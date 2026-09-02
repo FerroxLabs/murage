@@ -82,6 +82,7 @@ import {
 } from "@/lib/sidebar-layout";
 import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
@@ -1093,6 +1094,7 @@ function ArchivedBotsPanel({
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state, dispatch } = useStore();
+  const desktop = useDesktopSurface();
   const { capabilities } = useDesktopCapabilities();
   const importReturnRef = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -1792,7 +1794,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <Puzzle size={20} className="text-ink-secondary" />
           <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
         </button>
-        {density === "icons" && (
+        {/* The only thing this button does is open Settings → Phone, and that
+            section does not exist on a phone — it is the setup screen for
+            getting Murage ONTO one. A dot that opens an empty pane is worse
+            than no dot. `undefined` hides it too: the neutral answer. */}
+        {density === "icons" && desktop === true && (
           <SidebarPhoneButton
             density={density}
             onOpen={() => dispatch(phoneSettingsAction())}
@@ -1810,7 +1816,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
             </span>
           </button>
-          {density !== "icons" && (
+          {density !== "icons" && desktop === true && (
             <SidebarPhoneButton
               density={density}
               onOpen={() => dispatch(phoneSettingsAction())}

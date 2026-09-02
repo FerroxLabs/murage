@@ -565,9 +565,19 @@ function enterPage(nonce: string): string {
          font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
   main { max-width: 30rem; padding: 2rem; text-align: center; }
   h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
-  p { color: var(--dim); margin: 0; }
+  p { color: var(--dim); margin: 0 0 .75rem; }
+  #w:empty { display: none; }
+  #w { color: #b8791f; }
+  button { font: inherit; padding: .75rem 1.25rem; border-radius: .5rem; border: 0;
+           background: #e2622a; color: #fff; cursor: pointer; margin-top: .5rem; }
+  button[disabled] { opacity: .5; cursor: default; }
 </style>
-<main><h1 id="t">Signing in…</h1><p id="m"></p></main>
+<main>
+  <h1 id="t">Sign in to Murage</h1>
+  <p id="m">On this device.</p>
+  <p id="w"></p>
+  <button id="go" hidden>Sign in on this device</button>
+</main>
 <script nonce="${nonce}">
 (function () {
   var say = function (title, detail) {
@@ -582,17 +592,62 @@ function enterPage(nonce: string): string {
     say("Nothing to sign in with", "Open Phone settings in Murage on your computer and scan the code again.");
     return;
   }
-  fetch("/session", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ credential: credential })
-  }).then(function (r) {
-    return r.json().catch(function () { return {}; }).then(function (body) {
-      if (r.ok) { location.replace("/"); return; }
-      say("Could not sign in", body.error || "That code is no longer valid.");
+
+  // A TAP, not a page load.
+  //
+  // The credential lives in the fragment so it never reaches a server log or
+  // a Referer — but that buys nothing against something that RENDERS the
+  // page, because the script then runs with the fragment in hand. Paste this
+  // link into a chat app and its link-preview crawler fetches it, runs this,
+  // signs itself in and burns the single-use code before the person ever taps
+  // it. Sean hit exactly that relaying a link through a messenger: a device
+  // appeared, was never seen again, and his own tap was told the code was
+  // already spent.
+  //
+  // A crawler does not press buttons. One tap costs a person nothing they
+  // were not already doing, and it is also the only moment at which we can
+  // warn them BEFORE the code is spent — see the in-app browser note below.
+  var go = document.getElementById("go");
+  var warn = document.getElementById("w");
+  var ua = navigator.userAgent || "";
+  // An in-app webview has its own cookie jar. Signing in here strands the
+  // session in an app the person cannot bookmark or install from, and the
+  // code is single-use, so they must come back for another. Say so first.
+  // Plain string matching, not a regular expression. This script is emitted
+  // inside a TEMPLATE LITERAL, where a backslash is an escape the template
+  // consumes before JavaScript ever sees it. A word-boundary escape became a
+  // backspace character, the pattern collapsed into an unterminated literal,
+  // the whole script died with a syntax error, and the button below was never
+  // revealed — the page simply sat there saying "Sign in to Murage" with no
+  // way to. Nothing here is worth a regex.
+  //
+  // Note for anyone editing this string: no backticks, and no backslashes.
+  // Both belong to the template literal, not to the script.
+
+  var webview = false;
+  var marks = ["Line/", "FBAN", "FBAV", "Instagram", "WhatsApp", "MicroMessenger", "; wv)"];
+  for (var i = 0; i < marks.length; i++) {
+    if (ua.indexOf(marks[i]) !== -1) { webview = true; break; }
+  }
+  if (webview) {
+    warn.textContent = "You are in an app's built-in browser. Its sign-in will not carry over to Chrome or Safari, and this code can only be used once. Open this link in your normal browser first.";
+  }
+  go.hidden = false;
+  go.addEventListener("click", function () {
+    go.disabled = true;
+    say("Signing in…", "");
+    fetch("/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ credential: credential })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (r.ok) { location.replace("/"); return; }
+        say("Could not sign in", body.error || "That code is no longer valid.");
+      });
+    }).catch(function () {
+      say("Could not reach Murage", "The app may have stopped on your computer.");
     });
-  }).catch(function () {
-    say("Could not reach Murage", "The app may have stopped on your computer.");
   });
 })();
 </script>

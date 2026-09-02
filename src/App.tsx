@@ -24,6 +24,7 @@ import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { trackVisualViewport } from "@/lib/visual-viewport";
 import { setLocale } from "@/lib/i18n";
+import { useDesktopSurface } from "@/lib/use-surface";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -301,6 +302,19 @@ function Shell() {
 }
 
 export default function App() {
+  // WHO IS ALLOWED TO SEE A FIRST-RUN SCREEN.
+  //
+  // The welcome / email gate keys off localStorage, and a phone reaching this
+  // app through the browser door is a fresh browser: no key, so `emailGateDone`
+  // said "never used Murage" to the person holding the paired device. He had
+  // used it — pairing that phone is what he used it FOR. The gate is a
+  // first-run screen for the machine, and only the machine can answer it, so
+  // it renders on a CONFIRMED desktop and nowhere else.
+  //
+  // `undefined` (not asked yet) renders nothing. Nothing is the neutral thing
+  // here: the app underneath is already correct on both surfaces, and a frame
+  // of the welcome screen on a phone is the whole bug.
+  const desktop = useDesktopSurface();
   const [gated, setGated] = useState(() => !emailGateDone());
   useEffect(() => {
     initAnalytics();
@@ -313,7 +327,7 @@ export default function App() {
     <DesktopCapabilitiesProvider>
       <StoreProvider>
         <Shell />
-        {gated && <Onboarding onDone={() => setGated(false)} />}
+        {desktop === true && gated && <Onboarding onDone={() => setGated(false)} />}
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );

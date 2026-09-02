@@ -18,6 +18,7 @@ import {
   usePhoneSetupController,
 } from "./PhoneSetupFlow";
 import { companionPairingMode } from "../lib/phone-setup";
+import { useDesktopSurface } from "../lib/use-surface";
 import { ConnectionDetail } from "./ConnectionDetail";
 import { Card, Switch } from "./SettingsPrimitives";
 
@@ -65,8 +66,33 @@ const endpointHost = (url: string): string => {
 };
 
 export function CompanionSection({ profileEmail = "" }: { profileEmail?: string }) {
+  const desktop = useDesktopSurface();
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
+
+  // Settings → Phone, seen FROM the phone, was a list of things to do to a
+  // computer this device cannot see: turn phone access on, keep the computer
+  // awake, pair another device, reveal a tailnet address, sign a secure
+  // account in. Every switch here writes over the Electron bridge, which does
+  // not exist on this side of the door, so all of them were decoration.
+  //
+  // The section goes — not a disabled copy of it, and not one control. What is
+  // left is one sentence, and it is here only because the nav entry that leads
+  // here lives in `SettingsModal.tsx`, which this lane does not own: without
+  // it, tapping "Phone" on a phone opens a pane that is blank, which reads as
+  // broken rather than as decided. When that entry learns the surface too,
+  // this branch stops being reachable and can go.
+  if (desktop === false) {
+    return (
+      <Card
+        title="Phone setup happens on the computer"
+        subtitle="You are already on the phone. To pair another device, or change how phones reach Murage, open Settings → Phone on the computer running it."
+      />
+    );
+  }
+
+  // Not asked yet. Nothing, which is the neutral answer — never the desktop's.
+  if (desktop !== true) return null;
 
   if (!companionBridge()) {
     return (

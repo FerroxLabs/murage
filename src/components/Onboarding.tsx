@@ -7,6 +7,7 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { EngineSetup } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
 import { PhoneSetupFlow } from "./PhoneSetupFlow";
+import { useDesktopSurface } from "@/lib/use-surface";
 import type { InstanceInfo } from "@/state/store";
 
 // First-run onboarding: who you are (email), what's installed (live engine
@@ -109,6 +110,7 @@ function SetupRow(entry: EngineEntry) {
 }
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
+  const desktop = useDesktopSurface();
   const skin = useActiveSkin();
   const { capabilities } = useDesktopCapabilities();
   const [step, setStep] = useState(0);
@@ -191,6 +193,20 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     }));
   const readyEngines = engines.filter((e) => engineReady(e.instance));
   const setupEngines = engines.filter((e) => !engineReady(e.instance));
+
+  // EVERY STEP OF THIS SCREEN IS A DESKTOP STEP.
+  //
+  // Step 0 asks a returning user who he is because localStorage on a phone is
+  // empty. Step 1 lists engines installed ON THIS COMPUTER and offers to
+  // install them. Step 2 asks macOS for the microphone. Step 3 explains how to
+  // open Murage on a phone — to a phone. None of it is answerable from the
+  // other side of the browser door, and all of it was rendered there.
+  //
+  // App.tsx already refuses to mount this off the desktop. This is the second
+  // lock, on the component itself, so a future caller cannot reopen the hole
+  // by rendering `<Onboarding>` somewhere new. `undefined` renders nothing:
+  // the neutral answer, never the desktop one.
+  if (desktop !== true) return null;
 
   return (
     <div className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-app p-8 max-md:p-4">

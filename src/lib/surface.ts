@@ -1,3 +1,5 @@
+import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
+
 /** Which door this renderer came through.
  *
  * The same bundle is served to the local desktop app and, through the browser
@@ -36,7 +38,14 @@ export function surface(): Promise<SurfaceAnswer> {
   // and stamps `x-murage-companion` in — which requestSurface checks first. So
   // the marker survives on loopback and is stripped on the way through the
   // door, which is exactly what makes the answer honest on both sides.
-  pending ??= fetch("/api/config", { headers: { "x-murage-surface": "desktop" } })
+  //
+  // The marker alone stopped being enough once the harness started minting a
+  // per-launch secret: a bare `x-murage-surface: desktop` is exactly the
+  // forgery that gate exists to refuse, so without the secret this asked
+  // "am I the desktop?" in the voice of an impostor and was told no — in the
+  // desktop app.
+  pending ??= ensureDesktopSurfaceSecret()
+    .then(() => fetch("/api/config", { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } }))
     .then((response) => (response.ok ? response.json() : null))
     .then((body: { surface?: string } | null) => {
       const answer: SurfaceAnswer = body?.surface === "desktop" ? "desktop" : "remote";
