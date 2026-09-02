@@ -969,3 +969,22 @@ button:disabled.bg-danger {
   color: var(--color-ink-secondary);
   opacity: 1;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Markdown in the transcript.
+
+   A bot's answer carries text it did not choose: absolute paths, API URLs,
+   hashes, MCP tool names. `overflow-wrap: normal` breaks only at spaces and
+   hyphens, so a token with neither — `sha256:9f2c…`, a path with no spaces —
+   sets the paragraph's min-content width and runs off the right edge, where
+   the transcript's `overflow-x-hidden` cuts it. `anywhere` breaks such a
+   token only when it will not fit, and (unlike `break-word`) it also lowers
+   the min-content width, which is what actually stops the overflow.
+
+   `white-space: pre` wins over overflow-wrap, so fenced code blocks are
+   untouched: they keep their own `overflow-x-auto` and scroll inside their
+   own box. Tables likewise scroll in their wrapper.
+   ───────────────────────────────────────────────────────────────────────── */
+.chat-md {
+  overflow-wrap: anywhere;
+}
