@@ -331,3 +331,62 @@ export function companionPairingLink({
   if (routes.length) url.searchParams.set("endpoints", encodeEndpoints(routes));
   return url.toString();
 }
+
+/** Where a phone points its browser to reach this computer.
+ *
+ * Reported by the sidecar rather than derived here, and that is not
+ * fussiness. The door's port is an env override, its scheme decides a cookie
+ * attribute rather than describing one, and its dialable host is not its bind
+ * host — under `tailscale serve` it binds loopback and answers on the
+ * MagicDNS name. Three decisions taken in another process; a renderer that
+ * reassembled them would be wrong the first time any one of them changed. */
+export interface CompanionBrowserDoor {
+  scheme: "http" | "https";
+  host: string;
+  port: number;
+}
+
+/** The default port for a scheme, which a URL does not spell out. */
+const DEFAULT_PORT: Record<CompanionBrowserDoor["scheme"], number> = { http: 80, https: 443 };
+
+/**
+ * The link a phone actually follows: `<scheme>://<host>:<port>/enter#<token>`.
+ *
+ * This is the other half of `companionPairingLink`, and it exists because
+ * that one hands out a `murage://` URL for an app this repository no longer
+ * contains. Scanning it on a phone opens nothing. The browser door's
+ * first-contact page is a real destination that a real camera app can open,
+ * and this is its address.
+ *
+ * The credential rides in the **fragment**, which is the entire security
+ * design of `/enter` and not a formatting choice. A fragment is never sent to
+ * a server, so it cannot reach an access log, a proxy, or a `Referer` header —
+ * and the page's first act, before any network call, is to strip it out of
+ * the address bar and the session history. Putting the same token in a query
+ * string would undo all of that silently.
+ *
+ * Everything is validated before a URL is built, on the same principle
+ * `companionPairingLink` uses: a malformed link is a QR code someone points a
+ * phone at and gets a blank page from, with no way to tell what went wrong.
+ * `null` is a state the caller can render — "the door is not ready" — and a
+ * broken string is not.
+ */
+export function companionBrowserLink(
+  door: CompanionBrowserDoor | null | undefined,
+  token: string | undefined | null,
+): string | null {
+  if (!door || !token) return null;
+  if (door.scheme !== "http" && door.scheme !== "https") return null;
+  if (!Number.isInteger(door.port) || door.port < 1 || door.port > 65_535) return null;
+  // The same token the pairing window issued, and the same shape `devices.ts`
+  // will accept at `POST /session`. Checked here so a phone is never sent to
+  // a page that can only tell it the code is wrong.
+  if (!/^murage_pair_[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  const host = door.host.trim();
+  if (!host || /[\s/\\?#@]/.test(host)) return null;
+  // A bare IPv6 literal has colons of its own and has to be bracketed, or the
+  // first one reads as the port separator.
+  const dialable = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const port = door.port === DEFAULT_PORT[door.scheme] ? "" : `:${door.port}`;
+  return `${door.scheme}://${dialable}${port}/enter#${token}`;
+}

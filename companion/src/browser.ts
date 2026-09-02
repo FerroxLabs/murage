@@ -202,7 +202,45 @@ export function originGate(
   //    request including EventSource and no-cors images. Absent means the
   //    caller is not a browser, and this door is only for browsers.
   const site = req.headers["sec-fetch-site"];
-  if (site !== "same-origin" && site !== "none") {
+
+  //    ...but a TOP-LEVEL NAVIGATION to the shell is exempt, and that
+  //    exemption is the difference between a working door and a dead one.
+  //
+  //    `none` is only sent for a URL typed into the address bar. Every other
+  //    way a person opens a link on a phone — tapping it in Messages, in
+  //    mail, in a notes app, from a QR scanner — is a navigation with an
+  //    initiator, and the browser sends `cross-site`. So the rule below
+  //    refused the single flow this door exists to serve: Sean pasted the
+  //    pairing link to his phone, tapped it, and got "forbidden: cross-origin
+  //    request". Measured, not guessed: none → 200, same-origin → 200,
+  //    cross-site → 403, same-site → 403, header absent → 403.
+  //
+  //    Allowing it costs nothing. A cross-site initiator cannot READ what
+  //    comes back — that is what the same-origin policy is for, and no CORS
+  //    header here ever says otherwise — so navigating someone to this page
+  //    reveals nothing. It cannot forge one either: the shell is inert
+  //    without a session, and the pairing token rides in the URL FRAGMENT,
+  //    which browsers never put on the wire. What an attacker would gain is
+  //    the ability to show a person their own sign-in page.
+  //
+  //    Narrow on purpose: a safe method, never an `/api/` path, and the
+  //    request must actually look like a document navigation. Everything
+  //    else — every API read, every write, every subresource — still faces
+  //    the strict rule, which is where same-site matters and where the
+  //    comment above about ports on one MagicDNS name still holds.
+  //
+  //    An ABSENT `Sec-Fetch-Site` is still refused, deliberately. Widening to
+  //    cover it would let any non-browser reach the shell, which throws away
+  //    the "this door is only for browsers" property for the sake of Safari
+  //    below 16.4 — and a browser that old cannot run this app anyway. The
+  //    cost is recorded rather than paid.
+  const navigating =
+    SAFE_METHODS.has(method) &&
+    !path.startsWith("/api/") &&
+    (req.headers["sec-fetch-mode"] === "navigate" ||
+      req.headers["sec-fetch-dest"] === "document");
+
+  if (!navigating && site !== "same-origin" && site !== "none") {
     return { status: 403, error: "forbidden: cross-origin request" };
   }
   // `none` is a typed URL or a bookmark — a top-level navigation with no

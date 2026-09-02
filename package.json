@@ -30,7 +30,7 @@
     "docs:build": "pnpm --filter @murage/docs build",
     "docs:preview": "pnpm --filter @murage/docs preview",
     "companion": "node --experimental-strip-types companion/src/index.ts",
-    "dev:server": "node --experimental-strip-types server/index.ts",
+    "dev:server": "node scripts/dev-server.mjs",
     "mcp": "node --experimental-strip-types scripts/mcp-server.ts",
     "control:murage": "node --experimental-strip-types scripts/control-murage.ts",
     "dev:desktop": "node scripts/prepare-cloudflared.mjs --current && electron .",

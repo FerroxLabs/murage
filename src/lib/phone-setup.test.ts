@@ -15,6 +15,7 @@ import {
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
+  preparePhonePairingRoute,
   invalidatePhonePairingAttempt,
   queuePhonePairingAttempt,
   releasePhonePairingAttempt,
@@ -30,6 +31,73 @@ const account = (status: CompanionAccountState["status"]): CompanionAccountState
 });
 
 describe("phone setup flow", () => {
+  it("refreshes Tailscale before validating an explicit tailnet route", async () => {
+    const calls: string[] = [];
+    const initial = { enabled: true };
+    const refreshed = { enabled: true, endpoints: [] };
+    const result = await preparePhonePairingRoute("tailscale", true, {
+      read: vi.fn(async () => {
+        calls.push("read");
+        return initial;
+      }),
+      start: vi.fn(async () => {
+        calls.push("start");
+        return initial;
+      }),
+      refreshTailscale: vi.fn(async () => {
+        calls.push("refresh");
+        return refreshed;
+      }),
+    });
+
+    expect(calls).toEqual(["read", "refresh"]);
+    expect(result).toBe(refreshed);
+  });
+
+  it("does not probe Tailscale for HTTPS or direct Wi-Fi pairing", async () => {
+    for (const route of ["automatic", "local"] as const) {
+      const refreshTailscale = vi.fn(async () => ({ enabled: true }));
+      await preparePhonePairingRoute(route, false, {
+        read: vi.fn(async () => ({ enabled: true })),
+        start: vi.fn(async () => ({ enabled: true })),
+        refreshTailscale,
+      });
+      expect(refreshTailscale).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not begin a Tailscale probe after the setup attempt is cancelled", async () => {
+    const refreshTailscale = vi.fn(async () => ({ enabled: true }));
+    await preparePhonePairingRoute("tailscale", true, {
+      read: vi.fn(async () => ({ enabled: true })),
+      start: vi.fn(async () => ({ enabled: true })),
+      refreshTailscale,
+      shouldContinue: () => false,
+    });
+    expect(refreshTailscale).not.toHaveBeenCalled();
+  });
+
+  it("starts a sidecar that stopped after the panel's last enabled snapshot", async () => {
+    const calls: string[] = [];
+    const result = await preparePhonePairingRoute("tailscale", true, {
+      read: vi.fn(async () => {
+        calls.push("read");
+        return { enabled: false };
+      }),
+      start: vi.fn(async () => {
+        calls.push("start");
+        return { enabled: true };
+      }),
+      refreshTailscale: vi.fn(async () => {
+        calls.push("refresh");
+        return { enabled: true };
+      }),
+    });
+
+    expect(calls).toEqual(["read", "start", "refresh"]);
+    expect(result.enabled).toBe(true);
+  });
+
   it("moves from intro to sign-in and preserves the profile-independent resume path", () => {
     const started = phoneSetupReducer(initialPhoneSetupFlowState, {
       type: "start",

@@ -1,5 +1,5 @@
 import type { CompanionAccountState } from "../types/muragebox";
-import type { CompanionEndpoint } from "./companion-pairing";
+import type { CompanionEndpoint, CompanionPairingRouteMode } from "./companion-pairing";
 
 export type PhoneSetupPhase = "intro" | "sign-in" | "verifying" | "qr" | "success";
 
@@ -121,6 +121,41 @@ export type CompanionPairingMode =
 export interface PhoneSetupCompanionSnapshot {
   enabled: boolean;
   endpoints?: CompanionEndpoint[];
+}
+
+/** Load the freshest state needed to validate a selected pairing route.
+ * Tailscale is the only route whose availability can change behind a running
+ * sidecar, so automatic HTTPS and direct Wi-Fi never pay for a CLI probe. */
+export async function preparePhonePairingRoute<State extends { enabled: boolean; error?: string }>(
+  routeMode: CompanionPairingRouteMode,
+  alreadyEnabled: boolean,
+  actions: {
+    read: () => Promise<State>;
+    start: () => Promise<State>;
+    refreshTailscale: () => Promise<State>;
+    shouldContinue?: () => boolean;
+  },
+): Promise<State> {
+  let state = await (alreadyEnabled ? actions.read() : actions.start());
+  if (
+    alreadyEnabled
+    && !state.enabled
+    && (actions.shouldContinue?.() ?? true)
+  ) {
+    // The panel is polled, so its last snapshot can say "on" after the
+    // sidecar exits. A deliberate Pair click should recover by starting it,
+    // not fail because the stale renderer snapshot chose read over start.
+    state = await actions.start();
+  }
+  if (
+    routeMode === "tailscale"
+    && state.enabled
+    && !state.error
+    && (actions.shouldContinue?.() ?? true)
+  ) {
+    state = await actions.refreshTailscale();
+  }
+  return state;
 }
 
 /** Automatic setup is hosted-HTTPS only. Tailscale and plain local pairing
