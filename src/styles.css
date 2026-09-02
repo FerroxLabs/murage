@@ -143,23 +143,35 @@
 /* ── Light ─────────────────────────────────────────────────────────────────
    Wayland Desktop's light neutral ramp, near-verbatim — pure neutral grey with
    no hue cast, which is what lets the orange be the only colour in the room.
-   Wayland paints the page white and the panels grey; Murage's surface contract
-   requires the content card to be the brightest thing (--color-card must clear
-   --color-app by 1.04:1), so the same rungs are assigned one step over:
-   app = Wayland --bg-2, panel = --bg-1, card/raised = --bg-base.
+
+   `--color-panel` is the CHROME tone in both palettes — sidebar, docked side
+   panels, dialog shells, the pills that float over a transcript — and it always
+   sits one rung from the ground TOWARDS mid-grey. Dark's ground is black, so
+   panel (#171717) is lighter than app (#0a0a0a); light's ground is near-white,
+   so panel must be DARKER than app. Wayland does exactly this: its page is
+   --bg-base and its sidebar the tinted --bg-1 below it. Content is the figure,
+   chrome is the ground, in both palettes.
+
+   Murage's surface contract additionally requires the content card to be the
+   brightest thing (--color-card must clear --color-app by 1.04:1), so the whole
+   ramp is assigned one rung over Wayland's: card/raised = --bg-base, app (the
+   content ground) = --bg-1, panel (the chrome) = --bg-2. The 1.06:1 app→panel
+   step is the same measured step the palette shipped with; only which name owns
+   which rung has changed.
 
    The accent is deliberately NOT Forge Orange. #ff6b35 measures 2.49:1 against
    this ground and carries white at 2.84:1; no light ground exists on which it
    reaches the 3:1 WCAG 1.4.11 asks of a control boundary — the arithmetic
-   forbids it. It is stepped down to #b8481f (white ink 5.27:1, 4.62:1 on the
+   forbids it. It is stepped down to #b8481f (white ink 5.27:1, 4.92:1 on the
    ground) and the bright brand tone survives as --color-accent-border, so a
    filled accent button still wears a brand-bright edge over a legible fill.
    Wayland's semantic greens/ambers/reds get the same treatment: theirs are
    decorative fills, Murage renders them as text.
    ───────────────────────────────────────────────────────────────────────── */
 [data-skin="light"] {
-  --color-app: #f0f0f0;           /* Wayland --bg-2 — the outermost ground */
-  --color-panel: #f7f7f7;         /* Wayland --bg-1 — sidebar */
+  --color-app: #f7f7f7;           /* Wayland --bg-1 — the content ground */
+  --color-panel: #f0f0f0;         /* Wayland --bg-2 — sidebar and chrome,
+                                     recessed one rung under the content */
   --color-card: #ffffff;          /* Wayland --bg-base — the content plane */
   --color-raised: #ffffff;        /* = card: raised means brighter here */
   --color-inset: #eaeaea;         /* a hole: one step under the card */
@@ -170,7 +182,7 @@
                                      clears the panel, the ground, an inset row
                                      and the hover fill */
   --color-hairline: #bfbfbf;      /* Wayland --border-bright. --border-base
-                                     (#d4d4d4) only reaches 1.30:1 on this
+                                     (#d4d4d4) only reaches 1.38:1 on this
                                      ground, under the 1.5 floor */
 
   --color-ink: #0d0d0d;           /* Wayland --text-primary */

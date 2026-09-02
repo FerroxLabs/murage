@@ -51,6 +51,29 @@ const palettes = new Map(
   ]),
 );
 
+/** id → {token: value}. The name sets above answer "is it declared"; the
+ *  surface-order assertion needs to know what it was declared AS. */
+const paletteValues = new Map(
+  [...css.matchAll(/\[data-skin="([a-z-]+)"\]\s*\{([^}]*)\}/g)].map(([, id, body]) => [
+    id,
+    Object.fromEntries([...body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map(([, n, v]) => [n, v.trim()])),
+  ]),
+);
+
+/** Relative luminance, per WCAG — the same maths scripts/check-skin-contrast.mjs
+ *  uses. That script measures whether two surfaces differ; this file measures
+ *  which way round they are, which no contrast ratio can say. */
+function luminance(hex: string): number {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) throw new Error(`not an opaque hex: ${hex}`);
+  const channel = (v: number) => {
+    const s = v / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
 /** Every `--color-*` the stylesheet defines anywhere. */
 const colorTokens = new Set([...css.matchAll(/(--color-[\w-]+)\s*:/g)].map(([, name]) => name));
 
@@ -84,6 +107,47 @@ describe("token drift", () => {
         const missing = [...tokensA].filter((token) => !tokensB.has(token));
         expect(`${b} is missing: ${missing.join(", ")}`).toBe(`${b} is missing: `);
       }
+    }
+  });
+
+  it("orders the three structural surfaces the way each palette intends", () => {
+    // Which surface is BRIGHTER than which is a design decision that no
+    // contrast check can hold: check-skin-contrast.mjs asks only that
+    // `--color-panel` and `--color-app` differ by 1.03:1, and a palette that
+    // swaps them passes it unchanged. Light shipped inverted for exactly that
+    // reason — the sidebar (`bg-panel`) read as the white surface and the
+    // transcript (`bg-app`) as the grey one, so the eye was pulled to the
+    // navigation instead of the conversation.
+    //
+    // The rule both palettes obey: `--color-card` is the brightest surface, so
+    // a bubble or a tile is always the figure. Where they differ is which side
+    // of the content ground the chrome sits on, and that is forced by the
+    // ground itself — chrome always steps TOWARDS mid-grey. Light's ground is
+    // near-white, so the sidebar is darker than it; dark's ground is near-black,
+    // so the sidebar is lighter. Wayland Desktop does the same in both modes.
+    const ORDER: Record<string, string[]> = {
+      // dimmest → brightest
+      light: ["--color-panel", "--color-app", "--color-card"],
+      dark: ["--color-app", "--color-panel", "--color-card"],
+    };
+    for (const [id, order] of Object.entries(ORDER)) {
+      const tokens = paletteValues.get(id);
+      expect(`${id} exists`).toBe(tokens ? `${id} exists` : `${id} missing`);
+      // Strictly increasing, so this catches a swap AND a tie — two surfaces
+      // given the same value are an order on paper and a flat wall on screen.
+      const measured = order.map((token) => luminance(tokens![token]));
+      const dimmestFirst = order
+        .map((token, i) => ({ token, value: tokens![token], lum: measured[i] }))
+        .sort((a, b) => a.lum - b.lum)
+        .map(({ token, value }) => `${token} ${value}`)
+        .join(" < ");
+      const want = order.map((token) => `${token} ${tokens![token]}`).join(" < ");
+      expect(dimmestFirst).toBe(want);
+      // Sorting is stable, so it would report two identical surfaces as ordered.
+      const ties = order
+        .map((token, i) => (i > 0 && measured[i] <= measured[i - 1] ? `${order[i - 1]} == ${token}` : null))
+        .filter((pair) => pair !== null);
+      expect(`${id} ties: ${ties.join(", ")}`).toBe(`${id} ties: `);
     }
   });
 

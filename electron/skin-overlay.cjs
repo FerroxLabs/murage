@@ -9,7 +9,7 @@
 
 const SKIN_CHROME = Object.freeze({
   dark: Object.freeze({ color: "#0a0a0a", symbolColor: "#a8a8a8" }),
-  light: Object.freeze({ color: "#f0f0f0", symbolColor: "#555555" }),
+  light: Object.freeze({ color: "#f7f7f7", symbolColor: "#555555" }),
 });
 
 const DEFAULT_SKIN = "dark";
