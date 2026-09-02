@@ -174,6 +174,23 @@ day it is not.
 
 ---
 
+## SEAN'S DECISIONS — settled, act on these
+
+- **Publish smart-trader: APPROVED.** IP-verified this session and banked:
+  `bot-library/builtins/smart-trader.json` has **zero** hits for Rebel Scanner,
+  REGIME-GATE, or any `smarttrader` path, and **all 11 declared skills exist in
+  `skills-library/`** — it installs complete. Not pushed only because
+  `scripts/publish-profiles.mjs` merges into a *network clone* of a public repo
+  and that is an irreversible outward action; do it first thing, read the script
+  before running it. **This is the fix for "trading returns nothing".**
+- **Fuigo artifact growth (~59 MB compressed per mac arch): APPROVED.** Closed,
+  no further action.
+- **Win32 ARM64: for the NEXT edition.** Nothing is broken today — the app ships
+  Windows x64 only and Windows-on-ARM emulates x64. When `fuigo-win32-arm64` is
+  published, add the target to `scripts/prepare-fuigo.mjs` (the placeholder
+  comment at `:66-68` explains the gap) **and** an arm64 entry under `win:` in
+  `electron-builder.yml:154`. Both, or it stages a binary nothing packages.
+
 ## OPEN — needs Sean, not code
 
 - **The skill-less profiles now have a plan — see §2b.** Corrected count: 27 of
