@@ -26,19 +26,25 @@ const manifest = {
   },
 };
 
+// A slug the shipped library does NOT carry. fetchLibraryTeam is local-first
+// now (server/team-library.local.test.ts owns that contract), so a fixture
+// named after a real catalog entry — "engineering" was one — resolves out of
+// library/packages/ and never reaches the fetcher these tests exist to drive.
+const REMOTE_ONLY_SLUG = "remote-only-engineering";
+
 const catalog = {
   format: "murage.catalog",
   version: 1,
   teams: [
     {
-      slug: "engineering",
+      slug: REMOTE_ONLY_SLUG,
       name: "Engineering Team",
       summary: "Plan and ship software.",
       category: "Engineering",
-      manifest: "teams/engineering/team.emberteam.json",
-      readme: "teams/engineering/README.md",
+      manifest: `teams/${REMOTE_ONLY_SLUG}/team.emberteam.json`,
+      readme: `teams/${REMOTE_ONLY_SLUG}/README.md`,
       members: 1,
-      skills: ["teams/engineering/skills/release/SKILL.md"],
+      skills: [`teams/${REMOTE_ONLY_SLUG}/skills/release/SKILL.md`],
       requires: { apps: ["GitHub"] },
     },
   ],
@@ -55,7 +61,7 @@ describe("team library", () => {
   it("validates catalog paths and adds the trusted repository URL", () => {
     const parsed = parseTeamCatalog(catalog);
     expect(parsed.repositoryUrl).toBe("https://github.com/FerroxLabs/murage-teams");
-    expect(parsed.teams[0]).toMatchObject({ slug: "engineering", members: 1 });
+    expect(parsed.teams[0]).toMatchObject({ slug: REMOTE_ONLY_SLUG, members: 1 });
 
     const unsafe = structuredClone(catalog);
     unsafe.teams[0]!.manifest = "../private.json";
@@ -85,11 +91,11 @@ describe("team library", () => {
     const fetcher = vi.fn(async (url: string | URL | Request) => {
       const target = String(url);
       if (target === TEAM_LIBRARY_CATALOG_URL) return response(catalog);
-      if (target === `${TEAM_LIBRARY_RAW_ROOT}/teams/engineering/team.emberteam.json`) return response(manifest);
+      if (target === `${TEAM_LIBRARY_RAW_ROOT}/teams/${REMOTE_ONLY_SLUG}/team.emberteam.json`) return response(manifest);
       return response({}, 404);
     }) as unknown as typeof fetch;
 
-    const loaded = await fetchLibraryTeam("engineering", fetcher);
+    const loaded = await fetchLibraryTeam(REMOTE_ONLY_SLUG, fetcher);
     if (loaded.format !== "murage.team") throw new Error("expected a legacy team");
     expect(loaded.team.name).toBe("Engineering");
     expect(fetcher).toHaveBeenCalledTimes(2);
