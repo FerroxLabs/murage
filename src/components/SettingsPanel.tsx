@@ -13,6 +13,7 @@ import { shortPath } from "@/lib/short-path";
 import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
 import { BotRoleControl } from "./BotRoleControl";
+import { BotSetupAction } from "./BotIntakeCard";
 import { BotSkillsPanel } from "./BotSkillsPanel";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
@@ -445,6 +446,15 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               onChange={(e) => patch({ description: e.target.value })}
             />
           </Field>
+
+          {/* SETUP LIVES HERE, not in the composer dock.
+              Beside the role control because this is the same kind of
+              question — what IS this bot — and because a person arrives at
+              this panel on purpose. The composer version renders only for a
+              genuinely new agent; this one is always reachable, and warns
+              before it touches an agent that already has skills, a
+              description, or a conversation behind it. */}
+          <BotSetupAction bot={bot} />
 
           <BotRoleControl bot={bot} canCoordinate={canCoordinate} />
 

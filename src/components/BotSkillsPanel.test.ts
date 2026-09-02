@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -671,5 +672,30 @@ describe("proposals waiting in chat", () => {
     const markup = render({ skills: [skill()], staged: 2 });
 
     expect(markup).toContain("2 proposals are waiting in chat");
+  });
+});
+
+describe("removing a skill", () => {
+  const panelSource = readFileSync(fileURLToPath(new URL("./BotSkillsPanel.tsx", import.meta.url)), "utf8");
+
+  it("invalidates the shared count, so the setup question can come back", () => {
+    // The count is what decides whether an agent still looks unconfigured.
+    // Without this, removing the last skill left the cached count saying "3"
+    // until the page was reloaded — and the composer stayed silent about an
+    // agent that now had nothing.
+    const remove = panelSource.slice(panelSource.indexOf("const remove = async (skill: BotSkill)"));
+    const body = remove.slice(0, remove.indexOf("\n  };"));
+    expect(body).toContain("invalidateSkillCount(botId);");
+    // After the list re-reads, not before: this notifies every subscriber, and
+    // re-rendering the panel mid-refresh is not a race worth having.
+    expect(body.indexOf("await load({ silent: true })")).toBeLessThan(body.indexOf("invalidateSkillCount(botId)"));
+  });
+
+  it("does not point at a route with no control behind it", () => {
+    // "Use /learn in chat to add another." sat under a panel whose own add
+    // control is right there. It named a second, worse way to do the thing the
+    // button above it does.
+    expect(panelSource).not.toContain("Use /learn in chat to add another.");
+    expect(panelSource).toContain("Add a skill");
   });
 });

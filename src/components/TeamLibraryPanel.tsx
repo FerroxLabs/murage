@@ -5,7 +5,7 @@ import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import { assignSkillsToBot } from "@/lib/onboarding-intake";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import type { Routine } from "@/lib/routines";
-import { api, useStore, type Bot, type Group } from "@/state/store";
+import { api, useStore, type Bot, type Group, type TeamLibraryView } from "@/state/store";
 import {
   ArrowLeft,
   BookOpen,
@@ -247,15 +247,23 @@ function SkillAssignButton({
   skillId,
   bots,
   preselected,
+  installed,
 }: {
   skillId: string;
   bots: Bot[];
   preselected?: Bot;
+  /** Library ids the assign TARGET already has. Empty when there is no single
+   *  target to read, which is the honest state — see `alreadyAdded`. */
+  installed?: ReadonlySet<string>;
 }) {
   const [phase, setPhase] = useState<"idle" | "picking" | "busy" | "done">("idle");
   const [addedTo, setAddedTo] = useState("");
   const [error, setError] = useState("");
   const target = preselected ?? (bots.length === 1 ? bots[0] : undefined);
+  /** An installed skill's stored name IS its library id — `installSkillFromLibrary`
+   *  refuses any manifest whose frontmatter name differs from the directory —
+   *  so this comparison is exact, not a guess. */
+  const alreadyAdded = Boolean(target && installed?.has(skillId));
 
   const assign = async (bot: Bot) => {
     setPhase("busy");
@@ -289,6 +297,21 @@ function SkillAssignButton({
 
   if (bots.length === 0) return null;
 
+  /* ALREADY THERE. Adding it again reaches `server/skills.ts`, which refuses a
+     duplicate with an error no person was ever shown — the button simply did
+     nothing. Saying so before the press is the whole fix. */
+  if (alreadyAdded) {
+    return (
+      <span
+        className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-secondary"
+        title={`${target!.name} already has this skill`}
+      >
+        <Check size={13} />
+        Added
+      </span>
+    );
+  }
+
   return (
     <span className="relative flex shrink-0 flex-col items-end">
       <button
@@ -305,16 +328,25 @@ function SkillAssignButton({
       </button>
       {phase === "picking" && (
         <div className="absolute right-0 top-full z-10 mt-1 max-h-56 w-48 overflow-y-auto rounded-lg border border-hairline/50 bg-card py-1 shadow-lg">
-          {bots.map((bot) => (
-            <button
-              key={bot.id}
-              type="button"
-              onClick={() => void assign(bot)}
-              className="block w-full truncate px-3 py-2 text-left text-[12.5px] text-ink hover:bg-raised-hover"
-            >
-              Add to {bot.name}
-            </button>
-          ))}
+          {/* A SECOND LINE, because names are not unique. The live workspace
+              has "Bruce" and "Bruce (Smart Trader)" and two agents both called
+              "Seam Audit Probe"; a list of bare names asks a question the
+              person cannot answer. The title is what they wrote themselves, so
+              it comes first. */}
+          {bots.map((bot) => {
+            const detail = bot.title?.trim() || bot.description?.trim() || "";
+            return (
+              <button
+                key={bot.id}
+                type="button"
+                onClick={() => void assign(bot)}
+                className="block w-full px-3 py-2 text-left hover:bg-raised-hover"
+              >
+                <span className="block truncate text-[12.5px] text-ink">Add to {bot.name}</span>
+                {detail && <span className="mt-0.5 block truncate text-[11px] text-ink-secondary">{detail}</span>}
+              </button>
+            );
+          })}
         </div>
       )}
       {error && (
@@ -331,12 +363,21 @@ export function TeamLibraryPanel({
   onImported,
   returnFocusRef,
   initialUrl,
+  initialView,
   preselectedBotId,
 }: {
   onClose: () => void;
   onImported: (result: TeamImportResult) => void;
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
   initialUrl?: string;
+  /** Which half of the library to open on.
+   *
+   *  "Add a skill to Bruce" and "browse teams" are different questions, and
+   *  before this they landed on the same screen — the team grid, with a row of
+   *  Load buttons that import a whole crew. A person who asked for a skill and
+   *  was handed a team importer either imports the wrong thing or gives up.
+   *  Absent = teams, the panel's own default. */
+  initialView?: TeamLibraryView;
   /** SEAM — the agent this panel was opened "for", when the user arrived from
    *  an agent's Skills panel rather than from the sidebar. Assignment is one
    *  action, `assign(skillId, botId)`, with one end pre-filled by where the
@@ -351,6 +392,10 @@ export function TeamLibraryPanel({
   const dialogRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<TeamTab>("explore");
+  /** Teams or skills. A real switch, not a derived one: the person who arrived
+   *  here for a skill must be able to walk over to the teams and back without
+   *  the panel deciding for them. */
+  const [view, setView] = useState<TeamLibraryView>(initialView ?? "teams");
   const [catalog, setCatalog] = useState<TeamCatalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState("");
@@ -398,6 +443,31 @@ export function TeamLibraryPanel({
   /** Who a skill can be assigned to. Archived bots are not on screen anywhere
    *  else, so offering them here would name agents the person cannot see. */
   const assignableBots = state.bots.filter((bot) => !bot.hidden);
+  /** The agent every "Add to…" on this screen would land on, when there is
+   *  exactly one. Only then is there a set worth reading — with a picker open
+   *  the answer differs per row, and a wrong "Added ✓" is worse than none. */
+  const assignTarget = preselectedBot ?? (assignableBots.length === 1 ? assignableBots[0] : undefined);
+  const [installedSkills, setInstalledSkills] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const botId = assignTarget?.id;
+    if (!botId) {
+      setInstalledSkills(new Set());
+      return;
+    }
+    let live = true;
+    void api(`/api/bots/${botId}/skills`)
+      .then((response: { skills?: Array<{ name?: unknown }> }) => {
+        if (!live) return;
+        const names = Array.isArray(response?.skills) ? response.skills : [];
+        setInstalledSkills(new Set(names.map((skill) => String(skill?.name ?? "")).filter(Boolean)));
+      })
+      // An unreadable list means "unknown", and unknown renders the ordinary
+      // Add button — never a false "Added".
+      .catch(() => live && setInstalledSkills(new Set()));
+    return () => {
+      live = false;
+    };
+  }, [assignTarget?.id]);
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true);
@@ -945,6 +1015,34 @@ export function TeamLibraryPanel({
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
               {tab === "explore" && (
                 <div>
+                  {/* THE PANEL'S MISSING TABS. It had `activeFacet` and a
+                      search box and nothing else, so "Add a skill to Bruce"
+                      and "browse teams" arrived at the same screen. */}
+                  <div role="tablist" aria-label="Library view" className="mb-4 inline-flex rounded-xl bg-raised/60 p-1">
+                    {(["teams", "skills"] as const).map((candidate) => (
+                      <button
+                        key={candidate}
+                        role="tab"
+                        aria-selected={view === candidate}
+                        onClick={() => setView(candidate)}
+                        className={cn(
+                          "rounded-lg px-4 py-1.5 text-[13px] transition-colors",
+                          view === candidate ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
+                        )}
+                      >
+                        {candidate === "teams" ? "Teams" : "Skills"}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Say whose skill this is about BEFORE any search — a
+                      pre-filled target the person cannot see is exactly the
+                      invisible state that makes an "Add a skill" flow feel
+                      like it did nothing. */}
+                  {view === "skills" && (
+                    <h2 className="mb-3 text-[15px] font-semibold text-ink">
+                      Skills{preselectedBot && <span className="text-ink-secondary"> · for {preselectedBot.name}</span>}
+                    </h2>
+                  )}
                   {/* Browse, with nothing typed. Krug: search only helps
                       someone who already knows what to ask for. */}
                   {facets.length > 0 && (
@@ -992,11 +1090,7 @@ export function TeamLibraryPanel({
                   )}
 
                   <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-ink-secondary">
-                    {activeFacet
-                      ? `Skills in ${facetLabel(activeFacet)}`
-                      : search
-                        ? "Teams"
-                        : "Teams"}
+                    {activeFacet ? `Skills in ${facetLabel(activeFacet)}` : view === "skills" ? "Skills" : "Teams"}
                     {searching && <Loader2 size={12} className="animate-spin" />}
                   </div>
                   {catalogLoading && (
@@ -1010,7 +1104,11 @@ export function TeamLibraryPanel({
                       <button onClick={() => void loadCatalog()} className="mt-3 rounded-full bg-raised px-3.5 py-2 text-ink hover:bg-raised-hover">Try again</button>
                     </div>
                   )}
-                  {!catalogLoading && catalog && !activeFacet && (
+                  {/* NO LOAD BUTTONS ON THE SKILLS VIEW. `TeamRow`'s action
+                      imports an entire crew of bots; offering it to someone who
+                      asked for one skill is how this flow produced workspaces
+                      full of agents nobody wanted. */}
+                  {!catalogLoading && catalog && !activeFacet && view === "teams" && (
                     <>
                       {/* Browsing: grouped by the catalog's own categories, so
                           the shape of the library is visible at a glance.
@@ -1070,7 +1168,11 @@ export function TeamLibraryPanel({
                               agent, say so. A pre-filled target the user cannot
                               see is exactly the invisible state Krug warns
                               about. */}
-                          {preselectedBot && <span className="opacity-60"> · for {preselectedBot.name}</span>}
+                          {/* The skills view already names the agent in its
+                              own heading; saying it twice is noise. */}
+                          {preselectedBot && view !== "skills" && (
+                            <span className="opacity-60"> · for {preselectedBot.name}</span>
+                          )}
                         </h3>
                       )}
                       <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
@@ -1083,6 +1185,7 @@ export function TeamLibraryPanel({
                                 skillId={hit.id}
                                 bots={assignableBots}
                                 preselected={preselectedBot}
+                                installed={installedSkills}
                               />
                             }
                           />
