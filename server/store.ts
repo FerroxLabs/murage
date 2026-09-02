@@ -746,24 +746,16 @@ export class Store {
         botsMigrated = true;
       }
     }
-    for (const b of this.bots) {
-      if (!b.chiefOfStaff) continue;
-      const key = sectionKey(b.section);
-      if (!chiefSectionsSeen.has(key)) {
-        chiefSectionsSeen.add(key);
-        if (b.hidden) {
-          b.hidden = false;
-          botsMigrated = true;
-        }
-        continue;
-      }
-      b.chiefOfStaff = false;
-      botsMigrated = true;
-    }
     // One workspace Chief, the same way there is one Chief per section. A
     // hand-edited or merged bots.json naming two keeps the first; a
     // `chiefScope` on a bot that is not a Chief at all has no meaning and is
     // dropped, so the flag and its modifier can never disagree on disk.
+    //
+    // Runs BEFORE the per-section pass, not after: an extra workspace tier is
+    // dropped here, which leaves that bot an ordinary section-tier Chief, and
+    // the section pass below is then the thing that decides whether its
+    // section already has one. In the other order the demotion happened after
+    // the only pass that could have caught the collision.
     let workspaceChiefSeen = false;
     for (const b of this.bots) {
       if (b.chiefScope !== "workspace") continue;
@@ -772,6 +764,28 @@ export class Store {
         continue;
       }
       delete b.chiefScope;
+      botsMigrated = true;
+    }
+    for (const b of this.bots) {
+      if (!b.chiefOfStaff) continue;
+      // The workspace Chief is not any section's lead — it sits above all of
+      // them — so it never occupies the one slot this pass rations, and it is
+      // de-duped globally by the pass above instead. Without this, a workspace
+      // that never created a section (every bot on sectionKey "") could not
+      // hold a Chief of Staff and a team leader at the same time: whichever
+      // record came second lost its role on the next load.
+      const workspaceChief = b.chiefScope === "workspace";
+      const key = sectionKey(b.section);
+      if (workspaceChief || !chiefSectionsSeen.has(key)) {
+        if (!workspaceChief) chiefSectionsSeen.add(key);
+        // A section's main contact must stay reachable in the sidebar.
+        if (b.hidden) {
+          b.hidden = false;
+          botsMigrated = true;
+        }
+        continue;
+      }
+      b.chiefOfStaff = false;
       botsMigrated = true;
     }
     // The two branches under the Chief are exclusive: a bot either leads a
@@ -1494,6 +1508,30 @@ export class Store {
         // because there the role being discarded is the bigger one.
         if (bot.individual) delete bot.individual;
       } else {
+        // The workspace Chief is not this section's lead. It sits ABOVE every
+        // section and hands each team's work to that team's leader, so it is
+        // not a competitor for the slot being filled here — and this loop
+        // walks by section, which means it meets the Chief whenever the Chief
+        // happens to sit in the section being elected.
+        //
+        // That is not an edge case, it is the default: a workspace where
+        // nobody created a section has every bot on sectionKey "", so the
+        // Chief shares a section with everyone. Clearing the flag here fired
+        // the Chief of Staff every time a human pressed "Team leader" on any
+        // teammate — and took `chiefScope` with it, which the sidebar's
+        // "Make Chief of Staff" (a re-election with no scope) cannot give
+        // back. One click, and the workspace had no Chief and no way to say so.
+        //
+        // Handing the WORKSPACE tier over is the one case that may move this
+        // bot, and it is handled below by dropping the tier alone — leaving
+        // the old holder leading its own section, which is exactly what the
+        // role control's copy promises.
+        //
+        // Only while somebody is actually being ELECTED. `setChiefOfStaff(null,
+        // section)` is a human explicitly clearing that section's role, which
+        // is allowed to reach the Chief sitting in it — there is no incoming
+        // lead for it to be displaced by.
+        if (id !== null && bot.chiefScope === "workspace") continue;
         bot.chiefOfStaff = false;
         // The tier is a modifier on the flag; losing the flag loses it too.
         if (bot.chiefScope) delete bot.chiefScope;
