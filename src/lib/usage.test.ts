@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { botUsage, cachedInput, costCaption, formatTaskTokens, formatTokens, formatUsd, sumUsage, usageChip, usageDetail } from "./usage";
+import { botUsage, freshTokens, cachedInput, costCaption, formatTaskTokens, formatTokens, formatUsd, sumUsage, usageChip, usageDetail } from "./usage";
 
 describe("usage formatting", () => {
   it("formats token counts compactly", () => {
@@ -66,10 +66,12 @@ describe("usage formatting", () => {
     expect(cachedInput({ input: 100, output: 0, cachedInput: Number.NaN, costUsd: null, turns: 1 })).toBe(0);
   });
 
-  it("builds the chip: tokens always, cost only when known, nothing when unused", () => {
-    expect(usageChip({ input: 0, output: 0, costUsd: null, turns: 0 })).toBe("");
-    expect(usageChip({ input: 10_000, output: 2_400, costUsd: null, turns: 3 })).toBe("12.4k tok");
-    expect(usageChip({ input: 10_000, output: 2_400, costUsd: 0.06, turns: 3 })).toBe("12.4k tok · $0.06");
+  it("builds the chip: tokens always, cost only when metered, nothing when unused", () => {
+    expect(usageChip({ input: 0, output: 0, costUsd: null, turns: 0 }, "metered")).toBe("");
+    expect(usageChip({ input: 10_000, output: 2_400, costUsd: null, turns: 3 }, "metered")).toBe("12.4k tok");
+    expect(usageChip({ input: 10_000, output: 2_400, costUsd: 0.06, turns: 3 }, "metered")).toBe("12.4k tok · $0.06");
+    // Cost is withheld on a subscription — see the dedicated describe below.
+    expect(usageChip({ input: 10_000, output: 2_400, costUsd: 0.06, turns: 3 }, "subscription")).toBe("12.4k tok");
   });
 
   it("sums across tasks and leaves cost null until one reports it", () => {
@@ -94,5 +96,38 @@ describe("usage formatting", () => {
     expect(costCaption("subscription")).toMatch(/not billed/);
     expect(costCaption("metered")).toMatch(/API key/);
     expect(costCaption(undefined)).toMatch(/reported/);
+  });
+});
+
+// A conversation's `input` counts the whole thread once per turn, so the raw
+// total climbs into the millions while the person has typed a few paragraphs.
+// Reported as a runaway meter it frightens people; on a subscription, so does
+// a dollar figure nobody is being charged.
+describe("the chip reports what was actually consumed", () => {
+  const heavy = { input: 1_000_000, output: 20_000, cachedInput: 960_000, costUsd: 6.71, turns: 30 };
+
+  it("leaves context re-read out of the headline", () => {
+    // 1M in, but 960k of it is the model re-reading its own notes.
+    expect(freshTokens(heavy)).toBe(60_000);
+    expect(usageChip(heavy, "metered")).toContain("60k tok");
+    expect(usageChip(heavy, "metered")).not.toContain("1.0M");
+  });
+
+  it("shows money only where money is owed", () => {
+    expect(usageChip(heavy, "metered")).toBe("60k tok · $6.71");
+    // Same tokens, same equivalent cost, nothing billed.
+    expect(usageChip(heavy, "subscription")).toBe("60k tok");
+    // Unknown billing is not a licence to imply a charge.
+    expect(usageChip(heavy, undefined)).toBe("60k tok");
+  });
+
+  it("still says nothing at all for a task that has not run", () => {
+    expect(usageChip({ input: 0, output: 0, costUsd: null, turns: 0 }, "metered")).toBe("");
+  });
+
+  it("is unchanged when nothing was cached", () => {
+    const plain = { input: 100, output: 20, costUsd: null, turns: 1 };
+    expect(freshTokens(plain)).toBe(120);
+    expect(usageChip(plain, "subscription")).toBe("120 tok");
   });
 });
