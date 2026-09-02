@@ -36,6 +36,12 @@
         "appearance": {
           "color": "teal"
         },
+        "skills": [
+          "financial-model-template",
+          "financial-model-structure",
+          "excel-lookup-formulas",
+          "spreadsheet-model-audit"
+        ],
         "playbooks": [
           "financial-model-creator"
         ]

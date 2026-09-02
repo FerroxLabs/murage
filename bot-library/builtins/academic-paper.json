@@ -37,6 +37,12 @@
         "appearance": {
           "color": "blue"
         },
+        "skills": [
+          "research-paper-structure",
+          "academic-paper-review",
+          "citation-management",
+          "citation-reference"
+        ],
         "playbooks": [
           "academic-paper"
         ]

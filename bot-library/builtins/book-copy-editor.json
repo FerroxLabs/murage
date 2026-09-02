@@ -36,6 +36,12 @@
         "appearance": {
           "color": "purple"
         },
+        "skills": [
+          "copy-editing",
+          "line-editor",
+          "proofreading",
+          "write-book-chapter"
+        ],
         "playbooks": [
           "book-copy-editor"
         ]

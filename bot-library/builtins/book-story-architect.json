@@ -36,6 +36,14 @@
         "appearance": {
           "color": "pink"
         },
+        "skills": [
+          "write-book-chapter",
+          "short-story-writing",
+          "plot-outline",
+          "scene-writing",
+          "story-pitch",
+          "story-writer"
+        ],
         "playbooks": [
           "book-story-architect"
         ]

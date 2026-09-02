@@ -36,6 +36,11 @@
         "appearance": {
           "color": "orange"
         },
+        "skills": [
+          "developmental-editor",
+          "structural-editing",
+          "write-book-chapter"
+        ],
         "playbooks": [
           "book-developmental-editor"
         ]

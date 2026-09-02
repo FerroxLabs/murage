@@ -35,6 +35,14 @@
         "appearance": {
           "color": "yellow"
         },
+        "skills": [
+          "pitch-deck-builder",
+          "sales-pitch-deck",
+          "pitch-deck-creator",
+          "pitch-deck-structure",
+          "slide-deck-structure",
+          "startup-pitch-narrative"
+        ],
         "playbooks": [
           "pitch-deck-creator"
         ]
