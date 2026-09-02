@@ -9103,6 +9103,14 @@ const server = createServer(async (req, res) => {
         case "sleep":
           return json(res, 200, await box.sleepBox(cfg, botId));
         case "exec": {
+          // Arbitrary shell on the user's provisioned box, taken verbatim
+          // from the request body. `join` two branches up already refuses the
+          // companion surface for something far milder; this one had no
+          // surface check at all. Desktop-only, and the same 404 the other
+          // execution routes give.
+          if (requestSurface(req.headers, url.searchParams) !== "desktop") {
+            return json(res, 404, { error: "no such route" });
+          }
           const body = await readBody(req);
           return json(res, 200, await box.execOnBox(cfg, botId, String(body.command ?? "")));
         }
