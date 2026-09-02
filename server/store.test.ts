@@ -10,7 +10,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
-import { canReach, isWorkspaceChief, Store, type BotRecord } from "./store.ts";
+import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecord } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -1196,6 +1196,165 @@ describe("canReach", () => {
   it("requires the flag before the tier means anything", () => {
     expect(isWorkspaceChief(bot({ chiefScope: "workspace" }))).toBe(false);
     expect(canReach(bot({ section: "X", chiefScope: "workspace" }), salesLead)).toBe(false);
+  });
+});
+
+// ── the Chief's second branch: individual assistants ──────────────────
+// Bruce, a trading assistant, sits alone in "Smart Trader" with no leader
+// above him and reports straight to the Chief. Before this he matched no
+// clause of canReach at all: the Chief could not reach him and he could not
+// reach the Chief. An orphan in the org chart.
+
+describe("canReach — individual assistants", () => {
+  const bot = (over: Record<string, unknown> = {}) =>
+    ({ section: undefined, ...over }) as unknown as BotRecord;
+  const ember = bot({ section: null, chiefOfStaff: true, chiefScope: "workspace" });
+  const bruce = bot({ section: "Smart Trader", individual: true });
+  const salesLead = bot({ section: "Sales", chiefOfStaff: true });
+  const salesGrunt = bot({ section: "Sales" });
+
+  it("connects the workspace Chief and an individual assistant, both ways", () => {
+    expect(canReach(ember, bruce)).toBe(true);
+    expect(canReach(bruce, ember)).toBe(true);
+  });
+
+  it("gives an individual assistant no leader and no other team", () => {
+    expect(canReach(salesLead, bruce)).toBe(false);
+    expect(canReach(bruce, salesLead)).toBe(false);
+    expect(canReach(salesGrunt, bruce)).toBe(false);
+    expect(canReach(bruce, salesGrunt)).toBe(false);
+  });
+
+  it("leaves a bot merely ALONE in a section unreachable — the flag is the role", () => {
+    // The whole reason the role is explicit. Without the flag, adding a
+    // second bot to Bruce's group would silently flip him between
+    // "reports to the Chief" and "unreachable", with no visible cause.
+    const alone = bot({ section: "Smart Trader" });
+    expect(canReach(ember, alone)).toBe(false);
+    expect(canReach(alone, ember)).toBe(false);
+    expect(canReach(salesLead, alone)).toBe(false);
+  });
+
+  it("keeps an individual assistant unreachable from outside its own group", () => {
+    const roommate = bot({ section: "Smart Trader" });
+    expect(canReach(bruce, roommate)).toBe(true); // same section, unchanged
+    expect(canReach(salesGrunt, roommate)).toBe(false);
+    expect(canReach(salesLead, roommate)).toBe(false);
+  });
+
+  it("needs a SECTION chief to be an individual-assistant edge, not any chief", () => {
+    // A team leader is not the Chief; the branch hangs off the workspace tier.
+    expect(canReach(bot({ section: "Sales", chiefOfStaff: true }), bruce)).toBe(false);
+  });
+
+  it("resolves a record claiming both roles in favour of the team it leads", () => {
+    const janus = bot({ section: "Ops", chiefOfStaff: true, individual: true });
+    expect(isIndividualAssistant(janus)).toBe(false);
+    // reached as a lead (clause 2), not as an individual — same answer here,
+    // but the roster and the prompts render the two completely differently.
+    expect(canReach(ember, janus)).toBe(true);
+    expect(canReach(bot({ section: "Ops" }), janus)).toBe(true);
+  });
+
+  it("changes nothing at all while no workspace Chief exists", () => {
+    // The claim the doc comment makes, as a test: with clauses 2-5 all
+    // gated on isWorkspaceChief, an unelected workspace is the section rule.
+    const chiefless = [
+      bot({ section: "Sales", chiefOfStaff: true }),
+      bot({ section: "Sales" }),
+      bot({ section: "Smart Trader", individual: true }),
+      bot({ section: "Content" }),
+      bot({ section: null }),
+    ];
+    for (const from of chiefless) {
+      for (const to of chiefless) {
+        expect(canReach(from, to)).toBe(
+          (from.section?.trim() || "") === (to.section?.trim() || ""),
+        );
+      }
+    }
+  });
+});
+
+describe("Store.setIndividual", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("marks a bot as working alone under the Chief, and persists it", () => {
+    const store = new Store(selection);
+    const bruce = store.createBot({ name: "Bruce", section: "Smart Trader" });
+    const result = store.setIndividual(bruce.id, true);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(store.bot(bruce.id)?.individual).toBe(true);
+    expect(new Store(selection).bot(bruce.id)?.individual).toBe(true);
+  });
+
+  it("spells 'no' as an absent field, never as false", () => {
+    const store = new Store(selection);
+    const bruce = store.createBot({ name: "Bruce", section: "Smart Trader" });
+    store.setIndividual(bruce.id, true);
+    store.setIndividual(bruce.id, false);
+    expect(store.bot(bruce.id)?.individual).toBeUndefined();
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).not.toContain('"individual"');
+  });
+
+  it("refuses the role to a Chief instead of quietly stripping the team", () => {
+    const store = new Store(selection);
+    const rex = store.createBot({ name: "Rex", section: "Sales" });
+    store.setChiefOfStaff(rex.id);
+
+    expect(store.setIndividual(rex.id, false)).toMatchObject({ ok: true });
+    expect(store.setIndividual(rex.id, true)).toEqual({ ok: false, reason: "chief-conflict" });
+    expect(store.bot(rex.id)?.chiefOfStaff).toBe(true);
+    expect(store.bot(rex.id)?.individual).toBeUndefined();
+  });
+
+  it("refuses the role to the workspace Chief too", () => {
+    const store = new Store(selection);
+    const ember = store.createBot({ name: "Ember" });
+    store.setChiefOfStaff(ember.id, undefined, "workspace");
+    expect(store.setIndividual(ember.id, true)).toEqual({ ok: false, reason: "chief-conflict" });
+  });
+
+  it("reports an unknown bot rather than throwing", () => {
+    const store = new Store(selection);
+    expect(store.setIndividual("nope", true)).toEqual({ ok: false, reason: "unavailable" });
+  });
+
+  it("clears the mark the other way round — electing a Chief resolves it", () => {
+    // Opposite direction from the refusal above, and deliberately so: the
+    // human just asked for the larger role, and the result is visible.
+    const store = new Store(selection);
+    const bruce = store.createBot({ name: "Bruce", section: "Smart Trader" });
+    store.setIndividual(bruce.id, true);
+    store.setChiefOfStaff(bruce.id);
+    expect(store.bot(bruce.id)).toMatchObject({ chiefOfStaff: true });
+    expect(store.bot(bruce.id)?.individual).toBeUndefined();
+  });
+
+  it("drops a both-roles record and an explicit false at load", () => {
+    const store = new Store(selection);
+    const rex = store.createBot({ name: "Rex", section: "Sales" });
+    const bruce = store.createBot({ name: "Bruce", section: "Smart Trader" });
+    store.setChiefOfStaff(rex.id);
+    store.setIndividual(bruce.id, true);
+
+    const raw = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    for (const bot of raw.bots ?? raw) {
+      if (bot.id === rex.id) bot.individual = true; // a leader that also works alone
+      if (bot.id === bruce.id) bot.individual = true;
+    }
+    (raw.bots ?? raw).push(undefined);
+    (raw.bots ?? raw).pop();
+    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify(raw));
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toContain('"individual":true');
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(rex.id)?.individual).toBeUndefined();
+    expect(reloaded.bot(rex.id)?.chiefOfStaff).toBe(true);
+    expect(reloaded.bot(bruce.id)?.individual).toBe(true);
   });
 });
 

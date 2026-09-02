@@ -1,9 +1,15 @@
+import { botRole } from "./bot-role";
+
 export interface TeamMapBot {
   id: string;
   name: string;
   hidden?: boolean;
   section?: string;
   chiefOfStaff?: boolean;
+  /** Set only on the one workspace Chief, above the team leaders. */
+  chiefScope?: "workspace";
+  /** Works alone under the Chief, with no team leader above it. */
+  individual?: boolean;
   busy?: boolean;
   activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
 }
@@ -55,6 +61,33 @@ export function buildTeamMapSections<T extends TeamMapBot>(bots: T[]): TeamMapSe
     chiefs: sectionBots.filter((bot) => bot.chiefOfStaff),
     members: sectionBots.filter((bot) => !bot.chiefOfStaff),
   }));
+}
+
+/** The workspace as the chart it actually is, rather than a flat row of
+ * sections.
+ *
+ * Both branches hang off the Chief: team leaders with their members, and
+ * individual assistants with nobody beneath them. The Chief is lifted out of
+ * its own section — it does not belong to a team, it is above all of them —
+ * and an individual is lifted out too, so the group it sits alone in never
+ * renders as a leaderless team. With no Chief elected, `teams` is exactly
+ * what `buildTeamMapSections` always returned. */
+export interface TeamMapOrg<T extends TeamMapBot = TeamMapBot> {
+  chief: T | null;
+  teams: TeamMapSection<T>[];
+  individuals: T[];
+}
+
+export function buildTeamMapOrg<T extends TeamMapBot>(bots: T[]): TeamMapOrg<T> {
+  const visible = bots.filter((bot) => !bot.hidden);
+  const chief = visible.find((bot) => botRole(bot) === "chief") ?? null;
+  const individuals: T[] = [];
+  const rest: T[] = [];
+  for (const bot of visible) {
+    if (bot.id === chief?.id) continue;
+    (botRole(bot) === "individual" ? individuals : rest).push(bot);
+  }
+  return { chief, teams: buildTeamMapSections(rest), individuals };
 }
 
 /** One visible edge per pair. A running handoff outranks a queued one,

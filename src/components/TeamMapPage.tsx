@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, BookOpen, Crown, Loader2, Network, Radio, RefreshCw, Save, X } from "lucide-react";
+import { ArrowRight, BookOpen, Loader2, Network, Radio, RefreshCw, Save, X } from "lucide-react";
 
 import { EmberAvatar } from "./Avatar";
 import { api, formatTime, useStore, type Bot } from "@/state/store";
@@ -8,11 +8,14 @@ import { normalizeState } from "@/lib/mascot";
 import {
   EMPTY_TEAM_MAP_SNAPSHOT,
   buildTeamMapEdges,
-  buildTeamMapSections,
+  buildTeamMapOrg,
   teamMapStatus,
   type TeamMapEdge,
+  type TeamMapSection,
   type TeamMapSnapshot,
 } from "@/lib/team-map";
+import { botRole } from "@/lib/bot-role";
+import { RoleIcon } from "./RoleBadge";
 import { cn } from "@/lib/cn";
 
 const statusTone = {
@@ -22,13 +25,19 @@ const statusTone = {
   idle: "bg-ink-secondary/35",
 } as const;
 
-function BotNode({ bot, chief = false }: { bot: Bot; chief?: boolean }) {
+function BotNode({ bot, top = false }: { bot: Bot; top?: boolean }) {
   const { dispatch } = useStore();
   const status = teamMapStatus(bot);
+  const role = botRole(bot);
   return (
     <button
       onClick={() => dispatch({ type: "select", id: bot.id })}
-      className="group relative flex min-w-0 items-center gap-3 rounded-xl border border-hairline/50 bg-card px-3 py-3 text-left shadow-sm transition hover:border-accent/35 hover:bg-raised/50"
+      className={cn(
+        "group relative flex w-full min-w-0 items-center gap-3 rounded-xl border px-3 py-3 text-left shadow-sm transition",
+        top
+          ? "border-accent/40 bg-accent/10 hover:bg-accent/15"
+          : "border-hairline/50 bg-card hover:border-accent/35 hover:bg-raised/50",
+      )}
     >
       <EmberAvatar
         color={bot.color}
@@ -41,7 +50,7 @@ function BotNode({ bot, chief = false }: { bot: Bot; chief?: boolean }) {
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13.5px] font-semibold text-ink">{bot.name}</span>
-          {chief && <Crown size={12} className="shrink-0 text-warning" aria-label="Chief of Staff" />}
+          <RoleIcon bot={bot} size={12} className={role === "chief" ? "text-accent" : "text-ink-secondary"} />
         </span>
         <span className="block truncate text-[11.5px] text-ink-secondary">{bot.title || bot.modelSelection.model}</span>
       </span>
@@ -52,6 +61,8 @@ function BotNode({ bot, chief = false }: { bot: Bot; chief?: boolean }) {
     </button>
   );
 }
+
+const RAIL_HEADING = "text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-secondary";
 
 function EdgeRow({ edge, bots }: { edge: TeamMapEdge; bots: Bot[] }) {
   const { dispatch } = useStore();
@@ -83,6 +94,55 @@ function EdgeRow({ edge, bots }: { edge: TeamMapEdge; bots: Bot[] }) {
         {edge.state === "running" ? "Running" : edge.state === "queued" ? "Queued" : edge.lastAt ? formatTime(edge.lastAt) : "Connected"}
       </span>
     </button>
+  );
+}
+
+/** One team: its leader on top, its members on the rail beneath. A team with
+ * no leader says so — the Chief's prompt says the same sentence, and the two
+ * must not disagree. */
+function TeamCard({
+  section,
+  onEditContext,
+}: {
+  section: TeamMapSection<Bot>;
+  onEditContext: () => void;
+}) {
+  const size = section.chiefs.length + section.members.length;
+  return (
+    <section className="rounded-2xl border border-hairline/50 bg-panel p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className={cn(RAIL_HEADING, "min-w-0 truncate")}>{section.name}</h3>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={onEditContext}
+            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10.5px] font-medium text-ink-secondary hover:bg-raised hover:text-ink"
+            aria-label={`Edit ${section.name} shared context`}
+            title="Shared context"
+          >
+            <BookOpen size={11} /> Context
+          </button>
+          <span className="text-[11px] tabular-nums text-ink-secondary">{size}</span>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {section.chiefs.map((bot) => (
+          <BotNode key={bot.id} bot={bot} />
+        ))}
+        {section.chiefs.length === 0 && section.members.length > 0 && (
+          <p className="pb-1 text-[11.5px] text-ink-secondary">No team leader yet.</p>
+        )}
+        {section.chiefs.length > 0 && section.members.length > 0 && (
+          <div className="ml-5 h-3 w-px bg-hairline" aria-hidden />
+        )}
+        {section.members.length > 0 && (
+          <div className={cn("space-y-2", section.chiefs.length > 0 && "border-l border-hairline/60 pl-3")}>
+            {section.members.map((bot) => (
+              <BotNode key={bot.id} bot={bot} />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -290,7 +350,7 @@ export function TeamMapPage() {
   const [error, setError] = useState<string | null>(null);
   const [contextEditor, setContextEditor] = useState<{ section: string; label: string } | null>(null);
   const bots = useMemo(() => state.bots.filter((bot) => !bot.hidden), [state.bots]);
-  const sections = useMemo(() => buildTeamMapSections(bots), [bots]);
+  const org = useMemo(() => buildTeamMapOrg(bots), [bots]);
   const edges = useMemo(() => buildTeamMapEdges(bots, snapshot), [bots, snapshot]);
 
   const refresh = useCallback(async (showSpinner = false) => {
@@ -316,9 +376,37 @@ export function TeamMapPage() {
   const working = bots.filter((bot) => bot.busy || bot.activity === "working").length;
   const waiting = bots.filter((bot) => bot.activity === "waiting-on-you").length;
 
+  const branches = [
+    ...org.teams.map((section) => (
+      <TeamCard
+        key={section.key || "__general__"}
+        section={section}
+        onEditContext={() => setContextEditor({ section: section.key, label: section.name })}
+      />
+    )),
+    ...(org.individuals.length
+      ? [
+          <section key="__individuals__" className="rounded-2xl border border-hairline/50 bg-panel p-4">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <h3 className={RAIL_HEADING}>Individual assistants</h3>
+              <span className="text-[11px] tabular-nums text-ink-secondary">{org.individuals.length}</span>
+            </div>
+            <p className="mb-3 text-[11.5px] leading-relaxed text-ink-secondary">
+              No team leader — each one reports to the Chief of Staff directly.
+            </p>
+            <div className="space-y-2">
+              {org.individuals.map((bot) => (
+                <BotNode key={bot.id} bot={bot} />
+              ))}
+            </div>
+          </section>,
+        ]
+      : []),
+  ];
+
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
-      <header className="flex shrink-0 items-center justify-between border-b border-hairline/40 px-7 py-5 max-md:pl-12">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline/40 px-4 py-5 sm:px-7 max-md:pl-12">
         <div>
           <div className="flex items-center gap-2.5">
             <Network size={20} className="text-accent" />
@@ -328,7 +416,7 @@ export function TeamMapPage() {
             </span>
           </div>
           <p className="mt-1 text-[12.5px] text-ink-secondary">
-            See every section, who is working, and where tasks are moving.
+            The whole org chart — who leads what, who is working, and where tasks are moving.
           </p>
         </div>
         <button
@@ -342,7 +430,7 @@ export function TeamMapPage() {
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7 sm:py-6">
         <div className="mb-5 grid max-w-[620px] grid-cols-3 gap-2">
           {[
             [bots.length, "Bots"],
@@ -358,39 +446,36 @@ export function TeamMapPage() {
 
         {error && <div className="mb-4 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
 
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-4">
-          {sections.map((section) => (
-            <section key={section.key || "__general__"} className="rounded-2xl border border-hairline/50 bg-panel p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">{section.name}</h2>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setContextEditor({ section: section.key, label: section.name })}
-                    className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10.5px] font-medium text-ink-secondary hover:bg-raised hover:text-ink"
-                    aria-label={`Edit ${section.name} shared context`}
-                    title="Shared context"
-                  >
-                    <BookOpen size={11} /> Context
-                  </button>
-                  <span className="text-[11px] tabular-nums text-ink-secondary">{section.chiefs.length + section.members.length}</span>
+        {/* The chart, drawn as one. The Chief sits above everything, and the
+            two branches under it — teams with their leaders, and the
+            individual assistants who have no leader at all — share one grid
+            off one rail, so "reports to the Chief" is a thing you see rather
+            than a thing you work out. */}
+        <section aria-label="Org chart">
+          <h2 className={RAIL_HEADING}>Org chart</h2>
+          {org.chief ? (
+            <div className="mt-2.5">
+              <div className="max-w-[440px]">
+                <BotNode bot={org.chief} top />
+              </div>
+              <div className="ml-5 mt-3 border-l border-hairline/70 pl-5">
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] items-start gap-4">
+                  {branches}
                 </div>
               </div>
-              <div className="space-y-2">
-                {section.chiefs.map((bot) => <BotNode key={bot.id} bot={bot} chief />)}
-                {section.chiefs.length > 0 && section.members.length > 0 && (
-                  <div className="ml-5 h-3 w-px bg-hairline" aria-hidden />
-                )}
-                {section.members.length > 0 && (
-                  <div className={cn("space-y-2", section.chiefs.length > 0 && "border-l border-hairline/60 pl-3")}>
-                    {section.members.map((bot) => <BotNode key={bot.id} bot={bot} />)}
-                  </div>
-                )}
+            </div>
+          ) : (
+            <div className="mt-2.5 space-y-3">
+              <div className="rounded-xl border border-dashed border-hairline bg-panel px-4 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
+                No Chief of Staff yet. Open an agent's profile, set its Role to Chief of Staff, and it takes the
+                top of this chart — team leaders and individual assistants report to it.
               </div>
-            </section>
-          ))}
-        </div>
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] items-start gap-4">{branches}</div>
+            </div>
+          )}
+        </section>
 
-        <section className="mt-6 max-w-[900px]">
+        <section className="mt-7 max-w-[900px]">
           <div className="mb-2.5 flex items-center justify-between">
             <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">Agent handoffs</h2>
             <span className="text-[11px] text-ink-secondary">Running and queued first</span>

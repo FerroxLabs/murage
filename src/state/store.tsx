@@ -257,6 +257,13 @@ export interface Bot {
   pinnedMessageId?: string;
   /** This sidebar section's primary coordinator. */
   chiefOfStaff?: boolean;
+  /** Set only on the ONE bot that coordinates the whole workspace, above the
+   * team leaders. Meaningful only while `chiefOfStaff` is true. */
+  chiefScope?: "workspace";
+  /** The Chief's other branch: this bot works alone in its own group, with
+   * no team leader above it, reporting to the Chief directly. Never true at
+   * the same time as `chiefOfStaff`. */
+  individual?: boolean;
   /** When this bot wants to talk to another bot (ask_bot/delegate_bot),
    * pause and ask the user first. Off by default. */
   approvePeerComms?: boolean;
@@ -1132,8 +1139,32 @@ export function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      const { acknowledgeLocalAuto: _ack, ...botPatch } = action.patch;
-      return updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
+      // `chiefScope` rides the wire body only ("section" is not a stored
+      // value, it means "drop the workspace tier"), so the optimistic tier is
+      // mirrored here instead of folded through. Promoting one bot demotes
+      // the previous holder to leader of its own team — never fires it —
+      // which is exactly what the harness's setChiefOfStaff does.
+      const tier = action.patch.chiefTier;
+      const scoped =
+        tier === undefined
+          ? next
+          : {
+              ...next,
+              bots: next.bots.map((b) =>
+                b.id === action.botId
+                  ? { ...b, chiefScope: tier === "workspace" ? ("workspace" as const) : undefined }
+                  : tier === "workspace" && b.chiefScope === "workspace"
+                    ? { ...b, chiefScope: undefined }
+                    : b,
+              ),
+            };
+      const { acknowledgeLocalAuto: _ack, chiefTier: _tier, ...botPatch } = action.patch;
+      return updateBot(scoped, action.botId, (b) => ({
+        ...b,
+        ...botPatch,
+        // Absent, never false — one shape for "no", the same as on disk.
+        ...(botPatch.individual === false ? { individual: undefined } : {}),
+      }));
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -1428,9 +1459,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     () =>
       createBotPatchQueue({
         send: async (botId, patch, signal) => {
+          // `chiefTier` is the queue's name for a value the harness reads as
+          // `chiefScope`; it is renamed here rather than shared, because the
+          // wire accepts "section"/null to mean "drop the tier" and the bot
+          // field only ever holds "workspace" or nothing.
+          const { chiefTier, ...fields } = patch;
           const result: { bot: BotAnnouncement } = await api(`/api/bots/${botId}`, {
             method: "PATCH",
-            body: JSON.stringify(patch),
+            body: JSON.stringify(chiefTier === undefined ? fields : { ...fields, chiefScope: chiefTier }),
             signal,
           });
           return result.bot;

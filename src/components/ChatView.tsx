@@ -9,7 +9,6 @@ import {
   Bug,
   Clock,
   Copy,
-  Crown,
   Folder,
   ListTree,
   Monitor,
@@ -50,6 +49,7 @@ import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { ChatFindBar } from "./ChatFindBar";
+import { RoleBadge } from "./RoleBadge";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -1136,20 +1136,17 @@ export function ChatView({ bot }: { bot: Bot }) {
             // name button itself opens.
             editButtonClassName="@max-md/chathead:hidden"
           />
-          {bot.chiefOfStaff && (
-            // No shrink-0 and no nowrap: measured at 390px this pill wrapped
-            // to three lines, took the header from 72px to 85.5px, overlapped
-            // the Find button by 79.4px and left the bot name 0px wide. In a
-            // narrow column the crown alone carries the same signal, the way
-            // the chips beside it already fold to their icons.
-            <span
-              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent @max-md/chathead:px-1"
-              title="Chief of Staff"
-            >
-              <Crown size={11} />
-              <span className="@max-md/chathead:hidden">Chief of Staff</span>
-            </span>
-          )}
+          {/* Three tiers, one mark. Without shrink-0 and nowrap this pill was
+              measured at 390px wrapping to three lines, taking the header from
+              72px to 85.5px, overlapping the Find button by 79.4px and leaving
+              the bot name 0px wide — both live on the badge itself. In a
+              narrow column the icon alone carries the signal, the way the
+              chips beside it already fold. */}
+          <RoleBadge
+            bot={bot}
+            labelClassName="@max-md/chathead:hidden"
+            className="@max-md/chathead:px-1"
+          />
           {bot.busy && <WorkingDots className="text-ink-secondary" />}
         </div>
         <div className="flex shrink-0 items-center gap-2">

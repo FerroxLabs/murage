@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, Crown, FolderOpen, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, FolderOpen, X } from "lucide-react";
 import { useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { stateForBot } from "@/lib/mascot";
@@ -12,6 +12,7 @@ import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@
 import { shortPath } from "@/lib/short-path";
 import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
+import { BotRoleControl } from "./BotRoleControl";
 import { BotSkillsPanel } from "./BotSkillsPanel";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
@@ -366,12 +367,6 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const browserFeature = builtInBrowserEnabled(state.config);
   const browserAllowed = bot.browser !== false;
   const browserEnabled = browserFeature && browserAllowed;
-  const sectionName = bot.section?.trim() || "General";
-  const currentChief = state.bots.find(
-    (candidate) =>
-      candidate.chiefOfStaff &&
-      (candidate.section?.trim() || "") === (bot.section?.trim() || ""),
-  );
 
   return (
     <>
@@ -409,6 +404,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
       <div className="flex-1 overflow-y-auto px-5 pb-5">
         <div className="flex flex-col gap-4 pt-4">
+          {/* Below md this panel covers the chat, and the chat is where the
+              app's error banner renders — a refused role change would land
+              behind it with nothing on screen to explain the snap-back. */}
+          {state.error && (
+            <div role="alert" className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[12.5px] leading-relaxed text-danger">
+              {state.error}
+            </div>
+          )}
           <BotProfileAvatarCard
             bot={bot}
             activeState={activeState}
@@ -443,42 +446,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             />
           </Field>
 
-          <div className={cn(
-            "rounded-xl border p-4",
-            bot.chiefOfStaff ? "border-accent/40 bg-accent/10" : "border-hairline/40 bg-card",
-          )}>
-            <div className="flex items-center gap-3">
-              <span className={cn(
-                "flex size-8 shrink-0 items-center justify-center rounded-lg",
-                bot.chiefOfStaff ? "bg-accent text-white" : "bg-control text-ink-secondary",
-              )}>
-                <Crown size={17} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-medium text-ink">Chief of Staff</div>
-                <div className="text-[11.5px] text-ink-secondary">One for {sectionName}</div>
-              </div>
-              <Switch
-                checked={Boolean(bot.chiefOfStaff)}
-                aria-label="Chief of Staff"
-                disabled={!bot.chiefOfStaff && !canCoordinate}
-                onClick={() => patch({ chiefOfStaff: !bot.chiefOfStaff })}
-                title={!bot.chiefOfStaff && !canCoordinate ? "This engine cannot contact other bots" : undefined}
-                className="disabled:cursor-not-allowed"
-              />
-            </div>
-            <div className="mt-3 text-[13px] leading-relaxed text-ink-secondary">
-              {bot.chiefOfStaff && !canCoordinate
-                ? "This bot still holds the role, but its current engine cannot contact teammates. Choose a Claude or ACP engine to restore coordination."
-                : bot.chiefOfStaff
-                  ? `This is the primary contact for ${sectionName}. It can create and coordinate specialists in this section, then combine their work into one answer.`
-                : !canCoordinate
-                  ? "Choose a Claude or ACP engine to let this bot coordinate teammates."
-                  : currentChief
-                    ? `Make this bot the ${sectionName} Chief and hand the role over from ${currentChief.name}.`
-                    : `Make this bot the primary contact for the ${sectionName} section.`}
-            </div>
-          </div>
+          <BotRoleControl bot={bot} canCoordinate={canCoordinate} />
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>

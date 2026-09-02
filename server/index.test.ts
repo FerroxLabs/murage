@@ -1258,6 +1258,48 @@ describe("harness HTTP API", () => {
     }
   });
 
+  // The Chief's second branch, over the wire the UI actually uses. The role
+  // control always sends all three fields at once, so the refusal and the
+  // handover both have to behave inside ONE request.
+  it("files a bot as an Individual Assistant and refuses the role to a Chief", async () => {
+    const chief = (await api("POST", "/api/bots")).body.bot;
+    const bruce = (await api("POST", "/api/bots")).body.bot;
+    try {
+      await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+      const filed = await api("PATCH", `/api/bots/${bruce.id}`, {
+        section: "Smart Trader",
+        chiefOfStaff: false,
+        chiefScope: null,
+        individual: true,
+      });
+      expect(filed.status).toBe(200);
+      expect(filed.body.bot).toMatchObject({ section: "Smart Trader", individual: true });
+
+      // survives a re-read, and is not merely an echo of the request
+      const bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === bruce.id).individual).toBe(true);
+
+      // the two roles are opposite ends of one chart, in one request
+      const refused = await api("PATCH", `/api/bots/${bruce.id}`, { chiefOfStaff: true, individual: true });
+      expect(refused.status).toBe(400);
+      expect(String(refused.body.error)).toContain("Individual Assistant");
+      expect((await api("GET", "/api/bots")).body.bots.find((bot: { id: string }) => bot.id === bruce.id))
+        .toMatchObject({ individual: true, chiefOfStaff: false });
+
+      // and refused the other way round too, against the stored role
+      await api("PATCH", `/api/bots/${bruce.id}`, { chiefOfStaff: true, chiefScope: "section", individual: false });
+      const promoted = (await api("GET", "/api/bots")).body.bots
+        .find((bot: { id: string }) => bot.id === bruce.id);
+      expect(promoted.chiefOfStaff).toBe(true);
+      expect(promoted.individual).toBeUndefined(); // leading clears the branch
+      expect((await api("PATCH", `/api/bots/${bruce.id}`, { individual: true })).status).toBe(400);
+
+      expect((await api("PATCH", `/api/bots/${bruce.id}`, { individual: "yes" })).status).toBe(400);
+    } finally {
+      for (const bot of [chief, bruce]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("files a sidebar section atomically, trims and dedupes, and preserves its Chief", async () => {
     const incumbent = (await api("POST", "/api/bots")).body.bot;
     const incoming = (await api("POST", "/api/bots")).body.bot;

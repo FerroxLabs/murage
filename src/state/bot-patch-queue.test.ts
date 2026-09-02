@@ -222,6 +222,32 @@ describe("bot patch queue", () => {
     for (const overlay of overlays) expect(overlay).not.toHaveProperty("acknowledgeLocalAuto");
   });
 
+  it("carries the Chief's tier to the wire but never into a state overlay", async () => {
+    // Same rule, second wire-only field. "section" is not a value any bot
+    // holds — it means "drop the workspace tier" — so folding it back would
+    // put a word into bot state that no server bot will ever contain.
+    const sent: BotUpdatePatch[] = [];
+    const overlays: BotUpdatePatch[] = [];
+    const queue = createBotPatchQueue({
+      send: async (_botId, patch) => {
+        sent.push(patch);
+        return bot();
+      },
+      reconcile: async () => bot(),
+      onAuthoritative: (_bot, overlay) => overlays.push(overlay),
+      onError: vi.fn(),
+    });
+
+    queue.enqueue("bot-1", { chiefOfStaff: true, chiefTier: "section", individual: false }, bot());
+    queue.enqueue("bot-1", { title: "Ops" }, bot());
+    expect(queue.overlayFor("bot-1")).toEqual({ chiefOfStaff: true, individual: false, title: "Ops" });
+    await vi.advanceTimersByTimeAsync(400);
+    await queue.flush("bot-1");
+
+    expect(sent).toEqual([{ chiefOfStaff: true, chiefTier: "section", individual: false, title: "Ops" }]);
+    for (const overlay of overlays) expect(overlay).not.toHaveProperty("chiefTier");
+  });
+
   it("revive undoes a dispose, so StrictMode's dev probe cannot kill saving", async () => {
     // StrictMode mounts, runs the cleanup once against the same memoized
     // queue, and mounts again. dispose → revive must leave a working queue.

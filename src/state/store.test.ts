@@ -467,6 +467,63 @@ describe("section Chiefs", () => {
     expect(next.bots.find((candidate) => candidate.id === workCandidate.id)?.chiefOfStaff).toBe(true);
     expect(next.bots.find((candidate) => candidate.id === personalChief.id)?.chiefOfStaff).toBe(true);
   });
+
+  // The tier and the lone-worker branch ride the same optimistic path as the
+  // flag, and both have a shape the renderer must not persist: "section" is
+  // a wire word meaning "drop the tier", and `individual: false` is spelled
+  // as an absent field everywhere else in the app.
+  it("mirrors a workspace handover optimistically and demotes the previous holder", () => {
+    const ember = { ...bot("ember", ""), chiefOfStaff: true, chiefScope: "workspace" as const };
+    const rex = { ...bot("rex", "Sales"), chiefOfStaff: true };
+    const state = {
+      ...initialState,
+      bots: [ember, rex].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, {
+      type: "updateBot",
+      botId: rex.id,
+      patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
+    });
+
+    expect(next.bots.find((candidate) => candidate.id === rex.id)?.chiefScope).toBe("workspace");
+    // demoted to leader of its own team, not fired — what the harness does
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBeUndefined();
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(true);
+  });
+
+  it("never folds the wire-only tier word into a bot", () => {
+    const rex = { ...bot("rex", "Sales"), chiefOfStaff: true, chiefScope: "workspace" as const };
+    const state = { ...initialState, bots: [{ ...rex, messages: [] }] };
+
+    const next = reducer(state, {
+      type: "updateBot",
+      botId: rex.id,
+      patch: { chiefOfStaff: true, chiefTier: "section", individual: false },
+    });
+
+    expect(next.bots[0]?.chiefScope).toBeUndefined();
+    expect(JSON.stringify(next.bots[0])).not.toContain("section\":\"section");
+  });
+
+  it("spells the lone-worker branch as absent, never false", () => {
+    const bruce = { ...bot("bruce", "Smart Trader"), individual: true };
+    const state = { ...initialState, bots: [{ ...bruce, messages: [] }] };
+
+    const cleared = reducer(state, {
+      type: "updateBot",
+      botId: bruce.id,
+      patch: { chiefOfStaff: false, chiefTier: null, individual: false },
+    });
+    expect(cleared.bots[0]?.individual).toBeUndefined();
+
+    const set = reducer(cleared, {
+      type: "updateBot",
+      botId: bruce.id,
+      patch: { chiefOfStaff: false, chiefTier: null, individual: true },
+    });
+    expect(set.bots[0]?.individual).toBe(true);
+  });
 });
 
 describe("pending queued chip", () => {
