@@ -24,6 +24,10 @@ const GOAL_RUN_PREVIEW_LABEL = {
 export type SidebarBot = {
   id: string;
   chiefOfStaff?: boolean;
+  /** Present only on the workspace Chief. `chiefOfStaff` alone means "leads
+   * something", which a team leader does too — this is what separates them,
+   * and the sidebar needs it to decide who gets the single top slot. */
+  chiefScope?: "workspace";
   section?: string;
   pinned?: boolean;
   hidden?: boolean;
@@ -81,15 +85,34 @@ export function sidebarSectionCollapsed(
  * unpinning returns them to the context they came from. */
 export function partitionSidebarBots<T extends SidebarBot>(bots: T[]) {
   const visible = bots.filter((bot) => !bot.hidden);
-  const unsectionedChief = visible.find((bot) => bot.chiefOfStaff && !bot.section) ?? null;
-  const pinnedBots = visible.filter((bot) => !bot.chiefOfStaff && Boolean(bot.pinned));
+
+  // There is ONE top slot, and more than one bot can qualify for it.
+  //
+  // `chiefOfStaff` means "leads something"; `chiefScope: "workspace"` is what
+  // separates the Chief of Staff from a team leader. In a workspace where
+  // nobody created a section — the default one — both of them are unsectioned
+  // and both carry the flag. This used to `find()` the first and every bucket
+  // below excluded the flag outright, so the second one landed in NO bucket
+  // and was never rendered: making a bot a team leader made the Chief of Staff
+  // disappear from the sidebar while sitting perfectly intact on disk.
+  //
+  // So the slot goes to the workspace tier by role rather than to whoever came
+  // first in the array, and every other leader is an ordinary row.
+  const unsectionedLeaders = visible.filter((bot) => bot.chiefOfStaff && !bot.section);
+  const unsectionedChief =
+    unsectionedLeaders.find((bot) => bot.chiefScope === "workspace") ?? unsectionedLeaders[0] ?? null;
+  // A leader that did not get the slot is listed like anything else. Chiefs
+  // WITH a section are unaffected: they head their own section below.
+  const listed = (bot: T) => !bot.chiefOfStaff || (!bot.section && bot.id !== unsectionedChief?.id);
+
+  const pinnedBots = visible.filter((bot) => listed(bot) && Boolean(bot.pinned));
   const pinnedIds = new Set(pinnedBots.map((bot) => bot.id));
   const sectionChiefs = visible.filter((bot) => bot.chiefOfStaff && Boolean(bot.section));
   const sectionedBots = visible.filter(
     (bot) => !bot.chiefOfStaff && Boolean(bot.section) && !pinnedIds.has(bot.id),
   );
   const unsectionedBots = visible.filter(
-    (bot) => !bot.chiefOfStaff && !bot.section && !pinnedIds.has(bot.id),
+    (bot) => listed(bot) && !bot.section && !pinnedIds.has(bot.id),
   );
   return { unsectionedChief, pinnedBots, sectionChiefs, sectionedBots, unsectionedBots };
 }

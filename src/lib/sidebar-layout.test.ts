@@ -57,6 +57,45 @@ describe("sidebar virtual sections", () => {
     expect(bot.section).toBe("Work");
   });
 
+  // A workspace with no sections is the default one, and in it the Chief of
+  // Staff and a team leader BOTH have `chiefOfStaff: true` and no section.
+  // Every bucket below the top slot excluded the flag outright, so the second
+  // such bot fell into no bucket at all and simply never rendered: Sean made
+  // one bot a team leader and his Chief of Staff vanished from the sidebar
+  // while sitting perfectly intact on disk.
+  it("keeps every unsectioned leader visible, not just the first one found", () => {
+    const chief = { id: "sable", chiefOfStaff: true, chiefScope: "workspace" as const };
+    const lead = { id: "bruce", chiefOfStaff: true };
+    const parts = partitionSidebarBots([lead, chief, { id: "plain" }]);
+
+    // The workspace tier takes the top slot even though the team lead came
+    // first in the list — the slot is a role, not a race.
+    expect(parts.unsectionedChief?.id).toBe("sable");
+    // ...and the team lead is an ordinary row rather than nothing at all.
+    expect(parts.unsectionedBots.map((bot) => bot.id)).toEqual(["bruce", "plain"]);
+  });
+
+  it("pins an unsectioned team lead like any other bot", () => {
+    const lead = { id: "bruce", chiefOfStaff: true, pinned: true };
+    const parts = partitionSidebarBots([
+      { id: "sable", chiefOfStaff: true, chiefScope: "workspace" as const },
+      lead,
+    ]);
+    expect(parts.pinnedBots.map((bot) => bot.id)).toEqual(["bruce"]);
+    expect(parts.unsectionedBots).toEqual([]);
+  });
+
+  // The bot in the top slot must never also appear in the list below it.
+  it("never shows the workspace Chief twice", () => {
+    const parts = partitionSidebarBots([
+      { id: "sable", chiefOfStaff: true, chiefScope: "workspace" as const, pinned: true },
+      { id: "plain" },
+    ]);
+    expect(parts.unsectionedChief?.id).toBe("sable");
+    expect(parts.pinnedBots).toEqual([]);
+    expect(parts.unsectionedBots.map((bot) => bot.id)).toEqual(["plain"]);
+  });
+
   it("shows DMs in Bot Chats without rewriting their comms context", () => {
     const dm = { id: "dm", dm: true, section: "Work" };
     const namedBotChats = { id: "named", section: "Bot Chats" };
