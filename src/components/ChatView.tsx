@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { plainTextClamped } from "@/lib/plain-text";
-import { cachedInput, costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
+import { cachedInput, costCaption, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
 import {
   useStore,
   useStreaming,
@@ -1415,22 +1415,32 @@ export function ChatView({ bot }: { bot: Bot }) {
 function UsageChip({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
-  const text = usage ? usageChip(usage) : "";
-  if (!usage || !text) return null;
   const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
+  const text = usage ? usageChip(usage, billing) : "";
+  if (!usage || !text) return null;
   const detail = [
     `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
+    // The headline is fresh tokens; this is the full arithmetic behind it, so
+    // the two can be reconciled instead of looking like a discrepancy.
     usageDetail(usage),
+    cachedInput(usage) > 0
+      ? `${formatTokens(freshTokens(usage))} tok new — the figure on the chip`
+      : null,
     // the whole thread rides along on every turn, so most of "in" is the
     // model re-reading what it already saw — say so, or the figure reads as
     // a bug (issue #527)
     cachedInput(usage) > 0 ? "cached = context re-read each turn, not new text" : null,
+    // Kept in the tooltip whatever the billing, because here there is room to
+    // say what it is. Only the chip itself withholds it on a subscription.
     hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
   ]
     .filter(Boolean)
     .join("\n");
   // folded: one figure — cost when the engine reports one, else tokens
-  const short = usage.costUsd !== null ? formatUsd(usage.costUsd) : formatTokens(usage.input + usage.output);
+  // Folded, the same rule: money only where money is owed.
+  const short = billing === "metered" && hasFiniteCost(usage.costUsd)
+    ? formatUsd(usage.costUsd)
+    : formatTokens(freshTokens(usage));
   return (
     <button
       onClick={() => dispatch({ type: "toggleSettings", open: true })}

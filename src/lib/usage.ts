@@ -78,12 +78,32 @@ export function usageDetail(u: TaskUsage): string {
   return `${input} · ${formatTokens(u.output)} out`;
 }
 
-/** The chip text: tokens, and cost when known. Empty string when nothing
- * has been spent — a fresh task shows no chip. */
-export function usageChip(u: TaskUsage): string {
+/** Fresh tokens: what this conversation actually consumed, once the context
+ * re-read is taken out.
+ *
+ * The whole thread rides along on every turn, so `input` counts the same
+ * text once per turn — thirty turns over a large thread reaches millions
+ * without the person having written anything much. That total is arithmetically
+ * true and reads as a runaway meter. Cached input is the machine re-reading
+ * its own notes; it is not what someone means by "how much have I used". */
+export function freshTokens(u: TaskUsage): number {
+  return Math.max(0, u.input - cachedInput(u)) + u.output;
+}
+
+/** The chip text. Empty string when nothing has been spent — a fresh task
+ * shows no chip.
+ *
+ * A cost figure appears only when the engine is metered, because only then
+ * is it money. On a subscription the same number is a tariff comparison
+ * nobody is being charged, and a running dollar total in the header of a
+ * conversation you are already paying a flat fee for is alarming in a way
+ * that changes behaviour: people use the thing less to avoid a bill that
+ * does not exist. It stays available in the tooltip and the Usage panel,
+ * where there is room to caption it honestly. */
+export function usageChip(u: TaskUsage, billing?: "metered" | "subscription"): string {
   if (u.turns === 0 && u.input + u.output === 0) return "";
-  const parts = [`${formatTokens(u.input + u.output)} tok`];
-  if (hasFiniteCost(u.costUsd)) parts.push(formatUsd(u.costUsd));
+  const parts = [`${formatTokens(freshTokens(u))} tok`];
+  if (billing === "metered" && hasFiniteCost(u.costUsd)) parts.push(formatUsd(u.costUsd));
   return parts.join(" · ");
 }
 
