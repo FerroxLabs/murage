@@ -176,6 +176,26 @@ subprocess, certs on the tailnet. **D1's cost, stated:** under plain HTTP every
 `ChatView.tsx:162`, `ConnectionDetail.tsx:27`, `EngineSetup.tsx:48`,
 `SettingsPrimitives.tsx:64`) — and PWA install is impossible. D2 fixes both.
 
+## Sean's direction — the phone intro screen IS the web UI offer
+
+Recorded 2026-09-02, from the running app at startup. His words: "Still
+showing the phone. This will be WHERE we do / offer WebUI / Phone connection
+etc."
+
+The screen is `PhoneSetupFlow.tsx` `phase === "intro"` (~:919-:958), plus its
+Settings twin `CompanionSection.tsx:73`. It sells "Use Murage from your phone"
+with a "Set up my phone" button — a native app that no longer exists in this
+repo. It is the right surface for the real offer: open Murage in a browser on
+any device over Tailscale, no app, no account, no public ingress.
+
+Constraints for whoever writes it: state the preconditions (Tailscale
+installed and signed in on both ends, door listening) rather than failing
+later; leave unwired affordances disabled with an honest reason, the way the
+primary button already disables while `!c.state`; keep "Not now" and the
+resume-from-Settings line. Item E's "Check for Tailscale again" button lives
+here. Owned by the Wave 2a lane if it has room, otherwise it is Wave 2b's
+item G.
+
 ## Wave 2b — serial, AFTER Wave 1 merges. 1–1.5 days.
 
 - **G — the pairing flow rewritten for what exists.** It promises a phone that
