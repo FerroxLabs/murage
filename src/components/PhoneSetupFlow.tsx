@@ -10,9 +10,11 @@ import {
 import {
   ArrowLeft,
   Check,
+  Globe,
   Loader2,
   Mail,
   QrCode,
+  RefreshCw,
   ShieldCheck,
   Smartphone,
   Wifi,
@@ -77,7 +79,72 @@ export interface CompanionState {
   hosts?: string[];
   endpoints?: CompanionEndpoint[];
   discovery?: { advertising: boolean; name: string };
+  /** Where the browser door is answering, or null when it is not listening.
+   *
+   * Reported by the sidecar (`companion/src/control.ts`) rather than derived
+   * here, and that is not fussiness. The door's port is an env override, its
+   * scheme decides a cookie attribute rather than describing one, and its
+   * dialable host is not its bind host — under `tailscale serve` it binds
+   * loopback and answers on the MagicDNS name. Three decisions taken in
+   * another process; a renderer that reassembled them would be wrong the
+   * first time any one of them changed.
+   *
+   * Optional because an older sidecar predates the field. Null because a
+   * newer one distinguishes "not listening" from "did not say". */
+  browser?: CompanionBrowserDoor | null;
   error?: string;
+}
+
+/** Where a phone points its browser to reach this computer. */
+export interface CompanionBrowserDoor {
+  scheme: "http" | "https";
+  host: string;
+  port: number;
+}
+
+/** The default port for a scheme, which a URL does not spell out. */
+const DEFAULT_PORT: Record<CompanionBrowserDoor["scheme"], number> = { http: 80, https: 443 };
+
+/**
+ * The link a phone actually follows: `<scheme>://<host>:<port>/enter#<token>`.
+ *
+ * This is the other half of `companionPairingLink`, and it exists because
+ * that one hands out a `murage://` URL for an app this repository no longer
+ * contains. Scanning it on a phone opens nothing. The browser door's
+ * first-contact page is a real destination that a real camera app can open,
+ * and this is its address.
+ *
+ * The credential rides in the **fragment**, which is the entire security
+ * design of `/enter` and not a formatting choice. A fragment is never sent to
+ * a server, so it cannot reach an access log, a proxy, or a `Referer` header —
+ * and the page's first act, before any network call, is to strip it out of
+ * the address bar and the session history. Putting the same token in a query
+ * string would undo all of that silently.
+ *
+ * Everything is validated before a URL is built, on the same principle
+ * `companionPairingLink` uses: a malformed link is a QR code someone points a
+ * phone at and gets a blank page from, with no way to tell what went wrong.
+ * `null` is a state the caller can render — "the door is not ready" — and a
+ * broken string is not.
+ */
+export function companionBrowserLink(
+  door: CompanionBrowserDoor | null | undefined,
+  token: string | undefined | null,
+): string | null {
+  if (!door || !token) return null;
+  if (door.scheme !== "http" && door.scheme !== "https") return null;
+  if (!Number.isInteger(door.port) || door.port < 1 || door.port > 65_535) return null;
+  // The same token the pairing window issued, and the same shape `devices.ts`
+  // will accept at `POST /session`. Checked here so a phone is never sent to
+  // a page that can only tell it the code is wrong.
+  if (!/^murage_pair_[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  const host = door.host.trim();
+  if (!host || /[\s/\\?#@]/.test(host)) return null;
+  // A bare IPv6 literal has colons of its own and has to be bracketed, or the
+  // first one reads as the port separator.
+  const dialable = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const port = door.port === DEFAULT_PORT[door.scheme] ? "" : `:${door.port}`;
+  return `${door.scheme}://${dialable}${port}/enter#${token}`;
 }
 
 export type CompanionBridge = {
@@ -202,6 +269,12 @@ export interface PhoneSetupController {
   localFallback: boolean;
   tailscaleFallback: boolean;
   tailscaleAvailable: boolean;
+  /** The `/enter#<token>` URL a phone's camera can open, or null while there
+   * is no pairing window or no door to send it to. */
+  browserLink: string | null;
+  /** Where the door is answering, for saying so honestly before there is a
+   * link to show. */
+  browserDoor: CompanionBrowserDoor | null;
   pairingExpired: boolean;
   setupTimedOut: boolean;
   setEmail: (email: string) => void;
@@ -214,6 +287,9 @@ export interface PhoneSetupController {
   verifyCode: () => void;
   retryAccount: () => void;
   cancel: () => void;
+  /** Ask the sidecar to look for Tailscale again, and to move the browser
+   * door onto the tailnet if it has appeared since startup. */
+  refreshTailscale: () => void;
   refreshCode: () => void;
   finish: () => void;
   skip: () => void;
@@ -783,6 +859,27 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     });
   }, [pairingRoute, state]);
 
+  /** The URL the QR should carry. Built from the door the sidecar reported
+   * and the token the pairing window just issued — never from the route the
+   * `murage://` link uses, which addresses the device port and an app that
+   * is not in this repository. */
+  const browserLink = useMemo(
+    () => companionBrowserLink(state?.browser, state?.pairing?.token),
+    [state],
+  );
+
+  /** Look for Tailscale again, now.
+   *
+   * The sidecar reads the MagicDNS name at boot, and installing or signing
+   * into Tailscale afterwards used to leave a perfectly working tailnet
+   * reading as permanently unavailable. This asks again — and the sidecar
+   * moves the browser door onto the tailnet in the same call, because a
+   * correctly spelled name for a door still on loopback is not the fix
+   * anybody wanted. */
+  const refreshTailscale = useCallback(() => {
+    void act((companion) => companion.refreshTailscale());
+  }, [act]);
+
   const cancel = useCallback(() => {
     const cancelledGeneration = setupGeneration.current;
     setupGeneration.current += 1;
@@ -833,6 +930,8 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     localFallback: flow.localFallback,
     tailscaleFallback: flow.tailscaleFallback,
     tailscaleAvailable: Boolean(state && companionPairingRoute(state, "tailscale")),
+    browserLink,
+    browserDoor: state?.browser ?? null,
     pairingExpired: flow.pairingAttempted && !state?.pairing,
     setupTimedOut,
     setEmail: (next) => {
@@ -852,6 +951,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     verifyCode,
     retryAccount,
     cancel,
+    refreshTailscale,
     refreshCode: () => {
       const generation = ++setupGeneration.current;
       void openPairing(pairingRouteMode, undefined, generation);
@@ -880,11 +980,142 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   };
 }
 
+/** The one sentence this screen is allowed to make.
+ *
+ * It used to say "Use Murage from your phone" over a phone icon and a button
+ * reading "Set up my phone", which described a native app. There is no native
+ * app — `ios/` was removed from this repository, and the `murage://` link the
+ * old QR carried opens nothing on a phone that never installed one. What
+ * exists is the browser door: the sidecar serves this same app over the
+ * tailnet, and a phone reaches it with a camera and a browser.
+ *
+ * Exported so `CompanionSection` can say the same thing. Two screens leading
+ * into one flow with two different promises is how the old copy survived a
+ * rewrite of the thing underneath it. */
+export const WEB_UI_TITLE = "Open Murage in your browser";
+export const WEB_UI_SUBTITLE =
+  "Scan a code and Murage opens in the browser on your phone, tablet, or another computer — "
+  + "over your own Tailscale network. Nothing to install, and nothing exposed to the internet.";
+
+/** What still has to be true before there is anything to scan.
+ *
+ * Named rather than inferred at the button, because each of these is a
+ * different thing to go and do and "it didn't work" is not one of them.
+ * Ordered by what a person fixes first: the app has to be able to ask at all,
+ * then the sidecar has to be running, then Tailscale, then the door. */
+export interface WebUiReadiness {
+  ready: boolean;
+  /** The single next thing to do, when there is one. */
+  blocker: string | null;
+  tailnetName: string | null;
+  /** `host:port` the door is answering on, when it is. */
+  doorAddress: string | null;
+  /** Whether re-probing Tailscale could plausibly change the answer. */
+  canRecheck: boolean;
+}
+
+export function webUiReadiness(source: {
+  state: CompanionState | null;
+  browserDoor: CompanionBrowserDoor | null;
+}): WebUiReadiness {
+  const { state, browserDoor } = source;
+  const tailnetName = state?.tailnetName ?? null;
+  const doorAddress = browserDoor ? `${browserDoor.host}:${browserDoor.port}` : null;
+  const base = { tailnetName, doorAddress, canRecheck: Boolean(state?.enabled) };
+  if (!state) {
+    return { ...base, ready: false, blocker: "Checking this computer…", canRecheck: false };
+  }
+  if (!state.enabled) {
+    // Ready, deliberately. The sidecar is off, and pressing the button is
+    // what turns it on — everything below is a question only a running
+    // sidecar can answer, so refusing here would be refusing to let anyone
+    // find out. The rows still say "not found" and "not listening yet",
+    // which is true and is not a promise that they will stay that way.
+    return { ...base, ready: true, blocker: null };
+  }
+  if (!tailnetName) {
+    return {
+      ...base,
+      ready: false,
+      blocker:
+        "Tailscale isn’t signed in on this computer yet. Install it, sign in, then check again — "
+        + "your phone needs to be signed into the same tailnet.",
+    };
+  }
+  if (!browserDoor) {
+    return {
+      ...base,
+      ready: false,
+      blocker: "The browser door isn’t listening yet. Check again in a moment.",
+    };
+  }
+  return { ...base, ready: true, blocker: null };
+}
+
+/** The preconditions, said out loud.
+ *
+ * A row per thing that has to be true, each either satisfied and specific —
+ * the actual tailnet name, the actual address the door answers on — or
+ * unsatisfied with the action next to it. This is the "say what is true and
+ * leave the affordance disabled with an honest reason" rule made visible
+ * rather than left to a tooltip. */
+function WebUiReadinessPanel({
+  readiness,
+  busy,
+  onRecheck,
+}: {
+  readiness: WebUiReadiness;
+  busy: boolean;
+  onRecheck: () => void;
+}) {
+  const rows: Array<{ label: string; value: string; good: boolean }> = [
+    {
+      label: "Tailscale on this computer",
+      value: readiness.tailnetName ?? "not found",
+      good: Boolean(readiness.tailnetName),
+    },
+    {
+      label: "Murage in a browser",
+      value: readiness.doorAddress ?? "not listening yet",
+      good: Boolean(readiness.doorAddress),
+    },
+  ];
+  return (
+    <div className="mt-4 w-full max-w-[420px] rounded-xl border border-hairline/50 px-3 py-2.5 text-left">
+      {rows.map((row) => (
+        <div key={row.label} className="flex items-baseline justify-between gap-3 py-1">
+          <span className="text-[12px] text-ink-secondary">{row.label}</span>
+          <span
+            className={`truncate text-[12px] ${row.good ? "text-ink" : "text-ink-secondary"}`}
+            title={row.value}
+          >
+            {row.value}
+          </span>
+        </div>
+      ))}
+      {readiness.canRecheck && !readiness.ready && (
+        // Tailscale is routinely installed or signed into after Murage has
+        // already started, and the sidecar read the tailnet once, at boot. So
+        // this is not a refresh button in the decorative sense: without it a
+        // working tailnet reads as permanently absent until somebody restarts
+        // the app, and nobody would think to.
+        <button
+          disabled={busy}
+          onClick={onRecheck}
+          className="mt-1.5 flex items-center gap-1.5 text-[12px] text-accent hover:opacity-80 disabled:opacity-40"
+        >
+          <RefreshCw size={12} /> Check for Tailscale again
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ValuePoints() {
   const points: Array<{ Icon: typeof Smartphone; title: string; detail: string }> = [
-    { Icon: Smartphone, title: "Your chats", detail: "Read and reply from your phone." },
-    { Icon: Check, title: "Quick approvals", detail: "Keep work moving when you step away." },
-    { Icon: ShieldCheck, title: "Private by default", detail: "Only phones you approve can connect." },
+    { Icon: Smartphone, title: "Any device", detail: "A phone, a tablet, another laptop. Just a browser." },
+    { Icon: Check, title: "Nothing to install", detail: "No app store, no account. Scan and you are in." },
+    { Icon: ShieldCheck, title: "Your tailnet only", detail: "Not the internet. Only devices you approve." },
   ];
   return (
     <div className="mt-5 grid w-full gap-2 sm:grid-cols-3">
@@ -916,27 +1147,41 @@ export function PhoneSetupFlowView({
   const manualCodeMode = phonePairingManualCodeMode(Boolean(c.state?.pairing), c.pairingLink);
 
   if (c.phase === "intro") {
+    const readiness = webUiReadiness(c);
     return (
       <div className="flex flex-col items-center text-center">
         <div className="flex size-14 items-center justify-center rounded-2xl bg-accent/12 text-accent">
-          <Smartphone size={26} />
+          <Globe size={26} />
         </div>
-        <h2 className="mt-4 text-[19px] font-semibold text-ink">Use Murage from your phone</h2>
+        <h2 className="mt-4 text-[19px] font-semibold text-ink">{WEB_UI_TITLE}</h2>
         <p className="mt-1.5 max-w-[460px] text-[13.5px] leading-relaxed text-ink-secondary">
-          Check chats, answer approvals, and send new work without staying at your computer.
+          {WEB_UI_SUBTITLE}
         </p>
         <ValuePoints />
+        <WebUiReadinessPanel
+          readiness={readiness}
+          busy={c.busy || c.accountBusy}
+          onRecheck={c.refreshTailscale}
+        />
         <button
           onClick={c.start}
-          disabled={!c.state || c.busy || c.accountBusy}
-          className="mt-5 w-full max-w-[320px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
+          disabled={!c.state || c.busy || c.accountBusy || !readiness.ready}
+          className="mt-4 w-full max-w-[320px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {variant === "settings"
             ? c.state?.devices.length
-              ? "Pair another phone"
-              : "Pair a phone"
-            : "Set up my phone"}
+              ? "Add another device"
+              : "Show me the code"
+            : "Show me the code"}
         </button>
+        {!readiness.ready && (
+          // The reason lives here rather than in a tooltip: a disabled button
+          // with no explanation is the failure this screen was already making
+          // in a different way.
+          <p className="mt-2 max-w-[390px] text-[11.5px] leading-relaxed text-ink-secondary">
+            {readiness.blocker}
+          </p>
+        )}
         {c.error && <p role="alert" className="mt-3 max-w-[390px] text-[12.5px] text-danger">{c.error}</p>}
         {variant === "onboarding" && (
           <>
@@ -1056,7 +1301,7 @@ export function PhoneSetupFlowView({
         <div className="my-4 flex items-center gap-3 text-[11px] text-ink-secondary">
           <span className="h-px flex-1 bg-hairline/40" /> or <span className="h-px flex-1 bg-hairline/40" />
         </div>
-        {c.tailscaleAvailable && (
+        {c.tailscaleAvailable ? (
           <>
             <button
               disabled={c.busy || c.accountBusy}
@@ -1069,6 +1314,20 @@ export function PhoneSetupFlowView({
               Your phone must be signed in to the same tailnet.
             </p>
           </>
+        ) : (
+          // The tailnet is the route this product leads with, and the sidecar
+          // reads it once, at boot. Somebody who installs Tailscale while
+          // this screen is open — which is exactly when they would — sees
+          // "no Tailscale route" until they restart the whole app. This is
+          // the way back, and it is a plain text button on purpose: it is a
+          // re-probe, not a route to choose.
+          <button
+            disabled={c.busy || c.accountBusy}
+            onClick={c.refreshTailscale}
+            className="flex items-center justify-center gap-1.5 text-[12.5px] text-accent hover:opacity-80 disabled:opacity-40"
+          >
+            <RefreshCw size={13} /> Check for Tailscale again
+          </button>
         )}
         <button
           disabled={c.busy || c.accountBusy}
@@ -1148,10 +1407,28 @@ export function PhoneSetupFlowView({
           ? "Create a fresh code when your phone is ready."
           : "Scan this code with your phone to pair it with this computer."}
       </p>
-      {!c.pairingExpired && c.pairingLink && (
+      {/* The browser door first, the `murage://` link only as a fallback.
+        * The fallback addresses an app this repository no longer contains, so
+        * scanning it opens nothing — it stays only because a phone that
+        * paired against an older build may still have one installed, and
+        * "delete nothing until its replacement ships" is the rule. The
+        * replacement is `c.browserLink`, which every camera app can open. */}
+      {!c.pairingExpired && (c.browserLink ?? c.pairingLink) && (
         <div className="mt-4 rounded-2xl bg-white p-3.5" aria-label="Phone pairing QR code">
-          <QRCodeSVG value={c.pairingLink} size={180} level="M" bgColor="#ffffff" fgColor="#111111" />
+          <QRCodeSVG
+            value={(c.browserLink ?? c.pairingLink)!}
+            size={180}
+            level="M"
+            bgColor="#ffffff"
+            fgColor="#111111"
+          />
         </div>
+      )}
+      {!c.pairingExpired && c.browserLink && c.browserDoor && (
+        <p className="mt-2.5 max-w-[390px] text-[11.5px] leading-relaxed text-ink-secondary">
+          Opens <span className="text-ink">{c.browserDoor.host}</span> in your phone’s browser. Your
+          phone has to be signed into the same tailnet.
+        </p>
       )}
       {!c.pairingExpired && manualCodeMode === "direct" && c.state?.pairing && (
         <div className="mt-4 w-full max-w-[320px] rounded-xl bg-inset px-4 py-3 text-[12.5px] text-ink-secondary">

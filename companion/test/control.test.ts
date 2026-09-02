@@ -16,6 +16,8 @@ let devices: DeviceRegistry;
 let connectedDeviceIds: string[] = [];
 let disconnectedDeviceIds: string[] = [];
 let tailscaleRefreshes = 0;
+/** What the sidecar says about the browser door, swapped per test. */
+let browserDoor: { scheme: "http" | "https"; host: string; port: number } | null = null;
 let completedTailscaleRefreshes = 0;
 
 const ask = async (
@@ -54,6 +56,7 @@ beforeAll(async () => {
       await Promise.resolve();
       completedTailscaleRefreshes += 1;
     },
+    browserDoor: () => browserDoor,
   });
   port = await new Promise<number>((resolve) =>
     control.listen(0, "127.0.0.1", () => resolve((control.address() as { port: number }).port)),
@@ -366,5 +369,44 @@ describe("originIsLoopback", () => {
     // the prefix trick: a hostname that merely starts with the loopback one
     expect(originIsLoopback("https://127.0.0.1.evil.example")).toBe(false);
     expect(originIsLoopback("https://localhost.evil.example")).toBe(false);
+  });
+});
+
+// ── where the browser door is ────────────────────────────────────────────
+//
+// The door was reachable and unnamed: `/state` carried the phone's port, the
+// LAN addresses and the MagicDNS name, and said nothing about the door
+// itself. Anything downstream that wanted a URL for a phone had to assemble
+// one out of three decisions taken elsewhere — the port (an env override),
+// the scheme (a cookie-attribute decision, not a guess), and the dialable
+// host (which is not the bind host under `tailscale serve`). Every one of
+// those is wrong the first time it changes.
+describe("the browser door on /state", () => {
+  it("reports scheme, host and port as the sidecar knows them", async () => {
+    browserDoor = { scheme: "http", host: "seans-macbook-pro.tail0a48a4.ts.net", port: 8813 };
+    const state = await ask("GET", "/state");
+    expect(state.body.browser).toEqual({
+      scheme: "http",
+      host: "seans-macbook-pro.tail0a48a4.ts.net",
+      port: 8813,
+    });
+  });
+
+  it("says null rather than leaving the key out when the door is not listening", async () => {
+    browserDoor = null;
+    const state = await ask("GET", "/state");
+    expect("browser" in state.body).toBe(true);
+    expect(state.body.browser).toBeNull();
+  });
+
+  it("carries the door on the pairing write too, not only on the read", async () => {
+    // The renderer builds the QR from whatever the pairing write returned. A
+    // door reported on GET and dropped on POST would mean the one call that
+    // has a token in hand is the one call that cannot say where to send it.
+    browserDoor = { scheme: "http", host: "100.79.121.109", port: 8813 };
+    const opened = await ask("POST", "/pairing");
+    expect(opened.status).toBe(201);
+    expect(opened.body.browser).toEqual({ scheme: "http", host: "100.79.121.109", port: 8813 });
+    await ask("DELETE", `/pairing?expectedToken=${encodeURIComponent(opened.body.pairing.token)}`);
   });
 });

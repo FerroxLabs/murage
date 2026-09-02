@@ -27,7 +27,7 @@
 //  - `funnel` never appears anywhere in this design. `serve` is
 //    tailnet-scoped; `funnel` is the public internet, and the two subcommands
 //    differ by one word.
-import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import { request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
@@ -904,15 +904,177 @@ function relayStream(
  * back: falling back to 0.0.0.0 "so it works" is exactly how a tailnet-only
  * door becomes a LAN door, and the person who wanted the narrow bind would
  * never see it happen. */
-export type BrowserBindMode = "loopback" | "tailnet";
+export type BrowserBindMode = "auto" | "loopback" | "tailnet";
 
-export function browserBindHost(mode: BrowserBindMode, tailnet: string | null): string {
-  if (mode === "loopback") return "127.0.0.1";
-  if (!tailnet) {
-    throw new Error(
-      "the browser door is set to bind the Tailscale address and this machine has none — " +
-        "bring Tailscale up and restart, or set MURAGE_BROWSER_BIND=loopback and put `tailscale serve` in front",
-    );
+/** The tailnet address it is safe to bind, or a sentence saying why not.
+ *
+ * Two sources, deliberately: `fromInterfaces` is the first address in
+ * 100.64.0.0/10 on this machine's interface table, and `reported` is what the
+ * Tailscale CLI says this node's address is — the value `tailscale ip -4`
+ * prints. They are normally the same string, and the case where they are not
+ * is the whole reason for asking twice. 100.64/10 is CGNAT space and Tailscale
+ * does not own it: a carrier-grade-NAT uplink, another mesh VPN, or a
+ * container bridge can put a real address there, and the interface picker
+ * takes the first one it finds. Binding that address opens the door on a
+ * network nobody chose, silently, on exactly the machines where being wrong
+ * costs the most.
+ *
+ * So a disagreement refuses the address. It does not guess which of the two is
+ * Tailscale's, and it does not average them.
+ *
+ * A missing CLI answer is not a disagreement — Tailscale may simply not be
+ * installed where we looked, and the interface address is then the only
+ * evidence there is. A CLI answer with no matching interface *is* refused:
+ * nothing can bind an address the kernel does not have, and saying so beats
+ * an EADDRNOTAVAIL three frames away. */
+export function tailnetBindAddress(
+  fromInterfaces: string | null,
+  reported: string | null,
+): { address: string } | { refused: string } {
+  if (reported && fromInterfaces && reported !== fromInterfaces) {
+    return {
+      refused:
+        `Tailscale reports this node at ${reported}, but the first 100.64.0.0/10 address on this ` +
+        `machine is ${fromInterfaces}. Something else is using Tailscale's address range, and the ` +
+        `browser door will not pick between them`,
+    };
   }
-  return tailnet;
+  if (reported && !fromInterfaces) {
+    return {
+      refused:
+        `Tailscale reports this node at ${reported}, but no interface on this machine carries that ` +
+        `address — the tailnet interface may be coming up or going down`,
+    };
+  }
+  if (!fromInterfaces) return { refused: "this machine has no Tailscale address" };
+  return { address: fromInterfaces };
+}
+
+/** Where the browser door binds, given what was asked for and what is there.
+ *
+ * `auto` is the shipped setting and the only one that is right on a laptop:
+ * the tailnet address when there is a trustworthy one, loopback when there is
+ * not. It never throws, because the alternative is an app that refuses to
+ * start because Tailscale is not signed in yet — and loopback is a real,
+ * safe door with `tailscale serve` able to go in front of it later.
+ *
+ * `tailnet` is an operator saying "that address or nothing", so it throws
+ * rather than quietly becoming `auto`. `loopback` is the same in the other
+ * direction and never consults Tailscale at all. */
+export function browserBindHost(
+  mode: BrowserBindMode,
+  tailnet: string | null,
+  reported: string | null = null,
+  onDecline?: (reason: string) => void,
+): string {
+  if (mode === "loopback") return "127.0.0.1";
+  const resolved = tailnetBindAddress(tailnet, reported);
+  if ("address" in resolved) return resolved.address;
+  if (mode === "auto") {
+    onDecline?.(resolved.refused);
+    return "127.0.0.1";
+  }
+  throw new Error(
+    `the browser door is set to bind the Tailscale address and cannot: ${resolved.refused}. ` +
+      "Bring Tailscale up, or set MURAGE_BROWSER_BIND=loopback and put `tailscale serve` in front",
+  );
+}
+
+/** Move the door to a different address without restarting the sidecar.
+ *
+ * Tailscale is routinely installed, signed into or switched on minutes after
+ * Murage is. Before this the door had bound loopback at startup and stayed
+ * there for the life of the process, so the tailnet — the route this product
+ * leads with — came up and the door did not follow. Restarting the sidecar
+ * would have fixed it and would also have dropped every paired phone's event
+ * stream and the pairing window with them, which is a worse cure.
+ *
+ * Only this one server closes. The device port, the control page, the managed
+ * origin and the mDNS record are untouched, because they are not bound to the
+ * address that changed.
+ *
+ * The cost, stated: any browser session open on the old address loses its
+ * connection and reconnects. That is a page refresh, and it happens only when
+ * the address genuinely changed — an unchanged address returns without
+ * touching the socket, which is the common case by a long way.
+ *
+ * A failed re-bind tries to put the door back where it was. If even that
+ * fails the door is down and says so with `host: null`, which is a true
+ * statement the panel can render — rather than a listening socket on an
+ * address the caller has since been told is different. */
+export async function rebindBrowserDoor(options: {
+  server: Server;
+  port: number;
+  /** Where it is bound now, or null if it is not listening. */
+  boundHost: string | null;
+  /** Where it should be. Throws for `tailnet` mode with no tailnet. */
+  desiredHost: () => string;
+  /** The caller's own bind-with-a-readable-error helper. */
+  listen: (server: Server, port: number, host: string) => Promise<void>;
+}): Promise<{ host: string | null; note: string }> {
+  const { server, port, boundHost, listen } = options;
+  let desired: string;
+  try {
+    desired = options.desiredHost();
+  } catch (error) {
+    return { host: boundHost, note: error instanceof Error ? error.message : String(error) };
+  }
+  if (desired === boundHost) return { host: boundHost, note: `already bound to ${desired}` };
+
+  if (boundHost !== null) {
+    // An SSE stream never ends on its own, so close() alone would wait for a
+    // phone to navigate away — which is to say, forever.
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+  try {
+    await listen(server, port, desired);
+    return { host: desired, note: `moved from ${boundHost ?? "nowhere"} to ${desired}` };
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    if (boundHost === null) return { host: null, note: `could not bind ${desired}: ${why}` };
+    try {
+      await listen(server, port, boundHost);
+      return { host: boundHost, note: `could not bind ${desired} (${why}); stayed on ${boundHost}` };
+    } catch {
+      return { host: null, note: `could not bind ${desired} (${why}), and ${boundHost} is gone too` };
+    }
+  }
+}
+
+/** Where a phone should point its browser at this door.
+ *
+ * The bind host and the *dialable* host are not the same question and were
+ * being confused. Under `tailscale serve` the door binds 127.0.0.1 and is
+ * still reachable from the whole tailnet under the MagicDNS name; bound to
+ * the tailnet address directly it answers on that address. So the bind
+ * argument alone cannot answer "what do I type into a phone".
+ *
+ * The order is the door's own host allowlist, best first: the MagicDNS name,
+ * because it survives Tailscale re-issuing the node's address; then the
+ * address, which still works when MagicDNS is off; then whatever the socket
+ * is actually bound to, which on a machine with no tailnet is loopback and
+ * is a true answer that happens to be useless from a phone. Reporting the
+ * true useless answer beats reporting a reachable-looking one that 403s:
+ * `browser.ts` refuses any Host outside that set, so a host invented here
+ * would be refused by the door it names.
+ *
+ * `null` means the door is not listening — the caller has an "off" to render
+ * rather than a guess to make. */
+export interface BrowserDoor {
+  scheme: BoundIdentity["scheme"];
+  host: string;
+  port: number;
+}
+
+export function browserDoorLocation(
+  scheme: BoundIdentity["scheme"],
+  port: number,
+  /** The address the socket is bound to, or null when it is not listening. */
+  boundHost: string | null,
+  magicDnsName: string | null,
+  tailnet: string | null,
+): BrowserDoor | null {
+  if (!boundHost) return null;
+  return { scheme, host: magicDnsName ?? tailnet ?? boundHost, port };
 }

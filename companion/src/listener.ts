@@ -89,11 +89,30 @@ export function tailscaleAddress(addresses: string[] = lanAddresses()): string |
  * unavailable until someone restarted the app. An explicit setup action can
  * refresh this cache when Tailscale changes later. */
 let cachedTailnetName: string | null = null;
+let cachedTailnetSelfAddress: string | null = null;
 let activeTailnetRefresh: Promise<void> | null = null;
 
 /** The cached MagicDNS name, or null until `refreshTailnetName` finds one. */
 export function tailnetName(): string | null {
   return cachedTailnetName;
+}
+
+/** The IPv4 address **Tailscale itself** says this node has — the same value
+ * `tailscale ip -4` prints, read out of the same `status --json` the name
+ * comes from rather than costing a second subprocess.
+ *
+ * Worth having as a separate answer from `tailscaleAddress()`, which reads the
+ * interface table and takes the first address in 100.64.0.0/10. That range is
+ * CGNAT space, and Tailscale is not the only thing that lives there: a carrier
+ * -grade-NAT uplink or another mesh VPN puts an address the machine really has
+ * in front of the one Tailscale issued. For printing a candidate that mistake
+ * costs a failed connection. For *binding a door* it costs the door being
+ * opened on a network nobody chose, which is why the two are cross-checked
+ * before anything binds — see `browserBindHost`.
+ *
+ * Null until a refresh finds one, and null again when Tailscale goes away. */
+export function tailnetSelfAddress(): string | null {
+  return cachedTailnetSelfAddress;
 }
 
 /** Every place the Tailscale CLI is plausibly installed, best first. */
@@ -132,6 +151,17 @@ const searchPath = (): string =>
  * has MagicDNS on is worse than no message, and there was no way to tell
  * which of these paths had been tried. `onAttempt` is how the caller can say.
  */
+/** The first IPv4 out of Tailscale's `TailscaleIPs`, which carries both
+ * families. Anything that is not a dotted quad is ignored rather than
+ * trusted: this value decides what a listener binds. */
+function firstIPv4(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  for (const entry of value) {
+    if (typeof entry === "string" && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(entry)) return entry;
+  }
+  return null;
+}
+
 async function refreshTailnetNameOnce(
   onAttempt?: (cli: string, outcome: string) => void,
 ): Promise<void> {
@@ -140,6 +170,11 @@ async function refreshTailnetNameOnce(
   // hang — and they hang together, since the reason is usually the same one.
   // Nothing here is load-bearing: the address works without a name.
   const deadline = Date.now() + TAILSCALE_BUDGET_MS;
+  // Cleared before the hunt, not after it: a stale address that outlived
+  // Tailscale being signed out would keep a door bound to an interface that
+  // is on its way down, and "we could not ask" must read as "we do not know"
+  // rather than as last week's answer.
+  cachedTailnetSelfAddress = null;
   for (const cli of tailscaleCandidates()) {
     const left = deadline - Date.now();
     if (left <= 0) {
@@ -173,9 +208,14 @@ async function refreshTailnetNameOnce(
             return resolve(null);
           }
           try {
-            const dns = JSON.parse(stdout)?.Self?.DNSName;
+            const self = JSON.parse(stdout)?.Self;
+            const dns = self?.DNSName;
             // MagicDNS names are fully qualified, trailing dot and all
             const trimmed = typeof dns === "string" && dns ? dns.replace(/\.$/, "") : null;
+            // Same JSON, same probe: `tailscale ip -4` is a formatter over
+            // this field, so reading it here is the CLI's own answer without
+            // a second process and a second chance to disagree with itself.
+            cachedTailnetSelfAddress = firstIPv4(self?.TailscaleIPs);
             onAttempt?.(cli, trimmed ? `ok: ${trimmed}` : "ran, but no MagicDNS name in status");
             resolve(trimmed);
           } catch {

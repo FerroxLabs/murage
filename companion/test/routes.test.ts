@@ -392,3 +392,89 @@ describe("the execution routes are refused by name, not by omission", () => {
     }
   });
 });
+
+// ── the intake, at the browser door ──────────────────────────────────────
+//
+// The door shipped with no library routes at all, so a phone that opened a
+// blank bot 404'd every request the intake makes. The count came back −1 —
+// which is the value the seeded quiz renders on — and Browse was an empty
+// box. These pin the six reads that fix it, and, more importantly, the three
+// writes that must not come with them.
+describe("the new-bot intake reaches the browser door", () => {
+  const READS = [
+    // the skill count the intake card branches on
+    "/api/bots/bot_123/skills",
+    // one sentence in, one profile or a short skill list out
+    "/api/library/suggest",
+    "/api/library/search",
+    // Browse: facets from the skills, teams from the catalogue
+    "/api/library/browse",
+    "/api/team-library/catalog",
+    "/api/team-library/teams/smart-trader",
+  ] as const;
+
+  it("allows the six reads the card and the panel actually make", () => {
+    for (const path of READS) {
+      expect(askBrowser("GET", path), path).toBeNull();
+    }
+  });
+
+  it("allows none of them to a browser that has not signed in", () => {
+    for (const path of READS) {
+      expect(askBrowser("GET", path, false), path).toEqual({
+        status: 401,
+        error: "sign in",
+        signIn: "/enter",
+      });
+    }
+  });
+
+  it("keeps every writer of a skill off the door", () => {
+    // The harness refuses all three off the desktop already. This is the
+    // second lock: if that gate were relaxed, the door would still refuse
+    // them — and if this list ever grew a family instead of a route, this
+    // is the test that would go red.
+    for (const [method, path] of [
+      // installs from a caller-supplied GitHub URL
+      ["POST", "/api/bots/bot_123/skills"],
+      // installs from the bundled library and enables what it installs
+      ["POST", "/api/bots/bot_123/skills/library"],
+      // applies a whole persona: renames the bot and installs its skills
+      ["POST", "/api/bots/bot_123/assistant-profile"],
+      // enable, disable, delete an installed skill
+      ["PATCH", "/api/bots/bot_123/skills/writing"],
+      ["DELETE", "/api/bots/bot_123/skills/writing"],
+      // fetches an arbitrary GitHub URL from the request body
+      ["POST", "/api/team-library/github"],
+      // reads a folder off this machine's disk
+      ["GET", "/api/teams/scout"],
+      ["POST", "/api/teams/import"],
+    ] as const) {
+      expect(askBrowser(method, path), `${method} ${path}`).not.toBeNull();
+    }
+  });
+
+  it("opens the reads on the browser only, never on the phone", () => {
+    // The two lists do not converge, and adding six lines to one of them is
+    // exactly the edit that would make them.
+    for (const path of READS) {
+      expect(ask("GET", path), path).not.toBeNull();
+    }
+  });
+
+  it("anchors the library patterns rather than opening a family", () => {
+    for (const path of [
+      "/api/library",
+      "/api/library/suggest/extra",
+      "/api/library/../config",
+      "/api/team-library",
+      "/api/team-library/teams",
+      "/api/team-library/teams/Smart-Trader",
+      "/api/team-library/teams/../../config",
+      "/api/team-library/teams/a%2F..%2Fb",
+      "/api/bots/bot_123/skills/library",
+    ]) {
+      expect(askBrowser("GET", path), path).not.toBeNull();
+    }
+  });
+});

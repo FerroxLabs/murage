@@ -319,6 +319,41 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/connectors\/catalog$/ },
   { method: "GET", path: /^\/api\/connectors\/connected$/ },
   { method: "GET", path: /^\/api\/connectors$/ },
+
+  // ── the new-bot intake, and the library it reads from ─────────────────
+  //
+  // Six GETs and nothing else. Every one of them ranks, counts or describes;
+  // none of them installs anything, and that split is not incidental — it is
+  // the same line the harness already draws. `POST /api/bots/:id/skills`,
+  // `POST /api/bots/:id/skills/library` and `POST /api/bots/:id/assistant-
+  // profile` install a skill, and an enabled skill is instructions the engine
+  // will follow, so the harness answers 404 to all three off the desktop
+  // (`server/index.ts:7823`, `:7912`). They are absent here as well, by
+  // omission rather than by name, so the two locks hold independently: if the
+  // harness gate were ever relaxed this list would still refuse them, and the
+  // test below pins that.
+  //
+  // Without these six the phone does not get a degraded intake, it gets a
+  // wrong one: `GET /api/bots/:id/skills` is what `bot-skill-count.ts` reads,
+  // and a 404 there leaves the count at −1, which is the condition the seeded
+  // quiz renders on. So the phone showed the quiz to a bot that already had
+  // skills. Browse is the same story one panel over — `library/browse` is the
+  // facets, `team-library/catalog` the teams, and without them the panel is
+  // an empty box rather than a library.
+  //
+  // Deliberately still absent: `GET /api/bots/:id/skills/:name` reads a
+  // SKILL.md off disk to fill the expanded row. It is a read, and a narrow
+  // one, but nothing in the intake needs it and this list grows on purpose.
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/skills$/ },
+  { method: "GET", path: /^\/api\/library\/suggest$/ },
+  { method: "GET", path: /^\/api\/library\/search$/ },
+  { method: "GET", path: /^\/api\/library\/browse$/ },
+  // `team-library`, not `teams` — a different family with a different
+  // EXPLAINED entry. The slug pattern is the harness's own
+  // (`server/index.ts:6665`), anchored, so an encoded traversal fails to
+  // match and is denied rather than forwarded.
+  { method: "GET", path: /^\/api\/team-library\/catalog$/ },
+  { method: "GET", path: /^\/api\/team-library\/teams\/[a-z0-9][a-z0-9-]*$/ },
 ];
 
 /** Route families worth naming in the refusal.
