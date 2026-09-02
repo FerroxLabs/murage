@@ -1155,7 +1155,7 @@ export function PhoneSetupFlowView({
       )}
       {!c.pairingExpired && manualCodeMode === "direct" && c.state?.pairing && (
         <div className="mt-4 w-full max-w-[320px] rounded-xl bg-inset px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div>Open MurageMobile and enter this manual code.</div>
+          <div>Enter this code on the device you are pairing.</div>
           <div className="mt-2 font-mono text-[22px] tracking-[0.25em] text-ink">
             {c.state.pairing.code}
           </div>

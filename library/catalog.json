@@ -739,8 +739,7 @@
       "skills": [
         "teams/book-copy-editor/skills/copy-editing/SKILL.md",
         "teams/book-copy-editor/skills/line-editor/SKILL.md",
-        "teams/book-copy-editor/skills/proofreading/SKILL.md",
-        "teams/book-copy-editor/skills/write-book-chapter/SKILL.md"
+        "teams/book-copy-editor/skills/proofreading/SKILL.md"
       ],
       "requires": {
         "apps": []
@@ -758,8 +757,7 @@
       "members": 1,
       "skills": [
         "teams/book-developmental-editor/skills/developmental-editor/SKILL.md",
-        "teams/book-developmental-editor/skills/structural-editing/SKILL.md",
-        "teams/book-developmental-editor/skills/write-book-chapter/SKILL.md"
+        "teams/book-developmental-editor/skills/structural-editing/SKILL.md"
       ],
       "requires": {
         "apps": []
@@ -812,7 +810,6 @@
       "members": 1,
       "skills": [
         "teams/book-publisher/skills/write-and-publish-book/SKILL.md",
-        "teams/book-publisher/skills/write-book-chapter/SKILL.md",
         "teams/book-publisher/skills/write-technical-book/SKILL.md",
         "teams/book-publisher/skills/traditional-publishing/SKILL.md"
       ],
