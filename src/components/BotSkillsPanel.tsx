@@ -1,7 +1,8 @@
-import { BookOpen, ChevronLeft, RotateCw, Search, Trash2 } from "lucide-react";
+import { BookOpen, ChevronLeft, Plus, RotateCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { cn } from "@/lib/cn";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Switch } from "./SettingsPrimitives";
 
@@ -318,11 +319,48 @@ export interface SkillsBodyProps {
   onRetry: () => void;
   onToggle: (skill: BotSkill) => void;
   onRemove: (skill: BotSkill) => void;
+  /** SEAM — "Add a skill" opens the library browser with THIS agent already
+   *  chosen. Assignment is one action, `assign(skillId, botId)`; this end
+   *  pre-fills the agent, the library's own row action pre-fills the skill.
+   *  Optional so the body still renders in a suite with no store. */
+  onBrowse?: () => void;
 }
 
 const ALERT = "mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger";
 const RETRY =
   "mt-2 inline-flex items-center gap-1.5 rounded-md bg-control px-2.5 py-1.5 text-[12px] text-ink hover:bg-control/70";
+
+/** The way IN to the library, from the agent's own panel.
+ *
+ *  A VISIBLE control, on purpose. `Sidebar.tsx` exposed its bot menu solely
+ *  through `onContextMenu`, and a touch device fires no `contextmenu` event at
+ *  all — that was a live defect, not a hypothesis, and repeating it here would
+ *  make assignment unreachable on a phone. */
+function AddSkillButton({
+  botName,
+  onBrowse,
+  className,
+}: {
+  botName: string;
+  onBrowse: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onBrowse}
+      // The outcome, with the agent named — never the category.
+      aria-label={`Add a skill to ${botName}`}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-lg bg-control px-2.5 py-1.5 text-[12px] text-ink hover:bg-control/70",
+        className,
+      )}
+    >
+      <Plus size={13} />
+      Add a skill
+    </button>
+  );
+}
 
 /** Split from the container so the list, the empty state, the SKILL.md view
  * and the failure copy are all renderable without a live server. */
@@ -442,13 +480,13 @@ export function SkillsBody(props: SkillsBodyProps) {
             the moment its proposal is confirmed (applyStagedSkillWrite). There
             is no add control on this panel, so the route has to be named. */}
         <div className="rounded-lg bg-inset px-3 py-2.5 text-[12px] leading-relaxed text-ink-secondary">
-          {botName} has no skills yet. Hire a profile from the team library — the + at the top of the
-          sidebar, then Teams — and its skills arrive switched on.
+          {botName} has no skills yet. Add one from the library and it arrives switched on.
           {authoringEnabled
             ? " A skill you teach with /learn in chat is switched on once you confirm it."
             : ""}{" "}
           Everything that lands here can be read, switched off, or removed.
         </div>
+        {props.onBrowse && <AddSkillButton botName={botName} onBrowse={props.onBrowse} className="mt-2.5" />}
         {staged > 0 && (
           <div className="mt-2 text-[11.5px] text-warning">
             {staged} proposal{staged === 1 ? " is" : "s are"} waiting for a decision in chat.
@@ -472,6 +510,7 @@ export function SkillsBody(props: SkillsBodyProps) {
           </span>
         )}
       </div>
+      {props.onBrowse && <AddSkillButton botName={botName} onBrowse={props.onBrowse} className="mt-2" />}
       {skills.length > 8 && (
         <div className="mt-2 flex items-center gap-2 rounded-lg bg-inset px-2.5 py-1.5">
           <Search size={13} className="shrink-0 text-ink-secondary" />
@@ -568,7 +607,7 @@ export function SkillsBody(props: SkillsBodyProps) {
  * bot and ask what it can do. A disabled skill opens its SKILL.md before it
  * can be switched on: an import lands off precisely so the bytes get read
  * once (see the policy note above the routes in server/index.ts). */
-export function BotSkillsPanel({ bot }: { bot: Bot }) {
+export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => void }) {
   const { state } = useStore();
   const authoringEnabled = skillRecorderEnabled(state.config);
   const [query, setQuery] = useState("");
@@ -602,6 +641,7 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
         staged={snapshot.staged.length}
         loadFailure={snapshot.loadFailure}
         authoringEnabled={authoringEnabled}
+        onBrowse={onBrowse}
         query={query}
         onQuery={(value) => {
           setQuery(value);

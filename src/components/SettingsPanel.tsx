@@ -640,7 +640,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           {/* keyed so switching bots never shows one bot's notes under another's name */}
           <MemoryCard key={bot.id} bot={bot} />
 
-          <BotSkillsPanel key={`skills-${bot.id}`} bot={bot} />
+          {/* "Add a skill" is the other end of assignment: it opens the
+              library with THIS agent already chosen, so the person never has
+              to say which agent twice. */}
+          <BotSkillsPanel
+            key={`skills-${bot.id}`}
+            bot={bot}
+            onBrowse={() => dispatch({ type: "showTeamLibrary", botId: bot.id })}
+          />
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
