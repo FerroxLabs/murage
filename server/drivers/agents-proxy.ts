@@ -433,7 +433,14 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const lines = bots.map((b) => {
       const role = b.title ? ` — ${b.title}` : "";
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
-      return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${b.busy ? ", busy" : ""}]`;
+      // Where this bot sits in the chart. Without it a workspace Chief's
+      // roster is a flat list and an individual assistant — which leads
+      // nobody — is indistinguishable from a team leader that does. Section
+      // labels are user-editable third-party text, so they are clipped like
+      // every other persona field on this line.
+      const team = b.section ? `, team: ${String(b.section).slice(0, 80)}` : "";
+      const rank = b.chiefOfStaff ? ", team lead" : b.individual ? ", individual assistant" : "";
+      return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${team}${rank}${b.busy ? ", busy" : ""}]`;
     });
     return {
       text: `Other bots in your section:\n${lines.join("\n")}\n\nAssign work with delegate_bot. Use ask_bot only for a short answer you need inline.`,

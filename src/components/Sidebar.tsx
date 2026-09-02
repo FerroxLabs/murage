@@ -45,6 +45,8 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
+import { RoleIcon } from "./RoleBadge";
+import { botRole, BOT_ROLE_BADGE } from "@/lib/bot-role";
 import { BotPickerList } from "./BotPickerList";
 import {
   loadCollapsedSections,
@@ -829,12 +831,20 @@ function BotListItem({
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-ink-secondary">
-            {bot.chiefOfStaff && (
-              <span className="flex shrink-0 items-center gap-1 text-[11.5px] font-medium text-accent">
-                <Crown size={11} /> Chief of Staff
+            {/* All three tiers, not just the Chief: an individual assistant
+                reports straight to the Chief and reads as an ordinary team
+                member everywhere it is unmarked. */}
+            {botRole(bot) !== "member" && (
+              <span
+                className={cn(
+                  "flex shrink-0 items-center gap-1 text-[11.5px] font-medium",
+                  botRole(bot) === "chief" ? "text-accent" : "text-ink-secondary",
+                )}
+              >
+                <RoleIcon bot={bot} size={11} decorative /> {BOT_ROLE_BADGE[botRole(bot)]}
               </span>
             )}
-            {bot.chiefOfStaff && preview(bot) && <span className="shrink-0 text-ink-secondary/60">·</span>}
+            {botRole(bot) !== "member" && preview(bot) && <span className="shrink-0 text-ink-secondary/60">·</span>}
             <span className="truncate">{preview(bot)}</span>
           </span>
           {bot.unread && (

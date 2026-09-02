@@ -56,7 +56,7 @@ import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from 
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
-import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
+import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
 import { openMurageStatusSystemPrompt } from "./murage-status-capsule.ts";
 import {
   containerComputerAction,
@@ -148,6 +148,7 @@ import { ProviderRegistry } from "./harness/registry.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import {
   canReach,
+  isIndividualAssistant,
   isWorkspaceChief,
   mentionedBots,
   roomResponders,
@@ -839,6 +840,11 @@ if (browserCleanupReferencesReconciled) browserCleanup.startPending();
  * than the desktop window did. Stripped here rather than at each call site
  * so a new broadcast cannot forget. */
 const wireTask = ({ resumeCursors: _resumeCursors, lastInstanceId: _lastInstanceId, ...task }: TaskRecord) => task;
+
+/** One sentence, both places it can be refused: the pre-check that sees the
+ * whole request body, and the store call that owns the invariant. */
+const INDIVIDUAL_CHIEF_CONFLICT =
+  "An Individual Assistant works alone under the Chief of Staff and leads no team. Remove this bot's Chief of Staff role first, then make it an Individual Assistant.";
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors: _resumeCursors, tasks, ...rest } = bot;
@@ -2939,9 +2945,15 @@ async function startTurn(
             Boolean(integrations.agents),
             openMurageStatusSystemPrompt(),
           )
-        : integrations.agents && reachablePeers.length > 0
-          ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
-          : "";
+        // The Chief's other branch. The generic line below says "the other
+        // bots in your section", which is the one thing an individual
+        // assistant does not have — its single peer is the workspace Chief,
+        // across the section boundary.
+        : isIndividualAssistant(bot)
+          ? individualAssistantSystemPrompt(bot.id, store.bots, Boolean(integrations.agents))
+          : integrations.agents && reachablePeers.length > 0
+            ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
+            : "";
       const credentialPrompt = integrations.agents
         ? " If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat."
         : "";
@@ -5257,6 +5269,9 @@ const server = createServer(async (req, res) => {
             // from a peer, and one team from another, without guessing.
             section: b.section || undefined,
             chiefOfStaff: b.chiefOfStaff ? true : undefined,
+            // and `individual` so the one bot on the Chief's other branch is
+            // never rendered as a team leader it is not.
+            individual: isIndividualAssistant(b) ? true : undefined,
           }));
         return json(res, 200, { bots });
       }
@@ -7387,6 +7402,18 @@ const server = createServer(async (req, res) => {
       if (requestedScope && body.chiefOfStaff === false) {
         return json(res, 400, { error: "chiefScope needs chiefOfStaff" });
       }
+      // The other branch down from the Chief: a bot that works alone in its
+      // own group and reports to the workspace Chief with no leader between.
+      // Applied through setIndividual rather than the raw patch so the store
+      // stays the only owner of the one invariant — never both roles at once.
+      if (body.individual !== undefined && typeof body.individual !== "boolean") {
+        return json(res, 400, { error: "individual must be true or false" });
+      }
+      const keepsChiefRole =
+        body.chiefOfStaff !== undefined ? body.chiefOfStaff === true : existingBot?.chiefOfStaff === true;
+      if (body.individual === true && keepsChiefRole) {
+        return json(res, 400, { error: INDIVIDUAL_CHIEF_CONFLICT });
+      }
       if (body.cloudBackend !== undefined) {
         const backendError = cloudBackendChangeError(Boolean(existingBot?.busy), activeVpsThreads.has(m[1]));
         if (backendError) return json(res, 409, { error: backendError });
@@ -7464,6 +7491,16 @@ const server = createServer(async (req, res) => {
             )
           : [];
       if (chiefChanges === null) return json(res, 404, { error: "no such bot" });
+      if (body.individual !== undefined) {
+        // After setChiefOfStaff, so one request may hand a Chief's team over
+        // and file the same bot as an individual assistant in either order.
+        const branch = store.setIndividual(bot.id, body.individual === true);
+        if (!branch.ok) {
+          return branch.reason === "chief-conflict"
+            ? json(res, 400, { error: INDIVIDUAL_CHIEF_CONFLICT })
+            : json(res, 404, { error: "no such bot" });
+        }
+      }
       return json(res, 200, { bot: wireBot(store.bot(bot.id)!) });
     }
 

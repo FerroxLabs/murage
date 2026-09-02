@@ -467,6 +467,18 @@ export interface BotRecord {
    * (package-export.ts writes `chiefOfStaff` only), so no downloaded
    * package can install a bot that outranks the user's own Chief. */
   chiefScope?: "workspace";
+  /** The other branch down from the Chief: this bot works alone, in its own
+   * group, with NO team leader above it, reporting straight to the workspace
+   * Chief of Staff. Explicit rather than inferred from "alone in a section",
+   * because inferring it would mean adding a second bot to that group
+   * silently demotes this one from "reports to the Chief" to "unreachable
+   * member of a leaderless team" — a semantic flip with no visible cause.
+   * Mutually exclusive with `chiefOfStaff` (opposite ends of the same
+   * chart), enforced at both setters and de-duped on load. Like `chiefScope`
+   * it is deliberately NOT part of the published package format
+   * (package-export.ts writes `chiefOfStaff` only), so no downloaded package
+   * can install a bot that reports to the user's own Chief. */
+  individual?: boolean;
   /** Pause for human approval before this bot talks to a peer (ask_bot,
    * delegate_bot). Off by default: a chief-of-staff-style bot is most
    * useful when it can coordinate without nagging. */
@@ -535,35 +547,61 @@ const COLORS: EmberColor[] = [
  * their identity. Missing/blank means the unsectioned (General) team. */
 export const sectionKey = (section?: string | null): string => section?.trim() || "";
 
-/** The three fields the roster predicate reads. Structural rather than
+/** The four fields the roster predicate reads. Structural rather than
  * `BotRecord` so the Chief's prompt builder (chief-of-staff.ts) can share
  * one predicate without pulling the whole store type into it. */
 export interface ReachableBot {
   section?: string | null;
   chiefOfStaff?: boolean;
   chiefScope?: "workspace";
+  individual?: boolean;
 }
 
-/** The one Chief above the section leads, if the workspace has elected one. */
+/** The one Chief above the team leaders, if the workspace has elected one. */
 export const isWorkspaceChief = (bot: ReachableBot): boolean =>
   bot.chiefOfStaff === true && bot.chiefScope === "workspace";
 
+/** A bot that works alone under the Chief, with no team leader above it.
+ * The `chiefOfStaff` half of the test is not redundant with the store's
+ * invariant: this predicate also runs over structural records that never
+ * passed through the store (wire bots in the prompt builder, hand-written
+ * payloads), and the two roles must never both apply to one bot. The role
+ * that carries a team wins, the same way it does at load. */
+export const isIndividualAssistant = (bot: ReachableBot): boolean =>
+  bot.individual === true && bot.chiefOfStaff !== true;
+
 /** Who a bot may see, name, ask, delegate to, and schedule work for.
  *
- * A strict SUPERSET of the `sectionKey(a) === sectionKey(b)` rule it
- * replaces: same-section stays true, and the only new edges are
- * workspace-chief ⇄ section lead. With no workspace chief elected this is
- * exactly the old predicate, so promoting nobody changes nothing.
+ * The org chart as a predicate. Two branches hang off the one workspace
+ * Chief — Chief ⇄ team leaders (each of whom owns their own members), and
+ * Chief ⇄ individual assistants (each alone in its own group, with no
+ * leader in between). Same-section contact is unchanged.
+ *
+ * NO LONGER a strict superset of the section rule, and the comment that
+ * said so is now wrong. It held while the only extra edges were Chief ⇄
+ * team lead: both ends of those were already `chiefOfStaff`, so no bot
+ * gained a peer it could not already coordinate with. The individual-
+ * assistant edge is a genuinely new CLASS of edge — an ordinary non-leading
+ * bot becomes reachable across section boundaries. It stays narrow: exactly
+ * one peer (the workspace Chief), only in both directions of that one pair,
+ * and only while the bot carries the explicit `individual` flag a human set.
+ *
+ * What is still true, and is what the tests pin: with no workspace Chief
+ * elected, every clause below the first is unreachable, so the predicate is
+ * exactly `sectionKey(a) === sectionKey(b)`. Electing nobody changes
+ * nothing; marking somebody individual while nobody is Chief changes
+ * nothing either.
  *
  * Deliberately NOT a visibility filter. `hidden` and self-contact are left
  * to each call site, because four of the gates that call this never had a
  * hidden check and two report a different error for self — folding either
- * in here would quietly change what an ordinary bot may do, in the change
- * whose whole justification is that it changes nothing. */
+ * in here would quietly change what an ordinary bot may do. */
 export function canReach(from: ReachableBot, to: ReachableBot): boolean {
   if (sectionKey(from.section) === sectionKey(to.section)) return true;
   if (isWorkspaceChief(from) && to.chiefOfStaff === true) return true;
   if (from.chiefOfStaff === true && isWorkspaceChief(to)) return true;
+  if (isWorkspaceChief(from) && isIndividualAssistant(to)) return true;
+  if (isIndividualAssistant(from) && isWorkspaceChief(to)) return true;
   return false;
 }
 
@@ -734,6 +772,18 @@ export class Store {
         continue;
       }
       delete b.chiefScope;
+      botsMigrated = true;
+    }
+    // The two branches under the Chief are exclusive: a bot either leads a
+    // team (or the workspace) or works alone beneath the Chief. A record
+    // claiming both is meaningless, so the role that carries a team wins and
+    // the lone-worker flag is dropped — the same way a `chiefScope` with no
+    // role above is dropped. A persisted `individual: false` is normalised
+    // away too, so absent is the only way "no" is ever spelled on disk.
+    for (const b of this.bots) {
+      if (b.individual === undefined) continue;
+      if (b.individual === true && !b.chiefOfStaff) continue;
+      delete b.individual;
       botsMigrated = true;
     }
     // Peer grants originally used mutable display names (ask_bot:@Helper).
@@ -1437,6 +1487,12 @@ export class Store {
         bot.chiefOfStaff = true;
         // A section's main contact must stay reachable in the sidebar.
         bot.hidden = false;
+        // Opposite ends of the same chart: a bot that leads cannot also be
+        // one that works alone underneath the Chief. Electing is an explicit
+        // human act with a visible result, so this resolves rather than
+        // refuses; the reverse direction (setIndividual) refuses instead,
+        // because there the role being discarded is the bigger one.
+        if (bot.individual) delete bot.individual;
       } else {
         bot.chiefOfStaff = false;
         // The tier is a modifier on the flag; losing the flag loses it too.
@@ -1459,6 +1515,33 @@ export class Store {
     if (changed.length) this.saveBots();
     for (const bot of changed) this.emit({ type: "bot", botId: bot.id });
     return changed;
+  }
+
+  /** Mark a bot as an Individual Assistant, or clear the mark: one that
+   * works alone in its own group, reporting straight to the workspace Chief
+   * of Staff with no team leader in between.
+   *
+   * Refused rather than silently resolved while the bot leads something.
+   * The reverse (setChiefOfStaff) resolves, because there the human just
+   * asked for the larger role; here, quietly stripping a Chief or a team
+   * leader of the team it runs would throw away the role they did choose,
+   * and there is nowhere on this call to tell them it happened. The caller
+   * gets `chief-conflict` and a sentence to show. */
+  setIndividual(
+    id: string,
+    individual: boolean,
+  ): { ok: true; bot: BotRecord } | { ok: false; reason: "unavailable" | "chief-conflict" } {
+    const bot = this.bot(id);
+    if (!bot) return { ok: false, reason: "unavailable" };
+    if (individual && bot.chiefOfStaff) return { ok: false, reason: "chief-conflict" };
+    if (Boolean(bot.individual) === individual) return { ok: true, bot };
+    // Absent, never `false` — the load-time pass normalises the same way, so
+    // one shape means "no" both in memory and on disk.
+    if (individual) bot.individual = true;
+    else delete bot.individual;
+    this.saveBots();
+    this.emit({ type: "bot", botId: id });
+    return { ok: true, bot };
   }
 
   setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string) {

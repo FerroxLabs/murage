@@ -23,6 +23,7 @@ export type BotUpdatePatch = Partial<
     | "section"
     | "pinnedMessageId"
     | "chiefOfStaff"
+    | "individual"
     | "approvePeerComms"
     | "composio"
     | "browser"
@@ -30,6 +31,13 @@ export type BotUpdatePatch = Partial<
     | "modelSelection"
   >
 > & {
+  /** Rides the PATCH body only, as `chiefScope`: which tier a Chief
+   * occupies. Named apart from the bot field it becomes because its values
+   * are not the field's — "section" and null both mean "drop the workspace
+   * tier", which the store spells as an absent field. It must never fold
+   * into bot state; the reducer mirrors the tier optimistically and the
+   * server's answer is authoritative. */
+  chiefTier?: "workspace" | "section" | null;
   /** Rides the PATCH body only: the server's proof that the local-auto
    * warning dialog was shown (see server/index.ts's consent gate). It must
    * reach the wire inside the coalesced body and must never fold into bot
@@ -75,10 +83,11 @@ export interface BotPatchQueue {
 
 const hasFields = (patch: BotUpdatePatch): boolean => Object.keys(patch).length > 0;
 
-/** What may fold back into renderer bot state: everything except the consent
- * flag, which is wire-only. One strip point covers both overlay paths. */
+/** What may fold back into renderer bot state: everything except the two
+ * wire-only fields — the consent flag and the Chief's tier. One strip point
+ * covers both overlay paths. */
 const stateOverlay = (patch: BotUpdatePatch): BotUpdatePatch => {
-  const { acknowledgeLocalAuto: _ack, ...fields } = patch;
+  const { acknowledgeLocalAuto: _ack, chiefTier: _tier, ...fields } = patch;
   return fields;
 };
 

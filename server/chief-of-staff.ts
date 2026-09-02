@@ -1,4 +1,4 @@
-import { canReach, isWorkspaceChief, sectionKey } from "./store.ts";
+import { canReach, isIndividualAssistant, isWorkspaceChief, sectionKey } from "./store.ts";
 
 export interface ChiefTeamMember {
   id: string;
@@ -10,8 +10,10 @@ export interface ChiefTeamMember {
   section?: string;
   /** This bot leads its own section. */
   chiefOfStaff?: boolean;
-  /** Set only on the one Chief above the section leads. */
+  /** Set only on the one Chief above the team leaders. */
   chiefScope?: "workspace";
+  /** This bot works alone under the Chief, with no team leader above it. */
+  individual?: boolean;
 }
 
 // The roster is interpolated into a TRUSTED bot's system prompt on every
@@ -56,39 +58,68 @@ const delegationGuidance = (canDelegate: boolean): string =>
       ].join(" ")
     : "Your current engine cannot contact teammates. Be honest about that limitation and ask the user to choose a delegation-compatible engine before promising coordinated work.";
 
-/** The workspace tier: the roster is the section LEADS, grouped by team, plus
- * whatever reports to the Chief directly. A lead's own specialists are
- * counted, never named — the whole point of the tier is that the Chief hands
- * a team's work to its lead instead of reaching past them. */
+/** The workspace tier: three groups, presented distinctly, because the Chief
+ * has to do a different thing with each.
+ *
+ *  - TEAM LEADERS, grouped by team. A leader's own specialists are counted,
+ *    never named — the whole point of the tier is that the Chief hands a
+ *    team's work to its leader instead of reaching past them.
+ *  - INDIVIDUAL ASSISTANTS, named one by one. They lead nobody, so counting
+ *    a team under them would be a lie and calling them a leader would send
+ *    the Chief looking for members that do not exist. An individual is
+ *    pulled out of the section map entirely, so a group that holds only
+ *    an individual never appears as a leaderless team.
+ *  - DIRECT REPORTS: whatever else shares the Chief's own section.
+ */
 function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): string {
   const chiefSection = sectionKey(chief.section);
   const sections = new Map<string, { label: string; lead?: ChiefTeamMember; members: ChiefTeamMember[] }>();
+  const individuals: ChiefTeamMember[] = [];
+  const direct: ChiefTeamMember[] = [];
   for (const bot of bots) {
     if (bot.id === chief.id || bot.hidden) continue;
+    if (isIndividualAssistant(bot)) {
+      individuals.push(bot);
+      continue;
+    }
     const key = sectionKey(bot.section);
+    if (key === chiefSection) {
+      direct.push(bot);
+      continue;
+    }
     const entry = sections.get(key) ?? { label: clip(bot.section?.trim() || "General", ROSTER_SECTION_MAX), members: [] };
-    // A Chief in the workspace Chief's OWN section would be a second chief
-    // of one section; treat it as an ordinary report rather than trusting it.
-    if (bot.chiefOfStaff && key !== chiefSection && !entry.lead) entry.lead = bot;
+    // A second Chief in one section is not a second leader; treat the later
+    // one as an ordinary member rather than trusting it.
+    if (bot.chiefOfStaff && !entry.lead) entry.lead = bot;
     else entry.members.push(bot);
     sections.set(key, entry);
   }
 
-  const teamEntries = [...sections].filter(([key]) => key !== chiefSection);
-  const teamLines = teamEntries.map(([, entry]) =>
+  const teamLines = [...sections.values()].map((entry) =>
     entry.lead
       ? `- ${entry.label} — @${memberLine(entry.lead)}; ${entry.members.length} specialist${entry.members.length === 1 ? "" : "s"}`
-      : `- ${entry.label} — no lead yet (${entry.members.length} bot${entry.members.length === 1 ? "" : "s"}). Say so rather than working around it.`,
+      : `- ${entry.label} — no leader yet (${entry.members.length} bot${entry.members.length === 1 ? "" : "s"}). Say so rather than working around it.`,
   );
-  const directLines = (sections.get(chiefSection)?.members ?? []).map((bot) => `- @${memberLine(bot)}`);
+  const individualLines = individuals.map((bot) => `- @${memberLine(bot)}`);
+  const directLines = direct.map((bot) => `- @${memberLine(bot)}`);
 
+  // One budget across all three groups, spent top-down, so a workspace with
+  // forty teams cannot push the individuals off the end unannounced —
+  // withOverflow states the remainder for whichever group is cut.
   const listedTeams = teamLines.slice(0, ROSTER_MAX_BOTS);
-  const listedDirect = directLines.slice(0, Math.max(0, ROSTER_MAX_BOTS - listedTeams.length));
+  const listedIndividuals = individualLines.slice(0, Math.max(0, ROSTER_MAX_BOTS - listedTeams.length));
+  const listedDirect = directLines.slice(
+    0,
+    Math.max(0, ROSTER_MAX_BOTS - listedTeams.length - listedIndividuals.length),
+  );
   return [
-    "Section leads:",
-    listedTeams.length ? withOverflow(listedTeams, teamLines.length) : "- No section leads yet. Say so rather than inventing one.",
+    "Team leaders:",
+    listedTeams.length ? withOverflow(listedTeams, teamLines.length) : "- No team leaders yet. Say so rather than inventing one.",
+    ...(listedIndividuals.length
+      ? ["Individual assistants (they lead no team and report to you directly):", withOverflow(listedIndividuals, individualLines.length)]
+      : []),
     ...(listedDirect.length
-      ? ["Reporting to you directly:", withOverflow(listedDirect, directLines.length)]
+      ? ["Also reporting to you directly:", withOverflow(listedDirect, directLines.length)]
       : []),
   ].join("\n");
 }
@@ -107,10 +138,11 @@ export function chiefOfStaffSystemPrompt(
 
   if (chief && isWorkspaceChief(chief)) {
     return [
-      "You are the Chief of Staff for this workspace. You are the user's primary contact, and your direct reports are the section leads below.",
-      "Assign a team's work to that team's lead and let them run their own people. Do not assign work to a lead's specialists yourself, and do not route around a lead — coordinating their team is their job, not yours.",
-      "Own the outcome: understand the request, decide what to handle yourself, hand the rest to the right lead, and return one concise consolidated answer.",
-      "Do not delegate trivial work merely to appear busy. Never invent a lead's progress or result. Normal permission and approval rules still apply.",
+      "You are the Chief of Staff for this workspace. You are the user's primary contact, and your direct reports are the team leaders and individual assistants below.",
+      "Assign a team's work to that team's leader and let them run their own people. Do not assign work to a leader's specialists yourself, and do not route around a leader — coordinating their team is their job, not yours.",
+      "An individual assistant is not a team leader: it works alone, has nobody under it, and reports to you directly. Give it its own work yourself, and never ask it to hand work down.",
+      "Own the outcome: understand the request, decide what to handle yourself, hand the rest to the right leader or individual assistant, and return one concise consolidated answer.",
+      "Do not delegate trivial work merely to appear busy. Never invent a report's progress or result. Normal permission and approval rules still apply.",
       delegation,
       "Current workspace:",
       workspaceRoster(chief, bots),
@@ -135,14 +167,52 @@ export function chiefOfStaffSystemPrompt(
     : undefined;
 
   return [
-    `You are the Chief of Staff for the ${sectionName} section. You are the user's primary contact for this section's team of bots.`,
+    `You are the Chief of Staff for the ${sectionName} section — its team leader. You are the user's primary contact for this section, and the bots listed below are your own team members.`,
     "Own the outcome: understand the request, decide what to handle yourself, coordinate the right specialists when useful, and return one concise consolidated answer.",
     "Do not delegate trivial work merely to appear busy. Never invent a teammate's progress or result. Normal permission and approval rules still apply.",
     delegation,
     workspaceChief &&
       `@${clip(workspaceChief.name, ROSTER_NAME_MAX)} is the workspace Chief of Staff and is on your roster: report this section's results back to them when they assigned the work.`,
-    `Current ${sectionName} section team:`,
+    `Your ${sectionName} team:`,
     roster,
     trustedMurageStatus,
+  ].filter(Boolean).join("\n");
+}
+
+/** The Chief's OTHER branch, from the assistant's own side.
+ *
+ * An individual assistant has no team and no leader: `canReach` gives it
+ * exactly one peer, the workspace Chief. Telling it about "the other bots in
+ * your section" — the generic line every non-Chief gets — would send it
+ * looking for teammates that the predicate will not return. */
+export function individualAssistantSystemPrompt(
+  selfId: string,
+  bots: ChiefTeamMember[],
+  canDelegate: boolean,
+): string {
+  const self = bots.find((bot) => bot.id === selfId);
+  const reachable = self
+    ? bots.filter((bot) => bot.id !== selfId && !bot.hidden && canReach(self, bot))
+    : [];
+  const chief = reachable.find(isWorkspaceChief);
+  // Usually empty — an individual assistant sits alone in its own group. It
+  // is not guaranteed: the flag is explicit, so a human may leave one filed
+  // beside other bots, and the section rule still connects them. Listed
+  // rather than assumed away, so the prompt never contradicts canReach.
+  const others = reachable.filter((bot) => !isWorkspaceChief(bot));
+  const listed = others.slice(0, ROSTER_MAX_BOTS);
+  return [
+    "You are an individual assistant: you work on your own, you lead no team, and no team leader sits above you.",
+    chief
+      ? `@${clip(chief.name, ROSTER_NAME_MAX)} is the workspace Chief of Staff and you report to them directly. Send your results back to them when they assigned the work; the user is otherwise your primary contact.`
+      : "This workspace has no Chief of Staff, so nobody above you has been elected yet. The user is your primary contact.",
+    others.length
+      ? `Bots filed alongside you (they are not your team, and you do not direct them):\n${withOverflow(listed.map((bot) => `- ${memberLine(bot)}`), others.length)}`
+      : !chief
+        ? "There is no other bot you can reach right now. Say so rather than inventing a teammate."
+        : "",
+    canDelegate && (chief || others.length)
+      ? "Use list_bots to confirm who you can reach. Use ask_bot for a short answer you need inline; use delegate_bot to hand work over."
+      : "",
   ].filter(Boolean).join("\n");
 }
