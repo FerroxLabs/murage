@@ -7,10 +7,17 @@
 // and the one that quietly stopped being true once before.
 import { describe, expect, it } from "vitest";
 
-import { denyReason } from "../src/routes.ts";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-const ask = (method: string, path: string, authenticated = true) =>
-  denyReason({ method, path, authenticated });
+import { BROWSER_DENIED, BROWSER_STATIC, denyReason, type Surface } from "../src/routes.ts";
+
+const ask = (method: string, path: string, authenticated = true, surface: Surface = "device") =>
+  denyReason({ method, path, authenticated, surface });
+
+/** The same question, asked at the other door. */
+const askBrowser = (method: string, path: string, authenticated = true) =>
+  ask(method, path, authenticated, "browser");
 
 const allowed = (method: string, path: string) => ask(method, path) === null;
 
@@ -229,6 +236,159 @@ describe("what it may not", () => {
       expect(allowed("GET", path), path).toBe(false);
       expect(allowed("POST", path), path).toBe(false);
       expect(allowed("DELETE", path), path).toBe(false);
+    }
+  });
+});
+
+// ── the two doors ────────────────────────────────────────────────────────
+//
+// The property being pinned is not "the browser can do these things". It is
+// that the two lists cannot drift into each other: a route added for one door
+// does not thereby appear at the other, and the routes that compose into
+// arbitrary code execution are refused at the browser door explicitly, before
+// anything is allowed to allow them.
+describe("surfaces do not converge", () => {
+  it("keeps the UI shell off the device port entirely", () => {
+    // Every shell path, asked at the device door. If any of these returns
+    // null the phone's allowlist has quietly grown a static file server.
+    for (const entry of BROWSER_STATIC) {
+      const path =
+        entry.path.source === "^\\/$" ? "/"
+        : entry.path.source.includes("assets") ? "/assets/index-B7zzSDok.js"
+        : entry.path.source.includes("chat|rooms") ? "/chat/bot_123"
+        : entry.path.source.includes("icons") ? "/icons/murage-192.png"
+        : entry.path.source.includes("murage-logo") ? "/murage-logo.png"
+        : entry.path.source.replace(/[\\^$]/g, "").replace(/\(\?:.*/, "");
+      expect(ask("GET", path), path).not.toBeNull();
+      expect(askBrowser("GET", path), path).toBeNull();
+    }
+  });
+
+  it("gives the browser no pairing and no liveness bypass", () => {
+    // Both are unauthenticated at the device door on purpose. Neither is a
+    // thing a browser does, and an unauthenticated route is the most
+    // expensive kind to have by accident.
+    expect(ask("POST", "/api/pair", false)).toBeNull();
+    expect(askBrowser("POST", "/api/pair", false)?.status).toBe(401);
+    expect(ask("GET", "/api/health", false)).toBeNull();
+    expect(askBrowser("GET", "/api/health", false)?.status).toBe(401);
+    // and they are not merely unauthenticated-only: a signed-in browser has
+    // no route to them either
+    expect(askBrowser("POST", "/api/pair")?.status).toBe(404);
+    expect(askBrowser("GET", "/api/health")?.status).toBe(404);
+  });
+
+  it("points an unauthenticated browser at a page rather than at a settings panel", () => {
+    expect(askBrowser("GET", "/api/bots", false)).toEqual({
+      status: 401,
+      error: "sign in",
+      signIn: "/enter",
+    });
+  });
+
+  it("refuses the two halves of the two-request RCE, and the VM lifecycle", () => {
+    // Explicit, and checked before the allowlist — so this holds whatever
+    // BROWSER_ALLOWED grows to say.
+    for (const [method, path] of [
+      ["POST", "/api/cli-test"],
+      ["PATCH", "/api/instances/claude"],
+      ["POST", "/api/local-computer"],
+      ["POST", "/api/local-computer/start"],
+      ["POST", "/api/bots/bot_123/local-computer"],
+      ["POST", "/api/bots/bot_123/local-computer/exec"],
+    ] as const) {
+      expect(askBrowser(method, path), `${method} ${path}`).toEqual({
+        status: 404,
+        error: `no route: ${method} ${path}`,
+      });
+    }
+  });
+
+  it("keeps the unscoped-grep and desktop-only routes off the browser", () => {
+    for (const [method, path] of [
+      // scoped in the harness now, but still unbounded in `q` — see the note
+      // on BROWSER_ALLOWED
+      ["GET", "/api/search"],
+      // connection candidates are for a native client choosing an address
+      ["GET", "/api/companion/endpoints"],
+      // the desktop's broad patch, destruction, credentials, public ingress
+      ["PATCH", "/api/bots/bot_123"],
+      ["DELETE", "/api/bots/bot_123"],
+      ["PUT", "/api/config"],
+      ["POST", "/api/webhooks"],
+      ["POST", "/api/connectors/slack/authorize"],
+      ["POST", "/api/bots/bot_123/computer/exec"],
+      ["GET", "/api/cli-candidates"],
+      ["GET", "/api/internal/peer"],
+    ] as const) {
+      expect(askBrowser(method, path), `${method} ${path}`).not.toBeNull();
+    }
+  });
+
+  it("still applies the browser's own list rather than the phone's", () => {
+    // Present on the phone, absent on the browser.
+    expect(ask("GET", "/api/companion/endpoints")).toBeNull();
+    expect(askBrowser("GET", "/api/companion/endpoints")).not.toBeNull();
+    // Present on the browser, absent on the phone.
+    expect(askBrowser("GET", "/")).toBeNull();
+    expect(ask("GET", "/")).not.toBeNull();
+  });
+
+  it("denies a route it has never heard of at the browser door too", () => {
+    for (const path of ["/api/whatever-ships-next", "/api/secrets", "/not-a-page"]) {
+      expect(askBrowser("GET", path), path).not.toBeNull();
+      expect(askBrowser("POST", path), path).not.toBeNull();
+    }
+  });
+});
+
+// The second lock, as its own layer.
+//
+// NC18 in the negative-control run is why this exists. Deleting a line from
+// BROWSER_DENIED did *not* turn anything red, because none of those four
+// routes is in BROWSER_ALLOWED either — default-deny caught them, and the
+// second lock could have been silently absent. That is exactly the failure
+// this list is supposed to survive: an allowlist edit re-opening one of them.
+// So the layer is pinned directly rather than through its effect.
+describe("the execution routes are refused by name, not by omission", () => {
+  const source = readFileSync(fileURLToPath(new URL("../src/routes.ts", import.meta.url)), "utf8");
+
+  it("names all four, each on its own line", () => {
+    const shapes = BROWSER_DENIED.map((r) => `${r.method} ${r.path.source}`);
+    expect(shapes).toEqual([
+      "POST ^\\/api\\/cli-test$",
+      "PATCH ^\\/api\\/instances\\/[\\w.-]+$",
+      "POST ^\\/api\\/local-computer(?:\\/.*)?$",
+      "POST ^\\/api\\/bots\\/[\\w-]+\\/local-computer(?:\\/.*)?$",
+    ]);
+  });
+
+  it("consults them before anything can allow anything", () => {
+    // Order in the source, because order is the property. If the allowlist
+    // were consulted first, adding a family to it would re-open these.
+    const body = source.slice(source.indexOf("export function denyReason"));
+    const denied = body.indexOf("BROWSER_DENIED.some");
+    const allowed = body.indexOf("const allowed =");
+    expect(denied).toBeGreaterThan(-1);
+    expect(allowed).toBeGreaterThan(-1);
+    expect(denied).toBeLessThan(allowed);
+  });
+
+  it("keeps the two lists disjoint, so neither lock is doing the other's job", () => {
+    // If a denied route ever appeared in BROWSER_ALLOWED the deny list would
+    // be the only thing holding, which is worth knowing rather than
+    // discovering. Today both hold independently.
+    for (const denied of BROWSER_DENIED) {
+      const sample =
+        denied.path.source.includes("cli-test") ? "/api/cli-test"
+        : denied.path.source.includes("instances") ? "/api/instances/claude"
+        : denied.path.source.includes("bots") ? "/api/bots/bot_1/local-computer/exec"
+        : "/api/local-computer/start";
+      // Refused, and refused with the harness's own wording.
+      expect(askBrowser(denied.method, sample)).toEqual({
+        status: 404,
+        error: `no route: ${denied.method} ${sample}`,
+      });
     }
   });
 });
