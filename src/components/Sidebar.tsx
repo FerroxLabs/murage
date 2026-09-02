@@ -828,8 +828,14 @@ function BotListItem({
               inputClassName="w-full rounded bg-inset px-1 py-0.5 text-[15px] font-semibold"
             />
           </span>
+          {/* The two controls to the right are absolutely positioned over this
+              timestamp. On a hover device they fade it out as they fade in; on
+              a device with no hover at all they are visible at rest, so this
+              has to get out of the way at rest too — otherwise iPad landscape,
+              which is wide enough to miss `max-md:`, renders the archive
+              button on top of the time. */}
           {selected && last && !renaming && (
-            <span className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+            <span className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0">
               {formatTime(last.at)}
             </span>
           )}
@@ -926,7 +932,7 @@ function BotListItem({
         aria-label={`More actions for ${bot.name}`}
         aria-haspopup="menu"
         title={`More actions for ${bot.name}`}
-        className="absolute right-11 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100"
+        className="absolute right-11 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <MoreHorizontal size={16} />
       </button>}
@@ -942,7 +948,7 @@ function BotListItem({
               ? "Keep at least one active bot"
               : `Archive ${bot.name}`
         }
-        className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100"
+        className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100 disabled:[@media(hover:none)]:opacity-0"
       >
         <Archive size={14} />
       </button>}
@@ -1886,6 +1892,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <TeamLibraryPanel
           returnFocusRef={importReturnRef}
           preselectedBotId={state.teamLibrary.botId}
+          initialView={state.teamLibrary.view}
           initialUrl={teamInstallUrl ?? undefined}
           onClose={() => {
             dispatch({ type: "hideTeamLibrary" });

@@ -12,9 +12,12 @@ import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
 import {
   chooseIntakeProfile,
+  chooseIntakeSkills,
   describeIntakeSkill,
+  intakeTopicTokens,
   librarySkillId,
   librarySkillIds,
+  INTAKE_LOOSE_SKILL_MAX,
   type IntakeProfile,
   type IntakeSkill,
 } from "../src/lib/onboarding-intake.ts";
@@ -5196,8 +5199,13 @@ async function catalogForSearch(): Promise<SearchableTeam[]> {
  *  bm25 always returns *something* for a query with any indexed token in it,
  *  so rank 1 is a candidate, never an answer. */
 const INTAKE_PROFILE_CANDIDATES = 8;
-/** Loose skills offered when no profile survives the gate. */
-const INTAKE_FALLBACK_SKILLS = 8;
+/** Candidates pulled from the skill index before the SAME relevance gate a
+ *  profile has to pass. Ranked retrieval decides the order; the gate decides
+ *  whether any of them is an answer at all, and `INTAKE_LOOSE_SKILL_MAX`
+ *  decides how many survive to the card. This number is a search width, never
+ *  a suggestion count — reading it as the latter is what put eight pre-ticked
+ *  strangers on screen for the word "hi". */
+const INTAKE_FALLBACK_CANDIDATES = 12;
 /** Longest answer this route will read. Matches INTAKE_ANSWER_MAX in the card;
  *  restated here because the server cannot trust the client to have trimmed. */
 const INTAKE_QUERY_MAX = 300;
@@ -6658,8 +6666,17 @@ const server = createServer(async (req, res) => {
       // Bounded here as well as in the card: a query string is caller-chosen
       // input, and the ranking below reads a manifest per declared skill.
       const q = (url.searchParams.get("q") ?? "").slice(0, INTAKE_QUERY_MAX);
-      const profile = await intakeProfileFor(q);
-      const skills = profile ? [] : await searchSkills(q, INTAKE_FALLBACK_SKILLS);
+      // NO TOPIC, NO ANSWER. "hi" carries no topic word at all, and the honest
+      // reply to it is nothing — not the eight skills bm25 will happily rank
+      // for any string with an indexed token in it. This is the single line
+      // that stops the card offering strangers, so the shape is deliberate:
+      // the tokens are computed FIRST and gate both halves of the response.
+      const tokens = intakeTopicTokens(q);
+      const profile = tokens.length === 0 ? null : await intakeProfileFor(q);
+      const skills =
+        profile || tokens.length === 0
+          ? []
+          : chooseIntakeSkills(q, await searchSkills(q, INTAKE_FALLBACK_CANDIDATES), INTAKE_LOOSE_SKILL_MAX);
       return json(res, 200, { query: q, profile, skills });
     }
     m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);

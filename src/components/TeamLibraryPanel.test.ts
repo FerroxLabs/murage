@@ -34,3 +34,70 @@ describe("team import is additive", () => {
     expect(source).not.toMatch(/Replace team|Replace current team/);
   });
 });
+
+const store = readFileSync(fileURLToPath(new URL("../state/store.tsx", import.meta.url)), "utf8");
+const sidebar = readFileSync(fileURLToPath(new URL("./Sidebar.tsx", import.meta.url)), "utf8");
+const intakeCard = readFileSync(fileURLToPath(new URL("./BotIntakeCard.tsx", import.meta.url)), "utf8");
+
+describe("the panel has two halves, and 'add a skill' lands on the right one", () => {
+  it("carries a real view, all the way from the action that opened it", () => {
+    // It had `activeFacet` and a search box and nothing else, so "Add a skill
+    // to Bruce" and "browse teams" arrived at the same screen — a grid of Load
+    // buttons that import a whole crew.
+    expect(store).toContain('export type TeamLibraryView = "teams" | "skills";');
+    expect(store).toContain('| { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView }');
+    expect(source).toContain("initialView?: TeamLibraryView;");
+    expect(source).toContain('useState<TeamLibraryView>(initialView ?? "teams")');
+    expect(sidebar).toContain("initialView={state.teamLibrary.view}");
+  });
+
+  it("the intake's own escape hatch opens it on Skills, naming the bot", () => {
+    expect(intakeCard).toContain('dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" })');
+  });
+
+  it("names the agent BEFORE any search, not only once results exist", () => {
+    const heading = source.slice(source.indexOf('{view === "skills" && ('));
+    expect(heading.slice(0, 400)).toContain("· for {preselectedBot.name}");
+  });
+
+  it("ZERO Load buttons on the skills view", () => {
+    // `TeamRow`'s action imports an entire crew of bots. Offering it to
+    // someone who asked for one skill is how this produced workspaces full of
+    // agents nobody wanted.
+    expect(source).toContain('!catalogLoading && catalog && !activeFacet && view === "teams" && (');
+  });
+
+  it("switching back is one press, so the view is never a trap", () => {
+    expect(source).toContain('role="tablist" aria-label="Library view"');
+    expect(source).toContain("onClick={() => setView(candidate)}");
+  });
+});
+
+describe("a skill the agent already has", () => {
+  it("says so instead of offering to add it again", () => {
+    // server/skills.ts refuses the duplicate with an error no person is ever
+    // shown, so the button simply did nothing.
+    expect(source).toContain("const alreadyAdded = Boolean(target && installed?.has(skillId));");
+    expect(source).toContain("if (alreadyAdded) {");
+    expect(source).toContain("already has this skill");
+  });
+
+  it("reads the target's set once, and treats an unreadable answer as unknown", () => {
+    expect(source).toContain("const [installedSkills, setInstalledSkills] = useState<ReadonlySet<string>>(new Set());");
+    // A failed read must render the ordinary Add button, never a false "Added".
+    expect(source).toContain("live && setInstalledSkills(new Set())");
+  });
+
+  it("only claims it when there is a single agent the button would land on", () => {
+    expect(source).toContain("const assignTarget = preselectedBot ?? (assignableBots.length === 1 ? assignableBots[0] : undefined);");
+  });
+});
+
+describe("the agent picker", () => {
+  it("carries a second line, because names are not unique", () => {
+    // The live workspace has "Bruce" and "Bruce (Smart Trader)", and two
+    // agents both called "Seam Audit Probe".
+    expect(source).toContain("const detail = bot.title?.trim() || bot.description?.trim() || \"\";");
+    expect(source).toMatch(/\{detail && <span[^>]*>\{detail\}<\/span>\}/);
+  });
+});

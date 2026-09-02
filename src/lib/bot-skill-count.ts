@@ -85,16 +85,114 @@ export function resetSkillCounts(): void {
   emit();
 }
 
-/** True when we have READ this bot's skills and there are none — the one
- *  state that means "this agent was created and never configured". */
-export function needsSetup(count: SkillCount): boolean {
-  return count === 0;
+/** What the intake knows about an agent WITHOUT asking the server anything.
+ *
+ *  Structural on purpose: `Bot` from the store satisfies it, and so does a
+ *  three-line literal in a test. Nothing here is fetched — every field is
+ *  already on the bot the card was handed. */
+export interface BotSetupEvidence {
+  title?: string;
+  description?: string;
+  /** Every context this agent has. `usage.turns` is the closest thing the
+   *  renderer holds to "how many times has a person talked to it". */
+  tasks?: ReadonlyArray<{ usage?: { turns?: number } | undefined }>;
+}
+
+/** Past this many turns the agent is IN USE, and an unprompted "what do you
+ *  mostly want help with?" is an interruption rather than an offer. Three is
+ *  the first count that cannot be a person poking at a new bot. */
+export const INTAKE_MAX_TURNS = 3;
+
+/** Turns this agent has actually had, across all its contexts. */
+export function botTurnCount(bot: BotSetupEvidence): number {
+  let turns = 0;
+  for (const task of bot.tasks ?? []) {
+    const count = task?.usage?.turns;
+    if (typeof count === "number" && Number.isFinite(count) && count > 0) turns += count;
+  }
+  return turns;
+}
+
+/** Does this agent still look like the blank one "New Bot" made?
+ *
+ *  Skill count alone said yes for Sable — a bot with a hand-written title, a
+ *  description, and a conversation behind it, whose skills simply live
+ *  somewhere other than the library. The card then offered to RENAME it. A
+ *  title, a description, or a real conversation are each independently proof
+ *  that a person has already told this agent what it is for, and the intake
+ *  must not ask again. */
+export function looksUnconfigured(bot: BotSetupEvidence): boolean {
+  if ((bot.title ?? "").trim()) return false;
+  if ((bot.description ?? "").trim()) return false;
+  return botTurnCount(bot) < INTAKE_MAX_TURNS;
+}
+
+/** What the COMPOSER DOCK puts on screen. Two answers, and one of them is
+ *  nothing at all.
+ *
+ *  There is no collapsed chip here any more, and its absence is the design.
+ *  Sable — a Chief of Staff with 1.4M tokens of conversation behind her, a
+ *  profile, and a full set of skills — had "What do you mostly want help
+ *  with?" parked under every message. A quieter chip in the same place is the
+ *  same noise in the same place: the composer belongs to the conversation.
+ *
+ *  This is NOT a one-way door, because the door moved rather than closed. Set
+ *  up lives on the bot's own profile now (`BotSetupAction` in
+ *  BotIntakeCard.tsx, rendered by SettingsPanel beside the role control),
+ *  where a person goes deliberately to change what a bot IS — and where it can
+ *  warn before it touches an established agent instead of ambushing one. */
+export type IntakeMode = "question" | "none";
+
+export function intakeMode(count: SkillCount, bot: BotSetupEvidence): IntakeMode {
+  // Still counting, unreadable, or already carrying skills — nothing to offer.
+  if (count !== 0) return "none";
+  return looksUnconfigured(bot) ? "question" : "none";
+}
+
+/** Would running setup on this agent CHANGE something a person put there?
+ *
+ *  The gate on the profile path. Reached deliberately, setup is always
+ *  available — but on an agent that already has skills, or a description, or a
+ *  real conversation behind it, it says what it is about to touch and waits.
+ *  `count` may be null or -1 (not read, unreadable): both are "unknown", and
+ *  unknown warns, because the safe direction here is the cautious one. */
+export function setupWouldOverwrite(count: SkillCount, bot: BotSetupEvidence): boolean {
+  if (count === null || count === -1) return true;
+  if (count > 0) return true;
+  return !looksUnconfigured(bot);
+}
+
+/** What the warning names, so it is never a vague "are you sure?". */
+export function setupOverwriteReasons(count: SkillCount, bot: BotSetupEvidence): string[] {
+  const reasons: string[] = [];
+  if (typeof count === "number" && count > 0) {
+    reasons.push(count === 1 ? "1 skill it already has" : `${count} skills it already has`);
+  }
+  if ((bot.title ?? "").trim()) reasons.push("its title");
+  if ((bot.description ?? "").trim()) reasons.push("its description");
+  const turns = botTurnCount(bot);
+  if (turns >= INTAKE_MAX_TURNS) reasons.push(`a conversation ${turns} turns long`);
+  return reasons;
+}
+
+/** True when we have READ this bot's skills, there are none, AND nothing else
+ *  about the agent says a person already configured it. The one state that
+ *  earns an unprompted question. */
+export function needsSetup(count: SkillCount, bot: BotSetupEvidence): boolean {
+  return intakeMode(count, bot) === "question";
 }
 
 /** True once we know the answer either way. The seeded four-option quiz is
  *  superseded by the intake whenever this holds: with no skills the intake is
- *  asking the same question better, and with skills there is nothing left to
- *  ask. Only an unreadable count leaves the old card alone. */
+ *  asking the same question better — as the full card or as the chip, but
+ *  ALWAYS as something — and with skills there is nothing left to ask. Only an
+ *  unreadable count leaves the old card alone.
+ *
+ *  This moves in lock-step with `intakeMode` by construction: the invariant is
+ *  that whenever this returns true and `intakeMode` is "none", the count is
+ *  above zero and there is genuinely no question left. A test pins it, because
+ *  the failure — the quiz suppressed while the intake also renders nothing —
+ *  is a screen with no way to configure the agent on it at all. */
 export function intakeOwnsTheQuestion(count: SkillCount): boolean {
   return count !== null && count !== -1;
 }

@@ -130,6 +130,34 @@ describe("GET /api/library/suggest", () => {
     }
   });
 
+  it('ANSWERS "hi" WITH NOTHING — no profile, and NO SKILLS', async () => {
+    // The headline bug, against the real route: typing "hi" came back with
+    // eight skills and the card pre-ticked every one of them. "hi" carries no
+    // topic word, so the only honest answer is none.
+    const response = await call("GET", "/api/library/suggest?q=hi");
+    expect(response.status).toBe(200);
+    expect(response.body.profile).toBeNull();
+    expect(response.body.skills).toEqual([]);
+  });
+
+  it("answers filler with nothing, however many words of filler there are", async () => {
+    for (const q of ["hey%20there", "help%20me", "help%20me%20with%20stuff%20and%20things", "what%20should%20I%20do"]) {
+      const response = await call("GET", `/api/library/suggest?q=${q}`);
+      expect(response.status, q).toBe(200);
+      expect(response.body.profile, q).toBeNull();
+      expect(response.body.skills, q).toEqual([]);
+    }
+  });
+
+  it("never offers more than three loose skills", async () => {
+    // Was eight, ungated. Three is a list a person reads; eight is a list a
+    // person scrolls past and accepts.
+    for (const q of ["writing%20blog%20posts", "chasing%20invoices", "bookkeeping"]) {
+      const response = await call("GET", `/api/library/suggest?q=${q}`);
+      expect(response.body.skills.length, q).toBeLessThanOrEqual(3);
+    }
+  });
+
   it("survives the punctuation FTS5 treats as syntax", async () => {
     for (const q of ["c%2B%2B", "say%20%22hi%22", "%5Eweird", "", "%20%20"]) {
       const response = await call("GET", `/api/library/suggest?q=${q}`);

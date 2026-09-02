@@ -48,6 +48,23 @@ describe("the bot row's menu is reachable without a right-click", () => {
   it("still opens it on right-click, because taking that away would be a regression", () => {
     expect(botListItem).toContain("onContextMenu");
   });
+
+  it("is visible AT REST on any device with no pointer, not just narrow ones", () => {
+    // `max-md:opacity-100` was the whole defence, and it is a WIDTH test. An
+    // iPad in landscape is wider than `md` and has no hover at all, so both
+    // controls stayed at `opacity-0` forever — archive included, which is the
+    // one with no keyboard route of its own.
+    const sites = [...sidebar.matchAll(/group-hover:opacity-100[^"]*"/g)].map((match) => match[0]);
+    expect(sites.length, "the two hover-revealed controls are gone").toBe(2);
+    for (const site of sites) {
+      expect(site, site).toContain("[@media(hover:none)]:opacity-100");
+    }
+    // A disabled archive button must still look disabled there.
+    expect(sidebar).toContain("disabled:[@media(hover:none)]:opacity-0");
+    // And the timestamp those two are positioned on top of has to get out of
+    // the way at rest too, or they render over it.
+    expect(sidebar).toContain("group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0");
+  });
 });
 
 describe("every way into skill assignment", () => {
@@ -90,8 +107,13 @@ describe("the intake card", () => {
     expect(card.match(/What do you mostly want help with\?/g)).toHaveLength(2); // heading + aria-label
   });
 
-  it("shows itself only while the agent has no skills", () => {
-    expect(card).toContain("if (!needsSetup(skillCount)) return null;");
+  it("shows itself in the composer ONLY while the agent is genuinely new", () => {
+    // `intakeMode` is the widened form of `needsSetup`: it reads the bot's own
+    // title, description and turn count as well as the skill count. Anything
+    // but a genuinely blank agent gets nothing here at all — not even a
+    // collapsed chip. Setup moved to the profile, where you go and ask for it.
+    expect(card).toContain('if (intakeMode(skillCount, bot) !== "question") return null;');
+    expect(card).toContain("export function BotSetupAction(");
   });
 
   it("hands the transcript the same answer, so the question is asked once", () => {
@@ -105,9 +127,11 @@ describe("the intake card", () => {
 
   it("leaves a way back after it is dismissed", () => {
     // The previous setup question was a one-way door: nothing anywhere in the
-    // app could bring it back.
-    expect(card).toContain("Set {bot.name} up");
-    expect(card).toContain("writeDismissed(bot.id, false)");
+    // app could bring it back. The way back is now the bot's own profile,
+    // which is always there — dismissing the composer card is allowed to be
+    // final precisely because of it.
+    expect(card).toContain("Set up this bot");
+    expect(settings).toContain("<BotSetupAction bot={bot} />");
   });
 
   it("configures this bot and never creates another", () => {

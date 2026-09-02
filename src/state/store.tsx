@@ -462,7 +462,7 @@ export interface AppState {
    *  Skills panel has to be able to open it with an agent already chosen —
    *  "add a skill to Bruce" is the same action as assigning from the library,
    *  entered from the other end. `botId` is that pre-fill. */
-  teamLibrary: { open: boolean; botId?: string };
+  teamLibrary: { open: boolean; botId?: string; view?: TeamLibraryView };
   connected: boolean;
   error: string | null;
   mascotMotion: {
@@ -530,6 +530,14 @@ function reconcileSnapshotQueues(
 
 export type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
 
+/** Which half of the library modal opens first.
+ *
+ *  "Add a skill to Bruce" is a different question from "browse teams", and
+ *  landing a person on the team grid after they asked for a skill is how the
+ *  intake's one escape hatch stopped being an escape hatch. Absent means the
+ *  panel's own default. */
+export type TeamLibraryView = "teams" | "skills";
+
 export type Action =
   | {
       type: "hydrate";
@@ -539,7 +547,7 @@ export type Action =
     }
   | { type: "showRoutines" }
   | { type: "showTeamMap" }
-  | { type: "showTeamLibrary"; botId?: string }
+  | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView }
   | { type: "hideTeamLibrary" }
   | { type: "showSkillRecorder" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
@@ -780,7 +788,13 @@ export function reducer(state: AppState, action: Action): AppState {
       // inherit the previous one's pre-fill.
       return {
         ...state,
-        teamLibrary: action.botId ? { open: true, botId: action.botId } : { open: true },
+        teamLibrary: {
+          open: true,
+          // Absent, never `undefined` — a later open without an agent must not
+          // inherit the previous one's pre-fill, and the same goes for the view.
+          ...(action.botId ? { botId: action.botId } : {}),
+          ...(action.view ? { view: action.view } : {}),
+        },
       };
     case "hideTeamLibrary":
       return { ...state, teamLibrary: { open: false } };

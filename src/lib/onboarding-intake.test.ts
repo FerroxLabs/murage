@@ -22,8 +22,11 @@ import {
   applyProfileToBot,
   assignSkillsToBot,
   chooseIntakeProfile,
+  chooseIntakeSkills,
   describeIntakeSkill,
   intakeProfileMatches,
+  intakeSkillMatches,
+  INTAKE_LOOSE_SKILL_MAX,
   intakeQuery,
   intakeTopicTokens,
   librarySkillId,
@@ -83,6 +86,23 @@ async function suggestProfile(query: string) {
 
 const skillIds = (chosen: Awaited<ReturnType<typeof suggestProfile>>) =>
   (chosen?.skills ?? []).map((skill) => skill.id);
+
+/** THE WHOLE ROUTE, composed the way `GET /api/library/suggest` composes it —
+ *  tokens first, and the tokens gate BOTH halves of the answer. Reproduced
+ *  here rather than imported because index.ts boots a server on import; a
+ *  source-contract test below pins that the route still reads like this. */
+async function suggest(query: string): Promise<{ profile: string | null; skills: string[] }> {
+  const tokens = intakeTopicTokens(query);
+  const chosen = tokens.length === 0 ? null : await suggestProfile(query);
+  if (chosen) return { profile: chosen.entry.slug, skills: [] };
+  // Deliberately NOT short-circuited on empty tokens the way the route is.
+  // The route's guard saves an FTS query and is pinned by its own contract
+  // test; running the real search here means these cases depend on the GATE,
+  // so removing the gate turns them red rather than leaning on a guard that
+  // happens to sit in front of it.
+  const ranked = (await searchSkills(query, 12)) as unknown as IntakeSkill[];
+  return { profile: null, skills: chooseIntakeSkills(query, ranked).map((skill) => skill.id) };
+}
 
 // ── 1. the gate ───────────────────────────────────────────────────────
 
@@ -223,6 +243,90 @@ describe("against the shipped catalogue and skill index", () => {
   });
 });
 
+describe("the fallback, which is where the headline bug lived", () => {
+  it('ANSWERS "hi" WITH NOTHING AT ALL', async () => {
+    // The bug, in the user's own words: typing "hi" produced eight pre-ticked
+    // irrelevant skills. "hi" is two characters — it survives no token rule —
+    // so there is nothing it could be relevant TO, and the ungated
+    // `searchSkills(q, 8)` behind it was the entire defect.
+    expect(intakeTopicTokens("hi")).toEqual([]);
+    expect(await suggest("hi")).toEqual({ profile: null, skills: [] });
+  });
+
+  it("answers filler with nothing, however many words the filler is", async () => {
+    for (const q of ["hi", "hey there", "help me", "what should I do", "NOT OR AND", "", "   "]) {
+      expect(await suggest(q), q).toEqual({ profile: null, skills: [] });
+    }
+  });
+
+  it('answers "help me with stuff and things" with nothing', async () => {
+    // H2. Every word here is a placeholder for the topic rather than the
+    // topic. Before the stopwords landed this sentence carried three "topic"
+    // words and bm25 duly ranked something.
+    expect(intakeTopicTokens("help me with stuff and things")).toEqual([]);
+    expect(await suggest("help me with stuff and things")).toEqual({ profile: null, skills: [] });
+  });
+
+  it("offers at most three loose skills, never eight", async () => {
+    expect(INTAKE_LOOSE_SKILL_MAX).toBe(3);
+    const ranked = (await searchSkills("writing blog posts", 12)) as unknown as IntakeSkill[];
+    expect(ranked.length).toBeGreaterThan(3);
+    expect(chooseIntakeSkills("writing blog posts", ranked).length).toBeLessThanOrEqual(3);
+  });
+
+  it("gates a loose skill the same way it gates a profile", () => {
+    const skill: IntakeSkill = {
+      id: "chart-analysis",
+      name: "Chart analysis",
+      description: "Read a price chart.",
+      terms: ["trading"],
+    };
+    expect(intakeSkillMatches(skill, ["trading"])).toBe(true);
+    expect(intakeSkillMatches(skill, ["invoices"])).toBe(false);
+    expect(intakeSkillMatches(skill, [])).toBe(false);
+    // The ranked order survives the gate — it is a filter, not a re-rank.
+    const other: IntakeSkill = { id: "b", name: "b", description: "trading desk", terms: [] };
+    expect(chooseIntakeSkills("trading", [skill, other]).map((s) => s.id)).toEqual(["chart-analysis", "b"]);
+  });
+});
+
+describe("vague input, and the one sentence the card prints on itself", () => {
+  it('"CHASING INVOICES" — the card\'s own example — gets a relevant answer, not a stranger', async () => {
+    // WRITTEN FIRST. The card literally prints this phrase as an example of
+    // what to type, so answering it with nothing would be telling a person to
+    // type something and then refusing it.
+    //
+    // Measured against the shipped corpus: bm25 ranks exactly one profile for
+    // this sentence — IGNITION, "takes a total beginner from blank page to one
+    // live income asset in 7 days" — which reaches the gate only through the
+    // prefix `invoices`→`invoice` and is the textbook top-ranked stranger. The
+    // right answer is the receivables SKILL, offered as something to learn.
+    const answer = await suggest("chasing invoices");
+    expect(answer.profile, JSON.stringify(answer)).not.toBe("ignition");
+    expect(answer.skills.length, JSON.stringify(answer)).toBeGreaterThan(0);
+    expect(answer.skills.join(" ")).toMatch(/invoic|receivable|billing|payment/);
+  });
+
+  it("still stems the one plural it ever stemmed", async () => {
+    // The 4-char prefix rule is load-bearing: charts→chart, invoices→invoice.
+    expect((await suggestProfile("reading my trading charts"))?.entry.slug).toBe("smart-trader");
+    expect(intakeProfileMatches({
+      slug: "t", name: "Smart Trader", summary: "reads a chart", category: "Markets", skills: ["chart-analysis"],
+    }, ["charts"])).toBe(true);
+  });
+
+  it("will not let one loose prefix out of a whole sentence carry a profile", () => {
+    // Two topic words, one weak prefix hit, no whole word: not a match.
+    const entry: IntakeCatalogEntry = {
+      slug: "reader", name: "Reader", summary: "reading group notes", category: "Life", skills: ["x"],
+    };
+    expect(intakeProfileMatches(entry, ["readings", "invoices"])).toBe(false);
+    // The same single hit, from a one-word answer, still counts — there is no
+    // second token to corroborate with and `charts`→`chart` depends on it.
+    expect(intakeProfileMatches(entry, ["readings"])).toBe(true);
+  });
+});
+
 // ── 3. the wire ───────────────────────────────────────────────────────
 
 interface Call {
@@ -328,6 +432,35 @@ const applyRouteBody = (() => {
   expect(start, "the assistant-profile route is missing entirely").toBeGreaterThan(-1);
   return serverSource.slice(start, serverSource.indexOf("m = path.match", start + 10));
 })();
+
+/** The suggest route's body, so the composition the tests above reproduce can
+ *  be pinned against the real source rather than assumed. */
+const suggestRouteBody = (() => {
+  const start = serverSource.indexOf('path === "/api/library/suggest"');
+  expect(start, "the suggest route is gone").toBeGreaterThan(-1);
+  return serverSource.slice(start, serverSource.indexOf("m = path.match", start));
+})();
+
+describe("GET /api/library/suggest — the route's own contract", () => {
+  it("computes the topic tokens FIRST and gates both halves on them", () => {
+    expect(suggestRouteBody).toContain("const tokens = intakeTopicTokens(q);");
+    expect(suggestRouteBody).toContain("tokens.length === 0 ? null : await intakeProfileFor(q)");
+    expect(suggestRouteBody).toContain("tokens.length === 0");
+  });
+
+  it("NEVER returns an ungated skill search", () => {
+    // This is the one line the headline bug lived on:
+    //     const skills = profile ? [] : await searchSkills(q, INTAKE_FALLBACK_SKILLS);
+    // eight results, no relevance gate, for any string at all.
+    expect(suggestRouteBody).toContain("chooseIntakeSkills(");
+    expect(suggestRouteBody).not.toMatch(/:\s*await searchSkills\(q,\s*INTAKE_FALLBACK_SKILLS\)/);
+    expect(serverSource).not.toContain("INTAKE_FALLBACK_SKILLS");
+  });
+
+  it("caps what reaches the card at the shared maximum", () => {
+    expect(suggestRouteBody).toContain("INTAKE_LOOSE_SKILL_MAX");
+  });
+});
 
 describe("POST /api/bots/:id/assistant-profile", () => {
   it("refuses any surface but the desktop", () => {

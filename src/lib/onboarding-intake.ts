@@ -49,6 +49,11 @@ const INTAKE_STOPWORDS = new Set([
   "please", "really", "should", "some", "someone", "something", "that", "the", "them", "then",
   "there", "they", "this", "using", "want", "wanted", "was", "what", "when", "where", "which",
   "who", "why", "will", "with", "would", "you", "your",
+  // "help me with stuff and things" is a real answer a real person types, and
+  // every one of these words is a placeholder for the topic rather than the
+  // topic. Without them the sentence carried three "topic" words and bm25
+  // duly ranked something, so the card answered a question nobody asked.
+  "stuff", "thing", "things", "task", "tasks", "work", "everything", "anything", "lots", "bit",
 ]);
 
 /** How many topic words one answer contributes. Beyond this the answer is a
@@ -105,9 +110,79 @@ export function intakeProfileMatches(
   tokens: readonly string[],
   extra: readonly string[] = [],
 ): boolean {
+  return vocabularyMatches(intakeVocabulary(entry, extra), tokens);
+}
+
+/** The gate itself, over any bag of words: a profile's vocabulary or a single
+ *  skill's.
+ *
+ *  ONE WHOLE WORD IS ENOUGH — "chasing invoices" must reach the profile whose
+ *  own copy says "invoices", because that sentence is the example printed on
+ *  the card. A PREFIX ALONE IS NOT, once the person gave us more than one word
+ *  to work with: `charts`→`chart` is a real plural, but a lone four-character
+ *  prefix out of a five-word sentence is a coincidence dressed as a match.
+ *
+ *  `Math.min(2, tokens.length)` rather than a flat 2 is deliberate and load
+ *  bearing: a one-word answer has no second token to corroborate with, and
+ *  demanding one there would break `charts`→`chart` and `invoices`→`invoice`,
+ *  which is the only stemming this module has. */
+function vocabularyMatches(vocabulary: ReadonlySet<string>, tokens: readonly string[]): boolean {
   if (tokens.length === 0) return false;
-  const vocabulary = intakeVocabulary(entry, extra);
-  return tokens.some((token) => tokenHits(vocabulary, token));
+  const needed = Math.min(2, tokens.length);
+  let hits = 0;
+  for (const token of tokens) {
+    if (vocabulary.has(token)) return true;
+    if (!tokenHits(vocabulary, token)) continue;
+    hits += 1;
+    if (hits >= needed) return true;
+  }
+  return false;
+}
+
+/** How many loose skills the fallback may offer.
+ *
+ *  Was eight, unchecked-by-nobody and pre-ticked by the card, which is how
+ *  typing "hi" produced eight pre-selected strangers in a 1,379px-tall card.
+ *  Three is a list a person reads; eight is a list a person scrolls past and
+ *  accepts. */
+export const INTAKE_LOOSE_SKILL_MAX = 3;
+
+/** Every word one skill offers the gate, as a set. */
+export function intakeSkillVocabulary(skill: IntakeSkill): Set<string> {
+  return new Set(
+    describeIntakeSkill(skill)
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean),
+  );
+}
+
+/** Does this loose skill actually talk about what the person asked for? */
+export function intakeSkillMatches(skill: IntakeSkill, tokens: readonly string[]): boolean {
+  return vocabularyMatches(intakeSkillVocabulary(skill), tokens);
+}
+
+/** The loose-skill fallback, gated exactly the way a profile is.
+ *
+ *  THE HEADLINE BUG LIVED HERE. The route fell through to `searchSkills(q, 8)`
+ *  with no gate at all, so an answer with no topic words in it — "hi" — still
+ *  came back with eight skills, and the card pre-ticked every one. An empty
+ *  token list now yields an empty list, full stop: there is nothing a skill
+ *  could be relevant TO, so the honest answer is none. */
+export function chooseIntakeSkills(
+  query: string,
+  ranked: readonly IntakeSkill[],
+  max: number = INTAKE_LOOSE_SKILL_MAX,
+): IntakeSkill[] {
+  const tokens = intakeTopicTokens(query);
+  if (tokens.length === 0) return [];
+  const kept: IntakeSkill[] = [];
+  for (const skill of ranked) {
+    if (!intakeSkillMatches(skill, tokens)) continue;
+    kept.push(skill);
+    if (kept.length >= max) break;
+  }
+  return kept;
 }
 
 /** The id that names a skill inside `skills-library/`.

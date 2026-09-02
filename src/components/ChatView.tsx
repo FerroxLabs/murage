@@ -1405,7 +1405,19 @@ export function ChatView({ bot }: { bot: Bot }) {
           request can restore the old task without spilling into the newly
           selected one. ArrowUp-to-edit stays gated on busy because editing
           rewinds the thread, which a live turn forbids (the server 409s it). */}
-      <div ref={composerDockRef} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
+      {/* THE DOCK CANNOT BE TALLER THAN THE PANE IT IS DOCKED IN. The intake
+          card bounds itself against the visual viewport, which is the right
+          number when a keyboard is up; `max-h-full` is the second belt, in the
+          coordinate space that actually contains the composer. `flex-col` +
+          `min-h-0` is what lets the card be the thing that gives, so the
+          composer keeps its size and the transcript keeps its padding — the
+          dock's measured height is what `useComposerDockPad` feeds back into
+          the transcript, so a dock that could exceed the pane would silently
+          pad the transcript out of existence. */}
+      <div
+        ref={composerDockRef}
+        className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2] flex max-h-full flex-col"
+      >
       {/* The setup question, docked with the composer rather than buried at
           the top of the transcript: it has to still be reachable after the
           bot has said hello, and it must not scroll away. It renders itself

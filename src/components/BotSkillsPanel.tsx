@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { api, useStore, type Bot } from "@/state/store";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { cn } from "@/lib/cn";
+import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Switch } from "./SettingsPrimitives";
 
@@ -277,6 +278,15 @@ export function createSkillsStore({
       // silent: the list is already on screen, and blanking it to "Loading…"
       // for a refresh the user did not ask for reads as a fault.
       await load({ silent: true });
+      // The shared count is now wrong, and it is the number that decides
+      // whether this agent still looks unconfigured. Removing the last skill
+      // has to be able to bring the setup question back on its own; without
+      // this the cached count says "3" until the page reloads.
+      //
+      // AFTER the reload, not before: this notifies every `useSkillCount`
+      // subscriber, and re-rendering the panel this removal is running inside
+      // while its own refresh is still in flight is not a race worth having.
+      invalidateSkillCount(botId);
     } catch (cause) {
       setRowError(skill.name, skillErrorMessage(cause, `Could not remove “${skill.name}”.`));
     } finally {
@@ -632,7 +642,6 @@ export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => v
       </div>
       <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
         What {bot.name} knows how to do. Open one to read its instructions before you switch it on.
-        {authoringEnabled ? " Use /learn in chat to add another." : ""}
       </div>
       <SkillsBody
         botName={bot.name}
