@@ -93,6 +93,25 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
   return { status: res.status, body: await res.json() };
 };
 
+/** The same call, made as the person at the keyboard.
+ *
+ * `requestSurface` defaults to `remote`, so a bare `api()` is a *remote*
+ * caller — which is what most of this file wants to be. Routes that decide
+ * which binary the engine runs are desktop-only, and asserting them through
+ * this helper is what keeps "desktop-only" a statement about the request
+ * rather than about the test runner's address. */
+const desktopApi = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      "x-murage-surface": "desktop",
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json() };
+};
+
 const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = 5_000): Promise<T> => {
   let parsed: unknown;
   await expect.poll(() => {
@@ -5378,20 +5397,20 @@ describe("resumable event stream", () => {
 describe("instance CLI override API", () => {
   it("round-trips a set, clear, and rejects bad input", async () => {
     // ghost is the fixture's one shadow instance (unknown driver)
-    const set = await api("PATCH", "/api/instances/ghost", { cli: "/opt/ghost/wrapper sub" });
+    const set = await desktopApi("PATCH", "/api/instances/ghost", { cli: "/opt/ghost/wrapper sub" });
     expect(set.status).toBe(200);
     const setRow = set.body.instances.find((i: any) => i.instanceId === "ghost");
     expect(setRow.cli).toBe("/opt/ghost/wrapper sub");
 
     // persisted for real: the next fleet rebuild reads it back
-    const cleared = await api("PATCH", "/api/instances/ghost", { cli: "" });
+    const cleared = await desktopApi("PATCH", "/api/instances/ghost", { cli: "" });
     expect(cleared.status).toBe(200);
     const clearedRow = cleared.body.instances.find((i: any) => i.instanceId === "ghost");
     expect(clearedRow.cli).toBeUndefined();
 
-    expect((await api("PATCH", "/api/instances/nope", { cli: "/x" })).status).toBe(404);
-    expect((await api("PATCH", "/api/instances/ghost", { cli: 42 })).status).toBe(400);
-    expect((await api("PATCH", "/api/instances/ghost", { cli: "/x\ny" })).status).toBe(400);
+    expect((await desktopApi("PATCH", "/api/instances/nope", { cli: "/x" })).status).toBe(404);
+    expect((await desktopApi("PATCH", "/api/instances/ghost", { cli: 42 })).status).toBe(400);
+    expect((await desktopApi("PATCH", "/api/instances/ghost", { cli: "/x\ny" })).status).toBe(400);
   });
 
   it("echoes a path-ish name back as the only cli candidate", async () => {
@@ -5402,7 +5421,7 @@ describe("instance CLI override API", () => {
   });
 
   it("reports a missing binary as a failed probe with install info", async () => {
-    const res = await api("POST", "/api/cli-test", { cli: "/no/such/binary-anywhere", driver: "claudeAgent" });
+    const res = await desktopApi("POST", "/api/cli-test", { cli: "/no/such/binary-anywhere", driver: "claudeAgent" });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(false);
     expect(res.body.message).toContain("isn't installed");
@@ -5416,7 +5435,7 @@ describe("instance CLI override API", () => {
       `if (process.argv.slice(2).join(" ") !== "fixed --version") process.exit(9);\nif (process.env.COMPOSIO_API_KEY) process.exit(8);\nconsole.log("wrapper-ok");\n`,
     );
     const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} fixed`;
-    const res = await api("POST", "/api/cli-test", { cli });
+    const res = await desktopApi("POST", "/api/cli-test", { cli });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, version: "wrapper-ok" });
   });
@@ -5425,7 +5444,7 @@ describe("instance CLI override API", () => {
     const script = join(home, "cli-noisy-probe.mjs");
     writeFileSync(script, `process.stdout.write("x".repeat(70 * 1024));\n`);
     const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`;
-    const res = await api("POST", "/api/cli-test", { cli, driver: "claudeAgent" });
+    const res = await desktopApi("POST", "/api/cli-test", { cli, driver: "claudeAgent" });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(false);
     expect(res.body.message).toContain("more than 64 KiB");
@@ -5435,9 +5454,48 @@ describe("instance CLI override API", () => {
   it("rejects overlapping provider configuration writes", async () => {
     const slowConfigWrite = api("PUT", "/api/config", { box: { token: "box_slow" } });
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const overlapping = await api("PATCH", "/api/instances/ghost", { cli: "/tmp/ghost-overlap" });
+    const overlapping = await desktopApi("PATCH", "/api/instances/ghost", { cli: "/tmp/ghost-overlap" });
     expect(overlapping.status).toBe(409);
     expect((await slowConfigWrite).status).toBe(200);
+  });
+
+  // Choosing the engine binary is choosing what code runs on the machine.
+  // Behind the tailnet that is the owner's own decision; through a browser
+  // door or a paired phone it is remote code execution in one request, so
+  // the harness refuses on its own rather than trusting a list in another
+  // package to keep saying no.
+  it("refuses both execution-policy routes on every surface but the desktop", async () => {
+    // A real, harmless binary: if the gate ever regresses, this test fails by
+    // reporting a successful probe rather than by failing to prove anything.
+    const probe = await api("POST", "/api/cli-test", { cli: "/bin/echo" });
+    expect(probe.status).toBe(404);
+    expect(probe.body).toEqual({ error: "no such route" });
+
+    const override = await api("PATCH", "/api/instances/ghost", { cli: "/bin/echo" });
+    expect(override.status).toBe(404);
+    expect(override.body).toEqual({ error: "no such route" });
+
+    // 404 and not 403: the refusal must not confirm the route exists.
+    expect(probe.status).not.toBe(403);
+    expect(override.status).not.toBe(403);
+
+    // ...and the refusal was real, not a persisted write reported as denied.
+    const instances = await desktopApi("GET", "/api/instances");
+    const ghost = instances.body.instances.find((i: any) => i.instanceId === "ghost");
+    expect(ghost?.cli).toBeUndefined();
+  });
+
+  // EventSource cannot set headers, so `?surface=desktop` is honoured as an
+  // opt-out. That is fine for a loopback renderer and fatal for a door a
+  // browser can type a URL into: the door must stamp `x-murage-companion: 1`,
+  // which is checked first and cannot be overridden from the query string.
+  it("cannot be unlocked from the query string once the door marks the request remote", async () => {
+    const forged = await fetch(`${BASE}/api/cli-test?surface=desktop`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-murage-companion": "1" },
+      body: JSON.stringify({ cli: "/bin/echo" }),
+    });
+    expect(forged.status).toBe(404);
   });
 });
 
