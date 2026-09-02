@@ -323,7 +323,24 @@ describe("the front gate", () => {
     }
   });
 
-  it("refuses a request with no Sec-Fetch-Site at all", async () => {
+  // Renamed and inverted, because the belief it encoded is measurably false.
+  //
+  // `Sec-Fetch-*` is a SECURE-CONTEXT feature. Over plain http:// to a host
+  // that is not localhost — exactly what this door is until the tailnet has
+  // certificates — Chrome sends none of the three headers. Captured from
+  // Sean's Android Chrome 152 hitting this very door: site, mode and dest all
+  // absent, on `/enter` and on `/favicon.ico`, over the MagicDNS name and the
+  // raw tailnet address alike.
+  //
+  // So refusing an absent header did not keep non-browsers out. It kept
+  // EVERY browser out, which is why the door was unusable from a phone while
+  // hand-built requests carrying the headers sailed through. The protection
+  // that survives without it is the Host allowlist above, plus the Origin
+  // rules below: a cross-origin fetch() or EventSource carries Origin and is
+  // refused, and anything with no Origin cannot read the answer, because this
+  // door never sends a CORS header. When the header IS present it is still
+  // enforced in full — see the same-site case above, which still passes.
+  it("serves a browser that sends no Sec-Fetch headers, because plain HTTP has none", async () => {
     const answer = await new Promise<Answer>((resolve, reject) => {
       const req = request(
         {
@@ -344,7 +361,8 @@ describe("the front gate", () => {
       req.on("error", reject);
       req.end();
     });
-    expect(answer.status).toBe(403);
+    // Reaches the session check rather than the origin gate: 401, not 403.
+    expect(answer.status).toBe(401);
   });
 
   it("lets a typed URL reach the shell and nothing else", async () => {
@@ -401,7 +419,15 @@ describe("the front gate", () => {
     const host = "macbook.tail0a48a4.ts.net:8813";
     expect(ask({ host, "sec-fetch-site": "same-origin" })).toBeNull();
     expect(ask({ host: "evil.example", "sec-fetch-site": "same-origin" })?.error).toBe("forbidden: unexpected host");
-    expect(ask({ host })).not.toBeNull();
+    // No Sec-Fetch at all now passes the ORIGIN gate, because plain HTTP
+    // never carries it — and that is not a hole: the session check downstream
+    // still answers 401, and a caller with no `Origin` cannot read this
+    // door's reply, since it never sends a CORS header. What it stops being
+    // is the thing that locked every real phone out.
+    expect(ask({ host })).toBeNull();
+    // A cross-origin fetch() or EventSource DOES carry Origin, and that is
+    // still refused — this is the rule doing the real work now.
+    expect(ask({ host, origin: "http://evil.example" })).not.toBeNull();
     expect(ask({ host, "sec-fetch-site": "same-site" })).not.toBeNull();
     expect(ask({ host, "sec-fetch-site": "none" })).not.toBeNull();
     expect(ask({ host, "sec-fetch-site": "none" }, "GET", "/")).toBeNull();
@@ -431,7 +457,15 @@ describe("sessions", () => {
 
     const set = String(answer.headers["set-cookie"]?.[0] ?? "");
     expect(set).toContain("HttpOnly");
-    expect(set).toContain("SameSite=Strict");
+    // Lax, not Strict — and this is load-bearing, not a preference. Strict
+    // withholds the cookie on every cross-site NAVIGATION, so tapping a link
+    // to your own machine from a chat app or a mail client arrives signed
+    // out. That is exactly how Sean arrived, and the door told him "Not
+    // signed in" while his session sat on disk with three months left.
+    // Lax still withholds it from cross-site subrequests and cross-site
+    // POSTs, which is the part CSRF actually needs.
+    expect(set).toContain("SameSite=Lax");
+    expect(set).not.toContain("SameSite=Strict");
     expect(set).toContain("Path=/");
     // Host-only. `ts.net` is a public suffix, so a Domain cookie would be
     // scoped to every node in the tailnet.
@@ -882,9 +916,14 @@ describe("the door a person actually taps", () => {
         `a tapped link sending Sec-Fetch-Site: ${site} must reach the shell`,
       ).toBeNull();
     }
-    // A browser too old to send Sec-Fetch at all is STILL refused — see the
-    // note in originGate. Pinned here so widening it is a deliberate act.
-    expect(ask({ accept: "text/html" })).toMatchObject({ status: 403 });
+    // And the case that was the whole bug: NO Sec-Fetch headers at all.
+    // They are a secure-context feature; over plain http:// to a non-localhost
+    // host, which is what this door is until the tailnet has certificates,
+    // Chrome sends none of them. Measured from Android Chrome 152 against
+    // this door: site, mode and dest all absent, on the page AND on
+    // /favicon.ico, over both the MagicDNS name and the raw address.
+    expect(ask({ accept: "text/html" })).toBeNull();
+    expect(ask({ accept: "image/avif,image/webp,*/*" }, "/favicon.ico")).toBeNull();
     // ...INCLUDING when the browser attaches an Origin to that navigation,
     // which Safari does when the link is opened from another app, and which
     // becomes `null` after a redirect or from a sandboxed webview. Opening
