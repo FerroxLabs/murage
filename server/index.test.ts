@@ -5756,6 +5756,35 @@ describe("remote surfaces see only the conversations a person can see", () => {
     expect(JSON.stringify(desktop.body)).toContain("firehose probe zeta");
   }, 40_000);
 
+  // The renderer cannot tell which door it came through on its own —
+  // `window.muragebox` is absent whenever the desktop runs against the Vite
+  // dev server, which is how it is developed — so the harness, which is the
+  // thing that read the markers, reports the answer here. Both surfaces may
+  // call this route, which is what makes it usable as the seam.
+  it("tells the renderer which surface it is on, and cannot be talked out of it", async () => {
+    const desktop = await desktopApi("GET", "/api/config");
+    expect(desktop.status).toBe(200);
+    expect(desktop.body.surface).toBe("desktop");
+
+    // What the door actually sends: it stamps the companion marker into a
+    // fresh header object, so the renderer's own desktop marker rides along
+    // and must lose.
+    const throughTheDoor = await fetch(`${BASE}/api/config?surface=desktop`, {
+      headers: { "x-murage-companion": "1", "x-murage-surface": "desktop" },
+    });
+    expect((await throughTheDoor.json()).surface).toBe("remote");
+
+    // Node joins duplicate headers into "1, 1"; a value check read that as
+    // "not a companion" and handed back "desktop".
+    const duplicated = await fetch(`${BASE}/api/config?surface=desktop`, {
+      headers: [
+        ["x-murage-companion", "1"],
+        ["x-murage-companion", "1"],
+      ] as unknown as HeadersInit,
+    });
+    expect((await duplicated.json()).surface).toBe("remote");
+  });
+
   it("keeps a companion scoped even when it appends the desktop marker itself", async () => {
     // proxy.ts forwards req.url whole, so the query string is the device's
     // to write. The header is checked first for exactly this reason.

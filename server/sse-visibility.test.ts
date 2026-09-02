@@ -60,6 +60,24 @@ describe("requestSurface", () => {
     expect(requestSurface({}, new URLSearchParams("surface=1"))).toBe("remote");
   });
 
+  // Node folds duplicate request headers into ONE comma-joined string, so two
+  // `x-murage-companion: 1` headers arrive as `"1, 1"`. The check used to read
+  // the value — `=== "1"` — which calls that "not a companion", falls through
+  // to the desktop markers, and serves a request carrying `?surface=desktop`
+  // as the local app. The marker is now read as presence, so no spelling of it
+  // widens the answer.
+  it("cannot be widened by sending the companion marker twice", () => {
+    expect(
+      requestSurface({ "x-murage-companion": "1, 1" }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`)),
+    ).toBe("remote");
+    // the array shape some servers hand over, and the empty and odd values too
+    expect(requestSurface({ "x-murage-companion": ["1", "1"] as unknown as string[] })).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "" }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "yes" }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("remote");
+    // absent still means the desktop may announce itself
+    expect(requestSurface({}, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("desktop");
+  });
+
   it("keeps a companion scoped even when it forges the desktop marker", () => {
     // proxy.ts sets x-murage-companion into a fresh header object, so a
     // device cannot clear it — and because that check runs first, a device
