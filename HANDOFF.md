@@ -1,5 +1,180 @@
 # Murage — session handoff
 
+> **Read this section, then §NEXT. Everything below `--- HISTORY ---` is the
+> record of earlier sessions and is not a to-do list.**
+
+## THE PROTOCOL — Sean set this explicitly, follow it exactly
+
+For every item in §NEXT:
+
+1. **Research it properly.** Verify every claim against the code before planning
+   on it. This repo has produced *nine* cases where measurement contradicted a
+   written plan. Assume the same until you have checked.
+2. **Cross-audit the plan** before building — independent agents, different
+   angles (feasibility · experience · local-first & security). One generic
+   reviewer finds one class of problem.
+3. **Execute.**
+4. **Cross-audit the result, ONCE.**
+5. **Fix only Critical and High.** Record Medium and Low; do not fix them.
+
+**Swarm it.** Parallel subagents on strictly disjoint files. That is not
+optional flavour — it is the only thing that made the last two sessions fast.
+
+## LANE DISCIPLINE — this cost real time twice, do not relearn it
+
+- **Assign every agent an explicit file list, and an explicit forbidden list.**
+  Two agents in one file produced duplicate imports and a silently-clobbered
+  288-line change.
+- **Agents never run a git command that writes.** The orchestrator commits, by
+  explicit path, after checking `git diff --cached --name-only` for strays.
+- **After adding a file, re-run the suite for the lane you touched.** A commit
+  shipped red because the server suite was run after a *renderer* test landed.
+- **A workflow whose `.output` file is 0 bytes is RUNNING, not dead.** Check
+  with `TaskStop`/`TaskOutput`, never file size. Believing otherwise started
+  the collision above.
+- **Negative-control every test**: make it pass, revert the production change,
+  confirm RED, restore, report per test. Several controls have come back GREEN
+  and been rewritten — that is the discipline working. A test nobody has seen
+  fail is not a test.
+
+## STATE — everything is committed and pushed to `main`
+
+Suite **3224 passed / 1 failed**. The one failure is `server/control-murage.test.ts`,
+environment-only: it hardcodes `["claude"]` and this machine has a real `qwen`
+on PATH. All four gates exit 0 — `tsc -b`, `tsc -p tsconfig.server.json`,
+`tsc -p tsconfig.companion.build.json`, `node scripts/check-skin-contrast.mjs`.
+
+Landed this session, newest first: light-theme surface inversion · the usage
+meter · the light-mode wordmark · **the local skill-install route** · Composio
+through the broker · the library state lift · FTS search over 2,237 skills ·
+local-first catalog (122/122 offline) · stale skills copy + un-dismiss · the
+three-tier org model.
+
+---
+
+## NEXT — in this order
+
+### 1. Skill assignment, both directions — START HERE, fully unblocked
+Sean's design: **one action, two entry points.** From the library, pick a skill
+→ "Assign to agent". From an agent's Skills panel, "Add a skill" → opens the
+browser with that agent already chosen. Both collapse to `assign(skillId, botId)`.
+
+Everything it needs now exists:
+- `POST /api/bots/:id/skills/library` (`server/index.ts`, commit `2dab7893`) —
+  desktop-surface-only, bounded at 25, traversal-gated, records provenance as
+  `library:<id>@<version>`, arrives enabled.
+- `showTeamLibrary` action + `state.teamLibrary.botId` (`97f507f0`).
+- `TeamLibraryPanel` already accepts `preselectedBotId` and `SkillRow` already
+  has an action slot rendering nothing.
+- `BotSkillsPanel` needs `onBrowse?: () => void` — a 4-line change the copy
+  lane described precisely and deliberately left out.
+
+**Constraints.** No right-click-only affordance — `Sidebar.tsx` exposes its bot
+menu solely via `onContextMenu` and iOS fires no `contextmenu` event; that is a
+live defect, not a hypothesis. Button says the outcome ("Add to Bruce"), not the
+category. With exactly one bot, skip the picker entirely.
+
+### 2. The self-assembling assistant
+Plan at `docs/plans/self-assembling-assistant/PLAN.md`. **Three audits rewrote
+its sequence — read them before the plan**, in `scratchpad/audit-{feasibility,experience,local}.md`.
+
+The single most important finding: **profile-first, retrieval as fallback.**
+Narrowing to a matched profile's own declared skills gave **11/11 correct with
+zero noise and no model judgement**, where free search put `car-buying-guide` at
+rank 3. That makes the expensive half also the unnecessary half — **~60–85 h
+profile-only, not 187**.
+
+Known-broken in the plan as written, all measured:
+- **Accept creates a NEW bot** via `/api/teams/import` (`seedMessages: false`)
+  and auto-selects it, while the assembled path configures the bot you are in.
+  Same button, two outcomes, 5s toast, no Undo. **Decide this first — one
+  sentence settles everything downstream.**
+- The precision@8 gate is unsound four ways (n=20 → CI ~[0.38,0.82]; undefined
+  at variable k; no recall term; mean hides that 3/10 sentences scored ≤50%
+  **with junk at rank 1–2**).
+- No query sanitiser: **13 of 20 realistic inputs throw** FTS5 syntax errors,
+  and natural sentences return 0 rows because the implicit operator is AND.
+- The install route takes bare ids with no provenance argument, so §3's
+  first-party boundary does not exist in the API. And `delegate_bot` →
+  `mirrorExchange` can put agent text in a fresh bot's thread — the intake
+  trigger. **An agent must not be able to drive another agent's skill install.**
+
+### 3. Phase B — the browser door / WebUI. **Worst current state in the app.**
+`PhoneSetupFlow.tsx:1061,1136,1141` still says *"Open Murage on your iPhone"*
+and *"Scan with your iPhone"* about an app that no longer exists. Retiring iOS
+without B7 left the product advertising a dead thing.
+
+Unbuilt: `companion/src/browser.ts` on **8813** (8812 is taken), sessions with
+the credential in the URL **fragment**, registering the browser stream with
+`connectedDeviceTracker` so revocation kills it, **B7 onboarding** (two separate
+questions: "enable the web UI?" off by default, and "connect a device?"), and
+the Tailscale ACL — 5 peers, none today.
+
+**Design change since the plan:** front it with `tailscale serve` rather than a
+hand-rolled listener reading cert files. Tailscale then owns TLS *and renewal*.
+The cert expires **30 Nov 2026** and Tailscale renews only when something asks;
+`serve` asks, a file-reading listener does not. `serve` is tailnet-only —
+`funnel` is the public one and Murage must never use it.
+
+### 4. Phase C rows C2 / C6 / C7 — the phone is still half-broken
+C6 is the sharpest: **six per-message controls measure opacity 0** at 390px with
+`any-hover: hover` false — Copy, Regenerate, Reply, Pin, Speak, Archive. The
+entire per-message action set, invisible and unreachable. C7: the bot row menu
+and TaskPicker rename are `onContextMenu`-only, dead on iOS. C2: 52 tap targets.
+Also queued: sidebar near-alignment (rows x=8 vs x=12, icons x=21 vs x=24) and
+the settings nav hiding 6 of 8 sections behind a scroll with no affordance.
+
+### 5. Auto-update — engines and the app, with a release announcement
+Sean's ask, OpenMaus-style. Fuigo is bundled and pinned by SHA-256; the hybrid
+is ship-bundled then update quietly in the background so nobody ever waits.
+
+### 6. Composio billing
+Everything runs through Ferrox's broker on Sean's key, deliberately. `activeBroker()`
+in `server/composio.ts` is the single decision point and `brokerRequest` takes
+`cfg` so no caller can route around it — **flipping to own-key-wins is one line.**
+Nothing in the UI says which mode is active; fine while free, a real problem the
+day it is not.
+
+---
+
+## OPEN — needs Sean, not code
+
+- **28 of 58 solo profiles carry ZERO skills.** They ship a *playbook* instead,
+  and playbooks have **no UI surface anywhere in the app**. Half the assistant
+  catalog installs a personality and no capability. Content, not code.
+- **Fuigo artifact size**: ~59 MB compressed added per mac arch.
+- **`fuigo-win32-arm64@1.0.1` is unpublished** (registry 404s). **Not a blocker** —
+  the app ships Windows x64 only and Windows-on-ARM emulates x64. Only affects
+  someone running `npx fuigo` directly on ARM.
+- **`docs/plans/skins/THEME-COLLAPSE.md` is stale** — it documents the old
+  panel/app assignment, fixed in `28dabbce`.
+
+## GOTCHAS THAT COST TIME
+
+- Use `rtk proxy npx vitest …`. A bare `npx vitest` is swallowed by a shell hook
+  and prints nothing. `rtk`'s cached `sed`/`grep`/`git` output has also gone
+  stale mid-session — prefer `Read` and `rtk proxy git` when it matters.
+- Dev mode does **not** start the harness. Electron loads Vite on 5199 and you
+  run `node --experimental-strip-types server/index.ts` yourself. Chasing this
+  as a bug cost ten minutes.
+- `pkill -f murage-app` also kills Vite — it runs from the same directory.
+- Renderer fetches must carry `x-murage-surface: desktop` or they silently see
+  nothing (`src/lib/desktop-surface.test.ts`).
+- The route `/skills/([a-z0-9-]+)` matches `/skills/library`. Ordering matters.
+- `findDelegationReceipt` returns `null`, not `undefined`.
+
+## AUTONOMY BOUNDARIES
+
+Approved: merging to `main` and pushing `FerroxLabs/murage`; killing and
+restarting the local app; scratch instances under the scratchpad.
+**Not approved:** pushing `FerroxLabs/murage-teams`, publishing a release,
+deleting anything under `~/.murage` without a backup first, force-push, or
+touching `~/dev/smarttrader` — read-only reference, and nothing from the Rebel
+Scanner or REGIME-GATE ever enters this repo or a build artifact.
+
+--- HISTORY ---
+
+
 ## OVERNIGHT 2026-09-02 — nine commits, pushed to `main` at `94ef6689`
 
 Suite: **src 539/539 · electron 375 · companion 223 · server 1919/1**. The one failure is
