@@ -88,6 +88,14 @@ export type CompanionBridge = {
   pairing: (open: boolean, expectedToken?: string) => Promise<CompanionState>;
   cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   revoke: (deviceId: string) => Promise<CompanionState>;
+  /** Re-read Tailscale now, rather than trusting what was true at boot.
+   *
+   * The sidecar used to read the MagicDNS name once at startup and cache it
+   * for the process lifetime, so bringing Tailscale up after Murage was
+   * already running left the tailnet route reading as permanently
+   * unavailable. The door back in exists as of the #669 port; this is the
+   * declaration that lets the renderer actually open it. */
+  refreshTailscale: () => Promise<CompanionState>;
 };
 
 type AccountBridge = NonNullable<NonNullable<Window["muragebox"]>["companionAccount"]>;
@@ -1058,7 +1066,7 @@ export function PhoneSetupFlowView({
               <ShieldCheck size={15} /> Pair over Tailscale
             </button>
             <p className="mt-2 text-center text-[11px] leading-relaxed text-ink-secondary">
-              Your iPhone must be signed in to the same tailnet.
+              Your phone must be signed in to the same tailnet.
             </p>
           </>
         )}
@@ -1133,12 +1141,12 @@ export function PhoneSetupFlowView({
         <QrCode size={23} />
       </div>
       <h2 className="mt-3 text-[18px] font-semibold text-ink">
-        {c.pairingExpired ? "That code expired" : "Scan with your iPhone"}
+        {c.pairingExpired ? "That code expired" : "Scan with your phone"}
       </h2>
       <p className="mt-1 text-[13px] text-ink-secondary">
         {c.pairingExpired
           ? "Create a fresh code when your phone is ready."
-          : "Open Murage on your iPhone and scan this code."}
+          : "Scan this code with your phone to pair it with this computer."}
       </p>
       {!c.pairingExpired && c.pairingLink && (
         <div className="mt-4 rounded-2xl bg-white p-3.5" aria-label="Phone pairing QR code">
