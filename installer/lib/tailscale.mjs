@@ -132,6 +132,68 @@ export function buildUpArgs(opts) {
   return args;
 }
 
+export const DEFAULT_DOOR_PORT = 8813;
+
+/**
+ * The loopback port `tailscale serve` must be pointed at: the companion's
+ * **browser door** (`companion/src/browser.ts`), not the harness.
+ *
+ * The harness on 8799 gates on the request's `Host` header being a loopback
+ * name (`server/index.ts`, `isLoopbackHost`). `tailscale serve` forwards the
+ * ORIGINAL Host — `<node>.<tailnet>.ts.net` — so a request that arrives that
+ * way is refused 403 and the operator sees a proxy that "works" and an app
+ * that will not load. The browser door is the component that rewrites Host to
+ * loopback before forwarding, so it is the only correct proxy target.
+ *
+ * 8813, and NOT 8812: 8812 is the cloudflared origin gateway
+ * (`electron/companion-origin-gateway.mjs`), a different thing entirely.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {number}
+ */
+export function doorPort(env = process.env) {
+  const raw = env?.MURAGE_BROWSER_PORT;
+  if (raw === undefined || raw === null || String(raw).trim() === "") return DEFAULT_DOOR_PORT;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) return DEFAULT_DOOR_PORT;
+  return n;
+}
+
+/**
+ * Ask the browser door whether it is actually there, by fetching the one
+ * unauthenticated route it serves: `GET http://127.0.0.1:<door>/enter`.
+ *
+ * This is the gate on serve enablement. Configuring `tailscale serve` at a
+ * port nothing is listening on produces a tailnet URL that answers 502 — a
+ * deployment that reports "secured" and does not work. Any HTTP response at
+ * all proves something is listening and terminating requests there; a refused
+ * connection or a timeout proves it is not.
+ *
+ * @param {{ port?: number, timeoutMs?: number, fetchImpl?: typeof fetch }} [opts]
+ * @returns {Promise<{ answered: boolean, port: number, url: string, status?: number, reason?: string }>}
+ */
+export async function doorAnswers(opts = {}) {
+  const port = Number(opts.port ?? doorPort());
+  const url = `http://127.0.0.1:${port}/enter`;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { answered: false, port, url, reason: `bad door port: ${opts.port}` };
+  }
+  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  if (typeof doFetch !== "function") {
+    return { answered: false, port, url, reason: "no fetch implementation available" };
+  }
+  const timeoutMs = Math.max(1, Math.floor(opts.timeoutMs ?? 1_500));
+  try {
+    const res = await doFetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return { answered: true, port, url, status: res?.status };
+  } catch (e) {
+    return { answered: false, port, url, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Build the argv that puts the tailnet-only reverse proxy in front of the
  * loopback listener. `--bg` so it survives the installer exiting.
@@ -372,7 +434,12 @@ export function inspectShareConfig(doc, port) {
  *
  * @param {object} opts
  * @param {string} opts.authKey the raw key; consumed here and never logged
- * @param {number} opts.port loopback port to front
+ * @param {number} opts.port loopback port to front — the BROWSER DOOR (8813),
+ *   never the harness (8799); see `doorPort()` for why
+ * @param {boolean} [opts.serve] default true. `false` joins the tailnet and
+ *   stops there, configuring no proxy. The caller passes false when the door
+ *   did not answer (`doorAnswers()`): a proxy in front of a port nothing is
+ *   listening on is worse than no proxy, because it looks configured.
  * @param {string} [opts.hostname]
  * @param {string[]} [opts.tags]
  * @param {boolean} [opts.https]
@@ -415,6 +482,13 @@ export async function enroll(opts) {
   });
   if (!verdict.ok) return { ok: false, stage: "verify", reasons: verdict.reasons, verdict };
 
+  // The gate. The node is on the tailnet either way — that part is proven
+  // above — but we do not point a proxy at a door that is not there.
+  if (opts.serve === false) {
+    log("skipping the tailnet proxy: the browser door is not answering.");
+    return { ok: true, stage: "joined", served: false, reasons: [], verdict, share: null };
+  }
+
   log("putting the tailnet-only proxy in front of the loopback listener…");
   const serve = runTailscale(
     buildServeArgs({ port: opts.port, https: opts.https, listenPort: opts.listenPort }),
@@ -452,5 +526,5 @@ export async function enroll(opts) {
     };
   }
 
-  return { ok: true, stage: "done", reasons: [], verdict, share };
+  return { ok: true, stage: "done", served: true, reasons: [], verdict, share };
 }
