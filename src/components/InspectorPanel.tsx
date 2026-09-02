@@ -14,7 +14,7 @@ import { Bug, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { formatTime, toRows, type InspectorEntry, type InspectorPage, type InspectorRow } from "@/lib/inspector";
-import { openLiveEvents } from "@/lib/live-events";
+import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import type { RuntimeEvent } from "../../server/contracts.ts";
 
 type Lens = "events" | "raw";
@@ -39,9 +39,12 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
       // A raw fetch, so it carries the desktop surface itself — the inspector
       // serves prompts and tool traffic, which is exactly what the scoped
       // default withholds.
+      await ensureDesktopSurfaceSecret();
       const res = await fetch(`/api/threads/${threadId}/events?limit=400`, {
         signal: controller.signal,
-        headers: { "x-murage-surface": "desktop" },
+        // The marker alone is a forgery the harness now refuses; the
+        // per-launch secret is what makes it the desktop.
+        headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() },
       });
       if (!res.ok) throw new Error(`${res.status}`);
       // SAFETY: this same-version renderer calls the harness's typed

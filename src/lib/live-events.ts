@@ -59,6 +59,86 @@ export interface LiveEventsHandlers {
   retryMaxMs?: number;
 }
 
+// ── proving this renderer is the renderer ──────────────────────────────
+//
+// The surface marker says what a caller WANTS; it never said who the caller
+// was. Any local process could type `x-murage-surface: desktop`, and until
+// this existed that was enough to reach routes that spawn a binary. So the
+// harness mints a secret per launch and answers "desktop" only for a request
+// that carries it (server/sse-visibility.ts).
+//
+// Two ways in, and the app needs both:
+//
+//   packaged — Electron's main process receives it from the harness child
+//     over their private port and the preload exposes it synchronously, so
+//     it is already here when this module loads.
+//   dev      — Vite serves this bundle from another port and there is no
+//     Electron at all under Playwright, so it is fetched from the harness
+//     over loopback. That fetch lives behind `import.meta.env.DEV`, which is
+//     a compile-time constant: a production `vite build` deletes the branch,
+//     so a shipped bundle has no code that could ask.
+export const SURFACE_SECRET_HEADER = "x-murage-surface-secret";
+export const SURFACE_SECRET_QUERY = "surfaceSecret";
+/** Same path the harness serves it on; dev only, at both ends. */
+export const DEV_SECRET_PATH = "/api/desktop-secret";
+
+const bridgeSecret = (): string => {
+  const bridge = (globalThis as { muragebox?: { desktopSurfaceSecret?: unknown } }).muragebox;
+  return typeof bridge?.desktopSurfaceSecret === "string" ? bridge.desktopSurfaceSecret : "";
+};
+
+let desktopSecret = bridgeSecret();
+let pendingSecret: Promise<string> | null = null;
+
+/** The secret, or "" when this renderer has not been given one. Absent means
+ * absent: nothing here invents a value, and a request without one is simply
+ * treated as remote — which is the same narrow answer a phone gets. */
+export function desktopSurfaceSecret(): string {
+  return desktopSecret;
+}
+
+/** The headers a `fetch` on this origin should carry, merged into whatever
+ * the caller already sends. Empty while the secret is unknown so that a call
+ * made too early degrades to the scoped view rather than sending garbage. */
+export function desktopSurfaceHeaders(): Record<string, string> {
+  return desktopSecret ? { [SURFACE_SECRET_HEADER]: desktopSecret } : {};
+}
+
+/** Resolve the secret once, and remember the answer.
+ *
+ * Called before the first hydration fetch and before the stream opens. It
+ * never rejects: a harness that will not hand one over leaves this renderer
+ * on the scoped surface, which is a smaller app, not a broken one. */
+export function ensureDesktopSurfaceSecret(): Promise<string> {
+  if (desktopSecret) return Promise.resolve(desktopSecret);
+  // A late preload is still the packaged answer — re-read before asking.
+  desktopSecret = bridgeSecret();
+  if (desktopSecret) return Promise.resolve(desktopSecret);
+  if (!import.meta.env.DEV || typeof globalThis.fetch !== "function") {
+    return Promise.resolve("");
+  }
+  pendingSecret ??= globalThis
+    .fetch(DEV_SECRET_PATH)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((body: { secret?: unknown } | null) => {
+      const secret = typeof body?.secret === "string" ? body.secret : "";
+      if (secret) desktopSecret = secret;
+      return desktopSecret;
+    })
+    .catch(() => desktopSecret)
+    .finally(() => {
+      pendingSecret = null;
+    });
+  return pendingSecret;
+}
+
+/** Test seam. The renderer never calls this; `live-events.test.ts` does, to
+ * state a world in which the secret is or is not known. */
+export function setDesktopSurfaceSecretForTest(value: string): void {
+  desktopSecret = value;
+  pendingSecret = null;
+}
+
 export function liveEventsUrl(options?: { since?: string | null; screens?: boolean }): string {
   const params = new URLSearchParams();
   // The harness scopes this stream to a phone's narrow view by default, so
@@ -69,6 +149,10 @@ export function liveEventsUrl(options?: { since?: string | null; screens?: boole
   params.set("surface", "desktop");
   if (options?.since) params.set("since", options.since);
   if (options?.screens === false) params.set("screens", "off");
+  // …and the marker alone is not believed. Appended LAST so that every other
+  // parameter keeps the position it had before this existed, and omitted
+  // entirely when unknown — an empty value would only be a wrong one.
+  if (desktopSecret) params.set(SURFACE_SECRET_QUERY, desktopSecret);
   const query = params.toString();
   return query ? `${LIVE_EVENTS_PATH}?${query}` : LIVE_EVENTS_PATH;
 }

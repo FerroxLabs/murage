@@ -15,9 +15,30 @@ ipcRenderer.on("package:install", (_event, url) => {
   for (const listener of packageInstallListeners) listener(url);
 });
 
+/** This launch's desktop secret, read once while the page is still loading.
+ *
+ * The harness treats a request as the local desktop app only when it carries
+ * this (server/sse-visibility.ts). Reading it synchronously here means the
+ * renderer's very first hydration fetch and its first EventSource already
+ * hold it, with no window in which the app looks like a paired phone to its
+ * own harness.
+ *
+ * "" in development: nothing forked the harness, so main was never sent one
+ * and the dev renderer asks the harness over loopback instead. */
+const desktopSurfaceSecret = (() => {
+  try {
+    const value = ipcRenderer.sendSync("desktop:surface-secret");
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
+  }
+})();
+
 contextBridge.exposeInMainWorld("muragebox", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
+  /** Proof, to this launch's harness, that this really is the renderer. */
+  desktopSurfaceSecret,
   getCapabilities: () => ipcRenderer.invoke("desktop:capabilities"),
   onCapabilitiesChanged: (cb) => {
     const handler = (_event, capabilities) => cb(capabilities);

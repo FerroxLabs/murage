@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
@@ -267,6 +268,39 @@ describe("Store", () => {
     expect(saved.find((bot) => bot.id === vps.id)?.cloudBackend).toBe("vps");
     expect(saved.find((bot) => bot.id === invalid.id)).not.toHaveProperty("cloudBackend");
     expect(saved.find((bot) => bot.id === absent.id)).not.toHaveProperty("cloudBackend");
+  });
+
+  // The voice note round-trips like any other optional field, and has exactly
+  // one shape for "none": absent. A blank one would otherwise put an empty
+  // `Personality:` line in front of the model, and a hand-edited bots.json
+  // must not smuggle a second brief past the 280-character cap.
+  it("round-trips persona and normalizes it to absent, trimmed, and capped", () => {
+    const store = new Store(selection);
+    const kept = store.createBot();
+    const blank = store.createBot();
+    const padded = store.createBot();
+    const oversized = store.createBot();
+    const wrongType = store.createBot();
+
+    store.patchBot(kept.id, { persona: "Direct, a little snarky, dry wit." });
+    const raw: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    raw.find((bot) => bot.id === blank.id)!.persona = "   \n ";
+    raw.find((bot) => bot.id === padded.id)!.persona = "  dry wit  ";
+    raw.find((bot) => bot.id === oversized.id)!.persona = "x".repeat(400);
+    (raw.find((bot) => bot.id === wrongType.id) as unknown as { persona: unknown }).persona = 7;
+    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify(raw));
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(kept.id)?.persona).toBe("Direct, a little snarky, dry wit.");
+    expect(reloaded.bot(blank.id)?.persona).toBeUndefined();
+    expect(reloaded.bot(padded.id)?.persona).toBe("dry wit");
+    expect(reloaded.bot(oversized.id)?.persona).toHaveLength(BOT_PROFILE_LIMITS.persona);
+    expect(reloaded.bot(wrongType.id)?.persona).toBeUndefined();
+
+    const saved: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    expect(saved.find((bot) => bot.id === kept.id)?.persona).toBe("Direct, a little snarky, dry wit.");
+    expect(saved.find((bot) => bot.id === blank.id)).not.toHaveProperty("persona");
+    expect(saved.find((bot) => bot.id === wrongType.id)).not.toHaveProperty("persona");
   });
 
   it("migrates legacy browser profile references without collapsing case-distinct accounts", () => {

@@ -48,5 +48,30 @@ export const FIXTURES = {
 } as const;
 
 /** The desktop marker header. Routes that install skills or apply a profile
- *  are decisions for the person at the keyboard and 404 without it. */
+ *  are decisions for the person at the keyboard and 404 without it.
+ *
+ *  The marker ALONE stopped being enough when the harness began minting a
+ *  per-launch secret: a bare marker is precisely the forgery that gate
+ *  refuses, so seeding with it would 404 on every skill install and every
+ *  profile apply — silently producing fixtures with no skills, which is the
+ *  state Wave 1's card renders its quiz on. `desktopHeaders()` fetches the
+ *  secret the dev harness offers on loopback and caches it. */
 export const DESKTOP_HEADERS = { "x-murage-surface": "desktop" } as const;
+
+let cachedSecret: string | null = null;
+
+export async function desktopHeaders(): Promise<Record<string, string>> {
+  if (cachedSecret === null) {
+    const response = await fetch(`${HARNESS_URL}/api/desktop-secret`, { headers: DESKTOP_HEADERS });
+    if (!response.ok) {
+      throw new Error(
+        `the harness on ${HARNESS_URL} did not offer a desktop secret (${response.status}). `
+        + "That route exists only when the harness was NOT launched as an Electron utility child. "
+        + "If this is a packaged or cloud harness, the rig is pointed at the wrong process.",
+      );
+    }
+    cachedSecret = String(((await response.json()) as { secret?: string }).secret ?? "");
+    if (!cachedSecret) throw new Error("the harness offered an empty desktop secret");
+  }
+  return { ...DESKTOP_HEADERS, "x-murage-surface-secret": cachedSecret };
+}

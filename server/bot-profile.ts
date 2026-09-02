@@ -9,6 +9,7 @@ export const BOT_PROFILE_PATCH_FIELDS = [
   "name",
   "title",
   "description",
+  "persona",
   "notifications",
   "avatarUrl",
   "avatarCrop",
@@ -30,6 +31,14 @@ const profilePatchSchema = z.object({
     .string({ error: "description must be a string" })
     .max(BOT_PROFILE_LIMITS.description, { error: "description must be at most 4000 characters" })
     .optional(),
+  // The voice note. Deliberately the SHORTEST profile field: it is appended
+  // to the persona string on every turn and read by nothing that routes,
+  // draws or publishes this bot, so a brief written here would never be seen
+  // by the Chief deciding who does the work.
+  persona: z
+    .string({ error: "persona must be a string" })
+    .max(BOT_PROFILE_LIMITS.persona, { error: "persona must be at most 280 characters" })
+    .optional(),
   notifications: z.boolean({ error: "notifications must be true or false" }).optional(),
   avatarUrl: z
     .union([botAvatarUrlSchema, z.literal(""), z.null()], {
@@ -49,7 +58,15 @@ export type BotProfilePatchInput = z.input<typeof profilePatchSchema>;
 export type BotProfilePatch = Partial<
   Pick<
     BotRecord,
-    "name" | "title" | "description" | "notifications" | "avatarUrl" | "avatarCrop" | "voice" | "speakReplies"
+    | "name"
+    | "title"
+    | "description"
+    | "persona"
+    | "notifications"
+    | "avatarUrl"
+    | "avatarCrop"
+    | "voice"
+    | "speakReplies"
   >
 >;
 
@@ -80,8 +97,11 @@ export function parseBotProfilePatch(input: BotProfilePatchInput, strict = false
     return { ok: false, error: issue?.message ?? "invalid profile patch" };
   }
 
-  const { avatarUrl, ...fields } = parsed.data;
+  const { avatarUrl, persona, ...fields } = parsed.data;
   const patch: BotProfilePatch = fields;
   if (avatarUrl !== undefined) patch.avatarUrl = avatarUrl || undefined;
+  // Same clear-value rule as avatarUrl: absent, never an empty string. A
+  // cleared voice note must leave no `Personality:` line on the next turn.
+  if (persona !== undefined) patch.persona = persona.trim() || undefined;
   return { ok: true, patch };
 }

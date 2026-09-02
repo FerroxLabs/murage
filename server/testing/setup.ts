@@ -15,6 +15,10 @@ process.env.USERPROFILE = home;
 // MURAGE_DATA_DIR is an intentional production override, but tests must never
 // let it escape the throwaway home they are about to delete.
 delete process.env.MURAGE_DATA_DIR;
+// A developer who exported a pinned dev secret must not have it leak into
+// the suite: a test that accidentally holds the real value proves nothing
+// about a request that does not.
+delete process.env.MURAGE_DEV_DESKTOP_SECRET;
 // Do not let a developer's Hermes global config path leak into per-test homes.
 delete process.env.HERMES_HOME;
 // A developer with FLUX_API_KEY exported would otherwise get the Flux Router

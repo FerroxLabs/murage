@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { DESKTOP_HEADERS, FIXTURES, HARNESS_URL, SCRATCH_DATA_DIR } from "./rig";
+import { desktopHeaders, FIXTURES, HARNESS_URL, SCRATCH_DATA_DIR } from "./rig";
 
 type Json = Record<string, any>;
 
@@ -15,7 +15,11 @@ const api = async (method: string, path: string, body?: unknown): Promise<Json> 
   const res = await fetch(`${HARNESS_URL}${path}`, {
     method,
     headers: {
-      ...DESKTOP_HEADERS,
+      // The marker alone stopped being enough when the harness began minting
+      // a per-launch secret: seeding with it 404s on every skill install and
+      // every profile apply, silently producing fixtures with no skills —
+      // which is the exact state the intake card renders its quiz on.
+      ...(await desktopHeaders()),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),

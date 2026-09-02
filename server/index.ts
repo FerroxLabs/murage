@@ -173,6 +173,8 @@ import {
 } from "./store.ts";
 import {
   companionMarked,
+  desktopSurfaceSecret,
+  devDesktopSecretOffered,
   frameSubject,
   requestSurface,
   subjectResolves,
@@ -310,6 +312,9 @@ type DesktopPrivateMessage = BrowserCleanupWireRequest | {
   type: "murage:browser-control";
   botId: string;
   held: true;
+} | {
+  type: "murage:desktop-secret";
+  secret: string;
 };
 function postDesktopPrivateMessage(message: DesktopPrivateMessage): boolean {
   if (!utilityParentPort) return false;
@@ -334,6 +339,22 @@ utilityParentPort?.on("message", (event) => {
     console.error(`[desktop-sync] rejected private parent message: ${error instanceof Error ? error.message : String(error)}`);
   }
 });
+
+// ── the per-launch desktop secret, handed to the app that owns this process
+// The renderer has to prove it is the renderer (see sse-visibility.ts), and
+// the only channel that is not also reachable by every other local process
+// is this one: Electron's private utility-process port, which exists solely
+// between main and this child. Main forwards it to the renderer through the
+// preload bridge; nothing else is ever told.
+//
+// Pushed rather than answered on request, and pushed at module load, so the
+// value is in main's hands long before `startServerOn` finishes waiting on
+// /api/health and creates the window whose preload will ask for it.
+//
+// Never logged. Never persisted. Never in an agent or MCP environment.
+if (utilityParentPort) {
+  postDesktopPrivateMessage({ type: "murage:desktop-secret", secret: desktopSurfaceSecret() });
+}
 
 const bus = new EventBus();
 bus.attach(registry.instances());
@@ -1222,8 +1243,9 @@ interface SseClient {
    *
    * Named for the client it started out describing, but the default is the
    * point: `requestSurface()` answers `remote` for anything that does not
-   * announce itself, so a door added later gets the narrow stream by
-   * omission rather than the firehose. */
+   * announce itself AND prove it with this launch's desktop secret, so a
+   * door added later gets the narrow stream by omission rather than the
+   * firehose. */
   scoped: boolean;
 }
 const sseClients = new Set<SseClient>();
@@ -2702,6 +2724,7 @@ async function startTurn(
     `You are ${bot.name}, a personal bot in Murage.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
+    bot.persona && `Personality: ${bot.persona}`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -3706,6 +3729,7 @@ async function runGroupMemberTurn(
     `You are ${bot.name}, a bot in the room "${group.name}" in Murage.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
+    bot.persona && `Personality: ${bot.persona}`,
     `Room members: ${roster}, and ${userName} (the human).`,
     group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
     // A room turn is the ONE place a Chief runs at hop 0 and therefore holds
@@ -8649,6 +8673,31 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         image: await containerComputerScreenshot(undefined, undefined, target),
       });
+    }
+
+    // ── the dev renderer's copy of the desktop secret ──────────────────
+    // In development the renderer is served by Vite on another port and there
+    // is no Electron main process to hand it anything: `pnpm dev:desktop`
+    // only ever loads DEV_URL, and `startServerOn` — the fork that owns the
+    // private parent port — runs solely when `app.isPackaged`. The Playwright
+    // rig has no Electron at all. So the dev renderer asks over loopback.
+    //
+    // This route CANNOT exist in a shipped build. `devDesktopSecretOffered()`
+    // is false whenever `process.parentPort` is present, which is exactly and
+    // only the Electron utility child the packaged app forks — a structural
+    // property of how the process was started, not an environment variable a
+    // caller could set. `MURAGE_DEV_DESKTOP_SECRET` pins the value for a rig
+    // that needs both halves to agree; `MURAGE_NO_DEV_DESKTOP_SECRET=1` shuts
+    // the door on a headless install, whose loopback neighbours are agents.
+    //
+    // 404 rather than 403 when it is closed, and 404 to a companion even when
+    // it is open: the same rule the execution routes follow, so a caller
+    // cannot learn from the status code that there is anything here.
+    if (method === "GET" && path === "/api/desktop-secret") {
+      if (!devDesktopSecretOffered() || companionMarked(req.headers)) {
+        return json(res, 404, { error: "no such route" });
+      }
+      return json(res, 200, { secret: desktopSurfaceSecret() });
     }
 
     // identity handshake for the packaged app's port fallback: the forked

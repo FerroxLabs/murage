@@ -31,7 +31,7 @@ import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
-import { openLiveEvents } from "@/lib/live-events";
+import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 
 export type { EmberColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
@@ -1375,6 +1375,12 @@ export const initialState: AppState = {
 
 // ── API client ─────────────────────────────────────────────────────────
 export async function api(path: string, init?: RequestInit): Promise<any> {
+  // Resolve the desktop proof before the first call rather than racing it.
+  // Already known in the packaged app (the preload answered synchronously),
+  // so this costs a microtask; in dev it is one loopback fetch, memoized.
+  // It never rejects — a harness that withholds one leaves this renderer on
+  // the scoped surface, which is a smaller app rather than a broken one.
+  await ensureDesktopSurfaceSecret();
   const res = await fetch(path, {
     ...init,
     // `init` is spread FIRST on purpose: spreading it last let any caller
@@ -1386,6 +1392,12 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
       // so — without this the sidebar loses every hidden bot and every
       // bot-to-bot room on hydration.
       "x-murage-surface": "desktop",
+      // Saying it is not proving it. The harness believes the marker only
+      // when this launch's secret rides along; without it every call above
+      // is answered as though it came from a paired phone. Spread before
+      // `init?.headers` for the same reason the marker is: a caller with
+      // headers of its own must not be able to drop the proof.
+      ...desktopSurfaceHeaders(),
       ...init?.headers,
     },
   });
@@ -2234,28 +2246,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
       }
     };
-    const stopLive = openLiveEvents({
-      onOpen: () => rawDispatch({ type: "connected", value: true }),
-      onError: () => rawDispatch({ type: "connected", value: false }),
-      onSnapshotRequired: () => {
-        clearTimeout(hydrationFallback);
-        // Frames buffered before this non-resumable stream belong to an
-        // abandoned generation. Keep the new generation behind hydrate().
-        pendingFrames.splice(0);
-        return hydrate();
-      },
-      onFrame: (frame) => {
-        if (hydrated) handleFrame(frame);
-        else pendingFrames.push(frame);
-      },
+    // The stream opens only once this renderer can prove it is the desktop.
+    // EventSource cannot set a header, so the proof has to be in the URL at
+    // construction time — an EventSource opened a moment early would hold a
+    // scoped stream for its whole life and quietly miss every hidden bot.
+    // In the packaged app the preload already answered and this resolves on
+    // the first microtask; in dev it is one loopback fetch.
+    let stopLive: (() => void) | null = null;
+    let liveClosed = false;
+    void ensureDesktopSurfaceSecret().then(() => {
+      if (!alive || liveClosed) return;
+      stopLive = openLiveEvents({
+        onOpen: () => rawDispatch({ type: "connected", value: true }),
+        onError: () => rawDispatch({ type: "connected", value: false }),
+        onSnapshotRequired: () => {
+          clearTimeout(hydrationFallback);
+          // Frames buffered before this non-resumable stream belong to an
+          // abandoned generation. Keep the new generation behind hydrate().
+          pendingFrames.splice(0);
+          return hydrate();
+        },
+        onFrame: (frame) => {
+          if (hydrated) handleFrame(frame);
+          else pendingFrames.push(frame);
+        },
+      });
     });
     return () => {
       alive = false;
+      liveClosed = true;
       clearTimeout(hydrationFallback);
       for (const refresh of peripheralRefresh.values()) {
         if (refresh.timer) clearTimeout(refresh.timer);
       }
-      stopLive();
+      stopLive?.();
     };
   }, []);
 

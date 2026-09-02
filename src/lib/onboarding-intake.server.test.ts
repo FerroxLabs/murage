@@ -30,6 +30,10 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 
+/** The renderer's proof, pinned for this child. Saying "desktop" is not
+ *  enough any more — see server/sse-visibility.ts. */
+const DESKTOP_SECRET = "1a2b3c4d5e6f7089".repeat(4);
+
 /** Desktop by default — that is what the renderer's `api()` always sends, and
  *  the writing routes refuse anything else. `surface: "remote"` is how a test
  *  asks the question a paired phone would ask. */
@@ -40,7 +44,10 @@ const call = async (
 ): Promise<{ status: number; body: any }> => {
   const headers: Record<string, string> = {};
   if (options.body !== undefined) headers["content-type"] = "application/json";
-  if (options.surface !== "remote") headers["x-murage-surface"] = "desktop";
+  if (options.surface !== "remote") {
+    headers["x-murage-surface"] = "desktop";
+    headers["x-murage-surface-secret"] = DESKTOP_SECRET;
+  }
   const response = await fetch(`${BASE}${path}`, {
     method,
     headers,
@@ -65,6 +72,10 @@ beforeAll(async () => {
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
       MURAGE_WEBHOOK_PORT: String(PORT + 1),
+      // The desktop marker stopped being believed on its own: `requestSurface`
+      // now wants this launch's secret alongside it. The dev injection pins
+      // the value so a caller outside Electron can hold the same one.
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

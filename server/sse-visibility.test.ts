@@ -3,6 +3,7 @@
 // These are the pure decisions — which conversation a frame is about, who may
 // see that conversation, and which door asked — stated without a server, so
 // each rule can be read on one screen and each failure names one rule.
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,10 @@ import { describe, expect, it } from "vitest";
 import {
   DESKTOP_SURFACE,
   KNOWN_FRAME_KINDS,
+  SURFACE_SECRET_HEADER,
+  SURFACE_SECRET_QUERY,
+  desktopSurfaceSecret,
+  devDesktopSecretOffered,
   frameSubject,
   requestSurface,
   subjectResolves,
@@ -18,6 +23,17 @@ import {
   type FrameSubject,
   type VisibilityStore,
 } from "./sse-visibility.ts";
+
+/** This launch's proof. Minted at import; the test never gets to choose it,
+ * which is the point — a caller that has not been handed it cannot type it. */
+const SECRET = desktopSurfaceSecret();
+/** The desktop's two forms, each complete: marker plus proof. */
+const desktopHeaders = () => ({
+  "x-murage-surface": DESKTOP_SURFACE,
+  [SURFACE_SECRET_HEADER]: SECRET,
+});
+const desktopQuery = () =>
+  new URLSearchParams(`surface=${DESKTOP_SURFACE}&${SURFACE_SECRET_QUERY}=${SECRET}`);
 
 /** A workspace in four lines: one ordinary bot, one hidden bot, one room,
  * one bot⇄bot dm channel. `t*` are thread ids, including task threads. */
@@ -50,14 +66,68 @@ describe("requestSurface", () => {
     expect(requestSurface({ accept: "text/event-stream" }, new URLSearchParams("screens=off"))).toBe("remote");
   });
 
-  it("lets the desktop opt out by header or by query", () => {
+  it("lets the desktop opt out by header or by query, once it has proved it is the desktop", () => {
     // EventSource cannot set a request header, so the query form is the only
-    // one the renderer's live stream can use; fetch callers use either.
-    expect(requestSurface({ "x-murage-surface": DESKTOP_SURFACE })).toBe("desktop");
-    expect(requestSurface({}, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("desktop");
+    // one the renderer's live stream can use; fetch callers use either. Each
+    // form carries the marker AND this launch's secret.
+    expect(requestSurface(desktopHeaders())).toBe("desktop");
+    expect(requestSurface({}, desktopQuery())).toBe("desktop");
+    // the two halves may arrive by different routes — the SSE URL carries
+    // both in the query, a fetch carries both in headers, and a mixture is
+    // still one request from one caller
+    expect(
+      requestSurface({ [SURFACE_SECRET_HEADER]: SECRET }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`)),
+    ).toBe("desktop");
     // near-misses are not the marker
-    expect(requestSurface({ "x-murage-surface": "Desktop" })).toBe("remote");
-    expect(requestSurface({}, new URLSearchParams("surface=1"))).toBe("remote");
+    expect(requestSurface({ "x-murage-surface": "Desktop", [SURFACE_SECRET_HEADER]: SECRET })).toBe("remote");
+    expect(requestSurface({}, new URLSearchParams(`surface=1&${SURFACE_SECRET_QUERY}=${SECRET}`))).toBe("remote");
+  });
+
+  // THE attack this whole mechanism exists for. Before the secret, these two
+  // lines were "desktop" — and "desktop" is what /api/cli-test, PATCH
+  // /api/instances/:id and the box exec route check before they spawn a
+  // caller-supplied binary. Any local process, every agent with a shell
+  // included, could type the marker:
+  //
+  //   curl -H 'x-murage-surface: desktop' 127.0.0.1:8799/api/cli-test
+  //
+  // "desktop-only" was never an authorization boundary. It is now.
+  it("does not believe a forged desktop marker that carries no secret", () => {
+    expect(requestSurface({ "x-murage-surface": DESKTOP_SURFACE })).toBe("remote");
+    expect(requestSurface({}, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("remote");
+  });
+
+  it("does not believe a wrong secret, in any shape", () => {
+    const wrong = [
+      "",
+      "not-the-secret",
+      // right length, wrong bytes: the compare is constant-time, and the
+      // length guard in front of it must not be the only thing deciding
+      "0".repeat(SECRET.length),
+      // a prefix and an extension of the real one
+      SECRET.slice(0, -1),
+      `${SECRET}0`,
+      ` ${SECRET}`,
+      SECRET.toUpperCase(),
+    ];
+    for (const candidate of wrong) {
+      expect(
+        requestSurface({ "x-murage-surface": DESKTOP_SURFACE, [SURFACE_SECRET_HEADER]: candidate }),
+        `header secret ${JSON.stringify(candidate)}`,
+      ).toBe("remote");
+      expect(
+        requestSurface({}, new URLSearchParams({ surface: DESKTOP_SURFACE, [SURFACE_SECRET_QUERY]: candidate })),
+        `query secret ${JSON.stringify(candidate)}`,
+      ).toBe("remote");
+    }
+  });
+
+  it("does not treat the secret alone as an opt-out", () => {
+    // The marker says what the caller wants and the secret says who it is.
+    // A companion door forwarding a request that happened to carry the
+    // secret must still get the narrow answer it asked for.
+    expect(requestSurface({ [SURFACE_SECRET_HEADER]: SECRET })).toBe("remote");
+    expect(requestSurface({}, new URLSearchParams(`${SURFACE_SECRET_QUERY}=${SECRET}`))).toBe("remote");
   });
 
   // Node folds duplicate request headers into ONE comma-joined string, so two
@@ -67,30 +137,103 @@ describe("requestSurface", () => {
   // as the local app. The marker is now read as presence, so no spelling of it
   // widens the answer.
   it("cannot be widened by sending the companion marker twice", () => {
-    expect(
-      requestSurface({ "x-murage-companion": "1, 1" }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`)),
-    ).toBe("remote");
+    // Every case here carries a VALID secret. Anything less and the test
+    // would pass for the wrong reason once the secret check landed.
+    expect(requestSurface({ "x-murage-companion": "1, 1" }, desktopQuery())).toBe("remote");
     // the array shape some servers hand over, and the empty and odd values too
-    expect(requestSurface({ "x-murage-companion": ["1", "1"] as unknown as string[] })).toBe("remote");
-    expect(requestSurface({ "x-murage-companion": "" }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("remote");
-    expect(requestSurface({ "x-murage-companion": "yes" }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": ["1", "1"] as unknown as string[], ...desktopHeaders() })).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "" }, desktopQuery())).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "yes" }, desktopQuery())).toBe("remote");
     // absent still means the desktop may announce itself
-    expect(requestSurface({}, new URLSearchParams(`surface=${DESKTOP_SURFACE}`))).toBe("desktop");
+    expect(requestSurface({}, desktopQuery())).toBe("desktop");
   });
 
   it("keeps a companion scoped even when it forges the desktop marker", () => {
     // proxy.ts sets x-murage-companion into a fresh header object, so a
     // device cannot clear it — and because that check runs first, a device
     // cannot talk its way past it by appending ?surface=desktop either.
-    expect(
-      requestSurface({ "x-murage-companion": "1" }, new URLSearchParams(`surface=${DESKTOP_SURFACE}`)),
-    ).toBe("remote");
-    expect(requestSurface({ "x-murage-companion": "1", "x-murage-surface": DESKTOP_SURFACE })).toBe("remote");
+    // Ordering is load-bearing: the companion check still runs FIRST, so
+    // even a leaked secret cannot re-widen a request that came through the
+    // door.
+    expect(requestSurface({ "x-murage-companion": "1" }, desktopQuery())).toBe("remote");
+    expect(requestSurface({ "x-murage-companion": "1", ...desktopHeaders() })).toBe("remote");
   });
 
   it("reads a repeated header from its first value", () => {
     expect(requestSurface({ "x-murage-companion": ["1", "0"] })).toBe("remote");
-    expect(requestSurface({ "x-murage-surface": [DESKTOP_SURFACE] })).toBe("desktop");
+    expect(
+      requestSurface({ "x-murage-surface": [DESKTOP_SURFACE], [SURFACE_SECRET_HEADER]: [SECRET] }),
+    ).toBe("desktop");
+    // …and a duplicated secret header is read the same way, so a caller
+    // cannot smuggle a second value past the compare
+    expect(
+      requestSurface({ "x-murage-surface": DESKTOP_SURFACE, [SURFACE_SECRET_HEADER]: ["wrong", SECRET] }),
+    ).toBe("remote");
+  });
+});
+
+describe("the desktop secret itself", () => {
+  it("is high-entropy hex and not a value anything could guess", () => {
+    // randomBytes(32). Not derived from the port, the pid, the data dir or
+    // the clock — a local process that can read any of those learns nothing.
+    expect(
+      SECRET,
+      "a secret that is not 64 hex characters means this process was handed one through "
+      + "MURAGE_DEV_DESKTOP_SECRET — unexport it, or add it to the deletions in "
+      + "server/testing/setup.ts",
+    ).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("offers the dev injection here, because this process is not the packaged app", () => {
+    // The rig, `pnpm dev:server` and this suite all run outside Electron, so
+    // the harness may hand the secret to a loopback caller that asks. The
+    // packaged app cannot reach that branch — see the subprocess test below,
+    // which is the only way to observe an import under a different launch.
+    expect(devDesktopSecretOffered()).toBe(true);
+  });
+
+  it("refuses the dev injection inside an Electron utility child", () => {
+    // `process.parentPort` is supplied by exactly one runtime and cannot be
+    // set from the outside, so this is the check that makes "dev only" a
+    // property of the launch rather than a promise about environments. A
+    // subprocess is the only honest way to ask: the module reads it once, at
+    // import, and this test file has already imported it.
+    const probe = [
+      'const { devDesktopSecretOffered, desktopSurfaceSecret } = await import("./server/sse-visibility.ts");',
+      'process.stdout.write(JSON.stringify({ offered: devDesktopSecretOffered(), secret: desktopSurfaceSecret() }));',
+    ].join("\n");
+    const run = (env: NodeJS.ProcessEnv) => {
+      const result = spawnSync(
+        process.execPath,
+        ["--experimental-strip-types", "--input-type=module", "--eval", probe],
+        {
+          cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
+          env: { ...process.env, ...env },
+          encoding: "utf8",
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      return JSON.parse(result.stdout) as { offered: boolean; secret: string };
+    };
+
+    const pinned = "a".repeat(64);
+    // a developer's harness: the env var is honoured and the value is offered
+    const dev = run({ MURAGE_DEV_DESKTOP_SECRET: pinned, MURAGE_DESKTOP_PARENT: "" });
+    expect(dev.offered).toBe(true);
+    expect(dev.secret).toBe(pinned);
+
+    // the packaged app's child: the same env var is ignored outright, and a
+    // freshly minted secret is used instead of the one the environment asked
+    // for. This is the line that makes the dev door unshippable.
+    const packaged = run({ MURAGE_DEV_DESKTOP_SECRET: pinned, MURAGE_DESKTOP_PARENT: "1" });
+    expect(packaged.offered).toBe(false);
+    expect(packaged.secret).not.toBe(pinned);
+    expect(packaged.secret).toMatch(/^[0-9a-f]{64}$/);
+
+    // and a cloud install, which is outside Electron but is not a developer
+    const headless = run({ MURAGE_DEV_DESKTOP_SECRET: pinned, MURAGE_NO_DEV_DESKTOP_SECRET: "1" });
+    expect(headless.offered).toBe(false);
+    expect(headless.secret).not.toBe(pinned);
   });
 });
 
