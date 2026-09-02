@@ -37,7 +37,7 @@ optional flavour — it is the only thing that made the last two sessions fast.
   and been rewritten — that is the discipline working. A test nobody has seen
   fail is not a test.
 
-## STATE — everything is committed and pushed to `main` (`746d7221`)
+## STATE — everything is committed and pushed to `main` (`a75d16b0`)
 
 Suites: **src 632/632 · companion 281/281 · electron 385 (+4 skipped) · server
 1998/1**. The one failure is `server/control-murage.test.ts`, host-dependent —
@@ -62,6 +62,13 @@ exit 0.
 **Four execution routes are gated** — `server/index.ts:7710`, `:8506`, `:8535`,
 `:9112`. That is the precondition on any public ingress, and it is met.
 
+**Then three audits ran over all of it, and two more over the plan.** Every lane's
+suite was green and the audits still found two Criticals and seven Highs — because
+no test crossed a lane boundary and the orchestrator's end-to-end proof was `curl`.
+Happy paths are real. Failure paths were never tested. The plan's Wave 0b is the fix
+for the *method*: Playwright human-path specs, scratch data, a CI job, and a LANE
+DISCIPLINE rule that no UI lane is committed without its spec.
+
 ## THE ONE THING THAT BLOCKS THE WEB UI FROM BEING USABLE
 
 The browser door is built, tested (34 negative controls) and smoke-tested on a
@@ -81,127 +88,37 @@ Do those three and the web UI is reachable from a phone.
 
 ---
 
-## NEXT — in this order
+## NEXT — read `docs/plans/next-session/PLAN.md`. It supersedes this section.
 
-### 1. Skill assignment, both directions — START HERE, fully unblocked
-Sean's design: **one action, two entry points.** From the library, pick a skill
-→ "Assign to agent". From an agent's Skills panel, "Add a skill" → opens the
-browser with that agent already chosen. Both collapse to `assign(skillId, botId)`.
+The plan was built from **three audits of today's ten commits** (security ·
+experience with Playwright against the real renderer · integration across every
+lane seam) and then **cross-audited twice** (feasibility · completeness). Everything
+below in this file is state and record; the plan is the work.
 
-Everything it needs now exists:
-- `POST /api/bots/:id/skills/library` (`server/index.ts`, commit `2dab7893`) —
-  desktop-surface-only, bounded at 25, traversal-gated, records provenance as
-  `library:<id>@<version>`, arrives enabled.
-- `showTeamLibrary` action + `state.teamLibrary.botId` (`97f507f0`).
-- `TeamLibraryPanel` already accepts `preselectedBotId` and `SkillRow` already
-  has an action slot rendering nothing.
-- `BotSkillsPanel` needs `onBrowse?: () => void` — a 4-line change the copy
-  lane described precisely and deliberately left out.
+**Start at Wave 0** — two hours, serial, orchestrator only. Then Wave 0b installs
+Playwright (unbudgeted before; nothing in Wave 1 or 2 can be verified as a person
+without it). Wave 1 (intake safety) and Wave 2a (door reaches a phone) run in
+parallel; Wave 2b is serial after Wave 1; Wave 4 (security) before Wave 3 (installer).
+**≈10–12 days honest.**
 
-**Constraints.** No right-click-only affordance — `Sidebar.tsx` exposes its bot
-menu solely via `onContextMenu` and iOS fires no `contextmenu` event; that is a
-live defect, not a hypothesis. Button says the outcome ("Add to Bruce"), not the
-category. With exactly one bot, skip the picker entirely.
+**What the audits found, in one line each — the plan fixes every one:**
+- "hi" in the intake → 8 pre-ticked junk skills in a 1379 px card, no scroll (Critical)
+- The intake fires on Sable and would rename her (High)
+- "chasing invoices" — the card's own example — lands on IGNITION (High)
+- "Add a skill" opens on Teams with Load buttons, no mention of the bot (High)
+- The phone 404s the entire intake — zero library/skills routes on either door surface (High)
+- `write-book-chapter` on five book profiles, not one (High)
+- The pairing flow still promises a phone via a `murage://` QR nothing opens; `:1158` still says "MurageMobile" (Critical, pre-existing)
+- The installer fronts 8799 (403s) and never runs the sidecar (High)
+- "Desktop-only" is a door gate, not a principal gate — any local `curl` passes (Medium, see §SECURITY)
 
-### 2. The self-assembling assistant
-Plan at `docs/plans/self-assembling-assistant/PLAN.md`. **Three audits rewrote
-its sequence — read them before the plan**, in `scratchpad/audit-{feasibility,experience,local}.md`.
+**Do NOT build:** skill assignment both directions (`388ae731`), the intake
+(`388ae731`), the browser door (`415e67e8`), the `hosted` re-rank (`995c37c3`),
+nine profiles' skills (`491a5abc`), the installer (`ccc5f07d`). They shipped. Fix
+them per the plan.
 
-The single most important finding: **profile-first, retrieval as fallback.**
-Narrowing to a matched profile's own declared skills gave **11/11 correct with
-zero noise and no model judgement**, where free search put `car-buying-guide` at
-rank 3. That makes the expensive half also the unnecessary half — **~60–85 h
-profile-only, not 187**.
-
-Known-broken in the plan as written, all measured:
-- **Accept creates a NEW bot** via `/api/teams/import` (`seedMessages: false`)
-  and auto-selects it, while the assembled path configures the bot you are in.
-  Same button, two outcomes, 5s toast, no Undo. **Decide this first — one
-  sentence settles everything downstream.**
-- The precision@8 gate is unsound four ways (n=20 → CI ~[0.38,0.82]; undefined
-  at variable k; no recall term; mean hides that 3/10 sentences scored ≤50%
-  **with junk at rank 1–2**).
-- No query sanitiser: **13 of 20 realistic inputs throw** FTS5 syntax errors,
-  and natural sentences return 0 rows because the implicit operator is AND.
-- The install route takes bare ids with no provenance argument, so §3's
-  first-party boundary does not exist in the API. And `delegate_bot` →
-  `mirrorExchange` can put agent text in a fresh bot's thread — the intake
-  trigger. **An agent must not be able to drive another agent's skill install.**
-
-### 2b. Give the skill-less assistants their skills — Sean's directive idea
-**Measured, not assumed: 27 of 57 local profiles declare ZERO skills, and every
-one of them has exactly one playbook.** The distribution is bimodal — a profile
-has 5–11 skills or it has none. Two authoring styles landed in one library.
-
-`bot-library/builtins/smart-trader.json` is what "good" looks like: 11 declared
-skills **plus** an 11,492-char playbook. Note it exists locally and was never
-published to the catalog — which is why searching "trading" finds nothing.
-
-**The primary directive Sean wants already exists — it is the playbook, plus the
-agent's `title` and `description`. Do not add a field. Make it readable.**
-
-Sequence:
-1. **Derive at build time, not runtime.** Feed each of the 27 playbooks through
-   the FTS retrieval (`server/skill-search.ts`), take candidates, have a human
-   approve once, bake the result into the profile's `skills` array. Deterministic,
-   reviewed once rather than per install, zero runtime cost, works offline and on
-   a small local model because the matching already happened.
-   A playbook is a far richer query than "trading" — the ~50% noise the audit
-   measured was on two-word queries. Expect much better, verify anyway, and keep
-   the human gate.
-2. **Measure the gap, then author.** Some directives will have no match in 2,237
-   skills. Find out which before writing any. Authoring speculatively is the
-   expensive mistake.
-3. **Surface playbooks in the UI — arguably the real bug.** They have NO surface
-   anywhere (every `playbook` string in `src/` is preview copy or a delete
-   warning; installed ones live only in `server/installed-playbooks.ts`). Even a
-   fully-skilled assistant's directive is invisible and uneditable.
-4. **Then the runtime version, which is the best one and is now buildable:** an
-   assistant that knows its own directive notices a gap and *asks* — "you keep
-   asking about options flow, I found two skills, want them?" This is the
-   revealed-preference item, and it beats the intake for feeling understood.
-
-Also: **publish smart-trader** so "trading" matches something. Generic prompt and
-the 11 published `@ferroxlabs/tvcontrol` skills only — nothing from Rebel Scanner
-or REGIME-GATE, ever.
-
-### 3. Phase B — the browser door / WebUI. **Worst current state in the app.**
-`PhoneSetupFlow.tsx:1061,1136,1141` still says *"Open Murage on your iPhone"*
-and *"Scan with your iPhone"* about an app that no longer exists. Retiring iOS
-without B7 left the product advertising a dead thing.
-
-Unbuilt: `companion/src/browser.ts` on **8813** (8812 is taken), sessions with
-the credential in the URL **fragment**, registering the browser stream with
-`connectedDeviceTracker` so revocation kills it, **B7 onboarding** (two separate
-questions: "enable the web UI?" off by default, and "connect a device?"), and
-the Tailscale ACL — 5 peers, none today.
-
-**Design change since the plan:** front it with `tailscale serve` rather than a
-hand-rolled listener reading cert files. Tailscale then owns TLS *and renewal*.
-The cert expires **30 Nov 2026** and Tailscale renews only when something asks;
-`serve` asks, a file-reading listener does not. `serve` is tailnet-only —
-`funnel` is the public one and Murage must never use it.
-
-### 4. Phase C rows C2 / C6 / C7 — the phone is still half-broken
-C6 is the sharpest: **six per-message controls measure opacity 0** at 390px with
-`any-hover: hover` false — Copy, Regenerate, Reply, Pin, Speak, Archive. The
-entire per-message action set, invisible and unreachable. C7: the bot row menu
-and TaskPicker rename are `onContextMenu`-only, dead on iOS. C2: 52 tap targets.
-Also queued: sidebar near-alignment (rows x=8 vs x=12, icons x=21 vs x=24) and
-the settings nav hiding 6 of 8 sections behind a scroll with no affordance.
-
-### 5. Auto-update — engines and the app, with a release announcement
-Sean's ask, OpenMaus-style. Fuigo is bundled and pinned by SHA-256; the hybrid
-is ship-bundled then update quietly in the background so nobody ever waits.
-
-### 6. Composio billing
-Everything runs through Ferrox's broker on Sean's key, deliberately. `activeBroker()`
-in `server/composio.ts` is the single decision point and `brokerRequest` takes
-`cfg` so no caller can route around it — **flipping to own-key-wins is one line.**
-Nothing in the UI says which mode is active; fine while free, a real problem the
-day it is not.
-
----
+**Seven decisions for Sean are at the end of the plan.** Wave 0 items 0.2, 0.5 and
+0.6 are code and two hang on decision 7 (whether Mediums/Lows may be fixed in-lane).
 
 ## SEAN'S DECISIONS — settled, act on these
 
@@ -233,6 +150,17 @@ day it is not.
   it only activates in a packaged build, of which there are zero. So it is inert.
   Sequence: Tailscale web UI first, Cloud Deploy second, tunnel considered for the
   paid tier third, delete nothing until its replacement ships.
+- **Electron → Tauri: NOT NOW.** Sean asked whether Tauri is a strategic
+  advantage. Measured: the shell is 23k lines, the backend 69k with zero Electron
+  imports. The one real lock-in is the agent's browser tools on
+  `webContents.debugger.sendCommand` — a product feature needing CDP, which
+  WKWebView on macOS does not speak (Tauri 2 macOS testing is an embedded
+  WebDriver server, not CDP). Size win is partly eaten by a Node sidecar. **Order:**
+  keep decoupling (the door already made the renderer shell-agnostic), move the
+  browser tools to an external Chromium, and only then is Tauri a branch
+  experiment rather than a rewrite. Revisit at the first release (plan 5.2) if size
+  or memory becomes a user complaint. For the orchestrator's own testing, CDP is
+  already moot: Playwright against the door in real Chrome tests what a phone hits.
 - **`hosted` endpoint: re-rank, do NOT delete.** The plan's rationale for deleting
   ("the only remaining path by which Murage becomes internet-reachable") is wrong —
   the managed origin is a **0600 Unix socket**, and the 8812 gateway is loopback.
@@ -305,6 +233,40 @@ from Settings entirely.
   panel/app assignment, fixed in `28dabbce`.
 
 ## KNOWN MEDIUMS — recorded, deliberately not fixed (protocol: Critical/High only)
+
+**From the 2026-09-02 audits, unscheduled unless the plan names them:**
+- Seeded quiz title "What do you mostly want help with?" leaks into the sidebar row
+  preview as the bot's last message (experience §1, Low).
+- "Find it" wraps to two lines beside the intake input below ~840 px (`BotIntakeCard.tsx`, Low).
+- `book-production` ranks `write-book-chapter` at 0.609 — a publisher role; the
+  derivation scorer's confidence is not a confidence **as a class**
+  (`tiktok-creator` 0.40 for `word-form-creator`) — plan 5.4 puts all 48 mappings in
+  front of Sean once (Medium).
+- Duplicate `x-murage-companion` headers: Node joins to `"1, 1"`, a string, so
+  `=== "1"` reads desktop (`sse-visibility.ts:74`, `index.ts:9293`) — not remotely
+  reachable, both doors build from `{}`; plan 0.5 (Low).
+- `MURAGE_TRUSTED_PROXY=1`: written by the installer, read by
+  `classifyClientTrust()` which nothing calls; the semantics it claims (loopback ≠
+  operator) is not in `server/` — plan 3.5 (Low).
+- `installer/lib/systemd.mjs:33-58` interpolates paths into unit text without the
+  newline guard `env-file.mjs` has — operator-only input; plan 3.6 (Low).
+- `docs/plans/skins/THEME-COLLAPSE.md` superseded by `28dabbce`; needs a header or deletion (Low).
+- Sidebar `⋯` is `opacity-0` at ≥768 px including iPad landscape — hover-only, not
+  right-click-only; three sites `Sidebar.tsx:929,945,832` — plan Wave 1 M3 (Medium).
+- Removing every skill does not bring the intake back until reload —
+  `BotSkillsPanel.tsx:271` never calls `invalidateSkillCount` — plan Wave 1 M1 (Medium).
+- `BotSkillsPanel.tsx:483` still says "Use /learn in chat to add another" two lines
+  above an "Add a skill" button, 3,300 px down the profile — plan Wave 1 M2 (Medium).
+- Rename is forced on accept; the API supports `rename:false`, the card never
+  offers it — plan Wave 1 H5 (Medium).
+- One-word typo ("tradng") is a dead end — plan Wave 1 M4 (Medium).
+- Ten Office playbooks say "follow the `officecli-*` skill exactly"; no such skill
+  exists anywhere in `skills-library/` — plan 5.5, Sean's decision 4 (Medium).
+- Under D1 plain HTTP, all five `navigator.clipboard` sites are dead on a phone
+  (`ChatMarkdown.tsx:108`, `ChatView.tsx:162`, `ConnectionDetail.tsx:27`,
+  `EngineSetup.tsx:48`, `SettingsPrimitives.tsx:64`) until D2/HTTPS (Medium).
+
+**Pre-existing, carried forward:**
 
 - **Contract split #13, precisely stated.** `MURAGEBOX_*` is a *deliberate*
   namespace for the child MCP process `server/computer-proxy.ts`, injected by
