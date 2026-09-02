@@ -8,6 +8,7 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
 import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
@@ -320,6 +321,12 @@ function MemoryCard({ bot }: { bot: Bot }) {
 }
 
 export function SettingsPanel({ bot }: { bot: Bot }) {
+  // The one card in this panel that provisions rather than configures: "This
+  // computer" hands a bot the machine, and Cloud opens the Box / VPS backend
+  // picker, which is where a managed container gets created and started. Those
+  // routes require the desktop marker and the browser door strips it, so from
+  // a phone the segmented control was four buttons that 404. See below.
+  const desktop = useDesktopSurface();
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
@@ -351,8 +358,15 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "browser"
         | "modelSelection"
       >
-    > & { acknowledgeLocalAuto?: boolean },
+    > & { acknowledgeLocalAuto?: boolean; persona?: string },
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
+  // `persona` is validated, persisted and prompted server-side already
+  // (shared/bot-profile.ts, server/bot-profile.ts, server/index.ts). The
+  // renderer's `Bot` record and `BotUpdatePatch` live in src/state/, which
+  // this lane does not own, so it is read through a narrow view until the
+  // field lands there. The PATCH body is untyped JSON either way, so the
+  // round trip is real today.
+  const persona = (bot as { persona?: string }).persona ?? "";
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
@@ -437,14 +451,43 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               onChange={(e) => patch({ title: e.target.value })}
             />
           </Field>
-          <Field label="Description">
+          {/* Description is NOT a note about the bot. It is pasted verbatim
+              into the bot's system prompt on every turn ("About: …"), and it
+              is also what a Chief of Staff, the avatar prompt and the team
+              manifest read to decide who does the work. The label said
+              neither, so people wrote notes where instructions go — and, once
+              they realised, wrote voice ("be snarky") into the one field that
+              routing reads. Personality below is the field for that. */}
+          <Field label="Instructions">
             <textarea
               className={cn(inputCls, "min-h-[96px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.description}
-              placeholder="What this agent is for"
+              placeholder="What this agent does, what it should know, and how you want it to work"
               value={bot.description}
               onChange={(e) => patch({ description: e.target.value })}
             />
+            <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
+              Written to this agent at the start of every turn, in its own words. Its teammates
+              also read it when they decide who to hand work to — so keep it about the job.
+            </p>
+          </Field>
+          <Field label="Personality">
+            <textarea
+              className={cn(inputCls, "min-h-[64px] resize-none")}
+              maxLength={BOT_PROFILE_LIMITS.persona}
+              placeholder="Direct, a little snarky, dry wit. Skip the pleasantries."
+              value={persona}
+              onChange={(e) => patch({ persona: e.target.value })}
+            />
+            <div className="mt-1.5 flex items-start justify-between gap-3">
+              <p className="text-[12px] leading-relaxed text-ink-secondary">
+                How this agent talks — spoken to it, and read by nothing else. A teammate
+                deciding who to delegate to never sees it.
+              </p>
+              <span className="shrink-0 pt-px text-[11.5px] tabular-nums text-ink-secondary">
+                {persona.length}/{BOT_PROFILE_LIMITS.persona}
+              </span>
+            </div>
           </Field>
 
           {/* SETUP LIVES HERE, not in the composer dock.
@@ -584,6 +627,13 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </div>
           )}
 
+          {/* WHERE THE WORK RUNS is a decision for the keyboard.
+              Rendered only on a confirmed desktop — `undefined` shows nothing,
+              because showing it and then taking it away is worse than a card
+              that arrives a moment late. The bot keeps whatever it is already
+              set to; nothing here is required to read a conversation, approve
+              an action, or send a message from a phone. */}
+          {desktop === true && (
           <div className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">Computer</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
@@ -643,6 +693,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               </>
             )}
           </div>
+          )}
 
           <BotUsageCard bot={bot} />
           <WorkingFolder bot={bot} />

@@ -54,6 +54,7 @@ import {
   type PhonePairingAttemptLock,
   type PhonePairingAttemptQueue,
 } from "../lib/phone-setup";
+import { useDesktopSurface } from "../lib/use-surface";
 import type { CompanionAccountState } from "../types/muragebox";
 import { ConnectionDetail } from "./ConnectionDetail";
 
@@ -1059,27 +1060,61 @@ export function webUiReadiness(source: {
  * unsatisfied with the action next to it. This is the "say what is true and
  * leave the affordance disabled with an honest reason" rule made visible
  * rather than left to a tooltip. */
-function WebUiReadinessPanel({
-  readiness,
-  busy,
-  onRecheck,
-}: {
-  readiness: WebUiReadiness;
-  busy: boolean;
-  onRecheck: () => void;
-}) {
-  const rows: Array<{ label: string; value: string; good: boolean }> = [
+export interface WebUiReadinessRow {
+  label: string;
+  value: string;
+  good: boolean;
+}
+
+/** What this renderer has NOT looked at, said as such.
+ *
+ * "not found" and "not listening yet" are findings. They are only true if
+ * somebody went and looked, and the only renderer that can look is the one
+ * running on the machine: the tailnet name and the door's address both arrive
+ * over the Electron bridge, which does not exist on the other side of the
+ * browser door. On a phone this panel reported BOTH negatives while the user
+ * was reading it in a browser, over Tailscale — every word of it disproved by
+ * the fact that it was on screen.
+ *
+ * So the negative belongs to the desktop and nobody else. The panel does not
+ * render at all once the surface is known to be remote; while the surface is
+ * still unknown it renders, because hiding it would flash the desktop's own
+ * settings pane, and it says "checking…" — absence of evidence reported as
+ * absence of evidence, not as evidence of absence. */
+export function webUiReadinessRows(
+  readiness: WebUiReadiness,
+  desktop: boolean | undefined,
+): WebUiReadinessRow[] {
+  const unknown = desktop === undefined;
+  return [
     {
       label: "Tailscale on this computer",
-      value: readiness.tailnetName ?? "not found",
+      value: readiness.tailnetName ?? (unknown ? "checking…" : "not found"),
       good: Boolean(readiness.tailnetName),
     },
     {
       label: "Murage in a browser",
-      value: readiness.doorAddress ?? "not listening yet",
+      value: readiness.doorAddress ?? (unknown ? "checking…" : "not listening yet"),
       good: Boolean(readiness.doorAddress),
     },
   ];
+}
+
+function WebUiReadinessPanel({
+  readiness,
+  busy,
+  onRecheck,
+  desktop,
+}: {
+  readiness: WebUiReadiness;
+  busy: boolean;
+  onRecheck: () => void;
+  desktop: boolean | undefined;
+}) {
+  // Confirmed remote: there is no computer here to report on. Nothing to
+  // disable, nothing to caveat — the rows simply are not this device's rows.
+  if (desktop === false) return null;
+  const rows = webUiReadinessRows(readiness, desktop);
   return (
     <div className="mt-4 w-full max-w-[420px] rounded-xl border border-hairline/50 px-3 py-2.5 text-left">
       {rows.map((row) => (
@@ -1142,9 +1177,24 @@ export function PhoneSetupFlowView({
   onComplete?: () => void;
 }) {
   const c = controller;
+  // THE PHONE IS THE PHONE.
+  //
+  // This whole flow is "how do I get Murage onto a phone" — a QR code to point
+  // a camera at, a tailnet to join, a pairing to approve. It was rendered ON
+  // the paired phone, which had already done all of it. Confirmed remote gets
+  // nothing here rather than a disabled version of it: a greyed-out wizard for
+  // a job you have already finished is still the wrong screen.
+  //
+  // `undefined` keeps rendering. On the desktop this component's own callers
+  // (Onboarding, CompanionSection) have already established the surface, so
+  // the only renderer that reaches here unknowing is the dev server's — and
+  // blanking the settings pane for a fetch would be a change to the desktop.
+  const desktop = useDesktopSurface();
   const actionError = companionAccountActionError(c.account, c.accountError);
   const canSubmitEmail = /^\S+@\S+\.\S+$/.test(c.email.trim());
   const manualCodeMode = phonePairingManualCodeMode(Boolean(c.state?.pairing), c.pairingLink);
+
+  if (desktop === false) return null;
 
   if (c.phase === "intro") {
     const readiness = webUiReadiness(c);
@@ -1162,6 +1212,7 @@ export function PhoneSetupFlowView({
           readiness={readiness}
           busy={c.busy || c.accountBusy}
           onRecheck={c.refreshTailscale}
+          desktop={desktop}
         />
         <button
           onClick={c.start}
