@@ -113,11 +113,13 @@ export function rememberCompanionKeepAwake(keepAwake) {
 
 /** Ask the sidecar's own control server, which is the same API the standalone
  * page uses. Short timeout: this is loopback, and a spinner in Settings that
- * never resolves is worse than an error. */
-async function control(method, urlPath, body) {
+ * never resolves is worse than an error. The budget is a parameter because
+ * one call is not like the others — a Tailscale re-probe is bounded by a CLI
+ * hunt on the far side, not by loopback latency. */
+async function control(method, urlPath, body, { timeoutMs = 4000 } = {}) {
   const options = {
     method,
-    signal: AbortSignal.timeout(4000),
+    signal: AbortSignal.timeout(timeoutMs),
   };
   if (body !== undefined) {
     options.body = JSON.stringify(body);
@@ -386,6 +388,34 @@ export async function companionState() {
       connectedDeviceIds: [],
       pairing: null,
       error: "the companion is not responding",
+    };
+  }
+}
+
+/** Re-read Tailscale without restarting the sidecar or dropping connected
+ * phones.
+ *
+ * Tailscale may be installed, signed into, or enabled after Murage starts, so
+ * startup-only detection makes an otherwise healthy route look permanently
+ * unavailable — and the tailnet is the route this product leads with, which
+ * makes that the worst failure mode available. */
+export async function companionRefreshTailscale() {
+  if (!proc) return companionState();
+  try {
+    // The sidecar's CLI hunt is itself bounded to five seconds. Give the
+    // loopback call enough room to receive that bounded answer instead of
+    // aborting first and reporting a failure that never happened.
+    const state = await control("POST", "/tailscale/refresh", undefined, { timeoutMs: 6000 });
+    return {
+      enabled: true,
+      keepAwake: companionKeepAwakeAtRest(),
+      ...state,
+    };
+  } catch {
+    const state = await companionState();
+    return {
+      ...state,
+      error: state.error ?? "Tailscale could not be checked.",
     };
   }
 }

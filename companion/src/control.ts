@@ -35,6 +35,11 @@ export interface ControlOptions {
   connectedDeviceIds?: () => string[];
   /** Terminate every authenticated event stream owned by a revoked device. */
   disconnectDevice?: (deviceId: string) => void;
+  /** Re-read Tailscale after the sidecar has started. People commonly
+   * install, sign into, or enable Tailscale while Murage is already running,
+   * and the tailnet is the route this product leads with — so a name read
+   * only at boot makes a working door look permanently shut. */
+  refreshTailscale?: () => Promise<void>;
 }
 
 /** The host out of a `Host` header, port removed.
@@ -273,6 +278,16 @@ export function createControlServer(options: ControlOptions): Server {
       return res.end(html);
     }
     if (method === "GET" && path === "/state") return json(res, 200, companionState(options));
+    if (method === "POST" && path === "/tailscale/refresh" && options.refreshTailscale) {
+      // Awaited before replying, not fired and forgotten: the point of the
+      // call is the state that comes back, and answering early would hand
+      // back the stale name the caller asked to have replaced.
+      void options.refreshTailscale().then(
+        () => json(res, 200, companionState(options)),
+        () => json(res, 500, { error: "could not refresh Tailscale" }),
+      );
+      return;
+    }
     if (method === "POST" && path === "/pairing") {
       const window = options.devices.openPairing();
       // Keep the freshly issued credentials at the top level as well as in
