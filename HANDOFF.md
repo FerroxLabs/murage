@@ -99,6 +99,43 @@ Known-broken in the plan as written, all measured:
   `mirrorExchange` can put agent text in a fresh bot's thread — the intake
   trigger. **An agent must not be able to drive another agent's skill install.**
 
+### 2b. Give the skill-less assistants their skills — Sean's directive idea
+**Measured, not assumed: 27 of 57 local profiles declare ZERO skills, and every
+one of them has exactly one playbook.** The distribution is bimodal — a profile
+has 5–11 skills or it has none. Two authoring styles landed in one library.
+
+`bot-library/builtins/smart-trader.json` is what "good" looks like: 11 declared
+skills **plus** an 11,492-char playbook. Note it exists locally and was never
+published to the catalog — which is why searching "trading" finds nothing.
+
+**The primary directive Sean wants already exists — it is the playbook, plus the
+agent's `title` and `description`. Do not add a field. Make it readable.**
+
+Sequence:
+1. **Derive at build time, not runtime.** Feed each of the 27 playbooks through
+   the FTS retrieval (`server/skill-search.ts`), take candidates, have a human
+   approve once, bake the result into the profile's `skills` array. Deterministic,
+   reviewed once rather than per install, zero runtime cost, works offline and on
+   a small local model because the matching already happened.
+   A playbook is a far richer query than "trading" — the ~50% noise the audit
+   measured was on two-word queries. Expect much better, verify anyway, and keep
+   the human gate.
+2. **Measure the gap, then author.** Some directives will have no match in 2,237
+   skills. Find out which before writing any. Authoring speculatively is the
+   expensive mistake.
+3. **Surface playbooks in the UI — arguably the real bug.** They have NO surface
+   anywhere (every `playbook` string in `src/` is preview copy or a delete
+   warning; installed ones live only in `server/installed-playbooks.ts`). Even a
+   fully-skilled assistant's directive is invisible and uneditable.
+4. **Then the runtime version, which is the best one and is now buildable:** an
+   assistant that knows its own directive notices a gap and *asks* — "you keep
+   asking about options flow, I found two skills, want them?" This is the
+   revealed-preference item, and it beats the intake for feeling understood.
+
+Also: **publish smart-trader** so "trading" matches something. Generic prompt and
+the 11 published `@ferroxlabs/tvcontrol` skills only — nothing from Rebel Scanner
+or REGIME-GATE, ever.
+
 ### 3. Phase B — the browser door / WebUI. **Worst current state in the app.**
 `PhoneSetupFlow.tsx:1061,1136,1141` still says *"Open Murage on your iPhone"*
 and *"Scan with your iPhone"* about an app that no longer exists. Retiring iOS
@@ -139,9 +176,8 @@ day it is not.
 
 ## OPEN — needs Sean, not code
 
-- **28 of 58 solo profiles carry ZERO skills.** They ship a *playbook* instead,
-  and playbooks have **no UI surface anywhere in the app**. Half the assistant
-  catalog installs a personality and no capability. Content, not code.
+- **The skill-less profiles now have a plan — see §2b.** Corrected count: 27 of
+  57 local profiles, each with exactly one playbook. Content *and* code.
 - **Fuigo artifact size**: ~59 MB compressed added per mac arch.
 - **`fuigo-win32-arm64@1.0.1` is unpublished** (registry 404s). **Not a blocker** —
   the app ships Windows x64 only and Windows-on-ARM emulates x64. Only affects
