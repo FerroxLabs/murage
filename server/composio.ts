@@ -192,21 +192,27 @@ function brokerAccess(): { url: string; token: string } | null {
   return { url: normalizeManagedBrokerUrl(url), token };
 }
 
-/** The broker, but only when this workspace is not carrying its own key.
+/** Which broker a request should use, resolved in exactly one place.
  *
- * A person who pastes their own Composio key into Settings has said, as
- * plainly as the UI allows, that they want to use their own account. Checking
- * the broker first meant that key was accepted, stored in the keychain,
- * displayed as configured — and then silently ignored on every request, with
- * the bill landing on the broker's owner instead. Their key wins; the managed
- * broker is what you get when you have not brought one. */
+ * Today: the managed broker always wins. Connector traffic runs through
+ * Ferrox's worker and Ferrox eats the cost, deliberately, until connections
+ * become something people pay for. A workspace key is still accepted and
+ * stored — it is what a self-hosted or air-gapped install runs on, where
+ * there is no broker to reach — it simply does not displace the broker when
+ * one is configured.
+ *
+ * When billing exists this is the line that changes, and it is one line
+ * precisely so that it can be. `brokerRequest` takes `cfg` and resolves
+ * through here rather than reading the broker itself, so no caller can route
+ * around whatever this decides. */
 function activeBroker(cfg: AppConfig): { url: string; token: string } | null {
-  return cfg.composio?.apiKey ? null : brokerAccess();
+  void cfg;
+  return brokerAccess();
 }
 
 export function connectionMode(cfg: AppConfig): "managed" | "self-hosted" | "unavailable" {
-  if (cfg.composio?.apiKey) return "self-hosted";
-  return brokerAccess() ? "managed" : "unavailable";
+  if (activeBroker(cfg)) return "managed";
+  return cfg.composio?.apiKey ? "self-hosted" : "unavailable";
 }
 
 export function configured(cfg: AppConfig): boolean {

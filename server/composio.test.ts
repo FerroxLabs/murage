@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -205,34 +206,30 @@ describe.sequential("Composio Sessions", () => {
     expect(applyManagedBrokerMessage({ type: messageType, access: null })).toBe(true);
     expect(connectionMode({})).toBe("unavailable");
   });
-  // Someone who pastes their own Composio key into Settings has said as
-  // plainly as the UI allows that they want their own account used. The
-  // broker used to be checked first, so that key was accepted, stored in the
-  // keychain, shown as configured — and then ignored on every request, with
-  // the cost landing on whoever owns the broker.
-  it("lets a workspace's own key beat the managed broker", () => {
+  // Connector traffic runs through Ferrox's broker and Ferrox eats the cost,
+  // deliberately, until connections become something people pay for. A
+  // workspace key is still what a self-hosted or air-gapped install runs on —
+  // there is no broker to reach there — it just does not displace a broker
+  // that is configured. When billing lands, this expectation flips with the
+  // one line in activeBroker.
+  it("routes through the managed broker even when a workspace key exists", () => {
     setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
-    expect(connectionMode({})).toBe("managed");
-    expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("self-hosted");
+    expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("managed");
     setManagedBrokerAccess(null);
-    // And with no broker at all it is still their key, not "unavailable".
+    // With no broker, their key is what runs it.
     expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("self-hosted");
+    expect(connectionMode({})).toBe("unavailable");
   });
 
-  it("routes no request through the broker once a key is present", async () => {
-    // connectionMode is a label; this is the money. brokerRequest resolves the
-    // same predicate itself, so a caller cannot spend the broker's budget on
-    // behalf of someone holding their own key even by forgetting to check.
-    setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
-    try {
-      await expect(
-        connectedServices({ composio: { apiKey: "ak_mine" } } as never),
-      ).rejects.not.toThrow(/connected-apps service is unavailable/);
-    } catch {
-      // Reaching the self-hosted path at all is the assertion; what it does
-      // with an unreachable Composio afterwards is not this test's business.
-    }
-    setManagedBrokerAccess(null);
+  it("resolves the broker in one place, so no caller can route around it", () => {
+    // brokerRequest takes cfg and asks activeBroker rather than reading the
+    // broker itself. That is what makes the billing switch a one-line change
+    // instead of an audit of every call site.
+    const source = readFileSync(new URL("./composio.ts", import.meta.url), "utf8");
+    const body = source.slice(source.indexOf("async function brokerRequest("));
+    expect(body.slice(0, body.indexOf("\n}"))).toContain("activeBroker(cfg)");
+    // Only the resolver and the label may read it directly.
+    expect(source.split("brokerAccess()").length - 1).toBeLessThanOrEqual(3);
   });
 
   it("accepts only project API keys", async () => {
