@@ -306,6 +306,20 @@ describe("onboarding quiz", () => {
     });
   });
 
+  it("puts the quiz back when they ask for it, and does not delete the field", () => {
+    const state = { ...initialState, bots: [bot], selectedId: bot.id };
+    const hidden = reducer(state, { type: "dismissCard", botId: bot.id, messageId: "q" });
+    expect(hidden.bots[0]?.messages.find((message) => message.id === "q")?.card?.dismissed).toBe(true);
+
+    const back = reducer(hidden, { type: "restoreCard", botId: bot.id, messageId: "q" });
+    const card = back.bots[0]?.messages.find((message) => message.id === "q")?.card;
+    // false, not absent: undefined means nobody decided, and the transcript
+    // rule would hide the card again the moment anything follows it
+    expect(card?.dismissed).toBe(false);
+    expect(card?.answered).toBeUndefined();
+    expect(card?.title).toBe(quizCard.title);
+  });
+
   it("leaves a live permission card in place", () => {
     const askBot: Bot = {
       ...bot,
