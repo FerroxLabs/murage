@@ -48,7 +48,7 @@ import { MIN_QUERY, SearchResults } from "./SearchResults";
 import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
 import { RoleIcon } from "./RoleBadge";
-import { botRole, BOT_ROLE_BADGE } from "@/lib/bot-role";
+import { botRole, botRolePatch, BOT_ROLE_BADGE, BOT_ROLE_TITLE } from "@/lib/bot-role";
 import { BotPickerList } from "./BotPickerList";
 import {
   loadCollapsedSections,
@@ -665,12 +665,20 @@ function BotContextMenu({
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const visibleBotCount = state.bots.filter((candidate) => !candidate.hidden).length;
-  const archiveBlocked = Boolean(bot.chiefOfStaff) || visibleBotCount <= 1;
-  const archiveHint = bot.chiefOfStaff
-    ? "Choose another Chief of Staff first"
-    : visibleBotCount <= 1
-      ? "Keep at least one active bot"
-      : undefined;
+  const role = botRole(bot);
+  // Both roles are still blocked from archiving — a team with no lead is the
+  // state `create_bot` refuses to add to — but the reason has to name the role
+  // being blocked. A team leader was told to choose another Chief of Staff,
+  // which is neither what happened nor something it would fix.
+  const archiveBlocked = role === "chief" || role === "leader" || visibleBotCount <= 1;
+  const archiveHint =
+    role === "chief"
+      ? "Choose another Chief of Staff first"
+      : role === "leader"
+        ? `Choose another lead for ${bot.section?.trim() || "this team"} first`
+        : visibleBotCount <= 1
+          ? "Keep at least one active bot"
+          : undefined;
   // keep the menu on-screen near the click
   const top = Math.max(8, Math.min(menu.y, window.innerHeight - 380));
   const left = Math.min(menu.x, window.innerWidth - 240);
@@ -713,13 +721,38 @@ function BotContextMenu({
           bot.pinned ? "Unpin" : "Pin",
           () => dispatch({ type: "updateBot", botId: bot.id, patch: { pinned: !bot.pinned } }),
         ),
+        // Named for the role this bot actually holds. It used to say "Remove
+        // Chief of Staff" on a team leader, because it read `chiefOfStaff`
+        // raw — the field is true for both roles and `chiefScope` is what
+        // separates them. `botRole()` is the only thing allowed to make that
+        // call, here as everywhere else.
+        //
+        // The patch goes through `botRolePatch()` rather than a bare flag
+        // flip. A bare `chiefOfStaff: true` states one of three fields and
+        // leaves the other two to whatever the record already carried, which
+        // is how a bot ends up flagged as leading something with no tier
+        // saying what.
         item(
-          <Crown size={16} className={bot.chiefOfStaff ? "text-accent" : "text-ink-secondary"} />,
-          bot.chiefOfStaff ? "Remove Chief of Staff" : "Make Chief of Staff",
-          () => dispatch({ type: "updateBot", botId: bot.id, patch: { chiefOfStaff: !bot.chiefOfStaff } }),
+          role === "chief" ? (
+            <Crown size={16} className="text-accent" />
+          ) : (
+            <Users size={16} className={role === "leader" ? "text-ink" : "text-ink-secondary"} />
+          ),
+          role === "chief" || role === "leader"
+            ? `Remove ${BOT_ROLE_TITLE[role]}`
+            : "Make Team leader",
+          () =>
+            dispatch({
+              type: "updateBot",
+              botId: bot.id,
+              patch:
+                role === "chief" || role === "leader"
+                  ? botRolePatch("member")
+                  : botRolePatch("leader"),
+            }),
           {
-            disabled: !bot.chiefOfStaff && !canCoordinate,
-            hint: !bot.chiefOfStaff && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
+            disabled: role === "member" && !canCoordinate,
+            hint: role === "member" && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
           },
         ),
         item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to section", () => {
@@ -794,7 +827,18 @@ function BotListItem({
       : density === "compact"
         ? "gap-2 px-2 py-1.5 pr-[5.25rem]"
         : "gap-3 px-3 py-2.5 pr-[5.25rem]",
-    bot.chiefOfStaff
+    // ONLY the Chief of Staff, not every bot that leads something.
+    //
+    // This read `bot.chiefOfStaff`, which is true for a team leader too, so
+    // the two wore the same accent row and were indistinguishable — the badge
+    // below already said "Team lead" in a different colour and the row shouted
+    // over it.
+    //
+    // A leader is not given a second hue. There is one accent in this app and
+    // exactly one row in the sidebar should carry it, or it stops meaning
+    // anything; the leader is marked by its badge and its Users icon, which is
+    // the distinction the eye actually reads at 13px.
+    botRole(bot) === "chief"
       ? selected
         ? "border-accent/40 bg-accent/15"
         : "border-accent/25 bg-accent/5 hover:bg-accent/10"
@@ -943,11 +987,13 @@ function BotListItem({
         onClick={() => onArchive(bot)}
         aria-label={`Archive ${bot.name}`}
         title={
-          bot.chiefOfStaff
+          botRole(bot) === "chief"
             ? "Choose another Chief of Staff first"
-            : archiveDisabled
-              ? "Keep at least one active bot"
-              : `Archive ${bot.name}`
+            : botRole(bot) === "leader"
+              ? `Choose another lead for ${bot.section?.trim() || "this team"} first`
+              : archiveDisabled
+                ? "Keep at least one active bot"
+                : `Archive ${bot.name}`
         }
         className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100 disabled:[@media(hover:none)]:opacity-0"
       >
