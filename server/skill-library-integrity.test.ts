@@ -4,6 +4,16 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SKILL_LIBRARY_ROOT, checkLibrarySkill } from "./skills.ts";
 
+/** The catalog builder is plain JS with no declaration file, and this repo has
+ * no .d.ts anywhere under scripts/. Rather than add one, the single export this
+ * test needs is typed at the boundary; the specifier is held in a variable so
+ * TypeScript treats the module as untyped instead of erroring on the missing
+ * declarations. */
+const BUILDER_MODULE = "../scripts/build-local-catalog.mjs";
+async function loadBuilder(): Promise<{ installableSkillIds: (root: string) => Set<string> }> {
+  return await import(BUILDER_MODULE);
+}
+
 /** The nine skills this guard was written for shipped on disk for months and
  * never installed: the profile asked for them, installSkillFromLibrary
  * rejected them one by one, and the caller logged and carried on. Nothing
@@ -116,5 +126,67 @@ describe("skill library guard", () => {
     expect(unresolvable(root)).toEqual([
       expect.stringContaining('not-a-skill -> library skill "not-a-skill" could not be read: ENOENT'),
     ]);
+  });
+});
+
+/** The end invariant, stated on the artifact users actually receive.
+ *
+ * library/catalog.json is generated and CI-gated, and each entry advertises
+ * its skills as `teams/<slug>/skills/<id>/SKILL.md`. Every one of those ids
+ * has to install, or the card's "Set this up" button promises something the
+ * installer will refuse. The catalog builder is what decides which declared
+ * ids survive into that list, so builder and installer must agree exactly —
+ * the builder used to test only that two files existed while its comment
+ * claimed it matched the installer, which let an uninstallable skill through
+ * on any rule beyond file presence. */
+describe("shipped catalog", () => {
+  const CATALOG = join(SKILL_LIBRARY_ROOT, "..", "library", "catalog.json");
+
+  function advertisedSkillIds(): string[] {
+    const catalog = JSON.parse(readFileSync(CATALOG, "utf8")) as {
+      teams: Array<{ slug: string; skills?: string[] }>;
+    };
+    return [
+      ...new Set(
+        catalog.teams.flatMap((team) =>
+          (team.skills ?? []).map((path) => /^teams\/[^/]+\/skills\/(.+)\/SKILL\.md$/.exec(path)?.[1] ?? path),
+        ),
+      ),
+    ].sort();
+  }
+
+  it("advertises no skill that cannot install", () => {
+    const advertised = advertisedSkillIds();
+    expect(advertised.length).toBeGreaterThan(0);
+    const broken = advertised.flatMap((id) => {
+      const checked = checkLibrarySkill(id, SKILL_LIBRARY_ROOT);
+      return "error" in checked ? [`  ${id} -> ${checked.error}`] : [];
+    });
+    expect(
+      broken.join("\n"),
+      `library/catalog.json advertises ${broken.length} of ${advertised.length} skills that installSkillFromLibrary ` +
+        "would refuse. A user picking that team gets a card promising a skill the installer rejects.",
+    ).toBe("");
+  });
+
+  it("builds its installable set with the installer's own rules", async () => {
+    // Builder and installer must agree on the SAME library, or the catalog is
+    // derived from a different notion of installable than the one that runs.
+    const { installableSkillIds } = await loadBuilder();
+    const builder = [...installableSkillIds(SKILL_LIBRARY_ROOT)].sort();
+    const installer = skillIds(SKILL_LIBRARY_ROOT).filter(
+      (id) => !("error" in checkLibrarySkill(id, SKILL_LIBRARY_ROOT)),
+    );
+    expect(builder).toEqual(installer);
+  });
+
+  it("drops a skill the installer would refuse", async () => {
+    // The rule the old existence-only filter could not see: both files present,
+    // install still refused. The builder must not offer it.
+    const { installableSkillIds } = await loadBuilder();
+    const root = libraryCopy(["ab-test-design", "academic-argument"]);
+    const skillMd = join(root, "ab-test-design", "SKILL.md");
+    writeFileSync(skillMd, readFileSync(skillMd, "utf8").replace("name: ab-test-design", "name: something-else"));
+    expect([...installableSkillIds(root)]).toEqual(["academic-argument"]);
   });
 });

@@ -11,17 +11,19 @@
 //     still offered, and the card renders prose written for all ten.
 //
 // So: every id, not most of them. And installability is not "the directory
-// exists" — installSkillFromLibrary needs SKILL.md AND manifest.json, and the
-// SKILL.md frontmatter `name` must equal the manifest id or the install fails at
-// the last step. Nine catalogued skills are broken exactly that way; asserting the
-// invariant rather than the blocklist means a tenth cannot slip in unnoticed.
-import { existsSync, readFileSync } from "node:fs";
+// exists" — it is every rule installSkillFromLibrary applies, which is why this
+// asks checkLibrarySkill instead of restating a subset of them. Nine catalogued
+// skills were broken on the frontmatter-name rule and are now repaired;
+// server/skill-library-integrity.test.ts walks the whole library, so a tenth
+// cannot appear unnoticed and no blocklist has to be kept here to rot.
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { parseBotPackage } from "../server/bot-package.ts";
+import { checkLibrarySkill } from "../server/skills.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const skillLibrary = join(repoRoot, "skills-library");
@@ -39,16 +41,13 @@ function declaredSkills(pkg) {
   return [...new Set(pkg.agents.flatMap((agent) => agent.skills ?? []))];
 }
 
-/** Why this id would not install, or null if it would. */
+/** Why this id would not install, or null if it would. Delegates to the
+ *  installer's own checker rather than restating its rules: this function used
+ *  to hand-roll a SUBSET of them, and a profile test that quietly disagrees
+ *  with the installer is worse than no test at all. */
 function installFailure(id) {
-  const dir = join(skillLibrary, id);
-  if (!existsSync(join(dir, "SKILL.md"))) return "no SKILL.md";
-  if (!existsSync(join(dir, "manifest.json"))) return "no manifest.json";
-  const frontmatter = readFileSync(join(dir, "SKILL.md"), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!frontmatter) return "SKILL.md has no frontmatter";
-  const name = frontmatter[1].match(/^name:\s*(.+)$/m)?.[1].trim().replace(/^["']|["']$/g, "");
-  if (name !== id) return `SKILL.md name "${name}" !== manifest id`;
-  return null;
+  const checked = checkLibrarySkill(id, skillLibrary);
+  return "error" in checked ? checked.error : null;
 }
 
 describe("mainstream profiles", () => {
