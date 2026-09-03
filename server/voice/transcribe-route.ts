@@ -40,7 +40,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
-  MAX_AUDIO_BYTES,
   TranscriptionUnavailable,
   transcribe as transcribeWithFlux,
   type TranscribeOptions,
@@ -139,6 +138,137 @@ export function isTranscriptionModel(value: string): value is TranscriptionModel
  */
 export const DEFAULT_MODEL: TranscriptionModel = "flux-voice-fast";
 
+/**
+ * The route's OWN clip ceiling, deliberately tighter than Flux's 8MB.
+ *
+ * 8MB is Flux's body limit, not a bound on cost: Opus at the bitrates a
+ * MediaRecorder actually emits puts roughly forty minutes of audio inside it,
+ * and transcription is billed by the second on the workspace's key. So the
+ * shipped "one clip, 8MB" check bounded the UPLOAD and left the BILL open.
+ *
+ * The client stops itself at two minutes (`PushToTalk.MAX_CLIP_MS`), and the
+ * most generous realistic MediaRecorder audio bitrate is 128kbps — so the
+ * largest clip a real person can produce is about 1.9MB. Four megabytes is
+ * more than double that: no normal user can reach it, and it halves what a
+ * single accepted request can possibly cost.
+ */
+export const MAX_CLIP_BYTES = 4 * 1024 * 1024;
+
+/**
+ * How many clips may be in flight at once.
+ *
+ * Push to talk is a human holding a button: one person speaks once at a time.
+ * Two rather than one is slack for the case where the client has already
+ * given up on a slow request (`PushToTalk.CLIP_TIMEOUT_MS`) and the person
+ * presses again while the abandoned one is still upstream. A person cannot
+ * trip this. Fifty concurrent POSTs from a stolen pairing token trips it
+ * forty-eight times, BEFORE their bodies are read — which is also what stops
+ * the harness holding fifty eight-megabyte buffers at once.
+ */
+export const MAX_CONCURRENT_CLIPS = 2;
+
+/** The rolling window the budget below is measured over. */
+export const BUDGET_WINDOW_MS = 60 * 60_000;
+
+/**
+ * Billed audio seconds allowed per window.
+ *
+ * One hour of audio per rolling hour. A person cannot exceed this: it would
+ * require speaking into the button without pause for the entire hour, which
+ * is more dictation than the wall clock contains. An attacker reaches it in
+ * two requests and is then refused for the rest of the window — which turns
+ * "roughly thirty hours of billed audio in one burst" into a bounded, and
+ * frankly generous, ceiling.
+ */
+export const BUDGET_MAX_BILLED_SECONDS = 60 * 60;
+
+/**
+ * Requests allowed per window, regardless of how little each one cost.
+ *
+ * The seconds budget is the bound on money; this is the bound on everything
+ * else — sockets, uploads, and upstream calls. 240 an hour is one utterance
+ * every fifteen seconds sustained for a full hour, which no dictation session
+ * approaches, and 240 one-second clips cost four minutes of audio, so it can
+ * never be the cap that bites a real user first.
+ */
+export const BUDGET_MAX_REQUESTS = 240;
+
+/**
+ * Audio seconds a clip of this size could possibly be.
+ *
+ * Used only when the provider told us nothing — an error path. Opus at 24kbps
+ * (3000 bytes a second) is the CHEAPEST bitrate anything in the wild emits,
+ * so dividing by it yields the LONGEST clip those bytes could hold. Guessing
+ * high is the right direction for a budget: it over-charges a failure, which
+ * is rare, rather than under-charging an attack, which is not.
+ */
+export function estimateBilledSeconds(bytes: number): number {
+  return Math.ceil(bytes / 3000);
+}
+
+/**
+ * The bound on a billable route a phone can reach.
+ *
+ * Shaped after `createSignInLimiter` (`companion/src/browser.ts:1041`) on
+ * purpose rather than invented: in-memory, one per door, living as long as
+ * the door does, and driven on an injectable clock so a test can roll the
+ * window without waiting an hour. The difference is what it counts — that
+ * limiter counts failed sign-ins, and nothing in the tree counted spend.
+ */
+export interface VoiceBudget {
+  /** Reserve a slot, or say how long to wait and why. */
+  begin(
+    now?: number,
+  ):
+    | { ok: true; done: (billedSeconds: number, now?: number) => void }
+    | { ok: false; retryAfterMs: number; reason: "busy" | "budget" };
+}
+
+export function createVoiceBudget(): VoiceBudget {
+  let inFlight = 0;
+  /** [when it happened, what it cost in billed seconds] */
+  let spent: Array<[number, number]> = [];
+
+  const forget = (now: number): void => {
+    const from = now - BUDGET_WINDOW_MS;
+    if (spent.length && spent[0][0] <= from) spent = spent.filter(([at]) => at > from);
+  };
+
+  return {
+    begin(now = Date.now()) {
+      forget(now);
+      if (inFlight >= MAX_CONCURRENT_CLIPS) {
+        // Seconds, not the window: the thing to wait for is the clip in front
+        // of you finishing, and that is a moment away, not an hour.
+        return { ok: false, retryAfterMs: 5_000, reason: "busy" };
+      }
+      let seconds = 0;
+      for (const [, cost] of spent) seconds += cost;
+      if (spent.length >= BUDGET_MAX_REQUESTS || seconds >= BUDGET_MAX_BILLED_SECONDS) {
+        const oldest = spent[0]?.[0] ?? now;
+        return { ok: false, retryAfterMs: Math.max(1_000, oldest + BUDGET_WINDOW_MS - now), reason: "budget" };
+      }
+      inFlight += 1;
+      let closed = false;
+      return {
+        ok: true,
+        done: (billedSeconds, at = Date.now()) => {
+          // Idempotent: the handler has several exits and one of them is a
+          // catch, and a slot released twice would let the count drift below
+          // zero and quietly disable the concurrency cap.
+          if (closed) return;
+          closed = true;
+          inFlight -= 1;
+          spent.push([at, Math.max(0, billedSeconds)]);
+        },
+      };
+    },
+  };
+}
+
+/** One sentence for the size refusal, in the two places that can give it. */
+const TOO_LARGE = "That recording is too long. Keep it under 4MB, or about two minutes.";
+
 /** The content-type, stripped of its codecs parameter and lowercased. */
 export function containerOf(contentType: string | string[] | undefined): string | null {
   const raw = Array.isArray(contentType) ? contentType[0] : contentType;
@@ -157,6 +287,44 @@ export function filenameFor(container: string): string | null {
 export interface TranscribeRouteDeps {
   transcribe?: (recording: { bytes: Uint8Array; filename: string; mime?: string }, options?: TranscribeOptions) => Promise<Transcript>;
   env?: NodeJS.ProcessEnv;
+  /** Injectable so a test gets a fresh window; production shares the one
+   *  below, which lives as long as the process — the same arrangement the
+   *  sign-in limiter makes, for the same reason. */
+  budget?: VoiceBudget;
+}
+
+/** One budget per harness, created once. */
+const processBudget = createVoiceBudget();
+
+/**
+ * Cut the upload once the answer is on the wire.
+ *
+ * Destroying `req` destroys the socket beneath it, so this must wait for the
+ * response to flush — otherwise the refusal is written into a socket that is
+ * torn down before the bytes leave, and the client gets a reset with no
+ * status at all.
+ */
+function cutWhenAnswered(req: IncomingMessage, res: ServerResponse): void {
+  const cut = () => {
+    // Stop reading first, so nothing more is buffered while the close runs.
+    req.pause();
+    const socket = res.socket ?? req.socket;
+    if (!socket || socket.destroyed) return;
+    // `end()` and not `destroy()`. MEASURED: a hard destroy with unread
+    // request bytes still in flight sends a TCP RST, and an RST discards the
+    // peer's receive buffer — so the 413 we just wrote is thrown away and the
+    // client sees a reset connection with no status at all. Caught exactly
+    // that way, by a control that then read an empty status line. A FIN
+    // flushes what we wrote and still stops the upload.
+    socket.end();
+    // Backstop for a peer that keeps its half of the connection open and
+    // keeps sending: the FIN was the polite ask, this is the answer.
+    setTimeout(() => {
+      if (!socket.destroyed) socket.destroy();
+    }, 1_000).unref();
+  };
+  if (res.writableFinished) return cut();
+  res.once("finish", cut);
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -173,7 +341,7 @@ function json(res: ServerResponse, status: number, body: unknown): void {
  * running total is checked as well, and a chunked upload that lies about its
  * size is cut at the cap rather than after it.
  */
-function readAudio(req: IncomingMessage): Promise<Uint8Array> {
+function readAudio(req: IncomingMessage, limit: number): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let received = 0;
@@ -186,9 +354,7 @@ function readAudio(req: IncomingMessage): Promise<Uint8Array> {
     req.on("data", (chunk: Buffer) => {
       if (settled) return;
       received += chunk.byteLength;
-      if (received > MAX_AUDIO_BYTES) {
-        return fail(413, "That recording is too long. Keep it under 8MB.");
-      }
+      if (received > limit) return fail(413, TOO_LARGE);
       chunks.push(chunk);
     });
     req.on("end", () => {
@@ -197,6 +363,16 @@ function readAudio(req: IncomingMessage): Promise<Uint8Array> {
       resolve(new Uint8Array(Buffer.concat(chunks)));
     });
     req.on("error", (error) => fail(400, error instanceof Error ? error.message : String(error)));
+    // MEASURED, not assumed: on Node 22.23 a peer that vanishes mid-body
+    // emits `data, aborted, error:ECONNRESET, close` in that order, so the
+    // "error" listener above is what settles the ordinary disconnect today —
+    // both for a reset and for a clean half-close. These two are here because
+    // nothing in Node's contract PROMISES that ECONNRESET, and the cost of
+    // being wrong is asymmetric: a promise that settles twice is free, and
+    // one that never settles holds a request object, its buffered chunks and
+    // a socket for the life of the process, once per abandoned upload.
+    req.on("aborted", () => fail(499, "The upload was abandoned."));
+    req.on("close", () => fail(499, "The upload was abandoned."));
   });
 }
 
@@ -254,33 +430,90 @@ export async function handleTranscribeRoute(
       json(res, 400, { error: "content-length must be a non-negative integer" });
       return true;
     }
-    if (declared > MAX_AUDIO_BYTES) {
+    if (declared > MAX_CLIP_BYTES) {
       req.resume();
-      json(res, 413, { error: "That recording is too long. Keep it under 8MB.", reason: "too_large" });
+      json(res, 413, { error: TOO_LARGE, reason: "too_large" });
       return true;
     }
   }
 
+  // `?model=` may name the PINNED arm and nothing else.
+  //
+  // It used to admit all three aliases, which handed a caller on a remote,
+  // billable surface the choice of the more expensive engine —
+  // `flux-voice-accurate` directly, and `flux-voice` by the back door, since
+  // its duration probe cannot read a Matroska header and so falls to the
+  // accurate arm for exactly the webm clips both phone engines produce.
+  // Nothing in the tree has ever sent this parameter; the only caller it
+  // served was one choosing to spend more of somebody else's money.
   const requestedModel = url.searchParams.get("model");
-  if (requestedModel !== null && !isTranscriptionModel(requestedModel)) {
+  if (requestedModel !== null && requestedModel !== DEFAULT_MODEL) {
     req.resume();
-    json(res, 400, { error: `model must be one of ${MODELS.join(", ")}` });
+    json(res, 400, {
+      error: isTranscriptionModel(requestedModel)
+        ? `this route serves ${DEFAULT_MODEL} only`
+        : `model must be ${DEFAULT_MODEL}`,
+    });
+    return true;
+  }
+
+  // The slot is taken BEFORE the body is read, which is the half that
+  // matters: a refused request costs one response and no buffer at all.
+  const budget = deps.budget ?? processBudget;
+  const slot = budget.begin();
+  if (!slot.ok) {
+    // Before `json`, which writes the head — a header set after that is a
+    // header nobody receives.
+    res.setHeader("retry-after", String(Math.ceil(slot.retryAfterMs / 1000)));
+    json(res, 429, {
+      error:
+        slot.reason === "busy"
+          ? "Still working on the last recording. Try again in a moment."
+          : "Voice typing has used its hourly allowance. Try again later.",
+      reason: slot.reason,
+      retryAfterMs: slot.retryAfterMs,
+    });
+    // The caller may be mid-upload; do not sit and drain a body that has
+    // already been refused.
+    cutWhenAnswered(req, res);
     return true;
   }
 
   let bytes: Uint8Array;
   try {
-    bytes = await readAudio(req);
+    bytes = await readAudio(req, MAX_CLIP_BYTES);
   } catch (error) {
+    // Nothing was sent upstream, so nothing was billed. Releasing at zero
+    // keeps a workspace that is simply misconfigured — every request a 409 —
+    // from burning its own allowance on refusals and then being told, untruly,
+    // that it is over budget.
+    slot.done(0);
     const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 400;
-    json(res, status, {
-      error: error instanceof Error ? error.message : String(error),
-      reason: status === 413 ? "too_large" : undefined,
-    });
+    // 499 is our own marker for "the peer is gone". There is nobody left to
+    // write to, and writing anyway is how a handler turns a disconnect into
+    // an ERR_STREAM_WRITE_AFTER_END in the logs.
+    if (status !== 499 && !res.writableEnded) {
+      json(res, status, {
+        error: error instanceof Error ? error.message : String(error),
+        reason: status === 413 ? "too_large" : undefined,
+      });
+    }
+    // Then cut the upload. Without this a chunked client that is still
+    // sending keeps feeding a discard loop until Node's default 300-second
+    // `requestTimeout` notices — five minutes of the harness's uplink spent
+    // on bytes that were already refused, per request.
+    //
+    // AFTER the response has flushed, not before. Destroying the request
+    // destroys the socket under it, and doing that synchronously throws the
+    // 413 away unsent: the client sees a reset connection and no reason at
+    // all. Caught exactly that way, by a control that then read an empty
+    // status line.
+    cutWhenAnswered(req, res);
     return true;
   }
 
   if (bytes.byteLength === 0) {
+    slot.done(0);
     json(res, 400, { error: "That recording was empty.", reason: "format" });
     return true;
   }
@@ -298,10 +531,23 @@ export async function handleTranscribeRoute(
         env: deps.env,
       },
     );
+    // Charged from what Flux says it billed, never from a guess, whenever it
+    // says anything at all.
+    slot.done(transcript.billedSeconds ?? transcript.duration ?? estimateBilledSeconds(bytes.byteLength));
     json(res, 200, transcript);
     return true;
   } catch (error) {
     if (error instanceof TranscriptionUnavailable) {
+      // Which refusals actually cost anything. `key`, `unavailable`, `auth`
+      // and `premium` are answered before a single second is transcribed;
+      // `format` and `too_large` are the payload being rejected. The two that
+      // may have spent something upstream are charged the conservative
+      // estimate, so a retry storm against a failing provider still runs out.
+      slot.done(
+        error.reason === "upstream" || error.reason === "rate_limit"
+          ? estimateBilledSeconds(bytes.byteLength)
+          : 0,
+      );
       // The reason travels in the body as well as in the status, so a client
       // branches on a value rather than re-deriving one from a number that
       // several reasons could share.
@@ -312,6 +558,8 @@ export async function handleTranscribeRoute(
       });
       return true;
     }
+    // Nobody planned for this one, so assume it reached the meter.
+    slot.done(estimateBilledSeconds(bytes.byteLength));
     json(res, 502, { error: error instanceof Error ? error.message : String(error), reason: "upstream" });
     return true;
   }

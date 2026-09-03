@@ -196,6 +196,76 @@ export function noteForReason(reason: string | undefined, fallback: string): str
 
 type Phase = "idle" | "listening" | "transcribing";
 
+/** How long a clip may sit in flight before this gives up on it.
+ *
+ * Without a deadline a hung socket leaves the button disabled on
+ * "Transcribing" forever, recoverable only by navigating away and back —
+ * which on a phone reads as the app being broken.
+ *
+ * 45 seconds is chosen to sit just ABOVE the companion proxy's 30-second
+ * header deadline (`companion/src/proxy.ts:85`), so on the phone path the
+ * proxy's own 504 arrives first and the person gets its sentence rather than
+ * a generic timeout. On a direct connection there is no proxy, and this is
+ * the only backstop there is. A two-minute clip on the turbo arm returns in a
+ * few seconds, so nothing that is actually working is cut off. */
+export const CLIP_TIMEOUT_MS = 45_000;
+
+/**
+ * What happens to a finished clip, extracted from the component on purpose.
+ *
+ * The suite has no jsdom and no testing-library — `renderToStaticMarkup` is
+ * the whole rig — so a decision that lives inside `MediaRecorder.onstop`
+ * cannot be driven by a test at all. This is the decision that MUST be
+ * driven: it is the one that used to throw away two minutes of speech.
+ */
+export interface ClipDelivery {
+  transcribe: (clip: Blob) => Promise<{ text: string }>;
+  /** Where the finished utterance goes. Called whether or not the button is
+   *  still on screen — see below. */
+  onTranscript: (text: string) => void;
+  onNote?: (note: string | null) => void;
+  /** Is the button still mounted? Gates the SPINNER, and nothing else. */
+  mounted: () => boolean;
+  setPhase: (phase: Phase) => void;
+}
+
+/**
+ * Deliver a recorded clip, mounted or not.
+ *
+ * WHY `mounted` GATES THE SPINNER AND NOTHING ELSE
+ * ------------------------------------------------
+ * This used to be one `if (!alive.current) return;` covering the whole
+ * branch, which was harmless for the native macOS helper — that path streams
+ * partials into the composer as the person speaks, so an unmount loses at
+ * most the last word. This path is BATCH. The composer's mount condition
+ * drops this button the moment the draft has content, the bot goes busy, or
+ * an attachment lands; a single character typed while the clip is in flight
+ * therefore unmounted the button and silently discarded up to two minutes of
+ * speech — no note, no error, nothing.
+ *
+ * The transcript belongs to the person, not to the button. `onTranscript`
+ * and `onNote` write into the composer, which is still mounted, so they are
+ * called unconditionally. Only `setPhase` — which drives a spinner on an
+ * element that may no longer exist — is gated.
+ */
+export async function deliverClip(clip: Blob, deps: ClipDelivery): Promise<void> {
+  if (!clip.size) {
+    if (deps.mounted()) deps.setPhase("idle");
+    return;
+  }
+  try {
+    const result = await deps.transcribe(clip);
+    if (deps.mounted()) deps.setPhase("idle");
+    const text = result.text.trim();
+    if (text) deps.onTranscript(text);
+    else deps.onNote?.("Nothing was said in that recording.");
+  } catch (error) {
+    if (deps.mounted()) deps.setPhase("idle");
+    const fallback = error instanceof Error ? error.message : String(error);
+    deps.onNote?.(noteForReason((error as { reason?: string }).reason, fallback));
+  }
+}
+
 export interface PushToTalkProps {
   /** Called with the finished utterance. The composer decides where it goes. */
   onTranscript: (text: string) => void;
@@ -215,12 +285,30 @@ export interface PushToTalkProps {
  * rather than as multipart is what lets the route answer 413 from the
  * content-length before the upload starts.
  */
-export async function postClip(clip: Blob): Promise<{ text: string }> {
-  const response = await fetch("/api/voice/transcribe", {
-    method: "POST",
-    headers: { "content-type": clip.type || "application/octet-stream" },
-    body: clip,
-  });
+export async function postClip(clip: Blob, timeoutMs: number = CLIP_TIMEOUT_MS): Promise<{ text: string }> {
+  // A deadline, because the button is DISABLED while this is outstanding. A
+  // socket that never answers — a tailnet that dropped between the release
+  // and the response is the ordinary way this happens — otherwise leaves
+  // "Transcribing" on screen forever, and the only cure is a remount the
+  // person has no way to ask for.
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch("/api/voice/transcribe", {
+      method: "POST",
+      headers: { "content-type": clip.type || "application/octet-stream" },
+      body: clip,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    // An abort is our own deadline, and it gets a sentence about what to do
+    // rather than the DOM's "signal is aborted without reason".
+    if (controller.signal.aborted) throw new Error("That took too long to transcribe. Try again in shorter bursts.");
+    throw error;
+  } finally {
+    clearTimeout(deadline);
+  }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw Object.assign(new Error(body?.error ?? "Transcribing failed."), { reason: body?.reason });
@@ -242,6 +330,13 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
   const chunks = useRef<Blob[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
+  // The LATEST composer callbacks, not the ones captured when recording
+  // started. `active.onstop` is assigned once, at the top of the press; the
+  // composer's `onTranscript` closes over its own `text`, and that text can
+  // change while the clip is in flight. Calling the captured one would append
+  // to a stale draft and overwrite whatever the person typed in the meantime.
+  const latest = useRef({ onTranscript, onNote });
+  latest.current = { onTranscript, onNote };
   const gate = pushToTalkGate(facts);
 
   const release = useCallback(() => {
@@ -301,29 +396,22 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
     active.ondataavailable = (event) => {
       if (event.data.size) chunks.current.push(event.data);
     };
-    active.onstop = async () => {
+    active.onstop = () => {
       // `active.mimeType` and not the requested one: what the recorder
       // actually settled on is what the bytes are, and the route names the
       // file from this. A wrong name is a guaranteed 400 after a full upload.
       const clip = new Blob(chunks.current, { type: active.mimeType || mimeType || "audio/webm" });
       release();
-      if (!clip.size) {
-        if (alive.current) setPhase("idle");
-        return;
-      }
-      try {
-        const result = await transcribe(clip);
-        if (!alive.current) return;
-        setPhase("idle");
-        const text = result.text.trim();
-        if (text) onTranscript(text);
-        else onNote?.("Nothing was said in that recording.");
-      } catch (error) {
-        if (!alive.current) return;
-        setPhase("idle");
-        const fallback = error instanceof Error ? error.message : String(error);
-        onNote?.(noteForReason((error as { reason?: string }).reason, fallback));
-      }
+      // Deliberately NOT gated on `alive.current`. The unmount cleanup below
+      // stops a running recorder, which lands here — and a clip that has been
+      // recorded must reach the composer or say why, never evaporate.
+      void deliverClip(clip, {
+        transcribe,
+        onTranscript: (said) => latest.current.onTranscript(said),
+        onNote: (note) => latest.current.onNote?.(note),
+        mounted: () => alive.current,
+        setPhase,
+      });
     };
     active.start();
     setPhase("listening");
@@ -331,7 +419,7 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
     // uploading two minutes of nothing, and keeps the round trip inside the
     // proxy's header deadline.
     timer.current = setTimeout(stop, MAX_CLIP_MS);
-  }, [gate, onNote, onTranscript, phase, release, stop, transcribe]);
+  }, [gate, onNote, phase, release, stop, transcribe]);
 
   if (gate === "hidden") return null;
   if (gate === "insecure") {
