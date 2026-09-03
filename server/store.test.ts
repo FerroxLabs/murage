@@ -1571,3 +1571,82 @@ describe("Store.setChiefOfStaff scope", () => {
     expect(reloaded.bot(nia.id)?.chiefOfStaff).toBeFalsy();
   });
 });
+
+describe("Store.workspaceChief", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("is null in a workspace that has never elected one", () => {
+    const store = new Store(selection);
+    store.createBot({ name: "Ember" });
+    store.createBot({ name: "Rex", section: "Sales" });
+    expect(store.workspaceChief()).toBeNull();
+  });
+
+  it("finds the workspace Chief and ignores every team lead", () => {
+    // The whole reason this query exists: `chiefOfStaff` alone is true for
+    // both roles, so a caller filtering on the flag would find a team lead
+    // and refuse a legitimate election.
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    const bruce = store.createBot({ name: "Bruce", section: "Markets" });
+    store.setChiefOfStaff(bruce.id);
+    expect(store.workspaceChief()).toBeNull();
+
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+    expect(store.workspaceChief()?.id).toBe(sable.id);
+  });
+
+  it("does not count an archived Chief as holding the chair", () => {
+    // An archived bot is not in the sidebar and cannot be stood down from
+    // there, so treating it as the incumbent would lock the role forever.
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+    store.patchBot(sable.id, { hidden: true });
+    expect(store.workspaceChief()).toBeNull();
+  });
+
+  it("survives a reload, because the refusal has to outlive the process", () => {
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+    expect(new Store(selection).workspaceChief()?.id).toBe(sable.id);
+  });
+});
+
+describe("a team's first lead", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("is elected at SECTION scope, never at the workspace tier", () => {
+    // What `create_bot` now does for the workspace Chief. The scope argument
+    // is the only thing keeping this from minting a second Chief of Staff —
+    // which is single-holder and refused even to a human.
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+
+    const kessler = store.createBot({ name: "Kessler", section: "Operations" });
+    store.setChiefOfStaff(kessler.id, undefined, "section");
+
+    const lead = store.bot(kessler.id)!;
+    expect(lead.chiefOfStaff).toBe(true);
+    expect(lead.chiefScope).toBeUndefined();
+    // And the Chief is untouched by it.
+    expect(store.workspaceChief()?.id).toBe(sable.id);
+  });
+
+  it("leaves other teams' leads alone", () => {
+    const store = new Store(selection);
+    const bruce = store.createBot({ name: "Bruce", section: "Markets" });
+    store.setChiefOfStaff(bruce.id, undefined, "section");
+    const kessler = store.createBot({ name: "Kessler", section: "Operations" });
+    store.setChiefOfStaff(kessler.id, undefined, "section");
+
+    expect(store.bot(bruce.id)!.chiefOfStaff).toBe(true);
+    expect(store.bot(kessler.id)!.chiefOfStaff).toBe(true);
+  });
+});
