@@ -391,6 +391,26 @@ async function classify(query: string): Promise<{ strong: string[]; weak: string
   return { strong: tier(tiers.strong), weak: tier(tiers.weak) };
 }
 
+/** The strong tier UNCAPPED, in catalogue order.
+ *
+ *  `classify` slices to `INTAKE_TIER_MAX`, which is right for "what does the
+ *  card show" and hides "how many profiles thought they were the answer".
+ *  Both numbers matter: one strong candidate is a one-press install and eight
+ *  is a question, and only this one can tell them apart. */
+async function classifyAll(query: string): Promise<string[]> {
+  const tokens = intakeTopicTokens(query);
+  if (tokens.length === 0) return [];
+  const { teams } = await fetchTeamCatalog();
+  return teams
+    .filter((entry) => {
+      const skills = resolveSkills(entry);
+      if (skills.length === 0) return false;
+      const vocabulary = intakeVocabulary(entry, skills.map(describeIntakeSkill));
+      return tokens.length >= 2 && tokens.some((token) => vocabulary.has(token));
+    })
+    .map((entry) => entry.slug);
+}
+
 describe("the two sentences that reproduced the bug", () => {
   it('"ferret keeps escaping the hutch" is not a business need, and gets no profile', async () => {
     // BEFORE: strong = customer-success-org, dev-shop, founder-setup — all
@@ -475,14 +495,33 @@ describe("the queries a fix must not break", () => {
   });
 
   it("is honest about the one ordinary word it still cannot disambiguate", async () => {
-    // "book" is the topic of six profiles and a verb in English, and this is
+    // "book" is the topic of seven profiles and a verb in English, and this is
     // the residual false positive in the measured table. It is left alone
     // deliberately: removing `book` from those lists would break "I want to
-    // write a book", which is the sentence they exist for. The conversation
-    // shows the candidate and one press kills it, which is what that turn is
-    // for — a wrong guess costs a press, not a wrongly configured agent.
-    expect((await classify("book a table for four at eight")).strong[0]).toMatch(/^book-/);
-    expect((await classify("I want to write a book")).strong[0]).toMatch(/^book-/);
+    // write a book", which is the sentence they exist for.
+    //
+    // PINNED AS IT REALLY IS. This used to assert only that `strong[0]` began
+    // "book-", which is true of a query with one strong candidate and equally
+    // true of one with eight — and it is eight. Eight strong candidates is a
+    // narrow-pick card rather than a one-press confirm, so the cost of the
+    // residual is a question, not a wrongly configured agent; asserting the
+    // whole set is what makes that visible, and what would notice if a future
+    // edit turned this into a single confident wrong answer.
+    const dinner = await classifyAll("book a table for four at eight");
+    expect(dinner).toEqual([
+      "spark",
+      "book-copy-editor",
+      "book-developmental-editor",
+      "book-nonfiction-architect",
+      "book-production",
+      "book-publisher",
+      "book-story-architect",
+      "info-product-launch",
+    ]);
+    // And the sentence the lists exist for is INDISTINGUISHABLE from it, which
+    // is the actual reason `book` cannot be removed.
+    expect(await classifyAll("I want to write a book")).toEqual(dinner);
+    expect((await classify("book a table for four at eight")).strong.length).toBeGreaterThan(1);
   });
 });
 
@@ -551,9 +590,30 @@ describe("what happens to a profile with no curated terms", () => {
     expect(intakeVocabulary(uncurated).has("walks")).toBe(true);
   });
 
-  it("reads `extra` — the fallback is the only place skill manifests still count", () => {
+  it("IGNORES `extra` — a skill manifest is not a claim about the profile", () => {
+    // This used to assert the opposite, and the opposite was the original bug
+    // still running at full strength on one path. A skill manifest is 200-600
+    // words of ordinary English quoting example utterances; measured on this
+    // library the fallback bag ran 37-461 words, MEDIAN 257, against a curated
+    // list's ~14. One whole-word hit on a two-token sentence is STRONG with no
+    // corroboration, so the first remote slug reusing local skill ids would
+    // have entered the strong tier on ordinary English no curated profile
+    // could match — and one strong candidate is a one-press confirm card.
+    //
+    // `intakeProfileAt` does drop an entry whose skills do not resolve, but
+    // reusing local ids is exactly how a new remote entry resolves, so this
+    // path was reachable in precisely the dangerous case.
     expect(intakeProfileMatches(uncurated, ["leads"])).toBe(false);
-    expect(intakeProfileMatches(uncurated, ["leads"], ["lead tracking for kennels"])).toBe(true);
+    expect(intakeProfileMatches(uncurated, ["leads"], ["lead tracking for kennels"])).toBe(false);
+  });
+
+  it("does not read the entry's declared skill paths either", () => {
+    // Same argument twice: a "team launcher" entry declares the UNION of its
+    // members' skills, so skill-derived terms make every launcher a superset
+    // of every specialist it contains.
+    expect(intakeVocabulary(uncurated).has("route")).toBe(false);
+    expect(intakeVocabulary(uncurated).has("planning")).toBe(false);
+    expect(intakeVocabulary(uncurated).has("walks")).toBe(true);
   });
 });
 

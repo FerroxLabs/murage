@@ -100,41 +100,97 @@ export function intakeTopicTokens(raw: string): string[] {
  *  their own charts", never "trading" — and the curated list is where that
  *  word is now written down on purpose rather than scavenged.
  *
- *  A SLUG WITH NO CURATED LIST still matches, on the entry plus `extra` with
- *  the generic words taken out. That is the path a catalogue entry published
- *  after this build was cut takes, and it is the only place `extra` is still
- *  read. It is deliberately the weaker answer: it cannot say `keeps` or
- *  `before` any more, but it can still say ordinary English this list has
- *  never seen. Every slug in the shipped catalogue is curated, so on this
- *  build the fallback is unreachable — `onboarding-intake.test.ts` pins that,
- *  and pins the fallback's own behaviour so it cannot rot unnoticed.
+ *  A SLUG WITH NO CURATED LIST still matches, on ITS OWN ENTRY TEXT ONLY —
+ *  name, summary, category, outcome — with the generic words taken out.
+ *  That is the path a catalogue entry published after this build was cut
+ *  takes, and it is deliberately the weaker answer.
  *
- *  (Its tests live in `src/lib/onboarding-intake.test.ts` rather than beside
- *  the data, because vite.config.ts's `test.include` does not cover
- *  `shared/**` — a suite in there is collected as zero tests and passes.) */
+ *  NEITHER `extra` NOR `entry.skills` IS READ ANY MORE, and that is the whole
+ *  point. The fallback used to be the entry PLUS every word of every skill
+ *  manifest, which measures 37-461 words per profile on this library, MEDIAN
+ *  257 — the pre-curation bag with a 554-word stoplist subtracted, and
+ *  nothing else. `keeps` and `before` were gone; `walk` was not, and eight
+ *  live profiles carry it. A curated slug matches on ~14 terms and an
+ *  uncurated one on ~257, so the first remote slug that reuses local skill
+ *  ids became a SUPER-ATTRACTOR: it entered the strong tier on ordinary
+ *  English no curated profile could match, and one strong candidate is a
+ *  one-press confirm card. The reachability is real — `intakeProfileAt` drops
+ *  an entry whose skills do not resolve, and reusing local ids is exactly how
+ *  a new remote entry resolves.
+ *
+ *  Entry text alone measures 7-31 words, median 15, which is the same ORDER
+ *  as a curated list and makes the same kind of claim: a strong hit now needs
+ *  the person's own word to appear in the profile's own copy. Dropping the
+ *  skills as well as the manifests is the same argument twice — a "team
+ *  launcher" entry declares the UNION of its members' skills, so skill-derived
+ *  terms make every launcher a superset of every specialist it contains.
+ *
+ *  (Its tests live in `src/lib/onboarding-intake.test.ts` and, scored through
+ *  the real classification path against the shipped catalogue, in
+ *  `shared/intake-matches.test.ts`. An earlier note here said vite.config.ts's
+ *  `test.include` does not cover `shared`; it does — line 14 lists it — so a
+ *  suite beside the data really does run.) */
 export function intakeVocabulary(
   entry: IntakeCatalogEntry,
-  extra: readonly string[] = [],
+  // Accepted and deliberately ignored, on BOTH paths now. Callers hand over
+  // the profile's resolved skills because the signature has always taken
+  // them; reading them is what this function stopped doing.
+  _extra: readonly string[] = [],
 ): ReadonlySet<string> {
   const curated = intakeMatchTerms(entry.slug);
   if (curated) return curated;
-  return intakeGenericFilteredWords(
-    [entry.name, entry.summary, entry.category, entry.outcome ?? "", entry.skills.join(" "), ...extra].join(" "),
-  );
+  return intakeGenericFilteredWords([entry.name, entry.summary, entry.category, entry.outcome ?? ""].join(" "));
 }
 
-/** A topic word matches a profile word on the whole word, or on a prefix long
- *  enough to mean something.
+/** The endings one word may gain and still be the same word.
+ *
+ *  This is the whole of the module's stemming, written down. It is not a
+ *  stemmer and must not become one: it is the list of English inflections
+ *  that leave the topic unchanged, so `charts` is `chart` and `selling` is
+ *  `sell`, and nothing else is anything else. */
+const INTAKE_INFLECTIONS = ["s", "es", "d", "ed", "ing", "ings"];
+
+/** Is `longer` just `shorter` with an inflection on the end? */
+function isInflectionOf(longer: string, shorter: string): boolean {
+  return longer.startsWith(shorter) && INTAKE_INFLECTIONS.includes(longer.slice(shorter.length));
+}
+
+/** A topic word matches a profile word whole, or on an INFLECTION of it.
  *
  *  Whole-word matching is the point: substring matching let "say" match "says"
- *  and hand `say "hi"` a book editor with a straight face. The four-character
- *  prefix rule is what still lets "charts" find "chart" and "invoices" find
- *  "invoice" without inventing a stemmer. */
+ *  and hand `say "hi"` a book editor with a straight face. The inflection rule
+ *  is what still lets "charts" find "chart" and "invoices" find "invoice"
+ *  without inventing a stemmer.
+ *
+ *  A BARE PREFIX IS NOT AN INFLECTION, and used to be treated as one. 226
+ *  curated terms were four or five characters (167 still are, and `comp`,
+ *  `post`, `demo`, `prose` and `cash` are among them), and `vocabularyMatches` needs
+ *  `Math.min(2, tokens.length)` hits — so a ONE-WORD answer, which is the
+ *  commonest first thing a person types, needed exactly one prefix hit.
+ *  Measured on the shipped catalogue, `anti` covered 1,118 dictionary words
+ *  that way, `post` 508, `comp` 382, `spin` 131, and the results were what
+ *  they sound like:
+ *
+ *    computer    -> Quiet Money Career Strategist  (via `comp`)
+ *    scandal     -> Humanizer                      (via `scan`)
+ *    deadline    -> Link Disclosure Custodian      (via `dead`)
+ *    antibiotics -> Quiet Money                    (via `anti`)
+ *    spinal      -> Sales                          (via `spin`)
+ *
+ *  None of those five endings — `uter`, `dal`, `line`, `biotics`, `al` — is a
+ *  plural or a tense. Requiring one costs nothing the four-character rule was
+ *  ever bought for, because `charts`/`chart`, `invoices`/`invoice` and
+ *  `onboard`/`onboarding` are all inflections and all still match.
+ *
+ *  The four-character floor stays on BOTH sides: it is what keeps three-letter
+ *  words out of this loop entirely, and shortening it is a separate argument
+ *  from this one. */
 function tokenHits(vocabulary: ReadonlySet<string>, token: string): boolean {
   if (vocabulary.has(token)) return true;
   if (token.length < 4) return false;
   for (const word of vocabulary) {
-    if (word.length >= 4 && (word.startsWith(token) || token.startsWith(word))) return true;
+    if (word.length < 4) continue;
+    if (word.length >= token.length ? isInflectionOf(word, token) : isInflectionOf(token, word)) return true;
   }
   return false;
 }
@@ -158,9 +214,9 @@ export function intakeProfileMatches(
  *
  *  ONE WHOLE WORD IS ENOUGH — "chasing invoices" must reach the profile whose
  *  own copy says "invoices", because that sentence is the example printed on
- *  the card. A PREFIX ALONE IS NOT, once the person gave us more than one word
- *  to work with: `charts`→`chart` is a real plural, but a lone four-character
- *  prefix out of a five-word sentence is a coincidence dressed as a match.
+ *  the card. AN INFLECTION ALONE IS NOT, once the person gave us more than one
+ *  word to work with: `charts`→`chart` is a real plural, but one inflected hit
+ *  out of a five-word sentence is a coincidence dressed as a match.
  *
  *  `Math.min(2, tokens.length)` rather than a flat 2 is deliberate and load
  *  bearing: a one-word answer has no second token to corroborate with, and
