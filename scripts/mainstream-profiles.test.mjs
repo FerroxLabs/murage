@@ -16,7 +16,7 @@
 // skills were broken on the frontmatter-name rule and are now repaired;
 // server/skill-library-integrity.test.ts walks the whole library, so a tenth
 // cannot appear unnoticed and no blocklist has to be kept here to rot.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -82,6 +82,53 @@ describe("mainstream profiles", () => {
       }
       expect(pkg.requirements.capabilities).toEqual([]);
     }
+  });
+});
+
+// Every builtin, not just the seven. The seven above are the profiles this file
+// OWNS; this block is the weaker-per-profile but wider guarantee that no builtin
+// anywhere declares an id the installer would refuse. It is the cheap version of
+// the lesson at the top: a dangling id does not throw, it is logged and skipped
+// (server/index.ts, installSkillFromLibrary's caller), so the bot installs with
+// a persona and a hole in it and nothing on screen says so.
+const ALL_BUILTINS = readdirSync(join(repoRoot, "bot-library", "builtins"))
+  .filter((file) => file.endsWith(".json"))
+  .map((file) => file.slice(0, -".json".length))
+  .sort();
+
+/** The five profiles Wave 0 filled, and exactly what the cross-audit approved.
+ *
+ *  Pinned by value rather than merely "non-empty" because these five were empty
+ *  on purpose-by-omission for a long time, and BOTH directions are regressions:
+ *  losing a row puts the profile back behind chooseIntakeProfile's zero-skill
+ *  skip (invisible to intake again), and adding one silently widens the profile's
+ *  intake vocabulary, which is what routes a stranger's first sentence. 13 of the
+ *  18 formerly-empty builtins stay empty by design and are deliberately absent. */
+const WAVE0_PROFILES = {
+  "beautiful-mermaid": ["diagram-architect"],
+  "book-production": ["self-publishing-guide"],
+  "excel-creator": [
+    "excel-lookup-formulas",
+    "pivot-table-builder",
+    "conditional-formatting-rules",
+    "data-validation-setup",
+  ],
+  "human-3-coach": ["life-coach"],
+  "story-roleplay": ["character-development", "world-building", "dialogue-writing"],
+};
+
+describe("every builtin profile", () => {
+  it.each(ALL_BUILTINS)("%s declares no skill the installer would refuse", (slug) => {
+    const broken = declaredSkills(loadProfile(slug))
+      .map((id) => [id, installFailure(id)])
+      .filter(([, why]) => why !== null);
+    expect(broken).toEqual([]);
+  });
+});
+
+describe("wave 0 profiles", () => {
+  it.each(Object.keys(WAVE0_PROFILES))("%s declares exactly the approved skills", (slug) => {
+    expect(declaredSkills(loadProfile(slug))).toEqual(WAVE0_PROFILES[slug]);
   });
 });
 

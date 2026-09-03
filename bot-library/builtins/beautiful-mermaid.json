@@ -36,6 +36,9 @@
         "appearance": {
           "color": "teal"
         },
+        "skills": [
+          "diagram-architect"
+        ],
         "playbooks": [
           "beautiful-mermaid"
         ]

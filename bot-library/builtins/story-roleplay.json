@@ -37,6 +37,11 @@
         "appearance": {
           "color": "pink"
         },
+        "skills": [
+          "character-development",
+          "world-building",
+          "dialogue-writing"
+        ],
         "playbooks": [
           "story-roleplay"
         ]

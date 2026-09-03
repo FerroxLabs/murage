@@ -36,6 +36,12 @@
         "appearance": {
           "color": "green"
         },
+        "skills": [
+          "excel-lookup-formulas",
+          "pivot-table-builder",
+          "conditional-formatting-rules",
+          "data-validation-setup"
+        ],
         "playbooks": [
           "excel-creator"
         ]

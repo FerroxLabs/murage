@@ -37,6 +37,9 @@
         "appearance": {
           "color": "coral"
         },
+        "skills": [
+          "self-publishing-guide"
+        ],
         "playbooks": [
           "book-production"
         ]

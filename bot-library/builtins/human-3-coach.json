@@ -35,6 +35,9 @@
         "appearance": {
           "color": "orange"
         },
+        "skills": [
+          "life-coach"
+        ],
         "playbooks": [
           "human-3-coach"
         ]
