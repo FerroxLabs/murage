@@ -5848,6 +5848,7 @@ const server = createServer(async (req, res) => {
         // of the specialists she just created, which is the one thing the
         // tier exists to prevent.
         const requestedSection = typeof body.section === "string" ? body.section.trim() : "";
+        const wantsLead = body.lead === true;
         let targetSection: string | undefined;
         if (isWorkspaceChief(chief)) {
           if (!requestedSection) {
@@ -5866,14 +5867,44 @@ const server = createServer(async (req, res) => {
               candidate.chiefOfStaff &&
               sectionKey(candidate.section) === sectionKey(requestedSection),
           );
-          if (!lead) {
-            return json(res, 400, { error: `the ${requestedSection} team has no lead yet — create the lead first` });
+          // Standing up a team's FIRST lead is the workspace Chief's job.
+          //
+          // Before this, it was nobody's. `create_bot` could not set the flag,
+          // `setChiefOfStaff` had no call site any agent could reach, and
+          // promotion existed only in the sidebar — so the refusal below told
+          // her to "create the lead first", which was the one thing the API
+          // gave her no way to do. With one Chief and one existing team, the
+          // only team she could ever add to was that team. The tier meant to
+          // stop her managing specialists directly stopped her building an org
+          // at all.
+          //
+          // Deliberately narrow: the workspace Chief only, into a section that
+          // has no lead, and the new lead is a SECTION lead. Nothing here can
+          // mint a second workspace Chief — that role is single-holder and is
+          // refused even to a human until the incumbent stands down.
+          if (wantsLead && lead) {
+            return json(res, 409, {
+              error: `the ${requestedSection} team is already led by @${lead.name} — create this specialist without lead, or name another team`,
+            });
           }
-          // the lead's own label, so a near-miss spelling cannot fork a section
-          targetSection = lead.section;
+          if (!lead && !wantsLead) {
+            return json(res, 400, {
+              error: `the ${requestedSection} team has no lead yet — create this bot with lead: true to make it the lead, then add specialists under it`,
+            });
+          }
+          // An existing lead's own label, so a near-miss spelling cannot fork
+          // a section. When SHE is creating the lead there is no label to
+          // borrow, so her requested spelling becomes the team's name.
+          targetSection = lead ? lead.section : requestedSection;
         } else {
           if (requestedSection && sectionKey(requestedSection) !== sectionKey(chief.section)) {
             return json(res, 403, { error: "you can only create bots in your own section" });
+          }
+          // A team's lead already leads this team. Letting it create a second
+          // one would be electing its own replacement, which is a handover a
+          // person makes, not a side effect of adding a specialist.
+          if (wantsLead) {
+            return json(res, 403, { error: "only the workspace Chief of Staff can create a team lead" });
           }
           targetSection = chief.section;
         }
@@ -5915,12 +5946,19 @@ const server = createServer(async (req, res) => {
           autoApprove: false,
           approvePeerComms: false,
         })!;
+        // Elected after the record exists, and as a SECTION lead: the scope
+        // argument is what keeps this from reaching the workspace tier.
+        if (wantsLead) store.setChiefOfStaff(safeBot.id, undefined, "section");
+        const finalBot = store.bot(safeBot.id) ?? safeBot;
         return json(res, 201, {
-          id: safeBot.id,
-          name: safeBot.name,
-          title: safeBot.title,
-          section: safeBot.section || "General",
-          model: safeBot.modelSelection.model,
+          id: finalBot.id,
+          name: finalBot.name,
+          title: finalBot.title,
+          section: finalBot.section || "General",
+          model: finalBot.modelSelection.model,
+          // So the caller's next create_bot knows the team now has a lead
+          // rather than having to re-read list_bots to find out.
+          lead: finalBot.chiefOfStaff === true,
         });
       }
       if (method === "POST" && path === "/api/internal/request-credential") {
@@ -7350,7 +7388,9 @@ const server = createServer(async (req, res) => {
       if (!result.ok) {
         if (result.reason === "chief-conflict") {
           return json(res, 409, {
-            error: "A section can have only one Chief of Staff. Choose one Chief or use a section without one.",
+            // A section's lead is a Team leader, not the Chief of Staff —
+            // they are separate roles and this message named the wrong one.
+            error: "A team can have only one lead. Choose one, or file these bots under a team that has no lead yet.",
           });
         }
         return json(res, 404, { error: "one or more bots are unavailable" });
@@ -7696,6 +7736,25 @@ const server = createServer(async (req, res) => {
           .get(existingBot.modelSelection.instanceId)
           ?.adapter.interruptTurn(existingBot.threadId)
           .catch(() => {});
+      }
+      // The Chief of Staff is not replaced by accident.
+      //
+      // Every other role in this chart is a handover: electing a team lead
+      // stands the previous one down and says so. The Chief is different —
+      // she is the bot the whole workspace routes through, and every surface
+      // that could elect a second one did it silently. Refused here, before
+      // any write, so a rejected request changes nothing at all.
+      //
+      // 409 and not 400: the request is well-formed, the workspace is simply
+      // in a state that will not accept it, and the message says which state
+      // and how to leave it.
+      if (requestedScope === "workspace") {
+        const incumbent = store.workspaceChief();
+        if (incumbent && incumbent.id !== m[1]) {
+          return json(res, 409, {
+            error: `@${incumbent.name} is already Chief of Staff. Remove that role from @${incumbent.name} first, then assign it here.`,
+          });
+        }
       }
       const chiefMovedSections =
         Boolean(existingBot?.chiefOfStaff) &&

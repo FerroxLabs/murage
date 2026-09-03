@@ -5891,3 +5891,90 @@ describe("remote surfaces see only the conversations a person can see", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("the Chief of Staff is not replaced by accident", () => {
+  // Every other role in this chart is a handover: electing a team lead stands
+  // the previous one down and the UI says whose role moved. The Chief is the
+  // bot the whole workspace routes through, and every surface that could
+  // elect a second one did it silently — a mis-click on a role control, a
+  // package naming a coordinator. Sean asked for a refusal instead, and a
+  // refusal is only worth having if it changes nothing when it fires.
+  const makeBot = async (name: string) =>
+    (await api("POST", "/api/bots", { name, title: "Test", description: "t", color: "purple" })).body.bot;
+
+  /** Stand down whoever currently holds the role.
+   *
+   * These tests share one workspace with every other test in this file, and
+   * the rule under test is precisely "there can only be one" — so a test that
+   * assumed an empty chair was refused by the feature it was written to
+   * verify. Clearing first makes each one independent of what ran before it,
+   * and exercises the stand-down path on the way in. */
+  const standDownChief = async () => {
+    const bots: { id: string; chiefScope?: string }[] = (await api("GET", "/api/bots")).body.bots;
+    for (const bot of bots.filter((candidate) => candidate.chiefScope === "workspace")) {
+      await api("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: false, chiefScope: null, individual: false });
+    }
+  };
+
+  it("refuses a second Chief and names the one already holding it", async () => {
+    await standDownChief();
+    const first = await makeBot("Single Holder Sable");
+    const second = await makeBot("Single Holder Rex");
+    expect((await api("PATCH", `/api/bots/${first.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+
+    const refused = await api("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toContain("Single Holder Sable");
+    // The message has to say how to leave the state, not just that you are in it.
+    expect(refused.body.error).toMatch(/Remove that role/);
+  });
+
+  it("changes NOTHING when it refuses", async () => {
+    await standDownChief();
+    // The guard runs before patchBot, so a rejected request must leave both
+    // bots exactly as they were. A refusal that half-applied would be worse
+    // than the silent handover it replaced.
+    const first = await makeBot("Untouched Chief");
+    const second = await makeBot("Rejected Claimant");
+    await api("PATCH", `/api/bots/${first.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    await api("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+
+    const bots = (await api("GET", "/api/bots")).body.bots;
+    const incumbent = bots.find((bot: { id: string }) => bot.id === first.id);
+    const claimant = bots.find((bot: { id: string }) => bot.id === second.id);
+    expect(incumbent.chiefOfStaff).toBe(true);
+    expect(incumbent.chiefScope).toBe("workspace");
+    expect(claimant.chiefScope).toBeUndefined();
+  });
+
+  it("still lets the SAME bot re-assert the role", async () => {
+    await standDownChief();
+    // The guard compares ids. Without that, re-saving a role control on the
+    // incumbent would refuse her her own job.
+    const chief = await makeBot("Re-asserting Chief");
+    expect((await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+    expect((await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+  });
+
+  it("lets the role move once the incumbent stands down", async () => {
+    await standDownChief();
+    // The whole point: one extra step, not a locked door.
+    const outgoing = await makeBot("Outgoing Chief");
+    const incoming = await makeBot("Incoming Chief");
+    await api("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect((await api("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(409);
+
+    await api("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: false, chiefScope: null, individual: false });
+    expect((await api("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+  });
+
+  it("does not block a TEAM LEAD, which is an ordinary handover", async () => {
+    await standDownChief();
+    // The asymmetry is deliberate. A team's lead changing is reversible and
+    // local; blocking it would make the sidebar's own menu item fail.
+    const chief = await makeBot("Guarding Chief");
+    await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    const lead = await makeBot("Ordinary Lead");
+    expect((await api("PATCH", `/api/bots/${lead.id}`, { chiefOfStaff: true, chiefScope: "section" })).status).toBe(200);
+  });
+});

@@ -1504,6 +1504,20 @@ export class Store {
    * the workspace Chief), `"section"` demotes this bot to its section's
    * lead, `"workspace"` promotes it and demotes the previous holder to lead
    * of its own section rather than stripping its Chief role. */
+  /** The Chief of Staff, if this workspace has one.
+   *
+   * The role is single-holder and, unlike a team lead, it is NOT a handover:
+   * electing a second one is refused and the incumbent has to be stood down
+   * first. That is a deliberate asymmetry. A team's lead changing is ordinary
+   * and reversible; the Chief is the one bot the whole workspace routes
+   * through, and replacing her by accident — a mis-click on a role control,
+   * a package import naming a coordinator — silently rewires everything and
+   * looks like nothing happened. Refusing costs one extra step and makes the
+   * change something a person decided rather than something that occurred. */
+  workspaceChief(): BotRecord | null {
+    return this.bots.find((bot) => !bot.hidden && isWorkspaceChief(bot)) ?? null;
+  }
+
   setChiefOfStaff(
     id: string | null,
     section?: string | null,
