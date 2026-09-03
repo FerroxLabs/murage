@@ -13,10 +13,15 @@
 // flux-surface.ts:160) — are conditioned on `fluxConfigured()`, so with no key
 // the rows are never built and nothing anywhere else changes.
 //
-// That is the whole of it. It is NOT voice and NOT image generation: those are
-// separate credentials with separate homes (`tts` and `imageGen` in
-// server/config.ts), read by tts.ts and the avatar generator, and neither one
-// consults flux-config.ts. It does not "empower all agents" either — five
+// A Flux key ALSO draws generated bot avatars. `resolveAvatarImageRoutes`
+// (server/avatar-image.ts) posts to POST /v1/images/generations on the same
+// host and puts that route FIRST, ahead of the separate `imageGen` OpenAI key,
+// which stays as the fallback. This paragraph used to say the opposite, and the
+// copy guard in flux-invite.test.ts was built on it; see the comment there.
+// Voice is still NOT this key: `tts` is its own credential in server/config.ts,
+// read by tts.ts, and nothing in that path consults flux-config.ts. The invite
+// copy below therefore still says nothing about speech.
+// It does not "empower all agents" either — five
 // driver kinds (opencode, qoder, droid, auggie, copilot, kiro, vibe) are
 // deliberately absent from the surface table, each for a checked reason
 // recorded at flux-routing.ts:62-77.
@@ -96,8 +101,8 @@ export function fluxKeyPlaceholder(configured: boolean): string {
  * Every user-visible string this feature ships.
  *
  * Collected here for two reasons. It keeps the copy next to the verified facts
- * above, so nobody promises voice or image generation again. And it makes the
- * house copy rules testable: no em dashes, and every line says what the person
+ * above, so nobody promises a capability this app does not route. And it makes
+ * the house copy rules testable: no em dashes, and every line says what the person
  * gets rather than what the system is.
  */
 export const FLUX_COPY = {
