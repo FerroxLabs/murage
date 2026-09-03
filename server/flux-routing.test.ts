@@ -35,6 +35,11 @@ const KEY = "sk-flux-RrLp0sj95M2kmW5zTXbUpTgfAxKc4n6VOPbL6eQJR7Q";
 describe("FLUX_SURFACE", () => {
   it("maps exactly the engines with a verified surface", () => {
     expect(FLUX_SURFACE).toEqual({
+      // Fuigo is a NATIVE Flux client — its own default inference host IS
+      // api.fluxrouter.ai — so this entry is a GATE, not an injection recipe:
+      // the driver never calls applyFluxSurface. Without it routableEngine
+      // returns false and strips fuigo's entire (all-flux) catalog.
+      fuigoAgent: "openai",
       claudeAgent: "anthropic",
       qwenAgent: "openai",
       codex: "responses",

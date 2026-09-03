@@ -7,6 +7,7 @@ import { ClaudeDriver } from "./claude.ts";
 import { CodexDriver } from "./codex.ts";
 import { GrokDriver } from "./grok.ts";
 import { GrokAgentDriver } from "./acp/grok.ts";
+import { FuigoAgentDriver } from "./acp/fuigo.ts";
 import { GeminiAgentDriver } from "./acp/gemini.ts";
 import { KimiAgentDriver } from "./acp/kimi.ts";
 import { DroidAgentDriver } from "./acp/droid.ts";
@@ -20,6 +21,9 @@ import { PiDriver } from "./pi.ts";
 import { MinimaxDriver } from "./minimax.ts";
 
 export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
+  // Fuigo leads: it is the engine Murage ships a binary for, so it is the one
+  // that can answer on a machine with no CLIs installed at all.
+  FuigoAgentDriver,
   GrokDriver,
   GrokAgentDriver,
   GeminiAgentDriver,

@@ -102,6 +102,23 @@ export const FLUX_ANTHROPIC_BASE = "https://api.fluxrouter.ai/anthropic";
  *    is a different and true reason.
  */
 export const FLUX_SURFACE: Partial<Record<DriverKind, FluxSurfaceKind>> = {
+  // Fuigo is the one engine here that is a NATIVE Flux client: its own default
+  // inference host is https://api.fluxrouter.ai/v1 (fuigo-shell config.rs:62)
+  // and its provider table leads with FluxRouter, reading FUIGO_API_KEY /
+  // FUIGO_CODE_API_KEY / FLUX_API_KEY (key_discovery.rs:60). So this entry is
+  // NOT an injection recipe the way the others are — the driver never calls
+  // applyFluxSurface, it just hands fuigo the key under its own name.
+  //
+  // The entry is still REQUIRED, and its absence is not a smaller version of
+  // being here: routableEngine (flux-surface.ts:129) returns false when
+  // fluxSurfaceFor is null, which strips every flux-* row via filterFluxRows
+  // and makes fluxSelectionRefusal answer "this engine cannot route Flux Router" on
+  // every turn. Fuigo's catalog is almost ENTIRELY flux-* ids, so omitting it
+  // does not mean "no Flux rows", it means no engine.
+  //
+  // "openai" is honest about the wire: fuigo talks chat_completions to Flux
+  // (key_discovery.rs api_backend), even though nothing here writes OPENAI_*.
+  fuigoAgent: "openai",
   claudeAgent: "anthropic",
   qwenAgent: "openai",
   codex: "responses",
@@ -130,6 +147,7 @@ export const FLUX_SURFACE: Partial<Record<DriverKind, FluxSurfaceKind>> = {
 export type FluxCapability = "env" | "setup" | "vendor";
 
 export const FLUX_CAPABILITY: Partial<Record<DriverKind, FluxCapability>> = {
+  fuigoAgent: "env",
   claudeAgent: "env",
   qwenAgent: "env",
   codex: "env",
@@ -164,6 +182,10 @@ export function fluxCapabilityFor(engine: DriverKind): FluxCapability | null {
 export type FluxMechanism = "env" | "scopedHome" | "configWrite";
 
 export const FLUX_MECHANISM: Partial<Record<DriverKind, FluxMechanism>> = {
+  // env, and specifically NOT configWrite: routableEngine only consults
+  // connectorRouted() for configWrite engines, and fuigo needs no file on disk
+  // — FUIGO_API_KEY on the child env is the whole of it.
+  fuigoAgent: "env",
   claudeAgent: "env",
   qwenAgent: "env",
   codex: "env",

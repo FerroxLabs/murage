@@ -72,6 +72,11 @@ const claudeCatalog = (): ModelCatalog => ({
 describe("FLUX_SURFACE — the one table", () => {
   it("names only engines whose surface is implemented", () => {
     expect(FLUX_SURFACE).toEqual({
+      // Fuigo is a NATIVE Flux client — its own default inference host IS
+      // api.fluxrouter.ai — so this entry is a GATE, not an injection recipe:
+      // the driver never calls applyFluxSurface. Without it routableEngine
+      // returns false and strips fuigo's entire (all-flux) catalog.
+      fuigoAgent: "openai",
       claudeAgent: "anthropic",
       qwenAgent: "openai",
       codex: "responses",
@@ -98,7 +103,11 @@ describe("FLUX_SURFACE — the one table", () => {
 
   it("leaves every engine with no Flux surface out (spec §4.4)", () => {
     for (const driver of BUILT_IN_DRIVERS) {
-      if (["claudeAgent", "qwenAgent", "codex", "hermesAgent", "opencodeGo"].includes(driver.driverKind)) continue;
+      // fuigoAgent joined this list deliberately: it is a NATIVE Flux client
+      // (its own default host is api.fluxrouter.ai), and without a surface entry
+      // routableEngine strips its entire catalog — see flux-routing.ts.
+      if (["fuigoAgent", "claudeAgent", "qwenAgent", "codex", "hermesAgent", "opencodeGo"].includes(driver.driverKind))
+        continue;
       expect(fluxSurfaceFor(driver.driverKind)).toBeNull();
     }
     expect(fluxSurfaceFor("droidAgent")).toBeNull();

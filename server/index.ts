@@ -766,7 +766,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
   });
 }
 
-// default selection for new bots: first available instance, claude preferred
+// default selection for new bots: first available instance, Fuigo preferred
 async function defaultSelection() {
   const described = await registry.describe();
   const available = described.filter((d) => d.snapshot.state === "available");
@@ -775,7 +775,15 @@ async function defaultSelection() {
   // spawn ENOENT — the single worst first-run experience, and the one every
   // user with no CLIs used to get. An empty selection is honest: the UI shows
   // the setup path instead of a bot that cannot answer.
-  const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
+  // Fuigo first, then Claude. Fuigo is the only engine Murage SHIPS a binary
+  // for, so on a machine with no CLIs installed it is the one that can be
+  // "available" at all — which is the entire zero-terminal promise. Claude
+  // stays second because on a developer's machine it usually is installed and
+  // it was the previous default; a fresh install simply never reaches it.
+  const pick =
+    available.find((d) => d.driverKind === "fuigoAgent") ??
+    available.find((d) => d.driverKind === "claudeAgent") ??
+    available[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
 
