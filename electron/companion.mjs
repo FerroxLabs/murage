@@ -25,7 +25,12 @@ import {
 // sidecar opened. They must stay clear of the harness, which takes 8799 for
 // itself and 8800 for its webhook receiver — the sidecar refuses to start on
 // either and says which, rather than racing it for the socket.
-const CONTROL_PORT = 8811;
+// Overridable only so the two suites that stand up a fake control server can
+// run while a real Murage desktop is on 8811 — which is always, on the machine
+// this is developed on. They used to hard-code it and skip instead, so the
+// door's own tests went quiet on exactly the machine that could break it.
+// Unset in every real launch, which is what keeps the default authoritative.
+const CONTROL_PORT = Number(process.env.MURAGE_CONTROL_PORT_OVERRIDE) || 8811;
 const COMPANION_PORT = 8810;
 /** The browser door. 8813 and not 8812: companion-origin-gateway.mjs already
  * owns 8812 for the managed loopback gateway, so the two would have collided.
@@ -48,6 +53,14 @@ const BROWSER_BIND = "auto";
  * cookie name and whether `Secure` is set, so claiming it early breaks the
  * session rather than merely mislabelling it. */
 const BROWSER_SCHEME = "http";
+/** Where `tailscale serve` forwards, when the desktop turns it on.
+ *
+ * Loopback and not the tailnet address, and this is the whole of defect 2:
+ * `serve` proxies to `http://127.0.0.1:8813`, so a door that took the
+ * `auto` preference and bound the tailnet address instead has nothing
+ * listening where serve connects. Serve then answers 443 with a 502 while
+ * every local probe says the door is healthy. */
+export const BROWSER_LOOPBACK_TARGET = `http://127.0.0.1:${BROWSER_PORT}`;
 
 /** The door, as the panel sees it when there is no sidecar to ask.
  *
@@ -59,6 +72,11 @@ const BROWSER_DOOR_OFF = null;
 let proc = null;
 let lastError = null;
 let advertisedHostedUrl = null;
+/** The proxy origin the running sidecar was forked with, or null. This is
+ * what the door is CURRENTLY advertising, as opposed to what the remembered
+ * setting asks for — the two differ exactly while a toggle is failing, which
+ * is when the panel most needs to say which one is true. */
+let remoteAccessOrigin = null;
 let originTarget = null;
 let lifecycleListener = () => {};
 const expectedStops = new WeakSet();
@@ -94,9 +112,13 @@ const settingsFile = () => path.join(app.getPath("userData"), "companion-setting
 function companionSettings() {
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-    return { enabled: parsed?.enabled === true, keepAwake: parsed?.keepAwake === true };
+    return {
+      enabled: parsed?.enabled === true,
+      keepAwake: parsed?.keepAwake === true,
+      remoteAccess: parsed?.remoteAccess === true,
+    };
   } catch {
-    return { enabled: false, keepAwake: false };
+    return { enabled: false, keepAwake: false, remoteAccess: false };
   }
 }
 
@@ -108,6 +130,16 @@ export function companionEnabledAtRest() {
 
 export function companionKeepAwakeAtRest() {
   return companionSettings().keepAwake;
+}
+
+/** Whether the user left remote browser access on.
+ *
+ * Remembered for the same reason the sidecar toggle is: `tailscale serve`
+ * survives a reboot on its own, so an app that forgot would come back with a
+ * proxy pointed at a door bound the other way — serve up, door on the tailnet
+ * address, 502 for everyone. The two have to be restored together. */
+export function companionRemoteAccessAtRest() {
+  return companionSettings().remoteAccess;
 }
 
 /** Remember the toggle's position. Written via temp-and-rename so a crash
@@ -139,6 +171,10 @@ export function rememberCompanionKeepAwake(keepAwake) {
   rememberCompanionSettings({ keepAwake });
 }
 
+export function rememberCompanionRemoteAccess(remoteAccess) {
+  rememberCompanionSettings({ remoteAccess });
+}
+
 /** Ask the sidecar's own control server, which is the same API the standalone
  * page uses. Short timeout: this is loopback, and a spinner in Settings that
  * never resolves is worse than an error. The budget is a parameter because
@@ -168,6 +204,12 @@ export function companionRunning() {
  * this module. */
 export function companionAdvertisedHostedUrl() {
   return proc ? advertisedHostedUrl : null;
+}
+
+/** The `https://<name>` origin the owned sidecar is advertising as its front,
+ * or null when nothing is in front of the door. */
+export function companionRemoteAccessOrigin() {
+  return proc ? remoteAccessOrigin : null;
 }
 
 /** Exact private origin belonging to the currently owned sidecar. This value
@@ -217,7 +259,7 @@ export function stopCompanion() {
 }
 
 /** startCompanion's body, run inside the transition queue. */
-async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
+async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAccess = null, log }) {
   if (proc) return companionState();
   lastError = null;
   const resolved = entryPoint(resourcesPath);
@@ -253,6 +295,10 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
   const childEnvironment = { ...process.env };
   delete childEnvironment.MURAGE_COMPANION_HOSTED_URL;
   delete childEnvironment.MURAGE_COMPANION_INTERNAL_ORIGIN;
+  // Same reasoning: the door's public origin is decided here, per start, from
+  // what `tailscale serve` was actually observed to be doing. An inherited
+  // one would survive turning remote access off.
+  delete childEnvironment.MURAGE_BROWSER_PUBLIC_ORIGIN;
   if (hostedUrl) childEnvironment.MURAGE_COMPANION_HOSTED_URL = hostedUrl;
   childEnvironment.MURAGE_COMPANION_INTERNAL_ORIGIN = allocatedOrigin.socketPath;
 
@@ -268,8 +314,15 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
         // disagree about where it is, the same reason the two ports above are
         // passed rather than left to defaults.
         MURAGE_BROWSER_PORT: String(BROWSER_PORT),
-        MURAGE_BROWSER_BIND: childEnvironment.MURAGE_BROWSER_BIND || BROWSER_BIND,
-        MURAGE_BROWSER_SCHEME: childEnvironment.MURAGE_BROWSER_SCHEME || BROWSER_SCHEME,
+        // Remote access OVERRIDES the operator's own environment here, where
+        // everything else defers to it. That is not an oversight: `serve`
+        // connects to 127.0.0.1:8813, so `MURAGE_BROWSER_BIND=tailnet` with
+        // remote access on is not a preference to honour, it is a
+        // configuration that cannot work — serve reaching nothing, reported
+        // as a 502 from a door that all local checks call healthy. The
+        // operator's value is honoured in full whenever remote access is off,
+        // which is the shipped default.
+        ...browserDoorEnvironment(childEnvironment, remoteAccess),
       },
       // how the TS-source fallback gets --experimental-strip-types; empty for
       // compiled entries
@@ -293,6 +346,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
     if (proc === child) {
       proc = null;
       advertisedHostedUrl = null;
+      remoteAccessOrigin = null;
       originTarget = null;
       lifecycleListener({
         type: "exit",
@@ -335,6 +389,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
       if (!(await companionOriginHealth(target))) throw new Error("private origin not ready");
       proc = child;
       advertisedHostedUrl = hostedUrl;
+      remoteAccessOrigin = remoteAccess?.origin ?? null;
       originTarget = Object.freeze(target);
       return companionState();
     } catch {
@@ -350,11 +405,46 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
   return companionState();
 }
 
+/** The three door variables the fork sets, given the remote-access decision.
+ *
+ * Exported and pure so the two arrangements can be asserted directly. The
+ * whole feature is these three values agreeing with what is in front of the
+ * door, and every way it has failed so far was one of them disagreeing.
+ *
+ * `remoteAccess` is `{ origin }` when `tailscale serve` is fronting the door,
+ * and null otherwise. */
+export function browserDoorEnvironment(inherited = {}, remoteAccess = null) {
+  if (remoteAccess?.origin) {
+    return {
+      // Serve forwards to loopback. Anything else and it reaches nothing.
+      MURAGE_BROWSER_BIND: "loopback",
+      // True the moment serve is in front: the browser's connection really is
+      // TLS, so the session cookie may — and must — carry `Secure` and the
+      // `__Host-` prefix. Claiming it before serve was up is what made this
+      // value dangerous to set early; claiming it now is just accurate.
+      MURAGE_BROWSER_SCHEME: "https",
+      // What a browser types. The door's own socket is 8813 and no browser
+      // will ever dial it again while this is set.
+      MURAGE_BROWSER_PUBLIC_ORIGIN: remoteAccess.origin,
+    };
+  }
+  return {
+    MURAGE_BROWSER_BIND: inherited.MURAGE_BROWSER_BIND || BROWSER_BIND,
+    MURAGE_BROWSER_SCHEME: inherited.MURAGE_BROWSER_SCHEME || BROWSER_SCHEME,
+    // Explicitly cleared rather than omitted. An inherited value from a
+    // previous remote-access run would tell the sidecar a proxy is in front
+    // of it when nothing is, and the QR would advertise an address that
+    // stopped answering the moment serve was turned off.
+    MURAGE_BROWSER_PUBLIC_ORIGIN: "",
+  };
+}
+
 /** stopCompanion's body, run inside the transition queue. */
 async function stop() {
   const child = proc;
   proc = null;
   advertisedHostedUrl = null;
+  remoteAccessOrigin = null;
   originTarget = null;
   lastError = null;
   if (!child) return companionState();

@@ -1237,6 +1237,56 @@ export interface BrowserDoor {
   port: number;
 }
 
+/** What is standing in FRONT of the door, when something is.
+ *
+ * `tailscale serve` terminates TLS on 443 under the node's MagicDNS name and
+ * proxies to the door on loopback. From a browser's point of view the door is
+ * then at `https://<name>` on the default port — and the door's own socket,
+ * 127.0.0.1:8813, is an implementation detail nothing outside this machine can
+ * dial. Advertising the socket in that arrangement produces
+ * `https://<name>:8813`, which the certificate does not cover and serve does
+ * not answer on: a QR code that cannot work, generated from three individually
+ * true facts.
+ *
+ * So the front is a separate input. It is set by whoever put the proxy there —
+ * the desktop app, in `electron/companion-remote-access.mjs` — and it is
+ * `null` whenever nothing is in front, which is the shipped default. */
+export interface BrowserFront {
+  scheme: BoundIdentity["scheme"];
+  host: string;
+  port: number;
+}
+
+/** Parse `MURAGE_BROWSER_PUBLIC_ORIGIN` into a front, or `null`.
+ *
+ * Strict, and null on anything doubtful, for the same reason
+ * `companionBrowserLink` validates before it builds: this value decides the
+ * address printed into a QR code and the extra Host the door will answer to.
+ * A malformed one must degrade to "no proxy in front" — which is a true,
+ * working configuration — rather than to a door that trusts a host somebody
+ * typo'd. */
+export function browserFront(value: string | undefined | null): BrowserFront | null {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  const scheme = parsed.protocol === "https:" ? "https" : parsed.protocol === "http:" ? "http" : null;
+  if (!scheme) return null;
+  // A proxy origin is an origin. Credentials, a path, a query or a fragment
+  // all mean the caller meant something else.
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+  if (parsed.pathname !== "/" && parsed.pathname !== "") return null;
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, "");
+  if (!host) return null;
+  const port = parsed.port ? Number(parsed.port) : scheme === "https" ? 443 : 80;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
+  return { scheme, host, port };
+}
+
 export function browserDoorLocation(
   scheme: BoundIdentity["scheme"],
   port: number,
@@ -1244,7 +1294,17 @@ export function browserDoorLocation(
   boundHost: string | null,
   magicDnsName: string | null,
   tailnet: string | null,
+  /** The proxy in front of the door, when there is one. */
+  front: BrowserFront | null = null,
 ): BrowserDoor | null {
   if (!boundHost) return null;
+  // The front wins over every locally derived answer, including the socket's
+  // own port. It is not a better guess at the same question — it IS the
+  // question: "what does a browser type", not "what did this process bind".
+  //
+  // Still gated on `boundHost`, deliberately. A proxy in front of a door that
+  // is not listening is a 502, and reporting a reachable-looking address for
+  // it would be exactly the half-truth `null` exists to avoid.
+  if (front) return { scheme: front.scheme, host: front.host, port: front.port };
   return { scheme, host: magicDnsName ?? tailnet ?? boundHost, port };
 }

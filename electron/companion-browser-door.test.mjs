@@ -21,8 +21,10 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-/** The port companion.mjs hard-codes for the sidecar's control server. */
-const CONTROL_PORT = 8811;
+/** The port companion.mjs uses for the sidecar's control server. Shifted by
+ * MURAGE_CONTROL_PORT_OVERRIDE so this suite can run against a machine that
+ * already has a real Murage on 8811; both sides read the same variable. */
+const CONTROL_PORT = Number(process.env.MURAGE_CONTROL_PORT_OVERRIDE) || 8811;
 /** `start()` refuses to adopt a control server whose pid does not match the
  * child it forked, so both sides of this test agree on one. */
 const FAKE_PID = 515151;
@@ -64,7 +66,8 @@ vi.mock("./companion-origin-gateway.mjs", () => ({
   companionOriginHealth: async () => true,
 }));
 
-const { companionState, startCompanion, stopCompanion } = await import("./companion.mjs");
+const { browserDoorEnvironment, companionState, startCompanion, stopCompanion } =
+  await import("./companion.mjs");
 
 /** What the stand-in sidecar reports for the door. */
 let door = { scheme: "http", host: "macbook.tail1234.ts.net", port: 8813 };
@@ -141,6 +144,77 @@ describe("the desktop names the browser door", () => {
       if (previous === undefined) delete process.env.MURAGE_BROWSER_BIND;
       else process.env.MURAGE_BROWSER_BIND = previous;
     }
+  });
+
+  it("puts the door on LOOPBACK when tailscale serve is in front of it", async () => {
+    // Defect 2, pinned. `tailscale serve` connects to 127.0.0.1:8813. The
+    // shipped `auto` preference binds the TAILNET address when there is one,
+    // so serve reached nothing and answered 443 with a 502 while every local
+    // probe called the door healthy.
+    const front = { origin: "https://seans-macbook-pro.tail0a48a4.ts.net" };
+    const env = browserDoorEnvironment({}, front);
+    expect(env.MURAGE_BROWSER_BIND).toBe("loopback");
+    // True the moment serve is in front, and only then: the value decides the
+    // cookie name and the `Secure` attribute.
+    expect(env.MURAGE_BROWSER_SCHEME).toBe("https");
+    // Defect 1, pinned. What a browser types, not what the socket bound.
+    expect(env.MURAGE_BROWSER_PUBLIC_ORIGIN).toBe(front.origin);
+  });
+
+  it("overrides an operator bind preference that serve cannot work with", async () => {
+    // Everything else here defers to the operator's environment. This does
+    // not, because `MURAGE_BROWSER_BIND=tailnet` behind serve is not a
+    // preference — it is a configuration that cannot work.
+    const env = browserDoorEnvironment(
+      { MURAGE_BROWSER_BIND: "tailnet", MURAGE_BROWSER_SCHEME: "http" },
+      { origin: "https://box.tail0a48a4.ts.net" },
+    );
+    expect(env.MURAGE_BROWSER_BIND).toBe("loopback");
+    expect(env.MURAGE_BROWSER_SCHEME).toBe("https");
+  });
+
+  it("clears the front when remote access is off, rather than inheriting it", async () => {
+    // An inherited public origin would survive turning remote access off, and
+    // the QR would keep advertising an address that stopped answering.
+    const env = browserDoorEnvironment(
+      { MURAGE_BROWSER_PUBLIC_ORIGIN: "https://stale.tail0a48a4.ts.net" },
+      null,
+    );
+    expect(env.MURAGE_BROWSER_PUBLIC_ORIGIN).toBe("");
+    expect(env.MURAGE_BROWSER_BIND).toBe("auto");
+    expect(env.MURAGE_BROWSER_SCHEME).toBe("http");
+  });
+
+  it("forks the door onto loopback when the launch carries a front", async () => {
+    await stopCompanion();
+    await startCompanion({
+      resourcesPath: "/fake/resources",
+      harnessPort: 8799,
+      remoteAccess: { origin: "https://seans-macbook-pro.tail0a48a4.ts.net" },
+    });
+    const env = forkEnvironments.at(-1);
+    expect(env.MURAGE_BROWSER_BIND).toBe("loopback");
+    expect(env.MURAGE_BROWSER_SCHEME).toBe("https");
+    expect(env.MURAGE_BROWSER_PUBLIC_ORIGIN).toBe("https://seans-macbook-pro.tail0a48a4.ts.net");
+  });
+
+  it("advertises the front's portless address, not the door's own socket", async () => {
+    // The shape `/state` must produce for the link to be the one that works.
+    door = { scheme: "https", host: "seans-macbook-pro.tail0a48a4.ts.net", port: 443 };
+    await stopCompanion();
+    await startCompanion({
+      resourcesPath: "/fake/resources",
+      harnessPort: 8799,
+      remoteAccess: { origin: "https://seans-macbook-pro.tail0a48a4.ts.net" },
+    });
+    const state = await companionState();
+    expect(state.browser).toEqual({
+      scheme: "https",
+      host: "seans-macbook-pro.tail0a48a4.ts.net",
+      port: 443,
+    });
+    expect(state.browser.port).not.toBe(8813);
+    door = { scheme: "http", host: "macbook.tail1234.ts.net", port: 8813 };
   });
 
   it("reports where the door answers, from the sidecar rather than from a guess", async () => {

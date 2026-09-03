@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld("muragebox", {
     stop: () => ipcRenderer.invoke("companion:stop"),
     keepAwake: (enabled) => ipcRenderer.invoke("companion:keep-awake", enabled),
     refreshTailscale: () => ipcRenderer.invoke("companion:refresh-tailscale"),
+    // One switch: `tailscale serve` in front of the browser door, and the door
+    // bound to loopback where serve connects. The renderer asks for a state,
+    // never for a command — every decision about what that costs stays in the
+    // main process.
+    remoteAccess: (enabled) => ipcRenderer.invoke("companion:remote-access", enabled),
     pairing: (open, expectedToken) => ipcRenderer.invoke("companion:pairing", open, expectedToken),
     cloudDesktop: (deviceId, allowed) => ipcRenderer.invoke("companion:cloud-desktop", deviceId, allowed),
     revoke: (deviceId) => ipcRenderer.invoke("companion:revoke", deviceId),

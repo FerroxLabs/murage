@@ -399,6 +399,10 @@ import {
   companionOriginTarget,
   companionPairing,
   companionRefreshTailscale,
+  companionRemoteAccessAtRest,
+  companionRemoteAccessOrigin,
+  rememberCompanionRemoteAccess,
+  BROWSER_LOOPBACK_TARGET,
   companionCloudDesktopAccess,
   companionRevoke,
   companionRunning,
@@ -410,6 +414,11 @@ import {
   startCompanion,
   stopCompanion,
 } from "./companion.mjs";
+import {
+  disableServe,
+  enableServe,
+  serveState,
+} from "./companion-remote-access.mjs";
 
 let companionPowerBlocker = null;
 
@@ -547,11 +556,76 @@ function publicManagedCompanionState() {
     : { status: "unconfigured", configured: false, ready: false };
 }
 
+// ── remote browser access ──────────────────────────────────────────────
+// One switch: `tailscale serve` in front of the browser door, and the door
+// bound to loopback where serve connects. The two are one decision and were
+// two, which is why the door came up on the tailnet address while serve
+// forwarded to a loopback port nothing was listening on.
+//
+// The last observed serve arrangement, so the panel can render without paying
+// for a subprocess on every poll. Refreshed by every toggle, by startup, and
+// by the explicit re-check — never inferred from the remembered setting,
+// because "what the user asked for" and "what Tailscale is doing" are exactly
+// the two things that disagree when this is broken.
+let remoteAccessObserved = null;
+
+/** The public, secret-free shape the renderer renders.
+ *
+ * Three separate facts, deliberately not collapsed into one boolean:
+ *   `on`      — serve is fronting the door AND the sidecar knows it, so the
+ *               advertised link really is the portless HTTPS one.
+ *   `desired` — what the user last asked for. Differs from `on` while a
+ *               toggle is failing, which is when the difference matters.
+ *   `problem` — the honest reason, when there is one. */
+function publicRemoteAccessState() {
+  const origin = companionRemoteAccessOrigin();
+  const observed = remoteAccessObserved;
+  return {
+    on: Boolean(origin) && Boolean(observed?.on),
+    desired: companionRemoteAccessAtRest(),
+    url: origin ?? null,
+    available: observed ? observed.available !== false : null,
+    reason: observed?.reason ?? null,
+    problem: observed?.message ?? null,
+  };
+}
+
+/** Look at what Tailscale is actually doing, and remember it. */
+async function refreshRemoteAccessObservation() {
+  try {
+    remoteAccessObserved = await serveState({ proxyTarget: BROWSER_LOOPBACK_TARGET });
+  } catch {
+    remoteAccessObserved = {
+      available: false,
+      on: false,
+      host: null,
+      reason: "failed",
+      message: "Tailscale could not be checked on this computer.",
+    };
+  }
+  return remoteAccessObserved;
+}
+
+/** The launch options for the sidecar, honouring the remote-access decision.
+ *
+ * `null` when remote access is off or unavailable, which is the fallback path
+ * and is a complete, working configuration: the door binds the tailnet
+ * address and answers plain HTTP over WireGuard exactly as it does today. */
+function remoteAccessLaunch() {
+  const observed = remoteAccessObserved;
+  if (!companionRemoteAccessAtRest() || !observed?.on || !observed.host) return null;
+  return { origin: `https://${observed.host}` };
+}
+
 function decorateDesktopCompanionState(state) {
   // The panel polls this state, so a sidecar that exited on its own releases
   // the blocker within one poll instead of keeping the computer awake forever.
   syncCompanionKeepAwake(state.enabled && !state.error, state.keepAwake === true);
-  return { ...state, managedConnection: publicManagedCompanionState() };
+  return {
+    ...state,
+    managedConnection: publicManagedCompanionState(),
+    remoteAccess: publicRemoteAccessState(),
+  };
 }
 
 async function desktopCompanionState() {
@@ -563,6 +637,7 @@ function companionLaunchOptions(hostedUrl = null) {
     resourcesPath: process.resourcesPath,
     harnessPort: SERVER_PORT,
     hostedUrl,
+    remoteAccess: remoteAccessLaunch(),
     log: slog,
   };
 }
@@ -636,6 +711,11 @@ async function startManagedCompanionConnection({ waitForVerification = true } = 
 async function startDesktopCompanion({ waitForHosted = true, remember = true } = {}) {
   companionDesiredThisLaunch = true;
   companionLaunchGeneration += 1;
+  // Before the fork, not after: the fork's environment is where the door
+  // learns it is behind a proxy, and a sidecar started without that knowledge
+  // advertises its own socket. Only when remote access is actually wanted —
+  // the default costs no subprocess.
+  if (companionRemoteAccessAtRest()) await refreshRemoteAccessObservation();
   // Direct LAN comes up first. The hosted endpoint is added in place only
   // after the guardian has verified the public route to this exact sidecar.
   const localState = await startCompanion(companionLaunchOptions());
@@ -657,7 +737,56 @@ async function refreshDesktopCompanionTailscale() {
     const started = await startDesktopCompanion({ waitForHosted: false });
     if (!started.enabled || started.error) return started;
   }
+  // The proxy in front is part of "is this reachable", and it is the half a
+  // person is most likely to have just changed by hand.
+  await refreshRemoteAccessObservation();
   return decorateDesktopCompanionState(await companionRefreshTailscale());
+}
+
+/** Turn remote browser access on or off. One action, both halves.
+ *
+ * ON, in order, and the order is the design:
+ *   1. read `tailscale serve status` — a config that belongs to something
+ *      else is refused here, before any write, and nothing is changed;
+ *   2. `tailscale serve --bg --https=443 http://127.0.0.1:8813`, then read it
+ *      back, because the exit code is not evidence and the host in the
+ *      config is the name the certificate was issued for;
+ *   3. only then restart the sidecar, with the door on loopback and the
+ *      front's origin in its environment.
+ *
+ * A failure at 1 or 2 leaves the sidecar exactly as it was. That is the
+ * honest downgrade: plain HTTP on the tailnet keeps working, the switch does
+ * not stick, and the panel says why.
+ *
+ * OFF removes only an arrangement that is ours, then restarts the sidecar
+ * back onto its ordinary tailnet bind.
+ *
+ * Idempotent: asking for the state it is already in re-reads Tailscale, does
+ * not write, and does not restart. */
+async function setDesktopCompanionRemoteAccess(enabled) {
+  const wanted = Boolean(enabled);
+  const observed = wanted
+    ? await enableServe({ proxyTarget: BROWSER_LOOPBACK_TARGET })
+    : await disableServe({ proxyTarget: BROWSER_LOOPBACK_TARGET });
+  remoteAccessObserved = observed;
+
+  if (wanted && !observed.on) {
+    // Nothing was changed on this machine, so nothing is remembered either.
+    // Remembering a wish that failed would restore a broken pair on the next
+    // launch — serve config absent, door on loopback, unreachable.
+    rememberCompanionRemoteAccess(false);
+    slog(`remote browser access refused: ${observed.reason ?? "unknown"} — ${observed.message ?? ""}`);
+    return desktopCompanionState();
+  }
+  rememberCompanionRemoteAccess(wanted);
+
+  // The sidecar learns which side of this it is on through its environment,
+  // so the change lands on a restart and only when it actually differs.
+  const already = companionRemoteAccessOrigin();
+  const target = wanted && observed.host ? `https://${observed.host}` : null;
+  if (!companionRunning() || already === target) return desktopCompanionState();
+  await stopCompanion();
+  return startDesktopCompanion({ waitForHosted: false });
 }
 
 async function stopDesktopCompanion({ remember = true } = {}) {
@@ -1864,6 +1993,9 @@ ipcMain.handle("companion:keep-awake", async (_event, enabled) => {
   return desktopCompanionState();
 });
 ipcMain.handle("companion:refresh-tailscale", () => refreshDesktopCompanionTailscale());
+ipcMain.handle("companion:remote-access", (_event, enabled) =>
+  setDesktopCompanionRemoteAccess(Boolean(enabled)),
+);
 ipcMain.handle("companion:pairing", (_event, open, expectedToken) =>
   companionPairing(Boolean(open), expectedToken).then(decorateDesktopCompanionState),
 );

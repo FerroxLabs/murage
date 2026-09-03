@@ -93,7 +93,30 @@ export interface CompanionState {
    * Optional because an older sidecar predates the field. Null because a
    * newer one distinguishes "not listening" from "did not say". */
   browser?: CompanionBrowserDoor | null;
+  /** Whether `tailscale serve` is in front of the browser door, and what it
+   * cost if it is not.
+   *
+   * `on` is the only field that says the secure address is live — it is true
+   * only when serve is running AND the sidecar was told about it, because a
+   * proxy the door does not know about produces the exact bug this feature
+   * was built to fix: a link advertising the door's own socket behind a
+   * certificate that does not cover it. `desired` is what the user asked for,
+   * and it differs from `on` while a toggle is failing. */
+  remoteAccess?: CompanionRemoteAccess;
   error?: string;
+}
+
+/** The state of the secure address in front of the door. */
+export interface CompanionRemoteAccess {
+  on: boolean;
+  desired: boolean;
+  /** `https://<name>` when serve is fronting the door, else null. */
+  url: string | null;
+  /** Whether the Tailscale CLI could be found at all. Null until asked. */
+  available: boolean | null;
+  reason: "missing" | "logged-out" | "no-certificates" | "conflict" | "unsupported" | "failed" | null;
+  /** The honest sentence, when there is one. */
+  problem: string | null;
 }
 
 /** Where a phone points its browser to reach this computer. */
@@ -164,6 +187,12 @@ export type CompanionBridge = {
    * unavailable. The door back in exists as of the #669 port; this is the
    * declaration that lets the renderer actually open it. */
   refreshTailscale: () => Promise<CompanionState>;
+  /** Put `tailscale serve` in front of the door — or take it away.
+   *
+   * The main process does both halves: the serve config AND the door's bind,
+   * because they are one decision. It refuses rather than overwriting a serve
+   * config somebody else set up. */
+  remoteAccess: (enabled: boolean) => Promise<CompanionState>;
 };
 
 type AccountBridge = NonNullable<NonNullable<Window["muragebox"]>["companionAccount"]>;
@@ -183,6 +212,19 @@ interface PhonePairingRequest {
   accountOverride?: CompanionAccountState | null;
   generation: number;
 }
+
+/** Before the main process has answered. Not "off": nothing has been asked
+ * yet, and rendering a confident "off" for an unasked question is how the
+ * readiness panel came to tell a phone that its own working tailnet did not
+ * exist. */
+export const REMOTE_ACCESS_UNKNOWN: CompanionRemoteAccess = {
+  on: false,
+  desired: false,
+  url: null,
+  available: null,
+  reason: null,
+  problem: null,
+};
 
 export const companionBridge = (): CompanionBridge | null =>
   // SAFETY: the preload owns this narrow bridge; browser builds are guarded by the optional lookup.
@@ -276,6 +318,10 @@ export interface PhoneSetupController {
   /** Where the door is answering, for saying so honestly before there is a
    * link to show. */
   browserDoor: CompanionBrowserDoor | null;
+  /** The secure address in front of the door, as it actually is. */
+  remoteAccess: CompanionRemoteAccess;
+  /** Turn the secure address on or off. */
+  setRemoteAccess: (enabled: boolean) => void;
   pairingExpired: boolean;
   setupTimedOut: boolean;
   setEmail: (email: string) => void;
@@ -933,6 +979,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     tailscaleAvailable: Boolean(state && companionPairingRoute(state, "tailscale")),
     browserLink,
     browserDoor: state?.browser ?? null,
+    remoteAccess: state?.remoteAccess ?? REMOTE_ACCESS_UNKNOWN,
+    setRemoteAccess: (enabled: boolean) => {
+      void act((companion) => companion.remoteAccess(enabled));
+    },
     pairingExpired: flow.pairingAttempted && !state?.pairing,
     setupTimedOut,
     setEmail: (next) => {
@@ -1009,10 +1059,22 @@ export interface WebUiReadiness {
   /** The single next thing to do, when there is one. */
   blocker: string | null;
   tailnetName: string | null;
-  /** `host:port` the door is answering on, when it is. */
+  /** The address the door is answering on, as a browser would type it —
+   * portless when the scheme's default port is what is in front. */
   doorAddress: string | null;
   /** Whether re-probing Tailscale could plausibly change the answer. */
   canRecheck: boolean;
+}
+
+/** The default port for a scheme, which a browser never shows. */
+const DEFAULT_DOOR_PORT: Record<CompanionBrowserDoor["scheme"], number> = { http: 80, https: 443 };
+
+/** The door as a person would read it out: `name.ts.net` behind serve,
+ * `name.ts.net:8813` on the plain tailnet. Dropping the default port is the
+ * whole visible difference between a working link and a broken one. */
+export function doorAddressLabel(door: CompanionBrowserDoor | null): string | null {
+  if (!door) return null;
+  return door.port === DEFAULT_DOOR_PORT[door.scheme] ? door.host : `${door.host}:${door.port}`;
 }
 
 export function webUiReadiness(source: {
@@ -1021,7 +1083,7 @@ export function webUiReadiness(source: {
 }): WebUiReadiness {
   const { state, browserDoor } = source;
   const tailnetName = state?.tailnetName ?? null;
-  const doorAddress = browserDoor ? `${browserDoor.host}:${browserDoor.port}` : null;
+  const doorAddress = doorAddressLabel(browserDoor);
   const base = { tailnetName, doorAddress, canRecheck: Boolean(state?.enabled) };
   if (!state) {
     return { ...base, ready: false, blocker: "Checking this computer…", canRecheck: false };
@@ -1362,7 +1424,7 @@ export function PhoneSetupFlowView({
               <ShieldCheck size={15} /> Pair over Tailscale
             </button>
             <p className="mt-2 text-center text-[11px] leading-relaxed text-ink-secondary">
-              Your phone must be signed in to the same tailnet.
+              That device must be signed in to the same tailnet.
             </p>
           </>
         ) : (
@@ -1428,7 +1490,7 @@ export function PhoneSetupFlowView({
         <div className="flex size-14 items-center justify-center rounded-full bg-success/15 text-success">
           <Check size={28} />
         </div>
-        <h2 className="mt-4 text-[19px] font-semibold text-ink">Your phone is ready</h2>
+        <h2 className="mt-4 text-[19px] font-semibold text-ink">That device is ready</h2>
         <p className="mt-1.5 text-[13px] text-ink-secondary">
           It can now open chats, answer approvals, and send new work.
         </p>
@@ -1455,8 +1517,8 @@ export function PhoneSetupFlowView({
       </h2>
       <p className="mt-1 text-[13px] text-ink-secondary">
         {c.pairingExpired
-          ? "Create a fresh code when your phone is ready."
-          : "Scan this code with your phone to pair it with this computer."}
+          ? "Create a fresh code when the device you are pairing is ready."
+          : "Scan this code with the phone, tablet or laptop you want to pair."}
       </p>
       {/* The browser door first, the `murage://` link only as a fallback.
         * The fallback addresses an app this repository no longer contains, so
@@ -1477,8 +1539,9 @@ export function PhoneSetupFlowView({
       )}
       {!c.pairingExpired && c.browserLink && c.browserDoor && (
         <p className="mt-2.5 max-w-[390px] text-[11.5px] leading-relaxed text-ink-secondary">
-          Opens <span className="text-ink">{c.browserDoor.host}</span> in your phone’s browser. Your
-          phone has to be signed into the same tailnet.
+          Opens <span className="text-ink">{doorAddressLabel(c.browserDoor)}</span> in the browser on
+          whichever device scans it — a phone, a tablet, a laptop. That device has to be signed into
+          the same tailnet.
         </p>
       )}
       {!c.pairingExpired && manualCodeMode === "direct" && c.state?.pairing && (
