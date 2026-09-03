@@ -215,6 +215,25 @@ html,
 body,
 #root {
   height: 100%;
+  /* Nothing inside the app may grow the DOCUMENT.
+   *
+   * `body` is already overflow:hidden, but `html` is the scrolling element
+   * and it is visible — so an absolutely positioned descendant that hangs
+   * past the viewport scrolls the whole window, sliding the entire app up and
+   * leaving a black band where the page has run out. It looks like the app
+   * broke; nothing has thrown and no boundary fires.
+   *
+   * The one that did it: the composer's full-bleed ground
+   * (`Composer.tsx`, `absolute -left-5 -right-5 top-1/2 h-[50vh]`), which is
+   * deliberately half a viewport tall so bubbles cannot show below the pill's
+   * midline. Sitting near the bottom of the screen it hung 404px past it and
+   * the window scrolled 369.5px — measured, in the running app.
+   *
+   * Clipping here fixes that one and every future one: this app is a
+   * fixed-height layout and the document is never meant to scroll. `fixed`
+   * descendants — menus, the message sheet, the install invite — are
+   * positioned against the viewport and are not clipped by this. */
+  overflow: hidden;
 }
 
 /* The visual viewport, not the layout viewport. iOS does not shrink the layout
