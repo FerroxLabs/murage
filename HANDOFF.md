@@ -88,6 +88,61 @@ Do those three and the web UI is reachable from a phone.
 
 ---
 
+## TONIGHT — the web UI is real, and a phone found eight defects
+
+**Sean's Android phone reached Murage over his tailnet, and his desktop app is
+served HTTPS on a MagicDNS name with a real certificate.** 21 commits. Neither
+Wayland nor AionUI ever got this far: both stayed on plain HTTP, which is why
+neither ever got an installable PWA.
+
+**Read this first, because it is the lesson.** Every defect below passed its
+tests AND passed hand-built requests I wrote to reproduce them. A real phone
+found all of them. Three times a pre-existing test actively defended the wrong
+assumption and I trusted it over a measurement. When a live device disagrees
+with a green suite, the device is right.
+
+| What was wrong | Why it survived |
+|---|---|
+| Door refused every browser | `Sec-Fetch-*` is secure-context only; no browser sends it over plain HTTP. The gate required it. My curl added it by hand |
+| `SameSite=Strict` | Withheld the cookie on any cross-site NAVIGATION — tapping your own link from a chat app. Session was valid on disk the whole time |
+| 120-second pairing window | Measured against a flow where you already hold the phone. Reads as "credential is not right", not as expiry |
+| Link-preview crawlers spent the token | Fragment protects logs, not renderers. Sign-in is now a BUTTON |
+| Phone got the desktop's first run | Welcome gate, engine scan, phone-setup screen. Renderer did not know where it ran |
+| API keys rendered on the phone | SettingsModal was out of the lane's reach |
+| The desktop was told it was a phone | `resolveDesktopSurface` let a fetched "remote" outrank the Electron bridge |
+| Skill Remove ate its own click | `window.confirm`; an auto-dismissed dialog is indistinguishable from Cancel |
+
+**Live configuration right now — READ BEFORE TOUCHING ANYTHING.**
+- Harness 8799 serves a **frozen production build** from a git worktree at
+  `<scratchpad>/frozen`, NOT the working tree. Electron runs with
+  `ELECTRON_START_URL=http://127.0.0.1:8799`. This insulates Sean's app from
+  lanes editing the tree. **After any renderer change you must rebuild that
+  worktree and restart, or Sean sees stale code and reports a fixed bug.**
+- Door 8813 bound to **loopback**, fronted by `tailscale serve --https=443`
+  (tailnet only; **funnel is never to be used**). Undo: `tailscale serve
+  --https=443 off`.
+- Sean's bookmark: `https://seans-macbook-pro.tail0a48a4.ts.net/`
+- A production bundle served by a harness Electron did not fork has **no path
+  to the desktop secret**. The preload bridge is what saves it. Do not
+  reintroduce a fetch-first precedence.
+
+**In flight when this was written:** one lane building the desktop
+"Enable WebUI for Remote Access" page — Wayland's own settings screen is the
+agreed design (Sean sent screenshots; skeleton, three-step strip, consequence
+modal, copyable access URL, QR with expiry + refresh, paired devices, recent
+activity). Take the shape; do NOT copy its username/password, its
+bind-to-0.0.0.0 model, or its paired-devices list, which is a facade whose
+register function has zero call sites.
+
+**Known open, not started:** web app manifest + icons (this is the "no logo"
+report AND the last thing blocking home-screen install); the door still
+advertises its internal port in generated links now that serve fronts it;
+phones lost copy/reply/speak on messages when the hover rail became
+`display:none` and need a touch affordance; the catalog recall gap
+("reading my trading charts" finds nothing while "read my own charts" finds
+Smart Trader); `installer/` still not wired into CI; cloud installer still
+needs Sean's Tailscale auth key.
+
 ## NEXT — read `docs/plans/next-session/PLAN.md`. It supersedes this section.
 
 The plan was built from **three audits of today's ten commits** (security ·
