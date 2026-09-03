@@ -19,6 +19,11 @@ import {
   TRANSCRIBE_PATH,
   containerOf,
   filenameFor,
+  BUDGET_MAX_BILLED_SECONDS,
+  BUDGET_MAX_REQUESTS,
+  BUDGET_WINDOW_MS,
+  MAX_CLIP_BYTES,
+  createVoiceBudget,
   handleTranscribeRoute,
   isTranscriptionModel,
   statusForFailure,
@@ -40,8 +45,35 @@ let answer: { ok: Transcript } | { throws: unknown } = {
   ok: { text: "ship it", language: "en", duration: 3.2, model: "flux-voice-fast", billedSeconds: 4 },
 };
 
+/** Held open by the concurrency test so two clips can be in flight at once. */
+let gate: Promise<void> | null = null;
+/** A fresh budget per test — a rolling window is deliberately stateful, and
+ *  a suite that shared one would have its result depend on file order. */
+let budget = createVoiceBudget();
+
 let server: Server;
 let base = "";
+
+/** How many times `handleTranscribeRoute` has RETURNED.
+ *
+ * The only way to observe that the handler settled at all. A promise that
+ * never resolves writes no response and throws nothing — from the client's
+ * side it is indistinguishable from a slow network, and from the server's
+ * side it is a leaked request object per abandoned upload. Counting returns
+ * is what tells those apart. */
+let completions = 0;
+const awaitCompletions = (target: number, ms = 3_000): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      if (completions >= target) return resolve();
+      if (Date.now() - started > ms) {
+        return reject(new Error(`the handler never returned (${completions} of ${target} after ${ms}ms)`));
+      }
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
 
 /** A token webm header. Nothing decodes it; the route only measures it. */
 const CLIP = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04]);
@@ -59,9 +91,11 @@ beforeAll(async () => {
           language: options?.language,
           prompt: options?.prompt,
         });
+        if (gate) await gate;
         if ("throws" in answer) throw answer.throws;
         return answer.ok;
       },
+      budget,
     });
     // The dispatcher's own fall-through, reproduced: a false return has to
     // leave the response untouched for every route below.
@@ -69,6 +103,7 @@ beforeAll(async () => {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "not found" }));
     }
+    completions += 1;
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const address = server.address();
@@ -77,6 +112,9 @@ beforeAll(async () => {
 
 beforeEach(() => {
   seen = [];
+  completions = 0;
+  gate = null;
+  budget = createVoiceBudget();
   answer = { ok: { text: "ship it", language: "en", duration: 3.2, model: "flux-voice-fast", billedSeconds: 4 } };
 });
 
@@ -122,16 +160,16 @@ describe("what the route sends to Flux", () => {
     expect(seen[0].model).not.toBe("flux-voice");
   });
 
-  it("lets a caller ask for the accurate arm deliberately, and refuses anything else", async () => {
-    await post(CLIP, { query: "?model=flux-voice-accurate" });
-    expect(seen[0].model).toBe("flux-voice-accurate");
-
-    seen = [];
+  it("refuses an undocumented backing-engine synonym rather than passing it through", async () => {
     const bogus = await post(CLIP, { query: "?model=whisper-large-v3" });
-    // an undocumented backing-engine synonym is a 400 here, never a
-    // passthrough Flux could withdraw
+    // never a passthrough Flux could withdraw without notice
     expect(bogus.status).toBe(400);
     expect(seen).toHaveLength(0);
+    // NOTE: this used to also assert that `?model=flux-voice-accurate` was
+    // honoured "deliberately". It is not honoured any more, and the reason is
+    // in "does not let a remote caller select the more expensive arm" below:
+    // the only caller that parameter ever had was one choosing to spend more
+    // of somebody else's money on a route a phone can reach.
   });
 
   it("passes language and prompt through, and omits them when absent", async () => {
@@ -193,7 +231,7 @@ describe("the cap, enforced before the uplink is spent", () => {
     // precheck removed it stays green, because the running total catches the
     // same body a moment later. The socket test below is the one that tells
     // the two apart, and it is where that claim lives.
-    const huge = new Uint8Array(MAX_AUDIO_BYTES + 1);
+    const huge = new Uint8Array(MAX_CLIP_BYTES + 1);
     const res = await post(huge);
     expect(res.status).toBe(413);
     expect((await bodyOf(res)).reason).toBe("too_large");
@@ -215,7 +253,7 @@ describe("the cap, enforced before the uplink is spent", () => {
           "POST /api/voice/transcribe HTTP/1.1\r\n" +
             "host: 127.0.0.1\r\n" +
             "content-type: audio/webm\r\n" +
-            `content-length: ${MAX_AUDIO_BYTES + 1}\r\n\r\n`,
+            `content-length: ${MAX_CLIP_BYTES + 1}\r\n\r\n`,
         );
         // eight bytes and then deliberate silence — the body never completes
         socket.write(Buffer.from(CLIP));
@@ -257,12 +295,12 @@ describe("the cap, enforced before the uplink is spent", () => {
    *  cap go through, so an empty `seen` is evidence of a refusal and not of a
    *  route that never calls anything. */
   it("sends a clip that is exactly at the cap", async () => {
-    const atCap = new Uint8Array(MAX_AUDIO_BYTES);
+    const atCap = new Uint8Array(MAX_CLIP_BYTES);
     atCap.set(CLIP);
     const res = await post(atCap);
     expect(res.status).toBe(200);
     expect(seen).toHaveLength(1);
-    expect(seen[0].byteLength).toBe(MAX_AUDIO_BYTES);
+    expect(seen[0].byteLength).toBe(MAX_CLIP_BYTES);
   });
 
   it("refuses an empty recording", async () => {
@@ -347,5 +385,198 @@ describe("the registrar contract", () => {
     expect(isTranscriptionModel("flux-voice-fast")).toBe(true);
     expect(isTranscriptionModel("flux-voice-accurate")).toBe(true);
     expect(isTranscriptionModel("whisper-large-v3-turbo")).toBe(false);
+  });
+});
+
+describe("a client that walks away mid-upload", () => {
+  it("settles the read instead of leaking a permanently pending promise", async () => {
+    // A phone that leaves tailnet range between the release and the end of
+    // the upload. `readAudio` listened for "error" only, and an
+    // IncomingMessage does NOT emit "error" when the peer vanishes — it emits
+    // "aborted"/"close". So the promise never settled, the handler never
+    // returned, and every abandoned upload left one request object and its
+    // buffered chunks alive for as long as the harness ran.
+    const { connect } = await import("node:net");
+    const port = Number(new URL(base).port);
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(
+          "POST /api/voice/transcribe HTTP/1.1\r\n" +
+            "host: 127.0.0.1\r\n" +
+            "content-type: audio/webm\r\n" +
+            "content-length: 4096\r\n\r\n",
+        );
+        // eight of the promised four thousand bytes, and then the peer is gone
+        socket.write(Buffer.from(CLIP));
+        setTimeout(() => {
+          socket.destroy();
+          resolve();
+        }, 50);
+      });
+      socket.on("error", reject);
+    });
+    await awaitCompletions(1);
+    // and a half-received clip is never sent to be billed
+    expect(seen).toHaveLength(0);
+  });
+
+  /** POSITIVE control: the counter moves for an ordinary request, so a
+   *  stalled count above is the leak and not a counter that never ticks. */
+  it("counts an ordinary request as completed", async () => {
+    await post(CLIP);
+    await awaitCompletions(1);
+  });
+});
+
+describe("a chunked client that is still uploading when it is refused", () => {
+  it("cuts the socket on the running-total 413 instead of draining to requestTimeout", async () => {
+    // No content-length, so the header precheck cannot fire and the running
+    // total is the only defence. Writing the 413 is not enough on its own:
+    // the client is mid-upload and, with the request stream left open, Node
+    // keeps reading its bytes into a discard loop until the default
+    // 300-second `requestTimeout` notices. Five minutes of the harness's
+    // uplink, per refused request, for bytes already refused.
+    const { connect } = await import("node:net");
+    const port = Number(new URL(base).port);
+    const outcome = await new Promise<{ status: string; closed: boolean }>((resolve) => {
+      let status = "";
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(
+          "POST /api/voice/transcribe HTTP/1.1\r\n" +
+            "host: 127.0.0.1\r\n" +
+            "content-type: audio/webm\r\n" +
+            "transfer-encoding: chunked\r\n\r\n",
+        );
+        const megabyte = Buffer.alloc(1024 * 1024, 0x61);
+        for (let i = 0; i < 9; i += 1) {
+          socket.write(`${megabyte.length.toString(16)}\r\n`);
+          socket.write(megabyte);
+          socket.write("\r\n");
+        }
+        // and deliberately NO terminating "0\r\n\r\n" — this client believes
+        // it is still uploading.
+      });
+      socket.on("data", (chunk: Buffer) => {
+        if (!status) status = chunk.toString("latin1").split("\r\n")[0];
+      });
+      const giveUp = setTimeout(() => {
+        socket.destroy();
+        resolve({ status, closed: false });
+      }, 2_500);
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        clearTimeout(giveUp);
+        resolve({ status, closed: true });
+      });
+    });
+    expect(outcome.status).toContain("413");
+    expect(outcome.closed).toBe(true);
+    expect(seen).toHaveLength(0);
+  });
+});
+
+// ── the bound on a billable path a phone can reach ───────────────────────
+//
+// The neighbouring TTS route says the risk out loud (`server/index.ts:9793`):
+// "A hard ceiling prevents an arbitrary local request from turning the user's
+// hosted voice account into an unbounded, billable synthesis job." It defends
+// that with a 500-character cap. This route accepts a strictly larger and
+// more expensive unit of work, and shipped with a single 8MB size check —
+// which is not a bound on cost at all, because 8MB of Opus is around forty
+// minutes of audio, billed by the second on the workspace's Flux key.
+describe("what stops a stolen pairing token from spending the voice account", () => {
+  it("refuses a third clip while two are already in flight", async () => {
+    // Push to talk is a human holding a button. One person speaks once at a
+    // time; two is slack for a previous request the client has already given
+    // up on. Fifty concurrent 8MB POSTs is not a person, and without this the
+    // harness buffers all fifty bodies at once and bills all fifty.
+    let release = () => {};
+    gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const first = post(CLIP);
+    const second = post(CLIP);
+    // both must be INSIDE transcribe before the third arrives
+    while (seen.length < 2) await new Promise((r) => setTimeout(r, 10));
+    const third = await post(CLIP);
+    expect(third.status).toBe(429);
+    const body = await bodyOf(third);
+    expect(body.reason).toBe("busy");
+    expect(third.headers.get("retry-after")).toBeTruthy();
+    // and the refused one never reached the meter
+    expect(seen).toHaveLength(2);
+    release();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+    // A short deadline on purpose: with no cap the third request is ACCEPTED
+    // and blocks behind the same gate, so the honest failure here is a hang,
+    // not a wrong status. Eight seconds names it as one.
+  }, 8_000);
+
+  it("refuses once the window's billed audio is spent", async () => {
+    // Charged from what Flux actually reports it billed, not from a guess.
+    answer = { ok: { text: "ship it", model: "flux-voice-fast", billedSeconds: BUDGET_MAX_BILLED_SECONDS } };
+    expect((await post(CLIP)).status).toBe(200);
+    const over = await post(CLIP);
+    expect(over.status).toBe(429);
+    expect((await bodyOf(over)).reason).toBe("budget");
+    expect(seen).toHaveLength(1);
+  });
+
+  it("does not let a remote caller select the more expensive arm", async () => {
+    // `?model=` was reachable from the phone and could ask for
+    // `flux-voice-accurate`, or for `flux-voice` whose duration probe cannot
+    // read a Matroska header and therefore falls to the accurate arm anyway.
+    // Nothing in the tree sends it; the only thing it was reachable BY is an
+    // attacker choosing the costlier engine.
+    for (const model of ["flux-voice-accurate", "flux-voice"]) {
+      const res = await post(CLIP, { query: `?model=${model}` });
+      expect(res.status).toBe(400);
+    }
+    expect(seen).toHaveLength(0);
+    // the pinned arm is still nameable, so a caller can be explicit
+    expect((await post(CLIP, { query: "?model=flux-voice-fast" })).status).toBe(200);
+    expect(seen[0].model).toBe("flux-voice-fast");
+  });
+
+  it("bounds one clip far below Flux's own 8MB, because 8MB is forty minutes", async () => {
+    // The client stops itself at two minutes (`PushToTalk.MAX_CLIP_MS`).
+    // MediaRecorder's most generous realistic audio bitrate is 128kbps, so
+    // the largest clip a real person can produce is ~1.9MB. This cap is more
+    // than double that — no normal user trips it — while cutting the
+    // worst-case billed audio in a single request by half.
+    expect(MAX_CLIP_BYTES).toBeLessThan(MAX_AUDIO_BYTES);
+    const twoMinutesAt128kbps = (128_000 / 8) * 120;
+    expect(MAX_CLIP_BYTES).toBeGreaterThan(twoMinutesAt128kbps * 2);
+    const over = await post(new Uint8Array(MAX_CLIP_BYTES + 1));
+    expect(over.status).toBe(413);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("forgets a spent window rather than locking a user out forever", () => {
+    // Driven on its own clock, the way the sign-in limiter's is: a rolling
+    // budget that never rolls is a permanent ban.
+    const rolling = createVoiceBudget();
+    const at = (now: number) => {
+      const slot = rolling.begin(now);
+      if (slot.ok) slot.done(BUDGET_MAX_BILLED_SECONDS, now);
+      return slot.ok;
+    };
+    expect(at(0)).toBe(true);
+    expect(at(1_000)).toBe(false);
+    expect(at(BUDGET_WINDOW_MS + 1)).toBe(true);
+  });
+
+  it("never charges a user for a refusal that never reached the meter", () => {
+    // A workspace with no Flux key would otherwise burn its whole budget on
+    // 409s and then be told it is over budget, which is a lie and a loop.
+    const rolling = createVoiceBudget();
+    for (let i = 0; i < BUDGET_MAX_REQUESTS - 1; i += 1) {
+      const slot = rolling.begin(0);
+      expect(slot.ok).toBe(true);
+      if (slot.ok) slot.done(0, 0);
+    }
+    const slot = rolling.begin(0);
+    expect(slot.ok).toBe(true);
   });
 });

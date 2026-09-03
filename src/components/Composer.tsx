@@ -814,13 +814,26 @@ export function Composer({
             helper above is faster and streams partials; everywhere else — a
             phone through the browser door, a Windows or Linux desktop — this
             is the only microphone there is. */}
-        {!locked && !busy && !hasContent && !capabilities.dictation.available && (
+        {/* NOT gated on `hasContent` or `busy`, unlike the native mic above.
+            The native helper streams partials into the composer as the person
+            speaks, so unmounting it loses at most the last word. This path is
+            a batch round trip: one character typed while a clip is in flight
+            would unmount the button and throw away up to two minutes of
+            speech, and so would the bot going busy from another surface. The
+            button stays, the spinner stays visible, and dictation appends to
+            whatever is already in the draft. */}
+        {!locked && !capabilities.dictation.available && (
           <PushToTalk
             facts={browserPushToTalkFacts({
               nativeDictation: capabilities.dictation.available,
               fluxConfigured: Boolean(state.config?.flux?.configured),
             })}
-            onTranscript={(said) => editText(text.trim() ? `${text.trim()} ${said}` : said)}
+            onTranscript={(said) => {
+              // trimEnd, not trim: the utterance joins the draft with one
+              // space, and nothing the person typed is discarded.
+              const before = text.trimEnd();
+              editText(before ? `${before} ${said}` : said);
+            }}
             onNote={setSpeechError}
           />
         )}
