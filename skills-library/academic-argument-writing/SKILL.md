@@ -1,5 +1,5 @@
 ---
-name: academic-argument
+name: academic-argument-writing
 description: |
   Constructs rigorous academic arguments with clear claims, evidence, warrants, counterarguments, and rebuttals. Produces logically structured argumentative writing for academic contexts.
   Use when the user asks to write an argumentative essay, build an academic argument, construct a logical case, or develop a position paper with scholarly evidence.

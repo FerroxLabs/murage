@@ -1,5 +1,5 @@
 ---
-name: incident-commander
+name: incident-commander-devops-cloud
 description: |
   Incident response expertise covering incident command frameworks, severity classification, communication templates, role assignments, war room coordination, post-mortems, blameless culture, runbook design, and building organizational incident response muscle.
   Use when the user asks about incident commander, incident commander best practices, or needs guidance on incident commander implementation.

@@ -1,5 +1,5 @@
 ---
-name: skill-gap-analysis
+name: skill-gap-analysis-education
 description: |
   Creates competency-based skill gap analyses with current level, target level, gap identification, resources, and timeline for professionals planning their development. Produces a skills matrix with actionable development plan.
   Use when a professional asks to identify skill gaps, assess their competencies, plan professional development, or determine what skills to build next.

@@ -739,18 +739,22 @@ export function installSkill(
   return installPreparedSkill(botId, source, prepared, { enabled: false });
 }
 
-/** Install one library skill by id, DISABLED — the same contract as
- * installSkill, sourced from disk instead of a fetch. The library layout is
- * the bundled-skill layout: a directory named after the id holding
- * manifest.json and SKILL.md (skill-library.ts). Only the reviewed SKILL.md
- * bytes are stored, and the install runs through the same preparation and
- * commit path as a fetched import, so the content hash guard, the review
- * warnings, and syncSkillLinks behave identically. */
-export function installSkillFromLibrary(
-  botId: string,
+export interface LibrarySkillCheck {
+  manifest: { id: string; version: string };
+  prepared: PreparedSkillFiles;
+}
+
+/** Every rule a library skill has to satisfy before installSkillFromLibrary
+ * will commit its bytes, evaluated without writing anything. Split out of the
+ * installer so the library-integrity guard can walk the whole catalog through
+ * the exact code the installer runs: a rule that only the test knew about
+ * would drift, and a drifted guard is how nine unresolvable skills sat on
+ * disk unnoticed. Returns the manifest and the prepared files on success so
+ * the installer does no work twice. */
+export function checkLibrarySkill(
   skillId: string,
   libraryRoot: string,
-): SkillListing | { error: string } {
+): LibrarySkillCheck | { error: string } {
   // isSkillName is the traversal gate: no dots, no slashes, so the id can
   // only ever name one child of the library root.
   if (!isSkillName(skillId)) return { error: `invalid library skill id: ${JSON.stringify(skillId)}` };
@@ -793,11 +797,29 @@ export function installSkillFromLibrary(
   if ("error" in prepared) return prepared;
   if (prepared.parsed.name !== libraryManifest.id) {
     return {
-      error: `library skill "${skillId}" declares frontmatter name "${prepared.parsed.name}" — they must match`,
+      error: `library skill "${skillId}" declares frontmatter name "${prepared.parsed.name}" but its directory and manifest id are "${libraryManifest.id}" — SKILL.md frontmatter name must equal the directory name`,
     };
   }
-  const source = `${LIBRARY_SOURCE_PREFIX}${libraryManifest.id}@${libraryManifest.version}`;
-  return installPreparedSkill(botId, source, prepared, { enabled: false });
+  return { manifest: { id: libraryManifest.id, version: libraryManifest.version }, prepared };
+}
+
+/** Install one library skill by id, DISABLED — the same contract as
+ * installSkill, sourced from disk instead of a fetch. The library layout is
+ * the bundled-skill layout: a directory named after the id holding
+ * manifest.json and SKILL.md (skill-library.ts). Only the reviewed SKILL.md
+ * bytes are stored, and the install runs through the same preparation and
+ * commit path as a fetched import, so the content hash guard, the review
+ * warnings, and syncSkillLinks behave identically. checkLibrarySkill owns
+ * every rejection rule; this only commits the bytes it approved. */
+export function installSkillFromLibrary(
+  botId: string,
+  skillId: string,
+  libraryRoot: string,
+): SkillListing | { error: string } {
+  const checked = checkLibrarySkill(skillId, libraryRoot);
+  if ("error" in checked) return checked;
+  const source = `${LIBRARY_SOURCE_PREFIX}${checked.manifest.id}@${checked.manifest.version}`;
+  return installPreparedSkill(botId, source, checked.prepared, { enabled: false });
 }
 
 export function setSkillEnabled(botId: string, name: string, enabled: boolean): SkillListing | { error: string } {
@@ -983,7 +1005,7 @@ function writeStaged(botId: string, store: StagedStore): void {
   writeFileAtomic(stagedPath(botId), `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
 }
 
-interface PreparedSkillFiles {
+export interface PreparedSkillFiles {
   files: Array<{ path: string; content: string }>;
   parsed: ParsedSkill;
   warnings: string[];

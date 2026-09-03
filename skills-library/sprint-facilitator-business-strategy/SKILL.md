@@ -1,5 +1,5 @@
 ---
-name: sprint-facilitator
+name: sprint-facilitator-business-strategy
 description: |
   Sprint ceremony facilitation expert covering sprint planning, daily standups, sprint reviews, retrospectives, velocity tracking, capacity planning, ceremony optimization, remote facilitation, and agile anti-pattern correction.
   Use when the user asks about sprint facilitator, sprint facilitator best practices, or needs guidance on sprint facilitator implementation.

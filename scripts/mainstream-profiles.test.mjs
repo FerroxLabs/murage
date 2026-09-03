@@ -30,20 +30,6 @@ const skillLibrary = join(repoRoot, "skills-library");
  *  (Practical Guidance, Seeking Information, Writing) the library did not serve. */
 const MAINSTREAM_PROFILES = ["concierge", "writer", "explainer", "researcher", "advisor", "creator", "builder"];
 
-/** Catalogued but unusable: SKILL.md frontmatter `name` !== manifest id, so the
- *  install fails after the download. Referencing one is a promise that breaks. */
-const KNOWN_BROKEN_SKILLS = [
-  "ab-test-design-data-analysis",
-  "academic-argument-writing",
-  "code-reviewer-software-engineering",
-  "incident-commander-devops-cloud",
-  "incident-response-software-project",
-  "risk-assessment-productivity",
-  "security-auditor-security",
-  "skill-gap-analysis-education",
-  "sprint-facilitator-business-strategy",
-];
-
 function loadProfile(slug) {
   const file = join(repoRoot, "bot-library", "builtins", `${slug}.json`);
   return parseBotPackage(JSON.parse(readFileSync(file, "utf8"))).package;
@@ -74,14 +60,6 @@ describe("mainstream profiles", () => {
     expect(declared.length).toBeGreaterThan(0);
     const broken = declared.map((id) => [id, installFailure(id)]).filter(([, why]) => why !== null);
     expect(broken).toEqual([]);
-  });
-
-  it("references none of the nine skills that are catalogued but cannot install", () => {
-    const referenced = MAINSTREAM_PROFILES.flatMap((slug) => declaredSkills(loadProfile(slug)));
-    expect(referenced.filter((id) => KNOWN_BROKEN_SKILLS.includes(id))).toEqual([]);
-    // And the blocklist is still describing reality — if one of these were fixed
-    // upstream the entry should go, not linger as folklore.
-    for (const id of KNOWN_BROKEN_SKILLS) expect(installFailure(id)).not.toBeNull();
   });
 
   it("promises no connector it cannot honour", () => {

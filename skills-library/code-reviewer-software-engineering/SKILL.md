@@ -1,5 +1,5 @@
 ---
-name: code-reviewer
+name: code-reviewer-software-engineering
 description: |
   Expert code review methodology with structured checklists, severity classification, actionable feedback patterns, and language-specific anti-pattern detection.
   Use when the user asks about code reviewer, code reviewer best practices, or needs guidance on code reviewer implementation.
