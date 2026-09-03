@@ -155,20 +155,66 @@ export function companionBrowserLink(
   door: CompanionBrowserDoor | null | undefined,
   token: string | undefined | null,
 ): string | null {
-  if (!door || !token) return null;
-  if (door.scheme !== "http" && door.scheme !== "https") return null;
-  if (!Number.isInteger(door.port) || door.port < 1 || door.port > 65_535) return null;
+  const origin = companionDoorUrl(door);
+  if (!origin || !token) return null;
   // The same token the pairing window issued, and the same shape `devices.ts`
   // will accept at `POST /session`. Checked here so a phone is never sent to
   // a page that can only tell it the code is wrong.
   if (!/^murage_pair_[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  return `${origin}/enter#${token}`;
+}
+
+/** The address to READ OUT to somebody sitting at another computer.
+ *
+ * The door's own origin, with no path and no credential in it. That is not a
+ * simplification of `/enter`: any HTML GET without a session answers 401 with
+ * the sign-in page, and that page carries the typed-code field
+ * (`signInPage` / `codeEntryMarkup` in `companion/src/browser.ts`). So the
+ * origin IS the instruction — open it, type the six digits. `/enter` is for
+ * the QR, whose token rides in the fragment; a keyboard sent there reaches
+ * the same field by a longer road.
+ *
+ * Validated for the same reason `companionBrowserLink` is: the host arrives
+ * over IPC from the sidecar, and one `/` or `@` in it turns an address
+ * somebody is about to type into a different machine's.
+ */
+export function companionDoorUrl(door: CompanionBrowserDoor | null | undefined): string | null {
+  if (!door) return null;
+  if (door.scheme !== "http" && door.scheme !== "https") return null;
+  if (!Number.isInteger(door.port) || door.port < 1 || door.port > 65_535) return null;
   const host = door.host.trim();
   if (!host || /[\s/\\?#@]/.test(host)) return null;
   // A bare IPv6 literal has colons of its own and has to be bracketed, or the
   // first one reads as the port separator.
   const dialable = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
   const port = door.port === DEFAULT_PORT[door.scheme] ? "" : `:${door.port}`;
-  return `${door.scheme}://${dialable}${port}/enter#${token}`;
+  return `${door.scheme}://${dialable}${port}`;
+}
+
+/** The second way in, said in the order a person needs it: where to go, then
+ * what to type.
+ *
+ * There are two routes through the same single-use credential and only one of
+ * them was ever named on screen. A laptop cannot photograph its own screen and
+ * a browser pointed at a cloud instance has no camera at all, so "scan this"
+ * is not advice either of them can take. The typed field has been on the
+ * door's pages since the browser door learned to accept six digits; this is
+ * the desktop finally admitting it exists.
+ *
+ * Split into parts rather than one string so the address can be rendered as
+ * an address. Joined, it is one sentence — this is a step in a flow, not
+ * documentation.
+ */
+export function typedCodeInstruction(doorUrl: string | null): {
+  lead: string;
+  url: string | null;
+  tail: string;
+} {
+  // No address to give yet — the door is still coming up, or this is the
+  // local-network fallback. Still say the code can be typed, because the
+  // alternative is the old dead end where the only named route was a camera.
+  if (!doorUrl) return { lead: "No camera? Open Murage's address on that computer and type this code.", url: null, tail: "" };
+  return { lead: "No camera? Open ", url: doorUrl, tail: " on that computer and type this code." };
 }
 
 export type CompanionBridge = {
@@ -283,14 +329,6 @@ export const companionAccountActionError = (
 ): string | null => {
   if (actionError) return actionError;
   return account?.status === "signed-out" ? account.message ?? null : null;
-};
-
-export const phonePairingManualCodeMode = (
-  pairingOpen: boolean,
-  pairingLink: string | null,
-): "details" | "direct" | "hidden" => {
-  if (!pairingOpen) return "hidden";
-  return pairingLink ? "details" : "direct";
 };
 
 export interface PhoneSetupController {
@@ -1254,7 +1292,10 @@ export function PhoneSetupFlowView({
   const desktop = useDesktopSurface();
   const actionError = companionAccountActionError(c.account, c.accountError);
   const canSubmitEmail = /^\S+@\S+\.\S+$/.test(c.email.trim());
-  const manualCodeMode = phonePairingManualCodeMode(Boolean(c.state?.pairing), c.pairingLink);
+  // Both ways in need the door's address: the QR carries it, and the person
+  // typing the code has to be told it.
+  const doorUrl = companionDoorUrl(c.browserDoor);
+  const typed = typedCodeInstruction(doorUrl);
 
   if (desktop === false) return null;
 
@@ -1513,12 +1554,12 @@ export function PhoneSetupFlowView({
         <QrCode size={23} />
       </div>
       <h2 className="mt-3 text-[18px] font-semibold text-ink">
-        {c.pairingExpired ? "That code expired" : "Scan with your phone"}
+        {c.pairingExpired ? "That code expired" : "Scan it, or type the code"}
       </h2>
       <p className="mt-1 text-[13px] text-ink-secondary">
         {c.pairingExpired
           ? "Create a fresh code when the device you are pairing is ready."
-          : "Scan this code with the phone, tablet or laptop you want to pair."}
+          : "Point a phone camera at it. On a computer with no camera, type the code instead."}
       </p>
       {/* The browser door first, the `murage://` link only as a fallback.
         * The fallback addresses an app this repository no longer contains, so
@@ -1544,33 +1585,38 @@ export function PhoneSetupFlowView({
           the same tailnet.
         </p>
       )}
-      {!c.pairingExpired && manualCodeMode === "direct" && c.state?.pairing && (
-        <div className="mt-4 w-full max-w-[320px] rounded-xl bg-inset px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div>Enter this code on the device you are pairing.</div>
-          <div className="mt-2 font-mono text-[22px] tracking-[0.25em] text-ink">
+      {/* The digits, on screen, whenever there is a code — never again behind
+        * "Having trouble?". They used to hide there whenever a QR link could
+        * be built, which is exactly the case a laptop hits: a code nobody can
+        * read is a code nobody can type, and the only route left on screen
+        * was one a machine without a camera cannot take. */}
+      {!c.pairingExpired && c.state?.pairing && (
+        <div className="mt-4 w-full max-w-[390px] rounded-xl bg-inset px-4 py-3 text-left text-[12px] leading-relaxed text-ink-secondary">
+          <div>
+            {typed.lead}
+            {typed.url && <span className="font-mono text-ink">{typed.url}</span>}
+            {typed.tail}
+          </div>
+          <div className="mt-1.5 font-mono text-[22px] tracking-[0.25em] text-ink">
             {c.state.pairing.code}
           </div>
+          <div className="mt-1.5">Signs in one device, then it is spent. Expires in {c.secondsLeft}s.</div>
         </div>
-      )}
-      {!c.pairingExpired && manualCodeMode === "details" && c.state?.pairing && (
-        <p className="mt-3 text-[11.5px] text-ink-secondary">Code expires in {c.secondsLeft}s</p>
       )}
       {c.pairingExpired && (
         <button onClick={c.refreshCode} className="mt-5 rounded-lg bg-accent px-5 py-2.5 text-[14px] font-medium text-white">
           Create a new code
         </button>
       )}
-      {!c.pairingExpired && c.state?.pairing && (
+      {!c.pairingExpired && c.state?.pairing && c.address && (
         <details className="mt-4 w-full max-w-[390px] rounded-lg border border-hairline/40 px-3 py-2 text-left">
           <summary className="cursor-pointer text-[12px] text-ink-secondary">Having trouble?</summary>
           <div className="mt-3 text-[12px] text-ink-secondary">
-            Manual code
-            <div className="mt-1 font-mono text-[22px] tracking-[0.25em] text-ink">{c.state.pairing.code}</div>
-            {c.address && (
-              <div className="mt-3">
-                <ConnectionDetail label="Pairing address" value={`${c.address}:${c.pairingPort}`} />
-              </div>
-            )}
+            {/* The code itself is above now. What is left here is the direct
+              * pairing address, which only the local-network route uses — and
+              * with nothing else in the block, an empty "Having trouble?" is
+              * worse than none, so the whole disclosure waits on it. */}
+            <ConnectionDetail label="Pairing address" value={`${c.address}:${c.pairingPort}`} />
           </div>
         </details>
       )}

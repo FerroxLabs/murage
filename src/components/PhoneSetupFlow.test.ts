@@ -11,12 +11,16 @@
 // native phone app — "Use Murage from your phone", a phone icon, "Set up my
 // phone" — for a product whose phone story is a browser. Copy is not usually
 // worth a test; a screen that promises a thing the product cannot do is.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
   WEB_UI_SUBTITLE,
   WEB_UI_TITLE,
   companionBrowserLink,
+  companionDoorUrl,
+  typedCodeInstruction,
   webUiReadiness,
   type CompanionBrowserDoor,
   type CompanionState,
@@ -190,5 +194,107 @@ describe("the preconditions, before the button is pressed", () => {
     // The real name and the real address, not "connected".
     expect(ready.tailnetName).toBe("macbook.tail1234.ts.net");
     expect(ready.doorAddress).toBe("macbook.tail1234.ts.net:8813");
+  });
+});
+
+
+// The other route through the same credential: a keyboard.
+//
+// The door has accepted a typed six-digit code since `codeEntryMarkup` and
+// `codeEntryScript` landed in `companion/src/browser.ts` — the same digits the
+// QR carries, redeemed against the same window. Nothing in the desktop said
+// so, and a laptop was told to point a camera it does not have at its own
+// screen. These tests hold the desktop to naming both.
+describe("the address a keyboard is sent to", () => {
+  it("is the door's own origin — no path, no credential", () => {
+    // Any HTML GET without a session answers 401 with `signInPage`, and that
+    // page carries the typed-code field. So the origin is the whole
+    // instruction. `/enter` belongs to the QR, whose token rides in a
+    // fragment nobody is going to retype.
+    expect(companionDoorUrl(DOOR)).toBe("http://macbook.tail1234.ts.net:8813");
+    expect(companionDoorUrl(DOOR)).not.toContain("/enter");
+    expect(companionDoorUrl(DOOR)).not.toContain("#");
+  });
+
+  it("leaves the port off when it is the scheme's own, and brackets IPv6", () => {
+    expect(companionDoorUrl({ scheme: "https", host: "macbook.tail1234.ts.net", port: 443 }))
+      .toBe("https://macbook.tail1234.ts.net");
+    expect(companionDoorUrl({ scheme: "http", host: "fd7a:115c:a1e0::4d3b", port: 8813 }))
+      .toBe("http://[fd7a:115c:a1e0::4d3b]:8813");
+  });
+
+  it("refuses an address that would send somebody to another machine", () => {
+    // This string is rendered as a link and read out to be typed, and the
+    // host arrives over IPC from the sidecar. A `/`, `@` or `#` in it moves
+    // the path, the userinfo or the fragment.
+    expect(companionDoorUrl(null)).toBeNull();
+    expect(companionDoorUrl(undefined)).toBeNull();
+    for (const host of ["evil.example/x", "user@evil.example", "macbook.ts.net#", "  "]) {
+      expect(companionDoorUrl({ ...DOOR, host }), host).toBeNull();
+    }
+    expect(companionDoorUrl({ ...DOOR, scheme: "javascript" as CompanionBrowserDoor["scheme"] })).toBeNull();
+    expect(companionDoorUrl({ ...DOOR, port: 0 })).toBeNull();
+  });
+});
+
+describe("what the desktop says about typing the code", () => {
+  it("names the address and the act, in that order", () => {
+    const typed = typedCodeInstruction("http://macbook.tail1234.ts.net:8813");
+    expect(typed.url).toBe("http://macbook.tail1234.ts.net:8813");
+    const sentence = `${typed.lead}${typed.url}${typed.tail}`;
+    // Where to go...
+    expect(sentence).toContain("http://macbook.tail1234.ts.net:8813");
+    // ...and what to do there. Without this the address is a fact, not an
+    // instruction.
+    expect(sentence).toMatch(/type this code/i);
+    // Said to somebody who cannot scan, which is the whole reason it exists.
+    expect(sentence).toMatch(/camera/i);
+  });
+
+  it("still says the code can be typed when there is no address yet", () => {
+    // The door may not be up, or this may be the local-network fallback. A
+    // sentence with "null" in it is worse than the dead end it replaced.
+    const typed = typedCodeInstruction(null);
+    expect(typed.url).toBeNull();
+    // Nothing dangles. A tail is the second half of a sentence about an
+    // address, and with no address to render it would leave a hole on screen
+    // — "Open  on that computer" — rather than a missing word anybody notices.
+    expect(typed.tail, "with no address there is no second half").toBe("");
+    const sentence = `${typed.lead}${typed.tail}`;
+    expect(sentence).toMatch(/type this code/i);
+    expect(sentence).not.toMatch(/null|undefined/);
+    expect(sentence).not.toMatch(/ {2}/);
+  });
+});
+
+describe("the pairing step puts the code where it can be read", () => {
+  const pairingStep = () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./PhoneSetupFlow.tsx", import.meta.url)),
+      "utf8",
+    );
+    // From the QR down to the troubleshooting disclosure: the part of the
+    // step a person looks at before they go hunting.
+    const start = source.indexOf('aria-label="Phone pairing QR code"');
+    return source.slice(start, source.indexOf("<details", start));
+  };
+
+  it("shows the digits next to the QR rather than inside Having trouble?", () => {
+    expect(pairingStep(), "the code must be on screen above the disclosure").toContain(
+      "c.state.pairing.code",
+    );
+  });
+
+  it("does not gate the digits on whether a QR link could be built", () => {
+    // That gate was `phonePairingManualCodeMode`: with a link, the code hid
+    // in the disclosure. A laptop always has a link and never a camera, so
+    // the one device that needed the digits was the one that never saw them.
+    expect(pairingStep(), "the code must not depend on a QR-link mode").not.toContain(
+      "manualCodeMode",
+    );
+  });
+
+  it("tells that device where to type them", () => {
+    expect(pairingStep()).toContain("typed.url");
   });
 });
