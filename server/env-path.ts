@@ -381,7 +381,7 @@ export interface ResolvedEngineBinary {
  *
  * ORDER — a `fuigo` the user installed themselves WINS over the bundled copy.
  * The bundle exists so a clean machine works at all, not to override someone's
- * own install: a user-installed fuigo may be newer than the pinned 1.0.1, may
+ * own install: a user-installed fuigo may be newer than the pinned build, may
  * be a build they are developing against, and is the one their terminal runs,
  * so the app agreeing with their terminal is the least surprising behaviour.
  * The bundled binary is the fallback, and only the fallback.
