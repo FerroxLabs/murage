@@ -245,7 +245,7 @@ const TOOLS = [
   {
     name: "create_bot",
     description:
-      "Create a specialist bot. Only a Chief of Staff may use this. The new bot inherits the Chief's engine, starts with connected apps and automatic approvals disabled, and can then receive work through delegate_bot. A section's Chief creates into its own section; the workspace Chief of Staff must name the team the specialist joins, and that team must already have a lead. Create only the smallest useful team (maximum four per turn).",
+      "Create a specialist bot. Only a Chief of Staff may use this. The new bot inherits the Chief's engine, starts with connected apps and automatic approvals disabled, and can then receive work through delegate_bot. A section's Chief creates into its own section. The workspace Chief of Staff must name the team the specialist joins: if that team already has a lead the new bot joins under it, and if the team does not exist yet, pass lead: true to create its lead first — then create the specialists under it. Create only the smallest useful team (maximum four per turn).",
     inputSchema: {
       type: "object",
       properties: {
@@ -254,7 +254,11 @@ const TOOLS = [
         instructions: { type: "string", description: "What this specialist is responsible for and how it should work." },
         section: {
           type: "string",
-          description: "The team the specialist joins, exactly as list_bots spells it. Required if you are the workspace Chief of Staff; omit it otherwise.",
+          description: "The team the specialist joins, exactly as list_bots spells it. Required if you are the workspace Chief of Staff; omit it otherwise. When creating a team's first lead this names the NEW team.",
+        },
+        lead: {
+          type: "boolean",
+          description: "Make this bot the LEAD of the named team. Only the workspace Chief of Staff may do this, and only for a team that has no lead yet. Use it to stand up a new team, then create its specialists in a following call without this flag.",
         },
       },
       required: ["name", "role", "instructions"],
@@ -535,6 +539,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const role = String(args.role ?? "").trim();
     const instructions = String(args.instructions ?? "").trim();
     const section = String(args.section ?? "").trim();
+    const lead = args.lead === true;
     if (!botName || !role || !instructions) {
       return { text: "create_bot needs name, role, and instructions.", isError: true };
     }
@@ -550,6 +555,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
         role,
         instructions,
         ...(section ? { section } : {}),
+        ...(lead ? { lead: true } : {}),
       }),
     });
     createdThisTurn += 1;
