@@ -5,12 +5,17 @@
 // header" failure. Inject writes providers.<host> and session/set_model
 // `custom:<host>:<model>` instead.
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import type { ModelCatalog } from "../../contracts.ts";
+import { writeFileAtomic } from "../../atomic.ts";
+import { DATA_DIR } from "../../config.ts";
+import { fluxKey } from "../../flux-config.ts";
+import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
+import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
@@ -34,6 +39,109 @@ export function bindHermesScreenshotCompat(
 
 function hermesHome(env: Record<string, string | undefined>): string {
   return env.HERMES_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".hermes");
+}
+
+const DRIVER_KIND = "hermesAgent";
+
+/**
+ * The scoped HOME a Flux-routed hermes spawn runs under.
+ *
+ * App-private and disposable. Nothing under `~/.hermes` is read or written on
+ * this path — that is the entire reason hermes needs no backup, no receipt and
+ * no rollback, and why it is capability `env` rather than `setup` despite
+ * involving a file. `MURAGE_DATA_DIR` is read off the passed env rather than
+ * the module constant so a test rig can redirect the whole thing.
+ */
+export function fluxHermesHome(env: Record<string, string | undefined>): string {
+  return join(env.MURAGE_DATA_DIR || DATA_DIR, "flux-hermes-home");
+}
+
+/**
+ * Write the scoped `config.yaml` and return the directory to set as HERMES_HOME.
+ *
+ * Regenerated on EVERY flux-routed spawn (Wayland hermesConfig.ts:47 does the
+ * same) so a rotated key or a different tier can never be served from a stale
+ * file, and so a half-written home from a crashed run cannot survive.
+ *
+ * Three details are load-bearing and were paid for in Wayland
+ * (hermesConfig.ts:20-30, HERMES-PROOF.md:32-35, proven against hermes 0.14.0):
+ *
+ *  - `provider` MUST be the literal `custom`. Hermes has a closed provider
+ *    registry; an invented `provider: flux` dies with
+ *    `AuthError: Unknown provider 'flux'`.
+ *  - the key MUST be INLINE. For a `custom` provider hermes ignores `key_env`
+ *    entirely and resolves from config or its own auth store, falling back to
+ *    a stale stored token → HTTP 401 `token_not_found`. Inline → 200. This is
+ *    also why `applyFluxSurface` is a no-op for hermes: there is no env var
+ *    hermes would read.
+ *  - `providers: {}` is written explicitly so the scoped home cannot inherit
+ *    or imply any hosted provider.
+ *
+ * 0600 on the file and 0700 on the directory because the file holds a bearer
+ * token in plaintext; `writeFileAtomic` applies the mode to the temp inode
+ * itself, so the token is never briefly world-readable.
+ */
+export function materializeFluxHermesHome(
+  env: Record<string, string | undefined>,
+  key: string,
+  model: string,
+): string {
+  const dir = fluxHermesHome(env);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dir, 0o700);
+  } catch {
+    // Windows ignores POSIX modes; a scoped home is still better than none.
+  }
+  const text = [
+    "model:",
+    `  default: ${quoteYaml(model)}`,
+    "  provider: custom",
+    `  base_url: ${quoteYaml(FLUX_OPENAI_BASE)}`,
+    "  api_mode: chat_completions",
+    `  api_key: ${quoteYaml(key)}`,
+    "providers: {}",
+    "",
+  ].join("\n");
+  writeFileAtomic(join(dir, "config.yaml"), text, { mode: 0o600 });
+  return dir;
+}
+
+/**
+ * Point one child env at a Flux-routed Hermes, in place, and report the tier.
+ *
+ * Split out of `resolveTurnModel` so the env mutation is directly testable:
+ * the fake ACP CLI dumps only an allowlist of names and cannot see
+ * HERMES_HOME, so an integration test can prove the FILE landed but not that
+ * the child was aimed at it. Both halves matter — a scoped home nobody points
+ * at is a no-op, and a HERMES_HOME with no config.yaml is a 401.
+ *
+ * Returns null (touching nothing) for a native model or a missing key, so it
+ * is safe to call on every turn.
+ */
+export function applyHermesFluxHome(
+  env: Record<string, string | undefined>,
+  model: string | null | undefined,
+  key: string | null,
+): string | null {
+  const tier = fluxModelId(model);
+  if (!tier) return null;
+  // No key degrades to native rather than to a half-written home that 401s —
+  // the same choice `applyFluxSurface` makes for the env engines.
+  if (!key) return null;
+  // Wayland accepts "a profile spawn silently stays native"
+  // (AcpAgentManager.ts:707-713). We refuse instead. The persona lives in
+  // `<HERMES_HOME>/profiles/<name>` and the scoped home has none, so the
+  // choice is between running the wrong persona and saying so; this codebase
+  // already treats "answered OK but ran something else" as the worse outcome
+  // (core.ts:645-651).
+  if (env.HERMES_PROFILE) {
+    throw new Error(
+      "Hermes cannot route Flux Router while HERMES_PROFILE is set — the profile persona lives in the native Hermes home, which Flux routing replaces. Unset HERMES_PROFILE for this bot, or pick a native model.",
+    );
+  }
+  env.HERMES_HOME = materializeFluxHermesHome(env, key, tier);
+  return tier;
 }
 
 function quoteYaml(value: string): string {
@@ -375,7 +483,17 @@ async function resolveModels(
     seen.add(o.id);
     return true;
   });
-  return { default: options[0]?.id ?? "", options };
+  // `custom: true` on the Flux rows is mandatory here, not decorative: Hermes
+  // is an `access: "custom"` engine, so ModelPicker pins it to the Custom pane
+  // (ModelPicker.tsx:166) with no way back (:208), and that pane renders only
+  // options carrying the flag. Without it the rows would be in the API
+  // response and absent from the UI — the exact failure hermesConfiguredModel
+  // documents at :240-244.
+  //
+  // Deliberately AFTER the default is settled, so an existing Hermes install
+  // keeps its own configured default and only a Hermes with nothing at all
+  // falls through to flux-auto.
+  return mergeFluxCatalog({ default: options[0]?.id ?? "", options }, DRIVER_KIND, process.env, { custom: true });
 }
 
 async function applySetting(
@@ -392,17 +510,37 @@ async function applySetting(
 }
 
 const support: AcpSupport = {
-  driverKind: "hermesAgent",
+  driverKind: DRIVER_KIND,
   displayName: "Hermes",
   access: "custom",
   models: EMPTY,
   resolveModels: (env: Record<string, string | undefined>, config: any) => resolveModels(env, config),
+  /**
+   * Flux on Hermes is a SCOPED HOME, materialised lazily per spawn.
+   *
+   * `resolveTurnModel` rather than `applyTurnEnv` because this hook is the one
+   * that both receives the child env (which it mutates in place — core.ts:311
+   * builds it, :322 passes it here, and the same object is handed to `spawn`)
+   * and settles the id argv/`configureSession` will use. Splitting the write
+   * from the HERMES_HOME that makes it findable would let the two disagree.
+   *
+   * The returned id is the bare `flux-*` alias on purpose: `hermesAcpModelId`
+   * returns null for it (no colon, not an inject id), so `configureSession`
+   * sends no `session/set_model` and hermes takes `model.default` out of the
+   * scoped config.yaml. `spawnArgs` passes no `-m` either — hermes' ACP mode
+   * ignores it — so nothing can override that choice.
+   */
   resolveTurnModel: (model, env) => {
     // Never inherit a broad or stale compatibility grant from the parent.
     // Only this Murage driver binds one concrete local model; Hermes still
     // requires the exact read-only screenshot MCP tool before activation.
     bindHermesScreenshotCompat(env, model);
     if (!model) return model;
+    const routed = applyHermesFluxHome(env, model, fluxKey());
+    if (routed) return routed;
+    // A Flux id with no key degrades to native. It must still not reach
+    // `ensureHermesInjectProvider`, which writes the user's real config.yaml.
+    if (fluxModelId(model)) return model;
     ensureHermesInjectProvider(model, env);
     return model;
   },

@@ -217,3 +217,206 @@ describe("hermesAcpModelId", () => {
     expect(hermesAcpModelId("gpt-5")).toBeNull();
 });
 });
+
+// ---------------------------------------------------------------------------
+// Hermes × Flux Router — the SCOPED HOME surface.
+//
+// Hermes is the engine that proves env injection is not the only mechanism.
+// It reads no Flux variable at all: the route lives entirely in a config.yaml
+// this app writes into a directory it owns, and one HERMES_HOME pointing at
+// it. So every assertion below is about a FILE and about what the child was
+// spawned with — read off FAKE_ACP_DUMP rather than from the driver, because
+// the interesting failures are ordering ones (core.ts:311 builds the env,
+// :322 is the only hook that can both write the file and aim the child at it).
+//
+// The user's real ~/.hermes is asserted untouched every time. That is the
+// entire justification for preferring a scoped home over a config write, and
+// an implementation that quietly wrote to ~/.hermes/config.yaml would pass a
+// naive "does Flux work" test and fail these.
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { beforeEach } from "vitest";
+
+import { ensureDirs } from "../../config.ts";
+import type { ProviderInstance } from "../../contracts.ts";
+import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { HermesAgentDriver, applyHermesFluxHome, fluxHermesHome } from "./hermes.ts";
+
+const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
+
+/** Shape only, never a live credential. */
+const FLUX_KEY = "sk-flux-Cccccccccccccccccccccccccccccccccccccccccc";
+
+describe("hermes Flux routing — the scoped HERMES_HOME", () => {
+  let home: string;
+  let state: string;
+  let instance: ProviderInstance | undefined;
+  let recorder: EventRecorder | undefined;
+
+  const scopedEnv = () => ({ HOME: home, MURAGE_DATA_DIR: state });
+  const scopedYaml = () => join(fluxHermesHome(scopedEnv()), "config.yaml");
+  const userConfig = () => join(home, ".hermes", "config.yaml");
+
+  async function spawnFor(
+    model: string | undefined,
+    extra: Record<string, string> = {},
+  ): Promise<{ argv: string[]; env: Record<string, string> }> {
+    const dump = join(home, `dump-${Math.random().toString(36).slice(2)}.json`);
+    instance = await HermesAgentDriver.create({
+      instanceId: "hermes-flux",
+      displayName: "Hermes",
+      environment: { HOME: home, MURAGE_DATA_DIR: state, FAKE_ACP_DUMP: dump, ...extra },
+      enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model });
+    await recorder.until((e) => e.type === "turn.completed");
+    return JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
+  }
+
+  beforeEach(() => {
+    ensureDirs();
+    home = mkdtempSync(join(tmpdir(), "murage-hermes-flux-"));
+    state = mkdtempSync(join(tmpdir(), "murage-hermes-state-"));
+    process.env.FLUX_API_KEY = FLUX_KEY;
+  });
+
+  afterEach(async () => {
+    delete process.env.FLUX_API_KEY;
+    recorder?.stop();
+    await instance?.dispose();
+    instance = undefined;
+    recorder = undefined;
+    await removeTempDir(state);
+  });
+
+  it("writes a config.yaml hermes will accept, with the key INLINE", async () => {
+    await spawnFor("flux-auto");
+    const yaml = readFileSync(scopedYaml(), "utf8");
+    expect(yaml).toContain("  default: flux-auto");
+    // `custom` is the literal hermes requires — an invented `provider: flux`
+    // dies with `AuthError: Unknown provider 'flux'` (Wayland HERMES-PROOF.md:32-35).
+    expect(yaml).toContain("  provider: custom");
+    expect(yaml).toContain("  base_url: https://api.fluxrouter.ai/v1");
+    expect(yaml).toContain("  api_mode: chat_completions");
+    // Inline, never key_env: for a `custom` provider hermes ignores key_env and
+    // falls back to a stale stored token → HTTP 401 token_not_found.
+    expect(yaml).toContain(`  api_key: ${FLUX_KEY}`);
+    expect(yaml).not.toContain("key_env");
+    expect(yaml).toContain("providers: {}");
+  });
+
+  it("leaves ~/.hermes alone and passes no -m", async () => {
+    const { argv } = await spawnFor("flux-auto");
+    expect(existsSync(userConfig())).toBe(false);
+    // ACP ignores -m, so the model can only come from the scoped config.yaml.
+    expect(argv).toEqual(["acp"]);
+  });
+
+  it("aims the child env at the scoped home, and puts the key NOWHERE in it", () => {
+    // Read off the env object directly rather than FAKE_ACP_DUMP: that dump is
+    // a fixed allowlist of names (fake-acp-cli.ts:60-110) which carries
+    // neither HERMES_HOME nor FLUX_API_KEY, so a dump-based assertion here
+    // would pass whatever the implementation did.
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, PATH: "/bin" };
+    const tier = applyHermesFluxHome(env, "flux-auto", FLUX_KEY);
+    expect(tier).toBe("flux-auto");
+    expect(env.HERMES_HOME).toBe(fluxHermesHome(scopedEnv()));
+    // The bearer lives in the 0600 config.yaml and in no variable at all.
+    expect(Object.keys(env).filter((key) => env[key] === FLUX_KEY)).toEqual([]);
+    expect(Object.keys(env).sort()).toEqual(["HERMES_HOME", "HOME", "MURAGE_DATA_DIR", "PATH"]);
+  });
+
+  it("POSITIVE CONTROL — the same helper touches nothing for a native id", () => {
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, PATH: "/bin" };
+    expect(applyHermesFluxHome(env, "openrouter:qwen/qwen3.8-max", FLUX_KEY)).toBeNull();
+    expect(env.HERMES_HOME).toBeUndefined();
+    expect(existsSync(scopedYaml())).toBe(false);
+  });
+
+  it("sends no session/set_model, so config.yaml's default is what runs", () => {
+    // hermesAcpModelId returning null is the mechanism: configureSession
+    // early-returns and hermes falls through to `model.default`.
+    for (const tier of ["flux-auto", "flux-reasoning", "flux-standard", "flux-fast"]) {
+      expect(hermesAcpModelId(tier)).toBeNull();
+    }
+  });
+
+  it("regenerates the scoped home per spawn, so a tier change lands", async () => {
+    await spawnFor("flux-auto");
+    expect(readFileSync(scopedYaml(), "utf8")).toContain("default: flux-auto");
+    await instance?.dispose();
+    instance = undefined;
+    await spawnFor("flux-reasoning");
+    const yaml = readFileSync(scopedYaml(), "utf8");
+    expect(yaml).toContain("default: flux-reasoning");
+    expect(yaml).not.toContain("flux-auto");
+  });
+
+  it("keeps the bearer token off other users of the machine", async () => {
+    await spawnFor("flux-auto");
+    expect(statSync(scopedYaml()).mode & 0o777).toBe(0o600);
+    expect(statSync(fluxHermesHome(scopedEnv())).mode & 0o777).toBe(0o700);
+  });
+
+  it("refuses a Flux route under HERMES_PROFILE instead of losing the persona", () => {
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, HERMES_PROFILE: "research" };
+    expect(() => applyHermesFluxHome(env, "flux-auto", FLUX_KEY)).toThrow(/HERMES_PROFILE/);
+    expect(env.HERMES_HOME).toBeUndefined();
+    expect(existsSync(scopedYaml())).toBe(false);
+  });
+
+  it("surfaces that refusal as a failed turn, not a silently native one", async () => {
+    const dump = join(home, "dump-profile.json");
+    instance = await HermesAgentDriver.create({
+      instanceId: "hermes-flux-profile",
+      displayName: "Hermes",
+      environment: { HOME: home, MURAGE_DATA_DIR: state, FAKE_ACP_DUMP: dump, HERMES_PROFILE: "research" },
+      enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: true },
+    });
+    await expect(
+      instance.adapter.sendTurn({ threadId: "t-profile", text: "hi", model: "flux-auto" }),
+    ).rejects.toThrow(/HERMES_PROFILE/);
+    expect(existsSync(dump)).toBe(false);
+  });
+
+  it("POSITIVE CONTROL — a native model writes no scoped home at all", async () => {
+    // Without this, every assertion above would also pass on an implementation
+    // that materialised the scoped home unconditionally.
+    await spawnFor("openrouter:qwen/qwen3.8-max");
+    expect(existsSync(scopedYaml())).toBe(false);
+  });
+
+  it("degrades to native when there is no Flux key, never to a half-written home", async () => {
+    delete process.env.FLUX_API_KEY;
+    await spawnFor("flux-auto");
+    expect(existsSync(scopedYaml())).toBe(false);
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state };
+    expect(applyHermesFluxHome(env, "flux-auto", null)).toBeNull();
+    expect(env.HERMES_HOME).toBeUndefined();
+  });
+
+  it("offers the Flux tiers as CUSTOM rows, or the picker never shows them", async () => {
+    instance = await HermesAgentDriver.create({
+      instanceId: "hermes-flux-catalog",
+      displayName: "Hermes",
+      environment: { HOME: home, MURAGE_DATA_DIR: state },
+      enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: true },
+    });
+    const flux = instance.models.options.filter((option) => option.id.startsWith("flux-"));
+    expect(flux.map((option) => option.id)).toEqual([
+      "flux-auto",
+      "flux-reasoning",
+      "flux-standard",
+      "flux-fast",
+    ]);
+    // Hermes is access:"custom"; ModelPicker pins it to the Custom pane
+    // (ModelPicker.tsx:166) with no way back (:208), and that pane renders
+    // only options carrying this flag.
+    expect(flux.every((option) => option.custom === true)).toBe(true);
+  });
+});

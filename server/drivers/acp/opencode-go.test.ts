@@ -289,3 +289,204 @@ describe("OpenCode catalog", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// OpenCode × Flux Router — the CONFIG-WRITE surface.
+//
+// OpenCode is the engine that cannot be routed by env at all: it defaults to a
+// non-openai provider and will not resolve `flux-auto` out of its own catalog,
+// so the route only exists once `provider.flux` is in the user's own
+// opencode.json. That makes it `setup`-class, and it makes the gate here
+// stateful in a way no other engine's is — the picker must not offer a row
+// whose provider is not on disk.
+//
+// Everything below runs against a temp HOME. The connector's own safety
+// properties (backup, drift, rollback, symlinks) are in flux-connector.test.ts;
+// these are about the DRIVER: does the gate follow the file, and does the spawn
+// rewrite the id without writing anything.
+import { existsSync } from "node:fs";
+import { afterEach, beforeEach } from "vitest";
+
+import { connectOpenCodeFlux, disconnectOpenCodeFlux, openCodeFluxRouted } from "../../opencode-config.ts";
+import { resetOpenCodeModelCache } from "./opencode-go.ts";
+
+const FLUX_KEY = "sk-flux-Dddddddddddddddddddddddddddddddddddddddddd";
+
+describe("OpenCode Flux routing", () => {
+  let scratch: string;
+  let env: Record<string, string | undefined>;
+  let configPath: string;
+
+  const fluxRows = (models: ModelCatalog) => models.options.filter((option) => option.id.startsWith("flux-"));
+
+  beforeEach(() => {
+    scratch = mkdtempSync(join(tmpdir(), "murage-opencode-flux-"));
+    env = { HOME: scratch, MURAGE_DATA_DIR: join(scratch, "state") };
+    configPath = join(scratch, ".config", "opencode", "opencode.json");
+    mkdirSync(dirname(configPath), { recursive: true });
+    process.env.FLUX_API_KEY = FLUX_KEY;
+    resetOpenCodeModelCache();
+  });
+
+  afterEach(async () => {
+    delete process.env.FLUX_API_KEY;
+    resetOpenCodeModelCache();
+    await removeTempDir(scratch);
+  });
+
+  async function instanceWith(extra: Record<string, string> = {}) {
+    const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
+    return await driver.create({
+      instanceId: "opencode-flux",
+      displayName: "OpenCode",
+      environment: { ...env, ...extra } as Record<string, string>,
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+  }
+
+  it("offers no Flux rows until the connector has actually written the file", async () => {
+    expect(openCodeFluxRouted(env)).toBe(false);
+    const instance = await instanceWith();
+    try {
+      expect(fluxRows(instance.models)).toEqual([]);
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  it("POSITIVE CONTROL — offers the four tiers once the connector has run", async () => {
+    // Without this the gate test above passes on an implementation that can
+    // never offer a Flux row at all.
+    expect((await connectOpenCodeFlux({ key: FLUX_KEY, env })).ok).toBe(true);
+    expect(openCodeFluxRouted(env)).toBe(true);
+    const instance = await instanceWith();
+    try {
+      expect(fluxRows(instance.models).map((option) => option.id)).toEqual([
+        "flux-auto",
+        "flux-reasoning",
+        "flux-standard",
+        "flux-fast",
+      ]);
+      // OpenCode is a subscription-access engine, so its rows belong in the
+      // official pane — the custom flag hermes needs would hide them here.
+      expect(fluxRows(instance.models).every((option) => option.custom === undefined)).toBe(true);
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  it("withdraws the rows again when the connector is disconnected", async () => {
+    await connectOpenCodeFlux({ key: FLUX_KEY, env });
+    await disconnectOpenCodeFlux({ env });
+    const instance = await instanceWith();
+    try {
+      expect(fluxRows(instance.models)).toEqual([]);
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  it("fails closed on a drifted config rather than offering a row that will 4xx", async () => {
+    await connectOpenCodeFlux({ key: FLUX_KEY, env });
+    const edited = JSON.parse(readFileSync(configPath, "utf8")) as any;
+    edited.provider.flux.options.baseURL = "https://my-own-proxy.example/v1";
+    writeFileSync(configPath, `${JSON.stringify(edited, null, 2)}\n`);
+    expect(openCodeFluxRouted(env)).toBe(false);
+    const instance = await instanceWith();
+    try {
+      expect(fluxRows(instance.models)).toEqual([]);
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  it("rewrites the picker id to OpenCode's provider-qualified slug at spawn", async () => {
+    await connectOpenCodeFlux({ key: FLUX_KEY, env });
+    // The fake agent rejects an unadvertised model with -32602, and the core
+    // refuses a set_config_option that silently keeps the old one, so a turn
+    // completing on `flux/flux-auto` IS the proof the rewrite happened.
+    const instance = await instanceWith({ FAKE_ACP_MODELS: "flux/flux-auto" });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux-auto" });
+      const done = await recorder.until((event) => event.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true });
+      expect(recorder.events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "session.started", model: "flux/flux-auto" }),
+      ]));
+    } finally {
+      recorder.stop();
+      await instance.dispose();
+    }
+  });
+
+  it("writes NOTHING to the user's opencode.json during a Flux turn", async () => {
+    await connectOpenCodeFlux({ key: FLUX_KEY, env });
+    const before = readFileSync(configPath, "utf8");
+    const instance = await instanceWith({ FAKE_ACP_MODELS: "flux/flux-auto" });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-flux-2", text: "hi", model: "flux-auto" });
+      await recorder.until((event) => event.type === "turn.completed");
+      // A spawn must never be able to touch a file the user owns. The only
+      // writer is the deliberate connector call.
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+    } finally {
+      recorder.stop();
+      await instance.dispose();
+    }
+  });
+
+  it("counts a connected Flux provider as a usable login", async () => {
+    // Its key lives inline in opencode.json, not auth.json, so without this
+    // the pre-spawn subscription gate would refuse a Flux turn on an install
+    // with no other provider.
+    const emptyData = join(scratch, "empty-xdg-data");
+    mkdirSync(emptyData, { recursive: true });
+    const bare = { ...env, XDG_DATA_HOME: emptyData, OPENCODE_API_KEY: "" } as Record<string, string>;
+
+    const before = await createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free")).create({
+      instanceId: "opencode-flux-auth-before",
+      displayName: "OpenCode",
+      environment: bare,
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      expect((await before.snapshot()).authenticated).toBe(false);
+    } finally {
+      await before.dispose();
+    }
+
+    resetOpenCodeModelCache();
+    await connectOpenCodeFlux({ key: FLUX_KEY, env });
+
+    const after = await createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free")).create({
+      instanceId: "opencode-flux-auth-after",
+      displayName: "OpenCode",
+      environment: bare,
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      expect((await after.snapshot()).authenticated).toBe(true);
+    } finally {
+      await after.dispose();
+    }
+  });
+
+  it("leaves the local-inject writer working on the same shared upsert", async () => {
+    // The Flux connector and the local-inject writer share one implementation
+    // of "how a provider goes into opencode.json"; this pins that the shared
+    // path did not regress the inject side, and that the two coexist.
+    await connectOpenCodeFlux({ key: FLUX_KEY, env });
+    const { ensureOpenCodeInjectModel } = await import("./opencode-go.ts");
+    expect(ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", env)).toBe("omlx/GLM-5.2-fp8");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as any;
+    expect(config.provider.omlx.options.baseURL).toBe("http://127.0.0.1:8080/v1");
+    expect(config.provider.flux.options.apiKey).toBe(FLUX_KEY);
+    expect(openCodeFluxRouted(env)).toBe(true);
+    expect(existsSync(configPath)).toBe(true);
+  });
+});

@@ -19,7 +19,11 @@ import {
   FLUX_MODELS,
   FLUX_OPENAI_BASE,
   FLUX_RESPONSES_BASE,
+  FLUX_CAPABILITY,
+  FLUX_MECHANISM,
   FLUX_SURFACE,
+  fluxCapabilityFor,
+  fluxMechanismFor,
   fluxModelId,
   fluxSurfaceFor,
   isFluxModel,
@@ -29,15 +33,52 @@ import {
 const KEY = "sk-flux-RrLp0sj95M2kmW5zTXbUpTgfAxKc4n6VOPbL6eQJR7Q";
 
 describe("FLUX_SURFACE", () => {
-  it("maps exactly the three engines with a verified surface", () => {
-    expect(FLUX_SURFACE).toEqual({ claudeAgent: "anthropic", qwenAgent: "openai", codex: "responses" });
+  it("maps exactly the engines with a verified surface", () => {
+    expect(FLUX_SURFACE).toEqual({
+      claudeAgent: "anthropic",
+      qwenAgent: "openai",
+      codex: "responses",
+      // hermes speaks chat-completions; it is reached by a scoped HERMES_HOME
+      // rather than by env, which is what FLUX_MECHANISM is for.
+      hermesAgent: "openai",
+      // opencode speaks chat-completions through @ai-sdk/openai-compatible;
+      // reached by writing its own config file, never by env.
+      opencodeGo: "openai",
+    });
   });
 
   it("leaves every non-routable engine absent, so the gate denies by default", () => {
-    // opencode/qoder are config-file-only; droid/cursor/gemini/kimi/hermes and
-    // the vendor-locked CLIs have no Flux surface at all (spec §4.4).
-    for (const kind of ["opencodeGo", "droidAgent", "cursorAgent", "geminiAgent", "kimiAgent", "hermesAgent", "grokAgent", "piAgent", "antigravityAgent", "minimax", "openai-compat", "boxAgent", "customAcp", "gooseAgent"]) {
+    // gemini-cli-over-ACP has no proven recipe (Wayland routes only its own
+    // in-process gemini); the rest are vendor-locked or unclassified.
+    for (const kind of ["droidAgent", "cursorAgent", "geminiAgent", "kimiAgent", "grokAgent", "piAgent", "antigravityAgent", "minimax", "openai-compat", "boxAgent", "customAcp", "gooseAgent"]) {
       expect(fluxSurfaceFor(kind)).toBeNull();
+    }
+  });
+
+  it("keeps capability, mechanism and surface as three separate axes", () => {
+    // The whole point of the split: two engines share a surface and share
+    // nothing else. Collapsing any pair of these back into one table is what
+    // made an engine needing a FILE unrepresentable.
+    expect(fluxSurfaceFor("hermesAgent")).toBe(fluxSurfaceFor("opencodeGo"));
+    expect(fluxMechanismFor("hermesAgent")).toBe("scopedHome");
+    expect(fluxMechanismFor("opencodeGo")).toBe("configWrite");
+    expect(fluxCapabilityFor("hermesAgent")).toBe("env");
+    expect(fluxCapabilityFor("opencodeGo")).toBe("setup");
+  });
+
+  it("gives every engine with a surface both a mechanism and a non-vendor capability", () => {
+    for (const kind of Object.keys(FLUX_SURFACE)) {
+      expect(fluxMechanismFor(kind)).not.toBeNull();
+      expect(fluxCapabilityFor(kind)).not.toBe("vendor");
+      expect(fluxCapabilityFor(kind)).not.toBeNull();
+    }
+  });
+
+  it("gives no engine a mechanism or a routable capability without a surface", () => {
+    for (const kind of Object.keys(FLUX_MECHANISM)) expect(fluxSurfaceFor(kind)).not.toBeNull();
+    for (const [kind, capability] of Object.entries(FLUX_CAPABILITY)) {
+      if (capability === "vendor") expect(fluxSurfaceFor(kind)).toBeNull();
+      else expect(fluxSurfaceFor(kind)).not.toBeNull();
     }
   });
 
@@ -94,10 +135,25 @@ describe("isFluxModel", () => {
 describe("applyFluxSurface — the gate", () => {
   it("is a no-op on an engine with no surface, leaving the env untouched", () => {
     const env: Record<string, string | undefined> = { OPENAI_API_KEY: "sk-native", PATH: "/bin" };
-    const result = applyFluxSurface("opencodeGo", env, "flux-auto", KEY);
+    const result = applyFluxSurface("droidAgent", env, "flux-auto", KEY);
     expect(result.applied).toBe(false);
     expect(result.surface).toBeNull();
     expect(env).toEqual({ OPENAI_API_KEY: "sk-native", PATH: "/bin" });
+  });
+
+  it("is a no-op on a routable engine whose mechanism is not env", () => {
+    // hermes and opencode DO have an openai surface. Neither reads a single
+    // one of these variables — hermes takes its key inline from the scoped
+    // config.yaml, opencode from its own config file — so writing them would
+    // put a route in the returned env map that does not exist, and on opencode
+    // would fight `stripForeignProviderKeys`.
+    for (const engine of ["hermesAgent", "opencodeGo"]) {
+      const env: Record<string, string | undefined> = { OPENAI_API_KEY: "sk-native", PATH: "/bin" };
+      const result = applyFluxSurface(engine, env, "flux-auto", KEY);
+      expect(fluxSurfaceFor(engine)).toBe("openai");
+      expect(result.applied).toBe(false);
+      expect(env).toEqual({ OPENAI_API_KEY: "sk-native", PATH: "/bin" });
+    }
   });
 
   it("is a no-op on a routable engine when the model is not a Flux id", () => {

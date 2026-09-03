@@ -1,14 +1,25 @@
 // The maintained OpenCode CLI through its ACP stdio interface. OpenCode is
 // the harness; Zen, Go, OpenRouter, and user-configured/local providers are
 // models discovered from that harness rather than separate Murage drivers.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
+import { writeFileAtomic } from "../../atomic.ts";
 import { execCli } from "../../procs.ts";
+import { fluxModelId } from "../../flux-routing.ts";
+import { mergeFluxCatalog } from "../../flux-surface.ts";
+import {
+  openCodeFluxRouted,
+  opencodeConfigDir,
+  opencodeConfigPath,
+  opencodeFluxModelId,
+  renderOpenCodeConfig,
+  upsertOpenCodeProvider,
+} from "../../opencode-config.ts";
 
 const STATIC_MODELS: ModelCatalog = {
   default: "opencode/x-preview-f-free",
@@ -188,12 +199,20 @@ const stripForeignProviderKeys = (env: Record<string, string | undefined>) => {
   ]) delete env[key];
 };
 
-function opencodeConfigDir(env: Record<string, string | undefined>): string {
-  const home = env.HOME || env.USERPROFILE || homedir();
-  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "opencode");
-}
-
-/** Upsert an openai-compatible provider so OpenCode can select host/model. */
+/** Upsert an openai-compatible provider so OpenCode can select host/model.
+ *
+ * The merge itself lives in `opencode-config.ts` and is shared verbatim with
+ * the Flux connector — one implementation of "how a provider goes into
+ * opencode.json", so the two writers cannot drift apart on npm package,
+ * camelCase `baseURL`, or what counts as safe to overwrite.
+ *
+ * This path stays deliberately LENIENT where the connector is strict: a
+ * malformed user config falls back to a fresh object rather than failing the
+ * turn (existing behaviour, pinned by local-inject.test.ts:890), and an apiKey
+ * already in the file is never replaced. The connector cannot afford either —
+ * it is writing on a user's explicit instruction and must refuse rather than
+ * guess.
+ */
 export function ensureOpenCodeInjectModel(
   modelId: string,
   env: Record<string, string | undefined> = process.env,
@@ -206,51 +225,28 @@ export function ensureOpenCodeInjectModel(
   const native = `${inject.host}/${inject.model}`;
   const dir = opencodeConfigDir(env);
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, "opencode.json");
+  const path = opencodeConfigPath(env);
+  let source: string | null = null;
   let config: Record<string, unknown> = { $schema: "https://opencode.ai/config.json" };
   if (existsSync(path)) {
     try {
-      config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      const text = readFileSync(path, "utf8");
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        config = parsed as Record<string, unknown>;
+        source = text;
+      }
     } catch {
       // Malformed user config — inject into a fresh object rather than fail the turn.
     }
   }
-  const providers =
-    config.provider && typeof config.provider === "object" && !Array.isArray(config.provider)
-      ? { ...(config.provider as Record<string, unknown>) }
-      : {};
-  const previous = providers[inject.host];
-  const existing =
-    previous && typeof previous === "object" && !Array.isArray(previous)
-      ? { ...(previous as Record<string, unknown>) }
-      : {
-          npm: "@ai-sdk/openai-compatible",
-          name: host.label,
-          options: {},
-          models: {},
-        };
-  const options =
-    existing.options && typeof existing.options === "object" && !Array.isArray(existing.options)
-      ? { ...(existing.options as Record<string, unknown>) }
-      : {};
-  options.baseURL = host.baseUrl;
-  if (!options.apiKey) options.apiKey = hostApiKey(host, env);
-  const models =
-    existing.models && typeof existing.models === "object" && !Array.isArray(existing.models)
-      ? { ...(existing.models as Record<string, unknown>) }
-      : {};
-  if (!models[inject.model]) {
-    models[inject.model] = { name: `${inject.model} (${host.label})` };
-  }
-  providers[inject.host] = {
-    ...existing,
-    npm: existing.npm || "@ai-sdk/openai-compatible",
-    name: existing.name || host.label,
-    options,
-    models,
-  };
-  config.provider = providers;
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  upsertOpenCodeProvider(config, inject.host, {
+    name: host.label,
+    baseUrl: host.baseUrl,
+    apiKey: hostApiKey(host, env),
+    models: { [inject.model]: { name: `${inject.model} (${host.label})` } },
+  });
+  writeFileAtomic(path, renderOpenCodeConfig(config, source));
   return native;
 }
 
@@ -365,22 +361,55 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   spawnArgs: () => ["acp"],
   credentialEnv: ["OPENCODE_API_KEY"],
   selectModel: { configId: "model" },
-  resolveTurnModel: (model, env) => model
-    ? ensureOpenCodeInjectModel(normalizeLegacyOpenCodeModel(model, env), env)
-    : model,
+  /**
+   * Flux on OpenCode is a pure ID REWRITE at spawn — it writes nothing.
+   *
+   * OpenCode addresses models as `<provider>/<model>`, so the bare picker id
+   * `flux-auto` is not a slug it can resolve (`validModelSlug` above rejects
+   * it) and `session/set_config_option` would fail the turn. The provider row
+   * that `flux/flux-auto` resolves against was written earlier, once, by the
+   * user-initiated connector — never from here. That separation is the point:
+   * a spawn must never be able to touch the user's opencode.json.
+   *
+   * The explicit early return also keeps a Flux id out of
+   * `ensureOpenCodeInjectModel` entirely. `decodeInjectId` already returns
+   * null for `flux-*` so it would no-op, but a config write is unrecoverable
+   * and should not depend on another module's parser staying that way.
+   */
+  resolveTurnModel: (model, env) => {
+    if (!model) return model;
+    const tier = fluxModelId(model);
+    if (tier) return opencodeFluxModelId(tier);
+    return ensureOpenCodeInjectModel(normalizeLegacyOpenCodeModel(model, env), env);
+  },
   transformEnv: stripForeignProviderKeys,
   pickAuthMethod: () => null,
   authFailure: "continue",
+  // A connected Flux provider IS a usable login, and it does not live in
+  // auth.json — its key sits inline in opencode.json, which `hasStoredOpenCodeAuth`
+  // never reads. Without this clause a Flux turn on an OpenCode install with no
+  // other provider is refused by the pre-spawn subscription gate (core.ts:313)
+  // before it can reach the router: Flux would be paying for a turn the gate
+  // never lets start. `skipSubscriptionAuthForLocalInject` cannot cover it —
+  // that predicate only knows `host::model` inject ids.
   isAuthenticated: async (env, config) => (
     Boolean(env.OPENCODE_API_KEY)
+    || openCodeFluxRouted(env)
     || hasStoredOpenCodeAuth(env)
     || await canListOpenCodeModels(env, config.cli)
   ),
   requireAuthenticationBeforeSpawn: true,
   classifyError: classifyOpenCodeError,
-  resolveModels: async (environment, config) => mergeLocalInject(
-    await loadCatalog(environment, config.cli),
-    environment,
+  // The gate env is READ-ONLY and never handed to a child: `process.env` for
+  // the Flux key (FLUX_API_KEY is a workspace credential the ACP core has
+  // already stripped out of `environment`, so `environment` alone would hide a
+  // dev-mode key), overlaid with `environment` so an instance-specific HOME /
+  // XDG_CONFIG_HOME / OPENCODE_CONFIG_DIR still decides WHICH opencode.json
+  // the connector gate inspects.
+  resolveModels: async (environment, config) => mergeFluxCatalog(
+    await mergeLocalInject(await loadCatalog(environment, config.cli), environment),
+    "opencodeGo",
+    { ...process.env, ...environment } as NodeJS.ProcessEnv,
   ),
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
