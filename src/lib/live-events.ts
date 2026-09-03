@@ -114,7 +114,33 @@ export function ensureDesktopSurfaceSecret(): Promise<string> {
   // A late preload is still the packaged answer — re-read before asking.
   desktopSecret = bridgeSecret();
   if (desktopSecret) return Promise.resolve(desktopSecret);
-  if (!import.meta.env.DEV || typeof globalThis.fetch !== "function") {
+  // Deliberately NOT behind `import.meta.env.DEV`.
+  //
+  // It used to be, and that left a real configuration with no path to the
+  // secret at all: a PRODUCTION bundle served by a harness that Electron did
+  // not fork. The secret travels desktop-ward over `postDesktopPrivateMessage`
+  // (server/index.ts:363), a channel that exists only when the packaged app
+  // forked the harness as its own child. Start the harness separately — which
+  // is how this app is run against a built bundle — and `main.mjs` never
+  // receives one, so the preload bridge hands the renderer "".
+  //
+  // The renderer then believed it was the desktop (the bridge is present, and
+  // presence is the one true positive) while the harness answered "remote" to
+  // every request it made (the marker without the secret is exactly the
+  // forgery that gate refuses). Desktop-only buttons rendered enabled and
+  // then 404'd on press. A disagreement between "which surface am I" and
+  // "what am I allowed to do" is worse than either answer being wrong.
+  //
+  // Dropping the guard opens nothing, because the ROUTE is what is gated and
+  // its gate is structural, not an environment flag: `/api/desktop-secret`
+  // 404s whenever `process.parentPort` is present, which is exactly and only
+  // the utility child a packaged build forks (server/index.ts:8703). So in a
+  // shipped app the bridge answers first and this fetch never runs; if it did
+  // it would 404. It 404s to anything carrying the companion marker. And the
+  // browser door's allowlist does not carry the path at all, so a phone's
+  // request is refused before the harness ever sees it — three independent
+  // locks, none of which was the compile-time guard.
+  if (typeof globalThis.fetch !== "function") {
     return Promise.resolve("");
   }
   pendingSecret ??= globalThis
