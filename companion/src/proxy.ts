@@ -13,6 +13,12 @@
 // serve. Nothing upstream has to change, or even know this exists.
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 
+import {
+  countsAgainstSignIn,
+  createSignInLimiter,
+  signInClientKey,
+  type SignInLimiter,
+} from "./browser.ts";
 import { bearerToken } from "./devices.ts";
 import {
   COMPANION_ENDPOINT_KINDS,
@@ -35,7 +41,7 @@ export interface ProxyOptions {
     code: string,
     deviceName: unknown,
     pairRequestId?: unknown,
-  ) => { token: string; device: unknown } | { error: string };
+  ) => { token: string; device: unknown } | { error: string; reason?: string };
   /** What the phone should call this computer in its connection list. */
   serverName: () => string;
   /** Every host the phone could dial later, best first — sent with the
@@ -53,6 +59,16 @@ export interface ProxyOptions {
   /** How long the harness may take to produce response *headers*. Optional,
    * and only ever set by tests — the default is the one that ships. */
   headersTimeoutMs?: number;
+  /** The per-client limiter `POST /api/pair` charges failed redemptions to.
+   *
+   * The same limiter type the browser door uses, imported rather than
+   * re-implemented: two limiters with two sets of counters is two places a
+   * lockout can be forgotten, and the shared one is what makes a client that
+   * is locked out at one door locked out at the other when both are handed
+   * the same instance. Optional, and only ever supplied by tests or by a
+   * caller deliberately sharing one — the default is a limiter per handler,
+   * living exactly as long as the handler does. */
+  signInLimiter?: SignInLimiter;
 }
 
 export interface CompanionEndpointSnapshot {
@@ -271,6 +287,11 @@ const forwardHeaders = (req: IncomingMessage, body: Buffer | null = null): Recor
  * the token, then replay the request to the harness over loopback and scrub
  * what comes back. Pairing is the one route that stops here. */
 export function createProxyHandler(options: ProxyOptions) {
+  // One limiter per door, living as long as the door does — the same
+  // arrangement `browser.ts` makes, for the same reason. In memory on
+  // purpose: a lockout that survived a restart would need a file, and a file
+  // an attacker can provoke writes to is the worse trade.
+  const signIn = options.signInLimiter ?? createSignInLimiter();
   return function handle(req: IncomingMessage, res: ServerResponse): void {
     const path = (req.url ?? "/").split("?")[0];
     const method = req.method ?? "GET";
@@ -315,6 +336,33 @@ export function createProxyHandler(options: ProxyOptions) {
     // Pairing terminates here. Forwarding it would hand the harness a route
     // it does not have, and the 404 would read to a phone as "wrong address".
     if (method === "POST" && path === "/api/pair") {
+      // Before the body is read, and before `redeem` is reached at all.
+      //
+      // Until this existed the only bound on this route was the pairing
+      // window's own five-wrong-guess burn, so any unauthenticated peer that
+      // could reach the device port could destroy a pairing window in five
+      // requests and keep doing it — a denial of service on pairing itself.
+      // The browser door already closed exactly this hole on `/session`; the
+      // device door is the other half of the same credential and needs the
+      // same limiter, not a copy of it.
+      //
+      // Fail closed, in both directions the limiter fails closed: a locked
+      // client never reaches `redeem`, so a lockout cannot be spent as one of
+      // the window's five attempts, and an unknown client arriving when the
+      // table of tracked clients is full is refused rather than admitted.
+      const client = signInClientKey(req);
+      const waiting = signIn.check(client);
+      if (waiting) {
+        // Drain rather than leave the request half-read, so the socket can be
+        // reused instead of being torn down under a keep-alive client.
+        req.resume();
+        const seconds = Math.max(1, Math.ceil(waiting.retryAfterMs / 1000));
+        res.setHeader("retry-after", String(seconds));
+        return sendJson(res, 429, {
+          error: `too many pairing attempts from this device — try again in ${seconds} seconds`,
+          retryAfter: seconds,
+        });
+      }
       readJson(req).then(
         (body) => {
           // New clients redeem the high-entropy credential carried by the QR.
@@ -324,7 +372,25 @@ export function createProxyHandler(options: ProxyOptions) {
             body.deviceName,
             body.pairRequestId,
           );
-          if ("error" in result) return sendJson(res, 401, { error: result.error });
+          if ("error" in result) {
+            // `full` and `save-failed` mean the credential was RIGHT and this
+            // machine could not finish; charging those would lock out the one
+            // person holding the real code. `countsAgainstSignIn` owns that
+            // judgement for both doors, and it counts an unclassified reason
+            // as a guess — the fail-closed direction.
+            const payload: Record<string, unknown> = { error: result.error };
+            if (countsAgainstSignIn(result.reason)) {
+              const locked = signIn.fail(client);
+              if (locked) {
+                const seconds = Math.max(1, Math.ceil(locked.retryAfterMs / 1000));
+                res.setHeader("retry-after", String(seconds));
+                payload.retryAfter = seconds;
+              }
+            }
+            return sendJson(res, 401, payload);
+          }
+          // In, and the next attempt from this address starts clean.
+          signIn.succeed(client);
           // `hosts` rides along whichever way the phone paired — QR, typed
           // address, or discovery — so every paired device learns the full
           // fallback list, not just the ones that scanned a QR. Absent, not

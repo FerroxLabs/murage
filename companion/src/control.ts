@@ -15,7 +15,7 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
 import type { BrowserDoor } from "./browser.ts";
-import type { DeviceRegistry } from "./devices.ts";
+import { PAIRING_TTL_MS, type DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
 import { lanAddresses, tailnetName, tailscaleAddress } from "./listener.ts";
 import { defaultHostName } from "./mdns.ts";
@@ -359,6 +359,16 @@ export function createControlServer(options: ControlOptions): Server {
   });
 }
 
+/** How long a pairing window lasts, in whole minutes.
+ *
+ * Derived from `PAIRING_TTL_MS` rather than written out, because this page
+ * spent a release telling people the code lasts two minutes after the window
+ * had been lengthened to ten. A second literal is a second thing to remember
+ * to change; read the constant that actually governs the window and the copy
+ * cannot drift from it again. A numeral rather than a word for the same
+ * reason — spelling the number out needs a lookup table that can rot too. */
+const pairingMinutes = (): number => Math.round(PAIRING_TTL_MS / 60_000);
+
 /** One self-contained page. No build step and no assets on purpose — a
  * sidecar that needed bundling would be a much bigger thing to run. */
 function page(): string {
@@ -445,9 +455,9 @@ function render(s) {
 
   el("pair").innerHTML = s.pairing
     ? "<h2>Pair a phone</h2><div class=code>" + esc(s.pairing.code) + "</div>" +
-      "<p class=dim>Expires in <span id=left></span>s. Enter it on your phone.</p>" +
+      "<p class=dim>Expires in <span id=left></span>s. Type it on your phone, or in a browser on another computer.</p>" +
       "<button id=cancel>Cancel</button>"
-    : "<h2>Pair a phone</h2><p class=dim>The code lasts two minutes.</p><button id=start>Start pairing</button>";
+    : "<h2>Pair a phone</h2><p class=dim>The code lasts ${pairingMinutes()} minutes.</p><button id=start>Start pairing</button>";
 
   el("devices").innerHTML =
     "<h2>Paired devices</h2>" +

@@ -8,7 +8,7 @@ import { type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createControlServer, hostCandidates, originIsLoopback } from "../src/control.ts";
-import { DeviceRegistry } from "../src/devices.ts";
+import { DeviceRegistry, PAIRING_TTL_MS } from "../src/devices.ts";
 
 let control: Server;
 let port = 0;
@@ -408,5 +408,38 @@ describe("the browser door on /state", () => {
     expect(opened.status).toBe(201);
     expect(opened.body.browser).toEqual({ scheme: "http", host: "100.79.121.109", port: 8813 });
     await ask("DELETE", `/pairing?expectedToken=${encodeURIComponent(opened.body.pairing.token)}`);
+  });
+});
+
+// The pairing page is copy, and copy rots silently. Nothing type-checks a
+// sentence, nothing fails when the constant it describes is changed
+// underneath it, and the page spent a release telling people a ten-minute
+// code lasts two minutes — the exact failure that is invisible until someone
+// reads it out loud. These pin the two claims that were wrong.
+describe("what the pairing page tells a person", () => {
+  it("states the pairing window's real length, derived from the constant", async () => {
+    const html = (await ask("GET", "/")).body as string;
+    const minutes = Math.round(PAIRING_TTL_MS / 60_000);
+    // The number, and the number the registry actually enforces — not a
+    // literal that happens to match today. Change PAIRING_TTL_MS and this
+    // assertion follows it; leave a hardcoded word behind and it fails.
+    expect(html).toContain(`The code lasts ${minutes} minutes.`);
+    expect(minutes).toBe(10);
+    // The sentence it replaced must be gone, not merely joined.
+    expect(html).not.toContain("two minutes");
+  });
+
+  it("tells a person the code goes into a phone or a browser, not a phone alone", async () => {
+    // As of the typed-code sign-in at the browser door, the same six digits
+    // are redeemable from a laptop or a cloud instance with no camera. Copy
+    // that says "on your phone" sends those people looking for a QR scanner
+    // they cannot use.
+    const html = (await ask("GET", "/")).body as string;
+    const line = html.split("\n").find((l) => l.includes("Expires in"));
+    expect(line).toBeDefined();
+    expect(line).toMatch(/phone/);
+    expect(line).toMatch(/browser/);
+    // And it stayed one sentence rather than growing into a paragraph.
+    expect(line).not.toMatch(/Enter it on your phone\./);
   });
 });
