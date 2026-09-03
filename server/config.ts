@@ -778,6 +778,12 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   // The driver stays registered for enterprise licences, which keep Gemini
   // CLI — `{"instances": {"gemini": {"driver": "geminiAgent"}}}` restores it.
   const DEFAULT_FLEET: InstanceConfigMap = {
+    // Fuigo leads: Murage SHIPS its binary, so it is the only engine that can
+    // be available on a machine with no CLIs installed. Registering the driver
+    // in BUILT_IN_DRIVERS only populates driversByKind — instanceConfigs() is
+    // the ONLY source of instances, so without a row here the engine has no
+    // instance, never appears in describe(), and remains unreachable.
+    fuigo: { driver: "fuigoAgent" },
     grok: { driver: "grokAgent" },
     kimi: { driver: "kimiAgent" },
     droid: { driver: "droidAgent" },
@@ -801,6 +807,10 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   // never see. Custom-only engines stay in CUSTOM_ONLY so a one-off test map
   // is not expanded, matching the claude/grok/codex product-fleet probe.
   const PRODUCT_FLEET_ADDITIONS = {
+    // Existing installs have cfg.instances on disk, so DEFAULT_FLEET is never
+    // consulted for them. Without this line every user who has ever launched
+    // Murage before would silently never get Fuigo.
+    fuigo: { driver: "fuigoAgent" },
     cursor: { driver: "cursorAgent" },
     openaiCompat: { driver: "openai-compat" },
     ...CUSTOM_ONLY,
