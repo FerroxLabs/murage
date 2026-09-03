@@ -36,6 +36,7 @@ import { createAddressWatcher } from "./advertise-watch.ts";
 import {
   browserBindHost,
   browserDoorLocation,
+  browserFront,
   createBrowserHandler,
   rebindBrowserDoor,
   type BoundIdentity,
@@ -102,6 +103,24 @@ const BROWSER_BIND: BrowserBindMode =
  * accepts direct connections, and a cookie attribute that a request header
  * can flip is not an attribute. */
 const BROWSER_SCHEME: BoundIdentity["scheme"] = process.env.MURAGE_BROWSER_SCHEME === "https" ? "https" : "http";
+/** The proxy standing in front of the door, when one was put there.
+ *
+ * Set by the desktop app when it turns on `tailscale serve` — never inferred
+ * here. The sidecar cannot see a proxy it does not terminate, and guessing
+ * one from the fact that the door happens to be on loopback would claim HTTPS
+ * for a machine where nobody ran `serve`.
+ *
+ * Two things follow from it, and both are the point:
+ *   - `/state` advertises the front's address, so the QR is the portless
+ *     `https://<name>/enter#…` a phone or a laptop can actually open, not
+ *     `https://<name>:8813` which the certificate does not cover.
+ *   - the front's scheme decides the session cookie, because the browser's
+ *     view of the connection is the one the cookie has to match. */
+const BROWSER_FRONT = browserFront(process.env.MURAGE_BROWSER_PUBLIC_ORIGIN);
+/** What a browser sees. The front's scheme when there is a front, because
+ * `serve` terminates TLS and the client is on HTTPS whatever this process
+ * bound. Falls back to the configured scheme when nothing is in front. */
+const BROWSER_CLIENT_SCHEME: BoundIdentity["scheme"] = BROWSER_FRONT?.scheme ?? BROWSER_SCHEME;
 const SERVICE_TYPE = "_murage._tcp";
 let hostedUrl = hostedCompanionUrl(process.env.MURAGE_COMPANION_HOSTED_URL);
 const PRIVATE_ORIGIN = companionOriginSocket(process.env.MURAGE_COMPANION_INTERNAL_ORIGIN);
@@ -132,7 +151,14 @@ let browserBoundHost: string | null = null;
  * the MagicDNS name can land after boot, and the door can be re-bound under a
  * running sidecar without the port or scheme changing. */
 const browserDoor = () =>
-  browserDoorLocation(BROWSER_SCHEME, BROWSER_PORT, browserBoundHost, tailnetName(), tailscaleAddress());
+  browserDoorLocation(
+    BROWSER_CLIENT_SCHEME,
+    BROWSER_PORT,
+    browserBoundHost,
+    tailnetName(),
+    tailscaleAddress(),
+    BROWSER_FRONT,
+  );
 
 /** Every authority the browser door will answer to, and nothing else.
  *
@@ -157,11 +183,18 @@ const browserIdentity = (): BoundIdentity => {
   if (browserBoundHost === null ? BROWSER_BIND !== "tailnet" : browserBoundHost === "127.0.0.1") {
     for (const host of ["127.0.0.1", "localhost", "::1", "[::1]"]) hosts.add(host);
   }
+  // The proxy forwards the client's Host intact, so the name it answers on
+  // has to be in the door's allowlist. Added independently of `tailnetName()`
+  // rather than relying on it: the MagicDNS probe can fail — a CLI that is
+  // not where we looked, a `status --json` that timed out — on a machine
+  // where `serve` is working perfectly, and a door that then 403s every
+  // request through its own proxy is the worst version of this.
+  if (BROWSER_FRONT) hosts.add(BROWSER_FRONT.host);
   for (const extra of (process.env.MURAGE_BROWSER_HOSTS ?? "").split(",")) {
     const trimmed = extra.trim().toLowerCase();
     if (trimmed) hosts.add(trimmed);
   }
-  return { scheme: BROWSER_SCHEME, hosts };
+  return { scheme: BROWSER_CLIENT_SCHEME, hosts };
 };
 
 /** Where the door should be bound right now, given Tailscale as it is right

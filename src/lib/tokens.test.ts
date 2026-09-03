@@ -231,6 +231,8 @@ describe("token drift", () => {
         "macOS traffic-light decoration — it mimics the OS, so it cannot follow the theme",
       "src/components/PhoneSetupFlow.tsx":
         "QR code foreground/background — a scanner needs pure black on pure white",
+      "src/components/CompanionSection.tsx":
+        "the same QR, on the WebUI page — a scanner needs pure black on pure white",
       "src/components/RoutineCalendarPage.tsx":
         "calendar chip gradients mixed from EMBER_COLORS; theme-invariant like the mascot",
     };
