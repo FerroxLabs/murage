@@ -23,13 +23,14 @@ vi.mock("@/lib/analytics", () => ({
   track: () => {},
 }));
 
-const { PasteKeysBody, rowTarget } = await import("./PasteKeys");
+const { PasteKeysBody, createPasteController, rowTarget, toPasteRow } = await import("./PasteKeys");
 type Props = Parameters<typeof PasteKeysBody>[0];
 type Row = Props["rows"][number];
 
 const FLUX = `sk-flux-${"F".repeat(40)}`;
 const XAI = `xai-${"7".repeat(32)}`;
 const BARE = `sk-${"o".repeat(40)}`;
+const COMPOSIO = `ak_${"c".repeat(32)}`;
 const ANTHROPIC = `sk-ant-api03-${"a".repeat(40)}`;
 
 const candidate = (blob: string): KeyCandidate => {
@@ -38,11 +39,11 @@ const candidate = (blob: string): KeyCandidate => {
   return found[0]!;
 };
 
+// Rows are built through the production factory, so a key that leaks into one
+// leaks into these tests too.
+let minted = 0;
 const row = (blob: string, over: Partial<Row> = {}): Row => ({
-  candidate: candidate(blob),
-  chosen: null,
-  status: "pending",
-  error: null,
+  ...toPasteRow(`test-${++minted}`, candidate(blob)),
   ...over,
 });
 
@@ -125,20 +126,42 @@ describe("no key ever reaches the screen", () => {
     expect(source).not.toMatch(/\{\s*row\.candidate\.value\s*\}/);
   });
 
-  it("blanks the key out of a row the moment it is finished with", () => {
-    expect(source).toMatch(/candidate: \{ \.\.\.row\.candidate, value: "" \}/);
-    expect(source).toMatch(/spent\(current, "saved", null\)/);
-    expect(source).toMatch(/spent\(current, "dismissed", null\)/);
+  it("keeps the key only while the person is still deciding about it", async () => {
+    // The row never held the key; the vault did, and the vault lets go the
+    // moment there is nothing left to write.
+    const saved = harness();
+    saved.controller.scan(`FLUX_API_KEY=${FLUX}\nXAI_API_KEY=${XAI}`);
+    expect(saved.controller.held()).toBe(2);
+    const writing = saved.controller.accept(find(saved.controller, "FLUX_API_KEY").id);
+    saved.gates[0]!.resolve({});
+    await writing;
+    expect(saved.controller.held(), "a written key is not kept").toBe(1);
+
+    const ignored = harness();
+    ignored.controller.scan(`FLUX_API_KEY=${FLUX}`);
+    ignored.controller.dismiss(find(ignored.controller, "FLUX_API_KEY").id);
+    expect(ignored.controller.held(), "an ignored key is not kept").toBe(0);
+
+    // POSITIVE control: a write that FAILS keeps it, because the person will
+    // want to try again.
+    const failed = harness();
+    failed.controller.scan(`FLUX_API_KEY=${FLUX}`);
+    const doomed = failed.controller.accept(find(failed.controller, "FLUX_API_KEY").id);
+    failed.gates[0]!.reject(new Error("the harness said no"));
+    await doomed;
+    expect(failed.controller.held()).toBe(1);
+    expect(statusOf(failed.controller, "FLUX_API_KEY")).toBe("pending");
+    expect(failed.controller.rows()[0]!.error).toBe("the harness said no");
   });
 
   it("shows only four dots for a key too short to hint at", () => {
     // A short value never gets a tail, so the mask cannot become the key.
-    const short: Row = {
-      candidate: { value: "sk-short123", hint: "", providers: ["flux"], evidence: "shape" },
-      chosen: null,
-      status: "pending",
-      error: null,
-    };
+    const short: Row = toPasteRow("short", {
+      value: "sk-short123",
+      hint: "",
+      providers: ["flux"],
+      evidence: "shape",
+    });
     const html = render({ rows: [short], scanned: true });
     expect(html).toContain("••••<");
     expect(html).not.toContain("sk-short123");
@@ -265,5 +288,187 @@ describe("it saves the way the rest of the app saves", () => {
     // could arrive in. This asserts the component never reaches for one.
     expect(source).toContain("state.config ?? null");
     expect(source).not.toMatch(/config[^\n]*\.(apiKey|token)\b/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The controller: what a scan adds, what a confirmation writes, and which row
+// a finished write belongs to. These drive real sequences — a save that lands
+// after a second paste — which is the only place the interesting bugs live.
+// ---------------------------------------------------------------------------
+
+type Controller = ReturnType<typeof createPasteController>;
+
+interface Gate {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+}
+
+interface Harness {
+  controller: Controller;
+  /** Every write actually attempted, in order. */
+  saves: Array<{ target: string; value: string }>;
+  /** One per write, still open until the test lets it land. */
+  gates: Gate[];
+  /** Rows as React last received them, so state and props are inspectable. */
+  rendered: () => Row[];
+}
+
+const harness = (): Harness => {
+  const saves: Harness["saves"] = [];
+  const gates: Gate[] = [];
+  let rendered: Row[] = [];
+  const controller = createPasteController({
+    render: (rows) => {
+      rendered = rows;
+    },
+    save: (target, value) => {
+      saves.push({ target, value });
+      let resolve!: (value: unknown) => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<never>((res, rej) => {
+        resolve = res as (value: unknown) => void;
+        reject = rej;
+      });
+      gates.push({ resolve, reject });
+      return promise;
+    },
+    saved: () => {},
+  });
+  return { controller, saves, gates, rendered: () => rendered };
+};
+
+const find = (controller: Controller, name: string): Row => {
+  const found = controller.rows().find((r) => r.name === name);
+  expect(found, `no row for ${name}`).toBeTruthy();
+  return found!;
+};
+const statusOf = (controller: Controller, name: string): string =>
+  controller.rows().find((r) => r.name === name)?.status ?? "no row at all";
+
+describe("a confirmed row is the row that gets confirmed", () => {
+  it("marks the key it actually wrote, even when a second paste arrived mid-flight", async () => {
+    const { controller, saves, gates } = harness();
+    controller.scan(`FLUX_API_KEY=${FLUX}\nXAI_API_KEY=${XAI}`);
+
+    // The person confirms the second key. The write is in flight.
+    const writing = controller.accept(find(controller, "XAI_API_KEY").id);
+    expect(statusOf(controller, "XAI_API_KEY")).toBe("saving");
+    expect(saves).toEqual([{ target: "xai", value: XAI }]);
+
+    // …and pastes something else before it lands, which reorders the list.
+    controller.scan(`COMPOSIO_API_KEY=${COMPOSIO}`);
+
+    gates[0]!.resolve({});
+    await writing;
+
+    // Exactly one key was written, and it is the one the person confirmed.
+    expect(saves).toEqual([{ target: "xai", value: XAI }]);
+    expect(
+      statusOf(controller, "COMPOSIO_API_KEY"),
+      "a key nothing was written for must not be marked saved",
+    ).toBe("pending");
+    expect(statusOf(controller, "XAI_API_KEY"), "the key that was written is the one marked saved").toBe(
+      "saved",
+    );
+
+    // And the untouched key is still saveable — its value was not destroyed
+    // by somebody else's write landing.
+    const second = controller.accept(find(controller, "COMPOSIO_API_KEY").id);
+    expect(saves).toEqual([
+      { target: "xai", value: XAI },
+      { target: "composio", value: COMPOSIO },
+    ]);
+    gates[1]!.resolve({});
+    await second;
+  });
+});
+
+describe("rows are addressed by identity", () => {
+  // TRIPWIRE, and the reason it exists: the behavioural control above was red
+  // because a re-scan REBUILT the list and moved the row a save was already
+  // pointing at. Now that a re-scan only ever appends, positions do not move
+  // on their own, so no sequence this controller supports can catch a
+  // positional patch any more. The invariant is still the one that matters —
+  // an id survives a list that changes shape, an index does not — so it is
+  // asserted structurally rather than left to rot.
+  it("addresses a row by its id and never by where it sits in the list", () => {
+    const controller = source.slice(source.indexOf("export function createPasteController"));
+    expect(controller).toMatch(/const patch = \(id: string/);
+    expect(controller, "a position captured before an await is a different row after it").not.toMatch(
+      /findIndex|\(row, i\)|\(one, i\)|rows\[/,
+    );
+  });
+});
+
+describe("a re-scan adds to the list; it does not replace it", () => {
+  it("keeps the keys the person has not decided about yet", () => {
+    const { controller } = harness();
+    controller.scan(`FLUX_API_KEY=${FLUX}\nXAI_API_KEY=${XAI}`);
+    expect(controller.rows().map((r) => r.name)).toEqual(["FLUX_API_KEY", "XAI_API_KEY"]);
+
+    // A second paste. Nothing has been decided about the first two, so nothing
+    // about them may disappear — an undecided key that vanishes is a key the
+    // person can no longer save and was never told about.
+    controller.scan(`COMPOSIO_API_KEY=${COMPOSIO}`);
+    expect(controller.rows().map((r) => r.name)).toEqual([
+      "FLUX_API_KEY",
+      "XAI_API_KEY",
+      "COMPOSIO_API_KEY",
+    ]);
+    expect(statusOf(controller, "FLUX_API_KEY")).toBe("pending");
+    expect(statusOf(controller, "XAI_API_KEY")).toBe("pending");
+  });
+
+  it("does not bring back a key the person just said no to", () => {
+    const { controller } = harness();
+    const blob = `FLUX_API_KEY=${FLUX}`;
+    controller.scan(blob);
+    controller.dismiss(find(controller, "FLUX_API_KEY").id);
+
+    // The same blob again — a second paste of the same .env, or the same note
+    // pasted twice. "No" has to survive it.
+    controller.scan(blob);
+    expect(controller.rows(), "the dismissed key came back as a fresh row").toHaveLength(1);
+    expect(controller.rows()[0]!.status).toBe("dismissed");
+  });
+
+  // The same dedupe rule as the test above, from the other two directions, so
+  // these are companions rather than independent controls.
+  it("does not offer a key twice, whether it was saved or is still waiting", async () => {
+    const { controller, gates } = harness();
+    const blob = `FLUX_API_KEY=${FLUX}\nXAI_API_KEY=${XAI}`;
+    controller.scan(blob);
+    const writing = controller.accept(find(controller, "FLUX_API_KEY").id);
+    gates[0]!.resolve({});
+    await writing;
+    expect(statusOf(controller, "FLUX_API_KEY")).toBe("saved");
+
+    controller.scan(blob);
+    expect(controller.rows(), "one row per key, however often it is pasted").toHaveLength(2);
+    expect(statusOf(controller, "FLUX_API_KEY"), "a saved key is not offered again").toBe("saved");
+    expect(statusOf(controller, "XAI_API_KEY"), "a waiting key is not duplicated").toBe("pending");
+  });
+});
+
+describe("the keys themselves never enter the render tree", () => {
+  it("hands React rows with no key in them, only the four characters it shows", () => {
+    const { controller, rendered } = harness();
+    controller.scan(`FLUX_API_KEY=${FLUX}\nXAI_API_KEY=${XAI}\nANTHROPIC_API_KEY=${ANTHROPIC}`);
+    expect(controller.rows()).toHaveLength(3);
+
+    // Rows are state, and state is props: whatever is in here is in React
+    // DevTools, in a prop-serialising snapshot, and in an error boundary's
+    // dump. The mask may be; the key may not.
+    for (const shape of [JSON.stringify(controller.rows()), JSON.stringify(rendered())]) {
+      for (const key of [FLUX, XAI, ANTHROPIC]) {
+        expect(shape, `full key in the row: ${key.slice(0, 10)}…`).not.toContain(key);
+        expect(shape, `key body in the row: ${key.slice(0, 10)}…`).not.toContain(
+          key.slice(0, key.length - 4),
+        );
+        expect(shape, `key middle in the row: ${key.slice(0, 10)}…`).not.toContain(key.slice(8, 32));
+      }
+      expect(shape, "the mask is what the row is for").toContain("••••FFFF");
+    }
   });
 });
