@@ -73,6 +73,17 @@ const devices: BrowserDeviceStore = {
     return session ? { device: DEVICE, session } : null;
   },
   closeSession: (value) => (value ? sessions.delete(value) : false),
+  renewSession: (value) => {
+    const session = value ? sessions.get(value) : undefined;
+    if (!session) return null;
+    // Rotate in place, exactly as the registry does: the old value stops
+    // working the moment the new one exists.
+    sessions.delete(value!);
+    const next = `murage_browser_renewed_${sessions.size}_${Math.random().toString(36).slice(2)}`;
+    const renewed = { expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
+    sessions.set(next, renewed);
+    return { value: next, session: renewed };
+  },
 };
 
 const identity: BoundIdentity = {

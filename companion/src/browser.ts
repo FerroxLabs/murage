@@ -67,6 +67,12 @@ export interface BrowserDeviceStore {
     value: string | undefined,
   ): { device: { id: string; name: string; cloudDesktopAccess: boolean }; session: { expiresAt: number } } | null;
   closeSession(value: string | undefined): boolean;
+  /** Rotate the credential of a live session, inside its existing device
+   * record. `null` for anything that is not a live session — the door turns
+   * that into a silent no-op, never a sign-out. */
+  renewSession(
+    value: string | undefined,
+  ): { value: string; session: { expiresAt: number } } | null;
 }
 
 export interface BrowserDoorOptions {
@@ -92,6 +98,11 @@ const HEADERS_TIMEOUT_MS = 30_000;
 /** A JSON response is buffered whole before it can be scrubbed. Far above any
  * real payload; it exists to have a ceiling at all. */
 const MAX_JSON_BODY_BYTES = 32 * 1024 * 1024;
+
+/** The shell is buffered whole so the renewal script can be injected into it.
+ * `dist/index.html` is 1.8 KB; this is a thousand times that, and exists so
+ * the buffer has a ceiling rather than as a limit anyone expects to meet. */
+const MAX_SHELL_BYTES = 2 * 1024 * 1024;
 
 /** Methods that do not change state, and therefore need not carry `Origin`. */
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
@@ -680,6 +691,107 @@ function signInPage(): string {
 `;
 }
 
+/** How often an open page rotates its own session credential.
+ *
+ * Twenty-four hours, and the number comes out of the idle window rather than
+ * out of the air. `SESSION_IDLE_MS` is fourteen days, so a renewal a day is
+ * one fourteenth of the window a session can sit unused before it dies. That
+ * ratio is the whole justification: THIRTEEN consecutive renewals can fail —
+ * offline, asleep, the harness restarting, the laptop in a bag — and the
+ * session is still nowhere near idle expiry. Renewal is therefore never the
+ * thing keeping somebody signed in; it is the thing keeping the credential
+ * fresh and the cap moving, and it is free to fail silently as often as it
+ * likes. A tighter interval would buy nothing and would put a request on the
+ * wire every few minutes for a session measured in months.
+ *
+ * It is also well inside the window for the case the timer actually exists
+ * for: a tab or an installed PWA left open for weeks, which never re-runs the
+ * on-load renewal and would otherwise drift toward the absolute cap without
+ * ever rotating.
+ *
+ * Exported so the test can assert the served script carries this number
+ * rather than a hard-coded copy of it. */
+export const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/** The smallest gap between two renewals, whatever asks for one.
+ *
+ * `visibilitychange` fires on every app switch and every screen unlock. A
+ * phone in a pocket can produce dozens in a minute, and each one would
+ * otherwise rotate the credential — which is not dangerous but is a write to
+ * devices.json per unlock. */
+const RENEW_MIN_GAP_MS = 60_000;
+
+/** The client half of silent renewal, served inline into the app shell.
+ *
+ * Wayland and AionUI both built the endpoint and never called it, which is
+ * how an advertised thirty-day cookie turns out to be a twenty-four-hour one.
+ * This function is the half they left out. It runs on load, on a timer, and
+ * when a backgrounded tab comes back — because `setInterval` in a frozen
+ * mobile tab is not a schedule, it is a hope.
+ *
+ * Failure is a no-op on purpose, in both directions. A rejected fetch is
+ * swallowed; a 204 from the door means "nothing was renewed" and the page is
+ * not told, because there is nothing it could usefully do about it and the
+ * one thing it must never do is sign somebody out that the server has not.
+ *
+ * NOTE FOR ANYONE EDITING THE STRING BELOW: it is a TEMPLATE LITERAL. A
+ * backtick ends it and a backslash is consumed as an escape before JavaScript
+ * ever sees it — that is how a word-boundary escape in `enterPage` once
+ * became a literal backspace, killed the whole script with a syntax error,
+ * and left a page that simply sat there. No backticks, no backslashes, no
+ * regular expressions. `companion/test/browser-renew.test.ts` extracts this
+ * string and parses it, so a mistake here is a red test rather than a blank
+ * page on somebody's phone. */
+export function renewalScript(): string {
+  return `(function () {
+  if (typeof fetch !== "function") return;
+  var every = ${RENEW_INTERVAL_MS};
+  var gap = ${RENEW_MIN_GAP_MS};
+  var last = 0;
+  var renew = function () {
+    var now = Date.now();
+    if (last && now - last < gap) return;
+    last = now;
+    try {
+      fetch("/session/renew", { method: "POST", credentials: "same-origin" }).then(
+        function () {},
+        function () {}
+      );
+    } catch (e) {
+      // Fail closed and silent: the session we have is still the session we
+      // had, and saying so on screen would only alarm somebody who is fine.
+    }
+  };
+  renew();
+  setInterval(renew, every);
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") renew();
+    });
+  }
+})();`;
+}
+
+/** Put the renewal script into the shell document.
+ *
+ * Before `</body>` when there is one, appended when there is not — an SPA
+ * shell that lost its closing tag is still a document a browser will run a
+ * trailing script in, and refusing to inject would silently give back the
+ * ninety-day product this change exists to replace.
+ *
+ * No nonce, and that is checked rather than assumed: neither this door nor
+ * the harness sends a Content-Security-Policy on the shell, and `dist/
+ * index.html` carries no CSP meta — it already runs an inline script of its
+ * own to stamp the colour scheme before first paint. The day a policy lands,
+ * this is the second script that needs a nonce and the first one will have
+ * shown the way. */
+export function injectRenewal(html: string): string {
+  const tag = `<script>${renewalScript()}</script>`;
+  const close = html.lastIndexOf("</body>");
+  if (close < 0) return html + tag;
+  return html.slice(0, close) + tag + html.slice(close);
+}
+
 /**
  * The browser-facing handler.
  *
@@ -714,6 +826,38 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       });
       res.end(html);
       return;
+    }
+
+    // ── silent renewal ───────────────────────────────────────────────────
+    //
+    // Terminated here, above the allowlist, for the same reason `/session`
+    // is: it is a sidecar-owned route and nothing upstream ever sees it.
+    //
+    // POST, so the origin gate's rule 4 applies — a write must carry an
+    // `Origin`, and it must be ours. That is the CSRF story for this route,
+    // and it is the same one every other write at this door gets. A GET would
+    // have been a credential rotation any cross-site `<img>` could trigger.
+    //
+    // The failure answer is 204 with no body and no `Set-Cookie`: nothing
+    // happened, nothing to say. Not 401 — a 401 here would invite a client to
+    // conclude it had been signed out, which is precisely the outcome renewal
+    // exists to avoid and which no client should ever infer from a
+    // best-effort background call.
+    if (path === "/session/renew") {
+      if (method !== "POST") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
+      // Nothing in the body is read. Drain it so the socket can be reused
+      // rather than left half-consumed.
+      req.resume();
+      const cookie = readCookie(req.headers.cookie, cookieName(identity.scheme));
+      const renewed = options.devices.renewSession(cookie);
+      if (!renewed) {
+        res.writeHead(204, BASE_HEADERS);
+        res.end();
+        return;
+      }
+      const maxAge = Math.floor((renewed.session.expiresAt - Date.now()) / 1000);
+      res.setHeader("set-cookie", sessionCookie(renewed.value, identity, maxAge));
+      return sendJson(res, 200, { ok: true, expiresAt: renewed.session.expiresAt });
     }
 
     if (path === "/session") {
@@ -969,9 +1113,59 @@ function relayStatic(
   const cache = path.startsWith("/assets/")
     ? "private, max-age=31536000, immutable"
     : "private, no-store";
+
+  // The shell is the one response this door rewrites, and this is the line
+  // that makes renewal actually happen rather than merely exist. Every other
+  // static file goes through untouched.
+  if (expected.startsWith("text/html")) return relayShell(harness, res, expected, cache);
+
   res.writeHead(200, { ...BASE_HEADERS, "cache-control": cache, "content-type": expected });
   harness.on("error", () => res.destroy());
   harness.pipe(res);
+}
+
+/** The shell document, with the renewal script injected.
+ *
+ * Buffered rather than piped, because injecting into a stream means finding
+ * `</body>` across a chunk boundary and that is a parser nobody should own.
+ * The real document is under two kilobytes.
+ *
+ * The ceiling is a guard, not a path. Above it the bytes are relayed
+ * unmodified and chunked — a page that loads without renewal is a working
+ * app that has to be re-paired in ninety days, which is today's behaviour;
+ * a 502 would be a blank screen. Choosing the degraded-but-working side is
+ * the same call the rest of this file makes about a failed renewal. */
+function relayShell(harness: IncomingMessage, res: ServerResponse, expected: string, cache: string): void {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let overflowed = false;
+  harness.on("data", (chunk: Buffer) => {
+    if (overflowed) return;
+    size += chunk.length;
+    if (size > MAX_SHELL_BYTES) {
+      overflowed = true;
+      // No content-length: the rest of this body is still arriving.
+      res.writeHead(200, { ...BASE_HEADERS, "cache-control": cache, "content-type": expected });
+      for (const buffered of chunks) res.write(buffered);
+      chunks.length = 0;
+      res.write(chunk);
+      harness.pipe(res);
+      return;
+    }
+    chunks.push(chunk);
+  });
+  harness.on("error", () => res.destroy());
+  harness.on("end", () => {
+    if (overflowed) return;
+    const html = injectRenewal(Buffer.concat(chunks).toString("utf8"));
+    res.writeHead(200, {
+      ...BASE_HEADERS,
+      "cache-control": cache,
+      "content-type": expected,
+      "content-length": Buffer.byteLength(html),
+    });
+    res.end(html);
+  });
 }
 
 /** Relay one SSE stream, registered against its device.
