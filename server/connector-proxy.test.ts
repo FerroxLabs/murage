@@ -200,4 +200,58 @@ describe("connector MCP bridge", () => {
       error: { code: -32000, message: "connected apps are unavailable" },
     });
   });
+
+  // The three ways this bridge used to fail in silence. Each was found by
+  // driving the real proxy against a stub upstream, not by reading it.
+
+  it("carries the upstream's own words, not just its status number", async () => {
+    // Every distinct failure collapsed to "connector service returned HTTP
+    // 429". The broker writes a real sentence with a code and a reset time,
+    // and all of it was discarded — which is why a dead connector could not
+    // be diagnosed from inside the app.
+    const harness = await listen((_request, response) => {
+      response.writeHead(429, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        error: "This install has hit today's connected-app request limit. It resets at 00:00 UTC.",
+        code: "daily_call_ceiling",
+        used: 251,
+      }));
+    });
+    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" })}\n`);
+    const reply = await nextJson(lines);
+    expect(JSON.stringify(reply)).toContain("daily_call_ceiling");
+    expect(JSON.stringify(reply)).toContain("resets at 00:00 UTC");
+  });
+
+  it("answers an unreadable upstream instead of hanging forever", async () => {
+    // A 200 with an empty body parsed to null, and null was never written to
+    // stdout at all. An MCP client waits on an unanswered id indefinitely,
+    // and inside an agent turn a hung tool call looks exactly like the model
+    // thinking.
+    const harness = await listen((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("");
+    });
+    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/list" })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply.id).toBe(11);
+    expect(JSON.stringify(reply)).toMatch(/unreadable/i);
+  });
+
+  it("refuses to answer one request with another request's frame", async () => {
+    // `?? frames.at(-1)` forwarded a stranger: a frame carrying a different
+    // jsonrpc id was handed back as the answer, so the client never resolved
+    // the id it asked about.
+    const harness = await listen((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`data: ${JSON.stringify({ jsonrpc: "2.0", id: 999, result: { tools: [] } })}\n\n`);
+    });
+    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 12, method: "tools/list" })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply.id, "answered id 12 with id 999's frame").toBe(12);
+    expect(JSON.stringify(reply)).toMatch(/unreadable/i);
+  });
 });
