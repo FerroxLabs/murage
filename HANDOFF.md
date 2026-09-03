@@ -1,5 +1,150 @@
 # Murage — session handoff
 
+> Read this, then §QUEUE. Below `--- HISTORY ---` is record, not a to-do list.
+
+## THE PROTOCOL — Sean set this, follow it exactly
+
+1. **Research it properly.** Verify every claim against the code first. This
+   repo has now produced ~20 cases where measurement contradicted a written
+   plan, including several written the same day.
+2. **Cross-audit the plan** before building. 3. **Execute.**
+4. **Cross-audit the result, ONCE.** 5. **Fix only Critical and High.**
+
+**Swarm it.** Parallel agents, strictly disjoint files. Agents NEVER run a git
+command that writes; the orchestrator commits by explicit path.
+
+## HOW TO BRIEF AN AGENT — this is what made the session work
+
+- **Tell them to contradict you, and mean it.** Seven lanes corrected the
+  orchestrator and every one was right. Working phrasing: *"tell me plainly if
+  any premise I have handed you does not survive contact with the code."*
+- **`git show HEAD:<file>`, never the file on disk**, when checking whether code
+  "already exists". An auditor read a live lane's UNCOMMITTED work and reported
+  it as pre-existing; that error was relayed to a lane as a correction.
+- **Controls that share a production rule are NOT independent.** Run them one at
+  a time. Applying two masks both and yields a false green.
+- **Expect one green control per lane.** Seven turned up. Each was a test that
+  had never failed and never could. A green control means the test is wrong.
+- **Ask for a POSITIVE control too**: prove the rig notices the opposite case,
+  so a green means a guard working rather than a harness observing nothing.
+- **Never run two full server suites at once** — spurious boot failures that
+  read as real bugs.
+- **A suite result older than the last commit is worthless.** Two lanes reported
+  failures already fixed by a commit landing mid-run.
+- **Do not let an agent fabricate to satisfy a brief.** One was asked for a
+  toast reading "7 of 9 skills"; the denominator does not exist in the response.
+  It counted what failed and added a test forbidding `of <N>`.
+- **API 500/529 kills agents mid-flight.** Work survives because agents never
+  git-write. Resume with SendMessage; state persists on disk. Verify with
+  typecheck + targeted suite before trusting it, then finish the control pass
+  yourself if it keeps dying.
+
+## STATE — 24 commits, pushed, tree clean
+
+Everything below is committed, negative-controlled and green. Full list in
+`git log`. Highlights: conversational intake replacing the quiz; the matcher
+architecture fix (whole catalogue tiered, bm25 demoted to tie-break, so the
+right profile is no longer eliminated before the gate); device-door 0.0.0.0
+exposure closed; `/api/pair` DoS closed; nine uninstallable skills that ranked
+#1 in live search; skill index 8.1s -> 2.2s; a base64 DoS 330ms -> 0.84ms;
+installer actually starts the sidecar; Fuigo 1.0.2; the whole Flux surface.
+
+## QUEUE — in the order I would do it
+
+### 1. FUIGO AS THE DEFAULT ENGINE — biggest gap, and it is not close
+Murage downloads, checksums, decompresses and ships a **165MB binary that
+nothing spawns**. `resolveFuigoCli` (server/env-path.ts:390) has **zero
+callers**. No driver, no catalog entry, no way to select it. Bumping to 1.0.2
+made the bundled binary correct, not reachable. A fresh user with no CLIs and a
+Flux key still has nothing to run, which is the entire zero-terminal pitch.
+
+**VERIFIED THIS SESSION, act on it:** Fuigo is at
+`/Volumes/Mando/WaylandBots/Fuigo/fuigo`. It is a Rust fork of Grok Build,
+declares `agent-client-protocol` in Cargo.toml, and ships ACP filesystem
+adapters (`crates/codegen/fuigo-workspace/src/file_system/acp_fs.rs`). **So it
+speaks ACP and goes through `server/drivers/acp/`.**
+
+**Start here:** `server/drivers/acp/grok.ts` already exists and Fuigo is a Grok
+Build fork, so it is the closest analog by construction. Read it beside
+`qwen.ts` (the simplest ACP driver, 9.4K) for the minimum shape: `DRIVER_KIND`,
+the `command` block, a catalog, and `applyFluxSurface(DRIVER_KIND, env, model,
+fluxKey())`. Resolve the binary through `resolveFuigoCli`, which already
+prefers a user's own install over the bundled copy and fails loudly naming both
+paths checked. Then add it to `FLUX_SURFACE`/`FLUX_CAPABILITY` in
+flux-routing.ts, and make `defaultSelection()` (server/index.ts:768) prefer it
+on a fresh install.
+
+### 2. IMAGE TOOL — specced, unblocked, waiting on their roll
+`docs/plans/flux-image-tool.md` is current and revised against flux-router's
+reply. Build when `/v1/models` rolls with `capability`/`display_name`/
+`list_price_microcents`/`entitlement`; then drop the static seed and the
+unverified-price labelling.
+**Traps already paid for:** `flux-image-gpt2-high` and `-xl` are WIRED, PRICED
+AND WITHHELD (164.7s measured vs a ~100s edge cap; they would 524 for every
+caller). `together-flux` is RETIRED and answers 400. Default is
+`flux-image-nano-banana-2` -> `gemini-3.1-flash-image`, live today, $0.0806.
+`entitlement` fails OPEN, so order and warn on it, never hard-disable.
+
+### 3. PHONE DICTATION — half built, and it fixes a real complaint
+Sean cannot use voice on his phone: dictation is a native macOS helper
+(`electron/resources/Murage Speech.app`, Apple NSSpeechRecognition, permission
+at electron/main.mjs:1949). A phone browser cannot reach it.
+`server/voice/flux-voice.ts` (`transcribe()`) is BUILT and tested. Missing: a
+route beside the TTS routes at server/index.ts:9762, and the recorder UI.
+**Two facts already paid for:** record `audio/ogg;codecs=opus`, NOT the
+MediaRecorder webm default, because Flux has no Matroska parser and webm falls
+to the slow accuracy arm. And `getUserMedia` needs a secure context, which
+`tailscale serve --https=443` already provides. Capture pattern exists at
+`src/components/SkillRecorderPage.tsx:208`. It is batch push-to-talk, not
+streaming; Flux rejects `stream: true`.
+
+### 4. THE FERRET — the last matcher defect
+"ferret keeps escaping the hutch" -> customer-success-org on the word `keeps`;
+"gutters need doing before winter" -> validate-before-build on `before`, a word
+taken from a profile's own NAME. The gate fires on one whole-word hit against a
+bag including 25 skill manifests of prose.
+**Do not retry a threshold.** Four axes were measured and good and garbage
+overlap on all of them: smart-trader/`trading` and customer-success-org/`keeps`
+both score exactly one hit, which is why removing the short-circuit broke
+trading. The long-term answer is curated `matches:` terms per profile.
+
+### 5. COMPOSIO BEHIND FLUX — cheap, but check the terms first
+`activeBroker()` (server/composio.ts:195) is already the single choke point and
+already resolves a URL + token, with a user's own key winning. So pointing
+`MURAGE_COMPOSIO_BROKER_URL` at Flux is config, not a rebuild. Flux already has
+the entitlement, pricing and metering machinery.
+**Do NOT reimplement Composio inside Flux** — OAuth lifecycle across 250+ apps
+is a product with a maintenance treadmill, not a routing layer.
+**Blocking, non-technical: read Composio's ToS on proxying/reselling.** Then the
+OAuth callback flow, which is stateful and will not survive a naive proxy.
+
+### 6. PASTE-AND-EXTRACT KEYS — not started
+Paste a blob, extract each key, confirm individually, never echo a secret.
+Note: you CANNOT harvest a key from a native subscription (`~/.claude.json`
+holds hashes only), so this only ever finds real keys.
+
+## THE FLUX RELATIONSHIP — it works, keep it working
+`docs/plans/HANDOFF-TO-FLUX-ROUTER.md` and their reply at
+`~/dev/flux-router-evidence/REPLY-TO-MURAGE-2026-09-03.md`. Citing file:line
+made three of our four items resolvable without debate. They corrected us twice
+and were right both times. Do the same back.
+**In flight on their side:** gpt-image-2 rolling, Request 1 built not rolled,
+streaming dispatcher built, route wiring left.
+
+## RUNNING THE APP — this cost an hour
+Dev does NOT fork the harness. Three processes:
+  `npx vite` (5199) · `node scripts/dev-server.mjs` (8799) · `npx electron .`
+The app says so on screen when the harness is missing. `--experimental-strip-types`
+does NOT hot-reload, so a server change needs the harness restarted, and a
+harness older than your commits will make a fixed feature look broken. Check its
+start time against `git log` before debugging anything.
+
+--- HISTORY ---
+
+## SESSION 2026-09-03 (earlier head) — superseded
+
+# Murage — session handoff
+
 > **Read this section, then §OPEN. Everything below `--- HISTORY ---` is the
 > record of earlier sessions and is not a to-do list.**
 
@@ -129,7 +274,6 @@ Everything below shipped this session, each with negative controls.
 - **Paid tier: after Monday.** Ship what exists as it is.
 - Everything in the prior sessions' decision list below still stands.
 
---- HISTORY ---
 
 ## SESSION 2026-09-03 (earlier) — superseded by the section above
 
