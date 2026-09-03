@@ -59,9 +59,23 @@ export function resolveDesktopSurface(
   answer: SurfaceAnswer | undefined,
   bridge: unknown,
 ): boolean | undefined {
+  // The bridge is checked FIRST, and it wins.
+  //
+  // It used to be checked only when the fetched answer had not arrived, which
+  // reads as harmless and is not: `/api/config` can answer "remote" to the
+  // real desktop. It did. The harness began requiring a per-launch secret to
+  // prove the desktop, and a renderer served as a production bundle by a
+  // harness it did not fork has no way to hold that secret — so Sean's own
+  // desktop asked "am I the desktop?", was told no, and hid Connections,
+  // Engines, Phone and Local VM from the machine that owns them.
+  //
+  // Ordering is the whole fix. The bridge is a TRUE POSITIVE that cannot be
+  // manufactured through the door — the door serves HTTP to a browser, and an
+  // HTTP response cannot install a preload script — so where it disagrees with
+  // the fetch, the bridge is right and the fetch is a plumbing failure. The
+  // asymmetry stays: absence still proves nothing, because the desktop dev
+  // server has no bridge either.
+  if (bridge) return true;
   if (answer !== undefined) return answer === "desktop";
-  // Not asked yet. The bridge is the only thing that can still say "desktop"
-  // truthfully; nothing may say "remote" from here, because "no bridge" is
-  // also what the desktop dev server looks like.
-  return bridge ? true : undefined;
+  return undefined;
 }
