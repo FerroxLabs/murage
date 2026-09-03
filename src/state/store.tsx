@@ -20,6 +20,12 @@ import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
+// The `.js` specifier, and not a bare one, for the reason spelled out in
+// src/lib/onboarding-intake.ts: `shared/intake-turn.ts` is reached by BOTH
+// toolchains, the server under NodeNext (which requires an extension) and
+// this renderer under `bundler` (which forbids a bare `.ts` one). Type-only,
+// so nothing survives to runtime either way.
+import type { IntakeCardData } from "../../shared/intake-turn.js";
 import {
   reviewedSkillSha256,
   skillRequestBehavior,
@@ -56,6 +62,12 @@ export interface OptionCardData {
   routineRequest?: RoutineRequestCardData;
   /** Staged learned-skill change; applied only after the user confirms this card. */
   skillRequest?: SkillRequestCardData;
+  /** Present when this card is a turn of the new-bot setup conversation.
+   * Mirrors `server/store.ts`'s field exactly by importing the one shared
+   * definition — a second local declaration of a wire shape is how the two
+   * ends of this seam drift. Read defensively through `readIntakeCard`
+   * (src/lib/onboarding-intake.ts); never both set with `requestId`. */
+  intake?: IntakeCardData;
 }
 
 export interface ConnectorCardData {
@@ -271,6 +283,21 @@ export interface Bot {
   /** Whether this bot may use the workspace's connected apps. Unset means
    * allowed for existing bots; imported bots start with this disabled. */
   composio?: boolean;
+  /** Set on bots that arrived from a bot package. `wireBot` (server/index.ts)
+   * spreads the whole record, so this reaches the renderer on GET /api/bots,
+   * on the import response and on every SSE bot frame; without it declared
+   * here no UI can render which connected services an assistant needs.
+   *
+   * Hand-declared rather than imported: the definition it mirrors is
+   * `InstalledPackageMetadata` in server/store.ts, which is a Node module
+   * (fs, DATA_DIR) this renderer must not reach into. It belongs in
+   * `shared/` alongside the other wire shapes — see the report note. */
+  installedPackage?: {
+    id: string;
+    name: string;
+    release: string;
+    requiredApps: Array<{ slug: string; label: string; reason: string; optional?: boolean }>;
+  };
   /** Whether this bot gets the app's built-in browser (Browser tab). On unless switched off. */
   browser?: boolean;
   /** Named browser profile id (config.browserProfiles); absent/null = the
@@ -1745,6 +1772,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }),
             }).catch(showError);
           } else {
+            // Intake turns are answered BY INDEX on their own route
+            // (IntakeTurn -> intakeChipAction), never by posting the chip's
+            // label as chat. Two other places already keep an intake card
+            // away from here — ChatView branches to IntakeTurn before
+            // OptionCard renders, and `isOnboardingCard` narrows it out —
+            // so this is the third. It is worth the two lines because the
+            // failure it prevents is silent: a chip label posted to
+            // /messages settles the conversation as "general" and discards
+            // the answer, with no error on either side of the seam.
+            if (card?.intake) break;
             persistCard(action.botId, action.messageId, { answered: action.answer, dismissed: true });
             api(`/api/bots/${action.botId}/messages`, {
               method: "POST",

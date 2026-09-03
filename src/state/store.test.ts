@@ -1,17 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
 import {
+  StoreProvider,
   configStatusFromFrame,
   initialState,
   loadSnapshotBoundary,
   openNotificationTarget,
   reducer,
+  useStore,
   visibleNotificationThread,
   type Bot,
   type Group,
   type Message,
+  type OptionCardData,
 } from "./store";
+import { intakeChips, type IntakeCardData } from "../../shared/intake-turn.js";
 import { openLiveEvents, type LiveEventSourceLike, type LiveEventsPlatform } from "../lib/live-events";
+import { openerAt } from "../../shared/bot-openers.js";
 
 type SnapshotFrame =
   | { kind: "hello"; resumed: boolean; cursor: string }
@@ -434,7 +442,11 @@ describe("cross-client bot creation", () => {
       id: "greeting",
       role: "bot",
       kind: "text",
-      text: "Hey — I'm Scout. Nice to meet you.",
+      // A real opener rather than hand-written copy: the greeting is one of
+      // the thirty in shared/bot-openers.ts, and that module's own test bans
+      // em and en dashes. Pinning the fixture to it keeps this SSE frame
+      // honest and keeps a stray dash from creeping back in here.
+      text: openerAt(0, "Scout"),
       at: 2,
     } satisfies Message;
     const greeted = reducer(added, {
@@ -884,5 +896,168 @@ describe("messageAdded leaf adoption", () => {
     });
     expect(next.bots[0].activeLeafId).toBe("m2"); // the user's message stays the tail
     expect(next.bots[0].messages.map((m) => m.id)).toContain("shot");
+  });
+});
+
+// ── the renderer's half of three wire contracts ────────────────────────
+//
+// The first two are TYPE contracts, so the test that enforces them is
+// `tsc -p tsconfig.json --noEmit` and not this runner: each fixture is
+// written with `satisfies`, so deleting the field it pins fails the build
+// with a real error. The runtime assertions below them are the weaker half
+// — they check the value survives the reducer, which it would even with the
+// type missing. Both halves are stated plainly rather than dressed up.
+const bare = (id: string, name: string) => ({
+  id,
+  threadId: `t-${id}`,
+  name,
+  title: "",
+  description: "",
+  notifications: true,
+  color: "green",
+  unread: false,
+  modelSelection: { instanceId: "x", model: "y" },
+  messages: [],
+}) as unknown as Bot;
+
+describe("wire shapes the renderer must declare", () => {
+  it("carries an intake payload on an options card", () => {
+    // Imported from shared/intake-turn.ts, never re-declared here: the
+    // server's OptionCardData holds the same field from the same file, and
+    // two declarations of one wire shape is how the two ends drift.
+    const intake = {
+      step: "confirm",
+      outcome: "profile",
+      candidate: { slug: "day-trader", name: "Day Trader", skillNames: ["Charting"] },
+      asked: 2,
+    } satisfies IntakeCardData;
+    const card = {
+      title: "Set this up?",
+      subtitle: "Day Trader",
+      // Never matched by label: chips are answered BY INDEX (see the CHIP
+      // ORDER note in shared/intake-turn.ts). Built by the shared builder so
+      // the wrong order is not expressible.
+      options: [...intakeChips("confirm-profile")],
+      intake,
+    } satisfies OptionCardData;
+
+    const bot = {
+      ...bare("echo", "Echo"),
+      messages: [{ id: "q", role: "bot", kind: "options", card, at: 1 }],
+    } as unknown as Bot;
+    const next = reducer({ ...initialState, bots: [bot] }, {
+      type: "answerCard",
+      botId: "echo",
+      messageId: "q",
+      answer: card.options[0]!,
+    });
+    // the payload is not dropped on the way through the reducer
+    expect(next.bots[0]?.messages[0]?.card?.intake).toEqual(intake);
+  });
+
+  it("carries the installed package's required apps on a bot", () => {
+    const installedPackage = {
+      id: "trading-desk",
+      name: "Trading Desk",
+      release: "1.2.0",
+      requiredApps: [
+        { slug: "gmail", label: "Gmail", reason: "sends the morning note" },
+        { slug: "slack", label: "Slack", reason: "posts alerts", optional: true },
+      ],
+    };
+    // `satisfies Bot` is the assertion: without `installedPackage` declared on
+    // the client Bot this line is an excess-property error, and no UI could
+    // render which connected services the assistant needs.
+    const packaged = { ...bare("packaged", "Packaged"), messages: [], installedPackage } satisfies Bot;
+
+    const next = reducer(initialState, { type: "botPatched", bot: packaged } as never);
+    expect(next.bots[0]?.installedPackage?.requiredApps.map((app) => app.slug)).toEqual(["gmail", "slack"]);
+  });
+});
+
+// The one behavioral test of the three. It drives the REAL wrapped dispatch
+// out of StoreProvider — rendered with `renderToStaticMarkup` because the
+// renderer suite has no DOM — and watches `fetch`. Under Fizz the reducer's
+// own dispatch is a no-op after the render returns, which is why the bot is
+// seeded onto `initialState` (restored in `finally`) rather than dispatched
+// in: `stateRef.current` is the object `useReducer` was initialised with.
+describe("answerCard routing", () => {
+  const seatedIntakeBot = {
+    ...bare("echo", "Echo"),
+    messages: [
+      {
+        id: "q",
+        role: "bot",
+        kind: "options",
+        at: 1,
+        card: {
+          title: "Set this up?",
+          subtitle: "Day Trader",
+          options: [...intakeChips("confirm-profile")],
+          intake: { step: "confirm", outcome: "profile", asked: 2 } satisfies IntakeCardData,
+        },
+      },
+    ],
+  } as unknown as Bot;
+
+  const plainQuizBot = {
+    ...bare("echo", "Echo"),
+    messages: [
+      {
+        id: "q",
+        role: "bot",
+        kind: "options",
+        at: 1,
+        card: { title: "What for?", subtitle: "", options: ["Work & projects", "Personal"] },
+      },
+    ],
+  } as unknown as Bot;
+
+  /** Render the provider, seed `bot` as the reducer's initial state, press
+   *  `answer` on message `q`, and return every URL fetch was asked for. */
+  async function urlsFetchedFor(bot: Bot, answer: string): Promise<string[]> {
+    const urls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      urls.push(typeof input === "string" ? input : String(input));
+      return Promise.resolve(
+        new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+      );
+    }) as typeof fetch;
+    initialState.bots.push(bot);
+    try {
+      let dispatch: ((action: never) => void) | null = null;
+      const Probe = () => {
+        dispatch = useStore().dispatch as unknown as (action: never) => void;
+        return null;
+      };
+      renderToStaticMarkup(createElement(StoreProvider, null, createElement(Probe)));
+      expect(dispatch).toBeTypeOf("function");
+      dispatch!({ type: "answerCard", botId: bot.id, messageId: "q", answer } as never);
+      // `api()` awaits the desktop-surface probe (itself a fetch and a
+      // `.json()`) before it sends anything, so the POST this test is
+      // looking for lands several macrotasks later. Drained the same number
+      // of times for both cases, so neither is given a different budget.
+      for (let tick = 0; tick < 20; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      initialState.bots.length = 0;
+      globalThis.fetch = realFetch;
+    }
+    return urls;
+  }
+
+  // The control that makes the test above meaningful: the harness CAN see the
+  // chat route, so a green intake case is a guard working and not a rig that
+  // never observes anything.
+  it("posts an ordinary quiz answer to the chat route", async () => {
+    const urls = await urlsFetchedFor(plainQuizBot, "Work & projects");
+    expect(urls).toContain("/api/bots/echo/messages");
+  });
+
+  it("never posts an intake chip's label to the chat route", async () => {
+    const urls = await urlsFetchedFor(seatedIntakeBot, intakeChips("confirm-profile")[0]);
+    expect(urls).not.toContain("/api/bots/echo/messages");
+    // and it does not settle the card behind the intake's back either
+    expect(urls).not.toContain("/api/bots/echo/cards/q");
   });
 });
