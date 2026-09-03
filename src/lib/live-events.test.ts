@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -424,5 +426,39 @@ describe("live event liveness predicates", () => {
     expect(isLivePing({ kind: "message" })).toBe(false);
     expect(shouldReconnectLiveEvents(0, LIVE_EVENTS_STALE_MS - 1)).toBe(false);
     expect(shouldReconnectLiveEvents(0, LIVE_EVENTS_STALE_MS)).toBe(true);
+  });
+});
+
+describe("the secret's production path", () => {
+  // The configuration this closes: a production bundle served by a harness
+  // that Electron did not fork. The bridge is present, so the renderer knows
+  // it is the desktop; the bridge carries no secret, because the secret only
+  // travels over the fork's private channel; so the harness answered "remote"
+  // to everything the renderer asked. Enabled buttons that 404 on press.
+  it("asks the harness even in a production bundle", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./live-events.ts", import.meta.url)),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+    // The guard that used to compile this fetch out of the shipped bundle.
+    expect(source).not.toContain("import.meta.env.DEV");
+    expect(source).toContain('export const DEV_SECRET_PATH = "/api/desktop-secret"');
+  });
+
+  it("is still refused at the browser door, which is the lock that matters", async () => {
+    // Dropping a compile-time guard is only safe because the route is gated
+    // structurally and the door's allowlist never carried the path. Assert
+    // the second one here rather than trusting the comment.
+    const { denyReason } = await import("../../companion/src/routes");
+    for (const method of ["GET", "POST"]) {
+      expect(
+        denyReason({ method, path: "/api/desktop-secret", authenticated: true, surface: "browser" })?.status,
+        `the door lets ${method} /api/desktop-secret through`,
+      ).toBe(404);
+      expect(
+        denyReason({ method, path: "/api/desktop-secret", authenticated: true, surface: "device" })?.status,
+        `the phone lets ${method} /api/desktop-secret through`,
+      ).toBe(404);
+    }
   });
 });
