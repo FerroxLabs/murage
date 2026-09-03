@@ -198,7 +198,11 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   // until then because a miss is a 404 here rather than the SPA fallback.
   { method: "GET", path: /^\/manifest\.webmanifest$/ },
   { method: "GET", path: /^\/sw\.js$/ },
-  { method: "GET", path: /^\/icons\/murage-(?:180|192|512)\.png$/ },
+  // Enumerated, not `murage-[\w-]+`: this list's whole property is that
+  // adding a path is a decision someone made. `maskable-` is a third
+  // family, not a size — Android crops an adaptive icon and only these
+  // two are drawn full-bleed for it. `180` is the one iOS reads.
+  { method: "GET", path: /^\/icons\/murage-(?:180|192|512|maskable-192|maskable-512)\.png$/ },
   // SPA deep links. Enumerated, not `/.*`: these are the only client routes
   // the app has, and a wildcard would quietly re-open the SPA fallback for
   // every path the list above refuses.

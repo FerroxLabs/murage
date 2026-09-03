@@ -7,6 +7,42 @@
          is dead code. No maximum-scale: that would disable pinch zoom. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" type="image/svg+xml" href="/app-icon.svg" />
+    <!-- The .ico is the fallback for clients that request /favicon.ico by name
+         without reading this document. app-icon.svg stays first because it is
+         what a modern tab uses; it is a 1024px PNG in an SVG wrapper, so it is
+         also 900KB, which is why the small sizes live in the .ico instead. -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+
+    <!-- Add to Home Screen. HTTPS was the hard half of this and `tailscale
+         serve` closed it; without the manifest below, install was still
+         refused and the tile had no icon — which is what "no logo" meant.
+         Every file it names is on the browser door's static allowlist
+         (companion/src/routes.ts), so a phone reaching Murage over the tailnet
+         can fetch them; a path that is not on that list 404s rather than
+         falling through to the SPA. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- iOS reads none of the manifest's icons for the home screen. It reads
+         this, applies its OWN corner radius, and composites on an opaque
+         ground — so this one file is full-bleed and pre-flattened rather than
+         the rounded, transparent mark the manifest points at. -->
+    <link rel="apple-touch-icon" href="/icons/murage-180.png" />
+    <meta name="apple-mobile-web-app-title" content="Murage" />
+    <!-- The unprefixed name is the standard; iOS still only honours the
+         apple- one, so both are here until that stops being true. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- black-translucent puts the page under the status bar, which is only
+         correct because viewport-fit=cover is set above AND styles.css pads
+         with env(safe-area-inset-*). Change one of those three and the header
+         renders under the clock. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- The manifest carries one theme colour and the app has two palettes.
+         These track the real one, so browser chrome matches the app instead of
+         the manifest's splash-screen default. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f7f7" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a0a" />
     <script>
       // Stamped before the stylesheet resolves, so the first painted frame is
       // already the right palette. index.html paints before src/main.tsx is

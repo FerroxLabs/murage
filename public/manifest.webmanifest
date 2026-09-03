@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "Murage",
+  "short_name": "Murage",
+  "description": "Your agents, on every device you own.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    { "src": "/icons/murage-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/murage-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/murage-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/murage-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

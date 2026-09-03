@@ -10,7 +10,16 @@ import {
   setupWouldOverwrite,
   useSkillCount,
 } from "@/lib/bot-skill-count";
-import { knownSurface, surface, type SurfaceAnswer } from "@/lib/surface";
+// The shared hook, not a local copy. This file had its own four-line version
+// that asked the harness and stopped there — no check of the Electron preload
+// bridge. On the desktop, served as a production bundle by a harness that did
+// not fork Electron, `/api/config` answers "remote", so the card decided the
+// desktop was a phone and rendered "Add this on your desktop" as dead text
+// next to a button the person at the keyboard could not press.
+//
+// That is the same defect d2c984fd fixed in `resolveDesktopSurface`, surviving
+// in a second copy the fix could not reach. One answer, one place.
+import { useDesktopSurface } from "@/lib/use-surface";
 import {
   addSkillsLabel,
   applyProfileDetail,
@@ -77,27 +86,6 @@ const QUIET =
  *  server error into the card. "Installs are a keyboard decision" is only a
  *  policy if the UI says so before the press, not after. */
 const DESKTOP_ONLY = "Add this on your desktop";
-
-/** Desktop, phone, or not-yet-known.
- *
- *  `undefined` is a real answer and is rendered NEUTRALLY: the buttons are
- *  present but inert. Rendering the desktop affordance for one frame on a
- *  phone is the bug this seam exists to prevent, and rendering the phone
- *  message on a desktop would be a lie that outlives the fetch. */
-function useDesktopSurface(): boolean | undefined {
-  const [answer, setAnswer] = useState<SurfaceAnswer | undefined>(() => knownSurface());
-  useEffect(() => {
-    if (answer !== undefined) return;
-    let live = true;
-    void surface().then((next) => {
-      if (live) setAnswer(next);
-    });
-    return () => {
-      live = false;
-    };
-  }, [answer]);
-  return answer === undefined ? undefined : answer === "desktop";
-}
 
 /** THE QUESTION ITSELF, with no opinion about where it is allowed to appear.
  *
