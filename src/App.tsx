@@ -25,6 +25,7 @@ import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { trackVisualViewport } from "@/lib/visual-viewport";
 import { setLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { InstallPrompt } from "./components/InstallPrompt";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -328,6 +329,10 @@ export default function App() {
       <StoreProvider>
         <Shell />
         {desktop === true && gated && <Onboarding onDone={() => setGated(false)} />}
+        {/* A CONFIRMED remote surface only. The desktop app is already an app;
+            `undefined` renders nothing, the same neutral answer the welcome
+            gate above takes. */}
+        {desktop === false && <InstallPrompt />}
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );
