@@ -15,7 +15,9 @@ import {
   WEB_UI_TITLE,
   companionAccountActionError,
   companionBridge,
+  companionDoorUrl,
   doorAddressLabel,
+  typedCodeInstruction,
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
   type CompanionRemoteAccess,
@@ -258,13 +260,16 @@ function StepStrip({ steps }: { steps: WebUiStep[] }) {
 function QrLogin({ c }: { c: PhoneSetupController }) {
   const link = c.browserLink;
   const pairing = c.state?.pairing ?? null;
+  // The code was already printed here, with nowhere to type it. A person at a
+  // second laptop needs the address as much as the digits.
+  const typed = typedCodeInstruction(companionDoorUrl(c.browserDoor));
   return (
     <div>
-      <div className="text-[13px] text-ink">Scan to sign in</div>
+      <div className="text-[13px] text-ink">Scan it, or type the code</div>
       <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
         Scan this with the camera on the device you want to use — a phone, a tablet, another laptop —
-        and Murage opens signed in, in its browser. That device has to be signed into the same tailnet
-        as this computer. Nothing to install.
+        and Murage opens signed in, in its browser. A computer with no camera types the code instead.
+        Either way that device has to be signed into the same tailnet as this one. Nothing to install.
       </p>
       {link && pairing ? (
         <div className="mt-3 flex flex-col items-start gap-3 sm:flex-row">
@@ -276,6 +281,11 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
               Or type this code
             </div>
             <div className="mt-1 font-mono text-[22px] tracking-[0.25em] text-ink">{pairing.code}</div>
+            <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
+              {typed.lead}
+              {typed.url && <span className="font-mono text-ink">{typed.url}</span>}
+              {typed.tail}
+            </div>
             <div className="mt-3 flex items-center gap-1.5">
               <span className="text-[11.5px] text-ink-secondary">
                 Expires at {clockTime(pairing.expiresAt)}
@@ -350,9 +360,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
 
   const remote = c.remoteAccess;
   const doorAddress = doorAddressLabel(c.browserDoor);
-  const doorUrl = c.browserDoor
-    ? `${c.browserDoor.scheme}://${doorAddress}`
-    : null;
+  const doorUrl = companionDoorUrl(c.browserDoor);
   const steps = webUiSteps({ state, remoteAccess: remote, doorAddress });
   const pairedCount = state.devices.length;
   const accountActionError = companionAccountActionError(c.account, c.accountError);

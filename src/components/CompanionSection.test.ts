@@ -6,7 +6,6 @@ import type { CompanionAccountState } from "../types/muragebox";
 import {
   companionStateRefreshIsCurrent,
   mutateCompanionBridgeState,
-  phonePairingManualCodeMode,
   type CompanionState,
 } from "./PhoneSetupFlow";
 import {
@@ -142,14 +141,38 @@ describe("companion status refresh", () => {
   });
 });
 
-describe("manual pairing code placement", () => {
-  it("shows the code directly when no QR link can be built", () => {
-    expect(phonePairingManualCodeMode(true, null)).toBe("direct");
+// `phonePairingManualCodeMode` used to live here, deciding whether the digits
+// sat next to the QR or inside "Having trouble?" depending on whether a QR
+// link could be built. That decision is gone: the code is always on screen,
+// because the person it is for is the one who cannot scan.
+describe("the sign-in panel names both ways in", () => {
+  const qrLogin = () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)),
+      "utf8",
+    );
+    const start = source.indexOf("function QrLogin");
+    return source.slice(start, source.indexOf("export function CompanionSection", start));
+  };
+
+  it("tells the person where to type the code, not just what it is", () => {
+    // The code was printed here with no address anywhere near it, which is
+    // the exact dead end a second laptop hits: six digits and nowhere to put
+    // them. `typedCodeInstruction` carries the door's own URL.
+    const panel = qrLogin();
+    expect(panel).toContain("companionDoorUrl");
+    // Rendered, not merely computed: a helper called and never printed is the
+    // same blank space beside the digits that sent Sean looking for a camera
+    // on a laptop.
+    expect(panel, "the address must reach the screen").toContain("{typed.url}");
+    expect(panel).toContain("{typed.lead}");
   });
 
-  it("keeps the code in troubleshooting details when a QR is available", () => {
-    expect(phonePairingManualCodeMode(true, "murage://pair?token=example")).toBe("details");
-    expect(phonePairingManualCodeMode(false, null)).toBe("hidden");
+  it("does not sell the camera as the only route", () => {
+    const panel = qrLogin();
+    // The heading is the first thing read, and "Scan to sign in" is advice a
+    // laptop cannot take.
+    expect(panel).toMatch(/Scan it, or type the code/);
   });
 });
 
