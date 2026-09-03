@@ -429,6 +429,40 @@ export function inspectShareConfig(doc, port) {
 }
 
 /**
+ * The origin a browser actually types, for a proxy that fronts `port`.
+ *
+ * Derived from the daemon's own share document, never from the tailnet name
+ * plus an assumption: the scheme decides the sidecar's session cookie
+ * (`__Host-` and `Secure` are only legal on https) and the address it prints
+ * in its QR, and both are worse than useless if they describe a listener that
+ * is not there.
+ *
+ * Deliberately narrow. Only a `<host>:443` entry yields an origin, because
+ * that is the listener `buildServeArgs` creates by default and the only one
+ * whose spelling here has been read back from a real daemon. Any other
+ * listener returns `null` — the door then runs with no advertised front,
+ * which costs a nicer QR and breaks nothing.
+ *
+ * @param {any} doc parsed `tailscale serve status --json`
+ * @param {number} port the loopback port the proxy should be fronting
+ * @returns {string | null}
+ */
+export function serveOrigin(doc, port) {
+  if (!doc || typeof doc !== "object") return null;
+  const want = `http://127.0.0.1:${Number(port)}`;
+  for (const [hostPort, entry] of Object.entries(doc.Web ?? {})) {
+    const handlers = Object.values(entry?.Handlers ?? {});
+    if (!handlers.some((h) => h?.Proxy === want || String(h?.Proxy ?? "").startsWith(`${want}/`))) continue;
+    const match = /^(.+):(\d+)$/.exec(hostPort);
+    if (!match || match[2] !== "443") continue;
+    const host = match[1].trim().toLowerCase();
+    if (!host) continue;
+    return `https://${host}`;
+  }
+  return null;
+}
+
+/**
  * Full enrolment. Returns a verdict; the caller decides what to print. This
  * function never prints "secured" — it has no opinion, only evidence.
  *

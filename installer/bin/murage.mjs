@@ -27,6 +27,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BindRefused, resolveBindFromEnv } from "../lib/bind.mjs";
+import { companionEnv, resolveCompanionEntry, spawnCompanion, waitForDoor } from "../lib/companion.mjs";
 import { envFilePermissions, readEnvFile, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
 import { stageUnit } from "../lib/systemd.mjs";
@@ -181,7 +182,7 @@ async function ensureTailscaleInstalled() {
  *   not the harness. See `DOOR_PORT`.
  * @returns {Promise<{ ok: boolean, served?: boolean, verdict?: any, share?: any, reasons?: string[] }>}
  */
-async function enrolTailnet(port = DOOR_PORT) {
+async function enrolTailnet(port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
   const already = ts.verdictFromStatus(ts.status());
   if (already.ok) {
     ok(`already on the tailnet as ${c.b(already.dnsName ?? already.ips[0])}`);
@@ -189,7 +190,14 @@ async function enrolTailnet(port = DOOR_PORT) {
       // `served` has to be answered even on this path, or an already-enrolled
       // box with a working proxy would be reported as having none.
       const share = ts.shareStatus({ port });
-      return { ok: true, verdict: already, reenrolled: false, served: share.configured };
+      if (share.configured && !share.publicExposure) {
+        return { ok: true, verdict: already, reenrolled: false, served: true };
+      }
+      // Enrolled, but with no proxy in front of the door — which is exactly the
+      // state a box is left in by an earlier setup that could not find a door
+      // to front. Re-running setup has to be able to FIX that without demanding
+      // a fresh auth key for a node that is already on the tailnet.
+      return { ...(await frontTheDoor(port, harnessPort)), verdict: already, reenrolled: false };
     }
   }
 
@@ -216,27 +224,167 @@ async function enrolTailnet(port = DOOR_PORT) {
   // The proxy is only offered if the thing it would front is actually there.
   // A `tailscale serve` pointed at a dead port is a tailnet URL that answers
   // 502 on a box that just told you it was secured.
-  const door = await ts.doorAnswers({ port });
+  //
+  // "Actually there" used to mean "somebody else started it", which on a fresh
+  // cloud box is nobody: nothing in this installer had ever started the
+  // sidecar, so the probe below always failed, serve was always declined, and
+  // setup finished by telling the operator to start a process it gave them no
+  // way to start. Now the door is brought UP for the length of setup, proven,
+  // and stopped again — `murage start` is what runs it for real.
+  const brought = await bringDoorUp(port, harnessPort);
   let https = false;
-  if (door.answered) {
+  if (brought.up) {
     https = await confirm("  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)", true);
-  } else {
-    warn(`the browser door is not running: ${c.dim(door.url)} did not answer.`);
-    console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
-    console.log(c.dim("  listening on, and the tailnet URL would answer 502. Start the companion's"));
-    console.log(c.dim(`  browser door on ${port} (or set MURAGE_BROWSER_PORT) and re-run \`murage setup\`.`));
   }
 
-  const result = await ts.enroll({
-    authKey,
-    port,
-    tags,
-    hostname,
-    https,
-    serve: door.answered,
-    log: (m) => console.log(c.dim(`  ${m}`)),
+  try {
+    const result = await ts.enroll({
+      authKey,
+      port,
+      tags,
+      hostname,
+      https,
+      serve: brought.up,
+      log: (m) => console.log(c.dim(`  ${m}`)),
+    });
+    return { ...result, doorStarted: brought.started };
+  } finally {
+    // Whatever happened above, this process does not leave a sidecar behind.
+    // An orphan holding 8813 is a port collision the operator meets later, as
+    // `murage start` failing for a reason that has nothing to do with them.
+    await brought.stop();
+  }
+}
+
+/**
+ * Get the browser door answering, starting the sidecar if nothing else has.
+ *
+ * Returns a `stop()` in every branch, including the ones that started nothing,
+ * so the caller never has to ask whether there is something to clean up.
+ * @param {number} port the door port
+ * @param {number} harnessPort the harness the sidecar proxies to
+ * @returns {Promise<{ up: boolean, started: boolean, stop: () => Promise<void> }>}
+ */
+async function bringDoorUp(port, harnessPort) {
+  const noop = async () => {};
+  const already = await ts.doorAnswers({ port });
+  if (already.answered) {
+    ok(`the browser door is already answering on ${c.dim(`127.0.0.1:${port}`)}`);
+    return { up: true, started: false, stop: noop };
+  }
+
+  const resolved = resolveCompanionEntry(INSTALLER_ROOT, REPO_ROOT);
+  if (!resolved) {
+    warn(`the browser door is not running: ${c.dim(already.url)} did not answer.`);
+    console.log(c.dim("  The companion sidecar is not in this install either, so setup cannot start"));
+    console.log(c.dim("  it: no payload/companion/index.js, no dist-companion/index.js (pnpm"));
+    console.log(c.dim("  build:companion), no companion/src/index.ts."));
+    console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
+    console.log(c.dim("  listening on, and the tailnet URL would answer 502."));
+    return { up: false, started: false, stop: noop };
+  }
+
+  console.log(c.dim(`\n  Starting the companion sidecar to bring the browser door up…`));
+  console.log(c.dim(`  ${resolved.entry} (${resolved.kind})`));
+  announceDeviceDoorClosed();
+  const sidecar = spawnCompanion({
+    resolved,
+    env: companionEnv({ base: process.env, harnessPort, doorPort: port, dataDir: DATA_DIR }),
+    stdio: "ignore",
   });
-  return result;
+  const stop = async () => {
+    await sidecar.stop();
+    console.log(c.dim(`  stopped the setup-time sidecar; \`murage start\` runs it for real.`));
+  };
+  const waited = await waitForDoor({ probe: () => ts.doorAnswers({ port }), alive: sidecar.alive });
+  if (!waited.up) {
+    warn(`the browser door is not running: ${c.dim(already.url)} did not answer — ${waited.reason}`);
+    console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
+    console.log(c.dim("  listening on, and the tailnet URL would answer 502."));
+    await stop();
+    return { up: false, started: true, stop: noop };
+  }
+  ok(`the browser door answered on ${c.dim(`127.0.0.1:${port}`)}`);
+  return { up: true, started: true, stop };
+}
+
+/**
+ * Put the tailnet proxy in front of the door on a node that is ALREADY
+ * enrolled. Everything `enroll()` does after `up`, and nothing it does before.
+ *
+ * @param {number} port the door port
+ * @param {number} harnessPort
+ * @returns {Promise<{ ok: boolean, served: boolean, reasons: string[], share?: any }>}
+ */
+async function frontTheDoor(port, harnessPort) {
+  const brought = await bringDoorUp(port, harnessPort);
+  try {
+    if (!brought.up) return { ok: true, served: false, reasons: [] };
+    const https = await confirm(
+      "  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)",
+      true
+    );
+    console.log(c.dim("  putting the tailnet-only proxy in front of the loopback listener…"));
+    const serve = ts.runTailscale(ts.buildServeArgs({ port, https }));
+    if (!serve.ok) {
+      return {
+        ok: false,
+        served: false,
+        reasons: [`tailscale serve failed (exit ${serve.status}): ${(serve.stderr || serve.stdout).trim().slice(0, 500)}`],
+      };
+    }
+    const share = ts.shareStatus({ port });
+    if (share.publicExposure) {
+      return {
+        ok: false,
+        served: false,
+        share,
+        reasons: [
+          "this node has a share published to the PUBLIC INTERNET. That is the exact " +
+            "thing this deployment exists to avoid. Run `tailscale serve reset` and re-run setup.",
+        ],
+      };
+    }
+    if (!share.configured) {
+      return {
+        ok: false,
+        served: false,
+        share,
+        reasons: [`the daemon does not report a proxy to http://127.0.0.1:${port} after configuring one`],
+      };
+    }
+    return { ok: true, served: true, reasons: [], share };
+  } finally {
+    await brought.stop();
+  }
+}
+
+/**
+ * Say what starting the sidecar does NOT open, before it is started.
+ *
+ * The sidecar's DEVICE door (8810) defaults to `0.0.0.0`, which is right on a
+ * desktop — a phone pairs against the LAN address — and is the public internet
+ * minus a security-group rule on a rented box. This installer used to be able
+ * only to name that and hand the operator a `ufw deny`, because there was no
+ * way to switch it off from out here.
+ *
+ * There is now: `companion/src/index.ts` reads `MURAGE_COMPANION_BIND`, and
+ * `companionEnv` sets it to `off` for every sidecar this installer starts —
+ * both the short-lived one in `setup` and the long-running one in `start`. So
+ * the device socket is never bound at all, and there is no firewall rule to
+ * get right. The control page (8811) and the browser door (8813) are unaffected
+ * and still come up, which is the whole arrangement this deployment uses.
+ *
+ * Stated out loud rather than left silent: the operator was told to firewall
+ * this port by earlier versions of this installer, and "we closed it for you"
+ * is the sentence that stops them acting on stale advice.
+ */
+function announceDeviceDoorClosed() {
+  ok(`the device door on ${c.b("8810")} is ${c.b("not opened")} — the sidecar is started with MURAGE_COMPANION_BIND=off.`);
+  console.log(c.dim("  Nothing binds that port, so there is no 0.0.0.0 listener to firewall. The"));
+  console.log(c.dim("  control page (8811) and the browser door (8813) still come up as normal."));
+  console.log(c.dim("  Pairing a phone over the LAN is a desktop feature; a cloud box has no LAN"));
+  console.log(c.dim("  to pair over, and reaching this box goes through the tailnet instead."));
 }
 
 // ── commands ──────────────────────────────────────────────────────────────
@@ -262,7 +410,7 @@ async function setup() {
   const installed = await ensureTailscaleInstalled();
   let enrolment = { ok: false, reasons: ["tailscale not installed"] };
   // NOTE the port: the proxy fronts the browser door, not `port` (the harness).
-  if (installed) enrolment = await enrolTailnet(DOOR_PORT);
+  if (installed) enrolment = await enrolTailnet(DOOR_PORT, port);
 
   // 2. Provider key.
   console.log("");
@@ -317,7 +465,7 @@ async function setup() {
     if (enrolment.served) {
       console.log(`      tailnet proxy: ${c.dim(`127.0.0.1:${DOOR_PORT}`)} (browser door)`);
     } else {
-      console.log(`      tailnet proxy: ${c.r("none")} — the browser door on ${DOOR_PORT} is not running`);
+      console.log(`      tailnet proxy: ${c.r("none")} — the browser door on ${DOOR_PORT} could not be brought up`);
     }
     console.log(`      public share : ${c.g("none")}`);
     if (url && enrolment.served) {
@@ -335,7 +483,7 @@ async function setup() {
   await maybeSystemd(enrolment.ok);
 
   console.log(c.b("\n  Next:"));
-  console.log(`    ${c.o("murage start")}     ${c.dim("# run it (foreground)")}`);
+  console.log(`    ${c.o("murage start")}     ${c.dim("# run the harness AND the browser door (foreground)")}`);
   console.log(`    ${c.o("murage status")}    ${c.dim("# verify the posture at any time")}\n`);
   closeRl();
 
@@ -443,11 +591,115 @@ function start() {
   console.log(c.dim(`  binding ${plan.address}:${plan.port} (${plan.mode})`));
   const args = found.entry.endsWith(".ts") ? ["--experimental-strip-types", found.entry] : [found.entry];
   const child = spawn(process.execPath, args, { env, stdio: "inherit" });
-  child.on("exit", (code) => process.exit(code ?? 0));
-  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));
+
+  // The sidecar, alongside the harness — because on this deployment it is not
+  // an optional extra. `tailscale serve` fronts the browser door and nothing
+  // else; a box running only the harness answers 502 on the one URL setup told
+  // the operator to open.
+  let stopping = false;
+  const sidecar = startSidecar(env, plan.port, {
+    // A door that dies and never comes back is the defect this whole change
+    // exists to remove, re-created quietly at 3am. Take the process down with
+    // it so `Restart=always` brings BOTH back, rather than leaving a harness
+    // running behind a proxy that now answers 502.
+    onExit: (code) => {
+      if (stopping) return;
+      stopping = true;
+      fail(`the companion sidecar exited (code ${code}) — taking the harness down so both restart together.`);
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* already gone */
+      }
+      process.exit(1);
+    },
+  });
+
+  const shutdown = (sig) => {
+    if (stopping) return;
+    stopping = true;
+    try {
+      child.kill(sig);
+    } catch {
+      /* already gone */
+    }
+    sidecar?.stop();
+  };
+  child.on("exit", (code) => {
+    // The harness leaving is the end of the deployment; do not leave a door
+    // standing in front of nothing.
+    sidecar?.stop();
+    process.exit(code ?? 0);
+  });
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => shutdown(sig));
 }
 
-function status() {
+/**
+ * Start the companion sidecar next to the harness, or say precisely why not.
+ *
+ * Never fatal. A box with a harness and no door is degraded — reachable over
+ * an SSH tunnel, not over the tailnet — and that is worth saying out loud and
+ * continuing, rather than refusing to run the app at all.
+ *
+ * @param {Record<string,string|undefined>} env the harness's resolved env
+ * @param {number} harnessPort
+ * @returns {{ stop: () => void } | null}
+ */
+export function startSidecar(env, harnessPort, deps = {}) {
+  const resolve_ = deps.resolveCompanionEntry ?? resolveCompanionEntry;
+  const spawn_ = deps.spawnCompanion ?? spawnCompanion;
+  const front = deps.doorFront ?? doorFront;
+  const log = deps.log ?? console.log;
+  const say = deps.warn ?? warn;
+
+  const resolved = resolve_(INSTALLER_ROOT, REPO_ROOT);
+  if (!resolved) {
+    say("the companion sidecar is not in this install — starting the harness alone.");
+    log(c.dim("  Nothing will be listening on the browser door, so the tailnet URL will 502."));
+    log(c.dim("  Build it (pnpm build:companion) or set MURAGE_COMPANION_ENTRY, then restart."));
+    return null;
+  }
+  const door = ts.doorPort(env);
+  const origin = front(door);
+  log(c.dim(`  companion sidecar ${resolved.entry} (${resolved.kind})`));
+  log(c.dim(`  browser door 127.0.0.1:${door}${origin ? ` behind ${origin}` : " (no verified proxy in front)"}`));
+  // The long-running sidecar, so this is the one whose posture matters most.
+  // Said here as well as in `setup` because a box that was set up months ago
+  // is restarted far more often than it is set up.
+  log(c.dim("  device door  not opened (MURAGE_COMPANION_BIND=off)"));
+  const sidecar = spawn_({
+    resolved,
+    env: companionEnv({
+      base: env,
+      harnessPort,
+      doorPort: door,
+      dataDir: env.MURAGE_DATA_DIR || DATA_DIR,
+      publicOrigin: origin,
+    }),
+    stdio: "inherit",
+  });
+  if (deps.onExit) sidecar.child.on("exit", (code) => deps.onExit(code));
+  return { stop: () => void sidecar.stop(), child: sidecar.child };
+}
+
+/**
+ * The origin the tailnet proxy actually answers on for this door, read back
+ * from the daemon — or null.
+ *
+ * Read, not composed. Handing the sidecar an origin nobody verified is how a
+ * door ends up issuing `Secure` cookies for an https listener that was never
+ * configured, and printing a QR for an address that does not resolve.
+ * @param {number} door
+ * @returns {string | null}
+ */
+function doorFront(door) {
+  if (!ts.isInstalled()) return null;
+  const share = ts.shareStatus({ port: door });
+  if (!share.configured || share.publicExposure) return null;
+  return ts.serveOrigin(share.raw, door);
+}
+
+async function status() {
   heading("Murage — deployment status");
 
   const perms = envFilePermissions(ENV_FILE);
@@ -466,6 +718,8 @@ function status() {
   const addrs = [...tailnetAddresses()];
   if (addrs.length) ok(`this host holds tailnet addresses: ${c.dim(addrs.join(", "))}`);
   else warn("this host holds no tailnet address (network-trust probe)");
+
+  await reportDoor();
 
   if (!ts.isInstalled()) {
     fail("tailscale is not installed — there is no secure path into this box");
@@ -496,6 +750,24 @@ function status() {
     warn(`no tailnet proxy in front of the browser door 127.0.0.1:${DOOR_PORT} — re-run \`murage setup\``);
   }
   console.log("");
+}
+
+/**
+ * The half of the posture the old `status` never looked at: is the thing the
+ * proxy points at actually running, and is it even present on this box?
+ *
+ * Both questions, not one. "Not running" is a `murage start` away; "not
+ * installed" is a build step away, and a status that conflated them sent
+ * people to restart a process that does not exist here.
+ */
+async function reportDoor() {
+  const resolved = resolveCompanionEntry(INSTALLER_ROOT, REPO_ROOT);
+  if (resolved) ok(`companion sidecar present: ${c.dim(resolved.entry)} (${resolved.kind})`);
+  else fail("the companion sidecar is NOT in this install — nothing can serve the browser door");
+
+  const door = await ts.doorAnswers({ port: DOOR_PORT });
+  if (door.answered) ok(`browser door answering on ${c.dim(`127.0.0.1:${DOOR_PORT}`)} (HTTP ${door.status})`);
+  else fail(`browser door NOT answering on ${c.dim(`127.0.0.1:${DOOR_PORT}`)} — ${door.reason}`);
 }
 
 function resetpass() {
@@ -533,7 +805,7 @@ function help() {
   ${c.o("murage")} — deploy Murage's headless server, reachable only over your tailnet
 
   ${c.b("murage setup")}       Join the tailnet, wire a provider key, front the app, verify it
-  ${c.b("murage start")}       Run the server (refuses any non-loopback, non-tailnet bind)
+  ${c.b("murage start")}       Run the server and the companion sidecar (refuses any non-loopback, non-tailnet bind)
   ${c.b("murage status")}      Verify the posture: bind policy, enrolment, no public share
   ${c.b("murage resetpass")}   Break-glass admin reset, if this build has one
   ${c.b("murage help")}        This message
@@ -551,7 +823,7 @@ if (isMain) {
   const cmd = (process.argv[2] || "help").toLowerCase();
   if (cmd === "setup") await setup();
   else if (cmd === "start") start();
-  else if (cmd === "status") status();
+  else if (cmd === "status") await status();
   else if (cmd === "resetpass" || cmd === "reset-password") resetpass();
   else if (cmd === "version" || cmd === "--version" || cmd === "-v") {
     try {
