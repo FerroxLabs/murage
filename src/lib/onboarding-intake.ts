@@ -15,6 +15,15 @@
 // curated set exists — so loose skills are the fallback, never the first
 // answer.
 
+// The curated terms are imported through their `.ts` specifier because this
+// module is loaded BY RAW NODE from server/index.ts (`node server/index.ts`,
+// type stripping), and node resolves the path it is given — a `.js` specifier
+// for a file that only exists as `.ts` is ERR_MODULE_NOT_FOUND, and an
+// extensionless one is too. The type-only import at the bottom of this file
+// can use `.js` precisely because it never survives to runtime. This one is a
+// value import and does.
+import { intakeGenericFilteredWords, intakeMatchTerms } from "../../shared/intake-matches.ts";
+
 /** The shape the catalogue gives us for one assistant profile. Structural, so
  *  both `SearchableTeam` (server) and the wire type (renderer) satisfy it. */
 export interface IntakeCatalogEntry {
@@ -71,16 +80,47 @@ export function intakeTopicTokens(raw: string): string[] {
 
 /** Everything a profile says about itself, as a set of words.
  *
- *  The catalogue entry alone is not enough. Smart Trader's summary never says
- *  "trading" — it says "read their own charts" — so a gate that read only the
- *  entry would reject the single best match in the library for "help me with
- *  trading". What a profile is FOR lives in the skills it ships, so those
- *  words count too; `extra` is where the caller passes them in. */
-export function intakeVocabulary(entry: IntakeCatalogEntry, extra: readonly string[] = []): Set<string> {
-  const text = [entry.name, entry.summary, entry.category, entry.outcome ?? "", entry.skills.join(" "), ...extra]
-    .join(" ")
-    .toLowerCase();
-  return new Set(text.split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+ *  CURATED TERMS DECIDE. `shared/intake-matches.ts` carries a reviewed list
+ *  per slug — the words that mean this profile — and when a slug has one it is
+ *  the WHOLE vocabulary. `extra` is ignored there, deliberately: it is exactly
+ *  what used to poison this set.
+ *
+ *  WHY. The old vocabulary was the catalogue entry plus every word of every
+ *  one of the profile's ~25 skill manifests, which measures 200-600 words of
+ *  ordinary English per profile — the manifests quote example user sentences
+ *  ("the forecast keeps missing"). One whole-word hit anywhere in that bag
+ *  confirmed a profile, so:
+ *
+ *    "ferret keeps escaping the hutch"  -> Customer Success Org, on `keeps`
+ *    "gutters need doing before winter" -> Validate Before Build, on `before`
+ *
+ *  and no threshold separates those from a real match, because `smart-trader`
+ *  on `trading` scores the same single whole-word hit. The reason the entry
+ *  alone was not enough is still true — Smart Trader's summary says "read
+ *  their own charts", never "trading" — and the curated list is where that
+ *  word is now written down on purpose rather than scavenged.
+ *
+ *  A SLUG WITH NO CURATED LIST still matches, on the entry plus `extra` with
+ *  the generic words taken out. That is the path a catalogue entry published
+ *  after this build was cut takes, and it is the only place `extra` is still
+ *  read. It is deliberately the weaker answer: it cannot say `keeps` or
+ *  `before` any more, but it can still say ordinary English this list has
+ *  never seen. Every slug in the shipped catalogue is curated, so on this
+ *  build the fallback is unreachable — `onboarding-intake.test.ts` pins that,
+ *  and pins the fallback's own behaviour so it cannot rot unnoticed.
+ *
+ *  (Its tests live in `src/lib/onboarding-intake.test.ts` rather than beside
+ *  the data, because vite.config.ts's `test.include` does not cover
+ *  `shared/**` — a suite in there is collected as zero tests and passes.) */
+export function intakeVocabulary(
+  entry: IntakeCatalogEntry,
+  extra: readonly string[] = [],
+): ReadonlySet<string> {
+  const curated = intakeMatchTerms(entry.slug);
+  if (curated) return curated;
+  return intakeGenericFilteredWords(
+    [entry.name, entry.summary, entry.category, entry.outcome ?? "", entry.skills.join(" "), ...extra].join(" "),
+  );
 }
 
 /** A topic word matches a profile word on the whole word, or on a prefix long
