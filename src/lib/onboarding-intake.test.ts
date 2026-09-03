@@ -29,6 +29,7 @@ import {
   intakeChipAction,
   intakeProfileMatches,
   intakeSkillMatches,
+  intakeVocabulary,
   INTAKE_LOOSE_SKILL_MAX,
   intakeQuery,
   intakeTopicTokens,
@@ -41,6 +42,7 @@ import {
   type IntakeCatalogEntry,
   type IntakeSkill,
 } from "./onboarding-intake";
+import { INTAKE_GENERIC_WORDS, INTAKE_MATCH_TERMS, intakeMatchTerms } from "../../shared/intake-matches";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const SKILL_LIBRARY = join(REPO, "skills-library");
@@ -145,7 +147,15 @@ describe("the relevance gate", () => {
 
   it("matches a plural against the singular in the profile's own words", () => {
     // "charts" must find "chart". Nothing stems further than that.
-    expect(intakeProfileMatches({ ...trader, summary: "reads a chart" }, ["charts"])).toBe(true);
+    //
+    // The slug is deliberately NOT a catalogue slug. `smart-trader` has a
+    // curated term list now, and that list contains the whole word `charts` —
+    // so running this against it would go green on a whole-word hit and stop
+    // exercising the prefix rule it is named after. An unknown slug takes the
+    // fallback path, which is where "the profile's own words" still means the
+    // summary.
+    expect(intakeProfileMatches({ ...trader, slug: "not-in-the-catalogue", summary: "reads a chart" }, ["charts"]))
+      .toBe(true);
   });
 
   it("rejects a profile that shares no topic word with the answer", () => {
@@ -330,6 +340,245 @@ describe("vague input, and the one sentence the card prints on itself", () => {
     // The same single hit, from a one-word answer, still counts — there is no
     // second token to corroborate with and `charts`→`chart` depends on it.
     expect(intakeProfileMatches(entry, ["readings"])).toBe(true);
+  });
+});
+
+// ── 2b. curated match terms ───────────────────────────────────────────
+//
+// The bug these exist for, in the two sentences that reproduced it:
+//
+//   "ferret keeps escaping the hutch"  -> Customer Success Org, on `keeps`
+//   "gutters need doing before winter" -> Validate Before Build, on `before`
+//
+// Both were ONE whole-word hit against the profile's old vocabulary — the
+// catalogue entry plus every word of every one of its ~25 skill manifests,
+// 200-600 words of ordinary English per profile. `keeps` came from a manifest
+// quoting a user ("the forecast keeps missing"); `before` came from that
+// profile's own NAME. No threshold separates those from a real match:
+// `smart-trader` on `trading` is also exactly one whole-word hit, which is why
+// four scoring axes were measured and all four overlapped.
+
+/** The setup conversation's own classifier, reproduced by behaviour the way
+ *  `suggest` above reproduces the route. `classifyIntakeCandidates` in
+ *  server/index.ts cannot be imported — index.ts boots a server on import —
+ *  so this restates it: EVERY entry is classified (bm25 never filters, only
+ *  orders within a tier), a profile that resolves no skill is not a candidate,
+ *  and each tier is capped. Diverging from the server would make this table
+ *  measure nothing, so `INTAKE_TIER_MAX` and the tier rule are pinned by the
+ *  source-contract test in this file. */
+async function classify(query: string): Promise<{ strong: string[]; weak: string[] }> {
+  const tokens = intakeTopicTokens(query);
+  if (tokens.length === 0) return { strong: [], weak: [] };
+  const { teams } = await fetchTeamCatalog();
+  const rank = new Map<string, number>();
+  searchCatalog(teams, query, 100).forEach((hit, index) => {
+    if (!rank.has(hit.slug)) rank.set(hit.slug, index);
+  });
+  const tiers: Record<"strong" | "weak", Array<{ order: number; slug: string }>> = { strong: [], weak: [] };
+  teams.forEach((entry, index) => {
+    const skills = resolveSkills(entry);
+    if (skills.length === 0) return;
+    const extra = skills.map(describeIntakeSkill);
+    const vocabulary = intakeVocabulary(entry, extra);
+    const strength = tokens.length >= 2 && tokens.some((token) => vocabulary.has(token))
+      ? "strong"
+      : intakeProfileMatches(entry, tokens, extra) ? "weak" : null;
+    if (!strength) return;
+    tiers[strength].push({ order: rank.get(entry.slug) ?? teams.length + index, slug: entry.slug });
+  });
+  const tier = (list: Array<{ order: number; slug: string }>) =>
+    list.sort((left, right) => left.order - right.order).slice(0, 3).map((ranked) => ranked.slug);
+  return { strong: tier(tiers.strong), weak: tier(tiers.weak) };
+}
+
+describe("the two sentences that reproduced the bug", () => {
+  it('"ferret keeps escaping the hutch" is not a business need, and gets no profile', async () => {
+    // BEFORE: strong = customer-success-org, dev-shop, founder-setup — all
+    // three on the single word `keeps`. Asking again is the right answer.
+    expect(intakeTopicTokens("ferret keeps escaping the hutch")).toEqual(["ferret", "keeps", "escaping", "hutch"]);
+    expect(await classify("ferret keeps escaping the hutch")).toEqual({ strong: [], weak: [] });
+  });
+
+  it('"gutters need doing before winter" does not match the profile whose NAME says "before"', async () => {
+    // BEFORE: strong = validate-before-build, quiet-money-position-auditor,
+    // advisor. The first of those matched on a word taken out of its own name.
+    expect(await classify("gutters need doing before winter")).toEqual({ strong: [], weak: [] });
+  });
+
+  it("still reaches Validate Before Build when the sentence is actually about validating", async () => {
+    // The fix must not make the profile unreachable — only unreachable BY
+    // ACCIDENT. This is the sentence it exists for, and `before` is in it.
+    const { strong } = await classify("validate my startup idea before I build it");
+    expect(strong[0]).toBe("validate-before-build");
+  });
+});
+
+describe("the queries a fix must not break", () => {
+  it('"trading" and "I want to trade options" still reach Smart Trader', async () => {
+    // The one every previous attempt broke. Smart Trader's catalogue entry
+    // never says "trading" — it says "read their own charts" — so the word is
+    // written into its curated list on purpose.
+    expect((await classify("I want to trade options")).strong).toEqual(["smart-trader"]);
+    // A ONE-WORD answer is thin by construction and buys a second question
+    // rather than a profile: `intakeProfileStrength` requires two topic words
+    // for "strong". "trading" therefore lands weak, and did before this change
+    // too — that is the tier working, not a regression.
+    expect(await classify("trading")).toEqual({ strong: [], weak: ["smart-trader"] });
+    expect((await classify("help me read my trading charts")).strong).toContain("smart-trader");
+  });
+
+  it('"chasing invoices" — the card\'s own example — still reaches the one invoice profile', async () => {
+    // `coin` never says "invoice" anywhere in its catalogue entry. The word
+    // lives only in finance-receivables' manifest prose, which is exactly the
+    // corpus this change stops reading — so it is written into coin's curated
+    // list by hand. Deleting it there turns this red.
+    expect((await classify("chasing invoices")).strong).toEqual(["coin"]);
+    expect((await classify("figure out my runway and burn rate")).strong).toEqual(["coin"]);
+  });
+
+  it("answers ordinary business sentences with the profile they are about", async () => {
+    const table: Array<[string, string]> = [
+      ["I need help with SEO for my website", "beacon"],
+      ["write a newsletter for my subscribers", "copy"],
+      ["our customers keep churning", "customer-success-org"],
+      ["cold outreach emails to prospects", "cold-pitch-bench"],
+      ["hire and onboard new staff", "slate"],
+      ["price my saas product", "forge"],
+      ["write a course curriculum for students", "spark"],
+      ["analyse my competitors", "research"],
+      ["legal contract review for a freelancer", "sentry"],
+      ["build a pitch deck for investors", "pitch-deck-creator"],
+      ["I keep procrastinating and cannot focus", "advisor"],
+      ["design a landing page that converts", "ignition"],
+    ];
+    for (const [query, expected] of table) {
+      const { strong } = await classify(query);
+      expect(strong[0], `${query} -> ${strong.join(",") || "nothing"}`).toBe(expected);
+    }
+  });
+
+  it("answers a sentence that is not a business need with nothing at all", async () => {
+    // Every one of these matched something STRONG before. The listed slug is
+    // what it matched, and the word it matched on.
+    const table: Array<[string, string]> = [
+      ["my knee hurts when I run", "was coin/mira/smith"],
+      ["what time is the football on tonight", "was quiet-money-time-coach, on `time`"],
+      ["the dog ate my homework", "was explainer"],
+      ["my car needs a new clutch", "was quiet-money-council/editorial-newsroom/writer"],
+      ["remind me to water the plants", "was cohort-ops-control-tower (weak)"],
+      ["I want to set up a podcast", "was founder-setup — no profile here ships podcast skills"],
+    ];
+    for (const [query, before] of table) {
+      const answer = await classify(query);
+      expect(answer, `${query} (${before}) -> ${JSON.stringify(answer)}`).toEqual({ strong: [], weak: [] });
+    }
+  });
+
+  it("is honest about the one ordinary word it still cannot disambiguate", async () => {
+    // "book" is the topic of six profiles and a verb in English, and this is
+    // the residual false positive in the measured table. It is left alone
+    // deliberately: removing `book` from those lists would break "I want to
+    // write a book", which is the sentence they exist for. The conversation
+    // shows the candidate and one press kills it, which is what that turn is
+    // for — a wrong guess costs a press, not a wrongly configured agent.
+    expect((await classify("book a table for four at eight")).strong[0]).toMatch(/^book-/);
+    expect((await classify("I want to write a book")).strong[0]).toMatch(/^book-/);
+  });
+});
+
+describe("the curated terms themselves", () => {
+  it("covers every profile in the shipped catalogue", async () => {
+    // The fallback below is a real code path with real behaviour, and it is
+    // strictly the weaker answer. If a catalogue entry is missing from the
+    // list this goes red BEFORE anyone ships the weaker answer by accident.
+    const { teams } = await fetchTeamCatalog();
+    const missing = teams.filter((team) => intakeMatchTerms(team.slug) === null).map((team) => team.slug);
+    expect(missing, `add these slugs to shared/intake-matches.ts: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("carries no empty list, and no term that the tokenizer could never produce", () => {
+    // `intakeTopicTokens` lowercases, splits on every non-letter/digit and
+    // drops anything three characters or shorter... no, two or shorter. A term
+    // that breaks any of those rules is a term no answer can ever hit, which
+    // is a silent hole rather than a failing test.
+    for (const [slug, terms] of Object.entries(INTAKE_MATCH_TERMS)) {
+      const words = terms.split(" ").filter(Boolean);
+      expect(words.length, slug).toBeGreaterThan(0);
+      for (const word of words) {
+        expect(word, `${slug}: ${word}`).toMatch(/^[a-z0-9]{3,}$/);
+        expect(intakeTopicTokens(word), `${slug}: ${word}`).toEqual([word]);
+      }
+    }
+  });
+
+  it("keeps the two words that caused the bug out of every list", () => {
+    // Not a style rule — these are the reproductions. `keeps` and `before` are
+    // in INTAKE_GENERIC_WORDS, and a hand addition is allowed to override that
+    // set (nine do), so nothing structural stops someone writing them back in.
+    expect(INTAKE_GENERIC_WORDS.has("keeps")).toBe(true);
+    expect(INTAKE_GENERIC_WORDS.has("before")).toBe(true);
+    for (const [slug, terms] of Object.entries(INTAKE_MATCH_TERMS)) {
+      expect(terms.split(" "), slug).not.toContain("keeps");
+      expect(terms.split(" "), slug).not.toContain("before");
+    }
+  });
+});
+
+describe("what happens to a profile with no curated terms", () => {
+  const uncurated: IntakeCatalogEntry = {
+    slug: "dog-walking-desk",
+    name: "Dog Walking Desk",
+    summary: "Books walks and keeps a schedule for a dog walking round.",
+    category: "Life",
+    skills: ["teams/dog-walking-desk/skills/route-planning/SKILL.md"],
+  };
+
+  it("still matches, on its own words", () => {
+    // A catalogue published after this build was cut can add profiles this
+    // file has never seen. Making them unmatchable would be a silent
+    // regression that only shows up as "the library got worse".
+    expect(intakeProfileMatches(uncurated, ["walking", "schedule"])).toBe(true);
+    expect(intakeProfileMatches(uncurated, ["invoices", "bookkeeping"])).toBe(false);
+  });
+
+  it("cannot be carried by a generic word, which is the whole point", () => {
+    // `keeps` IS in this entry's summary. Under the old vocabulary that was a
+    // whole-word hit and therefore a match. The fallback filters
+    // INTAKE_GENERIC_WORDS out, so it is not one.
+    expect(uncurated.summary.toLowerCase()).toContain("keeps");
+    expect(intakeProfileMatches(uncurated, ["ferret", "keeps", "escaping", "hutch"])).toBe(false);
+    expect(intakeVocabulary(uncurated).has("keeps")).toBe(false);
+    expect(intakeVocabulary(uncurated).has("walks")).toBe(true);
+  });
+
+  it("reads `extra` — the fallback is the only place skill manifests still count", () => {
+    expect(intakeProfileMatches(uncurated, ["leads"])).toBe(false);
+    expect(intakeProfileMatches(uncurated, ["leads"], ["lead tracking for kennels"])).toBe(true);
+  });
+});
+
+describe("precedence: a curated list is the WHOLE vocabulary", () => {
+  it("ignores the entry's own text once the slug is curated", () => {
+    // The load-bearing half of the rule. If curated terms only ADDED to the
+    // old bag, `keeps` would still be in it and the bug would still be live.
+    const disguised: IntakeCatalogEntry = {
+      slug: "smart-trader",
+      name: "Smart Trader",
+      summary: "aardvark husbandry and the tending of aardvarks",
+      category: "Markets",
+      skills: ["teams/smart-trader/skills/chart-analysis/SKILL.md"],
+    };
+    expect(intakeProfileMatches(disguised, ["aardvark", "husbandry"])).toBe(false);
+    expect(intakeProfileMatches(disguised, ["trading", "charts"])).toBe(true);
+  });
+
+  it("ignores `extra` once the slug is curated", () => {
+    // `extra` is the skill manifests, which is where `keeps` came from.
+    const trader: IntakeCatalogEntry = {
+      slug: "smart-trader", name: "Smart Trader", summary: "reads charts", category: "Markets", skills: ["x"],
+    };
+    expect(intakeProfileMatches(trader, ["forecast", "keeps"], ['the user says "the forecast keeps missing"']))
+      .toBe(false);
   });
 });
 
