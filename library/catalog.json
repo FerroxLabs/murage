@@ -748,7 +748,9 @@
       "manifest": "teams/beautiful-mermaid/beautiful-mermaid.emberteam.json",
       "readme": "teams/beautiful-mermaid/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/beautiful-mermaid/skills/diagram-architect/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -820,7 +822,9 @@
       "manifest": "teams/book-production/book-production.emberteam.json",
       "readme": "teams/book-production/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/book-production/skills/self-publishing-guide/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -1002,7 +1006,12 @@
       "manifest": "teams/excel-creator/excel-creator.emberteam.json",
       "readme": "teams/excel-creator/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/excel-creator/skills/excel-lookup-formulas/SKILL.md",
+        "teams/excel-creator/skills/pivot-table-builder/SKILL.md",
+        "teams/excel-creator/skills/conditional-formatting-rules/SKILL.md",
+        "teams/excel-creator/skills/data-validation-setup/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -1080,7 +1089,9 @@
       "manifest": "teams/human-3-coach/human-3-coach.emberteam.json",
       "readme": "teams/human-3-coach/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/human-3-coach/skills/life-coach/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -1306,7 +1317,11 @@
       "manifest": "teams/story-roleplay/story-roleplay.emberteam.json",
       "readme": "teams/story-roleplay/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/story-roleplay/skills/character-development/SKILL.md",
+        "teams/story-roleplay/skills/world-building/SKILL.md",
+        "teams/story-roleplay/skills/dialogue-writing/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
