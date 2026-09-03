@@ -36,6 +36,7 @@ import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { ReplyQuote } from "./ReplyQuote";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
+import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -807,6 +808,21 @@ export function Composer({
           >
             <Mic size={18} />
           </button>
+        )}
+        {/* The else-branch of the SAME flag the native mic is gated on, so no
+            surface can end up with two microphones or none. On macOS the
+            helper above is faster and streams partials; everywhere else — a
+            phone through the browser door, a Windows or Linux desktop — this
+            is the only microphone there is. */}
+        {!locked && !busy && !hasContent && !capabilities.dictation.available && (
+          <PushToTalk
+            facts={browserPushToTalkFacts({
+              nativeDictation: capabilities.dictation.available,
+              fluxConfigured: Boolean(state.config?.flux?.configured),
+            })}
+            onTranscript={(said) => editText(text.trim() ? `${text.trim()} ${said}` : said)}
+            onNote={setSpeechError}
+          />
         )}
         {hasContent && !locked && (
           <button
