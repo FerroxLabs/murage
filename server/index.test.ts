@@ -18,6 +18,7 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
+import { connectorSystemPrompt, requiredAppsSystemPrompt } from "./composio.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -405,6 +406,21 @@ describe("harness HTTP API", () => {
     expect(await statusWithHeaders({ host: `[::1]:${PORT}` })).toBe(200);
     expect(await statusWithHeaders({ origin: `http://[::1]:${PORT}` })).toBe(200);
   });
+
+  // The skill index is built lazily by whichever request needs it first, and
+  // all three of those requests are somebody looking at a screen (the library
+  // panel's browse and search, and the new-bot intake's suggest). After an
+  // install or an upgrade the fingerprint changes, so that first person used
+  // to pay for the whole build while the machine had been idle since boot.
+  it("warms the skill index at startup, before anyone asks for it", async () => {
+    // No test in this file touches /api/library, so the only thing that can
+    // have built this is the prewarm on the listen callback.
+    const indexFile = join(home, ".murage", "skill-index.db");
+    await expect.poll(() => existsSync(indexFile), { timeout: 25_000, interval: 250 }).toBe(true);
+    // and the harness was answering the whole time it was being built — the
+    // prewarm is fired after the port is open, never awaited on the way to it
+    expect((await api("GET", "/api/health")).status).toBe(200);
+  }, 30_000);
 
   it("identifies itself on /api/health", async () => {
     const { status, body } = await api("GET", "/api/health");
@@ -1094,8 +1110,11 @@ describe("harness HTTP API", () => {
 
   it("searches transcripts and exports a conversation", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
-    // every new bot opens with a seeded greeting — a known searchable string
-    const hits = await api("GET", "/api/search?q=nice%20to%20meet");
+    // Every new bot opens with a rotating greeting, so the searchable string
+    // is the bot's own name: every opener contains it exactly once. Pinning
+    // the sentence instead is how this assertion went stale before.
+    const needle: string = bot.name.toLowerCase();
+    const hits = await api("GET", `/api/search?q=${encodeURIComponent(needle)}`);
     expect(hits.status).toBe(200);
     const hit = hits.body.hits.find((h: { botId?: string }) => h.botId === bot.id);
     expect(hit).toMatchObject({
@@ -1105,10 +1124,10 @@ describe("harness HTTP API", () => {
       kind: "text",
       onActivePath: true,
     });
-    expect(hit.snippet.toLowerCase()).toContain("nice to meet");
-    expect(hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength).toLowerCase()).toBe("nice to meet");
+    expect(hit.snippet.toLowerCase()).toContain(needle);
+    expect(hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength).toLowerCase()).toBe(needle);
     expect((await api("GET", "/api/search?q=")).body.hits).toEqual([]);
-    const scoped = await api("GET", `/api/search?q=nice%20to%20meet&threadId=${bot.threadId}`);
+    const scoped = await api("GET", `/api/search?q=${encodeURIComponent(needle)}&threadId=${bot.threadId}`);
     expect(scoped.status).toBe(200);
     expect(scoped.body.hits.every((candidate: { threadId: string }) => candidate.threadId === bot.threadId)).toBe(true);
     expect((await api("GET", "/api/search?q=hello&threadId=missing-thread")).status).toBe(404);
@@ -1118,11 +1137,15 @@ describe("harness HTTP API", () => {
     expect(markdown.headers.get("content-type")).toContain("text/markdown");
     expect(markdown.headers.get("content-disposition")).toContain("attachment");
     const text = await markdown.text();
-    expect(text).toContain("Nice to meet you");
 
     const asJson = await api("GET", `/api/threads/${bot.threadId}/export?format=json`);
     expect(asJson.status).toBe(200);
     expect(asJson.body.messages.length).toBeGreaterThan(0);
+    // the export carries the transcript verbatim: check the greeting the
+    // store actually seeded, whichever of the openers it drew
+    const greeting: string = asJson.body.messages.find((m: { kind: string }) => m.kind === "text").text;
+    expect(greeting).toContain(bot.name);
+    expect(text).toContain(greeting);
     expect(JSON.stringify(asJson.body)).not.toContain('"png"');
     expect((await api("GET", `/api/threads/${bot.threadId}/export?format=pdf`)).status).toBe(400);
     expect((await api("GET", "/api/threads/nope/export")).status).toBe(404);
@@ -2057,6 +2080,257 @@ describe("harness HTTP API", () => {
     await api("DELETE", `/api/groups/${installed.body.groups[0].id}`);
     for (const bot of installed.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
   });
+
+  // A bad skill id must not sink a nine-bot import — and it did not, but
+  // the only trace was a console line in the harness's own stderr, so the
+  // user was told the import succeeded and quietly got fewer skills than
+  // the profile advertised. The failure now rides back on the response.
+  it("reports the skills a package import could not deliver", async () => {
+    const packageOf = (skills: string[]) => ({
+      format: "murage.package",
+      version: 1,
+      package: {
+        id: "short-desk",
+        release: "1.0.0",
+        name: "Short Desk",
+        tagline: "A profile that asks for more than it gets.",
+        summary: "One bot, one impossible skill.",
+        category: "Work",
+        author: { name: "Murage" },
+        license: "MIT",
+        outcomes: ["Do the work."],
+        setupMinutes: 1,
+        requirements: { apps: [], capabilities: [] },
+        agents: [{
+          key: "clerk",
+          name: "Short Clerk",
+          title: "Assistant",
+          description: "Does the work.",
+          appearance: { color: "green" },
+          ...(skills.length ? { skills } : {}),
+        }],
+      },
+    });
+
+    const short = await api("POST", "/api/teams/import", packageOf(["no-such-library-skill"]));
+    try {
+      // one bad id does not fail the import: the team still lands
+      expect(short.status).toBe(201);
+      expect(short.body.bots).toHaveLength(1);
+      // ... and the discrepancy is reported rather than logged
+      expect(short.body.skillErrors).toHaveLength(1);
+      expect(short.body.skillErrors[0]).toMatchObject({
+        botId: short.body.bots[0].id,
+        botName: short.body.bots[0].name,
+        skillId: "no-such-library-skill",
+        stage: "install",
+      });
+      // the reason is carried through rather than invented here
+      expect(typeof short.body.skillErrors[0].error).toBe("string");
+      expect(short.body.skillErrors[0].error.length).toBeGreaterThan(0);
+    } finally {
+      for (const bot of short.body.bots ?? []) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+
+    // and a clean import answers with an empty list, not a missing field: a
+    // caller that has to test for the field is a caller that will forget
+    const clean = await api("POST", "/api/teams/import", packageOf([]));
+    try {
+      expect(clean.status).toBe(201);
+      expect(clean.body.skillErrors).toEqual([]);
+    } finally {
+      for (const bot of clean.body.bots ?? []) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  // The undo used to demote her. `archived` carried `chiefOfStaff` alone, so
+  // the only election it could ever replay was a tier-less one — which the
+  // chart reads as a section lead — and the workspace Chief came back from
+  // Undo one rung down with nothing said.
+  it("restores the workspace Chief to the workspace chair, and refuses to seat a second one", async () => {
+    const chief = (await api("POST", "/api/bots", { name: "Undo Chief" })).body.bot;
+    const promoted = await api("PATCH", `/api/bots/${chief.id}`, {
+      chiefOfStaff: true,
+      chiefScope: "workspace",
+    });
+    expect(promoted.status).toBe(200);
+    expect(promoted.body.bot).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
+
+    const exported = await api("POST", "/api/teams/export", { name: "Undo Team" });
+    const beforeReplace = (await api("GET", "/api/bots")).body.bots.filter(
+      (bot: { hidden?: boolean }) => !bot.hidden,
+    );
+    const replaced = await api("POST", "/api/teams/import?mode=replace", exported.body);
+    expect(replaced.status).toBe(201);
+    try {
+      // the record the undo works from now carries the TIER, not just the role
+      const archivedChief = replaced.body.archived.find((bot: { id: string }) => bot.id === chief.id);
+      expect(archivedChief).toMatchObject({ chiefOfStaff: true, chiefTier: "workspace" });
+      // every entry answers the tier question, one way or the other: a bot
+      // that led nothing says so, rather than leaving the undo to guess
+      for (const entry of replaced.body.archived) {
+        expect(entry.chiefOfStaff ? ["workspace", "section"] : [null]).toContain(entry.chiefTier);
+      }
+
+      const workspaceChiefIds = async (): Promise<string[]> =>
+        (await api("GET", "/api/bots")).body.bots
+          .filter(
+            (bot: { chiefOfStaff?: boolean; chiefScope?: string; hidden?: boolean }) =>
+              !bot.hidden && bot.chiefOfStaff && bot.chiefScope === "workspace",
+          )
+          .map((bot: { id: string }) => bot.id);
+
+      // The body the SHIPPED undo sends names no tier at all. It lands her
+      // back in the workspace chair anyway, because archiving strips the
+      // role and leaves the tier on the record for exactly this.
+      const bare = await api("PATCH", `/api/bots/${chief.id}`, { hidden: false, chiefOfStaff: true });
+      expect(bare.status).toBe(200);
+      expect(bare.body.bot).toMatchObject({ hidden: false, chiefOfStaff: true, chiefScope: "workspace" });
+      expect(await workspaceChiefIds()).toEqual([chief.id]);
+
+      // Put her away again exactly as the import does, and let a DIFFERENT
+      // bot take the chair in the meantime.
+      expect(
+        (await api("PATCH", `/api/bots/${chief.id}`, { hidden: true, chiefOfStaff: false })).status,
+      ).toBe(200);
+      const usurper = replaced.body.bots[0];
+      expect(
+        (await api("PATCH", `/api/bots/${usurper.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status,
+      ).toBe(200);
+
+      // Now the undo is refused outright rather than seating two Chiefs or
+      // quietly filing her as a section lead. 409 because the request is
+      // well-formed and the workspace is simply in a state that will not
+      // accept it — and the message names who has to stand down.
+      const refused = await api("PATCH", `/api/bots/${chief.id}`, {
+        ...archivedChief.chiefTier ? { chiefScope: archivedChief.chiefTier } : {},
+        hidden: false,
+        chiefOfStaff: true,
+      });
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toContain(usurper.name);
+      expect(await workspaceChiefIds()).toEqual([usurper.id]);
+
+      // Stand the incumbent down and the same request lands.
+      expect((await api("PATCH", `/api/bots/${usurper.id}`, { chiefOfStaff: false })).status).toBe(200);
+      const restored = await api("PATCH", `/api/bots/${chief.id}`, {
+        ...archivedChief.chiefTier ? { chiefScope: archivedChief.chiefTier } : {},
+        hidden: false,
+        chiefOfStaff: true,
+      });
+      expect(restored.status).toBe(200);
+      expect(restored.body.bot).toMatchObject({ hidden: false, chiefOfStaff: true, chiefScope: "workspace" });
+      expect(await workspaceChiefIds()).toEqual([chief.id]);
+    } finally {
+      // put the shared harness back: the imported team goes, everything the
+      // replace archived comes back with the role it went away with
+      for (const bot of replaced.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
+      for (const entry of replaced.body.archived) {
+        if (entry.id === chief.id) continue;
+        await api("PATCH", `/api/bots/${entry.id}`, {
+          hidden: false,
+          ...(entry.chiefOfStaff ? { chiefOfStaff: true } : {}),
+        });
+      }
+      await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: false });
+      await api("DELETE", `/api/bots/${chief.id}`);
+      const after = (await api("GET", "/api/bots")).body.bots.filter((bot: { hidden?: boolean }) => !bot.hidden);
+      expect(after.map((bot: { id: string }) => bot.id).sort()).toEqual(
+        beforeReplace
+          .map((bot: { id: string }) => bot.id)
+          .filter((id: string) => id !== chief.id)
+          .sort(),
+      );
+    }
+  });
+
+  // Three gates can drop the user's connected apps and every one of them
+  // used to end in the same silence, which is how an assistant came to deny
+  // access to a Gmail that was connected the whole time. The contract is
+  // that the turn's system prompt says WHICH — asserted against the shared
+  // builder rather than a sentence, so rewording the copy cannot fail this.
+  it("tells the assistant why it has no connectors, and what the profile says its job needs", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Connector Report" })).body.bot;
+    const packageFile = {
+      format: "murage.package",
+      version: 1,
+      package: {
+        id: "inbox-desk",
+        release: "1.0.0",
+        name: "Inbox Desk",
+        tagline: "Keep the inbox moving.",
+        summary: "A one-bot inbox workflow.",
+        category: "Work",
+        author: { name: "Murage" },
+        license: "MIT",
+        outcomes: ["Clear the inbox."],
+        setupMinutes: 2,
+        requirements: {
+          apps: [{ slug: "gmail", label: "Gmail", reason: "Read and reply to the inbox." }],
+          capabilities: [],
+        },
+        agents: [{
+          key: "clerk",
+          name: "Inbox Clerk",
+          title: "Assistant",
+          description: "Works the inbox.",
+          appearance: { color: "green" },
+        }],
+      },
+    };
+    const installed = await api("POST", "/api/teams/import", packageFile);
+    expect(installed.status).toBe(201);
+    const packaged = installed.body.bots[0];
+    // the declared services already reach the renderer on the bot payload
+    expect(packaged.installedPackage.requiredApps).toEqual([
+      { slug: "gmail", label: "Gmail", reason: "Read and reply to the inbox." },
+    ]);
+
+    const systemFor = async (botId: string, text: string): Promise<string> => {
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/bots/${botId}/messages`, { text })).status).toBe(202);
+      const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
+      expect((await api("POST", `/api/bots/${botId}/interrupt`)).status).toBe(200);
+      return seen.systemPrompt ?? "";
+    };
+
+    try {
+      for (const id of [bot.id, packaged.id]) {
+        expect((await api("PATCH", `/api/bots/${id}`, {
+          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+        })).status).toBe(200);
+      }
+
+      // this harness has no project key and no broker: nothing here can
+      // reach connected apps, and the assistant is told that rather than
+      // being left to invent a reason
+      const unconfigured = await systemFor(bot.id, "check my mail");
+      expect(unconfigured).toContain(connectorSystemPrompt("unconfigured"));
+      expect(unconfigured).not.toContain(connectorSystemPrompt("mounted"));
+
+      // the per-bot switch is a different fact and gets a different sentence
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: false })).status).toBe(200);
+      const botOff = await systemFor(bot.id, "check my mail again");
+      expect(botOff).toContain(connectorSystemPrompt("bot-off"));
+      expect(botOff).not.toContain(connectorSystemPrompt("unconfigured"));
+
+      // and a packaged assistant, switched off by the installer rather than
+      // by anyone's choice, is told that AND what its profile said it needs
+      const packagedTurn = await systemFor(packaged.id, "work the inbox");
+      expect(packagedTurn).toContain(connectorSystemPrompt("package-off"));
+      expect(packagedTurn).not.toContain(connectorSystemPrompt("bot-off"));
+      expect(packagedTurn).toContain(
+        requiredAppsSystemPrompt(packageFile.package.requirements.apps),
+      );
+      // a bot from no package says nothing about required services
+      expect(botOff).not.toContain(requiredAppsSystemPrompt(packageFile.package.requirements.apps));
+    } finally {
+      for (const id of [bot.id, packaged.id]) {
+        await api("POST", `/api/bots/${id}/interrupt`);
+        await api("DELETE", `/api/bots/${id}`);
+      }
+    }
+  }, 40_000);
 
   it("the scout reads a folder, proposes an importable team, and creates nothing until the human imports", async () => {
     const folder = mkdtempSync(join(tmpdir(), "murage-scout-"));

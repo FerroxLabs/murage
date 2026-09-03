@@ -20,6 +20,8 @@ import type { RoutineRequestCardData } from "../shared/routine-request.ts";
 import type { RoutineRunCardData } from "../shared/routine-run.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
 import type { GroupGoalRunCardData } from "../shared/group-goal-run.ts";
+import type { IntakeCardData } from "../shared/intake-turn.ts";
+import { openingLine } from "../shared/bot-openers.ts";
 
 export type EmberColor =
   | "green"
@@ -63,6 +65,12 @@ export interface OptionCardData {
   /** A durable learned-skill proposal. The skill stays staged until the
    * user confirms this card — it never rides the prompt before that. */
   skillRequest?: SkillRequestCardData;
+  /** A turn of the new-bot setup conversation. Staged like the two above:
+   * the card carries a proposal and nothing is installed until the person
+   * confirms it on `POST /api/bots/:id/assistant-profile`, which is where
+   * the desktop boundary already lives. Never set together with
+   * `requestId`: an intake turn is not a live provider ask. */
+  intake?: IntakeCardData;
 }
 
 export interface ConnectorCardData {
@@ -683,10 +691,16 @@ export function roomResponders<T extends { id: string; name: string; hidden?: bo
   return [];
 }
 
-const onboardingCard = (): OptionCardData => ({
-  title: "What do you mostly want help with?",
-  subtitle: "Pick whatever's closest; we can always expand from there.",
-  options: ["Work & projects", "Writing & research", "Life admin", "A bit of everything"],
+/** The one question a new bot opens with, as the bot asking it rather than
+ * a four-button quiz. No chips: a chip row here is the old quiz wearing a
+ * different coat, and the composer is already on screen as the free-text
+ * answer. Every later turn of the conversation is appended by the intake
+ * route, never seeded here. */
+const intakeOpeningQuestion = (): OptionCardData => ({
+  title: "What do you actually want me for?",
+  subtitle: "Plain words are fine. One line will do.",
+  options: [],
+  intake: { step: "open", asked: 1 },
 });
 
 /** Messages form a tree (forks appear when a message is edited); the
@@ -1228,9 +1242,10 @@ export class Store {
       }
     }
     this.emit({ type: "message", threadId, message: full });
-    // The first-run quiz is not a live ask. Talking past it hides it so the
-    // transcript is just the greeting plus what they said. Cards with a
-    // requestId are permission/question prompts and stay until answered.
+    // A legacy onboarding card is not a live ask. Talking past it hides it so
+    // the transcript is just the greeting plus what they said. Cards with a
+    // requestId are permission/question prompts and stay until answered, and
+    // intake cards own their own lifecycle (see dismissOnboardingCard).
     if (full.role === "user" && full.kind === "text") this.dismissOnboardingCard(threadId);
     return full;
   }
@@ -1263,11 +1278,24 @@ export class Store {
     return full;
   }
 
-  /** Hide the first-run quiz on this thread, if it is still open. */
+  /** Hide a legacy first-run quiz on this thread, if it is still open.
+   *
+   * Intake cards are deliberately excluded. This runs as a side effect of
+   * every user text message, and the intake route appends exactly such a
+   * message on every turn, so without the guard the card would be
+   * dismissed by its own answer, one message before the reply to it lands.
+   * Settling an intake by talking past it is a real behavior, but it belongs
+   * to the ordinary `/messages` route, where it is a decision, not here,
+   * where it would be an accident. */
   dismissOnboardingCard(threadId: string): Message | null {
     const t = this.thread(threadId);
     const card = t.messages.find(
-      (message) => message.kind === "options" && message.card && !message.card.requestId && !message.card.dismissed,
+      (message) =>
+        message.kind === "options" &&
+        message.card &&
+        !message.card.requestId &&
+        !message.card.intake &&
+        !message.card.dismissed,
     );
     if (!card?.card) return null;
     return this.patchMessage(threadId, card.id, { card: { ...card.card, dismissed: true } });
@@ -1389,12 +1417,8 @@ export class Store {
     // the bot/thread mapping before they can place either message.
     this.emit({ type: "bot", botId: bot.id });
     if (opts.seedMessages !== false) {
-      this.appendMessage(bot.threadId, {
-        role: "bot",
-        kind: "text",
-        text: `Hey — I'm ${name}. Nice to meet you.`,
-      });
-      this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
+      this.appendMessage(bot.threadId, { role: "bot", kind: "text", text: openingLine(name) });
+      this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: intakeOpeningQuestion() });
     }
     return bot;
   }

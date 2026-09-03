@@ -242,6 +242,95 @@ export function connectorAvailability(
   return storeState === "unavailable" ? "unreadable" : "unconfigured";
 }
 
+/** Why THIS turn does or does not carry the user's connected apps.
+ *
+ * Three separate gates decide it (index.ts, the 1:1 site and the room site):
+ * the per-bot grant, whether any broker or project key exists at all, and
+ * whether this engine can mount connector tools. Every one of them used to
+ * fail the same silent way — `integrations.composio` stayed unset, the
+ * paragraph naming the composio tools never rendered, and the assistant
+ * then told a user whose Gmail is connected and healthy that it has no
+ * access to Gmail. One outcome, several causes, nothing said.
+ *
+ * `package-off` is the per-bot grant again, narrowed to the case where
+ * nobody chose it: every bot installed from a package is switched off at
+ * install (the `composio: false` in the team-import handler), deliberately,
+ * so that a shared persona cannot reach someone's mail on turn one. That is
+ * the right default and is not being changed here — but it is also the most
+ * common reason an assistant has no connectors, and the one where the
+ * assistant can name both the cause and the single switch that fixes it. */
+export type ConnectorAccess = "mounted" | "package-off" | "bot-off" | "unconfigured" | "engine";
+
+/** Precedence when several causes hold at once: the per-bot switch first.
+ * It is the fact about THIS assistant, it is true regardless of what the
+ * workspace has configured, and it is the gate the user is most likely to
+ * have tripped. Workspace-wide absence comes next, and the engine's
+ * inability last — a bot that is switched off does not become reachable by
+ * changing engines. */
+export function connectorAccess(input: {
+  cfg: AppConfig;
+  /** the bot's own `composio` field; absent/true means allowed */
+  botComposio: boolean | undefined;
+  /** whether this bot arrived from a bot package (`installedPackage`) */
+  installedFromPackage: boolean;
+  /** adapter.capabilities.composioMcp === true */
+  engineMountsConnectors: boolean;
+  /** whether the turn actually received the connector integration */
+  mounted: boolean;
+}): ConnectorAccess {
+  if (input.mounted) return "mounted";
+  if (input.botComposio === false) return input.installedFromPackage ? "package-off" : "bot-off";
+  if (!configured(input.cfg)) return "unconfigured";
+  if (!input.engineMountsConnectors) return "engine";
+  // Every gate passed and nothing mounted. `mcpIntegration` only returns
+  // null while unconfigured, so this is defensive rather than reachable —
+  // and "we could not mount them" is still the honest thing to say.
+  return "unconfigured";
+}
+
+/** One sentence per outcome, and the assistant is told which one it is.
+ *
+ * Only the `mounted` copy may name the composio tools; every other branch
+ * exists precisely because those tools are NOT there, and each says what is
+ * true, what it is not (the service is not necessarily disconnected), and
+ * where the user would go to change it. */
+export function connectorSystemPrompt(access: ConnectorAccess): string {
+  switch (access) {
+    case "mounted":
+      return " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service.";
+    case "package-off":
+      return " You have no connected-app tools this turn because you were installed from a bot package, and packaged assistants start with connected apps switched off until the user turns them on for you. The workspace's connections may exist and be perfectly healthy — you are simply not mounted on them. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
+    case "bot-off":
+      return " You have no connected-app tools this turn because connected apps are switched off for you specifically — a per-bot setting the user controls. The workspace's connections may exist and be perfectly healthy. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
+    case "unconfigured":
+      return " You have no connected-app tools this turn because this workspace has no connected-apps service set up — there is no project key and no managed connection service, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Connections settings; do not claim a particular service failed or is disconnected.";
+    case "engine":
+      return " You have no connected-app tools this turn because the engine you are running on cannot mount connector tools. The workspace's connections may exist and be perfectly healthy, and another engine would reach them. If the user asks for work in a connected service, say that this bot's current engine cannot use connected apps and that switching its model/engine would; never tell them the service is disconnected.";
+  }
+}
+
+/** What a packaged assistant's job actually depends on.
+ *
+ * A package declares `requirements.apps` and the harness stores them on the
+ * bot (`installedPackage.requiredApps`). THIS function is the only thing
+ * that puts them in front of the model — the field's other reader,
+ * package-export.ts, merely round-trips it back out to a blueprint — so a
+ * profile that says "this assistant needs Gmail" tells the assistant so
+ * because of the call site in index.ts and nothing else.
+ *
+ * Structural parameter rather than the store's type so this stays a pure
+ * string builder the tests can call directly. */
+export function requiredAppsSystemPrompt(
+  apps: ReadonlyArray<{ slug: string; label: string; reason: string; optional?: boolean }> | undefined,
+): string {
+  if (!apps?.length) return "";
+  const describe = (app: { label: string; reason: string; optional?: boolean }) =>
+    `${app.label}${app.optional ? " (optional)" : ""} — ${app.reason.trim().replace(/\.$/, "")}`;
+  return ` The profile you were installed from declares that your work depends on these connected services: ${apps
+    .map(describe)
+    .join("; ")}. Treat that as the shape of your job, not as proof of access: check whether you actually hold the tools before promising work in one of them, and if a required service is missing, say which one and why you need it.`;
+}
+
 /** Takes `cfg` so the own-key-wins decision is made in exactly one place. It
  * used to read the broker directly, which left every caller responsible for
  * gating itself — and a caller that forgot would have quietly spent the
