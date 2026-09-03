@@ -981,11 +981,28 @@ export function reducer(state: AppState, action: Action): AppState {
               ? "celebrate"
               : null;
       const animated = kind ? withMascotMotion(state, action.bot.id, kind) : state;
+      // The workspace Chief is exempt, exactly as she is on the server.
+      //
+      // `chiefOfStaff` is true for the Chief AND for every team leader, and
+      // this walks by section — so in the DEFAULT workspace, where nobody
+      // created a section and every bot shares sectionKey "", electing any
+      // team leader cleared the Chief's flag here. She kept `chiefScope:
+      // "workspace"` with no flag, which is a shape that cannot exist: it
+      // classifies as `member`, so she loses her badge, her row and her top
+      // slot in the sidebar.
+      //
+      // And the renderer never recovers on its own. The server refuses this
+      // demotion (server/store.ts:1557), so nothing about her actually
+      // changed, so no frame is ever emitted to correct the client. The wrong
+      // state is sticky until a full hydration. This is the Chief-vanishes
+      // report, and only its server half was fixed.
       const next = action.bot.chiefOfStaff
         ? {
             ...animated,
             bots: animated.bots.map((b) =>
-              b.id === action.bot.id || (b.section?.trim() || "") !== (action.bot.section?.trim() || "")
+              b.id === action.bot.id ||
+              b.chiefScope === "workspace" ||
+              (b.section?.trim() || "") !== (action.bot.section?.trim() || "")
                 ? b
                 : { ...b, chiefOfStaff: false },
             ),
@@ -1188,11 +1205,16 @@ export function reducer(state: AppState, action: Action): AppState {
         : state;
       const target = animated.bots.find((bot) => bot.id === action.botId);
       const chiefSection = (action.patch.section ?? target?.section)?.trim() || "";
+      // Same exemption, and this is the copy the user actually sees: the
+      // optimistic update paints before the PATCH is even sent, so without
+      // this the Chief disappeared the instant the button was pressed.
       const next = action.patch.chiefOfStaff
         ? {
             ...animated,
             bots: animated.bots.map((b) =>
-              b.id === action.botId || (b.section?.trim() || "") !== chiefSection
+              b.id === action.botId ||
+              b.chiefScope === "workspace" ||
+              (b.section?.trim() || "") !== chiefSection
                 ? b
                 : { ...b, chiefOfStaff: false },
             ),

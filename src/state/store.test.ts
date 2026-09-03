@@ -507,6 +507,48 @@ describe("section Chiefs", () => {
     chiefOfStaff,
   });
 
+  /** The Chief carries the workspace tier; a team leader does not. */
+  const chief = (id: string, section: string) => ({ ...bot(id, section, true), chiefScope: "workspace" as const });
+
+  // The renderer half of the Chief-vanishes bug. The server half was fixed by
+  // exempting the workspace tier from the same-section demotion loop; this
+  // reducer kept doing it, and because the server correctly changes nothing
+  // it never emits a frame that would put her back. The wrong state sticks
+  // until a full hydration — which is why she came back after a restart and
+  // looked like a mystery.
+  it("never demotes the workspace Chief when a team leader is elected", () => {
+    // The DEFAULT workspace: nobody made a section, so the Chief and the new
+    // leader share sectionKey "". This is the common case, not an edge one.
+    const sable = chief("sable", "");
+    const bruce = bot("bruce", "");
+    const state = {
+      ...initialState,
+      bots: [sable, bruce].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, { type: "updateBot", botId: bruce.id, patch: { chiefOfStaff: true } });
+
+    const after = next.bots.find((candidate) => candidate.id === sable.id);
+    expect(after?.chiefOfStaff, "the Chief was fired by electing a team leader").toBe(true);
+    expect(after?.chiefScope).toBe("workspace");
+    expect(next.bots.find((candidate) => candidate.id === bruce.id)?.chiefOfStaff).toBe(true);
+  });
+
+  it("never demotes the workspace Chief on a broadcast frame either", () => {
+    // The same loop exists twice. Fixing only the optimistic one would paint
+    // correctly and then get it wrong a network round-trip later.
+    const sable = chief("sable", "");
+    const bruce = bot("bruce", "");
+    const state = {
+      ...initialState,
+      bots: [sable, bruce].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, { type: "botPatched", bot: { ...bruce, chiefOfStaff: true } });
+
+    expect(next.bots.find((candidate) => candidate.id === sable.id)?.chiefOfStaff).toBe(true);
+  });
+
   it("hands off only within the patched bot's section", () => {
     const workChief = bot("work-a", "Work", true);
     const workCandidate = bot("work-b", "Work");
