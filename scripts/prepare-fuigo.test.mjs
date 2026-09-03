@@ -20,31 +20,46 @@ import {
   verifyPinnedBinary,
 } from "./prepare-fuigo.mjs";
 
-// Verified against the published registry tarballs. A shipped binary is never
-// a floating range, so these live here as literals: changing the pin has to be
-// a deliberate edit in two places.
+// Verified against the published registry tarballs — each digest recomputed
+// from the downloaded bytes at this bump, not copied forward. A shipped binary
+// is never a floating range, so these live here as literals: changing the pin
+// has to be a deliberate edit in two places.
 const PINNED_ASSETS = {
   "darwin-arm64": {
-    package: "fuigo-darwin-arm64",
-    tarballSha256: "427c173e43e371952c5648127b9eead94c32afdd88b3579e2d6c30c8326fffbe",
-    binarySha256: "8d8ead462def617c95e1fbdb01847b9115ca97d8f414bac68b768c397e725a28",
+    package: "@fuigo/darwin-arm64",
+    tarballSha256: "07702f9ec1319e16da5453be005180466b5eadb6dbe4946a2958491413d590d7",
+    binarySha256: "689127774818e541141863b3d770e4d8a31e953a944ae5a668b7597b4cf45753",
   },
   "darwin-x64": {
-    package: "fuigo-darwin-x64",
-    tarballSha256: "8ab3c8a1b856a9316841504ad279fb123edc4816f5c998c039f9e0ff36287b5c",
-    binarySha256: "73d46ce9adf496af2d3264679a1e9f46428f21c3ed30d82dfee1f100777bdddc",
+    package: "@fuigo/darwin-x64",
+    tarballSha256: "65b4bab03b40b1044b0a6c441bd1546864db6b9bfd0378fc06b99dba477b5ab4",
+    binarySha256: "2b9caccf0d77b4026d02c1e61a71850b44f6849574a7ae3c7ece6ead27054c0a",
+  },
+  "linux-arm64": {
+    package: "@fuigo/linux-arm64",
+    tarballSha256: "f48b0e173fdb0ac0f796ca114f4488e2d3a0674314b0ea9a802ff31a77de721f",
+    binarySha256: "edba09a1071277f5723d151e2d7683285fe8ab2fb0516c5ab1125808e9a064ba",
   },
   "linux-x64": {
-    package: "fuigo-linux-x64",
-    tarballSha256: "7a0d14eb02a7f481bc81c459c36ac7adfee05d29effffcad48c7f178f9c3af8b",
-    binarySha256: "fc2d483f1cf724f1b69529e5a94b35e4c23209474dc90747c0719c4875887046",
+    package: "@fuigo/linux-x64",
+    tarballSha256: "e243883e149f6bacbf689e92b2ec4c40630080412eb690d7609a9f3c81de72a1",
+    binarySha256: "686a35b59566ae5176083757a9dd962d954729be6c5f30adf862dc28e0fa60bb",
+  },
+  "win32-arm64": {
+    package: "@fuigo/win32-arm64",
+    tarballSha256: "034c5f4f527180fb55169bc261fff3e35d53c593c4c7e14a000800d549450248",
+    binarySha256: "22e03c0f3cfee84efd86488d18614cfddcddf039e69f6493ae50e41cc7698956",
   },
   "win32-x64": {
-    package: "fuigo-win32-x64",
-    tarballSha256: "42f6b25d248f12298af322b745118bb1db9c5f0f2cee50f97ff4e0515e5e6792",
-    binarySha256: "81b364b7f9b02ba2c32c94e8c7dc6399fe82b036cea34f0a3ddd6ef1f9a788ac",
+    package: "@fuigo/win32-x64",
+    tarballSha256: "8175bce5860ff200a52e6cd6fbf3e6a6333ab31ff85eaa152df0f4ec1c5c2b70",
+    binarySha256: "29a7a341175abbaf49bd903e08b5c49e733f34fc4c07e98b4810e74b9ecc4d8b",
   },
 };
+
+// Targets that are pinned above but that the shared executableTarget() header
+// parser cannot classify yet, so nothing may try to fetch them.
+const UNSTAGEABLE = ["linux-arm64", "win32-arm64"];
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -53,28 +68,53 @@ function executableFixture(target) {
   if (target === "darwin-arm64" || target === "darwin-x64") {
     bytes.writeUInt32LE(0xfeedfacf, 0);
     bytes.writeUInt32LE(target === "darwin-arm64" ? 0x0100000c : 0x01000007, 4);
-  } else if (target === "linux-x64") {
+  } else if (target === "linux-x64" || target === "linux-arm64") {
+    // ELF64 little-endian; e_machine at offset 18 is 0x3e for x86-64 and 0xb7
+    // for aarch64 — the values read off the real published 1.0.4 engines.
     Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(bytes);
-    bytes.writeUInt16LE(0x3e, 18);
-  } else if (target === "win32-x64") {
+    bytes.writeUInt16LE(target === "linux-arm64" ? 0xb7 : 0x3e, 18);
+  } else if (target === "win32-x64" || target === "win32-arm64") {
+    // PE32+; machine word follows the PE\0\0 signature. 0x8664 = AMD64,
+    // 0xaa64 = IMAGE_FILE_MACHINE_ARM64, again as published.
     bytes.write("MZ", 0, "ascii");
     bytes.writeUInt32LE(0x40, 0x3c);
     bytes.write("PE\0\0", 0x40, "binary");
-    bytes.writeUInt16LE(0x8664, 0x44);
+    bytes.writeUInt16LE(target === "win32-arm64" ? 0xaa64 : 0x8664, 0x44);
+  } else {
+    throw new Error(`executableFixture has no header for ${target}`);
   }
   return bytes;
 }
 
 describe("pinned fuigo packaging", () => {
   it("pins the exact shipped version and a complete digest pair per target", () => {
-    expect(FUIGO_VERSION).toBe("1.0.2");
+    expect(FUIGO_VERSION).toBe("1.0.4");
     expect(FUIGO_ASSETS).toEqual(PINNED_ASSETS);
     for (const target of Object.keys(PINNED_ASSETS)) {
-      expect(tarballName(target)).toBe(`${PINNED_ASSETS[target].package}-1.0.2.tgz`);
+      // npm names a scoped package's tarball after the UNSCOPED half, so the
+      // basename is `<target>-1.0.4.tgz`, never `@fuigo/<target>-1.0.4.tgz`.
+      expect(tarballName(target)).toBe(`${target}-1.0.4.tgz`);
+      expect(tarballName(target)).not.toContain("/");
+      expect(tarballUrl(target)).toBe(
+        `https://registry.npmjs.org/@fuigo/${target}/-/${target}-1.0.4.tgz`,
+      );
       // The URL carries the pin, so a staged binary can never come from
       // whatever `latest` happens to be on the registry that day.
-      expect(tarballUrl(target)).toContain("-1.0.2.tgz");
+      expect(tarballUrl(target)).toContain("-1.0.4.tgz");
     }
+  });
+
+  it("pins every target fuigo@1.0.4 publishes, including ones it does not stage", () => {
+    // The pin list is the reviewed-digest list; targetsForHost is the
+    // packaged-target list. They are allowed to differ, and do.
+    expect(Object.keys(FUIGO_ASSETS).sort()).toEqual([
+      "darwin-arm64",
+      "darwin-x64",
+      "linux-arm64",
+      "linux-x64",
+      "win32-arm64",
+      "win32-x64",
+    ]);
   });
 
   it("stages both macOS architectures and only shipped desktop targets elsewhere", () => {
@@ -92,7 +132,7 @@ describe("pinned fuigo packaging", () => {
     expect(
       targetsForPreparation({ targets: ["darwin-x64", "darwin-x64"], platform: "linux", arch: "x64" }),
     ).toEqual(["darwin-x64"]);
-    expect(() => targetsForPreparation({ targets: ["win32-arm64"] })).toThrow(/No pinned fuigo asset/);
+    expect(() => targetsForPreparation({ targets: ["freebsd-x64"] })).toThrow(/No pinned fuigo asset/);
     // Without one, the host's own package script decides.
     expect(targetsForPreparation({ platform: "darwin", arch: "arm64" })).toEqual([
       "darwin-arm64",
@@ -102,7 +142,27 @@ describe("pinned fuigo packaging", () => {
       "darwin-arm64",
     ]);
     expect(targetForCurrentHost("linux", "x64")).toBe("linux-x64");
+    // Still refused, but for a new reason. @fuigo/win32-arm64 is published,
+    // pinned and runnable on such a host; what blocks it is that the shared
+    // executableTarget() header parser cannot classify PE ARM64, so staging
+    // would fail after the download rather than before it.
     expect(() => targetForCurrentHost("win32", "arm64")).toThrow(/unsupported/);
+    expect(() => targetForCurrentHost("linux", "arm64")).toThrow(/unsupported/);
+  });
+
+  it("refuses a pinned target the shared header parser cannot classify, before downloading", () => {
+    for (const target of UNSTAGEABLE) {
+      // Pinned...
+      expect(FUIGO_ASSETS[target]).toBeDefined();
+      // ...but every entry point that could start a fetch says no first.
+      expect(() => targetsForPreparation({ targets: [target] })).toThrow(/not yet stageable/);
+      // And the reason is real: the published header genuinely is rejected.
+      expect(() => verifyPinnedBinary(executableFixture(target), target)).toThrow(/unsupported/);
+    }
+    // Nothing that IS staged is caught by that refusal.
+    for (const target of targetsForHost("darwin")) {
+      expect(targetsForPreparation({ targets: [target] })).toEqual([target]);
+    }
   });
 
   it("accepts only the documented CLI options and the target env override", () => {
@@ -142,10 +202,10 @@ describe("pinned fuigo packaging", () => {
 
   it("records the pin in the staged manifest so a stale tree is restaged", () => {
     expect(expectedManifest("darwin-arm64")).toEqual({
-      version: "1.0.2",
+      version: "1.0.4",
       target: "darwin-arm64",
-      registryPackage: "fuigo-darwin-arm64@1.0.2",
-      tarball: "fuigo-darwin-arm64-1.0.2.tgz",
+      registryPackage: "@fuigo/darwin-arm64@1.0.4",
+      tarball: "darwin-arm64-1.0.4.tgz",
       tarballSha256: PINNED_ASSETS["darwin-arm64"].tarballSha256,
       binarySha256: PINNED_ASSETS["darwin-arm64"].binarySha256,
     });
