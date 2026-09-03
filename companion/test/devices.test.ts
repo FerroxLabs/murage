@@ -119,15 +119,23 @@ describe("DeviceRegistry", () => {
     const wrong = code === "000000" ? "111111" : "000000";
 
     for (let i = 1; i < MAX_PAIRING_ATTEMPTS; i++) {
-      expect(registry.redeem(wrong, "iPhone")).toEqual({ error: "that pairing credential is not right" });
+      expect(registry.redeem(wrong, "iPhone")).toEqual({
+        error: "that pairing credential is not right",
+        reason: "wrong",
+      });
       expect(registry.pairing()).not.toBeNull();
     }
     // the last one closes the window rather than counting down forever
     expect(registry.redeem(wrong, "iPhone")).toMatchObject({ error: expect.stringContaining("start pairing again") });
     expect(registry.pairing()).toBeNull();
 
-    // and the real code is worthless now
-    expect(registry.redeem(code, "iPhone")).toMatchObject({ error: expect.stringContaining("no pairing") });
+    // and the real code is worthless now — and says so as itself, rather than
+    // as "no pairing is in progress", which would send the person looking for
+    // a fault in the app instead of pressing Refresh on the pairing screen.
+    expect(registry.redeem(code, "iPhone")).toEqual({
+      error: "that code was cancelled after too many wrong guesses — start pairing again on your computer",
+      reason: "burned",
+    });
     expect(registry.count()).toBe(0);
   });
 
@@ -135,13 +143,17 @@ describe("DeviceRegistry", () => {
     const registry = new DeviceRegistry();
     const { code } = registry.openPairing();
     expect(registry.redeem(code, "iPhone")).toHaveProperty("token");
-    expect(registry.redeem(code, "iPad")).toMatchObject({ error: expect.stringContaining("no pairing") });
+    expect(registry.redeem(code, "iPad")).toEqual({
+      error: "that code has already signed a device in — open Phone settings on your computer for a new one",
+      reason: "used",
+    });
     expect(registry.count()).toBe(1);
   });
 
   it("points an out-of-window pairing attempt to Phone settings", () => {
     expect(new DeviceRegistry().redeem("000000", "iPhone")).toEqual({
       error: "no pairing is in progress — open Phone settings on your computer",
+      reason: "no-pairing",
     });
   });
 
@@ -158,7 +170,7 @@ describe("DeviceRegistry", () => {
     expect(registry.count()).toBe(1);
     // Possessing only one half of the replay key is not enough.
     expect(registry.redeem(credential, "iPhone", "different-request-id")).toMatchObject({
-      error: expect.stringContaining("no pairing"),
+      reason: "used",
     });
     expect(registry.redeem("murage_pair_wrong", "iPhone", requestId)).toMatchObject({
       error: expect.stringContaining("no pairing"),
@@ -234,9 +246,9 @@ describe("DeviceRegistry", () => {
 
     expect(token).toMatch(/^murage_pair_[A-Za-z0-9_-]{43}$/);
     expect(registry.redeem(token, "iPhone")).toHaveProperty("token");
-    expect(registry.redeem(code, "iPad")).toMatchObject({
-      error: expect.stringContaining("no pairing"),
-    });
+    // Both halves of one window: spending the QR token spends the typed code
+    // with it, and the typed code is told which of the two things happened.
+    expect(registry.redeem(code, "iPad")).toMatchObject({ reason: "used" });
     expect(registry.count()).toBe(1);
   });
 
@@ -259,8 +271,13 @@ describe("DeviceRegistry", () => {
 
       vi.advanceTimersByTime(2);
       expect(registry.pairing()).toBeNull();
+      // Expired, and named as expired. "No pairing is in progress" was true
+      // of the registry and useless to the person: they are holding a code
+      // that WAS this machine's, and the only thing they need told is that
+      // it ran out and a new one is a click away.
       expect(registry.redeem(code, "iPhone")).toMatchObject({
-        error: expect.stringContaining("no pairing"),
+        reason: "expired",
+        error: expect.stringContaining("expired"),
       });
     } finally {
       vi.useRealTimers();

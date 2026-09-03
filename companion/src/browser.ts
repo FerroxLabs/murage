@@ -61,7 +61,7 @@ export interface BrowserDeviceStore {
     credential: string,
     name: unknown,
     pairRequestId?: unknown,
-  ): { device: PublicDevice; token: string } | { error: string };
+  ): { device: PublicDevice; token: string } | { error: string; reason?: string };
   openSession(deviceId: string, label: unknown): { value: string; session: { expiresAt: number } } | null;
   resolveSession(
     value: string | undefined,
@@ -88,6 +88,9 @@ export interface BrowserDoorOptions {
   connected?: (deviceId: string, disconnect: () => void) => () => void;
   /** How long the harness may take to produce response *headers*. Tests only. */
   headersTimeoutMs?: number;
+  /** The sign-in rate limiter. Injectable so a test can drive its clock;
+   * every real door gets its own from `createSignInLimiter`. */
+  signInLimiter?: SignInLimiter;
 }
 
 /** Headers only. Once they arrive the clock is off and the body may take as
@@ -547,6 +550,140 @@ export function browserLabel(userAgent: string | undefined): string {
   return cleanDeviceName(engine || platform || "Browser");
 }
 
+/** The typed-code field, shared by both unauthenticated pages.
+ *
+ * A laptop cannot photograph its own screen, and neither can a browser pointed
+ * at a machine in a datacentre. Both pages used to name exactly one way in —
+ * "scan the code with this device" — which is not a route that exists on a
+ * device with a keyboard and no camera. The only thing that worked was copying
+ * the `/enter#<token>` link across by hand.
+ *
+ * So the six-digit code stops being the fallback nobody could reach. It is the
+ * SAME credential the QR carries (`PairingWindow` holds both, and redeeming
+ * either burns both), with the same expiry, the same device record and the
+ * same revoke. This is a second way to present it, not a second credential —
+ * which is also why there is no username and no password here, and never will
+ * be: Wayland had them and we refused them deliberately.
+ *
+ * The markup is inert on its own. Everything that acts is in
+ * `codeEntryScript`, behind a nonce. */
+function codeEntryMarkup(hidden: boolean): string {
+  return `<div id="cf" class="cf"${hidden ? " hidden" : ""}>
+    <label class="lb" for="cc">Six-digit code</label>
+    <div class="row">
+      <input id="cc" class="in" type="text" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="7" placeholder="000000" aria-label="Six-digit code" spellcheck="false">
+      <button id="cb" class="go">Sign in</button>
+    </div>
+    <p id="ce" class="note"></p>
+  </div>`;
+}
+
+/** The client half of typed-code sign-in.
+ *
+ * NOTE FOR ANYONE EDITING THIS STRING: it is a TEMPLATE LITERAL. A backtick
+ * ends it, and a backslash is eaten as an escape before JavaScript ever sees
+ * it — that is how a word-boundary escape in `enterPage` once became a literal
+ * backspace, killed the whole script with a syntax error, and left a page that
+ * simply sat there with no way in and nothing in any test. No backticks, no
+ * backslashes, no regular expressions: the digit filter below is `indexOf`
+ * against a string of digits for exactly that reason.
+ * `companion/test/browser-code.test.ts` extracts this string and runs
+ * `node --check` over it, so a mistake here is a red test rather than a blank
+ * page on somebody's laptop.
+ *
+ * It POSTs, and that is not a style choice. A GET that redeems a credential
+ * would be fireable by any cross-site `<img>`; the POST has to carry an
+ * `Origin` to satisfy the door's rule 4, which a same-origin `fetch` always
+ * does. There is deliberately no `<form>` element either — a form whose
+ * script failed to load would navigate with the code in the query string,
+ * putting the credential in an access log, which is the one place the whole
+ * fragment design exists to keep it out of. */
+export function codeEntryScript(): string {
+  return `(function () {
+  var box = document.getElementById("cf");
+  if (!box || typeof fetch !== "function") return;
+  var input = document.getElementById("cc");
+  var button = document.getElementById("cb");
+  var note = document.getElementById("ce");
+  var digits = function (text) {
+    var out = "";
+    for (var i = 0; i < text.length; i++) {
+      if ("0123456789".indexOf(text.charAt(i)) !== -1) out += text.charAt(i);
+    }
+    return out.slice(0, 6);
+  };
+  var timer = 0;
+  // The door tells the page how long it is locked out for. Counting it down
+  // is the difference between "it is broken" and "it is nineteen seconds".
+  var waitFor = function (seconds) {
+    if (timer) clearInterval(timer);
+    var left = seconds;
+    button.disabled = true;
+    var tick = function () {
+      if (left <= 0) {
+        clearInterval(timer);
+        timer = 0;
+        button.disabled = false;
+        note.textContent = "You can try again now.";
+        return;
+      }
+      note.textContent = "Too many attempts. Try again in " + left + "s.";
+      left = left - 1;
+    };
+    tick();
+    timer = setInterval(tick, 1000);
+  };
+  var submit = function () {
+    if (button.disabled) return;
+    var code = digits(input.value);
+    if (code.length !== 6) {
+      note.textContent = "The code is the six digits shown next to the QR code.";
+      return;
+    }
+    button.disabled = true;
+    note.textContent = "Checking the code…";
+    fetch("/session", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ credential: code })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (r.ok) { location.replace("/"); return; }
+        if (body.retryAfter) { waitFor(body.retryAfter); return; }
+        button.disabled = false;
+        note.textContent = body.error || "That code did not work.";
+      });
+    }, function () {
+      button.disabled = false;
+      note.textContent = "Could not reach Murage. It may have stopped on your computer.";
+    });
+  };
+  input.addEventListener("input", function () {
+    var cleaned = digits(input.value);
+    if (input.value !== cleaned) input.value = cleaned;
+  });
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") submit();
+  });
+  button.addEventListener("click", submit);
+})();`;
+}
+
+/** The styles the typed-code field needs, on both pages. */
+const CODE_ENTRY_STYLE = `
+  .cf { margin-top: 1.5rem; text-align: left; }
+  .cf[hidden] { display: none; }
+  .lb { display: block; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin-bottom: .35rem; }
+  .row { display: flex; gap: .5rem; }
+  .in { flex: 1 1 auto; min-width: 0; font: inherit; font-variant-numeric: tabular-nums; letter-spacing: .25em;
+        padding: .7rem .75rem; border-radius: .5rem; border: 1px solid #8884; background: transparent; color: var(--fg); }
+  .go { font: inherit; padding: .7rem 1.1rem; border-radius: .5rem; border: 0; background: #e2622a; color: #fff; cursor: pointer; }
+  .go[disabled] { opacity: .5; cursor: default; }
+  .note:empty { display: none; }
+  .note { margin: .6rem 0 0; color: #b8791f; }`;
+
 /** First contact: a self-contained page that moves the credential out of the
  * URL and into an HttpOnly cookie.
  *
@@ -582,14 +719,17 @@ function enterPage(nonce: string): string {
   button { font: inherit; padding: .75rem 1.25rem; border-radius: .5rem; border: 0;
            background: #e2622a; color: #fff; cursor: pointer; margin-top: .5rem; }
   button[disabled] { opacity: .5; cursor: default; }
+${CODE_ENTRY_STYLE}
 </style>
 <main>
   <h1 id="t">Sign in to Murage</h1>
   <p id="m">On this device.</p>
   <p id="w"></p>
   <button id="go" hidden>Sign in on this device</button>
+  ${codeEntryMarkup(true)}
 </main>
 <script nonce="${nonce}">
+${codeEntryScript()}
 (function () {
   var say = function (title, detail) {
     document.getElementById("t").textContent = title;
@@ -600,7 +740,16 @@ function enterPage(nonce: string): string {
   // the session history must not keep it.
   history.replaceState(null, "", "/enter");
   if (!credential) {
-    say("Nothing to sign in with", "Open Phone settings in Murage on your computer and scan the code again.");
+    // Not a dead end any more. This page is reached with an empty fragment by
+    // anyone who bookmarked it, and by every device that cannot scan — so it
+    // offers the other half of the same credential rather than telling a
+    // laptop to point a camera at itself.
+    say(
+      "Sign in to Murage",
+      "On your computer, open Murage and go to Settings → Phone. Scan the QR code with a phone camera, or type the six-digit code beside it here."
+    );
+    document.getElementById("cf").hidden = false;
+    document.getElementById("cc").focus();
     return;
   }
 
@@ -655,6 +804,11 @@ function enterPage(nonce: string): string {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.ok) { location.replace("/"); return; }
         say("Could not sign in", body.error || "That code is no longer valid.");
+        // The link failed — expired, already spent, or guessed to death. The
+        // person is standing in front of the computer that can show them a
+        // new code, so offer the field rather than making them go back and
+        // relay a second link by hand.
+        document.getElementById("cf").hidden = false;
       });
     }).catch(function () {
       say("Could not reach Murage", "The app may have stopped on your computer.");
@@ -667,15 +821,20 @@ function enterPage(nonce: string): string {
 
 /** What a person sees when they open the address without a session.
  *
- * No script and no link to `/enter`: that page is useless without a
- * credential in its fragment, and a link to it would only produce a second
- * dead end. The way in is the QR, which is on the computer. */
-function signInPage(): string {
+ * It used to say "scan the code with this device" and stop there, which is
+ * advice a laptop cannot take and a browser pointed at a cloud instance cannot
+ * take either. It now names both routes — scan it, or type it — and carries
+ * the field for the second one, so this page is somewhere a keyboard can
+ * finish rather than a wall with a QR code on the far side of it.
+ *
+ * Still no link to `/enter`: that page needs a credential in its fragment to
+ * do anything the field here does not already do. */
+function signInPage(nonce: string): string {
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Murage</title>
-<style>
+<style nonce="${nonce}">
   :root { color-scheme: light dark; --fg: #111; --dim: #666; --bg: #fff; }
   @media (prefers-color-scheme: dark) { :root { --fg: #eee; --dim: #999; --bg: #151515; } }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
@@ -683,11 +842,16 @@ function signInPage(): string {
   main { max-width: 30rem; padding: 2rem; text-align: center; }
   h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
   p { color: var(--dim); margin: 0; }
+${CODE_ENTRY_STYLE}
 </style>
 <main>
   <h1>Not signed in</h1>
-  <p>Open Phone settings in Murage on your computer and scan the code with this device.</p>
+  <p>On your computer, open Murage and go to Settings → Phone. Scan the QR code with a phone camera, or type the six-digit code beside it here.</p>
+  ${codeEntryMarkup(false)}
 </main>
+<script nonce="${nonce}">
+${codeEntryScript()}
+</script>
 `;
 }
 
@@ -792,6 +956,178 @@ export function injectRenewal(html: string): string {
   return html.slice(0, close) + tag + html.slice(close);
 }
 
+// ── The typed-code rate limit ────────────────────────────────────────────
+//
+// THE POLICY, AND WHY IT IS THIS ONE.
+//
+// A scanned QR carries 256 bits. A typed code carries six digits — one in a
+// million — so the moment a field exists on an unauthenticated page, online
+// guessing is a real attack for the first time. Two layers answer it, and they
+// answer different halves:
+//
+//  1. `DeviceRegistry` burns the pairing window after five wrong guesses
+//     (`MAX_PAIRING_ATTEMPTS`). That bounds the guesses ANY number of clients
+//     get against one code at five, total, ever. It is the layer that makes
+//     the credential safe.
+//  2. This limiter bounds the RATE at which one client may make attempts at
+//     all. It is the layer that makes the *endpoint* safe, and it exists
+//     because of a recorded defect: `POST /session` reuses `redeem`, so five
+//     requests from any unauthenticated tailnet peer could burn the window a
+//     person was mid-way through typing. Layer 1 alone turns that into a
+//     permanent pairing denial-of-service; layer 1 plus a lockout turns it
+//     into something that has to be re-earned every few minutes and gets a
+//     stranger nothing.
+//
+// Numbers: three free failures, because a person mistypes a digit and a person
+// finishes typing after the code rolled over, and neither of those is an
+// attack. From the fourth, a lockout of 5s, then 20s, 80s, 320s, capped at
+// fifteen minutes — a factor of four, so a machine that keeps trying is
+// spending exponentially more wall-clock time for each additional guess while
+// a human who got it wrong four times waits five seconds. A quarter of an hour
+// with no failures forgets the client entirely, so nobody is punished tomorrow
+// for a bad afternoon.
+//
+// What counts as a failure: every refusal EXCEPT `full` and `save-failed`, and
+// a refusal with no reason at all. Those two mean the credential was RIGHT and
+// the machine could not finish the job; locking somebody out for them would
+// punish the one person who is holding the real code. Everything else counts,
+// including presenting a spent or expired code, because the spent-window
+// memory in `devices.ts` answers those without charging an attempt against any
+// window — which would otherwise be a free, unlimited oracle.
+//
+// A success clears the client's record immediately: the person is in, and the
+// next browser on the same machine starts clean.
+//
+// FAIL CLOSED, in two places. A locked client's request never reaches
+// `redeem`, so a lockout cannot be spent as an attempt. And when the table of
+// tracked clients is full, an unknown client is refused rather than admitted
+// — see `SIGN_IN_MAX_CLIENTS`.
+export const SIGN_IN_FREE_ATTEMPTS = 3;
+export const SIGN_IN_LOCKOUT_BASE_MS = 5_000;
+export const SIGN_IN_LOCKOUT_FACTOR = 4;
+export const SIGN_IN_LOCKOUT_MAX_MS = 15 * 60_000;
+/** Quiet for this long and the client is forgotten. */
+export const SIGN_IN_FORGET_MS = 15 * 60_000;
+/** How many clients are tracked at once.
+ *
+ * Under `tailscale serve` every request arrives from 127.0.0.1, so in the
+ * shipped arrangement there is exactly one bucket and this cap is never
+ * approached. Bound directly to the tailnet the key is a peer address, and 256
+ * distinct peers failing sign-in is not a shape any real tailnet has.
+ *
+ * Full means refuse, not evict. Evicting the oldest would let an attacker
+ * clear their own lockout by making noise from other addresses, which is the
+ * limiter deleting itself under exactly the load it exists for. Refusing
+ * instead is a denial of service against sign-in — recorded, and the lesser
+ * of the two, because it lasts as long as the flood and no longer, while the
+ * other failure hands out the fleet. */
+export const SIGN_IN_MAX_CLIENTS = 256;
+
+interface SignInBucket {
+  failures: number;
+  lockedUntil: number;
+  lastFailureAt: number;
+}
+
+export interface SignInLimiter {
+  /** How long this client must wait, or null when it may try now. */
+  check(key: string, now?: number): { retryAfterMs: number } | null;
+  /** Record one failed attempt and return the resulting wait, if any. */
+  fail(key: string, now?: number): { retryAfterMs: number } | null;
+  /** Forget this client — it just signed in. */
+  succeed(key: string): void;
+}
+
+export function createSignInLimiter(): SignInLimiter {
+  const buckets = new Map<string, SignInBucket>();
+
+  const forget = (now: number): void => {
+    for (const [key, bucket] of buckets) {
+      if (bucket.lockedUntil <= now && now - bucket.lastFailureAt > SIGN_IN_FORGET_MS) buckets.delete(key);
+    }
+  };
+
+  return {
+    check(key, now = Date.now()) {
+      forget(now);
+      const bucket = buckets.get(key);
+      if (!bucket) {
+        // Unknown client, no room to track one. Refusing is the fail-closed
+        // half: an untracked attempt is an unlimited attempt.
+        if (buckets.size >= SIGN_IN_MAX_CLIENTS) return { retryAfterMs: SIGN_IN_LOCKOUT_BASE_MS };
+        return null;
+      }
+      if (bucket.lockedUntil > now) return { retryAfterMs: bucket.lockedUntil - now };
+      return null;
+    },
+    fail(key, now = Date.now()) {
+      const bucket = buckets.get(key) ?? { failures: 0, lockedUntil: 0, lastFailureAt: now };
+      bucket.failures += 1;
+      bucket.lastFailureAt = now;
+      const over = bucket.failures - SIGN_IN_FREE_ATTEMPTS;
+      if (over > 0) {
+        const wait = Math.min(
+          SIGN_IN_LOCKOUT_MAX_MS,
+          SIGN_IN_LOCKOUT_BASE_MS * Math.pow(SIGN_IN_LOCKOUT_FACTOR, over - 1),
+        );
+        bucket.lockedUntil = now + wait;
+      }
+      // Only stored once it has something to say, and only while there is
+      // room — a table already at its ceiling does not grow past it.
+      if (!buckets.has(key) && buckets.size >= SIGN_IN_MAX_CLIENTS) forget(now);
+      if (buckets.has(key) || buckets.size < SIGN_IN_MAX_CLIENTS) buckets.set(key, bucket);
+      return bucket.lockedUntil > now ? { retryAfterMs: bucket.lockedUntil - now } : null;
+    },
+    succeed(key) {
+      buckets.delete(key);
+    },
+  };
+}
+
+/** Which client an attempt is charged to.
+ *
+ * The socket's peer address, and NEVER a header. `X-Forwarded-For` is the
+ * obvious-looking choice and it is the wrong one: bound directly to the
+ * tailnet, that header is written by whoever is connecting, so an attacker
+ * would mint a fresh identity per guess and the limiter would be decoration.
+ * `forwardedHeaders` already refuses to trust client headers for the same
+ * reason; this is the same rule applied to counting.
+ *
+ * The cost is stated rather than hidden: under `tailscale serve` every request
+ * arrives from 127.0.0.1, so all tailnet clients share one bucket and a flood
+ * from one peer locks the others out too. That is over-throttling, and it is
+ * the direction to be wrong in — a tailnet has one user here, and the
+ * alternative is a spoofable key, which is no limit at all. */
+export function signInClientKey(req: IncomingMessage): string {
+  return req.socket?.remoteAddress ?? "unknown";
+}
+
+/** The credential as the registry should see it.
+ *
+ * A person reading six digits off a screen types them with a space or a dash
+ * in the middle, and a person copying them picks up a trailing newline. None
+ * of that is a wrong code, and answering it as one costs an attempt from a
+ * budget of five. Digits-with-separators collapse to digits; anything else —
+ * every `murage_pair_…` QR token — is passed through with only its
+ * surrounding whitespace removed, because that string's characters are the
+ * credential. */
+export function normalizeCredential(raw: unknown): string {
+  const value = String(raw ?? "").trim();
+  // `\s` covers the non-breaking space a copy off a rendered page brings.
+  if (/^[0-9][0-9\s.-]*$/.test(value)) return value.replace(/[^0-9]/g, "");
+  return value;
+}
+
+/** Whether a refusal from `redeem` is the caller's fault.
+ *
+ * `full` and `save-failed` mean the credential was correct and this machine
+ * could not finish. An unknown or missing reason counts, which is the
+ * fail-closed direction: a future refusal nobody classified is treated as a
+ * guess rather than waved through. */
+export function countsAgainstSignIn(reason: string | undefined): boolean {
+  return reason !== "full" && reason !== "save-failed";
+}
+
 /**
  * The browser-facing handler.
  *
@@ -804,6 +1140,11 @@ export function injectRenewal(html: string): string {
  * `GET /enter` is the one unauthenticated route and it terminates here.
  */
 export function createBrowserHandler(options: BrowserDoorOptions) {
+  // One limiter per door, living as long as the door does. In memory on
+  // purpose: a lockout that survived a restart would need a file, and a file
+  // an attacker can provoke writes to is a worse trade than a lockout that a
+  // deliberate restart of the desktop app clears.
+  const signIn = options.signInLimiter ?? createSignInLimiter();
   return function handle(req: IncomingMessage, res: ServerResponse): void {
     const identity = options.identity();
     const path = (req.url ?? "/").split("?")[0];
@@ -862,13 +1203,46 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
 
     if (path === "/session") {
       if (method === "POST") {
+        // Before the body is read, and before `redeem` is reached at all: a
+        // locked-out client must not be able to spend one of the five
+        // attempts the person at the keyboard is relying on.
+        const client = signInClientKey(req);
+        const waiting = signIn.check(client);
+        if (waiting) {
+          req.resume();
+          const seconds = Math.max(1, Math.ceil(waiting.retryAfterMs / 1000));
+          res.setHeader("retry-after", String(seconds));
+          return sendJson(res, 429, {
+            error: `too many sign-in attempts from this device — try again in ${seconds} seconds`,
+            retryAfter: seconds,
+          });
+        }
         readJson(req).then(
           (body) => {
             // The same redemption the native path uses. A second
             // implementation would be a second set of attempt counters and a
             // second place the five-attempt lockout can be forgotten.
-            const result = options.devices.redeem(String(body.credential ?? ""), browserLabel(String(req.headers["user-agent"] ?? "")));
-            if ("error" in result) return sendJson(res, 401, { error: result.error });
+            const result = options.devices.redeem(
+              normalizeCredential(body.credential),
+              browserLabel(String(req.headers["user-agent"] ?? "")),
+            );
+            if ("error" in result) {
+              // Each case keeps the registry's own sentence — expired,
+              // already used, cancelled after wrong guesses, simply wrong —
+              // because a person who typed six digits needs to know which of
+              // those happened to know what to do next.
+              const payload: Record<string, unknown> = { error: result.error };
+              if (countsAgainstSignIn(result.reason)) {
+                const locked = signIn.fail(client);
+                if (locked) {
+                  const seconds = Math.max(1, Math.ceil(locked.retryAfterMs / 1000));
+                  res.setHeader("retry-after", String(seconds));
+                  payload.retryAfter = seconds;
+                }
+              }
+              return sendJson(res, 401, payload);
+            }
+            signIn.succeed(client);
             // The raw bearer stops here. It is not written down, not logged,
             // and not sent on.
             const session = options.devices.openSession(result.device.id, browserLabel(String(req.headers["user-agent"] ?? "")));
@@ -916,12 +1290,19 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       // redirect — the SPA's own `fetch` calls target `/api/…`, never the
       // shell, so none of them can end up parsing this as JSON.
       if (denial.status === 401 && method === "GET" && staticContentType(path)?.startsWith("text/html")) {
-        const html = signInPage();
+        const nonce = randomBytes(16).toString("base64");
+        const html = signInPage(nonce);
         res.writeHead(401, {
           "content-type": "text/html; charset=utf-8",
           "content-length": Buffer.byteLength(html),
+          // The page now runs one script — the typed-code field — so it needs
+          // the same nonce treatment `/enter` has, and `connect-src 'self'`
+          // for the one POST it makes. `form-action 'none'` stays: there is no
+          // form on the page and there must never be one, because a form whose
+          // script failed would put the code in a query string.
           "content-security-policy":
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+            `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; ` +
+            `connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`,
           ...BASE_HEADERS,
         });
         res.end(html);
