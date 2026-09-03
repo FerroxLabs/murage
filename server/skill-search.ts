@@ -33,12 +33,16 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { DATA_DIR } from "./config.ts";
-import { SKILL_LIBRARY_ROOT } from "./skills.ts";
+import { SKILL_LIBRARY_ROOT, checkLibrarySkill } from "./skills.ts";
 
-/** Bump when the table shape or the tokenizer changes. Part of the fingerprint,
- *  so an app upgrade that changes either rebuilds instead of querying a stale
- *  index with the wrong columns. */
-const SCHEMA_VERSION = 2;
+/** Bump when the table shape, the tokenizer, or the ADMISSION RULE changes.
+ *  Part of the fingerprint, so an app upgrade that changes any of them
+ *  rebuilds instead of querying a stale index with the wrong columns — or,
+ *  since v3, with rows the installer would now refuse. v3 is the admission
+ *  bump: an index built by v2 on an unchanged library still fingerprints as
+ *  current, so without this an upgraded app would keep serving the very rows
+ *  checkLibrarySkill was added to withhold. */
+const SCHEMA_VERSION = 3;
 
 const INDEX_FILE = () => join(DATA_DIR, "skill-index.db");
 
@@ -125,6 +129,41 @@ interface SkillRow {
   terms: string;
 }
 
+/** One indexable row, or null if this entry must not be advertised.
+ *
+ *  THE INDEX MUST NOT ADVERTISE WHAT THE INSTALLER WILL REFUSE. Both
+ *  /api/library/search and /api/library/suggest hand the ids this module
+ *  returns straight to the install routes, so any rule the index does not
+ *  enforce is a row a user can tick and watch fail. Before this gate the only
+ *  requirement was a parseable manifest.json; the installer additionally
+ *  requires a valid id, a real directory, a regular SKILL.md inside the size
+ *  cap, a fully valid manifest, valid frontmatter, and a frontmatter name
+ *  equal to the manifest id. Measured consequence of that gap: "security
+ *  auditor" returned an unresolvable skill as the number one result.
+ *
+ *  checkLibrarySkill is the installer's own rejection ladder with the write
+ *  removed, so the two cannot drift — the same rule set the catalog builder
+ *  now calls (scripts/build-local-catalog.mjs). It is deliberately NOT
+ *  reimplemented here: a copy is how the disagreement started.
+ *
+ *  It is checked FIRST so a rejected entry costs no manifest parse, and it is
+ *  wrapped because an unexpected throw from one entry must not abort the
+ *  build for the other 2,236 — the same resilience readManifest has. */
+function indexRow(root: string, entry: string): SkillRow | null {
+  try {
+    if ("error" in checkLibrarySkill(entry, root)) return null;
+  } catch {
+    // Defensive: checkLibrarySkill returns its errors rather than throwing,
+    // but a skip here is always better than a build that dies on one entry.
+    return null;
+  }
+  return readManifest(root, entry);
+}
+
+/** Display fields for a row that has already passed the installer's gate.
+ *  The gate validates; this reads what the index shows. They read the same
+ *  manifest.json twice — measured at well under the noise floor of the build
+ *  it sits in, and the alternative is duplicating the installer's parse. */
 function readManifest(root: string, entry: string): SkillRow | null {
   const manifestPath = join(root, entry, "manifest.json");
   if (!existsSync(manifestPath)) return null;
@@ -275,7 +314,7 @@ async function buildIndexFile(target: string, root: string): Promise<number> {
       db.exec("BEGIN");
       try {
         for (const entry of slice) {
-          const row = readManifest(root, entry);
+          const row = indexRow(root, entry);
           if (!row) continue;
           const { lastInsertRowid } = insert.run(row.id, row.name, row.description, row.terms);
           for (const term of new Set(row.terms.split(" ").filter(Boolean))) {
