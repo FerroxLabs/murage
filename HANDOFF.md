@@ -1,5 +1,175 @@
 # Murage — session handoff
 
+> Read this, then the QUEUE section. Everything below the HISTORY separator is
+> record, not a to-do list.
+
+## THE PROTOCOL — Sean set this, follow it exactly
+
+1. **Research it properly.** Verify every claim against the code first. This
+   repo has now produced ~30 cases where measurement contradicted a written
+   plan, including several written the same day.
+2. **Cross-audit the plan** before building. 3. **Execute.**
+4. **Cross-audit the result, ONCE.** 5. **Fix only Critical and High.**
+
+**Swarm it.** Parallel agents, strictly disjoint files. Agents NEVER run a git
+command that writes; the orchestrator commits by explicit path.
+
+## HOW TO BRIEF AN AGENT — this is what makes the swarm work
+
+- **Tell them to contradict you, and mean it.** Twelve lanes across two sessions
+  have now corrected the orchestrator and **every single one was right**.
+  Working phrasing: *"tell me plainly if any premise I have handed you does not
+  survive contact with the code."* Last night that phrasing caught: a brief that
+  had ogg/webm support backwards, a premise asserting behaviour that never
+  existed, a wrong hypothesis about credential allowlisting, and a third wiring
+  point whose absence would have shipped a feature that did nothing.
+- **The orchestrator owns the contended files.** `server/index.ts` and
+  `server/flux-routing.ts` were mine last night; every lane wrote NEW modules
+  and handed back an exact diff with surrounding lines quoted. Five lanes, zero
+  collisions. Do this again.
+- **`git show HEAD:<file>`, never the file on disk**, when checking whether code
+  "already exists". An auditor once read a live lane's UNCOMMITTED work and
+  reported it as pre-existing.
+- **Controls that share a production rule are NOT independent.** Run them one at
+  a time. Applying two masks both and yields a false green.
+- **Expect green controls, and treat one as a bug in the TEST.** Four more
+  turned up last night, and each was worth having: a test named "refuses a
+  declared oversize body without reading it" passed with the precheck deleted;
+  a control removing the word `trading` did nothing because `trade` survived and
+  matching is prefix-based; a control that failed on the wrong error entirely.
+- **Ask for a POSITIVE control too**, so a green means a guard working rather
+  than a harness observing nothing.
+- **Never run two full server suites at once** — spurious boot failures that
+  read as real bugs. Tell auditors NOT to run suites at all; static reading plus
+  "describe the test you would write" is higher signal anyway.
+- **A suite result older than the last commit is worthless.**
+- **Do not let an agent fabricate to satisfy a brief.** The best outcome last
+  night was a lane REFUSING to report a `--version` string it could not obtain,
+  which is how a wedged machine got diagnosed instead of a phantom packaging bug.
+- **API 500/529 kills agents mid-flight.** Work survives because agents never
+  git-write. Resume with SendMessage; state persists on disk.
+
+## THE ENVIRONMENT WILL LIE TO YOU — check it before you debug code
+
+Two hours went to this across two sessions. Check both before believing a
+symptom.
+
+- **`syspolicyd` can wedge.** On 2026-09-03 it sat at 99.8% CPU with 7h25m of
+  CPU time across 6 days of uptime, and **no newly created binary would run at
+  all** — a freshly compiled hello-world hung at `_dyld_start`, as did a fresh
+  copy of a known-good binary. It presents as "the new build is broken".
+  Diagnose with: compile a hello-world and run it. Fix with
+  `sudo killall syspolicyd` (it respawns clean). After the fix, first launch of
+  any new binary costs ~3.5s to Gatekeeper validation, then 0.00-0.03s.
+- **`nohup ... &` from a tool call gets killed** when the call's shell exits.
+  Two full suite runs were lost to this, both leaving a 223-byte log that looks
+  like a hang. Use the harness's own background mechanism.
+- **Another session on the same machine competes.** Load average hit 61 with a
+  second project's full suite running. A slow suite may not be your suite.
+
+## STATE — 8 commits this session (33 across both), pushed, `main` in sync
+
+Everything below is committed and green. Highlights from the last session, all
+verified rather than relayed:
+
+- **Fuigo is an engine.** It was 165MB of shipped shelf-ware with zero callers.
+- **Fuigo 1.0.4**, scoped `@fuigo/*`, six targets pinned, twelve digests.
+- **Phone dictation**, server-side, on Groq.
+- **Paste-and-extract keys**, where the pasted blob is never React state.
+- **The ferret matcher**, 391ms -> 5.4ms and 26 of 27 queries correct.
+- **Composio's terms question closed** — multi-tenancy is the product.
+
+## QUEUE — what is actually left
+
+The six-item queue from the previous handoff is DONE except where an external
+dependency blocks it. What follows is the real remainder.
+
+### 1. IMAGE TOOL — specced, built nothing, blocked on Flux and RE-VERIFIED SO
+`docs/plans/flux-image-tool.md` is current and carries a dated live-probe block.
+**Do not start until `GET /v1/models` carries `capability`, `display_name`,
+`list_price_microcents` and `entitlement`.** Probed 2026-09-03: 105 rows whose
+keys are exactly `created, id, max_input_tokens, max_output_tokens, object,
+owned_by`. Flux reports Request 1 as built, route wiring left.
+
+**Traps already paid for, do not rediscover:**
+- Default is `flux-image-nano-banana-2` -> `gemini-3.1-flash-image`, live.
+- `flux-image-gpt2` and `-gpt2-low` ARE live now; gpt-image-2 rolled.
+- `flux-image-gpt2-high` and `-gpt2-xl` are WIRED, PRICED AND WITHHELD (164.7s
+  measured against a ~100s edge cap; they would 524 for every caller).
+- **`flux-image-nano-banana-pro-2k` DOES NOT EXIST** and would 400 for every
+  caller. The live arms are `-pro` and `-pro-4k`. The old price table is wrong.
+- `flux-image-together-flux` is retired but STILL ADVERTISED in `/v1/models`.
+- **Image generation answers `402 premium_locked` on our key.** So
+  `premium_locked` is the FIRST thing a new user hits, not an edge case. Reuse
+  the vocabulary `server/voice/flux-voice.ts` already established for the same
+  distinction — the key is fine, the plan is not.
+
+### 2. FLUX-SIDE WORK, already written up and handed over
+- `docs/plans/HANDOFF-TO-FLUX-ROUTER-CONNECTIONS.md` — front Composio's broker
+  on the Flux key. Murage's half is CONFIG: `activeBroker()`
+  (`server/composio.ts:195`) is the one choke point and `brokerRequest` resolves
+  through it, so no caller can route around it. The one piece of real work is
+  the **OAuth callback, which is stateful and will not survive a naive
+  pass-through** — it completes the browser flow and then fails to attach.
+- The terms question is CLOSED. Composio's API is keyed on an end-user id and
+  Murage already mints one per person (`server/composio.ts:520`). Multi-tenancy
+  is the product. `docs/plans/composio-behind-flux.md` has the evidence; do not
+  re-litigate it from the public terms page, which reads two ways.
+
+### 3. THE FUIGO LOGIN GAP — known, accepted, written down
+A user signed in with `fuigo login` (its own OAuth, `~/.fuigo/auth.json`) and
+NO Flux key in App Settings: `fluxConfigured()` is false, so `routableEngine`
+(`server/flux-surface.ts:129`) is false, so every `flux-*` row is stripped from
+their picker and a persisted `flux-auto` is refused at spawn — even though fuigo
+could have run it on its own login. Shipped deliberately: it is strictly better
+than the alternative, since without the `FLUX_SURFACE` entry fuigo has no
+catalog at all. **The fix requires the gate to know about a second credential
+source**, which is its own change and its own controls.
+
+### 4. TWO SMALL, REAL HOLES FOUND IN PASSING
+- **`FUIGO_API_KEY` / `FUIGO_CODE_API_KEY` are in NONE of
+  `PROVIDER_CREDENTIAL_ENV`, `WORKSPACE_CREDENTIAL_ENV` or `ROUTING_ENV`**
+  (`server/config.ts`). So an ambient one in the user's own shell currently
+  rides into EVERY driver's child env. The fuigo driver clears both for itself
+  when Murage has a key, but the general hole is in config.ts.
+- **`executableTarget()` (`scripts/prepare-cloudflared.mjs`) has no aarch64 or
+  ARM64 support** — only ELF `0x3e` and PE `0x8664`. That is why
+  `linux-arm64`/`win32-arm64` are pinned-but-unstageable behind an explicit
+  guard in `prepare-fuigo.mjs`. Adding ELF `0xb7` and PE `0xaa64` is a two-value
+  change; it must land together with removing that guard and its comment, or
+  the comment becomes a lie.
+
+### 5. THE FERRET'S SURVIVING CASE — deliberate, do not "fix" half of it
+"book a table for four at eight" reaches a book-writing profile. `book` is
+genuinely the topic word of six profiles and a verb in English, and removing it
+breaks "I want to write a book" — the sentence those profiles exist for. A test
+pins BOTH halves so nobody fixes one and silently breaks the other.
+
+### 6. COSMETIC, YOUR CALL
+`registry.describe()`'s `cliCandidates` uses `findCliCandidates("fuigo")` ->
+`augmentedPath()`, which does not include `MURAGE_FUIGO_DIR`, so the BUNDLED
+engine never appears in the Engines panel's "detected" dropdown. It works
+regardless. Arguably a shipped engine should not read as a "detected install".
+
+## RUNNING THE APP — this cost an hour once, do not pay it twice
+Dev does NOT fork the harness. Three processes:
+  `npx vite` (5199) · `node scripts/dev-server.mjs` (8799) · `npx electron .`
+`--experimental-strip-types` does NOT hot-reload, so a server change needs the
+harness restarted, and **a harness older than your commits makes a fixed feature
+look broken**. Check its start time against `git log` before debugging anything.
+
+Note `knownDirs()` (`server/env-path.ts:38`) already includes `~/.fuigo/bin`, so
+a user's own fuigo install is found in dev even though `MURAGE_FUIGO_DIR` is
+only set for packaged builds.
+
+--- HISTORY ---` is record, not a to-do list.
+
+--- HISTORY ---
+
+## SESSION 2026-09-03 — superseded by the head above
+
+# Murage — session handoff
+
 > Read this, then §QUEUE. Below `--- HISTORY ---` is record, not a to-do list.
 
 ## THE PROTOCOL — Sean set this, follow it exactly
@@ -138,8 +308,6 @@ The app says so on screen when the harness is missing. `--experimental-strip-typ
 does NOT hot-reload, so a server change needs the harness restarted, and a
 harness older than your commits will make a fixed feature look broken. Check its
 start time against `git log` before debugging anything.
-
---- HISTORY ---
 
 ## SESSION 2026-09-03 (earlier head) — superseded
 
