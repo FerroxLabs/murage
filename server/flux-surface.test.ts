@@ -16,6 +16,7 @@ import { CodexDriver } from "./drivers/codex.ts";
 import { QwenAgentDriver } from "./drivers/acp/qwen.ts";
 import { readCodexModelCatalog } from "./drivers/codex-catalog.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
+import { FLUX_SURFACE as ROUTING_FLUX_SURFACE } from "./flux-routing.ts";
 import {
   FLUX_SURFACE,
   FLUX_TIERS,
@@ -74,7 +75,15 @@ describe("FLUX_SURFACE — the one table", () => {
       claudeAgent: "anthropic",
       qwenAgent: "openai",
       codex: "responses",
+      hermesAgent: "openai",
+      opencodeGo: "openai",
     });
+  });
+
+  it("is literally the same object flux-routing.ts dispatches on", () => {
+    // Two hand-synced copies of this table is one table with a bug in it. The
+    // identity check is the only assertion that cannot rot.
+    expect(FLUX_SURFACE).toBe(ROUTING_FLUX_SURFACE);
   });
 
   it("uses driverKinds that actually exist on built-in drivers", () => {
@@ -89,11 +98,11 @@ describe("FLUX_SURFACE — the one table", () => {
 
   it("leaves every engine with no Flux surface out (spec §4.4)", () => {
     for (const driver of BUILT_IN_DRIVERS) {
-      if (["claudeAgent", "qwenAgent", "codex"].includes(driver.driverKind)) continue;
+      if (["claudeAgent", "qwenAgent", "codex", "hermesAgent", "opencodeGo"].includes(driver.driverKind)) continue;
       expect(fluxSurfaceFor(driver.driverKind)).toBeNull();
     }
-    expect(fluxSurfaceFor("opencodeGo")).toBeNull();
     expect(fluxSurfaceFor("droidAgent")).toBeNull();
+    expect(fluxSurfaceFor("geminiAgent")).toBeNull();
   });
 });
 
@@ -295,9 +304,18 @@ describe("fluxSelectionRefusal — the spawn backstop", () => {
   });
 
   it("refuses a persisted flux-* selection on an engine with no Flux surface", () => {
-    expect(fluxSelectionRefusal("flux-auto", "opencodeGo", KEYED)).toBe(
+    expect(fluxSelectionRefusal("flux-auto", "droidAgent", KEYED)).toBe(
       "this bot's engine cannot route Flux Router — choose another model in settings",
     );
+  });
+
+  it("tells a setup-class engine apart from an unroutable one", () => {
+    // opencode CAN route; it just has not been set up. Saying "cannot route"
+    // sends the user to change engines when the fix is one deliberate write.
+    const env = { ...KEYED, HOME: join(tmpdir(), "murage-flux-surface-no-such-home") } as NodeJS.ProcessEnv;
+    const refusal = fluxSelectionRefusal("flux-auto", "opencodeGo", env);
+    expect(refusal).toContain("not set up for this engine yet");
+    expect(refusal).not.toContain("cannot route");
   });
 
   it("refuses when the key was removed after the selection was saved", () => {

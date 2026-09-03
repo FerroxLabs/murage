@@ -1,10 +1,12 @@
-// Flux Router — the surface table and the three env appliers.
+// Flux Router — the three routing tables and the env appliers.
 //
-// One host, three wire protocols. Which one an engine gets is not a detail the
-// caller may choose: a CLI pointed at the wrong surface 4xx's on every turn, so
-// the mapping lives here, next to the appliers, and the picker gate and the
-// spawn gate both read it. They cannot disagree about which engines are
-// routable because there is only one table (spec §5.1).
+// One host, three wire protocols, three mechanisms, three capability classes.
+// Which surface an engine gets is not a detail the caller may choose: a CLI
+// pointed at the wrong one 4xx's on every turn, so the mapping lives here,
+// next to the appliers, and the picker gate and the spawn gate both read it.
+// They cannot disagree about which engines are routable because there is only
+// one table — `flux-surface.ts` re-exports these rather than keeping a second
+// copy, which is what the two tables used to be (spec §5.1).
 //
 // THE CREDENTIAL RULE (Kimi finding C, docs/plans/flux-router-integration.md:172).
 // `FLUX_API_KEY` is in WORKSPACE_CREDENTIAL_ENV (config.ts:551), so by the time
@@ -52,31 +54,126 @@ export const FLUX_RESPONSES_BASE = "https://api.fluxrouter.ai/v1";
 export const FLUX_ANTHROPIC_BASE = "https://api.fluxrouter.ai/anthropic";
 
 /**
- * Which engine gets which surface. Absent ⇒ not routable ⇒ no picker rows and
- * the spawn gate throws (spec §5.4).
+ * Which WIRE SURFACE an engine speaks. This answers "what does the HTTP look
+ * like", and nothing else — see `FLUX_MECHANISM` for how the engine is pointed
+ * at it, and `FLUX_CAPABILITY` for whether a user has to do anything first.
+ *
+ * Splitting those three apart is the change that made this table growable.
+ * While surface, mechanism and capability were one map, adding an engine that
+ * needs a FILE written rather than a VARIABLE set was impossible without
+ * changing the type — which is why this map sat at three engines while the
+ * drivers for two more were already in the tree. Wayland keeps the same two
+ * axes apart (`fluxCompat` in acpTypes.ts vs the four dispatch sets in
+ * fluxRouting.ts) and routes six CLIs off them.
  *
  * Keys are real `driverKind` values in this repo: claude.ts:98, qwen.ts:89,
- * codex.ts:37.
+ * codex.ts:37, hermes.ts:395, opencode-go.ts:346.
  *
  * Deliberately absent, each for a checked reason:
- *  - `gooseAgent` — the spec's §5.1 sketch lists it, but there is NO goose
- *    driver in this codebase (`grep -rin goose server/ src/` matches only
- *    "mongoose" in project-scout.ts:156). A key here that no driver can ever
- *    present would be dead weight in the gate and would read as a promise the
- *    picker never keeps. Add it in the same change that adds the driver.
- *  - `opencodeGo` (opencode-go.ts:346) and `qoder` — openai-capable but not
- *    pointable at Flux by env alone: opencode defaults to a non-openai provider
- *    and rejects `flux-auto` from its own catalog. Routing it needs a
- *    config-file writer, which Kimi finding B (integration.md:161) rules out
- *    without a real rollback. Spec §4.4.
- *  - droid / auggie / copilot / kiro / vibe — vendor-locked to their own
- *    service. Spec §4.4.
+ *  - `gooseAgent` — there is NO goose driver in this codebase (`grep -rin
+ *    goose server/ src/` matches only "mongoose" in project-scout.ts:156). A
+ *    key here that no driver can ever present would be dead weight in the gate
+ *    and would read as a promise the picker never keeps. Add it in the same
+ *    change that adds the driver. The recipe is known if it lands: the shared
+ *    OpenAI env PLUS `GOOSE_PROVIDER=openai` and `GOOSE_MODEL=flux-auto`,
+ *    without which goose never reads OPENAI_BASE_URL at all
+ *    (~/dev/wayland/app/src/process/task/fluxRouting.ts:27-28, 51).
+ *  - `geminiAgent` — Wayland routes its own IN-PROCESS gemini, not gemini-cli
+ *    over ACP, so there is no proven recipe to copy. Unverified, not refused.
+ *  - `droidAgent` / `cursorAgent` / `grok` / `grokAgent` — classified `vendor`
+ *    below. Note that classification is asserted, not probed, in Wayland too
+ *    (SESSION-HANDOFF-2026-06-05-FLUX-PHASE1-REMEDIATION.md:14: "it is
+ *    unproven that any given CLI honors OPENAI_BASE_URL/OPENAI_MODEL").
+ *  - `kimiAgent`, `piAgent`, `minimax`, `openai-compat`, `customAcp`,
+ *    `boxAgent`, `antigravityAgent` — unclassified. No evidence either way,
+ *    and an unclassified engine is not routable, so this fails closed.
+ *
+ * TWO CORRECTIONS to what this comment used to say, both wrong on the facts:
+ *  - it claimed `opencodeGo` is vendor-locked. It is not. OpenCode is
+ *    `setup`-class: it cannot be pointed at Flux by env alone (it defaults to
+ *    a non-openai provider), but Wayland ships a working connector for it
+ *    (src/process/connectors/opencode.ts:147-253) and so does this app now —
+ *    `server/opencode-config.ts`, behind the safety envelope Kimi finding B
+ *    (integration.md:161) asked for and Wayland built but never wired.
+ *  - it claimed `qoder` "routes through its own login". No Wayland doc or code
+ *    says that. Qoder was never ATTEMPTED — Wayland classifies it
+ *    routable-with-setup (acpTypes.ts:472) and simply never wrote the
+ *    connector. It is absent here because this app has no qoder driver, which
+ *    is a different and true reason.
  */
 export const FLUX_SURFACE: Partial<Record<DriverKind, FluxSurfaceKind>> = {
   claudeAgent: "anthropic",
   qwenAgent: "openai",
   codex: "responses",
+  hermesAgent: "openai",
+  opencodeGo: "openai",
 };
+
+/**
+ * CAPABILITY — what a user must do before this engine can reach Flux. Drives
+ * the picker copy and the refusal message; deliberately independent of which
+ * HTTP surface the engine speaks.
+ *
+ *  - `env`    — routable right now, with nothing for the user to do. Includes
+ *               the scoped-HOME engines: a disposable app-private config dir
+ *               is not "setup", it is an implementation detail of the spawn.
+ *               (Wayland labels hermes `setup` at acpTypes.ts:517; its own
+ *               router makes that stale, since hermesConfig.ts materialises
+ *               the home automatically. We follow the router, not the label.)
+ *  - `setup`  — routable only AFTER a deliberate, user-initiated write into
+ *               the CLI's own config file.
+ *  - `vendor` — locked to its own service. Never routable.
+ *
+ * Absent ⇒ unclassified ⇒ not routable, same as `vendor` in effect but honest
+ * about the difference: `vendor` is a claim, absence is the lack of one.
+ */
+export type FluxCapability = "env" | "setup" | "vendor";
+
+export const FLUX_CAPABILITY: Partial<Record<DriverKind, FluxCapability>> = {
+  claudeAgent: "env",
+  qwenAgent: "env",
+  codex: "env",
+  hermesAgent: "env",
+  opencodeGo: "setup",
+  grok: "vendor",
+  grokAgent: "vendor",
+  droidAgent: "vendor",
+  cursorAgent: "vendor",
+};
+
+export function fluxCapabilityFor(engine: DriverKind): FluxCapability | null {
+  return FLUX_CAPABILITY[engine] ?? null;
+}
+
+/**
+ * MECHANISM — how the child is actually pointed at the surface. This is the
+ * dispatch `applyFluxSurface` and the drivers read; it is not the same axis as
+ * the wire surface (hermes and opencode both speak `openai` and are reached
+ * two completely different ways).
+ *
+ *  - `env`         — variables on the child env, nothing on disk.
+ *                    claude / qwen / codex.
+ *  - `scopedHome`  — an app-private config dir regenerated per spawn plus one
+ *                    env var pointing at it. The user's own config is never
+ *                    read or written. hermes (`HERMES_HOME`).
+ *  - `configWrite` — a write into the CLI's OWN config file. The only
+ *                    mechanism that can damage something the user owns, hence
+ *                    the whole of `flux-connector.ts`, and the only one that
+ *                    is never triggered by a spawn. opencode.
+ */
+export type FluxMechanism = "env" | "scopedHome" | "configWrite";
+
+export const FLUX_MECHANISM: Partial<Record<DriverKind, FluxMechanism>> = {
+  claudeAgent: "env",
+  qwenAgent: "env",
+  codex: "env",
+  hermesAgent: "scopedHome",
+  opencodeGo: "configWrite",
+};
+
+export function fluxMechanismFor(engine: DriverKind): FluxMechanism | null {
+  return FLUX_MECHANISM[engine] ?? null;
+}
 
 /** Every `flux-*` alias the gateway serves shares this prefix. */
 export const FLUX_MODEL_PREFIX = "flux-";
@@ -225,6 +322,12 @@ export function applyFluxSurface(
 ): FluxSurfaceResult {
   const surface = fluxSurfaceFor(engine);
   if (!surface) return NOT_APPLIED;
+  // Env is one of THREE mechanisms now. A scoped-home engine (hermes) reads
+  // nothing off the env, and a config-write engine (opencode) carries its
+  // credential in its own file; writing OPENAI_* for either would be a lie in
+  // the returned `env` map that a routing badge or a log would repeat, and on
+  // opencode it would actively fight `stripForeignProviderKeys`.
+  if (fluxMechanismFor(engine) !== "env") return NOT_APPLIED;
   const model = fluxModelId(modelId);
   if (!model) return NOT_APPLIED;
   const bearer = key?.trim();

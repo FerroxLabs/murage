@@ -19,21 +19,35 @@
 // and by the injectors when they land, so picker and router cannot disagree.
 import type { DriverKind, ModelCatalog } from "./contracts.ts";
 import { fluxConfigured } from "./flux-config.ts";
+import { FLUX_SURFACE, type FluxSurfaceKind, fluxMechanismFor } from "./flux-routing.ts";
+import { openCodeFluxRouted } from "./opencode-config.ts";
 
-/** Which Flux wire surface an engine speaks. Presence in this table IS the
- *  "surface is implemented" flag — an engine absent from it is not routable,
- *  gets no rows, and is refused at spawn. Sourced from
- *  docs/plans/flux-router-spec.md §4.1-4.4: claude on Anthropic Messages,
- *  qwen on OpenAI chat-completions, codex on Responses. `opencode`, `qoder`,
- *  `droid`, `auggie`, `copilot`, `kiro` and `vibe` have no surface (§4.4) and
- *  must stay out. */
-export type FluxSurface = "anthropic" | "openai" | "responses";
+/** Which Flux wire surface an engine speaks.
+ *
+ *  There used to be a SECOND copy of this table in flux-routing.ts, kept in
+ *  sync by hand. Two tables that must agree are one table with a bug in it, so
+ *  this now re-exports the one in flux-routing.ts, which also owns the two
+ *  axes this file used to conflate with it:
+ *
+ *    FLUX_CAPABILITY  env | setup | vendor  — what the USER must do first
+ *    FLUX_MECHANISM   env | scopedHome | configWrite  — how the child is aimed
+ *
+ *  Presence in `FLUX_SURFACE` is still the "we know the wire protocol" flag,
+ *  but it is no longer sufficient for routing: a `configWrite` engine is not
+ *  routable until its connector has actually written the file — see
+ *  `routableEngine`. That is the whole reason an engine like opencode, which
+ *  needs a FILE rather than a VARIABLE, can now be in the table at all.
+ *
+ *  Corrections to what the old comment here asserted: `opencode` is NOT
+ *  vendor-locked (it is setup-class, and Wayland ships a working connector for
+ *  it), and `qoder` does not "route through its own login" — nothing in
+ *  Wayland says that; qoder was simply never attempted. Details and citations
+ *  in flux-routing.ts, next to the table. */
+export type FluxSurface = FluxSurfaceKind;
 
-export const FLUX_SURFACE: Readonly<Partial<Record<DriverKind, FluxSurface>>> = {
-  claudeAgent: "anthropic",
-  qwenAgent: "openai",
-  codex: "responses",
-};
+export { FLUX_SURFACE };
+export type { FluxCapability, FluxMechanism } from "./flux-routing.ts";
+export { FLUX_CAPABILITY, FLUX_MECHANISM, fluxCapabilityFor, fluxMechanismFor } from "./flux-routing.ts";
 
 export const FLUX_MODEL_PREFIX = "flux-";
 /** Flux's pinned-backend aliases (`flux-pinned-claude-opus-5`, …). They sort
@@ -90,8 +104,31 @@ export function fluxIdIsRoutable(id: string | null | undefined, driverKind: Driv
   return model !== null && id === fluxCatalogId(driverKind, model);
 }
 
+/**
+ * Has the deliberate, user-initiated config write for this engine actually
+ * happened, and is the block still ours?
+ *
+ * Only `configWrite` engines reach here. `openCodeFluxStatus` re-derives the
+ * answer from disk every time rather than caching, because the failure mode
+ * that matters is the user editing the file behind us: a cached "routed" would
+ * keep offering rows for a provider block that is no longer there.
+ *
+ * Fails closed on `absent`, `unconfigured` and `drifted` alike. Offering a
+ * Flux row that the CLI cannot resolve is exactly Kimi finding D in a new
+ * costume — the id would reach opencode, fail to match any provider, and burn
+ * the turn.
+ */
+function connectorRouted(driverKind: DriverKind, env: NodeJS.ProcessEnv): boolean {
+  if (driverKind === "opencodeGo") return openCodeFluxRouted(env as Record<string, string | undefined>);
+  // A configWrite engine with no connector implemented is not routable, and
+  // saying so here is what keeps the table from over-promising.
+  return false;
+}
+
 function routableEngine(driverKind: DriverKind, env: NodeJS.ProcessEnv): boolean {
-  return fluxSurfaceFor(driverKind) !== null && fluxConfigured(env);
+  if (fluxSurfaceFor(driverKind) === null || !fluxConfigured(env)) return false;
+  if (fluxMechanismFor(driverKind) !== "configWrite") return true;
+  return connectorRouted(driverKind, env);
 }
 
 /**
@@ -112,6 +149,7 @@ export function mergeFluxCatalog(
   catalog: ModelCatalog,
   driverKind: DriverKind,
   env: NodeJS.ProcessEnv = process.env,
+  options: { custom?: boolean } = {},
 ): ModelCatalog {
   const routable = routableEngine(driverKind, env);
   const own: ModelCatalog["options"] = [];
@@ -129,18 +167,28 @@ export function mergeFluxCatalog(
     (model.startsWith(FLUX_PINNED_PREFIX) ? pinned : own).push({ ...option });
   }
 
+  // `custom: true` is not cosmetic on a custom-access engine (hermes, qwen).
+  // ModelPicker pins such an engine to its Custom pane (ModelPicker.tsx:166)
+  // and offers no way back (`canReturnToOfficial`, :208), and that pane lists
+  // only options carrying this flag — so a Flux row without it is present in
+  // the API response and invisible in the UI. Same trap hermes.ts:240-244
+  // documents for its own config row.
   const rows = routable
-    ? FLUX_TIERS.map((tier) => ({ id: fluxCatalogId(driverKind, tier.id), label: tier.label }))
+    ? FLUX_TIERS.map((tier) => ({
+        id: fluxCatalogId(driverKind, tier.id),
+        label: tier.label,
+        ...(options.custom ? { custom: true } : {}),
+      }))
     : [];
-  const options = [...rows, ...own, ...pinned];
+  const merged = [...rows, ...own, ...pinned];
 
   let nextDefault = catalog.default;
   // a Flux default whose row just went away would select nothing
-  if (isFluxModel(nextDefault) && !options.some((option) => option.id === nextDefault)) nextDefault = "";
+  if (isFluxModel(nextDefault) && !merged.some((option) => option.id === nextDefault)) nextDefault = "";
   // an engine with no catalog of its own (qwen with no local host) would
   // otherwise have a default of "" while offering rows
-  if (!nextDefault) nextDefault = options[0]?.id ?? "";
-  return { default: nextDefault, options };
+  if (!nextDefault) nextDefault = merged[0]?.id ?? "";
+  return { default: nextDefault, options: merged };
 }
 
 /**
@@ -181,6 +229,12 @@ export function fluxSelectionRefusal(
   }
   if (!fluxConfigured(env)) {
     return "Flux Router has no API key — add one in App Settings, or choose another model";
+  }
+  // A setup-class engine is routable in principle and unrouted in fact. The
+  // distinction is worth its own sentence: "cannot route" would be a lie the
+  // user acts on by changing engines, when the fix is one deliberate write.
+  if (fluxMechanismFor(driverKind) === "configWrite" && !connectorRouted(driverKind, env)) {
+    return "Flux Router is not set up for this engine yet — run Flux setup for it (that writes a \"flux\" provider into the CLI's own config), or choose another model";
   }
   if (!fluxIdIsRoutable(model, driverKind)) {
     return `"${model}" is not a Flux Router model this engine can route — re-pick the model in settings`;
