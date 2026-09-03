@@ -18,6 +18,7 @@ import {
   librarySkillId,
   librarySkillIds,
   INTAKE_LOOSE_SKILL_MAX,
+  INTAKE_FRONT_DOOR_SLUG,
   type IntakeProfile,
   type IntakeSkill,
 } from "../src/lib/onboarding-intake.ts";
@@ -5274,6 +5275,34 @@ function intakeProfileSkills(entry: SearchableTeam): IntakeSkill[] {
     .filter((skill): skill is IntakeSkill => skill !== null);
 }
 
+/** The front door, for when the catalogue matched nothing at all.
+ *
+ * Not a match and never pretending to be one — it carries `fallback: true`
+ * so the card can say which it is. This is the only route by which Concierge
+ * is ever suggested, because a generic profile cannot win a matcher that
+ * rewards specific vocabulary, and making it win by padding its summary would
+ * be a lie that also breaks other profiles' matching.
+ *
+ * Returns null rather than an empty shell if Concierge is ever removed or
+ * loses its skills: a profile with no resolving skill is invisible by
+ * construction, and offering one here would promise a setup that does
+ * nothing. */
+async function intakeFrontDoor(): Promise<IntakeProfile | null> {
+  const entry = (await catalogForSearch()).find((candidate) => candidate.slug === INTAKE_FRONT_DOOR_SLUG);
+  if (!entry) return null;
+  const skills = intakeProfileSkills(entry);
+  if (skills.length === 0) return null;
+  return {
+    slug: entry.slug,
+    name: entry.name,
+    summary: entry.summary,
+    category: entry.category,
+    outcome: entry.outcome ?? null,
+    skills,
+    fallback: true,
+  };
+}
+
 /** The best profile for a sentence, or null when nothing is a real match.
  *  Returning null is a first-class answer: it is what sends the caller to the
  *  skills fallback instead of confidently suggesting the wrong assistant. */
@@ -6746,7 +6775,28 @@ const server = createServer(async (req, res) => {
         profile || tokens.length === 0
           ? []
           : chooseIntakeSkills(q, await searchSkills(q, INTAKE_FALLBACK_CANDIDATES), INTAKE_LOOSE_SKILL_MAX);
-      return json(res, 200, { query: q, profile, skills });
+      // Last, and only when both of the above found nothing. A real match
+      // wins, loose skills win over the front door, and "nothing in the
+      // library clearly matches that" — which is what someone saw after
+      // typing the card's own placeholder — stops being the end of the road.
+      // A vague REQUEST gets the front door. Noise does not.
+      //
+      // Measured, because the difference is not obvious: `help me`, `what
+      // should I do` and `NOT OR AND` already tokenise to nothing, so the
+      // token gate covers them. What survives tokenisation is a single
+      // leftover word — `say "hi"` keeps "say", `hey there` keeps "hey" — and
+      // those rank a stranger in the catalogue's bm25, which is the exact
+      // thing two existing tests were written to stop.
+      //
+      // Three words is the separator. Two-word noise is refused; "I don't
+      // know what I need help with" is seven words with real tokens and is
+      // precisely the person a front door exists for.
+      const words = q.trim().split(/\s+/).filter(Boolean).length;
+      const frontDoor =
+        !profile && skills.length === 0 && tokens.length > 0 && words >= 3
+          ? await intakeFrontDoor()
+          : null;
+      return json(res, 200, { query: q, profile: profile ?? frontDoor, skills });
     }
     m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);
     if (m && method === "GET") {

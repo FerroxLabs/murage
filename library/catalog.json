@@ -1242,10 +1242,16 @@
         "teams/researcher/skills/research-question/SKILL.md",
         "teams/researcher/skills/literature-search/SKILL.md",
         "teams/researcher/skills/citation-reference/SKILL.md",
-        "teams/researcher/skills/note-synthesis/SKILL.md"
+        "teams/researcher/skills/note-synthesis/SKILL.md",
+        "teams/researcher/skills/browser-automator/SKILL.md",
+        "teams/researcher/skills/company-research-guide/SKILL.md",
+        "teams/researcher/skills/competitive-intelligence/SKILL.md",
+        "teams/researcher/skills/industry-research-framework/SKILL.md"
       ],
       "requires": {
-        "apps": []
+        "apps": [
+          "Tavily"
+        ]
       }
     },
     {

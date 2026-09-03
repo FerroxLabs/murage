@@ -85,12 +85,69 @@ describe("mainstream profiles", () => {
   });
 
   it("promises no connector it cannot honour", () => {
-    // Zero of the 2,237 shipped skills can drive Composio or MCP, so a profile
-    // declaring a required app would advertise a capability that does not exist.
+    // Zero of the 2,237 shipped skills can drive Composio or MCP, so a
+    // REQUIRED app would advertise a capability that does not exist — the
+    // exact silent failure this whole set was written to avoid.
+    //
+    // An OPTIONAL one is the opposite: a declaration. Researcher is better
+    // with live search and honest without it, and `requirements.apps` is the
+    // field the package format already has for saying so — declared by 122
+    // entries as empty and read by nothing but re-export until now. Every
+    // optional entry still has to carry a reason, because an app named with
+    // no explanation is a prompt nobody can act on.
     for (const slug of MAINSTREAM_PROFILES) {
       const pkg = loadProfile(slug);
-      expect(pkg.requirements.apps).toEqual([]);
+      const required = (pkg.requirements.apps ?? []).filter((app) => app.optional !== true);
+      expect(required, `${slug} requires an app no shipped skill can reach`).toEqual([]);
+      for (const app of pkg.requirements.apps ?? []) {
+        expect(app.slug, `${slug} declares an app with no slug`).toBeTruthy();
+        expect(app.reason, `${slug} declares ${app.slug} with no reason`).toBeTruthy();
+      }
       expect(pkg.requirements.capabilities).toEqual([]);
+    }
+  });
+});
+
+describe("the front door reaches people the honest way", () => {
+  // Concierge cannot win the intake matcher and must not be made to. Its
+  // value is being generic; `intakeProfileMatches` rewards topic-specific
+  // vocabulary. Padding its summary to make it rank is a lie AND the exact
+  // trick that made the bare word "say" start matching Researcher.
+  //
+  // So it is offered as the answer to "nothing matched" — which is the
+  // question a front door exists to answer, and the one a person hit after
+  // typing the card's own placeholder text.
+  it("is offered last, only when a match and loose skills both found nothing", () => {
+    const server = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+    // Ordered: a real match wins, loose skills beat the front door, and two
+    // words of noise that happen to tokenise are refused outright.
+    expect(server).toContain("!profile && skills.length === 0 && tokens.length > 0 && words >= 3");
+    expect(server).toContain("await intakeFrontDoor()");
+    // A real match still wins, and loose skills still beat the front door.
+    expect(server).toContain("profile: profile ?? frontDoor");
+  });
+
+  it("refuses to offer a front door that would configure nothing", () => {
+    const server = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+    const fn = server.slice(server.indexOf("async function intakeFrontDoor"));
+    expect(fn.slice(0, fn.indexOf("\n}"))).toContain("if (skills.length === 0) return null;");
+  });
+
+  it("says it is a front door rather than a match", () => {
+    const card = readFileSync(new URL("../src/components/BotIntakeCard.tsx", import.meta.url), "utf8");
+    expect(card).toContain("profile.fallback &&");
+    expect(card).toContain("Nothing in the library matches that exactly");
+  });
+
+  it("does not pad Concierge's summary to game the matcher", () => {
+    // The failure this whole approach exists to avoid. If someone ever
+    // "fixes" ranking by stuffing generic verbs in here, they will break
+    // other profiles' matching the way "say" did.
+    const concierge = JSON.parse(
+      readFileSync(new URL("../bot-library/builtins/concierge.json", import.meta.url), "utf8"),
+    ).package;
+    for (const filler of [" say ", " help me ", " anything ", " something "]) {
+      expect(concierge.summary.toLowerCase(), `summary was padded with "${filler.trim()}"`).not.toContain(filler);
     }
   });
 });
