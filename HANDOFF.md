@@ -85,7 +85,12 @@ symptom.
 - **Another session on the same machine competes.** Load average hit 61 with a
   second project's full suite running. A slow suite may not be your suite.
 
-## STATE — 8 commits this session (33 across both), pushed, `main` in sync
+## STATE — 15 commits this session, pushed, `main` in sync
+
+**Five build lanes, then a three-way cross-audit, then three repair lanes.** The
+audit found 10 real defects in work that was already committed and green, and
+the single worst one was in a commit I had titled as finished. That is the
+argument for running it: every lane's tests passed the whole time.
 
 Everything below is committed and green. Highlights from the last session, all
 verified rather than relayed:
@@ -100,6 +105,30 @@ verified rather than relayed:
 - **Paste-and-extract keys**, where the pasted blob is never React state.
 - **The ferret matcher**, 391ms -> 5.4ms and 26 of 27 queries correct.
 - **Composio's terms question closed** — multi-tenancy is the product.
+
+### What the cross-audit caught, after everything was "green"
+
+- **The engine had no instance.** `BUILT_IN_DRIVERS` populates `driversByKind`;
+  `instanceConfigs()` is the only source of instances. Fuigo was unreachable and
+  `defaultSelection()`'s preference was dead code. Fixed in BOTH fleets —
+  `DEFAULT_FLEET` alone reaches nobody who has ever launched Murage before.
+- **"available" does not mean usable.** `snapshot()` sets available iff
+  `--version` exits 0. Murage ships the binary, so Fuigo was about to always win
+  and hand every new bot `model: ""`.
+- **The matcher's remaining 559 terms.** Not the ~57 the audit first estimated:
+  probing all 849 curated terms found 559 that alone produce a one-press confirm
+  card. "please save my marriage" offered Customer Success Org. 264 removed.
+- **PasteKeys addressed rows by array index across an async boundary**, marking
+  the WRONG key saved and destroying its value; and every extracted key really
+  was in React state and props despite a header comment saying otherwise.
+- **Dictation discarded up to two minutes of speech** if you typed while it
+  transcribed, and was an unmetered billable path from a phone.
+- **On Windows the bundled binary shadowed a user's own newer install**, because
+  `findCliCandidates` could never match a name that already carries `.exe`.
+
+Four of my own written claims were wrong and are corrected in place rather than
+left standing: the ogg/webm support order, a `fluxConfigured` justification, a
+memo-TTL guarantee, and a comment about vite not collecting `shared/`.
 
 ## QUEUE — what is actually left
 
