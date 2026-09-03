@@ -23,6 +23,19 @@ command that writes; the orchestrator commits by explicit path.
   had ogg/webm support backwards, a premise asserting behaviour that never
   existed, a wrong hypothesis about credential allowlisting, and a third wiring
   point whose absence would have shipped a feature that did nothing.
+- **Registering a thing is not creating a thing — verify by BOOTING, not by
+  testing.** The worst defect of the night: a driver was added to
+  `BUILT_IN_DRIVERS`, every unit test passed, the commit was titled "X is an
+  engine now", and the engine was still completely unreachable. Why:
+  `BUILT_IN_DRIVERS` populates `driversByKind`, while `instanceConfigs()`
+  (`server/config.ts:780`) is the ONLY source of instances. The tests passed
+  because they drove `support.spawnArgs`/`transformEnv` directly and never
+  touched instance seeding. **Always finish by booting the real harness on a
+  spare port and asking it what it actually has:**
+      MURAGE_PORT=18877 node scripts/dev-server.mjs
+      curl -s localhost:18877/api/instances
+  That single check is what turned "all green" into "the feature does not
+  exist", and then into `fuigo | fuigoAgent | available | models: 83`.
 - **The orchestrator owns the contended files.** `server/index.ts` and
   `server/flux-routing.ts` were mine last night; every lane wrote NEW modules
   and handed back an exact diff with surrounding lines quoted. Five lanes, zero
@@ -64,6 +77,11 @@ symptom.
 - **`nohup ... &` from a tool call gets killed** when the call's shell exits.
   Two full suite runs were lost to this, both leaving a 223-byte log that looks
   like a hang. Use the harness's own background mechanism.
+- **`npx vitest` is rewritten to `rtk vitest` by a hook**, which tees the real
+  output elsewhere and returns nothing until it finishes. A running suite
+  therefore looks like a 0-byte log, indistinguishable from a hang. The real
+  path is printed at the end as `[full output: ~/Library/Application
+  Support/rtk/tee/<id>_vitest_run.log]`.
 - **Another session on the same machine competes.** Load average hit 61 with a
   second project's full suite running. A slow suite may not be your suite.
 
@@ -73,6 +91,10 @@ Everything below is committed and green. Highlights from the last session, all
 verified rather than relayed:
 
 - **Fuigo is an engine.** It was 165MB of shipped shelf-ware with zero callers.
+  Verified by booting the harness, not by a test: `fuigo | fuigoAgent |
+  available | models: 83`, first in the fleet. A cross-audit caught that the
+  first attempt registered the DRIVER but created no INSTANCE, so it was still
+  unreachable — see the briefing note above, it is the most useful thing here.
 - **Fuigo 1.0.4**, scoped `@fuigo/*`, six targets pinned, twelve digests.
 - **Phone dictation**, server-side, on Groq.
 - **Paste-and-extract keys**, where the pasted blob is never React state.
@@ -146,7 +168,14 @@ breaks "I want to write a book" — the sentence those profiles exist for. A tes
 pins BOTH halves so nobody fixes one and silently breaks the other.
 
 ### 6. COSMETIC, YOUR CALL
-`registry.describe()`'s `cliCandidates` uses `findCliCandidates("fuigo")` ->
+`src/components/ProviderIcons.tsx:127` `ProviderMark` has no `fuigoAgent` case,
+so the engine Murage leads with renders a grey letter "F" where every other
+engine has a real mark. Fuigo ships only terminal braille/ASCII logo art
+(`crates/codegen/fuigo-pager/assets/logo/`) — there is no vector asset to
+reuse, so this needs a real design decision from Sean rather than an invented
+mark.
+
+Also: `registry.describe()`'s `cliCandidates` uses `findCliCandidates("fuigo")` ->
 `augmentedPath()`, which does not include `MURAGE_FUIGO_DIR`, so the BUNDLED
 engine never appears in the Engines panel's "detected" dropdown. It works
 regardless. Arguably a shipped engine should not read as a "detected install".
