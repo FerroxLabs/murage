@@ -461,7 +461,17 @@ describe("the browser actually calls it", () => {
     // 2. On a timer, and the timer is the one derived from the idle window
     //    rather than a second hard-coded copy that can drift from it.
     expect(intervalMs).toBe(RENEW_INTERVAL_MS);
-    expect(RENEW_INTERVAL_MS * 14).toBe(SESSION_IDLE_MS);
+    // The rule is "renewal fires far more often than the session can go
+    // idle", not a fixed ratio. It used to be pinned as an exact fourteenth,
+    // which quietly meant raising the idle window would stretch renewal with
+    // it — to every four days at sixty, when daily renewal is what keeps any
+    // cookie sitting in a jar at most 24 hours stale. Rotation freshness and
+    // the idle window are separate concerns and this now says so.
+    //
+    // Fourteen consecutive failures survivable was the old floor; at 24 hours
+    // against sixty days it is fifty-nine, so the margin improved by
+    // decoupling them.
+    expect(RENEW_INTERVAL_MS * 14).toBeLessThanOrEqual(SESSION_IDLE_MS);
     now += RENEW_INTERVAL_MS;
     tick!();
     expect(calls).toHaveLength(2);

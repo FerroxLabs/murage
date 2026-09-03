@@ -123,15 +123,33 @@ export const MAX_SESSIONS_PER_DEVICE = 3;
  * no evidence to offer against it — a renewal only ever happens because a
  * page is open, which is the definition of not idle.
  *
- * The cost, stated so nobody has to rediscover it: with the cap lifted, this
- * is now the binding bound for the traveller in the brief. A laptop shut in
- * a bag for longer than fourteen days runs no script, sends no renewal, and
- * is signed out on arrival exactly as before. Renewal cannot fix that; only
- * a larger number here can, and how long an untouched cookie should survive
- * is a policy call with its own cost that is not renewal's to make. Raising
- * it also changes `RENEW_INTERVAL_MS` in `browser.ts`, which is derived from
- * it — see the comment there. */
-export const SESSION_IDLE_MS = 14 * 24 * 60 * 60 * 1000;
+ * Sixty days, and the number is the whole point of the feature.
+ *
+ * Renewal cannot help this bound and never could: a renewal happens only
+ * because a page is open, and a page being open is the definition of not
+ * idle. A laptop closed in a bag sends nothing and has no way to say it still
+ * wants the session. So the only lever is this constant.
+ *
+ * At fourteen days the case this was built for still failed. A machine
+ * reached from a hotel twice a quarter is a ~45-day gap, so it was signed out
+ * every single time — and re-pairing needs the QR from the desktop sitting at
+ * home, which is exactly what is absent on the road. Sixty covers that with
+ * margin for a skipped trip while staying inside a business quarter, so a
+ * device genuinely abandoned still expires.
+ *
+ * The cost is that a stolen cookie on an untouched device stays valid for
+ * sixty days rather than fourteen, and it is close to nothing here. Using one
+ * requires already being on the tailnet — there is no public ingress and
+ * never will be — and if a stranger is on the tailnet, a fourteen-day cookie
+ * is not the control that saves anyone. Meanwhile rotation made theft
+ * strictly worse for the thief than the old scheme ever did: every time the
+ * real browser returns, the hash rotates and the stolen copy dies. And revoke
+ * is instant, killing every session on a device, renewed or not.
+ *
+ * `RENEW_INTERVAL_MS` is deliberately NOT derived from this — see the note
+ * there for why daily renewal is about rotation freshness, not about this
+ * window. */
+export const SESSION_IDLE_MS = 60 * 24 * 60 * 60 * 1000;
 /** How far ahead the absolute cap is set, at sign-in and at every renewal.
  *
  * It is no longer "never extended" — see `SESSION_MAX_LIFETIME_MS` and
