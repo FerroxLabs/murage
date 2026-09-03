@@ -21,6 +21,7 @@ import type { RoutineRunCardData } from "../shared/routine-run.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
 import type { GroupGoalRunCardData } from "../shared/group-goal-run.ts";
 import type { IntakeCardData } from "../shared/intake-turn.ts";
+import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
 
 export type EmberColor =
@@ -533,13 +534,6 @@ export interface InstalledPlaybook {
   summary: string;
   triggers: string[];
   instructions: string;
-}
-
-export interface InstalledPackageMetadata {
-  id: string;
-  name: string;
-  release: string;
-  requiredApps: Array<{ slug: string; label: string; reason: string; optional?: boolean }>;
 }
 
 const BOTS_FILE = join(DATA_DIR, "bots.json");

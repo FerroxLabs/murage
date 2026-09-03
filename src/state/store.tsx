@@ -26,6 +26,7 @@ import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
 // this renderer under `bundler` (which forbids a bare `.ts` one). Type-only,
 // so nothing survives to runtime either way.
 import type { IntakeCardData } from "../../shared/intake-turn.js";
+import type { InstalledPackageMetadata } from "../../shared/installed-package.js";
 import {
   reviewedSkillSha256,
   skillRequestBehavior,
@@ -286,18 +287,8 @@ export interface Bot {
   /** Set on bots that arrived from a bot package. `wireBot` (server/index.ts)
    * spreads the whole record, so this reaches the renderer on GET /api/bots,
    * on the import response and on every SSE bot frame; without it declared
-   * here no UI can render which connected services an assistant needs.
-   *
-   * Hand-declared rather than imported: the definition it mirrors is
-   * `InstalledPackageMetadata` in server/store.ts, which is a Node module
-   * (fs, DATA_DIR) this renderer must not reach into. It belongs in
-   * `shared/` alongside the other wire shapes — see the report note. */
-  installedPackage?: {
-    id: string;
-    name: string;
-    release: string;
-    requiredApps: Array<{ slug: string; label: string; reason: string; optional?: boolean }>;
-  };
+   * here no UI can render which connected services an assistant needs. */
+  installedPackage?: InstalledPackageMetadata;
   /** Whether this bot gets the app's built-in browser (Browser tab). On unless switched off. */
   browser?: boolean;
   /** Named browser profile id (config.browserProfiles); absent/null = the
