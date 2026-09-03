@@ -194,19 +194,28 @@ function brokerAccess(): { url: string; token: string } | null {
 
 /** Which broker a request should use, resolved in exactly one place.
  *
- * Today: the managed broker always wins. Connector traffic runs through
- * Ferrox's worker and Ferrox eats the cost, deliberately, until connections
- * become something people pay for. A workspace key is still accepted and
- * stored — it is what a self-hosted or air-gapped install runs on, where
- * there is no broker to reach — it simply does not displace the broker when
- * one is configured.
+ * A workspace key WINS. Somebody who pasted their own Composio key did it on
+ * purpose, their connected accounts live on their own project, and honouring
+ * it costs Ferrox nothing — it is strictly the cheaper branch. The managed
+ * broker remains the default for everyone who configures nothing, which is
+ * nearly everyone.
  *
- * When billing exists this is the line that changes, and it is one line
- * precisely so that it can be. `brokerRequest` takes `cfg` and resolves
- * through here rather than reading the broker itself, so no caller can route
- * around whatever this decides. */
+ * This used to be the other way round, and the cost was silent and severe.
+ * The broker's env only arrives from `electron/main.mjs` when `app.isPackaged`
+ * — so a person could connect eighteen toolkits in dev, on their own key,
+ * then run the packaged build and have every one of them vanish. Not deleted:
+ * on the far side of a different Composio project under a different user id,
+ * with an empty connectors list that looks exactly like never having
+ * connected anything. Two identities, no migration path, nothing said.
+ *
+ * The rule the old comment was protecting — Ferrox eats the cost until
+ * connections are something people pay for — still holds, because it only
+ * ever concerned the people who have no key of their own.
+ *
+ * `brokerRequest` takes `cfg` and resolves through here rather than reading
+ * the broker itself, so no caller can route around this. */
 function activeBroker(cfg: AppConfig): { url: string; token: string } | null {
-  void cfg;
+  if (cfg.composio?.apiKey) return null;
   return brokerAccess();
 }
 
