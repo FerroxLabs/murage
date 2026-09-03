@@ -93,7 +93,11 @@ describe("every way into skill assignment", () => {
   });
 
   it("4. a new bot's first chat asks the question that leads there", () => {
-    expect(chat).toContain("<BotIntakeCard bot={bot} />");
+    // It asks it as the bot talking, in the transcript, rather than as a panel
+    // docked above the composer. The branch is what makes that reachable: an
+    // intake turn renders as `IntakeTurn` or it renders as nothing.
+    expect(chat).toContain("<IntakeTurn bot={bot} message={m} />");
+    expect(chat).toContain('import { IntakeTurn } from "./IntakeTurn";');
   });
 });
 
@@ -107,29 +111,30 @@ describe("the intake card", () => {
     expect(card.match(/What do you mostly want help with\?/g)).toHaveLength(2); // heading + aria-label
   });
 
-  it("shows itself in the composer ONLY while the agent is genuinely new", () => {
-    // `intakeMode` is the widened form of `needsSetup`: it reads the bot's own
-    // title, description and turn count as well as the skill count. Anything
-    // but a genuinely blank agent gets nothing here at all — not even a
-    // collapsed chip. Setup moved to the profile, where you go and ask for it.
-    expect(card).toContain('if (intakeMode(skillCount, bot) !== "question") return null;');
+  it("is not in the composer at all any more", () => {
+    // It used to dock above the composer for any agent that looked new, which
+    // put an options box at the bottom of the screen in place of the bot
+    // saying anything. The transcript asks now; this file's copy of the
+    // question survives only behind the profile's own button.
     expect(card).toContain("export function BotSetupAction(");
+    expect(card).not.toContain("export function BotIntakeCard(");
+    expect(chat).not.toContain("BotIntakeCard");
   });
 
-  it("hands the transcript the same answer, so the question is asked once", () => {
-    // The seeded four-option quiz asks exactly this question. Both on screen
-    // at once, in two different widgets, is the "don't make me think" failure
-    // the intake exists to remove.
-    expect(chat).toContain("if (intakeOwnsTheQuestion(skillCount)) return null;");
-    expect(card).toContain("useSkillCount(bot.id, api)");
-    expect(chat).toContain("useSkillCount(bot.id, api)");
+  it("asks the question once, because only one thing asks it", () => {
+    // The suppression guard that existed to stop the seeded quiz and the
+    // docked card asking the same question twice is gone with the card. If it
+    // had survived, it would suppress the conversation too and a new bot would
+    // render one greeting and nothing else.
+    expect(chat).not.toContain("intakeOwnsTheQuestion");
+    expect(chat).not.toContain("useSkillCount(bot.id, api)");
   });
 
   it("leaves a way back after it is dismissed", () => {
-    // The previous setup question was a one-way door: nothing anywhere in the
-    // app could bring it back. The way back is now the bot's own profile,
-    // which is always there — dismissing the composer card is allowed to be
-    // final precisely because of it.
+    // The setup question was once a one-way door: nothing anywhere in the app
+    // could bring it back. The way back is the bot's own profile, which is
+    // always there — which is also what lets a person walk out of the
+    // conversation in the transcript without losing anything.
     expect(card).toContain("Set up this bot");
     expect(settings).toContain("<BotSetupAction bot={bot} />");
   });

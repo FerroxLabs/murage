@@ -14,14 +14,27 @@ import {
   chooseIntakeProfile,
   chooseIntakeSkills,
   describeIntakeSkill,
+  intakeProfileMatches,
+  intakeQuery,
   intakeTopicTokens,
+  intakeVocabulary,
   librarySkillId,
   librarySkillIds,
+  readIntakeCard,
   INTAKE_LOOSE_SKILL_MAX,
   INTAKE_FRONT_DOOR_SLUG,
   type IntakeProfile,
   type IntakeSkill,
 } from "../src/lib/onboarding-intake.ts";
+import {
+  intakeChipIndex,
+  intakeChips,
+  intakeNarrowPickChips,
+  INTAKE_ACCEPT_INDEX,
+  INTAKE_DECLINE_INDEX,
+  type IntakeCandidate,
+  type IntakeCardData,
+} from "../shared/intake-turn.ts";
 import {
   CREDENTIAL_TARGETS,
   credentialResumeOutcome,
@@ -170,6 +183,7 @@ import {
   type GroupDefaultResponder,
   type GroupRecord,
   type Message,
+  type OptionCardData,
   type TaskRecord,
 } from "./store.ts";
 import {
@@ -256,6 +270,7 @@ import {
   searchSkills,
   skillIndexStats,
   skillsByFacet,
+  SEARCH_LIMIT_MAX,
   type SearchableTeam,
 } from "./skill-search.ts";
 import { isBotPackage, packageAgentAsMember, parseBotPackage, renderBotPackageMarkdown } from "./bot-package.ts";
@@ -3797,6 +3812,26 @@ async function runGroupMemberTurn(
   const cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
   const roomSystem =
     system +
+    // The same connector paragraph the 1:1 turn gets, from the same builder.
+    // A room turn mounts connectors on exactly the gating above (the bot's
+    // own switch, a configured workspace, an engine that can mount them), so
+    // all five outcomes are reachable in a room and the room prompt used to
+    // carry NONE of them: a bot answering here would deny access to a Gmail
+    // it was holding, and say nothing at all when it genuinely lacked it.
+    // Built by calling `connectorAccess`/`connectorSystemPrompt` rather than
+    // by restating either, so room copy and 1:1 copy cannot drift.
+    composio.connectorSystemPrompt(
+      composio.connectorAccess({
+        cfg,
+        botComposio: bot.composio,
+        installedFromPackage: Boolean(bot.installedPackage),
+        engineMountsConnectors: instance.adapter.capabilities.composioMcp === true,
+        mounted: Boolean(integrations.composio),
+      }),
+    ) +
+    // What the profile said this assistant's job needs. A packaged bot does
+    // not stop needing Gmail because it is answering in a room.
+    composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
     (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
     sectionContextSystemPrompt(bot.section) +
     (workspace ? `\n${memorySystemPrompt(bot.id).trim()}${skillsSystemPrompt(bot.id)}` : "") +
@@ -5258,10 +5293,29 @@ const INTAKE_FALLBACK_CANDIDATES = 12;
  *  restated here because the server cannot trust the client to have trimmed. */
 const INTAKE_QUERY_MAX = 300;
 
+/** One manifest read per skill id, for the life of the process.
+ *
+ *  The setup conversation classifies the WHOLE catalogue rather than a bm25
+ *  top-8 (see `intakeCandidates`), which is up to one manifest read per
+ *  declared skill in the library on the first answer of the first
+ *  conversation. The library ships with the app and cannot change under a
+ *  running server, so the honest cache is a permanent one: one cold pass,
+ *  then free. Without it the first intake answer on a slow volume takes
+ *  seconds. */
+const librarySkillMemo = new Map<string, IntakeSkill | null>();
+
+function librarySkillSummary(skillId: string): IntakeSkill | null {
+  const cached = librarySkillMemo.get(skillId);
+  if (cached !== undefined) return cached;
+  const summary = readLibrarySkillSummary(skillId);
+  librarySkillMemo.set(skillId, summary);
+  return summary;
+}
+
 /** Read one bundled skill's manifest for display. `isSkillName` is the same
  *  traversal gate `installSkillFromLibrary` applies, re-applied here so a
  *  catalogue path can only ever name one child of the library root. */
-function librarySkillSummary(skillId: string): IntakeSkill | null {
+function readLibrarySkillSummary(skillId: string): IntakeSkill | null {
   if (!isSkillName(skillId)) return null;
   const manifestPath = join(SKILL_LIBRARY_ROOT, skillId, "manifest.json");
   if (!existsSync(manifestPath)) return null;
@@ -5304,8 +5358,18 @@ function intakeProfileSkills(entry: SearchableTeam): IntakeSkill[] {
  * construction, and offering one here would promise a setup that does
  * nothing. */
 async function intakeFrontDoor(): Promise<IntakeProfile | null> {
-  const entry = (await catalogForSearch()).find((candidate) => candidate.slug === INTAKE_FRONT_DOOR_SLUG);
-  if (!entry) return null;
+  const profile = await intakeProfileBySlug(INTAKE_FRONT_DOOR_SLUG);
+  return profile ? { ...profile, fallback: true } : null;
+}
+
+/** One catalogue entry as a profile, or null when this build cannot ship it.
+ *
+ *  The same rule the matcher applies (`chooseIntakeProfile`, and the front
+ *  door before it): a profile whose declared skills all fail to resolve
+ *  would apply a persona and nothing else, which is a half answer. Both the
+ *  front door and the setup conversation resolve slugs through here so the
+ *  two cannot disagree about what "this profile exists" means. */
+function intakeProfileAt(entry: SearchableTeam): IntakeProfile | null {
   const skills = intakeProfileSkills(entry);
   if (skills.length === 0) return null;
   return {
@@ -5315,8 +5379,12 @@ async function intakeFrontDoor(): Promise<IntakeProfile | null> {
     category: entry.category,
     outcome: entry.outcome ?? null,
     skills,
-    fallback: true,
   };
+}
+
+async function intakeProfileBySlug(slug: string): Promise<IntakeProfile | null> {
+  const entry = (await catalogForSearch()).find((candidate) => candidate.slug === slug);
+  return entry ? intakeProfileAt(entry) : null;
 }
 
 /** The best profile for a sentence, or null when nothing is a real match.
@@ -5340,6 +5408,282 @@ async function intakeProfileFor(query: string): Promise<IntakeProfile | null> {
     outcome: chosen.entry.outcome ?? null,
     skills: chosen.skills,
   };
+}
+
+// ── the setup CONVERSATION ────────────────────────────────────────────
+//
+// Everything above answers "what fits this sentence?" for the library panel
+// and for `BotSetupAction`. Everything below is the conversation a brand new
+// bot has with the person who made it, and it obeys three rules that the
+// one-shot suggest route does not have to:
+//
+//   TWO QUESTIONS, NEVER THREE. An interrogation is worse than a wrong
+//   guess, because the person leaves. A second question that does not
+//   resolve settles as general chat.
+//
+//   GENERAL CHAT IS AN OUTCOME, NOT A FAILURE TO MATCH. Most people do not
+//   want a specialist. The bot proposes staying general in its own voice, as
+//   a decision with a cost, rather than apologising for the library.
+//
+//   A THIN ANSWER BUYS A QUESTION, NEVER A GUESS. That is what the two
+//   strength tiers below are for.
+//
+// NOTHING HERE INSTALLS ANYTHING. The route reads the catalogue and writes
+// transcript text. The one call that configures a bot is still
+// `POST /api/bots/:id/assistant-profile`, which is desktop-surface-only, and
+// the renderer makes it from the confirm chip.
+
+/** How firmly one profile answers a person's sentence.
+ *
+ *  STRONG wants two things at once: a WHOLE WORD hit, and at least two topic
+ *  words to hit within. A one-word answer is thin by definition and buys a
+ *  second question rather than a profile, and a lone four-character prefix
+ *  hit is the coincidence the gate below already distrusts — it survives
+ *  here as "weak", which is the honest name for it.
+ *
+ *  The gate itself is not re-implemented: "weak" IS `intakeProfileMatches`,
+ *  the same boolean `/api/library/suggest` and `BotSetupAction` commit on.
+ *  This only adds the tier the boolean throws away. (§2.1 of the design puts
+ *  these two lines in `src/lib/onboarding-intake.ts` beside the gate, which
+ *  is where they belong; that file is another lane's and unchanged, so they
+ *  are expressed here over its exported primitives instead. Move them when
+ *  that lane is free.) */
+type IntakeStrength = "strong" | "weak" | "none";
+
+function intakeProfileStrength(
+  entry: SearchableTeam,
+  tokens: readonly string[],
+  extra: readonly string[],
+): IntakeStrength {
+  if (tokens.length === 0) return "none";
+  const vocabulary = intakeVocabulary(entry, extra);
+  if (tokens.length >= 2 && tokens.some((token) => vocabulary.has(token))) return "strong";
+  return intakeProfileMatches(entry, tokens, extra) ? "weak" : "none";
+}
+
+/** How many candidates of one tier ever reach a card. Two is what a chip row
+ *  can hold; the third is slack so a slug that has since lost its skills does
+ *  not empty the tier. */
+const INTAKE_TIER_MAX = 3;
+
+/** Every profile in the catalogue that talks about this sentence, split by
+ *  how firmly it does.
+ *
+ *  THE WHOLE CATALOGUE, deliberately, and this is the fix for "chasing
+ *  invoices lands on a trading profile". `intakeProfileFor` narrows to a bm25
+ *  top-8 first, and bm25 ranks the catalogue ENTRY text only — name, summary,
+ *  category, outcome. The relevance gate reads something else: the entry plus
+ *  every word its SKILLS' manifests declare. Measured on the shipped
+ *  catalogue, "chasing invoices" matches exactly one profile in 129 and the
+ *  word "invoice" appears only in that profile's skills, so the ranker that
+ *  runs first eliminates the single best answer and whichever of the
+ *  surviving eight passes the gate wins instead. Two layers reading different
+ *  corpora is the actual defect, and no amount of tuning the gate fixes it.
+ *
+ *  So bm25 is demoted to a TIE-BREAK WITHIN A TIER and never a filter that
+ *  runs before one. It is the honest use of it: it can order things it can
+ *  read about, and it must not be allowed to remove things it cannot.
+ *
+ *  Returning two empty lists is a first-class answer. A corpus that cannot
+ *  rank itself must ask rather than guess. */
+interface IntakeCandidateSets {
+  strong: IntakeProfile[];
+  weak: IntakeProfile[];
+}
+
+/** One classification per sentence, for as long as the catalogue behind it is
+ *  the one that produced it.
+ *
+ *  MEASURED on the shipped library: a full pass costs ~465ms, and effectively
+ *  all of it is rebuilding each entry's vocabulary (`intakeVocabulary` joins
+ *  and splits the entry plus every one of its skills' manifests, 129 times,
+ *  per query). The cheaper fix is to cache the vocabulary SET rather than the
+ *  answer, but the gate that would consume it (`vocabularyMatches`) is private
+ *  to the pure module and this file must not grow a second copy of it. See
+ *  the lane note: exporting the strength tier from `onboarding-intake.ts`
+ *  takes the same query to ~19ms.
+ *
+ *  The TTL is the catalogue memo's own, so a background refresh can never be
+ *  masked for longer by this than by the read it depends on. */
+const intakeCandidateMemo = new Map<string, { at: number; sets: IntakeCandidateSets }>();
+const INTAKE_CANDIDATE_MEMO_MAX = 64;
+
+async function intakeCandidates(query: string): Promise<IntakeCandidateSets> {
+  const cached = intakeCandidateMemo.get(query);
+  if (cached && Date.now() - cached.at < CATALOG_SEARCH_TTL_MS) return cached.sets;
+  const sets = await classifyIntakeCandidates(query);
+  if (intakeCandidateMemo.size >= INTAKE_CANDIDATE_MEMO_MAX) intakeCandidateMemo.clear();
+  intakeCandidateMemo.set(query, { at: Date.now(), sets });
+  return sets;
+}
+
+async function classifyIntakeCandidates(query: string): Promise<IntakeCandidateSets> {
+  const tokens = intakeTopicTokens(query);
+  // No topic word, no catalogue read at all. "hi" is not a query.
+  if (tokens.length === 0) return { strong: [], weak: [] };
+  const entries = await catalogForSearch();
+  const rank = new Map<string, number>();
+  // Capped by `searchCatalog` itself; entries it never ranked fall through to
+  // catalogue order rather than being dropped.
+  searchCatalog(entries, query, SEARCH_LIMIT_MAX).forEach((hit, index) => {
+    if (!rank.has(hit.slug)) rank.set(hit.slug, index);
+  });
+  const tiers: Record<"strong" | "weak", Array<{ order: number; profile: IntakeProfile }>> = {
+    strong: [],
+    weak: [],
+  };
+  entries.forEach((entry, index) => {
+    const profile = intakeProfileAt(entry);
+    // A profile that installs nothing is a half answer, so it is not a
+    // candidate. Same rule `chooseIntakeProfile` applies.
+    if (!profile) return;
+    const strength = intakeProfileStrength(entry, tokens, profile.skills.map(describeIntakeSkill));
+    if (strength === "none") return;
+    tiers[strength].push({ order: rank.get(entry.slug) ?? entries.length + index, profile });
+  });
+  const tier = (list: Array<{ order: number; profile: IntakeProfile }>): IntakeProfile[] =>
+    list
+      .sort((left, right) => left.order - right.order)
+      .slice(0, INTAKE_TIER_MAX)
+      .map((ranked) => ranked.profile);
+  return { strong: tier(tiers.strong), weak: tier(tiers.weak) };
+}
+
+/** What the card carries about a profile: a slug, a name, and skill NAMES.
+ *  Never skill ids, because nothing this payload touches installs anything —
+ *  the slug is the only thing the confirm button sends anywhere. */
+function intakeCandidateOf(profile: IntakeProfile): IntakeCandidate {
+  return { slug: profile.slug, name: profile.name, skillNames: profile.skills.map((skill) => skill.name) };
+}
+
+function intakeSkillLine(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  const count = names.length === 1 ? "1 skill" : `${names.length} skills`;
+  return ` Comes with ${count}: ${names.join(", ")}.`;
+}
+
+/* Every two-chip card below builds its `options` through `intakeChips` or
+ * `intakeNarrowPickChips`. The renderer reads intake chips BY INDEX, so a
+ * hand-written pair that came out in the wrong order would record "yes, set
+ * this up" as a refusal with nothing thrown on either side of the seam. The
+ * helpers declare the pairs by meaning, so the wrong order is not a thing a
+ * call site here can express. Do not inline a label. */
+
+function intakeConfirmProfileCard(profile: IntakeProfile, asked: 1 | 2): OptionCardData {
+  const candidate = intakeCandidateOf(profile);
+  return {
+    title: `I'd set myself up as ${profile.name} for that.`,
+    subtitle: `${profile.summary}${intakeSkillLine(candidate.skillNames)}`.trim(),
+    options: [...intakeChips("confirm-profile")],
+    intake: { step: "confirm", outcome: "profile", asked, candidate },
+  };
+}
+
+/** The general-chat proposal. "I don't think you need a specialist" is the
+ *  bot making a decision the person can refuse, and it costs something to
+ *  accept. "Nothing in the library clearly matches that" is an apology for
+ *  the library's coverage: honest, and it still makes the person feel they
+ *  answered the question wrongly. They did not. */
+function intakeGeneralCard(asked: 1 | 2): OptionCardData {
+  return {
+    title: "I don't think you need a specialist for this.",
+    subtitle:
+      "I'll stay general and get on with whatever you bring me. "
+      + "You can give me a speciality later from my profile.",
+    options: [...intakeChips("confirm-general")],
+    intake: { step: "confirm", outcome: "general", asked },
+  };
+}
+
+/** We have a candidate and we are not sure. Name it, and let one press kill
+ *  it. This is the turn that stops a wrong guess being applied: it is SHOWN
+ *  first, and showing it costs one question rather than one wrong agent. */
+function intakeNarrowCheckCard(profile: IntakeProfile): OptionCardData {
+  return {
+    title: `Sounds like it might be ${profile.name}. Would that be about right?`,
+    subtitle: profile.summary,
+    options: [...intakeChips("narrow-check")],
+    intake: { step: "narrow", asked: 2, candidate: intakeCandidateOf(profile) },
+  };
+}
+
+/** Two firm candidates. Two names, never two categories — and the subtitle
+ *  says free text is still accepted, because a two-chip question whose chips
+ *  are the only answers is the "townhome" failure. */
+function intakeNarrowPickCard(first: IntakeProfile, second: IntakeProfile): OptionCardData {
+  const choices = [intakeCandidateOf(first), intakeCandidateOf(second)];
+  return {
+    title: "Could go two ways. Which is closer to it?",
+    subtitle: "Or say it in your own words and I'll take that instead.",
+    options: [...intakeNarrowPickChips(choices[0]!, choices[1]!)],
+    intake: { step: "narrow", asked: 2, choices },
+  };
+}
+
+/** Nothing matched. Ask for an instance, not a category: a category is what
+ *  they just failed to give. The weakest turn in the flow and known to be —
+ *  it is the one generic follow-up here, and it is acceptable only because
+ *  the cap is two questions and it is the last one. */
+function intakeNarrowOpenCard(): OptionCardData {
+  return {
+    title: "Give me one real thing you'd rather hand over.",
+    subtitle: "Something from this week rather than a heading. That tells me more.",
+    options: [],
+    intake: { step: "narrow", asked: 2 },
+  };
+}
+
+/** The one closing line, in the bot's voice. No "you can always change this
+ *  later" on every branch: it is on the general card once, where it is
+ *  actually load bearing. */
+function intakeClosingLine(outcome: "profile" | "general" | "library", profileName?: string): string {
+  if (outcome === "profile") return `Right, I'm ${profileName} now. Ask me for something.`;
+  if (outcome === "library") return "Have a look. I'll be here.";
+  return "Fine, general it is. Ask me for something and we'll go from there.";
+}
+
+/** The next bot turn for an answer to an open question.
+ *
+ *  A chip is read by POSITION off the card's OWN stored options, never by
+ *  comparing the label to a sentence this file also writes: the label round
+ *  trips through the renderer verbatim, and a server that matched on the
+ *  words would break itself with its own next copy edit. Anything that is
+ *  not one of the two chips is free text, which is the normal case and never
+ *  an error — every question here takes free text through the composer.
+ *
+ *  NO PATH RETURNS A THIRD QUESTION. From `narrow` (the second question)
+ *  every branch returns a confirm card, which is a decision rather than a
+ *  question; only `open` produces a card with `asked: 2`. */
+async function intakeNextCard(
+  intake: IntakeCardData,
+  options: readonly string[],
+  text: string,
+): Promise<OptionCardData> {
+  if (intake.step === "narrow") {
+    const chip = intakeChipIndex(options, text);
+    if (chip !== null) {
+      const picked =
+        intake.choices?.length === 2
+          ? intake.choices[chip]
+          : chip === INTAKE_ACCEPT_INDEX
+            ? intake.candidate
+            : undefined;
+      const profile = picked ? await intakeProfileBySlug(picked.slug) : null;
+      // A slug that no longer resolves is not a reason to guess again. The
+      // person declined, or the library moved: either way, general chat.
+      return profile ? intakeConfirmProfileCard(profile, 2) : intakeGeneralCard(2);
+    }
+    const { strong } = await intakeCandidates(text);
+    const best = strong[0];
+    return best ? intakeConfirmProfileCard(best, 2) : intakeGeneralCard(2);
+  }
+  const { strong, weak } = await intakeCandidates(text);
+  // One firm candidate is an answer, so it is proposed rather than asked
+  // about. Two are a fork the person can settle faster than we can.
+  if (strong.length === 1) return intakeConfirmProfileCard(strong[0]!, 1);
+  if (strong.length >= 2) return intakeNarrowPickCard(strong[0]!, strong[1]!);
+  if (weak.length >= 1) return intakeNarrowCheckCard(weak[0]!);
+  return intakeNarrowOpenCard();
 }
 
 /** The first person in a shareable document, plus the skills it declares.
@@ -8360,6 +8704,105 @@ const server = createServer(async (req, res) => {
         },
       });
       return json(res, 200, { message: patched });
+    }
+    // Every turn of the new-bot setup conversation, in both directions.
+    //
+    // MATCHED BEFORE /api/bots/:id/messages on purpose: the composer routes a
+    // send here whenever a question is open, and a fall-through to the engine
+    // would have the bot answer its own question.
+    //
+    // NOT DESKTOP-GATED, also on purpose, and the next reader will ask. This
+    // route reads the catalogue and writes transcript text; it installs
+    // nothing and configures nothing. Same posture as GET /api/library/suggest.
+    // The install still crosses the desktop boundary on
+    // POST /api/bots/:id/assistant-profile, unchanged, and the renderer makes
+    // that call itself from the confirm chip. In particular this route never
+    // renames a bot: the person may have named it, and an agent that renames
+    // itself mid-conversation with the person who named it is the one
+    // surprise this flow could spring.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/intake$/);
+    if (m && method === "POST") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
+      const messageId = typeof body.messageId === "string" ? body.messageId : "";
+      if (!/^[\w-]+$/.test(messageId)) return json(res, 400, { error: "messageId required" });
+      const message = store.messagesFor(bot.threadId).find((entry) => entry.id === messageId);
+      const card = message?.card;
+      // `readIntakeCard` is the renderer's own reader, reused rather than
+      // re-derived: it refuses a card carrying a live provider requestId (I2)
+      // and clamps `asked` to 1 or 2 (I3), so a malformed payload cannot get
+      // as far as producing a turn.
+      const intake = readIntakeCard(card);
+      if (!card || !intake) return json(res, 404, { error: "no such setup question" });
+      // ONE CARD, ONE EFFECT. A double press, a replayed request or a retry
+      // after a dropped response must not advance the conversation twice or
+      // append a second bot turn. The person reads this sentence raw, so it
+      // says what happened rather than naming a status code.
+      if (card.answered !== undefined || card.dismissed) {
+        return json(res, 409, { error: "that question was already answered" });
+      }
+
+      if (body.outcome === undefined) {
+        // A. ANSWERING A QUESTION: a chip label back verbatim, or whatever
+        // the person typed into the composer.
+        const text = intakeQuery(String(body.text ?? ""));
+        if (!text) return json(res, 400, { error: "text required" });
+        store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
+        store.patchMessage(bot.threadId, messageId, { card: { ...card, answered: text } });
+        if (intake.step === "confirm") {
+          // A confirm card is a decision, not a question, and typing instead
+          // of pressing is the person declining to take the offer. It settles
+          // as general chat: the same outcome talking past the card gives on
+          // the ordinary chat route, and one this route can actually deliver,
+          // because accepting a speciality is an install and installs happen
+          // on the desktop-gated route from the chip.
+          store.appendMessage(bot.threadId, {
+            role: "bot",
+            kind: "text",
+            text: intakeClosingLine("general"),
+          });
+          return json(res, 202, { ok: true });
+        }
+        const next = await intakeNextCard(intake, card.options, text);
+        // I3, ENFORCED RATHER THAN ASSUMED. Two questions, never three: a
+        // second question that did not resolve settles as general chat. The
+        // branch table has no path to a third question; this is the guard
+        // that keeps that true if someone later adds one.
+        const bounded = intake.asked >= 2 && next.intake?.step !== "confirm" ? intakeGeneralCard(2) : next;
+        store.appendMessage(bot.threadId, { role: "bot", kind: "options", card: bounded });
+        return json(res, 202, { ok: true });
+      }
+
+      // B. CLOSING A CONFIRM CARD. The renderer sends the outcome and never a
+      // sentence: the closing line is the server's to write, so no bot-authored
+      // copy lives in the renderer.
+      const outcome = body.outcome;
+      if (outcome !== "profile" && outcome !== "general" && outcome !== "library") {
+        return json(res, 400, { error: "outcome must be profile, general or library" });
+      }
+      if (intake.step !== "confirm") return json(res, 400, { error: "that card is still a question" });
+      if (outcome === "profile" && (intake.outcome !== "profile" || !intake.candidate?.name)) {
+        return json(res, 400, { error: "that card does not offer a speciality" });
+      }
+      if (outcome === "library" && intake.outcome !== "general") {
+        return json(res, 400, { error: "that card does not offer the library" });
+      }
+      // Which chip the outcome corresponds to, by position on the card's own
+      // stored options — the same index the renderer pressed. Index 0 accepts
+      // what the card proposed; index 1 is the way out of it.
+      const declined = intake.outcome === "profile" ? outcome === "general" : outcome === "library";
+      const answered = card.options[declined ? INTAKE_DECLINE_INDEX : INTAKE_ACCEPT_INDEX] ?? outcome;
+      store.patchMessage(bot.threadId, messageId, { card: { ...card, answered } });
+      store.appendMessage(bot.threadId, {
+        role: "bot",
+        kind: "text",
+        text: intakeClosingLine(outcome, intake.candidate?.name),
+      });
+      return json(res, 202, { ok: true });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {

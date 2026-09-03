@@ -18,6 +18,12 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
+import {
+  intakeChips,
+  intakeNarrowPickChips,
+  type IntakeCandidate,
+  type IntakeCardData,
+} from "../shared/intake-turn.ts";
 import { connectorSystemPrompt, requiredAppsSystemPrompt } from "./composio.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -2056,7 +2062,7 @@ describe("harness HTTP API", () => {
       installedPackage: {
         id: "signal-desk",
         release: "1.0.0",
-        requiredApps: [{ slug: "reddit", label: "Reddit" }],
+        requiredApps: [{ slug: "reddit", label: "Reddit", reason: "Read approved communities." }],
       },
     });
     expect(scout).not.toHaveProperty("autoApprove");
@@ -2331,6 +2337,108 @@ describe("harness HTTP API", () => {
       }
     }
   }, 40_000);
+
+  // …and the same thing again in a ROOM, which had none of it.
+  //
+  // The fix for the silent denial above was scoped to the 1:1 call site, so
+  // the room path kept the original defect: a bot answering in a room denied
+  // holding tools it did have, and said nothing when it genuinely lacked
+  // them. Rooms mount connectors on exactly the same three gates as a 1:1
+  // turn, so all five outcomes are reachable here and none of them may be
+  // silent. Asserted against the shared builders, not against a sentence, so
+  // room copy and 1:1 copy cannot drift.
+  //
+  // The two per-bot outcomes are the ones driven here. The `unconfigured`
+  // sentence cannot be driven through a room turn in this harness: see the
+  // note in the lane report — a room turn whose system prompt contains that
+  // exact sentence never reaches the CLI, deterministically, with the
+  // production change reverted as well as applied. That is a pre-existing
+  // dispatch problem rather than anything this contract asserts, and the two
+  // outcomes below exercise the same builder on the same call site.
+  it("tells a bot answering in a ROOM why it has no connectors, and what its profile needs", async () => {
+    const packageFile = {
+      format: "murage.package",
+      version: 1,
+      package: {
+        id: "room-desk",
+        release: "1.0.0",
+        name: "Room Desk",
+        tagline: "Keep the room moving.",
+        summary: "A one-bot room workflow.",
+        category: "Work",
+        author: { name: "Murage" },
+        license: "MIT",
+        outcomes: ["Clear the room."],
+        setupMinutes: 2,
+        requirements: {
+          apps: [{ slug: "gmail", label: "Gmail", reason: "Read and reply to the inbox." }],
+          capabilities: [],
+        },
+        agents: [{
+          key: "clerk",
+          name: "Room Clerk",
+          title: "Assistant",
+          description: "Works the room.",
+          appearance: { color: "green" },
+        }],
+      },
+    };
+    const plain = (await api("POST", "/api/bots", { name: "Room Connector Report" })).body.bot;
+    const installed = await api("POST", "/api/teams/import", packageFile);
+    expect(installed.status).toBe(201);
+    const packaged = installed.body.bots[0];
+    let plainRoom: any;
+    let packagedRoom: any;
+
+    const roomSystemFor = async (roomId: string, text: string): Promise<string> => {
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/groups/${roomId}/messages`, { text })).status).toBe(202);
+      const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 20_000);
+      return seen.systemPrompt ?? "";
+    };
+
+    try {
+      for (const id of [plain.id, packaged.id]) {
+        expect((await api("PATCH", `/api/bots/${id}`, {
+          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+        })).status).toBe(200);
+      }
+      plainRoom = (await api("POST", "/api/groups", { name: "Room Connectors", memberIds: [plain.id] })).body.group;
+      packagedRoom = (await api("POST", "/api/groups", {
+        name: "Packaged Connectors",
+        memberIds: [packaged.id],
+      })).body.group;
+      for (const room of [plainRoom, packagedRoom]) {
+        expect((await api("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" })).status).toBe(200);
+      }
+
+      // the per-bot switch, which the room prompt used to say nothing about
+      expect((await api("PATCH", `/api/bots/${plain.id}`, { composio: false })).status).toBe(200);
+      const botOff = await roomSystemFor(plainRoom.id, "check my mail");
+      expect(botOff).toContain(connectorSystemPrompt("bot-off"));
+      // and it never claims the tools it does not hold
+      expect(botOff).not.toContain(connectorSystemPrompt("mounted"));
+      // a bot from no package says nothing about required services
+      expect(botOff).not.toContain(requiredAppsSystemPrompt(packageFile.package.requirements.apps));
+
+      // a packaged assistant is switched off by the installer rather than by
+      // anyone's choice, and is told that AND what its profile said it needs
+      const packagedTurn = await roomSystemFor(packagedRoom.id, "work the inbox");
+      expect(packagedTurn).toContain(connectorSystemPrompt("package-off"));
+      expect(packagedTurn).not.toContain(connectorSystemPrompt("bot-off"));
+      expect(packagedTurn).toContain(requiredAppsSystemPrompt(packageFile.package.requirements.apps));
+    } finally {
+      for (const id of [plain.id, packaged.id]) {
+        await api("POST", `/api/bots/${id}/interrupt`);
+      }
+      for (const room of [plainRoom, packagedRoom]) {
+        if (room) await api("DELETE", `/api/groups/${room.id}`);
+      }
+      for (const id of [plain.id, packaged.id]) {
+        await api("DELETE", `/api/bots/${id}`);
+      }
+    }
+  }, 60_000);
 
   it("the scout reads a folder, proposes an importable team, and creates nothing until the human imports", async () => {
     const folder = mkdtempSync(join(tmpdir(), "murage-scout-"));
@@ -6254,3 +6362,318 @@ describe("the Chief of Staff is not replaced by accident", () => {
     expect((await api("PATCH", `/api/bots/${lead.id}`, { chiefOfStaff: true, chiefScope: "section" })).status).toBe(200);
   });
 });
+
+// ── the new-bot setup conversation ────────────────────────────────────
+//
+// POST /api/bots/:botId/intake. Everything here asserts a CONTRACT — a step,
+// a chip built by the shared helper, an outcome, a bot that was not renamed —
+// and deliberately not a sentence. The copy on these cards is meant to be
+// edited; pinning it here would make every edit look like a regression, and
+// several stale tests in this repo were written exactly that way.
+// The suite timeout is deliberate and generous: this describe runs last in a
+// ten-minute file, and every answer classifies the WHOLE catalogue (~465ms
+// measured, see the memo comment beside `intakeCandidates`). The default 20s
+// is a load measurement here rather than a contract.
+describe("new-bot setup conversation", () => {
+  interface IntakeCard {
+    title: string;
+    subtitle: string;
+    options: string[];
+    answered?: string;
+    dismissed?: boolean;
+    intake?: IntakeCardData;
+  }
+  interface TranscriptMessage {
+    id: string;
+    role: "bot" | "user";
+    kind: string;
+    text?: string;
+    card?: IntakeCard;
+  }
+
+  const makeBot = async (name: string): Promise<{ id: string; name: string; threadId: string }> =>
+    (await api("POST", "/api/bots", { name, title: "Test", description: "t", color: "purple" })).body.bot;
+
+  const transcript = async (threadId: string): Promise<TranscriptMessage[]> =>
+    (await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages;
+
+  /** The question on the table, read the way the renderer reads it: the LAST
+   * intake card the server has not recorded an answer on. */
+  const openQuestion = (messages: readonly TranscriptMessage[]): TranscriptMessage | null => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]!;
+      if (message.kind !== "options" || !message.card?.intake) continue;
+      if (message.card.answered !== undefined || message.card.dismissed) continue;
+      return message;
+    }
+    return null;
+  };
+
+  const openCardOf = async (threadId: string): Promise<IntakeCard> => {
+    const open = openQuestion(await transcript(threadId));
+    expect(open?.card?.intake).toBeTruthy();
+    return open!.card!;
+  };
+
+  const openIdOf = async (threadId: string): Promise<string> => {
+    const open = openQuestion(await transcript(threadId));
+    expect(open).toBeTruthy();
+    return open!.id;
+  };
+
+  /** One turn: whatever the person said or pressed, sent back verbatim. */
+  const say = async (bot: { id: string; threadId: string }, text: string) => {
+    const messageId = await openIdOf(bot.threadId);
+    const response = await api("POST", `/api/bots/${bot.id}/intake`, { messageId, text });
+    return { messageId, response };
+  };
+
+  const close = async (
+    bot: { id: string; threadId: string },
+    messageId: string,
+    outcome: "profile" | "general" | "library",
+  ) => api("POST", `/api/bots/${bot.id}/intake`, { messageId, outcome });
+
+  const intakeCards = (messages: readonly TranscriptMessage[]): IntakeCard[] =>
+    messages.flatMap((message) => (message.card?.intake ? [message.card] : []));
+
+  /** Measured against the shipped catalogue, and re-derived rather than
+   * assumed: "chasing invoices" is the sentence that used to reach a trading
+   * profile, and it matches exactly one profile in 129 on a whole word that
+   * lives in that profile's SKILLS rather than its summary. */
+  const FIRM_ANSWER = "chasing invoices";
+  /** The same topic word alone. One word cannot corroborate itself, so it is
+   * thin by construction however well it matches. */
+  const THIN_ANSWER = "invoices";
+  /** Three topic words that reach more than one profile firmly. */
+  const FORKED_ANSWER = "reading my trading charts";
+  /** No topic words at all. */
+  const EMPTY_ANSWER = "hi";
+
+  it("seeds one open question and nothing else to answer", async () => {
+    const bot = await makeBot("Freshly Made");
+    const card = await openCardOf(bot.threadId);
+    expect(card.intake).toMatchObject({ step: "open", asked: 1 });
+    // No chips on the opening question: the composer is the answer.
+    expect(card.options).toEqual([]);
+    expect(intakeCards(await transcript(bot.threadId))).toHaveLength(1);
+  });
+
+  it("proposes a speciality on ONE question when the answer is firm", async () => {
+    const bot = await makeBot("Firm Answer");
+    expect((await say(bot, FIRM_ANSWER)).response.status).toBe(202);
+
+    const messages = await transcript(bot.threadId);
+    // the person's own words are in the transcript, and the question is spent
+    expect(messages.some((message) => message.role === "user" && message.text === FIRM_ANSWER)).toBe(true);
+    expect(intakeCards(messages)[0]!.answered).toBe(FIRM_ANSWER);
+
+    const card = openQuestion(messages)!.card!;
+    expect(card.intake!.step).toBe("confirm");
+    expect(card.intake!.outcome).toBe("profile");
+    expect(card.intake!.asked).toBe(1);
+    expect(card.intake!.candidate!.slug).toMatch(/^[a-z0-9][a-z0-9-]*$/);
+    expect(card.intake!.candidate!.name).toBeTruthy();
+    // A firm answer is never asked a second question.
+    expect(intakeCards(messages).filter((entry) => entry.intake!.step === "narrow")).toHaveLength(0);
+  });
+
+  it("asks a SECOND question rather than guessing a profile from a thin answer", async () => {
+    const bot = await makeBot("Thin Answer");
+    expect((await say(bot, THIN_ANSWER)).response.status).toBe(202);
+
+    const card = await openCardOf(bot.threadId);
+    // The contract: a thin answer buys a question. Not a profile, and not a
+    // silent install of the profile the word happened to brush against.
+    expect(card.intake!.step).toBe("narrow");
+    expect(card.intake!.asked).toBe(2);
+    expect(card.intake!.candidate!.name).toBeTruthy();
+    expect(card.intake!.outcome).toBeUndefined();
+
+    // …and the SAME topic word inside a fuller sentence does resolve, which
+    // is what makes this a strength tier rather than a blanket refusal.
+    const firm = await makeBot("Firm Companion");
+    await say(firm, FIRM_ANSWER);
+    expect((await openCardOf(firm.threadId)).intake!.step).toBe("confirm");
+  });
+
+  it("never asks a third question, whatever the second answer is", async () => {
+    const bot = await makeBot("Nothing To Say");
+    expect((await say(bot, EMPTY_ANSWER)).response.status).toBe(202);
+    const second = await openCardOf(bot.threadId);
+    expect(second.intake!.step).toBe("narrow");
+    expect(second.intake!.asked).toBe(2);
+
+    expect((await say(bot, "dunno")).response.status).toBe(202);
+
+    const messages = await transcript(bot.threadId);
+    const cards = intakeCards(messages);
+    // Two questions were asked and the third turn is a decision, not a
+    // question. `asked` never leaves {1, 2}, on any card, ever.
+    expect(cards.filter((card) => card.intake!.step !== "confirm")).toHaveLength(2);
+    for (const card of cards) expect([1, 2]).toContain(card.intake!.asked);
+    expect(openQuestion(messages)!.card!.intake!.step).toBe("confirm");
+  });
+
+  it("reaches general chat as an outcome, and stops there", async () => {
+    const bot = await makeBot("General Is Fine");
+    await say(bot, EMPTY_ANSWER);
+    await say(bot, "dunno");
+
+    const card = await openCardOf(bot.threadId);
+    expect(card.intake).toMatchObject({ step: "confirm", outcome: "general" });
+    // general chat installs nothing, so it carries no candidate at all
+    expect(card.intake!.candidate).toBeUndefined();
+    expect(card.options).toEqual([...intakeChips("confirm-general")]);
+
+    const messageId = await openIdOf(bot.threadId);
+    const closed = await close(bot, messageId, "general");
+    expect(closed.status).toBe(202);
+
+    const messages = await transcript(bot.threadId);
+    // the accept chip is recorded by POSITION, off the card's own options
+    const settled = messages.find((message) => message.id === messageId)!.card!;
+    expect(settled.answered).toBe(intakeChips("confirm-general")[0]);
+    // one closing line from the bot, and then nothing left to answer
+    expect(messages.at(-1)!.role).toBe("bot");
+    expect(messages.at(-1)!.kind).toBe("text");
+    expect(openQuestion(messages)).toBeNull();
+  });
+
+  it("opens the library as its own outcome, without installing anything", async () => {
+    const bot = await makeBot("Show Me The Library");
+    await say(bot, EMPTY_ANSWER);
+    await say(bot, "dunno");
+    const card = await openCardOf(bot.threadId);
+    expect(card.intake).toMatchObject({ step: "confirm", outcome: "general" });
+
+    const messageId = await openIdOf(bot.threadId);
+    expect((await close(bot, messageId, "library")).status).toBe(202);
+
+    const messages = await transcript(bot.threadId);
+    // the second chip, by position, and a closing line of its own
+    expect(messages.find((message) => message.id === messageId)!.card!.answered).toBe(
+      intakeChips("confirm-general")[1],
+    );
+    expect(messages.at(-1)!.kind).toBe("text");
+    expect(openQuestion(messages)).toBeNull();
+    // the library is a place to look, not an install
+    expect((await api("GET", `/api/bots/${bot.id}/skills`)).body.skills).toEqual([]);
+  });
+
+  it("answers an already-answered card once and only once", async () => {
+    const bot = await makeBot("Double Press");
+    const { messageId } = await say(bot, EMPTY_ANSWER);
+    const afterFirst = await transcript(bot.threadId);
+
+    const again = await api("POST", `/api/bots/${bot.id}/intake`, { messageId, text: EMPTY_ANSWER });
+    expect(again.status).toBe(409);
+    // the renderer shows this string to a person as it stands
+    expect(typeof again.body.error).toBe("string");
+    expect(again.body.error).toMatch(/already answered/);
+    expect(await transcript(bot.threadId)).toHaveLength(afterFirst.length);
+
+    // the same guard on the outcome form
+    const outcomeAgain = await close(bot, messageId, "general");
+    expect(outcomeAgain.status).toBe(409);
+    expect(await transcript(bot.threadId)).toHaveLength(afterFirst.length);
+  });
+
+  it("never renames the bot and never installs anything, even on 'profile'", async () => {
+    const bot = await makeBot("Named By The Person");
+    await say(bot, FIRM_ANSWER);
+    const card = await openCardOf(bot.threadId);
+    const candidate = card.intake!.candidate as IntakeCandidate;
+    // the proposal is for a differently-named profile, so a rename would show
+    expect(candidate.name).not.toBe(bot.name);
+
+    const messageId = await openIdOf(bot.threadId);
+    expect((await close(bot, messageId, "profile")).status).toBe(202);
+
+    const after = (await api("GET", "/api/bots?messages=0")).body.bots.find(
+      (entry: { id: string }) => entry.id === bot.id,
+    );
+    // rename: false, pinned. The install itself belongs to the desktop-gated
+    // assistant-profile route, which this route must never stand in for.
+    expect(after.name).toBe("Named By The Person");
+    expect((await api("GET", `/api/bots/${bot.id}/skills`)).body.skills).toEqual([]);
+    // and the closing line names the profile the person accepted
+    const messages = await transcript(bot.threadId);
+    expect(messages.at(-1)!.text).toContain(candidate.name);
+    expect(openQuestion(messages)).toBeNull();
+  });
+
+  it("builds every two-chip card through the shared helper, in the helper's order", async () => {
+    // The renderer maps intake chips BY INDEX. A pair written by hand in the
+    // wrong order records "set this up" as a refusal, silently, with nothing
+    // thrown on either side of the seam — so the order is pinned against the
+    // helper rather than against two strings written out again here.
+    const confirming = await makeBot("Chip Order Confirm");
+    await say(confirming, FIRM_ANSWER);
+    expect((await openCardOf(confirming.threadId)).options).toEqual([...intakeChips("confirm-profile")]);
+
+    const checking = await makeBot("Chip Order Check");
+    await say(checking, THIN_ANSWER);
+    expect((await openCardOf(checking.threadId)).options).toEqual([...intakeChips("narrow-check")]);
+
+    const general = await makeBot("Chip Order General");
+    await say(general, EMPTY_ANSWER);
+    await say(general, "dunno");
+    expect((await openCardOf(general.threadId)).options).toEqual([...intakeChips("confirm-general")]);
+
+    const forked = await makeBot("Chip Order Pick");
+    await say(forked, FORKED_ANSWER);
+    const pick = await openCardOf(forked.threadId);
+    expect(pick.intake!.step).toBe("narrow");
+    const choices = pick.intake!.choices!;
+    expect(choices).toHaveLength(2);
+    expect(pick.options).toEqual([...intakeNarrowPickChips(choices[0]!, choices[1]!)]);
+    // four conversations in one test, and the first intake answer in the
+    // process pays for the cold pass over the whole skills library
+  });
+
+  it("writes no chip label of its own into the server source", async () => {
+    // The behavioural check above passes just as happily if a call site
+    // inlines the pair in the RIGHT order today and someone swaps it
+    // tomorrow. This is the check that keeps the helper the only source: the
+    // fixed labels live in shared/intake-turn.ts, so the server must not
+    // contain one.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const labels = (["narrow-check", "confirm-profile", "confirm-general"] as const).flatMap((kind) => [
+      ...intakeChips(kind),
+    ]);
+    expect(labels.length).toBe(6);
+    for (const label of labels) expect(source).not.toContain(label);
+  });
+
+  it("resolves a narrow-check by POSITION, both ways", async () => {
+    const accepting = await makeBot("Narrow Accept");
+    await say(accepting, THIN_ANSWER);
+    const offered = (await openCardOf(accepting.threadId)).intake!.candidate!;
+    await say(accepting, intakeChips("narrow-check")[0]);
+    const accepted = await openCardOf(accepting.threadId);
+    expect(accepted.intake).toMatchObject({ step: "confirm", outcome: "profile", asked: 2 });
+    expect(accepted.intake!.candidate!.slug).toBe(offered.slug);
+
+    const declining = await makeBot("Narrow Decline");
+    await say(declining, THIN_ANSWER);
+    await say(declining, intakeChips("narrow-check")[1]);
+    const declined = await openCardOf(declining.threadId);
+    expect(declined.intake).toMatchObject({ step: "confirm", outcome: "general" });
+    expect(declined.intake!.candidate).toBeUndefined();
+  });
+
+  it("refuses a body that names no open question", async () => {
+    const bot = await makeBot("Bad Bodies");
+    const messageId = await openIdOf(bot.threadId);
+    expect((await api("POST", `/api/bots/${bot.id}/intake`, { messageId })).status).toBe(400);
+    expect((await api("POST", `/api/bots/${bot.id}/intake`, { messageId, text: "  " })).status).toBe(400);
+    expect((await api("POST", `/api/bots/${bot.id}/intake`, { messageId, outcome: "nope" })).status).toBe(400);
+    // an open question is not a confirm card, so it takes no outcome
+    expect((await api("POST", `/api/bots/${bot.id}/intake`, { messageId, outcome: "profile" })).status).toBe(400);
+    expect((await api("POST", `/api/bots/${bot.id}/intake`, { messageId: "nope", text: "x" })).status).toBe(404);
+    expect((await api("POST", "/api/bots/not-a-bot/intake", { messageId, text: "x" })).status).toBe(404);
+    // and none of that spent the question
+    expect((await openCardOf(bot.threadId)).intake!.step).toBe("open");
+  });
+}, 120_000);

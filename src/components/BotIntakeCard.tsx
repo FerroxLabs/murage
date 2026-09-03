@@ -4,7 +4,6 @@ import { AlertTriangle, BookOpen, Sparkles, X } from "lucide-react";
 import { api, useStore, type Bot, type BotAnnouncement } from "@/state/store";
 import { cn } from "@/lib/cn";
 import {
-  intakeMode,
   setSkillCount,
   setupOverwriteReasons,
   setupWouldOverwrite,
@@ -30,28 +29,6 @@ import {
   suggestForAnswer,
   type IntakeSuggestion,
 } from "@/lib/onboarding-intake";
-
-/** The dismissal is per bot and per machine — a preference, not a fact about
- *  the bot, so it does not belong on the server. A browser that refuses
- *  storage simply shows the question again, which is the safe direction. */
-const DISMISSED_KEY = "murage.intake.dismissed";
-
-function readDismissed(botId: string): boolean {
-  try {
-    return window.localStorage.getItem(`${DISMISSED_KEY}.${botId}`) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeDismissed(botId: string, value: boolean): void {
-  try {
-    if (value) window.localStorage.setItem(`${DISMISSED_KEY}.${botId}`, "1");
-    else window.localStorage.removeItem(`${DISMISSED_KEY}.${botId}`);
-  } catch {
-    // storage is a convenience here; the card still works without it
-  }
-}
 
 /** THE CARD NEVER EXCEEDS THE VIEWPORT.
  *
@@ -93,10 +70,17 @@ const DESKTOP_ONLY = "Add this on your desktop";
  *  creates a second bot: an orphan blank agent left in the sidebar next to the
  *  one you thought you were setting up is the exact failure this replaces.
  *
- *  Two callers, and the difference between them is the whole of this feature's
- *  design. `BotIntakeCard` puts it in the composer dock for an agent that is
- *  genuinely new. `BotSetupAction` puts it on any agent's own profile, behind
- *  a button and, when there is something to lose, behind a warning. */
+ *  ONE caller now. It used to have two: this and a copy docked above the
+ *  composer for any agent that looked new. That one is gone, because a new
+ *  agent asks in the transcript instead, in its own voice (`IntakeTurn`).
+ *  What survives is the deliberate door: `BotSetupAction` puts this on any
+ *  agent's own profile, behind a button and, when there is something to lose,
+ *  behind a warning.
+ *
+ *  Keeping it is not a leftover. It is the parallel surface that makes the
+ *  conversation safe to walk away from: every answer the conversation could
+ *  have collected is reachable here on purpose, so abandoning a setup chat
+ *  costs nothing and nothing has to nag to finish. */
 function IntakeQuestion({
   bot,
   onDismiss,
@@ -435,49 +419,6 @@ function IntakeQuestion({
         </div>
       </div>
     </div>
-  );
-}
-
-/** THE COMPOSER DOCK'S COPY. Only ever for an agent that is genuinely new.
- *
- *  Sean's own Chief of Staff, Sable, is the reason this is the whole rule:
- *  1.4M tokens of conversation, an established profile, a full set of skills —
- *  and the setup question parked under every message she sent, offering to set
- *  her up for something. His words:
- *  "it makes no sense to hold it there when a conversation as extensive as I
- *  have had with Sable has progressed and she's all skilled up."
- *
- *  So once ANY of the four conditions in `looksUnconfigured` turns false, this
- *  renders nothing at all — no card, and no collapsed chip either, because a
- *  quieter chip in the same place is the same noise in the same place. The
- *  composer belongs to the conversation.
- *
- *  That is not a one-way door. The door moved: `BotSetupAction` puts setup on
- *  the bot's own profile, where a person goes on purpose, and where it can
- *  warn before it touches anything. Dismissing this card is therefore
- *  permanent-until-you-go-and-ask, which is the correct weight for a question
- *  a person has already declined once. */
-export function BotIntakeCard({ bot }: { bot: Bot }) {
-  // Shared with the transcript, which uses the same answer to retire the old
-  // seeded four-option quiz rather than ask the same question twice.
-  const skillCount = useSkillCount(bot.id, api);
-  const [dismissed, setDismissed] = useState(() => readDismissed(bot.id));
-
-  useEffect(() => {
-    setDismissed(readDismissed(bot.id));
-  }, [bot.id]);
-
-  if (dismissed) return null;
-  if (intakeMode(skillCount, bot) !== "question") return null;
-
-  return (
-    <IntakeQuestion
-      bot={bot}
-      onDismiss={() => {
-        setDismissed(true);
-        writeDismissed(bot.id, true);
-      }}
-    />
   );
 }
 

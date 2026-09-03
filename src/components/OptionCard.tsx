@@ -2,11 +2,23 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { useStore, visibleMessages, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { readIntakeCard } from "@/lib/onboarding-intake";
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
-/** First-run quiz, not a live provider ask (those carry requestId). */
+/** First-run quiz, not a live provider ask (those carry requestId) and not a
+ * turn of the setup conversation.
+ *
+ * The intake exclusion is load bearing rather than tidy. Without it this
+ * returns true for every intake card, `shouldHideOnboardingCard` then hides
+ * it through `talkedPast` as soon as any later user text message exists, and
+ * the intake route appends exactly such a message on every single turn. The
+ * question would disappear the instant it was answered, taking its own reply
+ * chips with it. `ChatView` also branches to `IntakeTurn` before it reaches
+ * this code at all: belt and braces, because either one alone is one edit
+ * away from the same blank screen. */
 export function isOnboardingCard(message: Message): boolean {
+  if (readIntakeCard(message.card)) return false;
   return message.kind === "options" && !!message.card && !message.card.requestId;
 }
 

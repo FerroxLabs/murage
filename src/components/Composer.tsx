@@ -1,8 +1,9 @@
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowUp, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, Square, Target, Users, X } from "lucide-react";
-import { useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
+import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
 import {
   draftRevision,
   forgetFailedComposerSend,
@@ -435,6 +436,27 @@ export function Composer({
       });
       track("message_sent", { room: true, mode: channelMode, queued: busy });
     } else if (bot) {
+      // A SETUP QUESTION ON THE TABLE TAKES THE ANSWER.
+      //
+      // This is the whole of invariant I7: every question the new-bot
+      // conversation asks accepts free text, because the composer is on
+      // screen at every turn and this is where it goes. No chip is ever the
+      // only way to answer, which is the documented way chat onboarding
+      // fails - a person types the word their situation actually needs, the
+      // bot has no chip for it, and the conversation dead ends.
+      //
+      // Routed rather than sent: the ordinary chat route would hand the
+      // sentence to the engine, which would answer it as a question about
+      // itself, and the setup conversation would be over without ever
+      // reading the answer.
+      const question = openIntakeCard(visibleMessages(bot));
+      if (question) {
+        void replyToIntake(bot.id, question.id, t, api).catch(() => restoreDraft(sentDraft));
+        setText("");
+        setAttachments([]);
+        onConsumeReply?.();
+        return;
+      }
       dispatch({
         type: "send",
         botId: bot.id,

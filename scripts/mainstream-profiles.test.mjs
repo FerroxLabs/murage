@@ -24,6 +24,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseBotPackage } from "../server/bot-package.ts";
 import { checkLibrarySkill } from "../server/skills.ts";
+import { INTAKE_FRONT_DOOR_SLUG } from "../src/lib/onboarding-intake.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const skillLibrary = join(repoRoot, "skills-library");
@@ -152,9 +153,51 @@ describe("the front door reaches people the honest way", () => {
   });
 
   it("refuses to offer a front door that would configure nothing", () => {
+    // THE CONTRACT, NOT ITS ADDRESS. The guarantee worth keeping is that the
+    // front door never offers a profile whose declared skills all fail to
+    // resolve: that applies a persona and configures nothing, which is a half
+    // answer wearing a match's clothes. This used to be pinned by grepping
+    // one function body for one literal line, which broke the day the check
+    // moved into a resolver the front door now shares with the setup
+    // conversation — a refactor that made the guarantee STRONGER while the
+    // test called it a regression.
+    //
+    // So it is stated twice, in the two ways this file can reach:
+    //
+    //   1. In data. Whatever the front door offers today must actually
+    //      install something, checked through the installer's own rules.
+    //   2. In structure. Walk from `intakeFrontDoor` through whatever intake
+    //      helpers it delegates to, and require the zero-skill refusal
+    //      somewhere on that chain. The check may move; it may not vanish.
+    const declared = declaredSkills(loadProfile(INTAKE_FRONT_DOOR_SLUG));
+    const installable = declared.filter((id) => installFailure(id) === null);
+    expect(installable.length, `${INTAKE_FRONT_DOOR_SLUG} would configure nothing`).toBeGreaterThan(0);
+
     const server = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-    const fn = server.slice(server.indexOf("async function intakeFrontDoor"));
-    expect(fn.slice(0, fn.indexOf("\n}"))).toContain("if (skills.length === 0) return null;");
+    const chain = [];
+    const seen = new Set();
+    const walk = (name) => {
+      if (seen.has(name)) return;
+      seen.add(name);
+      const start = server.search(new RegExp(`^(?:async )?function ${name}\\b`, "m"));
+      if (start === -1) return;
+      const rest = server.slice(start);
+      const body = rest.slice(0, rest.indexOf("\n}"));
+      chain.push(name);
+      for (const [, callee] of body.matchAll(/\b(intake[A-Za-z]*)\(/g)) walk(callee);
+      bodies.set(name, body);
+    };
+    const bodies = new Map();
+    walk("intakeFrontDoor");
+    expect(chain[0], "intakeFrontDoor is gone from server/index.ts").toBe("intakeFrontDoor");
+    const trail = chain.join(" -> ");
+    // the skills a profile brings are still the ones the library can install
+    expect([...bodies.values()].some((body) => /intakeProfileSkills\(/.test(body)), trail).toBe(true);
+    // …and a profile that brings none of them is refused rather than offered
+    expect(
+      [...bodies.values()].some((body) => /skills\.length === 0\)\s*return null;/.test(body)),
+      `a front door that installs nothing would be offered: no zero-skill refusal on ${trail}`,
+    ).toBe(true);
   });
 
   it("says it is a front door rather than a match", () => {
