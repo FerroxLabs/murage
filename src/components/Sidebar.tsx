@@ -45,7 +45,14 @@ import { nextRename } from "@/lib/rename";
 import { downloadAllBots } from "@/lib/team-files";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
-import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
+import {
+  TeamLibraryPanel,
+  archivedRestorePatch,
+  teamImportSkillSummary,
+  type ArchivedTeamBot,
+  type TeamImportResult,
+  type TeamImportSkillError,
+} from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
 import { RoleIcon } from "./RoleBadge";
 import { botRole, botRolePatch, BOT_ROLE_BADGE, BOT_ROLE_TITLE } from "@/lib/bot-role";
@@ -84,6 +91,135 @@ import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+
+/** What the bottom-left toast is currently saying. `detail` is a second,
+ *  quieter line: present when something about the thing that just happened
+ *  is worth knowing but is not the headline. */
+export interface TeamFeedback {
+  error: boolean;
+  text: string;
+  detail?: string;
+  undo?: TeamImportResult;
+  restoreBot?: { id: string; name: string };
+}
+
+/** Every PATCH the team-import undo sends to put the previous roster back:
+ *  one per archived bot, no exceptions and no bespoke bodies.
+ *
+ *  Both halves of that matter, because both were once wrong here. The undo
+ *  used to split the archive in two and hand-write the chief half's body as
+ *  `{ hidden: false, chiefOfStaff: true }` — an election with no tier, which
+ *  the org chart (src/lib/bot-role.ts) reads as a SECTION lead, so pressing
+ *  Undo demoted the workspace Chief and said nothing. It stopped showing
+ *  only once the harness began keeping her tier on the archived record and
+ *  reading a bare election against it; that is a net under the client, not
+ *  the contract. One map through `archivedRestorePatch` states the tier
+ *  outright, and leaves no second branch for a tier-less body to live in. */
+export function teamUndoRestores(
+  archived: ArchivedTeamBot[],
+): Array<{ id: string; body: ReturnType<typeof archivedRestorePatch> }> {
+  return archived.map((bot) => ({ id: bot.id, body: archivedRestorePatch(bot) }));
+}
+
+/** The second line of the team-import toast, or "" when the import was
+ *  whole.
+ *
+ *  A team can land with fewer skills than its profile promised: the harness
+ *  answers 201 with the bots it made and a `skillErrors` list beside them.
+ *  It used to print that list to a console nobody reads, so somebody was
+ *  told "loaded" and got an assistant quietly short of the thing it was
+ *  hired for.
+ *
+ *  The tone is deliberate. A short import is NOT a failed one — the bots
+ *  exist, the rooms exist, and the toast keeps its ordinary styling and its
+ *  ordinary headline. The shortfall is a quieter second line rather than a
+ *  louder first one, so the eye reads "team loaded" and then "and here is
+ *  what is missing", which is the true order of those two facts.
+ *
+ *  There is no denominator to quote. The response carries the failures, not
+ *  the total the profile declared, so this counts what went wrong and never
+ *  invents an "n of m". `install` and `enable` are kept apart because a
+ *  skill that never arrived and a skill sitting there switched off are
+ *  different things to go and fix. */
+export function teamImportShortfall(result: { skillErrors: TeamImportSkillError[] }): string {
+  const { failed, unavailable, disabled } = teamImportSkillSummary(result);
+  if (failed === 0) return "";
+  const clauses: string[] = [];
+  if (unavailable > 0) {
+    clauses.push(`${unavailable} ${unavailable === 1 ? "skill" : "skills"} could not be installed`);
+  }
+  if (disabled > 0) {
+    clauses.push(`${disabled} ${disabled === 1 ? "skill" : "skills"} arrived switched off`);
+  }
+  // Naming the one bot is worth the words; naming nine is a wall of text.
+  const names = [...new Set(result.skillErrors.map((entry) => entry.botName))];
+  const who = names.length === 1 ? ` for ${names[0]}` : ` across ${names.length} bots`;
+  return `${clauses.join(" and ")}${who}.`;
+}
+
+/** The toast a finished team import puts up.
+ *
+ *  Never an error, even when skills were lost: the bots and rooms landed,
+ *  and a red toast over a working team would be wrong in the other
+ *  direction. Undo is offered only when there is a previous roster to put
+ *  back. */
+export function teamImportFeedback(result: TeamImportResult): TeamFeedback {
+  return {
+    error: false,
+    text: `${result.name} loaded · ${result.members} ${result.members === 1 ? "bot" : "bots"}`,
+    detail: teamImportShortfall(result),
+    undo: result.archived.length > 0 ? result : undefined,
+  };
+}
+
+/** The bottom-left toast itself. Headline, an Undo where one applies, and
+ *  the quiet second line underneath. */
+export function TeamFeedbackToast({
+  feedback,
+  onUndoTeam,
+  onUndoBot,
+}: {
+  feedback: TeamFeedback;
+  onUndoTeam: (undo: TeamImportResult) => void;
+  onUndoBot: (bot: { id: string; name: string }) => void;
+}) {
+  // Pulled out of `feedback` so each handler closes over a value the type
+  // system already knows is there, rather than re-reading a field it would
+  // then have to be told again is not null.
+  const { undo, restoreBot } = feedback;
+  return (
+    <div
+      role="status"
+      className={cn(
+        "fixed bottom-4 left-4 z-[60] max-w-[300px] rounded-xl border px-3.5 py-2.5 text-[13px] shadow-xl",
+        feedback.error ? "border-danger/30 bg-card text-danger" : "border-hairline/50 bg-card text-ink",
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <span>{feedback.text}</span>
+        {undo && (
+          <button
+            onClick={() => onUndoTeam(undo)}
+            className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
+          >
+            Undo
+          </button>
+        )}
+        {restoreBot && (
+          <button
+            onClick={() => onUndoBot(restoreBot)}
+            className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
+          >
+            Undo
+          </button>
+        )}
+      </div>
+      {feedback.detail && (
+        <p className="mt-1.5 text-[12px] leading-snug text-ink-secondary">{feedback.detail}</p>
+      )}
+    </div>
+  );
+}
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
 function profileInitials(profile?: { name?: string; email?: string }): string {
@@ -1158,12 +1294,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [exportingTeam, setExportingTeam] = useState(false);
-  const [teamFeedback, setTeamFeedback] = useState<{
-    error: boolean;
-    text: string;
-    undo?: TeamImportResult;
-    restoreBot?: { id: string; name: string };
-  } | null>(null);
+  const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
   const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
   const [lastExpandedDensity, setLastExpandedDensity] = useState<Exclude<SidebarDensity, "icons">>(() => {
@@ -1276,27 +1407,22 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       );
       for (const response of archiveNew) dispatch({ type: "botPatched", bot: response.bot });
 
-      const previousChiefs = result.archived.filter((bot) => bot.chiefOfStaff);
-      const restoreOthers = await Promise.all(
-        result.archived
-          .filter((bot) => !bot.chiefOfStaff)
-          .map((bot) =>
-            api(`/api/bots/${bot.id}`, {
-              method: "PATCH",
-              body: JSON.stringify({ hidden: false }),
-            }),
-          ),
-      );
-      for (const response of restoreOthers) dispatch({ type: "botPatched", bot: response.bot });
-      const restoredChiefs = await Promise.all(
-        previousChiefs.map((previousChief) =>
-          api(`/api/bots/${previousChief.id}`, {
-            method: "PATCH",
-            body: JSON.stringify({ hidden: false, chiefOfStaff: true }),
-          }),
+      // One map, one patch builder. This used to split the archive into
+      // chiefs and everyone else and hand-write each body, and the chief
+      // branch sent `{ hidden: false, chiefOfStaff: true }` — an election
+      // with no tier, which the org chart (src/lib/bot-role.ts) reads as a
+      // SECTION lead. Restoring the workspace Chief that way demoted her,
+      // and the only reason it stopped showing was that the harness began
+      // keeping her tier on the archived record and reading a bare election
+      // against it. That is a safety net under the client, not the contract:
+      // `archivedRestorePatch` states the tier, so the request says what it
+      // means whether or not anything downstream is willing to guess.
+      const restored = await Promise.all(
+        teamUndoRestores(result.archived).map(({ id, body }) =>
+          api(`/api/bots/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
         ),
       );
-      for (const response of restoredChiefs) dispatch({ type: "botPatched", bot: response.bot });
+      for (const response of restored) dispatch({ type: "botPatched", bot: response.bot });
       const first = result.archived[0];
       if (first) dispatch({ type: "select", id: first.id });
       setTeamFeedback({ error: false, text: "Previous team restored" });
@@ -1482,8 +1608,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   };
   const activeBotCount = state.bots.filter((bot) => !bot.hidden).length;
   const archivedBots = state.bots.filter((bot) => bot.hidden);
-  const pendingTeamUndo = teamFeedback?.undo;
-  const pendingBotUndo = teamFeedback?.restoreBot;
 
   return (
     <aside
@@ -1964,52 +2088,17 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onImported={(result) => {
             dispatch({ type: "hideTeamLibrary" });
             setTeamInstallUrl(null);
-            setTeamFeedback(
-              result.archived.length > 0
-                ? {
-                    error: false,
-                    text: `${result.name} loaded · ${result.members} ${result.members === 1 ? "bot" : "bots"}`,
-                    undo: result,
-                  }
-                : {
-                    error: false,
-                    text: `${result.name} loaded · ${result.members} ${result.members === 1 ? "bot" : "bots"}`,
-                  },
-            );
+            setTeamFeedback(teamImportFeedback(result));
           }}
         />
       )}
       {teamFeedback &&
         createPortal(
-          <div
-            role="status"
-            className={cn(
-              "fixed bottom-4 left-4 z-[60] max-w-[300px] rounded-xl border px-3.5 py-2.5 text-[13px] shadow-xl",
-              teamFeedback.error
-                ? "border-danger/30 bg-card text-danger"
-                : "border-hairline/50 bg-card text-ink",
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <span>{teamFeedback.text}</span>
-              {pendingTeamUndo && (
-                <button
-                  onClick={() => void undoTeamLoad(pendingTeamUndo)}
-                  className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
-                >
-                  Undo
-                </button>
-              )}
-              {pendingBotUndo && (
-                <button
-                  onClick={() => void undoBotArchive(pendingBotUndo)}
-                  className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
-                >
-                  Undo
-                </button>
-              )}
-            </div>
-          </div>,
+          <TeamFeedbackToast
+            feedback={teamFeedback}
+            onUndoTeam={(undo) => void undoTeamLoad(undo)}
+            onUndoBot={(bot) => void undoBotArchive(bot)}
+          />,
           document.body,
         )}
     </aside>
