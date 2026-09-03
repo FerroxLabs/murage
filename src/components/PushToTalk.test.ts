@@ -63,11 +63,25 @@ describe("which surface gets a microphone", () => {
     expect(render()).toContain("Hold to talk");
   });
 
-  it("says nothing when this browser cannot record, or the workspace has no key", () => {
-    // Neither is something the person can act on from here, and a control
-    // that exists only to refuse is worse than no control.
+  it("says nothing when this browser simply cannot record", () => {
+    // Nothing the person can act on from here, and a control that exists only
+    // to refuse is worse than no control.
     expect(pushToTalkGate({ ...READY, canRecord: false })).toBe("hidden");
-    expect(pushToTalkGate({ ...READY, fluxConfigured: false })).toBe("hidden");
+  });
+
+  it("POINTS AT SETTINGS when there is no Flux key, rather than hiding", () => {
+    // This app has an explicit rule, enforced by src/lib/flux-invite.test.ts:
+    // nothing is gated on a Flux key — with no key you keep what you had and
+    // gain a pointer to Settings. "hidden" cleared half of that bar and failed
+    // the other half, and it also made the route's `key` refusal unreachable,
+    // because the button that would have asked was never drawn.
+    expect(pushToTalkGate({ ...READY, fluxConfigured: false })).toBe("needs-key");
+    const markup = renderToStaticMarkup(
+      createElement(PushToTalk, { facts: { ...READY, fluxConfigured: false }, onTranscript: () => {} }),
+    );
+    expect(markup).toContain("Add a Flux key in Settings on the computer");
+    // still a mic, not a dead space and not a recording control
+    expect(markup).toContain("Voice typing unavailable");
   });
 });
 
@@ -95,9 +109,14 @@ describe("plain HTTP", () => {
     // the rendered `title`. `renderToStaticMarkup` cannot fire a click, so the
     // wiring is pinned in the source instead — the rule FluxKeyCard.test.ts
     // uses for the same reason. One constant, both places.
-    expect(source).toContain("onClick={() => onNote?.(INSECURE_NOTE)}");
-    // and there is exactly one such sentence to get out of sync with
+    // The tooltip and the click now share one `note` binding, chosen by the
+    // gate, so the pin is on the WIRING rather than on one constant's name —
+    // the same guarantee, and it survives a second reason being added.
+    expect(source).toContain("title={note}");
+    expect(source).toContain("onClick={() => onNote?.(note)}");
+    // and each sentence exists exactly once, so the two cannot drift
     expect(source.match(/Serve on my tailnet/g) ?? []).toHaveLength(1);
+    expect(source.match(/Add a Flux key in Settings on the computer/g) ?? []).toHaveLength(1);
   });
 
   it("names the setting the way the settings page names it", () => {

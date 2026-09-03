@@ -113,7 +113,7 @@ export interface PushToTalkFacts {
   canRecord: boolean;
 }
 
-export type PushToTalkGate = "hidden" | "insecure" | "ready";
+export type PushToTalkGate = "hidden" | "needs-key" | "insecure" | "ready";
 /**
  * Gather the four facts from the browser this is actually running in.
  *
@@ -153,7 +153,15 @@ export function browserPushToTalkFacts(known: {
 export function pushToTalkGate(facts: PushToTalkFacts): PushToTalkGate {
   if (facts.nativeDictation) return "hidden";
   if (!facts.canRecord) return "hidden";
-  if (!facts.fluxConfigured) return "hidden";
+  // NOT "hidden". This app has an explicit, tested rule that nothing is gated
+  // on a Flux key — `src/lib/flux-invite.test.ts` enforces it and states the
+  // bar: with no key, keep the existing path and add a POINTER TO SETTINGS.
+  // Hiding the control cleared half of that and failed the other half, and it
+  // also made `noteForReason("key")` unreachable: the route's 409 could never
+  // arrive because the button that would ask was never drawn. Same shape as
+  // `insecure` — the fix is on their own computer, and without being told they
+  // would conclude the feature does not exist.
+  if (!facts.fluxConfigured) return "needs-key";
   if (!facts.secure) return "insecure";
   return "ready";
 }
@@ -166,6 +174,12 @@ export function pushToTalkGate(facts: PushToTalkFacts): PushToTalkGate {
  *  sentence and `toggleMic` already writes into it for the same situation:
  *  "Dictation isn't available in this build." (`Composer.tsx:513`). One error
  *  surface, one voice, and no second banner competing with the first. */
+/** The sentence when there is no Flux key. Deliberately the SAME words the
+ *  route's `key` refusal uses (`noteForReason`), so a person who reaches this
+ *  by tapping and a person who reaches it by a 409 are told one thing. */
+export const NEEDS_KEY_NOTE =
+  "Add a Flux key in Settings on the computer to turn on voice typing.";
+
 export const INSECURE_NOTE =
   "Voice typing needs a secure address. Turn on “Serve on my tailnet” on your computer, then open Murage on the https link.";
 
@@ -178,7 +192,10 @@ export const INSECURE_NOTE =
 export function noteForReason(reason: string | undefined, fallback: string): string {
   switch (reason) {
     case "key":
-      return "Add a Flux key in Settings on the computer to turn on voice typing.";
+      // The SAME constant the muted mic shows, not a second copy of the
+      // sentence. Reaching this by tapping and reaching it by a 409 must not
+      // produce two subtly different instructions.
+      return NEEDS_KEY_NOTE;
     case "premium":
       return "Voice typing needs a paid Flux plan. The key is fine — the plan doesn’t cover it yet.";
     case "auth":
@@ -422,7 +439,8 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
   }, [gate, onNote, phase, release, stop, transcribe]);
 
   if (gate === "hidden") return null;
-  if (gate === "insecure") {
+  if (gate === "needs-key" || gate === "insecure") {
+    const note = gate === "needs-key" ? NEEDS_KEY_NOTE : INSECURE_NOTE;
     // Not a dead button, and not a hidden feature either. Pressing it says
     // what is wrong and what to do — the same thing `toggleMic` does when the
     // native helper is missing, into the same banner. Muted, and labelled as
@@ -432,8 +450,8 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
       <button
         type="button"
         aria-label="Voice typing unavailable — tap to find out why"
-        title={INSECURE_NOTE}
-        onClick={() => onNote?.(INSECURE_NOTE)}
+        title={note}
+        onClick={() => onNote?.(note)}
         className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary/40 hover:text-ink-secondary focus-visible:ring-2 focus-visible:ring-accent/70"
       >
         <Mic size={18} />
