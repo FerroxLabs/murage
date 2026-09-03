@@ -249,12 +249,52 @@ export function parseSkillMd(raw: string): ParsedSkill | { error: string } {
   };
 }
 
+/** Length of an unbroken base64-alphabet run that reads as a blob rather than
+ * as prose. Unchanged from the regex this replaced. */
+const BASE64_RUN_MIN = 120;
+
+/** True when the text contains BASE64_RUN_MIN or more consecutive characters
+ * of the base64 alphabet.
+ *
+ * EXACTLY the verdict of the /[A-Za-z0-9+\/]{120,}={0,2}/ this replaced: the
+ * "=" tail was already optional ({0,2} admits zero), so that pattern only ever
+ * asked whether a run of 120+ alphabet characters existed anywhere.
+ *
+ * Written as a scan, not a regex, because the regex backtracked. It restarted
+ * its 120-character attempt at every offset inside every run that would never
+ * reach 120 — O(L^2) per run of length L — so text made of runs just under the
+ * threshold cost it about 1.3 us per byte. Skill text is user-supplied, and
+ * SKILL_FILE_MAX_BYTES admits 256KB, so one crafted file bought ~330 ms of
+ * pure CPU (measured), about 390x what this loop needs for the same bytes.
+ * Across the real 2,237-skill library the pattern was 4.1 s of the ~4.8 s
+ * whole-library scan. This loop touches every character at most once, so
+ * there is no backtracking left to provoke. */
+function hasLongBase64Run(raw: string): boolean {
+  let run = 0;
+  for (let index = 0; index < raw.length; index += 1) {
+    const code = raw.charCodeAt(index);
+    const isBase64Char =
+      (code >= 0x41 && code <= 0x5a) || // A-Z
+      (code >= 0x61 && code <= 0x7a) || // a-z
+      (code >= 0x30 && code <= 0x39) || // 0-9
+      code === 0x2b || // +
+      code === 0x2f; // /
+    if (!isBase64Char) {
+      run = 0;
+      continue;
+    }
+    run += 1;
+    if (run >= BASE64_RUN_MIN) return true;
+  }
+  return false;
+}
+
 /** Static red flags before a human review. Presence is a warning shown in
  * the review screen, never a silent rejection — the reviewer decides. These
  * are the three patterns the public registry audits actually caught. */
 export function scanSkillText(raw: string): string[] {
   const warnings: string[] = [];
-  if (/[A-Za-z0-9+/]{120,}={0,2}/.test(raw)) {
+  if (hasLongBase64Run(raw)) {
     warnings.push("contains a long base64-looking blob — a common wrapper for hidden instructions or payloads");
   }
   if (/\b(curl|wget)\b[^\n]{0,200}\|\s*(ba|z|da)?sh\b/.test(raw)) {
@@ -1008,7 +1048,19 @@ function writeStaged(botId: string, store: StagedStore): void {
 export interface PreparedSkillFiles {
   files: Array<{ path: string; content: string }>;
   parsed: ParsedSkill;
-  warnings: string[];
+  /** COMPUTED ON FIRST READ, then memoised. Identical content and ordering to
+   * the eager array it replaced — the callers that record it on a manifest
+   * entry or a staged review card (installPreparedSkill, applySkillUpdate,
+   * stageSkillWrite) touch it exactly as before and see no difference.
+   *
+   * Lazy because validation-only callers never read it. checkLibrarySkill is
+   * the installer's rejection ladder with the write removed, and the skill
+   * search index runs it once per catalog entry to avoid advertising a skill
+   * the installer would refuse (server/skill-search.ts indexRow). Computing
+   * warnings there ran scanSkillText over all 57 MB of SKILL.md text for a
+   * value nobody read: measured 7.8 s of a ~8.4 s cold index build, on the
+   * lazy path a user waits behind when the library panel first opens. */
+  readonly warnings: string[];
   skippedFiles: string[];
 }
 
@@ -1033,11 +1085,19 @@ function preparedSkillFiles(
         }),
     ),
   ];
-  const warnings = [
-    ...scanSkillText(skillMd.content),
-    ...skippedFiles.map((path) => `skipped supporting file "${path}" — v1 imports only SKILL.md`),
-  ];
-  return { files: [{ path: "SKILL.md", content: skillMd.content }], parsed, warnings, skippedFiles };
+  let warnings: string[] | undefined;
+  return {
+    files: [{ path: "SKILL.md", content: skillMd.content }],
+    parsed,
+    skippedFiles,
+    get warnings(): string[] {
+      warnings ??= [
+        ...scanSkillText(skillMd.content),
+        ...skippedFiles.map((path) => `skipped supporting file "${path}" — v1 imports only SKILL.md`),
+      ];
+      return warnings;
+    },
+  };
 }
 
 function preparedLearnedSkill(
