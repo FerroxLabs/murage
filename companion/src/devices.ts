@@ -29,7 +29,9 @@ export interface BrowserSession {
   label: string;
   createdAt: number;
   lastSeenAt: number;
-  /** Absolute cap, never extended by use. */
+  /** The absolute cap. Set at sign-in and moved forward by `renewSession`,
+   * never past `createdAt + SESSION_MAX_LIFETIME_MS`. Use alone does not
+   * move it — only an explicit renewal does. */
   expiresAt: number;
 }
 
@@ -113,10 +115,61 @@ const LAST_SEEN_WRITE_MS = 60_000;
  * least recently used one out rather than failing. */
 export const MAX_SESSIONS_PER_DEVICE = 3;
 /** Rolling idle window. Longer than a fortnight away from a machine is a
- * reasonable point to make somebody scan the QR again. */
+ * reasonable point to make somebody scan the QR again.
+ *
+ * UNCHANGED BY RENEWAL, and that is a decision rather than an oversight.
+ * `renewSession` moves the absolute cap because a cap punishes a session for
+ * ageing; this bound punishes a session for being *unused*, and renewal has
+ * no evidence to offer against it — a renewal only ever happens because a
+ * page is open, which is the definition of not idle.
+ *
+ * The cost, stated so nobody has to rediscover it: with the cap lifted, this
+ * is now the binding bound for the traveller in the brief. A laptop shut in
+ * a bag for longer than fourteen days runs no script, sends no renewal, and
+ * is signed out on arrival exactly as before. Renewal cannot fix that; only
+ * a larger number here can, and how long an untouched cookie should survive
+ * is a policy call with its own cost that is not renewal's to make. Raising
+ * it also changes `RENEW_INTERVAL_MS` in `browser.ts`, which is derived from
+ * it — see the comment there. */
 export const SESSION_IDLE_MS = 14 * 24 * 60 * 60 * 1000;
-/** Absolute cap, never extended. Ten seconds of QR, once a quarter. */
+/** How far ahead the absolute cap is set, at sign-in and at every renewal.
+ *
+ * It is no longer "never extended" — see `SESSION_MAX_LIFETIME_MS` and
+ * `renewSession` for what replaced that, and why. */
 export const SESSION_ABSOLUTE_MS = 90 * 24 * 60 * 60 * 1000;
+/** The wall. The one bound in this file no client can push.
+ *
+ * The cap used to be simply "90 days from sign-in, never extended", and for a
+ * phone opened weekly that is fine: ten seconds of QR once a quarter. For the
+ * laptop this feature exists for it is not fine at all. Somebody who reaches
+ * their home machine twice a quarter is ALWAYS past the cap when they need
+ * it, and re-pairing needs physical access to the desktop — which is exactly
+ * what they do not have when they are away from it. A credential that only
+ * works when you are standing next to the thing it lets you reach is not a
+ * remote credential.
+ *
+ * So renewal moves `expiresAt`. The question the cap has to keep answering is
+ * "how long can a credential chain live", and the answer must not be "as long
+ * as anyone keeps asking", because then it is not a cap. Three positions were
+ * available:
+ *
+ *  - Renewal extends nothing. The traveller is stranded. That is the bug.
+ *  - Renewal re-anchors freely. A stolen cookie that renews on a timer lives
+ *    forever, and the cap is decoration.
+ *  - Renewal extends up to a ceiling anchored on the session's `createdAt`,
+ *    which renewal never rewrites. That is this.
+ *
+ * A year. Once a year, at your own desk, you scan a code — and between those
+ * scans the credential is rotated on every renewal, so the value sitting in a
+ * cookie jar or in devices.json is at most one renewal interval old. That
+ * rotation is a stronger property than the old cap ever bought: the 90-day
+ * wall did nothing to a thief inside the window, whereas rotation retires the
+ * stolen copy the moment the real browser comes back.
+ *
+ * The ceiling is per SESSION, not per device. Signing in again on the same
+ * browser starts a fresh year, because that sign-in required the pairing
+ * credential and therefore the desktop. */
+export const SESSION_MAX_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** Hex digest. Tokens live on disk as one of these and never in the clear. */
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -143,9 +196,11 @@ function sameCredential(a: string, b: string): boolean {
 
 /** Whether a browser session is past either of its two bounds.
  *
- * Both, and they are different bounds: `expiresAt` is an absolute cap set at
- * sign-in and never extended, and the idle window rolls forward with use. A
- * session that fails either is gone. */
+ * Both, and they are different bounds: `expiresAt` is the absolute cap, which
+ * only an explicit `renewSession` moves and only up to a fixed ceiling, and
+ * the idle window rolls forward with use. A session that fails either is
+ * gone — including inside `renewSession`, which refuses to renew what is
+ * already expired rather than becoming a back door around both. */
 function sessionExpired(session: BrowserSession, now: number): boolean {
   return session.expiresAt <= now || now - session.lastSeenAt > SESSION_IDLE_MS;
 }
@@ -480,6 +535,67 @@ export class DeviceRegistry {
         }
       }
       return { device, session };
+    }
+    return null;
+  }
+
+  /** Rotate a live session's credential in place, and push its cap forward.
+   *
+   * Three properties, and each of them is why this is a method on the
+   * registry rather than "close the old session and open a new one":
+   *
+   *  1. **Revocation survives renewal.** The row is mutated where it already
+   *     sits, inside `device.sessions`, so the identity of the record does
+   *     not change and `revoke()` still takes every session on the device
+   *     with it. Minting a fresh session would have been three fewer lines
+   *     and would have made revocation defeatable by anyone able to renew —
+   *     which, since renewal is the one thing a browser does automatically,
+   *     means defeatable by the browser being revoked.
+   *  2. **The old value dies.** One hash per row, overwritten. A renewal that
+   *     left the previous cookie working would turn every rotation into an
+   *     extra live credential.
+   *  3. **`createdAt` is never rewritten.** It is the anchor the ceiling in
+   *     `SESSION_MAX_LIFETIME_MS` is measured from, and the only reason that
+   *     ceiling is a wall rather than a suggestion.
+   *
+   * Fails CLOSED, and silently: an unknown, expired or unpersistable session
+   * returns `null` having changed nothing at all. The caller's contract is
+   * that a failed renewal leaves the browser exactly as signed in as it was —
+   * never signed out early, never shown an error. */
+  renewSession(
+    value: string | undefined,
+    now = Date.now(),
+  ): { value: string; session: BrowserSession } | null {
+    if (!value) return null;
+    const hash = sha256(value);
+    for (const device of this.devices) {
+      const session = device.sessions?.find((s) => sameDigest(s.hash, hash));
+      if (!session) continue;
+      // Not reaped here, deliberately. `resolveSession` owns taking a dead
+      // row out; renewal's only job on failure is to change nothing.
+      if (sessionExpired(session, now)) return null;
+
+      const next = `murage_browser_${randomBytes(32).toString("base64url")}`;
+      const previous = { hash: session.hash, lastSeenAt: session.lastSeenAt, expiresAt: session.expiresAt };
+      session.hash = sha256(next);
+      session.lastSeenAt = now;
+      // Monotonic without needing a guard: `expiresAt` was itself set to at
+      // most (some earlier now) + SESSION_ABSOLUTE_MS, so it can never be
+      // above `now + SESSION_ABSOLUTE_MS`, and the ceiling term is fixed.
+      session.expiresAt = Math.min(now + SESSION_ABSOLUTE_MS, session.createdAt + SESSION_MAX_LIFETIME_MS);
+      try {
+        this.persist();
+      } catch {
+        // The rotation only counts if it is on disk. A hash that lives in
+        // memory and not in the file signs this browser out at the next
+        // restart — the exact silent logout renewal exists to prevent — so
+        // put the row back and let the caller keep the cookie it has.
+        session.hash = previous.hash;
+        session.lastSeenAt = previous.lastSeenAt;
+        session.expiresAt = previous.expiresAt;
+        return null;
+      }
+      return { value: next, session };
     }
     return null;
   }
