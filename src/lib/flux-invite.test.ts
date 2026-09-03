@@ -193,6 +193,12 @@ describe("nothing in the app is gated on a Flux key", () => {
     "components/FluxInvite.tsx",
     "lib/flux-invite.ts",
     "lib/use-flux-invite.ts",
+    // Composer reads it to tell PushToTalk whether to OFFER voice typing or to
+    // point at Settings. It clears the same bar: with no Flux key the mic is
+    // still drawn, muted, and pressing it says where to add one — the feature
+    // is not removed, a pointer is added. If that ever becomes a `hidden`,
+    // this entry has to go with it.
+    "components/Composer.tsx",
   ]);
 
   const sources = (): string[] => {
