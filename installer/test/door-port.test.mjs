@@ -314,11 +314,13 @@ test("enroll skips the proxy entirely when the door is not answering", async () 
   assert.ok(!calls.some((c) => c.includes("serve --bg")), `configured a proxy with no door:\n${calls.join("\n")}`);
 });
 
-test("`murage setup` declines serve, loudly, when the door is not running", async () => {
+test("`murage setup` declines serve, loudly, when the door cannot be brought up", async () => {
   const home = scratch();
   const log = join(home, "argv.log");
   const stub = tailscaleStub(home, { logFile: log, proxyTarget: null, firstStatusNeedsLogin: true });
-  // 9 is reserved/discard and nothing is listening on it here; the probe fails.
+  // Port 9 is reserved/discard. Setup now STARTS the sidecar rather than only
+  // probing for one, so the failure being proven here is the sidecar refusing
+  // to bind that port and exiting — after which serve must still be declined.
   const env = setupEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: "9" });
   const { status, out } = await runCli(["setup"], env);
   assert.equal(status, 0, out);
