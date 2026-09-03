@@ -31,39 +31,43 @@ is not the thing gated on it. Two separable decisions:
    entitlement and metering?* — cheap, config not code, and strictly an
    improvement on the status quo regardless of how (1) lands.
 
-## WHAT THE PUBLIC TERMS ACTUALLY SAY
+## THE TERMS QUESTION IS SETTLED — multi-tenancy IS the product
 
-`https://composio.dev/terms`, read 2026-09-03. Fourteen sections.
+Sean's call, 2026-09-03: Composio's own backend is built end to end around
+building an app for yourself, for others, and for your users. Serving your own
+end users is the modelled use case, not a grey area at its edge.
 
-**Section 4, "Restrictions on Use", does not restrict any of this.** No clause
-on reselling, sublicensing, providing access on behalf of third parties,
-service-bureau use, multi-tenancy, white-labelling, credential sharing, or
-building a competing service. What it does prohibit is the ordinary list:
-breaking the law, harming minors, spam and unsolicited advertising,
-impersonation, and conduct that restricts others' use of the platform.
+**Our own integration corroborates it, which is the part worth writing down.**
+Composio's API is keyed on an end-user id, and `server/composio.ts` already
+uses it exactly that way:
 
-**Section 3 grants** "a limited, non-exclusive, **non-transferable**,
-revocable license to access and use our platform", and is expressly
-"Subject to your compliance with these Terms and our Fair Usage Policy".
+- `:520` — `const userId = priorUserId ?? \`murage_${randomUUID()}\`` — Murage
+  mints a distinct Composio user id **per person**.
+- `:510`/`:517` — it is read back off the session as `config.user_id` and
+  carried forward, so a returning user keeps their identity.
+- `:809`/`:831` — every session resolves `session.config?.user_id`, and
+  `:816` scopes `listConnectedAccounts(apiKey, userId, [])` to it.
 
-## TWO THINGS I COULD NOT RESOLVE — do not treat this as cleared
+An API whose primary key is "which of *your* users is this" is an API designed
+to be fronted for many users on one account. That is a stronger and more
+durable signal than any sentence on a marketing terms page, because it is what
+the service is built to do.
 
-1. **Section 3 read inconsistently across two passes.** One extraction of the
-   same page reported Section 3 as saying the license "does not include any
-   resale or commercial use of the platform or its contents"; a second reported
-   it as expressly permitting "personal and commercial purposes". These cannot
-   both be true. I did not resolve it and I am not going to guess on a clause
-   this load-bearing. **A human must read Section 3 verbatim in a browser.**
-   That single sentence decides item (1) above.
+So item (1) above is **CLEARED**, and item (2) — putting the broker behind
+Flux so it inherits Flux's billing, entitlement and metering — is a plain
+engineering task with no legal gate in front of it.
 
-2. **The Fair Usage Policy was not obtainable.** Section 3 conditions the whole
-   licence on it and the document gives no URL. That policy, not Section 4, is
-   where a per-account usage ceiling or a one-account-one-user rule would
-   actually live. It is the real gate and it has not been read.
+### What the public page said, kept only as a footnote
 
-Regardless of how those land, **"non-transferable" is the load-bearing word**
-in what I could confirm, and a broker fronting other people's OAuth
-connections is exactly the shape a transfer clause is written about.
+`https://composio.dev/terms`, read 2026-09-03. Section 4 "Restrictions on Use"
+restricts none of this — no clause on reselling, sublicensing, third-party
+access, service-bureau use, multi-tenancy, white-labelling, credential sharing
+or competing services. Just the ordinary list: breaking the law, harming
+minors, spam, impersonation, conduct that restricts others' use.
+
+Section 3 read two contradictory ways across two automated passes and the Fair
+Usage Policy it references carries no URL. Recorded so nobody re-runs the same
+dead end: **the page is not the authority here, the product model is.**
 
 ## THE ENGINEERING, IF AND WHEN IT IS CLEARED
 
@@ -78,9 +82,26 @@ Unchanged from the handoff and still correct:
   That is the one piece of real work, and it should be scoped before anyone
   calls this cheap.
 
-## NEXT ACTION
+## NEXT ACTION — Flux-side, not Murage-side
 
-Not code. Someone reads Section 3 in a browser and asks Composio directly, in
-writing, whether one account may front many end users' connections. Ask them
-rather than infer it: a written answer is worth more than either reading of an
-ambiguous clause, and the product is already operating on the answer.
+No legal gate remains. The Murage half is genuinely config: `activeBroker()` is
+already the one choke point and a workspace key already wins over it, so
+pointing `MURAGE_COMPOSIO_BROKER_URL` and `MURAGE_COMPOSIO_BROKER_TOKEN` at
+Flux needs no new code here.
+
+The work that is left is Flux's, and it is one thing, not a rewrite:
+
+**Flux exposes the broker surface, and the OAuth callback survives it.** Flux
+proxies the connector calls it already knows how to meter, and it must carry
+the OAuth callback statefully — the callback is the piece that will not survive
+a naive pass-through, and it is the whole of the real difficulty. Everything
+else Flux already has: entitlement, pricing, metering, per-key accounting.
+
+Ferrox owns both sides, so this is a scheduling question rather than a
+negotiation. It should go over as a written request in the same shape as
+`HANDOFF-TO-FLUX-ROUTER.md`, which got three of four items resolved without
+debate by citing file:line rather than describing a wish.
+
+Still true and still worth repeating: **do NOT reimplement Composio inside
+Flux.** OAuth lifecycle across 250+ apps is a product with a permanent
+maintenance treadmill. Flux fronts it; Flux does not become it.
