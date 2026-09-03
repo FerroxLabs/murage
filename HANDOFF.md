@@ -1,5 +1,140 @@
 # Murage — session handoff
 
+> **Read this section, then §OPEN. Everything below `--- HISTORY ---` is the
+> record of earlier sessions and is not a to-do list.**
+
+## THE PROTOCOL — Sean set this explicitly, follow it exactly
+
+1. **Research it properly.** Verify every claim against the code before planning
+   on it. This repo has now produced *fourteen* cases where measurement
+   contradicted a written plan, five of them in one session. Assume the same.
+2. **Cross-audit the plan** before building, from independent angles.
+3. **Execute.**
+4. **Cross-audit the result, ONCE.**
+5. **Fix only Critical and High.** Record Medium and Low; do not fix them.
+
+**Swarm it.** Parallel subagents on strictly disjoint files.
+
+## WHAT THE 2026-09-03 SWARM TAUGHT — read this before briefing any agent
+
+Fifteen lanes ran. These cost real time or nearly shipped a defect.
+
+- **Brief agents to contradict you, and mean it.** Five separate lanes corrected
+  the orchestrator and every one of them was right. The instruction that worked:
+  *"tell me plainly if any premise I have handed you does not survive contact
+  with the code. I would rather you contradict me than build on my error."*
+- **Check `git show HEAD:<file>`, not the file on disk,** before believing any
+  claim that code "already exists". An auditor read a live lane's *uncommitted*
+  work and reported it as pre-existing; that error was relayed to the lane as a
+  correction. The lane caught it with one `git show`.
+- **Controls that share a production rule are NOT independent.** Applying two at
+  once masks each other and yields a false green. Run them one at a time. This
+  was discovered the hard way and then confirmed twice more.
+- **Six negative controls came back GREEN across the session.** Every one was a
+  test that had never failed and never could. Expect roughly one per lane and
+  say so in the brief. A green control means the test is wrong, not the code.
+- **Seven tests went stale by pinning a location or a sentence** rather than a
+  contract, and every one went red on an *improvement*. Grepping a function body
+  for a literal line pins where code lives, not what it does.
+- **A scoped suite run misses cross-file breakage.** One lane ran
+  `vitest run scripts/` and missed a server test its own change broke.
+- **Never run more than one full server suite at a time.** Three concurrently
+  produced spurious "server never came up" boot failures that look like real
+  bugs. Serialise.
+- **A suite result older than the last commit is worthless.** Two lanes reported
+  failures that were already fixed by a commit landing mid-run. Re-run before
+  believing a red.
+- **Do not fabricate a number to satisfy a brief.** A toast was specified as
+  "installed 7 of 9 skills". The denominator does not exist in the response. The
+  lane counted what went wrong instead and added a test forbidding `of <N>`.
+
+## LANE DISCIPLINE
+
+- Assign every agent an explicit file list AND an explicit forbidden list.
+- **Agents never run a git command that writes.** The orchestrator commits, by
+  explicit path, after checking `git diff --cached --name-only` for strays.
+- A `.output` file of 0 bytes means RUNNING, not dead.
+- Negative-control every test: make it pass, revert the production change,
+  confirm RED, restore, report the real red text per test.
+- Consider a **positive** control too: prove the rig notices the opposite case,
+  so a green means a guard working rather than a harness observing nothing.
+
+## STATE — 14 commits, pushed to `main`
+
+Everything below shipped this session, each with negative controls.
+
+**Security**
+- The device door bound `0.0.0.0:8810` unconditionally. `MURAGE_COMPANION_BIND`
+  now closes it (`off` for headless), fails closed on an unknown value, and the
+  desktop LAN default is proven unchanged by dialling the real LAN address.
+- `POST /api/pair` had no rate limiter, so an unauthenticated tailnet peer could
+  burn anyone's pairing window. It shares the browser door's limiter now, and
+  the two doors share one lockout instead of half a lockout each.
+- A base64 detector regex cost 330ms of CPU on a crafted 256KB file, on a path
+  that ingests user-supplied skills. Now 0.84ms.
+- The installer never started the sidecar, so its correct door logic was dead
+  code. It starts it, and closes the device door while doing so.
+
+**Correctness**
+- Nine skills were catalogued, downloadable, and could never install, ranking
+  **#1** in live search for "security auditor" and three others. 2237/2237 now
+  resolve, and a guard walks the whole library through the installer's own rules.
+- The search index and the catalogue builder each had their own weaker copy of
+  those rules. Both delegate to the installer now.
+- The team-import undo could not restore the workspace Chief: `ArchivedTeamBot`
+  had nowhere to put her tier, and the guard meant to catch it was dead code
+  because the archive erased the field it tested.
+- Connectors failed silently three different ways through one ternary. Five
+  named states now, in both the 1:1 and the room prompt.
+- A team import that could not install a skill logged it and told the user it
+  succeeded. Reported now, and rendered in the toast.
+
+**Product**
+- Thirty rotating openers, no em dash, replacing one hardcoded greeting.
+- Five profiles that could never be offered are now matchable, verified against
+  41 probes with zero off-topic queries stolen.
+- The typed sign-in code is on screen with its address. It was actively hidden
+  in the laptop case by a helper that fired whenever a QR could be built.
+- The cold skill-index build went 8.1s to 2.2s and is prewarmed off the click.
+
+## OPEN — the real list
+
+- **The intake matcher.** Two distinct defects, both traced and neither fixed.
+  (a) The gate fires on a single whole-word hit against a bag that includes 25
+  skill manifests of prose, so "ferret keeps escaping the hutch" matches on
+  `keeps` and "gutters need doing before winter" on `before`, a word taken from
+  a profile's own *name*. (b) bm25 ranks only catalogue entry text and hands the
+  gate the top 8, but the gate reads those entries' *skills' manifests* — so for
+  "chasing invoices" the one correct profile is eliminated *before* the gate that
+  would have recognised it. **No threshold separates good from garbage**: four
+  axes were measured and they overlap; `smart-trader`/`trading` and
+  `customer-success-org`/`keeps` both score exactly one exact hit, which is why
+  removing the short-circuit broke trading. The answer is the conversation, and
+  long term, curated match terms per profile.
+- **Sean's paid tier** is after Monday. Public-ingress hardening waits on it.
+- `server/index.test.ts:2065` declares a required app with no `reason`, and
+  typechecks only because that literal never meets the type.
+- `src/components/TeamLibraryPanel.tsx:844` hardcodes `skillErrors: []` on the
+  scout path. True today, silently stale if project imports gain skills.
+- `scanSkillText`'s `curl|sh` pattern is the same bounded-backtracker class as
+  the base64 one, now the largest remaining scanner cost.
+- `src/state/store.tsx` carries two import conventions for `shared/`.
+
+## SEAN'S DECISIONS — settled, act on these
+
+- **Cross-audit replaces his approval pass** on mechanical questions. His
+  reasoning: a machine can check whether a skill reference resolves and he
+  cannot. It was the right call for a reason neither of us predicted — the audit
+  caught the *orchestrator* feeding a lane a false premise.
+- **Paid tier: after Monday.** Ship what exists as it is.
+- Everything in the prior sessions' decision list below still stands.
+
+--- HISTORY ---
+
+## SESSION 2026-09-03 (earlier) — superseded by the section above
+
+# Murage — session handoff
+
 > **Read this section, then §NEXT. Everything below `--- HISTORY ---` is the
 > record of earlier sessions and is not a to-do list.**
 
@@ -565,7 +700,6 @@ deleting anything under `~/.murage` without a backup first, force-push, or
 touching `~/dev/smarttrader` — read-only reference, and nothing from the Rebel
 Scanner or REGIME-GATE ever enters this repo or a build artifact.
 
---- HISTORY ---
 
 
 ## OVERNIGHT 2026-09-02 — nine commits, pushed to `main` at `94ef6689`

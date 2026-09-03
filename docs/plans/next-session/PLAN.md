@@ -1,5 +1,27 @@
 # Next session — plan v2, cross-audited
 
+> **SUPERSEDED 2026-09-03. Do not work from this file. Read `HANDOFF.md`.**
+>
+> Kept as a record, not a to-do list. Verified stale in at least six places, and
+> a lane very nearly shipped a cosmetic edit to a passing test by trusting one
+> of them. Confirmed wrong or already-shipped:
+>
+> - "the phone 404s the entire intake" — the door has the library routes.
+> - "`chasing invoices` lands on IGNITION" and "`hi` gives 8 pre-ticked skills"
+>   — both fixed and pinned by tests; measured against the running server, not
+>   read. The real matcher defect is different and is described in HANDOFF.md.
+> - "`write-book-chapter` on five book profiles" — it is on two.
+> - "the QR promises a phone app that nothing opens" — demoted to a fallback.
+> - "the installer fronts 8799 and 403s" — already fixed and guarded by ten
+>   tests. The real defect was that nothing ever started the sidecar, which made
+>   that correct code unreachable on a fresh box.
+> - "requiredApps is documentation-only" — it now feeds the system prompt.
+>
+> The lesson this file exists to teach: a plan written against a moving tree
+> rots within a day, and the cost lands on whoever trusts it. Verify against the
+> code before planning on anything below.
+
+
 **Status:** cross-audited twice (feasibility · completeness), corrections applied.
 Written 2026-09-02 at `b6f44e79`. Supersedes `HANDOFF.md` §NEXT in full.
 **Inputs:** three audits of today's ten commits — security, experience (Playwright
