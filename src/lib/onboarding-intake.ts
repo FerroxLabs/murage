@@ -373,3 +373,177 @@ export function applyProfileDetail(profile: IntakeProfile, botName: string, rena
     ? `Renames this agent to ${profile.name} and switches on ${skills}.`
     : `Keeps the name ${botName} and switches on ${skills}.`;
 }
+
+// ── the setup CONVERSATION ────────────────────────────────────────────
+//
+// Everything above answers "what fits this sentence?". Everything below is
+// the conversation that asks the sentence for, in the transcript, as the bot
+// talking. It lives here rather than in the component for one reason: the
+// renderer suite has no DOM, so a decision inside a `.tsx` is a decision no
+// test can execute. The component below this line is a renderer; the rules
+// are here.
+//
+// The type is imported through its `.js` specifier so this file stays
+// importable by BOTH toolchains: the server reaches it under NodeNext, which
+// requires an extension, and the renderer compiles under `bundler`, which
+// forbids a bare `.ts` one. It is a type-only import, so nothing survives to
+// runtime either way.
+
+import type { IntakeCardData } from "../../shared/intake-turn.js";
+
+/** The intake payload on a card, read defensively.
+ *
+ *  Read rather than trusted because it arrives as JSON over SSE, and because
+ *  the two invariants worth enforcing are cheap to enforce here and expensive
+ *  to debug anywhere else:
+ *
+ *    I2  `intake` and `requestId` are never both set. A live provider ask
+ *        that somehow carried an intake payload must render as the approval
+ *        it is, not as a setup question with buttons that install things.
+ *    I3  `asked` is 1 or 2. Never 3. Anything else is clamped rather than
+ *        rendered, so a malformed card cannot become a third question. */
+export function readIntakeCard(
+  card: { intake?: unknown; requestId?: string } | undefined | null,
+): IntakeCardData | null {
+  if (!card || card.requestId) return null;
+  const intake = card.intake as Partial<IntakeCardData> | undefined;
+  if (!intake || typeof intake !== "object") return null;
+  if (intake.step !== "open" && intake.step !== "narrow" && intake.step !== "confirm") return null;
+  return {
+    ...intake,
+    step: intake.step,
+    asked: intake.asked === 2 ? 2 : 1,
+  };
+}
+
+/** The question currently on the table, or null.
+ *
+ *  THE LAST one, not the first: a thread that has been through both questions
+ *  carries two intake cards, and the open one is always the later. `answered`
+ *  is the server's own record of the turn being spent, so a card the person
+ *  has replied to can never take the composer's next line as a second answer.
+ *
+ *  This is what makes I7 real. Every intake question accepts free text,
+ *  because the composer is on screen at every turn and asks this function
+ *  where to send what was typed. No chip is ever the only way to answer. */
+export function openIntakeCard<
+  M extends { id: string; kind: string; card?: { intake?: unknown; answered?: string } },
+>(messages: readonly M[]): M | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.kind !== "options") continue;
+    if (message.card?.answered) continue;
+    if (!readIntakeCard(message.card)) continue;
+    return message;
+  }
+  return null;
+}
+
+/** Where every turn of the conversation is posted. Not desktop-gated: it
+ *  reads the catalogue and writes transcript text, and it installs nothing.
+ *  The install still crosses the desktop boundary on `assistant-profile`. */
+export function intakePath(botId: string): string {
+  return `/api/bots/${botId}/intake`;
+}
+
+/** ANSWERING A QUESTION: a chip press, or a composer send while a question is
+ *  open. The label goes back exactly as it arrived — the renderer never sends
+ *  a step, a slug or a decision, because the server reads the step off its own
+ *  stored card and a renderer that decided would be a second source of truth
+ *  for the same conversation. */
+export async function replyToIntake(
+  botId: string,
+  messageId: string,
+  text: string,
+  request: IntakeRequest,
+): Promise<void> {
+  await request(intakePath(botId), {
+    method: "POST",
+    body: JSON.stringify({ messageId, text }),
+  });
+}
+
+/** CLOSING A CONFIRM CARD. The one place the renderer sends a decision, and
+ *  it sends the outcome rather than any sentence: the closing line is the
+ *  server's to write. */
+export async function closeIntakeCard(
+  botId: string,
+  messageId: string,
+  outcome: "profile" | "general" | "library",
+  request: IntakeRequest,
+): Promise<void> {
+  await request(intakePath(botId), {
+    method: "POST",
+    body: JSON.stringify({ messageId, outcome }),
+  });
+}
+
+/** What the confirm card's first chip does, in order, once.
+ *
+ *  THE ORDER IS THE FEATURE. A questionnaire that files the answers away and
+ *  changes nothing on screen is the recorded failure this conversation exists
+ *  to avoid, so the identity lands in the sidebar and the header BEFORE the
+ *  round trip that writes the closing line, not after it and not whenever SSE
+ *  gets around to it.
+ *
+ *  `rename: false` is pinned and not a default: the person may have named
+ *  this agent, and an agent that renames itself in the middle of a
+ *  conversation with the person who named it is the one surprise this flow
+ *  could spring. A rename belongs on the profile panel, where it is asked for.
+ *
+ *  The count is PUBLISHED, never invalidated: an invalidation reads `null`
+ *  for a frame, `null` means "not known", and "not known" flashes the
+ *  unconfigured state back onto the screen.
+ *
+ *  A failure to apply throws before the card is closed, so the question stays
+ *  open and the press can be repeated. Per-skill `errors` are not that: the
+ *  profile did apply, so the conversation ends and the caller renders them. */
+export async function confirmIntakeProfile(
+  botId: string,
+  messageId: string,
+  slug: string,
+  deps: {
+    request: IntakeRequest;
+    announceBot: (bot: AppliedProfile["bot"]) => void;
+    publishSkillCount: (botId: string, count: number) => void;
+  },
+): Promise<AppliedProfile> {
+  const applied = await applyProfileToBot(botId, slug, deps.request, { rename: false });
+  deps.announceBot(applied.bot);
+  deps.publishSkillCount(botId, Math.max(applied.installed.length, 1));
+  await closeIntakeCard(botId, messageId, "profile", deps.request);
+  return applied;
+}
+
+/** What a chip press means, decided by POSITION rather than by its words.
+ *
+ *  A renderer that compared the label against a sentence of its own would be
+ *  a second copy of the bot's script, and the first copy edit on the server
+ *  would quietly turn the accept chip into a no-op that still looks fine. The
+ *  server chose the order when it wrote the card: on a confirm card the first
+ *  option accepts and the second declines. Every other turn sends the label
+ *  straight back for the server to match against its own stored card.
+ *
+ *  GENERAL CHAT IS AN OUTCOME, NOT A FAILURE, and this is where that is true
+ *  mechanically: from the profile card it is one press away, and it installs
+ *  nothing, asks nothing further, and needs no third question to reach. */
+export type IntakeChipAction =
+  | { kind: "apply"; slug: string }
+  | { kind: "close"; outcome: "general" | "library" }
+  | { kind: "reply"; text: string };
+
+export function intakeChipAction(
+  intake: IntakeCardData,
+  options: readonly string[],
+  index: number,
+): IntakeChipAction | null {
+  const label = options[index];
+  if (label === undefined) return null;
+  if (intake.step !== "confirm") return { kind: "reply", text: label };
+  if (intake.outcome === "profile") {
+    if (index !== 0) return { kind: "close", outcome: "general" };
+    const slug = intake.candidate?.slug ?? "";
+    return slug ? { kind: "apply", slug } : null;
+  }
+  return { kind: "close", outcome: index === 0 ? "general" : "library" };
+}

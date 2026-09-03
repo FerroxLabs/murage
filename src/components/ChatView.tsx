@@ -28,7 +28,6 @@ import { WorkingDots } from "@/components/WorkingIndicator";
 import { plainTextClamped } from "@/lib/plain-text";
 import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
 import {
-  api,
   useStore,
   useStreaming,
   formatTime,
@@ -49,10 +48,10 @@ import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
-import { intakeOwnsTheQuestion, useSkillCount } from "@/lib/bot-skill-count";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
-import { BotIntakeCard } from "./BotIntakeCard";
+import { IntakeTurn } from "./IntakeTurn";
+import { readIntakeCard } from "@/lib/onboarding-intake";
 import { ChatFindBar } from "./ChatFindBar";
 import { RoleBadge } from "./RoleBadge";
 import { ReplyQuote } from "./ReplyQuote";
@@ -871,8 +870,6 @@ const MessagesList = memo(function MessagesList({
   // own action trigger. Asked once here rather than in every Bubble: one
   // matchMedia subscription for the transcript instead of one per row.
   const narrow = useNarrowViewport();
-  // Shared with BotIntakeCard, which asks the same question in a better form.
-  const skillCount = useSkillCount(bot.id, api);
   // Finished tool chips become compact runs; settled assistant narration
   // becomes one reversible turn row while the terminal answer stays visible.
   const items = useMemo(() => groupTranscript(messages), [messages]);
@@ -957,19 +954,20 @@ const MessagesList = memo(function MessagesList({
             case "connector":
               return m.connector ? <ConnectorCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
             case "options":
+              // A turn of the setup conversation is checked FIRST, before the
+              // approval box and before any hide logic. It is neither a live
+              // provider ask nor the retired first-run quiz, and both of the
+              // branches below would misread it as one: the hide rule drops
+              // any non-requestId card once a later user message exists, and
+              // the intake route appends exactly such a message on every turn,
+              // so the question would vanish the moment it was answered.
+              if (readIntakeCard(m.card)) return <IntakeTurn bot={bot} message={m} />;
               // a live permission ask gets the approval box; questions keep
               // the list card. The first-run quiz drops out once they talk.
               if (m.card?.requestId && m.card.tool) {
                 return <ApprovalCard bot={bot} message={m} />;
               }
               if (shouldHideOnboardingCard(m, transcript)) return null;
-              // The seeded four-option quiz asked exactly the question the
-              // intake now asks properly, with a free-text answer and a
-              // library behind it. Showing both would put the same question
-              // on screen twice in two widgets. Once the skill count is
-              // known, the intake owns it; an unreadable count changes
-              // nothing.
-              if (intakeOwnsTheQuestion(skillCount)) return null;
               return <OptionCard botId={bot.id} message={m} />;
             case "routine.run": {
               const executionThreadId = m.routineRun?.executionThreadId;
@@ -1655,11 +1653,6 @@ export function ChatView({ bot }: { bot: Bot }) {
         ref={composerDockRef}
         className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2] flex max-h-full flex-col"
       >
-      {/* The setup question, docked with the composer rather than buried at
-          the top of the transcript: it has to still be reachable after the
-          bot has said hello, and it must not scroll away. It renders itself
-          only while this agent has no skills. */}
-      <BotIntakeCard bot={bot} />
       <Composer
         key={bot.threadId}
         bot={bot}

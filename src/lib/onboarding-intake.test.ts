@@ -23,7 +23,10 @@ import {
   assignSkillsToBot,
   chooseIntakeProfile,
   chooseIntakeSkills,
+  closeIntakeCard,
+  confirmIntakeProfile,
   describeIntakeSkill,
+  intakeChipAction,
   intakeProfileMatches,
   intakeSkillMatches,
   INTAKE_LOOSE_SKILL_MAX,
@@ -31,6 +34,9 @@ import {
   intakeTopicTokens,
   librarySkillId,
   librarySkillIds,
+  openIntakeCard,
+  readIntakeCard,
+  replyToIntake,
   suggestForAnswer,
   type IntakeCatalogEntry,
   type IntakeSkill,
@@ -490,5 +496,266 @@ describe("POST /api/bots/:id/assistant-profile", () => {
     // must be out of that set or re-applying Smart Trader to Smart Trader
     // would produce "Smart Trader 2".
     expect(applyRouteBody).toContain("bot.id !== target.id");
+  });
+});
+
+// ── 4. the conversation ───────────────────────────────────────────────
+//
+// The turns themselves are the server's; what is testable here is the seam:
+// which message the composer answers, what goes back on the wire, and the
+// order the confirm press does its work in. All three have a failure that
+// looks like nothing on screen and reads as the bot ignoring you.
+
+interface Wire {
+  path: string;
+  method: string;
+  body: Record<string, unknown> | undefined;
+}
+
+/** A recorder that can answer differently per call, so an ordering assertion
+ *  has something to order. */
+function wire(replies: unknown[]) {
+  const calls: Wire[] = [];
+  const events: string[] = [];
+  let next = 0;
+  const request = async (path: string, init?: RequestInit) => {
+    calls.push({
+      path,
+      method: init?.method ?? "GET",
+      body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+    });
+    events.push(`request ${init?.method ?? "GET"} ${path}`);
+    const reply = replies[Math.min(next, replies.length - 1)];
+    next += 1;
+    if (reply instanceof Error) throw reply;
+    return reply;
+  };
+  return { calls, events, request };
+}
+
+const openCard = (id: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  kind: "options",
+  card: { title: "t", subtitle: "s", options: [], intake: { step: "open", asked: 1 }, ...extra },
+});
+
+describe("which question the composer is answering", () => {
+  it("takes the LAST open question, not the first", () => {
+    // The first version of this test used an ANSWERED first card, which
+    // proved nothing: a forward walk skips it for the same reason a backward
+    // one does, and the control came back green. The case that matters is
+    // two cards that both still look open, which is exactly what a transcript
+    // shows for a frame when the patch marking the first one answered lands
+    // after the card that replaced it. Answering the older one there would
+    // spend a turn that was already spent, and under a two-question cap that
+    // ends the conversation on a question nobody was being asked.
+    const messages = [
+      openCard("q1"),
+      { id: "u1", kind: "text" },
+      openCard("q2", { intake: { step: "narrow", asked: 2 } }),
+    ];
+    expect(openIntakeCard(messages)?.id).toBe("q2");
+  });
+
+  it("goes quiet once the question has been answered", () => {
+    // `answered` is the server's record of the turn being spent. Without
+    // this, the next thing typed would be posted as a second answer to a
+    // question already resolved, and the transcript would grow a turn the
+    // server never asked for.
+    expect(openIntakeCard([openCard("q1", { answered: "yes" })])).toBeNull();
+  });
+
+  it("ignores every options card that is not an intake turn", () => {
+    // A live provider ask and the old first-run quiz are both `options`
+    // cards with no intake payload. Routing a composer line into one of
+    // those would answer a permission prompt with a sentence.
+    const messages = [
+      { id: "t1", kind: "text" },
+      { id: "o1", kind: "options", card: { title: "t", subtitle: "s", options: ["Allow"], intake: undefined } },
+      {
+        id: "o2",
+        kind: "options",
+        card: { title: "t", subtitle: "s", options: [], requestId: "req-1", intake: undefined },
+      },
+    ];
+    expect(openIntakeCard(messages)).toBeNull();
+  });
+
+  it("is what makes free text an answer at every turn", () => {
+    // I7, as a mechanism rather than a promise: an open question of any
+    // step, with or without chips, is routable. NARROW-OPEN ships no chips
+    // at all, so if this returned null for it the only question with no
+    // buttons would also be the one with no way to answer.
+    for (const step of ["open", "narrow", "confirm"]) {
+      const message = openCard("q", { intake: { step, asked: 1 }, options: [] });
+      expect(openIntakeCard([message])?.id).toBe("q");
+    }
+  });
+});
+
+describe("reading an intake payload off a card", () => {
+  it("refuses a card that is also a live provider ask", () => {
+    // I2. The two are never both set, and if they ever were, the card must
+    // render as the approval it is rather than as a setup question whose
+    // buttons install things.
+    const card = { requestId: "req-1", tool: "Bash", intake: { step: "confirm", asked: 2 } };
+    expect(readIntakeCard(card)).toBeNull();
+  });
+
+  it("never reads a third question", () => {
+    // I3. The cap is the server's to enforce, but a renderer that would
+    // happily draw `asked: 3` is a renderer that cannot tell anyone the cap
+    // broke.
+    expect(readIntakeCard({ intake: { step: "narrow", asked: 3 } })?.asked).toBe(1);
+    expect(readIntakeCard({ intake: { step: "narrow", asked: 2 } })?.asked).toBe(2);
+  });
+
+  it("refuses a payload with no step it knows", () => {
+    expect(readIntakeCard({ intake: { asked: 1 } })).toBeNull();
+    expect(readIntakeCard({ intake: { step: "elsewhere", asked: 1 } })).toBeNull();
+    expect(readIntakeCard(undefined)).toBeNull();
+  });
+});
+
+describe("what the renderer sends back", () => {
+  it("posts the answer verbatim, naming no step and no slug", async () => {
+    const { calls, request } = wire([{ ok: true }]);
+    await replyToIntake("bot-1", "msg-9", "chasing invoices", request);
+    expect(calls).toEqual([
+      { path: "/api/bots/bot-1/intake", method: "POST", body: { messageId: "msg-9", text: "chasing invoices" } },
+    ]);
+  });
+
+  it("closes a confirm card with an outcome and nothing else", async () => {
+    const { calls, request } = wire([{ ok: true }]);
+    await closeIntakeCard("bot-1", "msg-9", "general", request);
+    expect(calls[0]!.body).toEqual({ messageId: "msg-9", outcome: "general" });
+  });
+});
+
+describe("the confirm press", () => {
+  const applied = {
+    bot: { id: "bot-1", name: "Numbers" },
+    installed: [{ name: "runway" }, { name: "pricing" }],
+    errors: [],
+  };
+
+  function deps(request: (path: string, init?: RequestInit) => Promise<any>, events: string[]) {
+    return {
+      request,
+      announceBot: (bot: { id: string; name: string }) => events.push(`announce ${bot.name}`),
+      publishSkillCount: (botId: string, count: number) => events.push(`count ${botId}=${count}`),
+    };
+  }
+
+  it("never renames a bot the person may have named", async () => {
+    // Pinned, not defaulted. The agent already has a name in the sidebar and
+    // may well have been given it by the person now talking to it.
+    const { calls, request } = wire([applied, { ok: true }]);
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []));
+    expect(calls[0]!.path).toBe("/api/bots/bot-1/assistant-profile");
+    expect(calls[0]!.body).toEqual({ slug: "coin", rename: false });
+  });
+
+  it("changes the visible identity BEFORE it writes the closing line", async () => {
+    // The recorded failure this order exists to avoid: a setup questionnaire
+    // that files the answers away and leaves the product looking exactly as
+    // it did. The question asked for something, so the sidebar and the
+    // header have to change on the press, not on the SSE round trip that
+    // happens to follow it.
+    const { events, request } = wire([applied, { ok: true }]);
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, events));
+    expect(events).toEqual([
+      "request POST /api/bots/bot-1/assistant-profile",
+      "announce Numbers",
+      "count bot-1=2",
+      "request POST /api/bots/bot-1/intake",
+    ]);
+  });
+
+  it("publishes a count rather than clearing one", async () => {
+    // An invalidation reads `null` for a frame, and `null` means "not
+    // known", which flashes the unconfigured state back onto the screen
+    // between the press and the refetch.
+    const { events, request } = wire([{ ...applied, installed: [] }, { ok: true }]);
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, events));
+    expect(events).toContain("count bot-1=1");
+  });
+
+  it("ends the conversation even when some skills failed to install", async () => {
+    const half = { ...applied, errors: ["pricing: not found"] };
+    const { calls, request } = wire([half, { ok: true }]);
+    const result = await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []));
+    expect(result.errors).toEqual(["pricing: not found"]);
+    expect(calls.at(-1)!.body).toEqual({ messageId: "msg-9", outcome: "profile" });
+  });
+
+  it("leaves the question open when the apply itself fails", async () => {
+    // A press that 404s on a phone, or fails on the network, must not write
+    // a closing line saying the bot is now something it is not.
+    const { calls, request } = wire([new Error("desktop only")]);
+    await expect(confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []))).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("installs through the one route that crosses the desktop boundary", async () => {
+    // I4. The intake route installs nothing; this is the only call in the
+    // conversation that can, and it is the same route the profile panel has
+    // always used.
+    const { calls, request } = wire([applied, { ok: true }]);
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []));
+    for (const call of calls) {
+      expect(call.path).not.toContain("/skills/library");
+      expect(call.path).not.toContain("/messages");
+      expect(call.path).not.toContain("/api/teams/import");
+    }
+  });
+});
+
+describe("what a chip press means", () => {
+  const candidate = { slug: "coin", name: "Numbers", skillNames: ["runway"] };
+
+  it("hands the label straight back on an open or narrow question", () => {
+    for (const step of ["open", "narrow"] as const) {
+      const action = intakeChipAction({ step, asked: 1 }, ["That's about right", "Not really"], 0);
+      expect(action).toEqual({ kind: "reply", text: "That's about right" });
+    }
+  });
+
+  it("makes general chat ONE press from the profile it just offered", () => {
+    // Not a third question, not a dead end, and nothing installed. A person
+    // shown a specialist they do not want gets out on the same card.
+    const intake = { step: "confirm", outcome: "profile", asked: 2, candidate } as const;
+    expect(intakeChipAction(intake, ["Set that up", "Keep me general instead"], 0)).toEqual({
+      kind: "apply",
+      slug: "coin",
+    });
+    expect(intakeChipAction(intake, ["Set that up", "Keep me general instead"], 1)).toEqual({
+      kind: "close",
+      outcome: "general",
+    });
+  });
+
+  it("ends cleanly on the general card, or goes and opens the library", () => {
+    const intake = { step: "confirm", outcome: "general", asked: 2 } as const;
+    expect(intakeChipAction(intake, ["That's fine", "Show me the library"], 0)).toEqual({
+      kind: "close",
+      outcome: "general",
+    });
+    expect(intakeChipAction(intake, ["That's fine", "Show me the library"], 1)).toEqual({
+      kind: "close",
+      outcome: "library",
+    });
+  });
+
+  it("offers no apply when there is nothing to apply", () => {
+    // A confirm card that lost its candidate must not render a button that
+    // posts an empty slug at the one route that installs things.
+    const intake = { step: "confirm", outcome: "profile", asked: 2 } as const;
+    expect(intakeChipAction(intake, ["Set that up", "Keep me general instead"], 0)).toBeNull();
+  });
+
+  it("has nothing to say about a chip that is not there", () => {
+    expect(intakeChipAction({ step: "open", asked: 1 }, [], 0)).toBeNull();
   });
 });

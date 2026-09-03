@@ -22,14 +22,11 @@ const card = read("./BotIntakeCard.tsx");
 const chat = read("./ChatView.tsx");
 const settings = read("./SettingsPanel.tsx");
 
-/** The composer-dock entry point alone, so an assertion about it cannot be
- *  satisfied by the profile one. */
-const composerEntry = card.slice(card.indexOf("export function BotIntakeCard("), card.indexOf("export function BotSetupAction("));
 const profileEntry = card.slice(card.indexOf("export function BotSetupAction("));
 
-/** The card's render body — everything after the last hook — so an assertion
- *  cannot be satisfied by a comment at the top of the file. */
-const body = card.slice(card.indexOf("function IntakeQuestion("), card.indexOf("export function BotIntakeCard("));
+/** The question's render body — so an assertion cannot be satisfied by a
+ *  comment at the top of the file. */
+const body = card.slice(card.indexOf("function IntakeQuestion("), card.indexOf("export function BotSetupAction("));
 
 describe("nothing is pre-ticked", () => {
   it("clears the selection when an answer arrives", () => {
@@ -87,18 +84,30 @@ describe("the card never exceeds the viewport", () => {
 });
 
 describe("the composer belongs to the conversation", () => {
-  it("renders NOTHING for a configured agent — not a card, and not a chip", () => {
-    // Sable: 1.4M tokens, an established profile, fully skilled, with "what do
-    // you mostly want help with?" parked under every message she sent.
-    expect(composerEntry).toContain('if (intakeMode(skillCount, bot) !== "question") return null;');
-    expect(composerEntry).toContain("if (dismissed) return null;");
-    // The collapsed chip is gone from the dock entirely.
-    expect(composerEntry).not.toContain("Set {bot.name} up");
+  it("has no card docked above it at all any more", () => {
+    // The verdict this deletion implements, verbatim: it must be a
+    // conversation FROM THE BOT, not an options box at the bottom. A quieter
+    // chip in the same place would have been the same noise in the same
+    // place, so the whole entry point is gone rather than reduced.
+    expect(card).not.toContain("export function BotIntakeCard(");
+    expect(chat).not.toContain("BotIntakeCard");
     expect(chat).not.toContain("Set {bot.name} up");
   });
 
-  it("reads the bot itself, not just the skill count", () => {
-    expect(composerEntry).toContain("intakeMode(skillCount, bot)");
+  it("takes its private dismissal record with it", () => {
+    // Per-bot, per-machine localStorage: it existed only to remember that
+    // someone had waved the docked card away. Nothing else read it, and a
+    // conversation has nothing to wave away.
+    expect(card).not.toContain("murage.intake.dismissed");
+    expect(card).not.toContain("localStorage");
+  });
+
+  it("asks in the transcript instead, and the transcript can reach it", () => {
+    // The one thing that would make this deletion a regression is deleting
+    // the docked card and wiring nothing in its place: a new bot would say
+    // hello and offer no way to set itself up anywhere on the screen.
+    expect(chat).toContain("<IntakeTurn bot={bot} message={m} />");
+    expect(chat).not.toContain("intakeOwnsTheQuestion");
   });
 });
 
