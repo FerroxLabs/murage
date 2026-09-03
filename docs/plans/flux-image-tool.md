@@ -147,3 +147,76 @@ value, the way `server/voice/flux-voice.ts` carries `premium`.
 
 Model management UI, per-bot image model overrides, cost dashboards, budgets,
 automatic cost optimisation, streaming. All deferred deliberately.
+
+---
+
+## LIVE VERIFICATION — 2026-09-03, probed against api.fluxrouter.ai
+
+Everything below was measured, not relayed. Re-measure before building; the
+whole point of this block is that the last relayed state was already stale.
+
+### STILL BLOCKED. `/v1/models` has NOT rolled the discovery fields.
+
+`GET /v1/models` returns 105 rows. The keys on every row are exactly:
+
+    created, id, max_input_tokens, max_output_tokens, object, owned_by
+
+No `capability`. No `display_name`. No `list_price_microcents`. No
+`entitlement`. Flux reported Request 1 as "built, route wiring left" and that
+is still where it is. **Do not start the discovery-driven build until these
+fields appear** — the static seed plus unverified-price labelling is the
+correct interim, exactly as specced above.
+
+### The 15 image arms that ARE live
+
+    flux-image                     flux-image-nano-banana
+    flux-image-fast                flux-image-nano-banana-2      <- DEFAULT
+    flux-image-flux                flux-image-nano-banana-pro
+    flux-image-gpt                 flux-image-nano-banana-pro-4k
+    flux-image-gpt-high            flux-image-pro
+    flux-image-gpt-xl              flux-image-together-flux
+    flux-image-gpt2                flux-image-lite
+    flux-image-gpt2-low
+
+Three corrections to the table earlier in this document:
+
+1. **gpt-image-2 has rolled.** `flux-image-gpt2` and `flux-image-gpt2-low` are
+   both live. The table above them was written when they were still in flight.
+2. **`flux-image-nano-banana-pro-2k` does not exist.** The live arm is
+   `flux-image-nano-banana-pro`, and there is a separate
+   `flux-image-nano-banana-pro-4k`. The `-2k` name in the price table is wrong
+   and would 400 for every caller.
+3. **The two withheld arms are correctly absent.** No `flux-image-gpt2-high`,
+   no `flux-image-gpt2-xl`. Their 164.7s-vs-100s-edge-cap measurement holds and
+   the withholding is real, not just documented.
+
+### REPORT BACK TO FLUX: a retired arm is still advertised
+
+`flux-image-together-flux` **is still listed in `/v1/models`**, despite Flux's
+own correction that Together retired FLUX.1-schnell and the arm has been
+failing since 2026-07-17. A dead arm in the discovery response is worse than a
+dead arm alone, because the discovery-driven build this spec describes would
+list it in the picker on their own authority. This should go back to them.
+
+Not probeable from here — see below — so this is "advertised", not "confirmed
+still broken". Say it that way when reporting it.
+
+### THE FEATURE IS PLAN-GATED, and that is the primary path, not an edge case
+
+    POST /v1/images/generations  {"model":"flux-image-together-flux",...}
+    -> HTTP 402
+       {"error":{"message":"image generation requires a paid plan",
+                 "code":"premium_locked"}}
+
+On the workspace key this repo develops against. So:
+
+- The `404 dark -> 401 auth -> 402 premium_locked` ladder is live and real.
+- **Every image generation is 402 until the account is on a paid plan.** The UI
+  cannot treat `premium_locked` as a rare branch. It is the first thing a new
+  user hits, and the copy has to say the key is fine and the plan is not —
+  the same distinction `server/voice/flux-voice.ts` already draws for the
+  `premium` transcription reason. Reuse that vocabulary rather than inventing
+  a second one.
+- `entitlement` failing OPEN (order and warn, never hard-disable) remains
+  correct and is now more important, not less: a wrongly-greyed model plus a
+  plan gate would give two different lies about the same state.
