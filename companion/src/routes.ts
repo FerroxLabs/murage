@@ -149,6 +149,9 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // workspace ElevenLabs key; the phone receives labels or audio only.
   { method: "GET", path: /^\/api\/tts\/voices$/ },
   { method: "POST", path: /^\/api\/tts\/speak$/ },
+  // Voice IN. Uploads audio and receives text; the Flux key stays on the
+  // harness and never appears in a request or a response.
+  { method: "POST", path: /^\/api\/voice\/transcribe$/ },
 
   // Routines create ordinary tasks using an existing agent configuration.
   // Webhook management remains explicitly denied below.
@@ -310,6 +313,9 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // voice out, never the workspace key
   { method: "GET", path: /^\/api\/tts\/voices$/ },
   { method: "POST", path: /^\/api\/tts\/speak$/ },
+  // voice in, same rule — and the whole reason this exists, since the browser
+  // door is the surface with no native dictation helper at all
+  { method: "POST", path: /^\/api\/voice\/transcribe$/ },
 
   // routines
   { method: "GET", path: /^\/api\/routines$/ },

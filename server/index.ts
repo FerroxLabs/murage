@@ -200,6 +200,8 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
+import { fluxConfigured } from "./flux-config.ts";
+import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
 import {
   ensureWorkspace,
   listMemoryTopics,
@@ -5172,7 +5174,11 @@ function configStatus() {
     // Flux Router: presence only. The key is workspace-scoped and must never
     // reach the renderer bundle, so this stays a boolean like every other
     // credential above.
-    flux: { configured: Boolean(cfg.flux?.apiKey) },
+    // `fluxConfigured()`, not `Boolean(cfg.flux?.apiKey)`. fluxKey() resolves
+    // config THEN `FLUX_API_KEY`, so a workspace keyed by env alone reported
+    // false here while every Flux route worked — and the renderer hides the
+    // features it gates on this. One reader for the key, one for the flag.
+    flux: { configured: fluxConfigured() },
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     // not a secret — the settings picker shows it; "" = follow the system
@@ -9796,6 +9802,13 @@ const server = createServer(async (req, res) => {
         return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
       }
     }
+
+    // Voice IN, on the workspace's own Flux key. Registered rather than
+    // written inline: the body is raw audio and the size cap has to be
+    // enforced from content-length BEFORE a byte is read, which is a shape
+    // this if-chain has no room for. Returns false for every other path, so
+    // nothing below this line changes.
+    if (await handleTranscribeRoute(method, url, req, res)) return;
 
     // ── connectors (Composio) ──
     if (method === "GET" && path === "/api/connectors/catalog") {
