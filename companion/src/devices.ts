@@ -64,9 +64,16 @@ export type PublicDevice = Omit<DeviceRecord, "tokenHash" | "sessions">;
  *
  * `token` is the primary path carried inside the QR code. It has enough
  * entropy to stand on its own and is never typed or persisted. `code` is the
- * human fallback: six digits is only 1e6 possibilities, so it lives for two
- * minutes, dies after a handful of wrong guesses, and only exists while the
- * user is looking at the pairing screen. Redeeming either burns both. */
+ * human fallback: six digits is only 1e6 possibilities, so it lives for
+ * `PAIRING_TTL_MS` and no longer, dies after `MAX_PAIRING_ATTEMPTS` wrong
+ * guesses, and only exists while the user is looking at the pairing screen.
+ * Redeeming either burns both.
+ *
+ * Named rather than numbered on purpose: this comment restated the duration
+ * in English for a while after the constant changed, and went on being wrong
+ * because nothing recompiles a comment. A restated constant is a second copy
+ * of it, and `devices.test.ts` now reads this file back to keep it the only
+ * one. */
 export interface PairingWindow {
   code: string;
   token: string;
@@ -139,8 +146,8 @@ interface PairingReplay {
 const DEVICES_FILE = join(DATA_DIR, "devices.json");
 export /** How long a pairing window stays open.
  *
- * Two minutes, and it was measured against a flow that does not exist: the
- * person is already holding the phone with the camera open. The real flow is
+ * It was 2 * 60_000 once, and that was measured against a flow that does not
+ * exist: the person is already holding the phone with the camera open. The real flow is
  * open Phone settings on the computer, walk to the phone, unlock it, find the
  * camera, frame the code — or, when the code is relayed to another person,
  * read a message and paste a link into a browser. Every one of those took
@@ -436,7 +443,8 @@ export class DeviceRegistry {
   }
 
   /** Open a fresh window, replacing any that was already open. The code is
-   * from `randomInt`, not `Math.random` — it is a credential for two minutes. */
+   * from `randomInt`, not `Math.random` — it is a credential, live for
+   * `PAIRING_TTL_MS`, and the entropy has to hold for all of it. */
   openPairing(): PairingWindow {
     this.clearReplay();
     // The replaced window is gone, and somebody may be holding it: a person
@@ -595,7 +603,8 @@ export class DeviceRegistry {
         () => this.clearReplay(),
         Math.max(0, window.expiresAt - Date.now()),
       );
-      // A two-minute recovery window is not a reason for a deliberately
+      // The recovery window lasts as long as the pairing window does
+      // (`PAIRING_TTL_MS`), and none of that is a reason for a deliberately
       // stopped companion process to stay alive.
       this.replayExpiryTimer.unref?.();
     }

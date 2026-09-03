@@ -403,3 +403,48 @@ describe("bearerToken", () => {
     expect(bearerToken("Bearermurage_abc")).toBeUndefined();
   });
 });
+
+// ── the pairing window's own documentation ────────────────────────────────
+//
+// Three comments in `devices.ts` said the pairing code lives "for two
+// minutes". `PAIRING_TTL_MS` has been ten for a while. Nothing broke, because
+// comments do not run — but this is the same rot that put a wrong number in
+// front of a real user, and the fix that lasts is not "correct them once", it
+// is "make the file unable to hold a second copy of the number".
+//
+// So the comments now name the constant, and this reads the source back to
+// prove they still do. Restate the duration in English anywhere in this file
+// and it goes red with the number it should have said.
+describe("the pairing TTL is stated once", () => {
+  const SOURCE = readFileSync(new URL("../src/devices.ts", import.meta.url), "utf8");
+
+  /** The English number words a duration comment would plausibly use. */
+  const WORDS: Record<string, number> = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+    nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, sixty: 60,
+  };
+
+  it("has no comment restating it as a different number of minutes", () => {
+    // From the constant itself, the same way `control.ts` derives the number
+    // it shows the user. A literal here would be a third copy of the value
+    // and could rot in step with the comments it is meant to catch.
+    const minutes = Math.round(PAIRING_TTL_MS / 60_000);
+
+    // Line breaks and comment gutters collapsed FIRST, because a wrapped
+    // "two\n * minutes" is still a wrong sentence and a line-by-line scan
+    // cannot see it. That is not hypothetical: the first version of this test
+    // was line-by-line, and its negative control — putting the original stale
+    // comment back — came back green, because prettier had wrapped the phrase
+    // between the two words. A guard that the defect walks straight past is
+    // worse than no guard, so the text is flattened before it is read.
+    const prose = SOURCE.replace(/\n\s*\*?\s?/g, " ");
+
+    const wrong: string[] = [];
+    for (const match of prose.matchAll(/\b([a-z]+)[- ]minutes?\b/gi)) {
+      const spelled = WORDS[match[1].toLowerCase()];
+      if (spelled === undefined || spelled === minutes) continue;
+      wrong.push(`"${match[0]}" in: …${prose.slice(Math.max(0, match.index - 90), match.index + 60).trim()}…`);
+    }
+    expect(wrong, `PAIRING_TTL_MS is ${minutes} minutes, but the file also says:\n${wrong.join("\n")}`).toEqual([]);
+  });
+});
