@@ -5868,7 +5868,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     const throughTheDoor = await fetch(`${BASE}/api/config?${DESKTOP_QUERY}`, {
       headers: { "x-murage-companion": "1", ...DESKTOP_HEADERS },
     });
-    expect((await throughTheDoor.json()).surface).toBe("remote");
+    expect(((await throughTheDoor.json()) as { surface: string }).surface).toBe("remote");
 
     // Node joins duplicate headers into "1, 1"; a value check read that as
     // "not a companion" and handed back "desktop".
@@ -5876,9 +5876,9 @@ describe("remote surfaces see only the conversations a person can see", () => {
       headers: [
         ["x-murage-companion", "1"],
         ["x-murage-companion", "1"],
-      ] as unknown as HeadersInit,
+      ] as [string, string][],
     });
-    expect((await duplicated.json()).surface).toBe("remote");
+    expect(((await duplicated.json()) as { surface: string }).surface).toBe("remote");
   });
 
   it("keeps a companion scoped even when it appends the desktop marker itself", async () => {
