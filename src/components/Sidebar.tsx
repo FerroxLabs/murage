@@ -1394,12 +1394,23 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   for (const group of sectionedRooms) {
     if (!sectionNames.includes(group.section!)) sectionNames.push(group.section!);
   }
+  // The org you built outranks conversations the bots opened by themselves.
+  //
+  // Bot Chats used to sit third, above every team. A bot-to-bot DM is created
+  // automatically whenever one bot messages another — so a single Chief of
+  // Staff talking to four teammates put 340px of machine-generated rows above
+  // the whole org chart and pushed an entire team below the fold. It read as
+  // the team having been disconnected; the members were rendered the whole
+  // time, just out of view.
+  //
+  // Teams are what a person arranged on purpose, so they come first. Bot
+  // Chats is last: it grows on its own, without anybody deciding it should.
   const naturalSectionIds = [
     ...(pinnedBots.length > 0 ? [PINNED_SECTION_ID] : []),
     ...(unsectionedRooms.length > 0 ? [CHANNELS_SECTION_ID] : []),
-    ...(botChats.length > 0 ? [BOT_CHATS_SECTION_ID] : []),
-    ...(unsectionedBots.length > 0 ? [BOTS_SECTION_ID] : []),
     ...sectionNames.map(userSectionId),
+    ...(unsectionedBots.length > 0 ? [BOTS_SECTION_ID] : []),
+    ...(botChats.length > 0 ? [BOT_CHATS_SECTION_ID] : []),
   ];
   const sectionIds = orderedSidebarSections(naturalSectionIds, sectionOrder);
   const layoutInteractive = sidebarLayoutInteractive(density, q);

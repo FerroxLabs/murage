@@ -7798,7 +7798,23 @@ const server = createServer(async (req, res) => {
       // 409 and not 400: the request is well-formed, the workspace is simply
       // in a state that will not accept it, and the message says which state
       // and how to leave it.
-      if (requestedScope === "workspace") {
+      // Any request that would SEAT a second Chief, however it is spelled.
+      //
+      // This checked only `requestedScope === "workspace"`, which meant a bare
+      // `chiefOfStaff: true` with no tier skipped the guard entirely. That
+      // shape is not hypothetical: it is what the old sidebar menu sent, and
+      // it is still what the team-import undo sends when it restores an
+      // archived Chief — which is also how that path loses her tier.
+      //
+      // A tier-less election is a SECTION lead and remains allowed, because
+      // team leadership is an ordinary handover. What is refused is a request
+      // that would put a second bot in the workspace chair: an explicit
+      // workspace scope, or a tier-less election aimed at a bot that already
+      // carries the workspace tier.
+      const seatsAChief =
+        requestedScope === "workspace" ||
+        (body.chiefOfStaff === true && requestedScope === undefined && existingBot?.chiefScope === "workspace");
+      if (seatsAChief) {
         const incumbent = store.workspaceChief();
         if (incumbent && incumbent.id !== m[1]) {
           return json(res, 409, {

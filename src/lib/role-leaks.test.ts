@@ -89,4 +89,20 @@ describe("the org chart has one reader", () => {
     // A leader's blocked-archive reason names the leader's team.
     expect(sidebar).toContain("Choose another lead for ${bot.section?.trim() || \"this team\"} first");
   });
+
+  it("puts the teams a person arranged above the chats bots opened themselves", () => {
+    // A bot-to-bot DM is created automatically whenever one bot messages
+    // another. One Chief of Staff talking to four teammates put 340px of
+    // machine-generated rows above the entire org chart and pushed a whole
+    // team below the fold — which read as the team having been disconnected.
+    // The members were rendered the whole time, just out of view.
+    const sidebar = readFileSync(join(root, "components/Sidebar.tsx"), "utf8");
+    const natural = sidebar.slice(
+      sidebar.indexOf("const naturalSectionIds = ["),
+      sidebar.indexOf("];", sidebar.indexOf("const naturalSectionIds = [")),
+    );
+    expect(natural.indexOf("sectionNames.map(userSectionId)")).toBeLessThan(
+      natural.indexOf("BOT_CHATS_SECTION_ID"),
+    );
+  });
 });
