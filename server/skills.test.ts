@@ -1136,7 +1136,11 @@ describe("installSkillFromLibrary", () => {
     // skill under a name the package's skills[] reference cannot find
     writeLibrarySkill(library, "pine-develop", { content: SKILL("something-else") });
     expect(installSkillFromLibrary(bot, "pine-develop", library)).toMatchObject({
-      error: expect.stringContaining("they must match"),
+      // The message has to name both halves of the mismatch: the nine skills
+      // that shipped broken were fixable from one read of this line.
+      error: expect.stringContaining(
+        'declares frontmatter name "something-else" but its directory and manifest id are "pine-develop"',
+      ),
     });
     // a manifest whose id disagrees with its own directory is rejected upstream
     writeLibrarySkill(library, "strategy-report", { manifest: libraryManifest("other-id") });

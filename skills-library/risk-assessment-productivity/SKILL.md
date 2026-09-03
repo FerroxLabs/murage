@@ -1,5 +1,5 @@
 ---
-name: risk-assessment
+name: risk-assessment-productivity
 description: |
   Produces a project risk register by identifying risks from the project description, scoring each by likelihood and impact, assigning mitigation strategies, and setting monitoring triggers. Builds a complete risk management artifact for personal or small-team projects.
   Use when the user asks about identifying project risks, building a risk register, assessing what could go wrong, or creating mitigation plans for a project.

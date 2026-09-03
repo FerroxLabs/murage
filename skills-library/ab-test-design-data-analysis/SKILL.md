@@ -1,5 +1,5 @@
 ---
-name: ab-test-design
+name: ab-test-design-data-analysis
 description: |
   Designs an A/B test from scratch. Defines the hypothesis, calculates required sample size, specifies randomization method, sets success metrics and minimum detectable effect, and produces a results interpretation template.
   Use when the user wants to set up a controlled experiment to test whether a change produces a measurable improvement.

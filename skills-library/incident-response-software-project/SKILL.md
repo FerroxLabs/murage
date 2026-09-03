@@ -1,5 +1,5 @@
 ---
-name: incident-response
+name: incident-response-software-project
 description: |
   Orchestrates the full incident lifecycle from initial triage through postmortem documentation, chaining five software-development skills into a structured incident management workflow. This workflow chains the incident-response skill with logging, monitoring, deployment, and documentation skills.
   Use when the user is handling an active production incident and needs a structured process from detection through resolution and postmortem.

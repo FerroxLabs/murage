@@ -1,5 +1,5 @@
 ---
-name: security-auditor
+name: security-auditor-security
 description: |
   Security vulnerability assessment expertise covering OWASP Top 10 deep dive, code review for security, dependency vulnerability scanning, SAST/DAST tools, security headers audit, authentication and authorization audit, and security assessment report writing for identifying and documenting application security weaknesses.
   Use when the user asks about security auditor, security auditor best practices, or needs guidance on security auditor implementation.
