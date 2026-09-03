@@ -153,7 +153,15 @@ export function resetPathCacheForTests(): void {
 export function findCliCandidates(name: string): string[] {
   if (!name || /[\n\r]/.test(name)) return [];
   if (/[/\\]/.test(name) || /^[a-zA-Z]:/.test(name)) return [name];
-  const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean) : [""];
+  // On win32 PATHEXT never contains "", so a name that ALREADY carries its
+  // extension ("fuigo.exe") was probed only as fuigo.exe.COM/.EXE/.BAT/.CMD and
+  // could never be found. That made resolveFuigoCli always answer "bundled" on
+  // Windows, so the pinned copy shadowed a newer fuigo the user installed
+  // themselves — the exact opposite of the documented precedence. `whichWin`
+  // already got this right (it checks extname first); this did not.
+  const winExts = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const exts =
+    process.platform === "win32" ? (extname(name) ? ["", ...winExts] : winExts) : [""];
   const out: string[] = [];
   for (const dir of augmentedPath().split(delimiter)) {
     if (!dir) continue;

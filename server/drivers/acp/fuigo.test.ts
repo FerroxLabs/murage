@@ -228,12 +228,17 @@ describe("fuigo argv — the ordering trap", () => {
       "--permission-mode",
       "default",
       "agent",
+      "--no-leader",
       "-m",
       "claude-opus-5",
       "--reasoning-effort",
       "low",
       "stdio",
     ]);
+    // --no-leader is not decoration: `[cli] use_leader = true` in the user's own
+    // config.toml makes `fuigo agent` attach to a running leader whose
+    // permission mode, model and credential are whatever started it.
+    expect(argv).toContain("--no-leader");
     const agentAt = argv.indexOf("agent");
     const stdioAt = argv.indexOf("stdio");
     expect(argv.indexOf("-m")).toBeGreaterThan(agentAt);
@@ -260,7 +265,7 @@ describe("fuigo argv — the ordering trap", () => {
 
   it("omits -m entirely when the turn names no model", async () => {
     await runTurn({});
-    expect(dump("agent").argv).toEqual(["--permission-mode", "default", "agent", "stdio"]);
+    expect(dump("agent").argv).toEqual(["--permission-mode", "default", "agent", "--no-leader", "stdio"]);
   });
 });
 

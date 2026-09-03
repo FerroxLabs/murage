@@ -780,10 +780,20 @@ async function defaultSelection() {
   // "available" at all — which is the entire zero-terminal promise. Claude
   // stays second because on a developer's machine it usually is installed and
   // it was the previous default; a fresh install simply never reaches it.
+  // "available" means the CLI answered --version, NOT that it can do anything:
+  // `authenticated` is a separate field on the snapshot. Murage SHIPS fuigo's
+  // binary, so fuigo is always available — and on a machine with no Flux key
+  // and no `fuigo login` its catalog merges down to nothing, which would hand
+  // every new bot `{instanceId:"fuigo", model:""}`: a bot that looks configured
+  // and is not. Requiring a usable default is what keeps the honest-empty
+  // promise below intact.
+  const usable = available.filter(
+    (d) => d.snapshot.state === "available" && d.snapshot.authenticated !== false && d.models.default,
+  );
   const pick =
-    available.find((d) => d.driverKind === "fuigoAgent") ??
-    available.find((d) => d.driverKind === "claudeAgent") ??
-    available[0];
+    usable.find((d) => d.driverKind === "fuigoAgent") ??
+    usable.find((d) => d.driverKind === "claudeAgent") ??
+    usable[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
 
@@ -5182,10 +5192,13 @@ function configStatus() {
     // Flux Router: presence only. The key is workspace-scoped and must never
     // reach the renderer bundle, so this stays a boolean like every other
     // credential above.
-    // `fluxConfigured()`, not `Boolean(cfg.flux?.apiKey)`. fluxKey() resolves
-    // config THEN `FLUX_API_KEY`, so a workspace keyed by env alone reported
-    // false here while every Flux route worked — and the renderer hides the
-    // features it gates on this. One reader for the key, one for the flag.
+    // `fluxConfigured()` rather than reading cfg directly, so this flag and
+    // every Flux route resolve the credential through the SAME function.
+    // NB the original justification for this change was wrong and is corrected
+    // here rather than left to mislead: config.ts:494 already folds
+    // `FLUX_API_KEY` into `cfg.flux.apiKey` at load, so `Boolean(cfg.flux
+    // ?.apiKey)` was already true for an env-only key. This is a
+    // one-reader-for-one-fact change, not a bug fix.
     flux: { configured: fluxConfigured() },
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },

@@ -304,6 +304,14 @@ const support: AcpSupport = {
     "--permission-mode",
     config.fullAuto ? "bypassPermissions" : "default",
     "agent",
+    // `[cli] use_leader = true` in the user's own ~/.fuigo/config.toml makes
+    // `fuigo agent` ATTACH to a running leader on ~/.fuigo/leader.sock instead
+    // of starting its own. That leader's permission mode, model and credential
+    // are whatever started it — reopening by a different door the exact hole
+    // the explicit --permission-mode above exists to close, and billing the
+    // turn to an identity that is not the FUIGO_API_KEY we just injected.
+    // Unconditional and free: Murage always wants its own backend.
+    "--no-leader",
     ...(turn.model ? ["-m", turn.model] : []),
     ...(turn.effort ? ["--reasoning-effort", turn.effort] : []),
     "stdio",
