@@ -556,9 +556,16 @@ export function PluginsPanel() {
         {/* Two notices about the same fact is one too many: the stale banner
             above already explains this launch, and "configure your own
             connection service" is advice for someone who never set one up. */}
+        {/* "Temporarily unavailable" was a lie for the most common way to see
+            this. The managed broker's credentials only arrive from
+            electron/main.mjs when `app.isPackaged`, so EVERY dev run and every
+            `node server/index.ts` lands here permanently — and the copy sent
+            people hunting for an outage that did not exist. It says what is
+            actually true now, and stays true for a packaged user whose broker
+            really is down. */}
         {!configured && !stale && (
           <div className="mx-6 mb-1 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning sm:mx-8">
-            Connected apps are temporarily unavailable. You can retry after restarting, or configure your own connection service.{" "}
+            Connected apps aren't available on this launch. Add your own Composio key in settings, or try again after restarting.{" "}
             <button
               className="font-medium underline underline-offset-2"
               onClick={() => {
@@ -568,6 +575,22 @@ export function PluginsPanel() {
             >
               Open settings
             </button>
+          </div>
+        )}
+        {/* WHICH Composio account this is talking to, said out loud.
+            There are two, they hold different connections, and the app used
+            to switch between them in silence. The broker's env only exists in
+            a packaged build, so connecting apps in dev on your own key and
+            then running the release used to empty the list — the accounts are
+            not deleted, they are on the far side of a different project under
+            a different user id, and nothing said so. One line is the whole
+            fix for the confusion; the precedence change in
+            `server/composio.ts` is the fix for the cause. */}
+        {configured && (
+          <div className="mx-6 mb-1 text-[12px] text-ink-secondary sm:mx-8">
+            {mode === "self-hosted"
+              ? "Connected with your own Composio key. These apps stay with your key."
+              : "Connected through Murage's service."}
           </div>
         )}
         {configured && source === "curated" && mode === "self-hosted" && (

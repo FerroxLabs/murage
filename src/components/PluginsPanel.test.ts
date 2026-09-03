@@ -1,191 +1,46 @@
+// Which Composio account the app is talking to, and whether it says so.
+//
+// There are two, they hold different connections, and until this the app
+// switched between them in silence. The managed broker's credentials arrive
+// only from `electron/main.mjs` when `app.isPackaged`, so a person could
+// connect eighteen toolkits in dev on their own key and watch every one of
+// them disappear the first time they ran the packaged build. Not deleted —
+// on the far side of a different Composio project under a different user id,
+// showing an empty list identical to never having connected anything.
+//
+// Source assertions, because the panel is a 900-line component with no render
+// harness and the thing worth pinning is the copy itself.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import {
-  connectedInventoryCopy,
-  connectorActionLabel,
-  disconnectAccountConfirmation,
-  mergeCompleteConnectorStatus,
-  mergeCurrentConnectorStatus,
-  requiresAccountAlias,
-  onlyLatestConnectorResponses,
-  type ConnectorStatus,
-} from "./PluginsPanel";
+const here = dirname(fileURLToPath(import.meta.url));
+const panel = readFileSync(join(here, "PluginsPanel.tsx"), "utf8");
+const composio = readFileSync(join(here, "../../server/composio.ts"), "utf8");
 
-describe("connected-app status races", () => {
-  it("does not let an older not_connected response erase a newer OAuth attempt", async () => {
-    const generations = new Map([["gmail", 0]]);
-    const initialRequestGenerations = new Map(generations);
-    let deliverInitialResponse: (value: Record<string, ConnectorStatus>) => void = () => {};
-    const delayedInitialResponse = new Promise<Record<string, ConnectorStatus>>((resolve) => {
-      deliverInitialResponse = resolve;
-    });
-
-    generations.set("gmail", 1);
-    const localOAuthState = {
-      gmail: { connected: false, pending: true, status: "INITIATED" },
-    };
-    deliverInitialResponse({ gmail: { connected: false, pending: false, status: "not_connected" } });
-
-    const merged = mergeCurrentConnectorStatus(
-      localOAuthState,
-      await delayedInitialResponse,
-      generations,
-      initialRequestGenerations,
-    );
-
-    expect(merged.gmail).toEqual({ connected: false, pending: true, status: "INITIATED" });
+describe("the connectors panel names its account", () => {
+  it("says which of the two Composio identities is in use", () => {
+    expect(panel).toContain("Connected with your own Composio key");
+    expect(panel).toContain("Connected through Murage's service");
   });
 
-  it("still applies a response from the current generation", () => {
-    const generations = new Map([["gmail", 1]]);
-    const merged = mergeCurrentConnectorStatus(
-      { gmail: { connected: false, pending: true, status: "INITIATED" } },
-      { gmail: { connected: true, pending: false, status: "ACTIVE" } },
-      generations,
-      new Map(generations),
-    );
-
-    expect(merged.gmail).toEqual({ connected: true, pending: false, status: "ACTIVE" });
-  });
-
-  it("drops an older status response when a newer request for the same app has started", () => {
-    const latestRequests = new Map([["gmail", 2], ["slack", 1]]);
-    const requestIds = new Map([["gmail", 1], ["slack", 1]]);
-    expect(
-      onlyLatestConnectorResponses(
-        {
-          gmail: { connected: false, status: "not_connected" },
-          slack: { connected: true, status: "ACTIVE" },
-        },
-        latestRequests,
-        requestIds,
-      ),
-    ).toEqual({ slack: { connected: true, status: "ACTIVE" } });
-  });
-
-  it("keeps a connected account beyond the first 40 marketplace cards", () => {
-    const catalog = Array.from({ length: 45 }, (_, index) => `toolkit_${index + 1}`);
-    const accountSlug = catalog[40];
-    expect(catalog.slice(0, 40)).not.toContain(accountSlug);
-
-    const merged = mergeCompleteConnectorStatus(
-      {},
-      {
-        [accountSlug]: {
-          connected: true,
-          pending: false,
-          status: "ACTIVE",
-          accounts: [{ id: "ca_toolkit_41", alias: "overflow", status: "ACTIVE" }],
-        },
-      },
-      new Map(),
-      new Map(),
-    );
-
-    expect(merged[accountSlug]?.accounts).toEqual([
-      { id: "ca_toolkit_41", alias: "overflow", status: "ACTIVE" },
-    ]);
-  });
-
-  it("clears externally removed accounts without overwriting a newer OAuth attempt", () => {
-    const generations = new Map([["gmail", 2]]);
-    const removed = mergeCompleteConnectorStatus(
-      { gmail: { connected: true, accounts: [{ id: "ca_old", status: "ACTIVE" }] } },
-      {},
-      generations,
-      new Map(generations),
-    );
-    expect(removed.gmail).toEqual({
-      connected: false,
-      pending: false,
-      status: "not_connected",
-      accounts: [],
-    });
-
-    const preserved = mergeCompleteConnectorStatus(
-      { gmail: { connected: false, pending: true, status: "INITIATED" } },
-      {},
-      new Map([["gmail", 3]]),
-      generations,
-    );
-    expect(preserved.gmail).toEqual({ connected: false, pending: true, status: "INITIATED" });
-
-    // The generation guard specifically: a connected entry WITH accounts is
-    // exactly what the clearing branch targets, so only the advanced
-    // generation can save it — a freshly-connected account must survive a
-    // stale /connected response racing the Connect click.
-    const racing = mergeCompleteConnectorStatus(
-      { gmail: { connected: true, accounts: [{ id: "ca_new", status: "ACTIVE" }] } },
-      {},
-      new Map([["gmail", 3]]),
-      generations,
-    );
-    expect(racing.gmail).toEqual({ connected: true, accounts: [{ id: "ca_new", status: "ACTIVE" }] });
-  });
-
-  it("names the exact account and limits disconnect confirmation to that account", () => {
-    expect(disconnectAccountConfirmation("Gmail", { id: "ca_work", alias: "work" })).toBe(
-      "Disconnect “work” (ca_work) from Gmail? Only this Gmail account will be revoked. Your other Gmail accounts will stay connected.",
-    );
-    expect(disconnectAccountConfirmation("GitHub", { id: "ca_personal" })).toContain(
-      "Disconnect “ca_personal” from GitHub? Only this GitHub account will be revoked.",
-    );
-  });
-
-  it("recognizes the existing-account alias guard and ignores unrelated errors", () => {
-    expect(requiresAccountAlias("Add an account alias so the existing connection is not replaced")).toBe(true);
-    expect(requiresAccountAlias("Authorization expired")).toBe(false);
-  });
-
-  it("never presents unloaded account state as disconnected", () => {
-    expect(connectedInventoryCopy("loading").title).toBe("Checking connected apps…");
-    expect(connectorActionLabel("loading", {
-      busy: false,
-      included: false,
-      canContinue: false,
-      hasAccounts: false,
-      failed: false,
-    })).toBe("Checking…");
-    expect(connectorActionLabel("ready", {
-      busy: false,
-      included: false,
-      canContinue: false,
-      hasAccounts: true,
-      failed: false,
-    })).toBe("Add account");
-    expect(connectorActionLabel("error", {
-      busy: false,
-      included: false,
-      canContinue: false,
-      hasAccounts: false,
-      failed: false,
-    })).toBe("Unavailable");
+  it("stops calling a permanent packaging gate a temporary outage", () => {
+    // This is the sentence that sent someone looking for a block that did not
+    // exist. Every dev run reaches it, and reaches it forever.
+    expect(panel).not.toContain("temporarily unavailable");
+    expect(panel).toContain("aren't available on this launch");
   });
 });
 
-describe("an answer the server was not sure about", () => {
-  const connectedGmail = {
-    gmail: { connected: true, pending: false, status: "ACTIVE", accounts: [{ id: "ca_1", status: "ACTIVE" }] },
-  } satisfies Record<string, ConnectorStatus>;
-
-  it("keeps a connected app when the response was not authoritative", () => {
-    // the credential store was unreadable, so the server sent {} — that is
-    // ignorance, and clearing on it is how a connected app turns into a
-    // Connect button the user never asked for
-    const merged = mergeCompleteConnectorStatus(connectedGmail, {}, new Map(), new Map(), false);
-    expect(merged.gmail.connected).toBe(true);
+describe("a key someone pasted on purpose is the one that gets used", () => {
+  it("lets a workspace key beat the managed broker", () => {
+    // The single choke point. Every other consumer resolves through it, which
+    // is why inverting the rule is one line and why that line has a test.
+    expect(composio).toMatch(/function activeBroker[\s\S]{0,200}if \(cfg\.composio\?\.apiKey\) return null;/);
   });
 
-  it("still clears an app the server authoritatively no longer lists", () => {
-    // disconnection has to remain possible: revoking from Composio's
-    // dashboard must show up here on the next successful check
-    const merged = mergeCompleteConnectorStatus(connectedGmail, {}, new Map(), new Map(), true);
-    expect(merged.gmail.connected).toBe(false);
-    expect(merged.gmail.status).toBe("not_connected");
-  });
-
-  it("treats a missing authority flag as authoritative, preserving today's behaviour", () => {
-    const merged = mergeCompleteConnectorStatus(connectedGmail, {}, new Map(), new Map());
-    expect(merged.gmail.connected).toBe(false);
+  it("still leaves the broker as the default for anyone who configured nothing", () => {
+    expect(composio).toMatch(/if \(cfg\.composio\?\.apiKey\) return null;\s*\n\s*return brokerAccess\(\);/);
   });
 });

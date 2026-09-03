@@ -206,17 +206,19 @@ describe.sequential("Composio Sessions", () => {
     expect(applyManagedBrokerMessage({ type: messageType, access: null })).toBe(true);
     expect(connectionMode({})).toBe("unavailable");
   });
-  // Connector traffic runs through Ferrox's broker and Ferrox eats the cost,
-  // deliberately, until connections become something people pay for. A
-  // workspace key is still what a self-hosted or air-gapped install runs on —
-  // there is no broker to reach there — it just does not displace a broker
-  // that is configured. When billing lands, this expectation flips with the
-  // one line in activeBroker.
-  it("routes through the managed broker even when a workspace key exists", () => {
+  // The broker used to win here, and the cost of that was silent. Its env
+  // only arrives when app.isPackaged, so someone could connect eighteen
+  // toolkits in dev on their own key and have every one of them disappear the
+  // first time they ran the packaged build — a different Composio project,
+  // a different user id, and an empty list that looks identical to never
+  // having connected anything.
+  it("lets a workspace key beat the managed broker, because they chose it", () => {
     setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
-    expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("managed");
+    expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("self-hosted");
+    // And the broker still serves everyone who configured nothing, which is
+    // the case the cost-bearing rule was ever about.
+    expect(connectionMode({})).toBe("managed");
     setManagedBrokerAccess(null);
-    // With no broker, their key is what runs it.
     expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("self-hosted");
     expect(connectionMode({})).toBe("unavailable");
   });
