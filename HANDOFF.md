@@ -143,6 +143,122 @@ phones lost copy/reply/speak on messages when the hover rail became
 Smart Trader); `installer/` still not wired into CI; cloud installer still
 needs Sean's Tailscale auth key.
 
+## SESSION 2026-09-03 — the web UI is done; the intake matcher is the open wound
+
+21 commits. **All six web-UI items are shipped.** Read the three traps first —
+every one of them cost real time today.
+
+### THE TRAPS
+
+**1. Sean's app runs a FROZEN BUILD from a separate worktree.** Harness 8799
+serves `<scratchpad>/frozen/dist`, Electron points at it. A renderer change is
+invisible to him until that worktree is checked out to HEAD and rebuilt. He
+reported "Make Chief of Staff" still showing after it was fixed — the served
+bundle was correct, his window was stale. **Verify what is actually served
+before believing a bug report:** `curl -s :8799/ | grep -o 'assets/index-[^"]*'`
+then grep that file for the string.
+**Never rebuild it while he is using the app** — that probably caused an
+earlier blank screen by 404-ing chunks under a live window.
+
+**2. Two layout bugs today, both the same cause, and no test could see them.**
+A flex item keeps `min-width/height: auto` and refuses to shrink below its
+content. First the settings step strip put a horizontal scrollbar across the
+modal; then — much worse — the composer's `absolute … h-[50vh]` ground hung
+404px past the viewport and **scrolled the whole document 369.5px**, sliding
+the app up and leaving a black band. It looked like the app broke. Nothing
+throws, no error boundary fires, nothing in any log. `#root` is now
+`overflow: hidden`, which forecloses the class. **Measure layout in a real
+browser** — chrome-devtools MCP against 8799 found both in minutes.
+
+**3. A capability with no path to it is not a capability.** This shipped
+THREE times today: `create_bot` gained a lead flag the tool schema never
+declared; `requirements.apps` is read by nothing but re-export; the desktop
+secret had no production route. Whenever you add a server capability, check
+the caller can actually reach it.
+
+### DONE — the web UI, all six
+
+| | |
+|---|---|
+| Remote-access page, QR, OFF | `91a7089f` — door advertises the FRONT's portless address |
+| Manifest, icons, favicon, install | `2e570aac` `98e7d093` — three icon families; harness MIME fixed |
+| Silent session renewal | `2ca41df5` — rotates in place, revoke still kills it |
+| 60-day idle window | `0d0fc06e` — renewal stays 24h, decoupled from the window |
+| Desktop secret production path | `87b7aa3b` — the DEV guard was never the lock |
+| Touch affordances on phone | `61a7f4ce` — tap the bubble, bottom sheet; width unchanged to 0.1px |
+| Install invite | `4c1b38ae` — Android button, iOS hint, SILENT over HTTP |
+
+### DONE — the org chart
+
+`597b5afb` team leads no longer wear the Chief's colour or get offered her job ·
+`ab7e4f21` Chief is single-holder, 409 before any write; `create_bot` can stand
+up a team's first lead · `1e07b9c9` **the client half of the Chief-vanishes bug**
+— both reducers were still demoting her, and the server never corrects it
+because nothing changed server-side · `6d7a1ea3` the tool wiring that made the
+lead flag reachable · `a5f9a23d` teams now rank above auto-created bot chats,
+and the guard covers the tier-less `chiefOfStaff: true` shape.
+
+### DONE — connectors and profiles
+
+**The bridge WORKS.** A real Gmail read returned three subjects end to end.
+**The broker was never blocked** — `composioBrokerUrl()` only returns a URL
+when `app.isPackaged`, so every dev run gets `mode: "unavailable"` and the copy
+called a permanent packaging gate a temporary outage. `c02a7bda` inverts
+precedence so a pasted key beats the broker (it used to `void cfg`), because
+a packaged run silently orphaned 18 connected toolkits. `3eadca14` makes three
+silent bridge failures loud — dropped error bodies, a request never answered
+(hangs forever), and one request answered with another's frame.
+`791af593` `27182ff7` seven mainstream profiles, 70 skills all resolving.
+
+### OPEN — in priority order
+
+1. **THE INTAKE MATCHER. This is the big one.** Measured against the shipped
+   catalogue: "my ferret keeps escaping the hutch" → customer-success-org,
+   "the gutters need doing before winter" → validate-before-build, "our
+   badminton club needs new nets" → a personal-finance auditor. Every one a
+   confident wrong specialist shown as "here is your match".
+   **Cause found:** `vocabularyMatches` (`src/lib/onboarding-intake.ts`)
+   declares `needed = min(2, tokens.length)` then begins
+   `if (vocabulary.has(token)) return true` — short-circuiting on the first
+   exact hit and never counting. The vocabulary is the whole summary split
+   into words, so one common English word decides it.
+   **I tried three fixes and reverted all three**; each traded one regression
+   for another (the last broke "help me read my trading charts" →
+   smart-trader). Do NOT guess a fourth. Cross-research is running
+   (`<scratchpad>/matcher/{kimi,codex}.md`).
+   **Sean's framing is the design constraint:** *"there's not just gonna be a
+   general usage one and a lot of people will have general chats and that's
+   fine."* "No specialist fits" must be a common, confident, correctly-labelled
+   outcome — not a near-failure. Build a labelled eval set first.
+2. **Concierge only works if it is the default first-run bot.** It cannot win
+   a matcher that rewards specific vocabulary and must not be made to — padding
+   its summary is what made the bare word "say" match Researcher. It is wired
+   as the answer to "nothing matched" (≥3 words, tokens present), which is
+   honest but rarely fires while the matcher confidently matches nonsense.
+3. **`requiredApps` is write-only** and every bot a Chief creates lands
+   `composio: false` with the system-prompt hint gated on the same flag — so it
+   is not even told the tools exist. Five of Sean's bots are in this state.
+   Make it loud.
+4. **Organiser/PA** — approved, deferred until one connector-aware skill class
+   exists. Zero of 2,237 skills reference Composio or MCP.
+5. **Team-import undo** restores an archived Chief without her tier.
+6. Ship gates: `installer/` into CI, cloud installer (needs Sean's Tailscale
+   auth key), first release.
+
+### IN FLIGHT AT HANDOFF
+One lane building **typed-code sign-in** so a laptop — or a browser hitting a
+future cloud instance — can pair without a camera. Owns `companion/src/{browser,
+devices,routes}.ts` and `companion/test/`. `companion/src/devices.ts` is
+mid-edit and currently fails typecheck (`'spent' is declared but never read`);
+that is the lane's, not a regression.
+
+### SEAN'S LIVE STATE
+Sable = workspace Chief. Ben (Coach) = War Room lead. Kessler exists but is
+`hidden: true`. Composio on his own key, 18 toolkits, 5 Gmail accounts.
+Bookmark `https://seans-macbook-pro.tail0a48a4.ts.net`, `tailscale serve`
+fronting 8813. `tailscale` is NOT on PATH — it is at
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+
 ## WHAT "FINISHED" MEANS — do these in this order
 
 Sean's bar, in his words: **"tested, polished and professional looking."** He
