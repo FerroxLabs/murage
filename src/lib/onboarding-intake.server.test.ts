@@ -267,4 +267,21 @@ describe("assigning one skill from the library", () => {
     const after = await call("GET", "/api/bots");
     expect(after.body.bots.length).toBe(before.body.bots.length + 1);
   });
+
+  it("still refuses two words of noise that happen to rank something", async () => {
+    // `say "hi"` keeps the token "say" and ranks a book editor; `hey there`
+    // keeps "hey". Tokenising to something is not the same as asking for
+    // something, and the front door must not become the new confident wrong
+    // answer.
+    for (const q of ['say "hi"', "hey there"]) {
+      const response = await call("GET", `/api/library/suggest?q=${encodeURIComponent(q)}`);
+      expect(response.body.profile, q).toBeNull();
+    }
+  });
+
+  it("lets a real match and loose skills both beat the front door", async () => {
+    const matched = await call("GET", `/api/library/suggest?q=${encodeURIComponent("help me read my trading charts")}`);
+    expect(matched.body.profile?.slug).toBe("smart-trader");
+    expect(matched.body.profile?.fallback).toBeUndefined();
+  });
 });

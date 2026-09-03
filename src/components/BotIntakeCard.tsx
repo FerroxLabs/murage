@@ -281,6 +281,16 @@ function IntakeQuestion({
               the skills it was built with, in one press. */}
           {profile && (
             <div className="mt-4 rounded-xl border border-hairline/40 bg-inset p-3.5">
+              {/* The front door is labelled as one. Offering Concierge as
+                  though the catalogue had matched it would be exactly the
+                  confident wrong answer that returning null exists to
+                  prevent — and the person can tell the difference, so the
+                  card should too. */}
+              {profile.fallback && (
+                <p className="mb-2 text-[12.5px] text-ink-secondary">
+                  Nothing in the library matches that exactly. This one works out what you need and hands it on:
+                </p>
+              )}
               <div className="flex items-baseline gap-2">
                 <span className="text-[15px] font-semibold text-ink">{profile.name}</span>
                 <span className="text-[12px] text-ink-secondary">{profile.category}</span>

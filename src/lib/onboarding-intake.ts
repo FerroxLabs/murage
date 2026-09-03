@@ -255,6 +255,16 @@ export function describeIntakeSkill(skill: IntakeSkill): string {
   return `${skill.id} ${skill.name} ${skill.description} ${skill.terms.join(" ")}`;
 }
 
+/** The profile offered when the catalogue matched nothing at all.
+ *
+ * Concierge cannot win the matcher and should not try. Its value is being
+ * generic, and `intakeProfileMatches` rewards topic-specific vocabulary — so
+ * padding its summary with filler to make it rank is both a lie and the exact
+ * trick that made the bare word "say" start matching Researcher. It reaches
+ * people the one honest way: as the answer to "nothing matched", which is
+ * precisely the question a front door exists to answer. */
+export const INTAKE_FRONT_DOOR_SLUG = "concierge";
+
 export interface IntakeProfile {
   slug: string;
   name: string;
@@ -262,6 +272,10 @@ export interface IntakeProfile {
   category: string;
   outcome: string | null;
   skills: IntakeSkill[];
+  /** True when this is the front door rather than a match. The card has to
+   * say so: offering Concierge as though the catalogue had found it would be
+   * the confident wrong answer that returning null exists to prevent. */
+  fallback?: boolean;
 }
 
 export interface IntakeSuggestion {
