@@ -221,7 +221,14 @@ function StepStrip({ steps }: { steps: WebUiStep[] }) {
       {steps.map((step, index) => (
         <li
           key={step.label}
-          className={`flex flex-1 items-start gap-2.5 rounded-xl px-3 py-2.5 ${
+          // `min-w-0` is load-bearing. A flex item keeps `min-width: auto`,
+          // which refuses to shrink below its content's intrinsic width — so
+          // the longest detail line ("Optional — plain HTTP inside your
+          // tailnet works now.") pushed this item past its third of the row,
+          // overflowed the strip, and put a horizontal scrollbar on the whole
+          // settings modal. The inner span already had it; the item did not,
+          // and the item is the one that gets a flex basis.
+          className={`flex min-w-0 flex-1 items-start gap-2.5 rounded-xl px-3 py-2.5 ${
             step.state === "current" ? "bg-accent/10" : "bg-inset"
           }`}
         >

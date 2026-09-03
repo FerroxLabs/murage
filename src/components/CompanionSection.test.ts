@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import type { CompanionAccountState } from "../types/muragebox";
@@ -191,5 +193,31 @@ describe("companion pairing availability", () => {
       companionPairingMode({ available: false, status: "signed-out" }, localCompanion(true)),
     ).toBe("local-only");
     expect(companionPairingMode(account("error"), localCompanion(true))).toBe("local-only");
+  });
+});
+
+describe("the three-step strip fits the modal it lives in", () => {
+  // A flex item keeps `min-width: auto` and refuses to shrink below its
+  // content's intrinsic width. The longest detail line pushed its item past
+  // its third of the row, overflowed the strip, and put a horizontal
+  // scrollbar across the whole settings modal — visible in a screenshot, and
+  // invisible to every test that reads behaviour rather than layout.
+  it("lets each step shrink below its own text", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)),
+      "utf8",
+    );
+    const strip = source.slice(source.indexOf("function StepStrip"));
+    const item = strip.slice(0, strip.indexOf("</li>"));
+    expect(item, "the flex ITEM needs min-w-0, not just the span inside it").toContain("flex min-w-0 flex-1");
+  });
+
+  it("still truncates the detail rather than wrapping the row taller", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)),
+      "utf8",
+    );
+    const strip = source.slice(source.indexOf("function StepStrip"));
+    expect(strip.slice(0, strip.indexOf("</ol>"))).toContain("truncate");
   });
 });
