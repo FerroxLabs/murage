@@ -148,7 +148,20 @@ Four of my own written claims were wrong and are corrected in place rather than
 left standing: the ogg/webm support order, a `fluxConfigured` justification, a
 memo-TTL guarantee, and a comment about vite not collecting `shared/`.
 
-## KNOWN RED, and it is NOT from this session — check before you chase it
+## KNOWN RED — all three traced, none from this session
+
+Final full run on HEAD: **4,305 of 4,328 passing, 3 failed.** Every one was
+traced by experiment rather than argument, using the worktree recipe below.
+
+| failing test | isolation on HEAD | at `d8e04876` | verdict |
+|---|---|---|---|
+| `server/computer-proxy.test.ts` — `computer_request_help` | PASSES | PASSES | load flake, full-suite only |
+| `server/index.test.ts` — team export/import | — | FAILS | pre-existing |
+| `server/drivers/antigravity.test.ts` — Windows-sized prompt over stdin | FAILS | FAILS | pre-existing |
+
+The failure SET changes between runs, which is worth knowing before you panic:
+one run showed the browser-profile assertion at `:3889`, another the `Mira 2` vs
+`Mira 4` team import, another the team export. Same file, different assertions.
 
 `server/index.test.ts` fails, and it failed **at `d8e04876`, before any of this
 session's work**. Verified by worktree, not assumed:
