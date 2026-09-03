@@ -21,6 +21,7 @@ import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
 import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { MessageActionSheet, type MessageAction } from "./ChatView";
 import { Composer } from "./Composer";
 import { ChatFindBar } from "./ChatFindBar";
 import { GroupTaskPicker } from "./TaskPicker";
@@ -42,7 +43,14 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
-import { CHIP, CHIP_NAME } from "@/lib/transcript-chrome";
+import {
+  BUBBLE_INTERACTIVE,
+  BUBBLE_TAPPABLE,
+  CHIP,
+  CHIP_NAME,
+  bubbleTapOpensActions,
+} from "@/lib/transcript-chrome";
+import { useNarrowViewport } from "@/lib/media-query";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
@@ -144,12 +152,34 @@ const Transcript = memo(function Transcript({
 }) {
   const { state, dispatch } = useStore();
   const showToolCalls = showToolCallsEnabled(state.config);
+  // Below `md` the hover rail is `display: none` and each bubble becomes its
+  // own trigger. One matchMedia subscription for the whole channel, and one
+  // open sheet at a time — the sheet is modal, so a second would be a bug.
+  const narrow = useNarrowViewport();
+  const [sheetFor, setSheetFor] = useState<string | null>(null);
   const memberOf = (id?: string) => members.find((b) => b.id === id);
   // Several bots working at once turn a room into a wall of chips; fold the
   // finished ones the same way a 1:1 chat does.
   const items = useMemo(() => groupActivityRuns(messages), [messages]);
   const focus = state.focusMessage;
   const focusedId = focus && !focus.consumed && focus.threadId === group.threadId ? focus.messageId : null;
+  const roomActions = (m: Message): MessageAction[] => {
+    const pinned = group.pinnedMessageId === m.id;
+    return [
+      { id: "reply", label: "Reply", icon: <MessageSquareReply size={18} />, onSelect: () => onReply(m) },
+      {
+        id: "pin",
+        label: pinned ? "Unpin message" : "Pin message",
+        icon: pinned ? <PinOff size={18} /> : <Pin size={18} />,
+        onSelect: () =>
+          dispatch({
+            type: "patchGroup",
+            groupId: group.id,
+            patch: { pinnedMessageId: pinned ? "" : m.id },
+          }),
+      },
+    ];
+  };
   return (
     <>
       {items.map((item, i) => {
@@ -246,8 +276,29 @@ const Transcript = memo(function Transcript({
                 </div>
                 <div
                   data-testid="msg-bubble"
+                  onClick={(event) => {
+                    if (
+                      !bubbleTapOpensActions({
+                        narrow,
+                        onInteractive:
+                          event.target instanceof Element
+                          && Boolean(event.target.closest(BUBBLE_INTERACTIVE)),
+                        selectedText: String(globalThis.getSelection?.() ?? ""),
+                      })
+                    ) return;
+                    setSheetFor(m.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (!narrow || (event.key !== "Enter" && event.key !== " ")) return;
+                    if (event.target !== event.currentTarget) return;
+                    event.preventDefault();
+                    setSheetFor(m.id);
+                  }}
+                  tabIndex={narrow ? 0 : undefined}
+                  aria-haspopup={narrow ? "dialog" : undefined}
                   className={cn(
                     "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+                    BUBBLE_TAPPABLE,
                     user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
                   )}
                   title={new Date(m.at).toLocaleString()}
@@ -303,6 +354,15 @@ const Transcript = memo(function Transcript({
                   {formatTime(m.at)}
                 </span>
               </div>
+              {/* The hover rail's two controls, as words, in the thumb zone.
+                  Same pair and same order as the rail above — a channel row
+                  offers Reply and Pin, so the sheet offers exactly those. */}
+              <MessageActionSheet
+                open={sheetFor === m.id}
+                onClose={() => setSheetFor(null)}
+                heading={`${user ? "You" : (m.from?.name ?? "Bot")} \u00b7 ${formatTime(m.at)}`}
+                actions={roomActions(m)}
+              />
             </div>
           ) : null;
         if (!row) return null;

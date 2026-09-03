@@ -1,4 +1,5 @@
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ArrowDown,
@@ -19,6 +20,7 @@ import {
   RefreshCw,
   Search,
   Square,
+  Volume2,
   Webhook,
   X,
 } from "lucide-react";
@@ -64,6 +66,8 @@ import { TaskPicker } from "./TaskPicker";
 import { UsagePopover } from "./UsagePopover";
 
 import { SpeakButton } from "./SpeakButton";
+import { speaker } from "@/lib/tts";
+import { useSpeech } from "@/lib/tts/useSpeech";
 import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
@@ -75,7 +79,17 @@ import { webhookMessageView } from "@/lib/webhook-message";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
-import { CHIP, CHIP_NAME } from "@/lib/transcript-chrome";
+import {
+  BUBBLE_INTERACTIVE,
+  BUBBLE_TAPPABLE,
+  CHIP,
+  CHIP_NAME,
+  SHEET_BACKDROP,
+  SHEET_ITEM,
+  SHEET_PANEL,
+  bubbleTapOpensActions,
+} from "@/lib/transcript-chrome";
+import { useNarrowViewport } from "@/lib/media-query";
 import {
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
@@ -174,6 +188,117 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
     >
       {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
     </button>
+  );
+}
+
+/** One choice in the phone's message action sheet. */
+export type MessageAction = {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  onSelect: () => void;
+  /** Kept in the list rather than dropped, with the reason as the label —
+   *  "Add an ElevenLabs key…" tells you what to do; a missing row does not. */
+  disabled?: boolean;
+};
+
+/** Everything the hover rail offers, as words, in the thumb zone.
+ *
+ * Shared by both transcripts (ChatView's 1:1 and GroupView's channel) because
+ * both lost the same capability to the same fix. Portalled to `<body>` and
+ * `fixed`, so it never becomes part of a transcript row's layout — the
+ * transcript's width cannot change no matter what this contains.
+ *
+ * Modal in the ways that matter on a phone: Escape and a tap on the ground
+ * both close it, focus moves to the first action and returns to the bubble
+ * afterwards, and Tab cycles inside it. */
+export function MessageActionSheet({
+  open,
+  onClose,
+  heading,
+  actions,
+}: {
+  open: boolean;
+  onClose: () => void;
+  heading: string;
+  actions: MessageAction[];
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // `onClose` is an inline arrow at every call site, so depending on it would
+  // re-run this effect on every parent render — which, while the sheet is
+  // open, means re-focusing the first row out from under a thumb that had
+  // moved on. The effect depends on `open` alone and reads the current
+  // handler through a ref.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const items = () =>
+      [...(panelRef.current?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? [])];
+    items()[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = items();
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previous?.focus();
+    };
+  }, [open]);
+
+  if (!open || typeof document === "undefined") return null;
+  return createPortal(
+    <>
+      <div className={SHEET_BACKDROP} onClick={onClose} aria-hidden />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Message actions"
+        tabIndex={-1}
+        className={SHEET_PANEL}
+      >
+        <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-hairline/70" aria-hidden />
+        <div className="px-3 pb-1 text-[12px] text-ink-secondary">{heading}</div>
+        {actions.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            disabled={action.disabled}
+            onClick={() => {
+              action.onSelect();
+              onClose();
+            }}
+            className={SHEET_ITEM}
+          >
+            <span className="shrink-0 text-ink-secondary">{action.icon}</span>
+            <span className="min-w-0 flex-1">{action.label}</span>
+          </button>
+        ))}
+        <button type="button" onClick={onClose} className={cn(SHEET_ITEM, "text-ink-secondary")}>
+          <span className="shrink-0"><X size={18} /></span>
+          <span className="min-w-0 flex-1">Close</span>
+        </button>
+      </div>
+    </>,
+    document.body,
   );
 }
 
@@ -306,6 +431,7 @@ function Bubble({
   onRegenerate,
   replyTarget,
   onReply,
+  narrow = false,
 }: {
   bot: Bot;
   message: Message;
@@ -317,10 +443,15 @@ function Bubble({
   onRegenerate?: () => void;
   replyTarget?: Message;
   onReply: () => void;
+  /** Below `md`, where the hover rail is `display: none`. Measured once by the
+   *  list rather than per bubble: one `matchMedia` listener, not one per row. */
+  narrow?: boolean;
 }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const user = message.role === "user";
   const [expanded, setExpanded] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const speech = useSpeech();
   const text = message.text ?? "";
   const webhookView = user ? webhookMessageView(text) : null;
   const attachments = user && !webhookView ? splitTranscriptAttachments(text) : null;
@@ -335,6 +466,69 @@ function Bubble({
       </div>
     );
   }
+
+  const pinned = bot.pinnedMessageId === message.id;
+  const togglePin = () =>
+    dispatch({
+      type: "updateBot",
+      botId: bot.id,
+      patch: { pinnedMessageId: pinned ? "" : message.id },
+    });
+
+  // The hover rail, as words. Same controls, same conditions, same order —
+  // the parity this sheet exists to restore is only real if it is derived
+  // from the same predicates the rail is.
+  const tts = state.config?.tts;
+  const speakReady = Boolean(tts?.configured) && Boolean(bot.voice || tts?.voice);
+  const speaking = speech.messageId === message.id && speech.status !== "idle";
+  const actions: MessageAction[] = user
+    ? [
+        { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void navigator.clipboard?.writeText(visibleText) },
+        { id: "reply", label: "Reply", icon: <MessageSquareReply size={18} />, onSelect: onReply },
+        ...(message.kind === "text" && !webhookView && !bot.busy
+          ? [{ id: "edit", label: "Edit message", icon: <Pencil size={18} />, onSelect: onStartEdit }]
+          : []),
+        { id: "pin", label: pinned ? "Unpin message" : "Pin message", icon: pinned ? <PinOff size={18} /> : <Pin size={18} />, onSelect: togglePin },
+      ]
+    : [
+        { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void navigator.clipboard?.writeText(text) },
+        ...(message.kind === "text"
+          ? [{
+              id: "speak",
+              label: speaking
+                ? "Stop speaking"
+                : !tts?.configured
+                  ? "Add an ElevenLabs key to read messages aloud"
+                  : !speakReady
+                    ? "Pick a voice in this agent's profile to read aloud"
+                    : "Read aloud",
+              icon: speaking ? <Square size={18} className="fill-current" /> : <Volume2 size={18} />,
+              disabled: !speakReady && !speaking,
+              onSelect: () =>
+                speaking
+                  ? speaker.stop()
+                  : void speaker.speak(text, { botId: bot.id, messageId: message.id, voiceId: bot.voice }),
+            }]
+          : []),
+        ...(isLastBotText && !bot.busy && onRegenerate
+          ? [{ id: "regenerate", label: "Regenerate response", icon: <RefreshCw size={18} />, onSelect: onRegenerate }]
+          : []),
+        { id: "reply", label: "Reply", icon: <MessageSquareReply size={18} />, onSelect: onReply },
+        { id: "pin", label: pinned ? "Unpin message" : "Pin message", icon: pinned ? <PinOff size={18} /> : <Pin size={18} />, onSelect: togglePin },
+      ];
+
+  /** A tap on the bubble is the phone's whole affordance — see the note in
+   *  transcript-chrome.ts for why it is a tap and not a long press. */
+  const openFromTap = (target: EventTarget | null) => {
+    if (
+      !bubbleTapOpensActions({
+        narrow,
+        onInteractive: target instanceof Element && Boolean(target.closest(BUBBLE_INTERACTIVE)),
+        selectedText: String(globalThis.getSelection?.() ?? ""),
+      })
+    ) return;
+    setSheetOpen(true);
+  };
 
   // "‹ 2/3 ›" under an edited message — every fork it belongs to
   const versions = user ? messageVersions(bot, message) : [message];
@@ -400,8 +594,18 @@ function Bubble({
         </div>
         <div
           data-testid="msg-bubble"
+          onClick={(event) => openFromTap(event.target)}
+          onKeyDown={(event) => {
+            if (!narrow || (event.key !== "Enter" && event.key !== " ")) return;
+            if (event.target !== event.currentTarget) return;
+            event.preventDefault();
+            setSheetOpen(true);
+          }}
+          tabIndex={narrow ? 0 : undefined}
+          aria-haspopup={narrow ? "dialog" : undefined}
           className={cn(
             "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
+            BUBBLE_TAPPABLE,
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
               : user
@@ -532,6 +736,12 @@ function Bubble({
           {formatTime(message.at)}
         </span>
       </div>
+      <MessageActionSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        heading={`${user ? "You" : bot.name} · ${formatTime(message.at)}`}
+        actions={actions}
+      />
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
           <button
@@ -657,6 +867,10 @@ const MessagesList = memo(function MessagesList({
 }) {
   const { state, dispatch } = useStore();
   const showToolCalls = showToolCallsEnabled(state.config);
+  // Below `md` the hover rail is `display: none`, so each bubble becomes its
+  // own action trigger. Asked once here rather than in every Bubble: one
+  // matchMedia subscription for the transcript instead of one per row.
+  const narrow = useNarrowViewport();
   // Shared with BotIntakeCard, which asks the same question in a better form.
   const skillCount = useSkillCount(bot.id, api);
   // Finished tool chips become compact runs; settled assistant narration
@@ -711,6 +925,7 @@ const MessagesList = memo(function MessagesList({
                         ? bot.messages.find((candidate) => candidate.id === message.replyToId)
                         : undefined}
                       onReply={() => onReply(message)}
+                      narrow={narrow}
                     />
                   </div>
                 ))}
@@ -803,6 +1018,7 @@ const MessagesList = memo(function MessagesList({
                   onRegenerate={onRegenerate}
                   replyTarget={m.replyToId ? bot.messages.find((candidate) => candidate.id === m.replyToId) : undefined}
                   onReply={() => onReply(m)}
+                  narrow={narrow}
                 />
               );
           }
