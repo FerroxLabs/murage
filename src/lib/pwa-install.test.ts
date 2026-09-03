@@ -78,6 +78,19 @@ describe("the installable web app", () => {
     }
   });
 
+  it("is served as a manifest by BOTH things that serve it", () => {
+    // Wrong content type is the quietest possible failure: 200, correct
+    // bytes, and no install prompt ever, with nothing in any log. The
+    // harness serves the desktop and the door serves the phone, and they
+    // keep separate tables, so both are asserted here.
+    for (const file of ["server/index.ts", "companion/src/browser.ts"]) {
+      const source = readFileSync(join(root, file), "utf8");
+      expect(source, `${file} does not map .webmanifest`).toContain(
+        '".webmanifest": "application/manifest+json"',
+      );
+    }
+  });
+
   it("can be fetched through the browser door, which is the whole point", () => {
     // The door is an allowlist with a default deny. Every path above has to
     // be on it or the install silently never offers itself on the one

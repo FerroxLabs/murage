@@ -288,6 +288,13 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
   ".json": "application/json",
   ".woff2": "font/woff2",
+  // A manifest served as anything but this is ignored, silently, and the
+  // browser simply never offers to install. It falls through to
+  // application/octet-stream without this line. The browser door carries its
+  // own copy of this table (companion/src/browser.ts) and got there first;
+  // `src/lib/pwa-install.test.ts` now pins the two together, because the
+  // desktop reads this one and a phone reads that one.
+  ".webmanifest": "application/manifest+json",
 };
 
 ensureDirs();
