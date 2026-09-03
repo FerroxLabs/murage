@@ -1394,12 +1394,14 @@ describe("harness HTTP API", () => {
         name: "Launch",
         botIds: [incoming.id, teammate.id],
       });
-      expect(response).toEqual({
-        status: 409,
-        body: {
-          error: "A section can have only one Chief of Staff. Choose one Chief or use a section without one.",
-        },
-      });
+      // The status and the refusal are the contract; the sentence is not.
+      // This pinned the whole string and went red at the role rename, where
+      // `chiefOfStaff: true` became "team lead" and the message followed it
+      // (`server/index.ts:7443`). The product was right and the test was
+      // stale — the third time a literal has done that in this suite. Assert
+      // the constraint the message must state, and let the wording move.
+      expect(response.status).toBe(409);
+      expect(response.body.error).toMatch(/only one lead/);
 
       const bots = (await api("GET", "/api/bots")).body.bots;
       expect(bots.find((bot: { id: string }) => bot.id === incumbent.id))
