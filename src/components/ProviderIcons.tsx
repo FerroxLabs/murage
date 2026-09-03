@@ -124,8 +124,53 @@ export function PiMark({ size = 16, className }: IconProps) {
   );
 }
 
+/**
+ * Fuigo — Ferrox Labs' own engine, and the one Murage ships a binary for.
+ *
+ * A TILE, not a bare glyph, and deliberately so: every other mark here is a
+ * vendor's own logo drawn in the theme's ink, but Fuigo is the engine this app
+ * leads with, and a tile carries its own ground so it reads identically on the
+ * light and dark surfaces without a second colour set.
+ *
+ * The swirl is lucide's `galaxy` (ISC), inlined rather than imported because
+ * the pinned lucide-react is 0.539.0 and `Galaxy` was added after it — bumping
+ * a UI dependency to reach one icon is a worse trade than fifteen lines of
+ * path data. If lucide is ever upgraded past it, this can become an import.
+ *
+ * Scale 0.76 with stroke-width 2.7 (≈2.05 after the scale). Both numbers were
+ * chosen by rendering, not arithmetic: the smallest place this appears is 14px
+ * (ModelPicker's active row), where lucide's stock weight of 2 thins to about
+ * 1.2 device pixels and the swirl silts up. A first pass at 0.84 was legible
+ * but crowded the tile edge; 0.76 gives it optical margin without losing the
+ * satellites. Compared side by side at 14/16/18/40 against 0.84/2.5 and
+ * 0.70/3.0 before settling.
+ */
+export function FuigoMark({ size = 16, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <rect width="24" height="24" rx="5.5" fill="#000000" />
+      <g
+        transform="translate(2.88 2.88) scale(0.76)"
+        fill="none"
+        stroke="#ff6b35"
+        strokeWidth="2.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M16.005 15.108a5.041 6.52 28.25 00-8.008-6.217 5.041 6.52 28.25 008.008 6.217A11.884 7.288-60.76 014.029 7.001" />
+        <path d="M17 21h.01" />
+        <path d="M7 3h.01" />
+        <path d="M7.997 8.891a11.885 7.288-60.756 0111.977 8.107" />
+        <circle cx="12" cy="12" r="1" fill="#ff6b35" stroke="none" />
+      </g>
+    </svg>
+  );
+}
+
 export function ProviderMark({ driverKind, size, className }: IconProps & { driverKind: string }) {
   switch (driverKind) {
+    case "fuigoAgent":
+      return <FuigoMark size={size} className={className} />;
     case "grok":
     case "grokAgent":
       return <GrokMark size={size} className={className} />;
