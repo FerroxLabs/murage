@@ -6,8 +6,11 @@
 // build machine, chooses the binary.
 //
 // The npm `fuigo` entry point is a Node launcher and the real executable
-// arrives brotli-compressed inside the matching `fuigo-<platform>-<arch>`
+// arrives brotli-compressed inside the matching `@fuigo/<platform>-<arch>`
 // optional dependency, decompressed by a postinstall step into ~/.fuigo/bin.
+// Those platform packages were unscoped (`fuigo-<platform>-<arch>`) through
+// 1.0.2 and are scoped from 1.0.4 on; the unscoped names are not published at
+// 1.0.4 at all, so the scope is not cosmetic.
 // Copying out of node_modules would ship either the compressed artifact or a
 // shim that needs Node on the user's machine, so this script fetches the
 // platform package directly and decompresses the real native executable.
@@ -41,39 +44,81 @@ import { brotliDecompressSync } from "node:zlib";
 import { executableTarget, verifySha256 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
 
-export const FUIGO_VERSION = "1.0.2";
+export const FUIGO_VERSION = "1.0.4";
 export const FUIGO_REGISTRY = "https://registry.npmjs.org";
 
 // Pinned to an exact version — never a floating range for a shipped binary.
 // `tarballSha256` covers the published npm tarball; `binarySha256` covers the
 // brotli-decompressed executable that actually ships.
+//
+// All six targets fuigo@1.0.4 declares are pinned here, including the two
+// arm64 ones Murage does not build today. That is deliberate and is NOT an
+// inconsistency with targetsForHost() below: pinning is "this digest has been
+// reviewed", staging is "electron-builder packages this". Keeping the reviewed
+// digest here makes a future builder arch flip a one-line change to
+// targetsForHost rather than a fresh supply-chain review under deadline.
 export const FUIGO_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
-    package: "fuigo-darwin-arm64",
-    tarballSha256: "427c173e43e371952c5648127b9eead94c32afdd88b3579e2d6c30c8326fffbe",
-    binarySha256: "8d8ead462def617c95e1fbdb01847b9115ca97d8f414bac68b768c397e725a28",
+    package: "@fuigo/darwin-arm64",
+    tarballSha256: "07702f9ec1319e16da5453be005180466b5eadb6dbe4946a2958491413d590d7",
+    binarySha256: "689127774818e541141863b3d770e4d8a31e953a944ae5a668b7597b4cf45753",
   }),
   "darwin-x64": Object.freeze({
-    package: "fuigo-darwin-x64",
-    tarballSha256: "8ab3c8a1b856a9316841504ad279fb123edc4816f5c998c039f9e0ff36287b5c",
-    binarySha256: "73d46ce9adf496af2d3264679a1e9f46428f21c3ed30d82dfee1f100777bdddc",
+    package: "@fuigo/darwin-x64",
+    tarballSha256: "65b4bab03b40b1044b0a6c441bd1546864db6b9bfd0378fc06b99dba477b5ab4",
+    binarySha256: "2b9caccf0d77b4026d02c1e61a71850b44f6849574a7ae3c7ece6ead27054c0a",
+  }),
+  "linux-arm64": Object.freeze({
+    package: "@fuigo/linux-arm64",
+    tarballSha256: "f48b0e173fdb0ac0f796ca114f4488e2d3a0674314b0ea9a802ff31a77de721f",
+    binarySha256: "edba09a1071277f5723d151e2d7683285fe8ab2fb0516c5ab1125808e9a064ba",
   }),
   "linux-x64": Object.freeze({
-    package: "fuigo-linux-x64",
-    tarballSha256: "7a0d14eb02a7f481bc81c459c36ac7adfee05d29effffcad48c7f178f9c3af8b",
-    binarySha256: "fc2d483f1cf724f1b69529e5a94b35e4c23209474dc90747c0719c4875887046",
+    package: "@fuigo/linux-x64",
+    tarballSha256: "e243883e149f6bacbf689e92b2ec4c40630080412eb690d7609a9f3c81de72a1",
+    binarySha256: "686a35b59566ae5176083757a9dd962d954729be6c5f30adf862dc28e0fa60bb",
   }),
-  // fuigo declares fuigo-win32-arm64 as an optionalDependency and no such
-  // package is published: the registry still answers {"error":"Not found"} at
-  // 1.0.2, re-checked when this was bumped. Ferrox Labs know and are working
-  // on it, so this is an open upstream issue rather than a mystery. Murage
-  // builds Windows x64 only, so there is nothing to pin for arm64 yet.
+  // The old note here said fuigo-win32-arm64 was declared but unpublished.
+  // That is no longer true: under the scope, @fuigo/win32-arm64@1.0.4 publishes
+  // and resolves normally, re-checked against the live registry at this bump.
+  // The remaining obstacle is on our side, not upstream — see
+  // UNSTAGEABLE_TARGETS.
+  "win32-arm64": Object.freeze({
+    package: "@fuigo/win32-arm64",
+    tarballSha256: "034c5f4f527180fb55169bc261fff3e35d53c593c4c7e14a000800d549450248",
+    binarySha256: "22e03c0f3cfee84efd86488d18614cfddcddf039e69f6493ae50e41cc7698956",
+  }),
   "win32-x64": Object.freeze({
-    package: "fuigo-win32-x64",
-    tarballSha256: "42f6b25d248f12298af322b745118bb1db9c5f0f2cee50f97ff4e0515e5e6792",
-    binarySha256: "81b364b7f9b02ba2c32c94e8c7dc6399fe82b036cea34f0a3ddd6ef1f9a788ac",
+    package: "@fuigo/win32-x64",
+    tarballSha256: "8175bce5860ff200a52e6cd6fbf3e6a6333ab31ff85eaa152df0f4ec1c5c2b70",
+    binarySha256: "29a7a341175abbaf49bd903e08b5c49e733f34fc4c07e98b4810e74b9ecc4d8b",
   }),
 });
+
+// Pinned and digest-reviewed above, but NOT stageable yet. verifyPinnedBinary()
+// parses the real executable header through the shared executableTarget() in
+// prepare-cloudflared.mjs, and that parser classifies only ELF x86-64
+// (e_machine 0x3e) and PE AMD64 (0x8664). The published 1.0.4 arm64 engines are
+// ELF aarch64 (0xb7) and PE ARM64 (0xaa64) — read off the real downloaded bytes,
+// not assumed — so staging either one would download ~40MB, pass the tarball
+// digest, then die inside a cloudflared-worded "unsupported executable format"
+// before the binary digest was ever compared. Refuse up front instead.
+//
+// The refusal lives here rather than in a second header parser on purpose: one
+// parser is exactly why executableTarget is imported. Teaching it those two
+// machine values deletes this set and nothing else.
+const UNSTAGEABLE_TARGETS = Object.freeze(new Set(["linux-arm64", "win32-arm64"]));
+
+/** A target must be both pinned and classifiable by the shared header parser
+ * before anything tries to fetch it. */
+function assertStageable(target) {
+  if (!Object.hasOwn(FUIGO_ASSETS, target)) throw new Error(`No pinned fuigo asset for ${target}`);
+  if (UNSTAGEABLE_TARGETS.has(target)) {
+    throw new Error(
+      `fuigo ${target} is pinned but not yet stageable: executableTarget() cannot classify its header`,
+    );
+  }
+}
 
 /** The staged file name, taken from the one declaration of it so the staged
  * tree, the electron-builder `to:` basename and the name the server reads can
@@ -89,10 +134,20 @@ function vendorEntry(target) {
   return `package/bin/${fuigoExecutableName(target)}.br`;
 }
 
+/** npm names a scoped package's tarball after the UNSCOPED half of the name:
+ * `@fuigo/darwin-arm64` publishes at
+ * `@fuigo/darwin-arm64/-/darwin-arm64-1.0.4.tgz`. Building the basename from
+ * the full package id would request `@fuigo/darwin-arm64-1.0.4.tgz`, which
+ * 404s, and would also push a `/` into the MURAGE_FUIGO_ARCHIVE_DIR cache
+ * path. */
+function unscopedPackageName(packageName) {
+  return packageName.slice(packageName.lastIndexOf("/") + 1);
+}
+
 export function tarballName(target) {
   const asset = FUIGO_ASSETS[target];
   if (!asset) throw new Error(`No pinned fuigo asset for ${target}`);
-  return `${asset.package}-${FUIGO_VERSION}.tgz`;
+  return `${unscopedPackageName(asset.package)}-${FUIGO_VERSION}.tgz`;
 }
 
 export function tarballUrl(target) {
@@ -101,7 +156,11 @@ export function tarballUrl(target) {
   return `${FUIGO_REGISTRY}/${asset.package}/-/${tarballName(target)}`;
 }
 
-/** Every target the desktop build for `platform` packages. */
+/** Every target the desktop build for `platform` packages. This deliberately
+ * covers LESS than FUIGO_ASSETS: electron-builder.yml builds macOS at arm64 and
+ * x64, but Windows (nsis + zip) and Linux (AppImage + deb) at x64 only. The two
+ * arm64 entries are pinned-and-reviewed, not staged by default. Do not "fix"
+ * the apparent mismatch by widening this — widen electron-builder.yml first. */
 export function targetsForHost(platform) {
   if (platform === "darwin") return ["darwin-arm64", "darwin-x64"];
   if (platform === "linux") return ["linux-x64"];
@@ -111,7 +170,14 @@ export function targetsForHost(platform) {
 
 export function targetForCurrentHost(platform = process.platform, arch = process.arch) {
   const target = `${platform}-${arch}`;
-  if (!Object.hasOwn(FUIGO_ASSETS, target)) {
+  // Windows and Linux arm64 hosts stay refused even now that both engines are
+  // pinned, because staging on them cannot succeed: the shared header parser
+  // rejects ELF aarch64 and PE ARM64 (see UNSTAGEABLE_TARGETS). Refusing at
+  // argument time is a clear "unsupported"; allowing it would swap that for a
+  // long download ending in a misleading cloudflared error. The day
+  // executableTarget learns those two machine values, this stops refusing on
+  // its own with no edit here.
+  if (!Object.hasOwn(FUIGO_ASSETS, target) || UNSTAGEABLE_TARGETS.has(target)) {
     throw new Error(`Fuigo development is unsupported on ${target}`);
   }
   return target;
@@ -127,9 +193,7 @@ export function targetsForPreparation({
   arch = process.arch,
 } = {}) {
   if (targets.length > 0) {
-    for (const target of targets) {
-      if (!Object.hasOwn(FUIGO_ASSETS, target)) throw new Error(`No pinned fuigo asset for ${target}`);
-    }
+    for (const target of targets) assertStageable(target);
     return [...new Set(targets)];
   }
   return current ? [targetForCurrentHost(platform, arch)] : targetsForHost(platform);
@@ -250,8 +314,8 @@ export function stagedDirectory(root, target) {
 }
 
 async function stageTarget(root, target) {
+  assertStageable(target);
   const asset = FUIGO_ASSETS[target];
-  if (!asset) throw new Error(`No pinned fuigo asset for ${target}`);
 
   const finalDirectory = stagedDirectory(root, target);
   const executable = fuigoExecutableName(target);
