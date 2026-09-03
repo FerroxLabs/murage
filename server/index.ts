@@ -5279,6 +5279,13 @@ let providerConfigBusy = false;
 const CATALOG_SEARCH_TTL_MS = 60_000;
 let catalogSearchMemo: { at: number; teams: SearchableTeam[] } | null = null;
 
+/** Bumped every time the catalogue is actually re-read. Anything that caches a
+ *  DERIVED answer stamps this and re-derives when it moves, which is the only
+ *  way such a cache can promise not to outlive the catalogue it was computed
+ *  from — two equal-length TTLs do not, because they start at different
+ *  moments. See `intakeCandidateMemo`. */
+let catalogSearchEpoch = 0;
+
 async function catalogForSearch(): Promise<SearchableTeam[]> {
   if (catalogSearchMemo && Date.now() - catalogSearchMemo.at < CATALOG_SEARCH_TTL_MS) {
     return catalogSearchMemo.teams;
@@ -5286,6 +5293,7 @@ async function catalogForSearch(): Promise<SearchableTeam[]> {
   try {
     const catalog = await fetchTeamCatalog();
     catalogSearchMemo = { at: Date.now(), teams: catalog.teams };
+    catalogSearchEpoch += 1;
     return catalog.teams;
   } catch {
     return catalogSearchMemo?.teams ?? [];
@@ -5530,17 +5538,30 @@ interface IntakeCandidateSets {
  *  the lane note: exporting the strength tier from `onboarding-intake.ts`
  *  takes the same query to ~19ms.
  *
- *  The TTL is the catalogue memo's own, so a background refresh can never be
- *  masked for longer by this than by the read it depends on. */
-const intakeCandidateMemo = new Map<string, { at: number; sets: IntakeCandidateSets }>();
+ *  Keyed on the catalogue EPOCH as well as a TTL. The comment here used to
+ *  claim the shared TTL length was enough to stop this masking a refresh; a
+ *  cross-audit showed it is not, because the two caches stamp at different
+ *  moments and a stale answer could outlive its catalogue by a further ~60s. */
+const intakeCandidateMemo = new Map<string, { at: number; epoch: number; sets: IntakeCandidateSets }>();
 const INTAKE_CANDIDATE_MEMO_MAX = 64;
 
 async function intakeCandidates(query: string): Promise<IntakeCandidateSets> {
   const cached = intakeCandidateMemo.get(query);
-  if (cached && Date.now() - cached.at < CATALOG_SEARCH_TTL_MS) return cached.sets;
+  // The EPOCH, not just the TTL. Both caches used a 60s TTL, but they stamp at
+  // different moments: a classification made at t=59s against catalogue A stays
+  // served until t=119s, ~60s AFTER the catalogue refreshed to B. Matching
+  // durations are not a shared lifetime. `team-library.ts:229` deliberately
+  // re-reads the catalogue every call for exactly this reason; caching a
+  // derived answer here re-introduced the staleness it was avoiding.
+  if (cached && cached.epoch === catalogSearchEpoch && Date.now() - cached.at < CATALOG_SEARCH_TTL_MS) {
+    return cached.sets;
+  }
   const sets = await classifyIntakeCandidates(query);
   if (intakeCandidateMemo.size >= INTAKE_CANDIDATE_MEMO_MAX) intakeCandidateMemo.clear();
-  intakeCandidateMemo.set(query, { at: Date.now(), sets });
+  // Stamped AFTER classification, which has just called catalogForSearch() and
+  // may itself have advanced the epoch — so the entry records the catalogue it
+  // was actually computed from, never the one that was current before.
+  intakeCandidateMemo.set(query, { at: Date.now(), epoch: catalogSearchEpoch, sets });
   return sets;
 }
 
