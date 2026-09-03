@@ -23,6 +23,24 @@ command that writes; the orchestrator commits by explicit path.
   had ogg/webm support backwards, a premise asserting behaviour that never
   existed, a wrong hypothesis about credential allowlisting, and a third wiring
   point whose absence would have shipped a feature that did nothing.
+- **Run the FULL suite before you believe you are done, and bisect against a
+  worktree rather than reasoning.** Three defects last night were invisible to
+  every targeted run: a fix of mine that emptied `defaultSelection` (surfacing
+  as a SECURITY message about an approval gate, which had nothing to do with
+  the cause), a mic silently gated on a Flux key, and a flaky assertion that
+  killed all 31 tests in its file and reported "Hook timed out". The habit that
+  settled each in minutes:
+      git worktree add --detach /tmp/base <commit-before-your-work>
+      ln -s "$PWD/node_modules" /tmp/base/node_modules
+      cd /tmp/base && npx vitest run <the failing file>
+  Passing there and failing on HEAD is proof it is yours. Two plausible
+  hypotheses were discarded that way before the real cause was found.
+- **Cleanup that depends on the happy path turns a flake into a file-wide
+  failure**, and reports it at the wrong place. A test held a gate open and
+  released it only on success; when its own deadline fired first, two requests
+  stayed parked forever, `afterAll` could not close the server, and the FILE
+  died with a hook timeout. Release in `beforeEach`, unconditionally, and put a
+  deadline on every `while` that waits for something.
 - **Registering a thing is not creating a thing — verify by BOOTING, not by
   testing.** The worst defect of the night: a driver was added to
   `BUILT_IN_DRIVERS`, every unit test passed, the commit was titled "X is an
