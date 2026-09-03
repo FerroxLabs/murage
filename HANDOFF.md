@@ -148,6 +148,31 @@ Four of my own written claims were wrong and are corrected in place rather than
 left standing: the ogg/webm support order, a `fluxConfigured` justification, a
 memo-TTL guarantee, and a comment about vite not collecting `shared/`.
 
+## KNOWN RED, and it is NOT from this session — check before you chase it
+
+`server/index.test.ts` fails, and it failed **at `d8e04876`, before any of this
+session's work**. Verified by worktree, not assumed:
+
+    git worktree add --detach /tmp/base d8e04876
+    ln -s "$PWD/node_modules" /tmp/base/node_modules
+    cd /tmp/base && npx vitest run server/index.test.ts
+
+At that commit it produced three failures, including *"applies browser disable
+effects before reporting a removed-profile cleanup failure"* (`:3889`). On HEAD
+it produces a DIFFERENT set, including *"team import is additive-only"* expecting
+`Mira 2` and getting `Mira 4`. **Different failures on different runs means the
+file is order- or state-dependent**, on top of carrying at least one real
+pre-existing failure.
+
+Do not attribute it to whatever you just changed, and do not "fix" the Mira
+numbering — a name colliding at `Mira 4` instead of `Mira 2` means two extra
+Miras existed when the import ran, which is a leak in the fixture, not in the
+importer. Worth its own session with the bisect recipe above.
+
+Everything else in the suite is green: 4,301 of 4,327 at the last full run, with
+the remainder traced to this file plus two defects that were found and fixed
+(`server/unattended.test.ts` and `src/lib/flux-invite.test.ts`).
+
 ## QUEUE — what is actually left
 
 The six-item queue from the previous handoff is DONE except where an external
