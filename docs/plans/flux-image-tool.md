@@ -1,15 +1,24 @@
 # Image generation on the Flux key: spec
 
 Status: SPEC, not built. Written 2026-09-03 against flux-router at ~/dev/flux.
+REVISED 2026-09-03 after flux-router's reply
+(~/dev/flux-router-evidence/REPLY-TO-MURAGE-2026-09-03.md). Three of our four
+requests came back already-fixed. The revisions below are theirs, not ours.
 
 ## The problem this exists to avoid
 
-`flux-image` is a BILLING TIER name, not a routable alias. Sent as a model it is
-absent from `_IMAGE_ALIAS_TO_PROVIDER` (capability_image.py:89-111), so
-`resolve_capability_provider` falls to the Standard canonical, which is always
-Together FLUX.1-schnell, the cheapest arm. It returns 200 and warns nobody.
-Wayland ships that id today and has been silently generating bottom-tier images
-while believing the router picks a good arm per request.
+We reported that `flux-image` was a billing tier name that fell through to the
+cheapest arm and answered 200. The mechanism was right and **the consequence was
+worse**: Together retired FLUX.1-schnell, so from **2026-07-17** that route was
+not quietly downgrading, it was returning 502. Six weeks dead, not cheap.
+
+Fixed on their side: `flux-image` is now an explicit alias resolving to
+`nano-banana-2` -> `gemini-3.1-flash-image`. The genuine tier names
+(`flux-fast`, `flux-standard`, `flux-reasoning`, `flux-auto`) are excluded from
+the image capability set and can never appear in our picker as image models.
+
+The rule this spec was built on still stands and is now cheap to keep: send a
+resolved alias, never a tier, and never accept a silent substitution.
 
 Every decision below is downstream of one rule: **never send a name the router
 might not resolve, and never accept a silent substitution.**
@@ -23,21 +32,33 @@ broken until Flux catches up, or worse, ships a name that silently degrades.
 So Murage asks Flux what exists, at catalog-refresh time, on the user's own key.
 `GET /v1/models` already exists and is authenticated.
 
-**ACTION ON THE FLUX SIDE, and this is the cheap half of the whole feature:**
-`/v1/models` must advertise the image aliases, with a capability marker and a
-list price. Then `nano-banana-2` and `gpt-image-2` appear in Murage the moment
-they ship, with no Murage release and no code change. Without it, every new arm
-needs a Murage build, which is the treadmill this design exists to avoid.
+**DONE ON THE FLUX SIDE.** Built, not yet rolled. Every row now carries
+`capability` (chat | image | audio), `display_name`, `list_price_microcents` and
+`entitlement` (open | paid_cleared | premium_locked), derived from the same
+dispatch map and pricing config the request path uses so it cannot drift.
 
-Fallback when discovery fails (offline, older router, 401): a small static seed
-of the aliases known good today, marked as a seed in the UI. Never a bare tier.
+Two of their design notes change what we build:
+
+- **`entitlement` fails OPEN.** A wrongly-greyed-out model is a worse lie than an
+  optimistic one the route then refuses with a clear 402. So we may use it to
+  ORDER and to warn, but we must not hard-disable on it, and 402 must stay a
+  first-class handled state (D7) rather than something the marker prevents.
+- **`max_input_tokens` / `max_output_tokens` are deliberately absent** on image
+  and audio rows. LiteLLM stamps a meaningless 4096 default there. Do not size
+  anything against those fields.
+
+Drop the static seed and the unverified-price labelling once they confirm the
+roll. Until then the seed stands, minus the retired arm (see D2).
 
 ## D2. The default is a PREFERENCE that resolves, and never substitutes silently
 
-Configured default: `nano-banana-2` per the owner.
+Configured default: **`flux-image-nano-banana-2`**, which is Google's
+`gemini-3.1-flash-image`. It EXISTS TODAY and resolves, so the default is live
+rather than aspirational.
 
-It does not exist yet. So the default is stored as a preference and resolved
-against the discovered list at use time:
+The preference-resolves-at-use-time machinery still stands, because two arms are
+withheld and one was retired mid-flight. That is precisely the class of event it
+exists for:
 - available    -> use it
 - unavailable  -> use the declared next-best AND say so in Settings, naming both
                   what was asked for and what is being used
@@ -45,9 +66,27 @@ against the discovered list at use time:
 Silent substitution is the `flux-image` bug wearing a different hat. The user
 must be able to see that their chosen model is not the one running.
 
-Declared order when the preference is unavailable, best quality first:
-`nano-banana-2`, `gpt-image-2`, `nano-banana-pro-2k`, `gpt-image-high`,
-`nano-banana`, `gpt-image-med`, `together-flux`. Revisit when 2-series lands.
+Declared order when the preference is unavailable, best first:
+
+  flux-image-nano-banana-2      DEFAULT, live
+  flux-image-gpt2               granted
+  flux-image-nano-banana-pro-2k
+  flux-image-gpt2-low           granted
+  flux-image-gpt-high
+  flux-image-nano-banana
+  flux-image-gpt-med
+
+**NEVER OFFER, and this is load bearing:**
+- `flux-image-gpt2-high` and `flux-image-gpt2-xl` are WIRED, PRICED AND
+  WITHHELD. Measured 164.7s at high against a ~100s Cloudflare edge cap, so they
+  would 524 for every caller. Streaming unblocks them; flux-router will tell us
+  when they open. Building a picker entry against either ships a row that always
+  fails.
+- `together-flux` / FLUX.1-schnell is RETIRED and answers 400. It was in this
+  spec's first draft as the cheap floor. Removed.
+
+Because arms appear and disappear, the picker renders the DISCOVERED list and
+this order is only a preference resolver, never a hardcoded menu.
 
 ## D3. Explicit aliases only, always
 
@@ -74,15 +113,15 @@ square, portrait, story, banner, subject to the provider accepting them.
 
 From `config/capability-pricing.yaml`, list price per image:
 
-  together-flux        cheapest tier
+  nano-banana-2        $0.0806   DEFAULT (80640 microcents, per their reply)
   gpt-image-med        $0.05
   nano-banana          $0.06
   gpt-image-high       $0.20
   nano-banana-pro-2k   $0.20
   gpt-image-high-xl    $0.30
   nano-banana-pro-4k   $0.36
-  gpt-image-2          TBD, arm being added
-  nano-banana-2        TBD, arm being added
+  gpt2 arms            from discovery once rolled
+  together-flux        RETIRED, do not list
 
 Prices come from discovery where D1 lands, from this table until then. A price
 shown from the static seed is labelled as such: a stale price is worse than no
