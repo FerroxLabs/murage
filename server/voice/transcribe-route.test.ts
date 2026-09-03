@@ -47,6 +47,14 @@ let answer: { ok: Transcript } | { throws: unknown } = {
 
 /** Held open by the concurrency test so two clips can be in flight at once. */
 let gate: Promise<void> | null = null;
+/** Always callable, so a test that fails BEFORE its own release() cannot
+ *  strand two requests parked on a promise nobody will ever resolve. That is
+ *  not hypothetical: it stranded them, `afterAll` blocked closing the server,
+ *  and the whole FILE died on "Hook timed out in 30000ms" — but only in the
+ *  full suite, because only there was the machine slow enough to miss the
+ *  8s deadline in the first place. A cleanup that depends on the happy path
+ *  turns one flaky assertion into a file-wide failure. */
+let releaseGate: () => void = () => {};
 /** A fresh budget per test — a rolling window is deliberately stateful, and
  *  a suite that shared one would have its result depend on file order. */
 let budget = createVoiceBudget();
@@ -113,6 +121,8 @@ beforeAll(async () => {
 beforeEach(() => {
   seen = [];
   completions = 0;
+  releaseGate();
+  releaseGate = () => {};
   gate = null;
   budget = createVoiceBudget();
   answer = { ok: { text: "ship it", language: "en", duration: 3.2, model: "flux-voice-fast", billedSeconds: 4 } };
@@ -494,10 +504,20 @@ describe("what stops a stolen pairing token from spending the voice account", ()
     gate = new Promise<void>((r) => {
       release = r;
     });
+    releaseGate = release;
     const first = post(CLIP);
     const second = post(CLIP);
-    // both must be INSIDE transcribe before the third arrives
-    while (seen.length < 2) await new Promise((r) => setTimeout(r, 10));
+    // Both must be INSIDE transcribe before the third arrives. DEADLINED, not
+    // an open `while`: under full-suite load the two can be slow to arrive,
+    // and an unbounded spin turns "the machine was busy" into a hang that
+    // reads as a product bug. Say which it was instead.
+    const deadline = Date.now() + 5_000;
+    while (seen.length < 2) {
+      if (Date.now() > deadline) {
+        throw new Error(`only ${seen.length} of 2 clips reached transcribe in 5s — the machine was slow, not the cap`);
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
     const third = await post(CLIP);
     expect(third.status).toBe(429);
     const body = await bodyOf(third);
