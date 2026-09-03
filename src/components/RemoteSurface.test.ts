@@ -63,14 +63,26 @@ describe("the surface answer has three states and the third is not 'desktop'", (
     expect(resolveDesktopSurface(undefined, { platform: "darwin" })).toBe(true);
     // Absence proves nothing: that is also the desktop against Vite.
     expect(resolveDesktopSurface(undefined, null)).toBeUndefined();
-    // And a confirmed remote is never overridden by anything.
-    expect(resolveDesktopSurface("remote", { platform: "darwin" })).toBe(false);
+    // ...and it OUTRANKS a fetched "remote", which is the case that bit.
+    //
+    // This assertion was the other way round and it shipped a real bug. The
+    // harness began requiring a per-launch secret to prove the desktop, and a
+    // renderer served as a production bundle by a harness it did not fork has
+    // no way to hold that secret — so the real desktop asked "am I the
+    // desktop?", was told no, and hid Connections, Engines, Phone and Local VM
+    // from the machine that owns them. A fetch saying "remote" to something
+    // holding the preload bridge is a plumbing failure, not a surface.
+    expect(resolveDesktopSurface("remote", { platform: "darwin" })).toBe(true);
   });
 
-  it("keeps the harness as the test, not the bridge", () => {
-    // The bridge is read in exactly one direction, in exactly one place.
-    expect(hook).toContain("if (answer !== undefined) return answer === \"desktop\";");
-    expect(hook).toContain("return bridge ? true : undefined;");
+  it("reads the bridge in one direction only", () => {
+    // Presence answers desktop. Absence answers nothing — that is also the
+    // desktop against the Vite dev server, which is why the harness is asked
+    // at all.
+    expect(resolveDesktopSurface(undefined, null)).toBeUndefined();
+    expect(resolveDesktopSurface(undefined, undefined)).toBeUndefined();
+    expect(resolveDesktopSurface("remote", null)).toBe(false);
+    expect(hook).toContain("if (bridge) return true;");
     expect(hook).not.toContain("=== \"remote\" : ");
   });
 });
