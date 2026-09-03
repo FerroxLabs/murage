@@ -3,6 +3,7 @@ import { Check, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
 import { imageAttachmentFromFile } from "@/lib/composer-attachments";
+import { AVATAR_COPY, avatarGeneratorPlan, type AvatarGeneratorPlan } from "@/lib/avatar-generation";
 import { cn } from "@/lib/cn";
 import {
   PICKABLE_STATES,
@@ -51,7 +52,16 @@ export function BotProfileAvatarCard({
   const crop = bot.avatarCrop ?? "mascot";
   const cropRef = useRef(crop);
   cropRef.current = crop;
-  const imageConfigured = state.config?.imageGen?.configured === true;
+  const [lastAttemptFailed, setLastAttemptFailed] = useState(false);
+  // `state.config` is null until GET /api/config answers. Both facts stay null
+  // until then rather than defaulting to "no key", so a machine that has a Flux
+  // key never shows another provider's name for a frame. See providerFor.
+  const config = state.config;
+  const plan = avatarGeneratorPlan({
+    flux: config ? config.flux?.configured === true : null,
+    openAiImageKey: config ? config.imageGen?.configured === true : null,
+    lastAttemptFailed,
+  });
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
@@ -119,8 +129,13 @@ export function BotProfileAvatarCard({
             ? (result.bot.avatarCrop ?? "circle")
             : latestCrop,
       });
+      setLastAttemptFailed(false);
     } catch (generateError) {
       setError(generateError instanceof Error ? generateError.message : String(generateError));
+      // A failed attempt is what un-hides the OpenAI key drawer on a Flux
+      // workspace. Flux answers 402 for an account that is not on a paid plan,
+      // and this panel is the only place an OpenAI image key can be entered.
+      setLastAttemptFailed(true);
     } finally {
       setGenerating(false);
     }
@@ -249,89 +264,145 @@ export function BotProfileAvatarCard({
           </>
         )}
 
-        <div className="mt-5 border-t border-hairline/40 pt-4">
-          <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
-            <Sparkles size={14} className="text-accent" /> Generate with GPT Image 2
-          </div>
-          <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
-            Uses a low-quality square draft to keep cost down. OpenAI bills your API account.
-          </div>
-
-          {!imageConfigured ? (
-            <div className="mt-3">
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={imageKey}
-                  onChange={(event) => setImageKey(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && void saveImageKey()}
-                  placeholder="Paste OpenAI image API key"
-                  aria-label="OpenAI image API key"
-                  autoComplete="off"
-                  className="min-w-0 flex-1 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => void saveImageKey()}
-                  disabled={savingKey || !imageKey.trim()}
-                  className="flex w-[72px] items-center justify-center gap-1.5 rounded-lg bg-control text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50"
-                >
-                  {savingKey ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} /> Save</>}
-                </button>
-              </div>
-              <div className="mt-1.5 text-[11px] text-ink-secondary">Stored in the operating system's encrypted credential store in the installed app.</div>
-            </div>
-          ) : (
-            <div className="mt-3">
-              <textarea
-                value={direction}
-                onChange={(event) => setDirection(event.target.value.slice(0, 400))}
-                maxLength={400}
-                placeholder={`Optional direction, e.g. “a calm navigator inspired by ${bot.title || bot.name}”`}
-                aria-label="Avatar generation direction"
-                className="min-h-[72px] w-full resize-none rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-              />
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-[11px] tabular-nums text-ink-secondary">{direction.length}/400</span>
-                <button
-                  type="button"
-                  onClick={() => void generate()}
-                  disabled={generating || uploading}
-                  className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-50"
-                >
-                  {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  {generating ? "Generating…" : "Generate avatar"}
-                </button>
-              </div>
-              <details className="mt-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-                <summary className="cursor-pointer text-[11.5px] text-ink-secondary">Replace OpenAI image key</summary>
-                <div className="mt-2 flex gap-2">
-                  <input
-                    type="password"
-                    value={imageKey}
-                    onChange={(event) => setImageKey(event.target.value)}
-                    onKeyDown={(event) => event.key === "Enter" && void saveImageKey()}
-                    placeholder="Paste replacement key"
-                    aria-label="Replacement OpenAI image API key"
-                    autoComplete="off"
-                    className="min-w-0 flex-1 rounded-lg border border-hairline/40 bg-card px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void saveImageKey()}
-                    disabled={savingKey || !imageKey.trim()}
-                    className="flex w-[72px] items-center justify-center gap-1.5 rounded-lg bg-control text-[12px] text-ink hover:bg-raised-hover disabled:opacity-50"
-                  >
-                    {savingKey ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} /> Save</>}
-                  </button>
-                </div>
-              </details>
-            </div>
-          )}
-        </div>
+        <AvatarGenerateSection
+          plan={plan}
+          direction={direction}
+          onDirection={setDirection}
+          directionPlaceholder={`Optional direction, e.g. \u201Ca calm navigator inspired by ${bot.title || bot.name}\u201D`}
+          generating={generating}
+          uploading={uploading}
+          onGenerate={() => void generate()}
+          imageKey={imageKey}
+          onImageKey={setImageKey}
+          savingKey={savingKey}
+          onSaveKey={() => void saveImageKey()}
+          onOpenSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+        />
 
         {error && <div role="alert" className="mt-3 text-[12px] text-danger">{error}</div>}
       </div>
+    </div>
+  );
+}
+
+export interface AvatarGenerateSectionProps {
+  plan: AvatarGeneratorPlan;
+  direction: string;
+  onDirection: (value: string) => void;
+  directionPlaceholder: string;
+  generating: boolean;
+  uploading: boolean;
+  onGenerate: () => void;
+  imageKey: string;
+  onImageKey: (value: string) => void;
+  savingKey: boolean;
+  onSaveKey: () => void;
+  /** Opens Settings at Connections, where the single Flux key field lives. */
+  onOpenSettings: () => void;
+}
+
+/**
+ * Rendering only, so every state of the panel can be asserted without a store
+ * or a DOM — the same split FluxInviteBody and SkillsBody use. Which state it
+ * is in is `avatarGeneratorPlan`'s answer, never a condition written here.
+ */
+export function AvatarGenerateSection({
+  plan,
+  direction,
+  onDirection,
+  directionPlaceholder,
+  generating,
+  uploading,
+  onGenerate,
+  imageKey,
+  onImageKey,
+  savingKey,
+  onSaveKey,
+  onOpenSettings,
+}: AvatarGenerateSectionProps) {
+  const keyField = (placeholder: string, label: string, background: string) => (
+    <div className="flex gap-2">
+      <input
+        type="password"
+        value={imageKey}
+        onChange={(event) => onImageKey(event.target.value)}
+        onKeyDown={(event) => event.key === "Enter" && onSaveKey()}
+        placeholder={placeholder}
+        aria-label={label}
+        autoComplete="off"
+        className={cn(
+          "min-w-0 flex-1 rounded-lg border border-hairline/40 px-3 py-2 text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none",
+          background,
+        )}
+      />
+      <button
+        type="button"
+        onClick={onSaveKey}
+        disabled={savingKey || !imageKey.trim()}
+        className="flex w-[72px] items-center justify-center gap-1.5 rounded-lg bg-control text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50"
+      >
+        {savingKey ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} /> Save</>}
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="mt-5 border-t border-hairline/40 pt-4">
+      <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
+        <Sparkles size={14} className="text-accent" /> {plan.heading}
+      </div>
+      <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{plan.body}</div>
+      {plan.fluxHint && (
+        <div className="mt-1.5 text-[11.5px] leading-relaxed text-ink-secondary">
+          {plan.fluxHint}{" "}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="text-accent underline underline-offset-2 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+          >
+            {AVATAR_COPY.fluxHintAction}
+          </button>
+        </div>
+      )}
+
+      {plan.showKeyField && (
+        <div className="mt-3">
+          {keyField("Paste OpenAI image API key", "OpenAI image API key", "bg-inset")}
+          <div className="mt-1.5 text-[11px] text-ink-secondary">Stored in the operating system's encrypted credential store in the installed app.</div>
+        </div>
+      )}
+
+      {plan.canGenerate && (
+        <div className="mt-3">
+          <textarea
+            value={direction}
+            onChange={(event) => onDirection(event.target.value.slice(0, 400))}
+            maxLength={400}
+            placeholder={directionPlaceholder}
+            aria-label="Avatar generation direction"
+            className="min-h-[72px] w-full resize-none rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className="text-[11px] tabular-nums text-ink-secondary">{direction.length}/400</span>
+            <button
+              type="button"
+              onClick={onGenerate}
+              disabled={generating || uploading}
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+            >
+              {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              {generating ? "Generating\u2026" : "Generate avatar"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {plan.showKeyDrawer && (
+        <details className="mt-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+          <summary className="cursor-pointer text-[11.5px] text-ink-secondary">{AVATAR_COPY.keyDrawerLabel}</summary>
+          <div className="mt-2">{keyField("Paste replacement key", "Replacement OpenAI image API key", "bg-card")}</div>
+        </details>
+      )}
     </div>
   );
 }

@@ -114,18 +114,58 @@ describe("copy rules", () => {
     expect(() => expect("a — dash").not.toContain("—")).toThrow();
   });
 
-  it("promises only what the code delivers", () => {
-    // server/flux-surface.ts routes MODELS, on three engines. It is not voice
-    // (server tts), not image generation (server imageGen), and not every
-    // agent: opencode, qoder, droid, auggie, copilot, kiro and vibe are
-    // deliberately absent from FLUX_SURFACE.
+  it("promises only what Murage actually routes today", () => {
+    // WHY THE GUARD THAT USED TO BE HERE WAS WRONG, so nobody restores it.
+    //
+    // It read `expect(claims).not.toMatch(/voice|speech|image|picture|avatar/)`
+    // and its comment said Flux "is not voice, not image generation". That was
+    // a claim about FLUX, and it was false. FluxRouter serves a metered
+    // POST /v1/images/generations (flux-router/src/images_route.py) across
+    // seven provider arms (capability_image.py), and an audio route besides.
+    // Probed live 2026-09-03: an unauthenticated POST to
+    // https://api.fluxrouter.ai/v1/images/generations answers 401
+    // {"error":{"message":"unauthorized"}}, which is that handler's own 401 and
+    // only runs AFTER the FLUX_CAP_IMAGE_ENABLED dark gate would have returned
+    // 404. The capability is live, so a blanket ban on the word "image" was
+    // guarding a fact that was not true.
+    //
+    // The real risk was never "Flux cannot do this". It is "MURAGE DOES NOT
+    // ROUTE THIS YET" — copy that sends someone to a key that then does
+    // nothing. So the list below is unrouted CAPABILITIES, and whether images
+    // count is read off the code rather than off anybody's belief. An entry
+    // leaves this list in the same change that wires it.
+    const avatarSource = readFileSync(join(srcRoot, "..", "server", "avatar-image.ts"), "utf8");
+    const routesImages = /images\/generations/.test(avatarSource) && /flux/i.test(avatarSource);
+
+    const unrouted: [string, RegExp][] = [
+      // Voice is being wired separately and is NOT this key yet: `tts` is its
+      // own credential (server/config.ts) and nothing in tts.ts reads
+      // flux-config.ts. Delete this row in the change that routes it.
+      ["voice", /voice|speech|speak|out loud/],
+      ["video", /video/],
+    ];
+    if (!routesImages) unrouted.push(["image generation", /image|picture|avatar/]);
+    const promises = (copy: string) =>
+      unrouted.filter(([, pattern]) => pattern.test(copy)).map(([name]) => name);
+
     const claims = [FLUX_COPY.keyHelp, FLUX_COPY.inviteBody].join(" ").toLowerCase();
-    expect(claims).not.toMatch(/voice|speech|image|picture|avatar/);
+    expect(promises(claims)).toEqual([]);
     expect(claims).not.toMatch(/every (agent|bot|engine)|all (agents|bots|engines)/);
     // and it does name the three engines that are actually routable
     expect(claims).toContain("claude");
     expect(claims).toContain("codex");
     expect(claims).toContain("qwen");
+
+    // POSITIVE control, unrouted side: copy that promised speech would fail.
+    expect(promises("your bots can speak their replies out loud")).toEqual(["voice"]);
+    // POSITIVE control, routed side: images are wired, so naming them is
+    // allowed now — and the SAME sentence is caught the moment they are not.
+    expect(routesImages).toBe(true);
+    expect(promises("it also draws your bot avatars")).toEqual([]);
+    const asIfUnwired: [string, RegExp][] = [...unrouted, ["image generation", /image|picture|avatar/]];
+    expect(
+      asIfUnwired.filter(([, pattern]) => pattern.test("it also draws your bot avatars")).map(([name]) => name),
+    ).toEqual(["image generation"]);
   });
 
   it("says what the person gets, not what the system is", () => {
@@ -137,9 +177,18 @@ describe("copy rules", () => {
 describe("nothing in the app is gated on a Flux key", () => {
   // Murage's engines are separately authenticated: a signed-in Claude, Codex
   // or Gemini CLI is what makes the app work. A Flux key is additive, so no
-  // surface outside the card that enters it and the offer that points at the
-  // card may condition anything on it.
+  // surface outside the card that enters it, the offer that points at the card,
+  // and the one panel whose work the key actually performs may condition
+  // anything on it.
+  //
+  // BotProfileAvatarCard was added to this list deliberately, not to quiet a
+  // failure. Avatar generation now routes at Flux when a Flux key exists
+  // (server/avatar-image.ts), so the panel has to name the provider that will
+  // really send the bill. It is NOT gated: with no Flux key the panel keeps the
+  // OpenAI image key path exactly as it was and only adds a pointer to
+  // Settings. A new entry here has to clear that same bar.
   const OWNERS = new Set([
+    "components/BotProfileAvatarCard.tsx",
     "components/FluxKeyCard.tsx",
     "components/FluxInvite.tsx",
     "lib/flux-invite.ts",
