@@ -39,6 +39,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseBotPackage } from "../server/bot-package.ts";
+import { checkLibrarySkill } from "../server/skills.ts";
 import { TEAM_LIBRARY_REPOSITORY, parseTeamCatalog } from "../server/team-library.ts";
 
 export const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -56,16 +57,26 @@ const clamp = (value, max) => {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 };
 
-/** A skill id installs only if skills-library ships BOTH files installSkillFromLibrary
- *  demands (server/skills.ts:763-773). Anything else is advertising. */
-function installableSkillIds(root) {
+/** A skill id installs only if it survives EVERY rule installSkillFromLibrary
+ *  applies — so this asks the installer's own checker rather than restating a
+ *  subset of it (server/skills.ts checkLibrarySkill).
+ *
+ *  This used to test `existsSync(SKILL.md) && existsSync(manifest.json)` while
+ *  claiming to match the installer. It did not: both files can be present and
+ *  the install still fail, most easily when SKILL.md's frontmatter `name`
+ *  disagrees with the directory id — the state nine shipped skills were in.
+ *  A catalog built on the loose test can therefore advertise a skill whose
+ *  "Set this up" button fails, which is the exact dishonesty the `dangling`
+ *  report at the bottom of this file exists to prevent. One rule set, owned by
+ *  the installer, used by both. */
+export function installableSkillIds(root) {
   if (!existsSync(root)) return new Set();
-  return new Set(
-    readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .filter((id) => existsSync(join(root, id, "SKILL.md")) && existsSync(join(root, id, "manifest.json"))),
-  );
+  const installable = new Set();
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (!("error" in checkLibrarySkill(entry.name, root))) installable.add(entry.name);
+  }
+  return installable;
 }
 
 /** Every local source document, in a stable order: profiles first (matching the
