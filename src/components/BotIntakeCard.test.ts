@@ -160,9 +160,19 @@ describe("the name is kept unless the person says otherwise", () => {
 });
 
 describe("the phone is told the truth before the press, not after", () => {
-  it("asks the harness which door this renderer came through", () => {
-    expect(card).toContain('from "@/lib/surface"');
-    expect(card).toContain("knownSurface()");
+  it("uses the SHARED surface hook, and keeps no copy of its own", () => {
+    // This asserted `from "@/lib/surface"` and `knownSurface()` — the card's
+    // own private four-line hook, which asked the harness and never checked
+    // the Electron preload bridge. On the desktop, served as a production
+    // bundle, /api/config answers "remote", so the card decided the desktop
+    // was a phone and rendered "Add this on your desktop" as dead text beside
+    // a button the person at the keyboard could not press.
+    //
+    // The assertion was pinning the bug. It now pins the fix: one answer, one
+    // place, and no second copy allowed back in.
+    expect(card).toContain('import { useDesktopSurface } from "@/lib/use-surface"');
+    expect(card).not.toContain("knownSurface()");
+    expect(card).not.toContain('from "@/lib/surface"');
   });
 
   it("renders the neutral thing while the answer is unknown", () => {

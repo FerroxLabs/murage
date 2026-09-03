@@ -241,7 +241,13 @@ describe("token drift", () => {
       for (const entry of readdirSync(dir)) {
         const path = join(dir, entry);
         if (statSync(path).isDirectory()) walk(path);
-        else if (/\.(tsx?|css)$/.test(entry)) files.push(path);
+        // Tests are excluded: the rule is about SHIPPED UI, and a test that
+        // asserts a palette value is asserting it, not styling with it.
+        // `pwa-install.test.ts` has to name #f7f7f7 and #0a0a0a because those
+        // are the exact theme-colour values index.html must carry — putting
+        // it on the allowlist instead would say it was a styling exception,
+        // which is the wrong reason for the right outcome.
+        else if (/\.(tsx?|css)$/.test(entry) && !/\.test\.tsx?$/.test(entry)) files.push(path);
       }
     })(join(root, "src"));
 
