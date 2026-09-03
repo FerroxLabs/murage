@@ -780,16 +780,20 @@ async function defaultSelection() {
   // "available" at all — which is the entire zero-terminal promise. Claude
   // stays second because on a developer's machine it usually is installed and
   // it was the previous default; a fresh install simply never reaches it.
-  // "available" means the CLI answered --version, NOT that it can do anything:
-  // `authenticated` is a separate field on the snapshot. Murage SHIPS fuigo's
-  // binary, so fuigo is always available — and on a machine with no Flux key
-  // and no `fuigo login` its catalog merges down to nothing, which would hand
-  // every new bot `{instanceId:"fuigo", model:""}`: a bot that looks configured
-  // and is not. Requiring a usable default is what keeps the honest-empty
-  // promise below intact.
-  const usable = available.filter(
-    (d) => d.snapshot.state === "available" && d.snapshot.authenticated !== false && d.models.default,
-  );
+  // "available" means the CLI answered --version, NOT that it can do anything.
+  // Murage SHIPS fuigo's binary, so fuigo is always available — and with no
+  // Flux key and no `fuigo login` its catalog merges down to nothing, which
+  // would hand every new bot `{instanceId:"fuigo", model:""}`: a bot that looks
+  // configured and is not. A non-empty catalog is the check that prevents it.
+  //
+  // NOT `snapshot.authenticated !== false` as well, though that reads like the
+  // stronger guard. It is reported conservatively by several drivers, so
+  // requiring it emptied this list on installs where engines work perfectly
+  // well — server/unattended.test.ts caught it: a delegated teammate created
+  // with no explicit selection got NO engine at all, its turn never ran, and
+  // the failure surfaced as "the delegated turn auto-approved". Bisected
+  // against the pre-change commit rather than guessed at.
+  const usable = available.filter((d) => d.models.default);
   const pick =
     usable.find((d) => d.driverKind === "fuigoAgent") ??
     usable.find((d) => d.driverKind === "claudeAgent") ??
