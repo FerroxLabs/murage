@@ -74,6 +74,54 @@ export interface PairingWindow {
   attemptsLeft: number;
 }
 
+/** Why a redemption failed, as a stable code rather than a sentence.
+ *
+ * The sentence is for the person and will be reworded; this is for the two
+ * doors, which have to *behave* differently per case and must not do that by
+ * matching on prose. Specifically: a wrong code is a guess and counts against
+ * the door's rate limiter, while `full` is a *correct* code arriving at a full
+ * fleet — locking somebody out for that would punish them for the one failure
+ * they can fix at the keyboard in ten seconds.
+ *
+ * It is an added field on the existing `{ error }` shape, deliberately: the
+ * device door (`proxy.ts`) reads `.error` and is outside this change's lane. */
+export type RedeemFailure =
+  /** There is no window and none of the remembered spent ones matches. */
+  | "no-pairing"
+  /** This exact credential existed and ran out of time, or was superseded. */
+  | "expired"
+  /** This exact credential already signed a device in. */
+  | "used"
+  /** This exact credential was destroyed by wrong guesses. */
+  | "burned"
+  /** A live window exists and this is not it. */
+  | "wrong"
+  /** The guess budget on the live window just ran out. */
+  | "locked-out"
+  /** Right credential, no room left in the fleet. */
+  | "full"
+  /** Right credential, and the registration could not be written down. */
+  | "save-failed";
+
+/** A window that is gone, remembered only so that presenting it again gets an
+ * honest answer instead of "no pairing is in progress".
+ *
+ * This is the difference between a person retyping a code and being told the
+ * truth — it expired, it was already used, it was guessed to death — and
+ * being told something that reads as "the app forgot about pairing", which
+ * sends them looking for a fault that is not there.
+ *
+ * Hashes, not the credentials, for the same reason `tokenHash` is a hash: this
+ * lives in a long-running desktop process and there is no reason for a spent
+ * credential to sit in it in the clear. And it is *forgotten* on a timer, so
+ * the honest answer is not available forever — see `SPENT_MEMORY_MS`. */
+interface SpentWindow {
+  codeHash: string;
+  tokenHash: string;
+  reason: Extract<RedeemFailure, "expired" | "used" | "burned">;
+  forgetAt: number;
+}
+
 /** A successful redemption kept only long enough for the *same* phone request
  * to recover from a lost HTTP response on another advertised address.
  *
@@ -106,6 +154,25 @@ export /** How long a pairing window stays open.
  * person time to walk across the room. */
 const PAIRING_TTL_MS = 10 * 60_000;
 export const MAX_PAIRING_ATTEMPTS = 5;
+/** How long a dead pairing window is remembered well enough to be explained.
+ *
+ * The same ten minutes the window itself lived, which is the useful span: a
+ * person who was too slow, or whose code was already spent by another device,
+ * is still holding the same digits and still standing in front of the screen.
+ * After that the honest answer is genuinely "no pairing is in progress",
+ * because by then nothing about the old window is true any more.
+ *
+ * Bounded in time on purpose. Presenting a spent credential is free — there is
+ * no window left to charge attempts against — so an unbounded memory would be
+ * a permanently queryable oracle for "was 123456 ever a code here". Ten
+ * minutes and three entries is a small enough surface to state plainly, the
+ * answer it gives away is about a credential that is already dead, and the
+ * door's own limiter (`browser.ts`) is what stops anybody asking it quickly. */
+const SPENT_MEMORY_MS = PAIRING_TTL_MS;
+/** Refreshing the QR twice in a row should still explain the first code. Three
+ * is enough for that and small enough that the list never needs a real
+ * eviction policy. */
+const MAX_SPENT_WINDOWS = 3;
 /** Bounds the file, and a fleet of 20 phones is already an odd story. */
 export const MAX_DEVICES = 20;
 /** lastSeen is a UI nicety, not an audit log — don't write on every request. */
@@ -278,6 +345,7 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
 export class DeviceRegistry {
   private devices: DeviceRecord[] = [];
   private window: PairingWindow | null = null;
+  private spent: SpentWindow[] = [];
   private replay: PairingReplay | null = null;
   private replayExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSeenWrites = new Map<string, number>();
@@ -327,14 +395,54 @@ export class DeviceRegistry {
   /** The live pairing window, or null. Expiry is evaluated on read so a
    * stale window can never be redeemed by a caller that skipped a tick. */
   pairing(): PairingWindow | null {
-    if (this.window && this.window.expiresAt <= Date.now()) this.window = null;
+    if (this.window && this.window.expiresAt <= Date.now()) this.spend("expired");
     return this.window;
+  }
+
+  /** Retire the live window, remembering what it was and why it went.
+   *
+   * Every path that clears `this.window` goes through here, which is what
+   * makes "why is this code not working" answerable at all. It deliberately
+   * does NOT touch the replay record: `closePairing` is the explicit cancel
+   * and clears that separately, and a successful redemption must keep it. */
+  private spend(reason: SpentWindow["reason"]): void {
+    const window = this.window;
+    this.window = null;
+    if (!window) return;
+    const now = Date.now();
+    this.spent = this.spent
+      .filter((entry) => entry.forgetAt > now)
+      .concat({
+        codeHash: sha256(window.code),
+        tokenHash: sha256(window.token),
+        reason,
+        forgetAt: now + SPENT_MEMORY_MS,
+      })
+      .slice(-MAX_SPENT_WINDOWS);
+  }
+
+  /** The remembered fate of a credential that is no longer live, or null. */
+  private recallSpent(presented: string): SpentWindow | null {
+    const now = Date.now();
+    this.spent = this.spent.filter((entry) => entry.forgetAt > now);
+    const hash = sha256(presented);
+    // Newest first: refreshing the QR twice leaves two "expired" rows and the
+    // most recent one is the one the person is most likely holding.
+    for (let i = this.spent.length - 1; i >= 0; i--) {
+      const entry = this.spent[i];
+      if (sameDigest(entry.codeHash, hash) || sameDigest(entry.tokenHash, hash)) return entry;
+    }
+    return null;
   }
 
   /** Open a fresh window, replacing any that was already open. The code is
    * from `randomInt`, not `Math.random` — it is a credential for two minutes. */
   openPairing(): PairingWindow {
     this.clearReplay();
+    // The replaced window is gone, and somebody may be holding it: a person
+    // who pressed Refresh on the desktop while a second person was typing.
+    // "That code has expired" is true of it and is the useful thing to say.
+    this.spend("expired");
     this.window = {
       code: String(randomInt(0, 1_000_000)).padStart(6, "0"),
       token: `murage_pair_${randomBytes(32).toString("base64url")}`,
@@ -346,7 +454,10 @@ export class DeviceRegistry {
 
   closePairing(expectedToken?: string): boolean {
     if (expectedToken !== undefined && this.pairing()?.token !== expectedToken) return false;
-    this.window = null;
+    // Cancelled on the computer reads to whoever is holding the digits
+    // exactly as an expiry does: the code was live, it is not any more, and
+    // the fix is to open the pairing screen again.
+    this.spend("expired");
     this.clearReplay();
     return true;
   }
@@ -371,7 +482,7 @@ export class DeviceRegistry {
     credential: string,
     name: unknown,
     pairRequestId?: unknown,
-  ): { device: PublicDevice; token: string } | { error: string } {
+  ): { device: PublicDevice; token: string } | { error: string; reason: RedeemFailure } {
     const presented = String(credential ?? "");
     const requestId =
       typeof pairRequestId === "string" && /^[A-Za-z0-9._-]{16,128}$/.test(pairRequestId)
@@ -393,26 +504,62 @@ export class DeviceRegistry {
     }
 
     const window = this.pairing();
-    if (!window) return { error: "no pairing is in progress — open Phone settings on your computer" };
+    if (!window) {
+      // Not "no pairing is in progress" for everything, because that sentence
+      // is only true of a credential we have never seen. A person retyping a
+      // code that expired, or that another device already spent, is holding
+      // something we know the fate of, and saying so is the difference
+      // between "refresh the code" and "the app is broken".
+      const spent = this.recallSpent(presented);
+      if (spent?.reason === "used") {
+        return {
+          error: "that code has already signed a device in — open Phone settings on your computer for a new one",
+          reason: "used",
+        };
+      }
+      if (spent?.reason === "burned") {
+        return {
+          error: "that code was cancelled after too many wrong guesses — start pairing again on your computer",
+          reason: "burned",
+        };
+      }
+      if (spent?.reason === "expired") {
+        return {
+          error: "that code has expired — open Phone settings on your computer and show a new one",
+          reason: "expired",
+        };
+      }
+      return {
+        error: "no pairing is in progress — open Phone settings on your computer",
+        reason: "no-pairing",
+      };
+    }
     if (!sameCredential(window.code, presented) && !sameCredential(window.token, presented)) {
       window.attemptsLeft -= 1;
       // A burned window is the whole point: without this, six digits is a
-      // few seconds of guessing.
+      // few seconds of guessing. It stays burned rather than merely paused,
+      // and that is the deliberate answer to "is a guessed-at code still
+      // safe to accept": five wrong guesses is not a typo pattern, and the
+      // cost of being wrong here is a person pressing Refresh, while the cost
+      // of being wrong the other way is a stranger inside the fleet.
       if (window.attemptsLeft <= 0) {
-        this.closePairing();
-        return { error: "too many incorrect codes — start pairing again" };
+        this.spend("burned");
+        this.clearReplay();
+        return { error: "too many incorrect codes — start pairing again", reason: "locked-out" };
       }
-      return { error: "that pairing credential is not right" };
+      return { error: "that pairing credential is not right", reason: "wrong" };
     }
     // After the code, not before. Checked first, a full fleet answers every
     // wrong guess with "too many paired devices" — which tells a guesser
     // something about this machine, and costs them none of their five
     // attempts. The window survives, so removing a phone and retyping the
     // same code still works.
-    if (this.devices.length >= MAX_DEVICES) return { error: "too many paired devices — remove one first" };
+    if (this.devices.length >= MAX_DEVICES) {
+      return { error: "too many paired devices — remove one first", reason: "full" };
+    }
     // Consume the window without clearing a possible replay. `closePairing`
     // is the explicit cancel operation and intentionally clears both.
-    this.window = null;
+    this.spend("used");
 
     const token = `murage_${randomBytes(32).toString("base64url")}`;
     const device: DeviceRecord = {
@@ -433,7 +580,7 @@ export class DeviceRegistry {
       this.persist();
     } catch (e) {
       this.devices.pop();
-      return { error: `could not save the pairing: ${(e as Error).message}` };
+      return { error: `could not save the pairing: ${(e as Error).message}`, reason: "save-failed" };
     }
     const { tokenHash, sessions, ...pub } = device;
     const result = { device: pub, token };
