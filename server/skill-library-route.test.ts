@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { denyReason, type Surface } from "../companion/src/routes.ts";
+
 const source = readFileSync(
   fileURLToPath(new URL("./index.ts", import.meta.url)),
   "utf8",
@@ -90,13 +92,40 @@ describe("POST /api/bots/:id/skills/library", () => {
 });
 
 describe("the companion surface", () => {
-  it("still exposes no skills route to a paired device", () => {
-    // The route's own surface check is the real defence; this is the second
-    // lock, and it fails loudly if someone adds one to the allowlist.
-    const routes = readFileSync(
-      fileURLToPath(new URL("../companion/src/routes.ts", import.meta.url)),
-      "utf8",
-    );
-    expect(routes).not.toMatch(/skills/);
+  // This used to assert that the string `skills` appeared nowhere in
+  // routes.ts. That was a proxy for the boundary, not the boundary, and it
+  // went red at 0976b791 when the door was given `GET /api/bots/:id/skills`
+  // so a phone could COUNT a bot's skills — a read the intake needs, and the
+  // reason the phone was showing the setup quiz to a bot that already had
+  // eleven of them. Nothing was wrong; the assertion was measuring spelling.
+  //
+  // It stayed red for two sessions, which is its own lesson: a tripwire that
+  // fires on a word fires on every legitimate change too, and a tripwire
+  // people learn to expect red is not a tripwire.
+  //
+  // So this asks the allowlist the question the comment always meant. Reading
+  // is allowed. INSTALLING is refused at both doors, and refused by asking
+  // `denyReason` rather than by reading the file it lives in — the same
+  // function the sidecar actually calls, so the two cannot drift.
+  const asks = (method: string, path: string, surface: Surface) =>
+    denyReason({ method, path, authenticated: true, surface });
+
+  it("lets a browser read a bot's skills, which is what the intake counts", () => {
+    expect(asks("GET", "/api/bots/abc123/skills", "browser")).toBeNull();
+  });
+
+  it("refuses every route that INSTALLS instructions, at both doors", () => {
+    // An enabled skill is symlinked into the engine's discovery directories,
+    // so choosing one is choosing instructions an agent will follow. That
+    // decision belongs to the person at the keyboard, on every surface.
+    for (const surface of ["browser", "device"] as Surface[]) {
+      for (const path of [
+        "/api/bots/abc123/skills",
+        "/api/bots/abc123/skills/library",
+        "/api/bots/abc123/assistant-profile",
+      ]) {
+        expect(asks("POST", path, surface)?.status, `POST ${path} at the ${surface} door`).toBe(404);
+      }
+    }
   });
 });

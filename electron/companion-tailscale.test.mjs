@@ -19,8 +19,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-/** The port companion.mjs hard-codes for the sidecar's control server. */
-const CONTROL_PORT = 8811;
+/** The port companion.mjs uses for the sidecar's control server. Shifted by
+ * MURAGE_CONTROL_PORT_OVERRIDE so this suite can run against a machine that
+ * already has a real Murage on 8811; both sides read the same variable. */
+const CONTROL_PORT = Number(process.env.MURAGE_CONTROL_PORT_OVERRIDE) || 8811;
 /** The pid the fake sidecar claims. `start()` refuses to adopt a control
  * server whose pid does not match the child it forked, so both sides of this
  * test have to agree on one. */
@@ -169,7 +171,17 @@ describe("the IPC wire from the renderer to the sidecar", () => {
 
   it("passes the sidecar a way to re-probe at all", () => {
     // The route exists on the control server only when index.ts hands it the
-    // callback; without this line every layer above is wired to a 404.
-    expect(read("../companion/src/index.ts")).toContain("refreshTailscale: () => refreshTailnetName()");
+    // callback; without it every layer above is wired to a 404.
+    //
+    // Two assertions, not one literal. This used to pin the exact source text
+    // `refreshTailscale: () => refreshTailnetName()`, which stopped being true
+    // at 0976b791 when the callback also learned to move the browser door. The
+    // test went red there and nobody saw it for two sessions, because the whole
+    // suite skips when port 8811 is taken and this machine always has a Murage
+    // on it. Assert the wiring — the key is handed over, and it re-probes —
+    // and let the callback's body change without breaking the contract.
+    const sidecar = read("../companion/src/index.ts");
+    expect(sidecar).toMatch(/refreshTailscale:\s*(?:async\s*)?\(\)\s*=>/);
+    expect(sidecar).toContain("refreshTailnetName()");
   });
 });
