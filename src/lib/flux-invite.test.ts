@@ -1,0 +1,183 @@
+// When the Flux offer is allowed to appear, and the two states in which
+// showing it would be a bug rather than a nag.
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+import {
+  FLUX_COPY,
+  FLUX_INVITE_DISMISSED_KEY,
+  fluxInviteVisible,
+  fluxKeyPatch,
+  fluxKeyPlaceholder,
+  type FluxInviteFacts,
+} from "./flux-invite";
+
+const facts = (over: Partial<FluxInviteFacts> = {}): FluxInviteFacts => ({
+  desktop: true,
+  configured: false,
+  dismissed: false,
+  firstRunGate: false,
+  ...over,
+});
+
+const srcRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+describe("who gets offered a Flux key", () => {
+  it("offers it on a fresh desktop with no key", () => {
+    // The POSITIVE control for every refusal below. Without this the rig
+    // could be a function that returns false and every other test would pass.
+    expect(fluxInviteVisible(facts())).toBe(true);
+  });
+
+  it("says nothing to someone who already has a key", () => {
+    expect(fluxInviteVisible(facts({ configured: true }))).toBe(false);
+  });
+
+  it("takes no for an answer, permanently", () => {
+    expect(fluxInviteVisible(facts({ dismissed: true }))).toBe(false);
+    // and the no outlives not having a key, which is the whole point
+    expect(fluxInviteVisible(facts({ dismissed: true, configured: false }))).toBe(false);
+  });
+
+  it("does not flash before config has answered", () => {
+    // `null` is "GET /api/config has not come back yet", not "no key". Reading
+    // it as no-key would show the offer for a frame on every single launch of
+    // a machine that already has one.
+    expect(fluxInviteVisible(facts({ configured: null }))).toBe(false);
+  });
+
+  it("stays off any surface that is not a confirmed desktop", () => {
+    // The Connections section it points at is desktopOnly: a phone through the
+    // browser door is not allowed to see or edit workspace keys, so offering
+    // there is an invitation to open a door that surface does not have.
+    expect(fluxInviteVisible(facts({ desktop: false }))).toBe(false);
+    // Not answered yet takes the same silent answer the welcome gate does.
+    expect(fluxInviteVisible(facts({ desktop: undefined }))).toBe(false);
+  });
+
+  it("does not stack itself on the first-run welcome screen", () => {
+    expect(fluxInviteVisible(facts({ firstRunGate: true }))).toBe(false);
+  });
+});
+
+describe("the dismissal is remembered, and survives a browser that refuses to", () => {
+  it("keys off one stable name", () => {
+    expect(FLUX_INVITE_DISMISSED_KEY).toBe("murage-flux-invite-dismissed");
+  });
+
+  it("writes the no to localStorage and reads it back on the next launch", () => {
+    const hook = readFileSync(join(srcRoot, "lib/use-flux-invite.ts"), "utf8");
+    expect(hook).toMatch(/localStorage\.setItem\(key, "1"\)/);
+    expect(hook).toMatch(/return localStorage\.getItem\(key\) === "1"/);
+    // Seeded from storage at mount, not defaulted to false: a dismissal made
+    // last launch has to be in hand before the first render decides.
+    expect(hook).toMatch(/useState\(\(\) => stored\(FLUX_INVITE_DISMISSED_KEY\)\)/);
+  });
+
+  it("never throws in a private window", () => {
+    const hook = readFileSync(join(srcRoot, "lib/use-flux-invite.ts"), "utf8");
+    expect(hook).toMatch(/try \{\s*return localStorage\.getItem/);
+    expect(hook).toMatch(/try \{\s*localStorage\.setItem/);
+  });
+});
+
+describe("the key never leaves the renderer except as a write", () => {
+  it("patches exactly the field the server accepts", () => {
+    expect(fluxKeyPatch("flux-live-abc")).toBe('{"flux":{"apiKey":"flux-live-abc"}}');
+  });
+
+  it("clears the key with an empty string rather than a delete", () => {
+    // server/config.ts syncCredentialEnv reads "" as "the user cleared this"
+    // and drops FLUX_API_KEY; `undefined` would mean "leave it alone".
+    expect(fluxKeyPatch("")).toBe('{"flux":{"apiKey":""}}');
+  });
+
+  it("has no saved value to put in the placeholder, and does not pretend to", () => {
+    // GET /api/config answers `flux: { configured }` and nothing else, so
+    // there is no key here to mask. The configured placeholder must say a key
+    // is saved without presenting itself AS the key.
+    expect(fluxKeyPlaceholder(true)).toBe("Saved. Paste a new key to replace it.");
+    expect(fluxKeyPlaceholder(false)).toBe("Paste your Flux Router key");
+    expect(fluxKeyPlaceholder(true)).not.toMatch(/[•*]/);
+  });
+});
+
+describe("copy rules", () => {
+  it("uses no em dashes anywhere a person can read", () => {
+    for (const [name, line] of Object.entries(FLUX_COPY)) {
+      expect(`${name}: ${line}`).not.toContain("—");
+    }
+    // POSITIVE control: prove the assertion above can actually fail, rather
+    // than passing because the matcher never sees the character.
+    expect(() => expect("a — dash").not.toContain("—")).toThrow();
+  });
+
+  it("promises only what the code delivers", () => {
+    // server/flux-surface.ts routes MODELS, on three engines. It is not voice
+    // (server tts), not image generation (server imageGen), and not every
+    // agent: opencode, qoder, droid, auggie, copilot, kiro and vibe are
+    // deliberately absent from FLUX_SURFACE.
+    const claims = [FLUX_COPY.keyHelp, FLUX_COPY.inviteBody].join(" ").toLowerCase();
+    expect(claims).not.toMatch(/voice|speech|image|picture|avatar/);
+    expect(claims).not.toMatch(/every (agent|bot|engine)|all (agents|bots|engines)/);
+    // and it does name the three engines that are actually routable
+    expect(claims).toContain("claude");
+    expect(claims).toContain("codex");
+    expect(claims).toContain("qwen");
+  });
+
+  it("says what the person gets, not what the system is", () => {
+    const all = Object.values(FLUX_COPY).join(" ").toLowerCase();
+    expect(all).not.toMatch(/configure your|set up your .*api key|enter your api key/);
+  });
+});
+
+describe("nothing in the app is gated on a Flux key", () => {
+  // Murage's engines are separately authenticated: a signed-in Claude, Codex
+  // or Gemini CLI is what makes the app work. A Flux key is additive, so no
+  // surface outside the card that enters it and the offer that points at the
+  // card may condition anything on it.
+  const OWNERS = new Set([
+    "components/FluxKeyCard.tsx",
+    "components/FluxInvite.tsx",
+    "lib/flux-invite.ts",
+    "lib/use-flux-invite.ts",
+  ]);
+
+  const sources = (): string[] => {
+    const out: string[] = [];
+    (function walk(dir: string) {
+      for (const entry of readdirSync(dir)) {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(path);
+      }
+    })(srcRoot);
+    return out;
+  };
+
+  it("reads flux?.configured in the two places that own the offer, and nowhere else", () => {
+    const readers = sources()
+      .filter((path) => /flux\?\.configured|flux\.configured/.test(readFileSync(path, "utf8")))
+      .map((path) => path.slice(srcRoot.length + 1))
+      // store.tsx declares the type; declaring it is not gating on it
+      .filter((rel) => rel !== "state/store.tsx");
+    expect(readers.sort()).toEqual([...OWNERS].filter((o) => readers.includes(o)).sort());
+    for (const rel of readers) expect(OWNERS.has(rel)).toBe(true);
+    // POSITIVE control: the scan does find real readers, so an empty result
+    // cannot be mistaken for a clean one.
+    expect(readers).toContain("lib/use-flux-invite.ts");
+  });
+
+  it("offers the key without blocking anything: no overlay, no dialog", () => {
+    const invite = readFileSync(join(srcRoot, "components/FluxInvite.tsx"), "utf8");
+    // A backdrop over the whole viewport, or a dialog role, would make this
+    // something a person has to deal with before using an app that already
+    // works. Both are forbidden here.
+    expect(invite).not.toMatch(/inset-0/);
+    expect(invite).not.toMatch(/role="dialog"|aria-modal/);
+    expect(invite).toMatch(/role="complementary"/);
+  });
+});

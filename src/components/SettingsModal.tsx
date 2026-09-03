@@ -9,6 +9,7 @@ import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
 import { localeChoices } from "@/locales";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
+import { FluxKeyCard } from "./FluxKeyCard";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
 import { LocalComputerSection } from "./LocalComputerSection";
@@ -45,7 +46,7 @@ const SECTIONS: Array<{
   //
   // Phone is here for a different reason: on a phone it is an offer to do the
   // thing you have already done.
-  { id: "connections", label: "Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
+  { id: "connections", label: "Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "flux", "flux router", "models", "router"] },
   { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli"] },
   { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
   { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
@@ -727,6 +728,10 @@ export function SettingsModal() {
                     </div>
                   ) : null}
                   <TranscriptionSettings />
+                  {/* Flux Router. Sits with the other optional keys because
+                      that is what it is: nothing here is required for the app
+                      to work, and every engine is authenticated on its own. */}
+                  <FluxKeyCard />
                   <ApiKeyRow section="box" />
                   <VpsConnection />
                   <ApiKeyRow section="opencodeGo" />

@@ -26,6 +26,7 @@ import { trackVisualViewport } from "@/lib/visual-viewport";
 import { setLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
+import { FluxInvite } from "./components/FluxInvite";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -333,6 +334,11 @@ export default function App() {
             `undefined` renders nothing, the same neutral answer the welcome
             gate above takes. */}
         {desktop === false && <InstallPrompt />}
+        {/* The Flux offer owns its own visibility: `fluxInviteVisible` refuses
+            on a non-desktop surface, while the welcome gate is up, once
+            dismissed, and until config has actually answered. So no guard
+            here would be anything but a second copy of that decision. */}
+        <FluxInvite firstRunGate={gated} />
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );
