@@ -143,6 +143,91 @@ phones lost copy/reply/speak on messages when the hover rail became
 Smart Trader); `installer/` still not wired into CI; cloud installer still
 needs Sean's Tailscale auth key.
 
+## WHAT "FINISHED" MEANS — do these in this order
+
+Sean's bar, in his words: **"tested, polished and professional looking."** He
+has been using this on a real phone all night and reporting what he sees. That
+is the standard: not that a suite is green, but that he opens it and it looks
+and behaves like a product.
+
+### 1. The remote-access page — ONE LANE MAY STILL BE IN FLIGHT. Check before starting.
+Desktop action: "Enable WebUI for Remote Access" → starts the door on
+**loopback**, turns on `tailscale serve --https=443` (tailnet only, **never
+funnel**), shows a QR of the portless HTTPS link plus the six-digit code, and
+has a working OFF. Design is Wayland's own WebUI settings screen — Sean sent
+screenshots; take the skeleton, the numbered three-step strip, the consequence
+modal whose primary button repeats the action, the copyable access URL that
+reflects the ACTUAL mode, the QR with expiry + copy + refresh, paired devices,
+recent activity.
+
+**Do NOT copy from Wayland:** its username/password (we have none and want
+none — the credential is the pairing token then a device session); its
+"Allow Remote Access" meaning bind `0.0.0.0` over plaintext (ours is tailnet +
+certificate, strictly safer, and the copy must say what is true for us); its
+paired-devices card, which is a **facade** whose `registerDevice` has zero call
+sites while its dialog claims revoke kills the session. Ours is real — devices
+register on sign-in and `revoke()` kills every session on that device.
+
+Two fixes this lane must not miss: **the door still advertises its internal
+port**, so every generated link and QR is wrong now that serve fronts it on
+443; and the paired-devices card must genuinely list and revoke.
+
+### 2. Web app manifest + icons — the "no logo" report, and the last thing blocking install
+There is **no manifest and no favicon in the app at all** (`public/` has only
+`app-icon.svg` and two logo PNGs). HTTPS was the hard half and it is done, so
+"Add to Home Screen" now fails only for want of a manifest. Needs: a
+`.webmanifest` (standalone display, correct `start_url`/`scope`, 192 and 512
+icons), a `favicon.ico` fallback, the iOS meta tags, and the door's static
+allowlist widened to serve them (`companion/src/routes.ts` already lists
+`/app-icon.svg` and `/murage-logo*.png` by name). A service worker is optional
+now and required if offline shell caching is ever wanted.
+
+### 3. Silent session renewal — or the bookmark dies at the worst moment
+Sessions are 14 days idle / **90 days absolute**, then re-pair. Fine weekly;
+useless for the machine you reach from a hotel twice a quarter. Wayland and
+AionUI both built a refresh endpoint and **never called it from the browser**,
+which is why their "30-day cookie" is really a 24-hour one. Do not repeat that:
+build renewal AND call it, on load and on a timer, rotating within the device
+record so revoke still kills it.
+
+### 4. Touch affordances on messages — a regression I introduced
+Below `md`, copy / reply / regenerate / speak / pin are now `display:none`
+rather than invisible-but-present (they were reserving ~130px of every row on a
+phone, which is what made the transcript 74% wide). Nothing visible was lost,
+but a phone now has no way to copy or reply to a message. Needs a real touch
+affordance — long-press or an overflow sheet. Design decision, not a width fix.
+
+### 5. The desktop secret has no path in the current shape
+A renderer served as a **production bundle** by a harness Electron did not fork
+cannot obtain the per-launch secret; the dev fetch is behind
+`import.meta.env.DEV` and compiled out. The preload bridge rescues it (and must
+keep winning — see `resolveDesktopSurface`), but that is a rescue, not a
+design. Close it properly.
+
+### 6. The intake's recall gap — the product one
+`"read my own charts"` finds Smart Trader with 11 skills. `"reading my trading
+charts"` — **the card's own placeholder text** — finds nothing. The relevance
+gate is not the cause (proved: it passes that phrase); the local catalog
+ranking never surfaces the profile into the candidate window. New-bot
+onboarding is one of the three things Sean called essential and it currently
+fails on its own example.
+
+### Then the ship gates
+`installer/` into CI (needs a `test:installer` script in `package.json`; adding
+it to `vite.config.ts` will NOT work — they are `node:test` files). The cloud
+installer against a real tailnet — **blocked on a Tailscale auth key only Sean
+can mint**; use one droplet prefixed `murage-test-`, destroy before reporting,
+never touch the four `flux-pool-r2-*` production droplets. Then the first
+release.
+
+### How to work on this
+Lanes with disjoint file ownership, negative control on every fix (revert →
+confirm RED → restore), and **measure rather than assert** — the transcript
+width lane printed real pixel numbers at 390 and 1440 and that is why its fix
+was right the first time. Playwright is installed: `pnpm test:human`, scratch
+ports 8853/5253, never Sean's data. Specs share one scratch workspace, so run
+them one at a time.
+
 ## NEXT — read `docs/plans/next-session/PLAN.md`. It supersedes this section.
 
 The plan was built from **three audits of today's ten commits** (security ·
