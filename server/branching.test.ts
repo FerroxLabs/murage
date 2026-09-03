@@ -134,11 +134,17 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       // turn 1 settles on the original branch
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "original question" })).status).toBe(202);
       const afterSend = await getBot(created.id);
+      // The seeded question's dismissal is deliberately NOT asserted here any
+      // more. It is an intake card now, and the store leaves intake cards
+      // alone on purpose (server/store.test.ts pins that, with its reason);
+      // settling one by talking past it belongs to the /messages route. All
+      // branching needs is that the seeded card is really in the transcript
+      // it is about to fork around.
       const quiz = afterSend.messages.find(
-        (m: { kind: string; card?: { requestId?: string; dismissed?: boolean } }) =>
+        (m: { kind: string; card?: { requestId?: string; intake?: unknown } }) =>
           m.kind === "options" && !m.card?.requestId,
       );
-      expect(quiz?.card?.dismissed).toBe(true);
+      expect(quiz?.card?.intake).toBeTruthy();
       await waitFor(async () => {
         const b = await getBot(created.id);
         return !b.busy && b.messages.some((m: Msg) => m.role === "bot" && m.kind === "text" && m.text?.includes("fake acp"));

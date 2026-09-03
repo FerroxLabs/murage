@@ -3088,11 +3088,27 @@ async function startTurn(
           (computerKind
             ? " At a sign-in, password, MFA, CAPTCHA, or other protected-input step, stop and ask the user to complete it on the visible computer. Never type their password or ask them to paste a password or one-time code into chat."
             : "") +
-          // gated on the integration, not the key: the hint only goes to a
-          // bot whose driver actually mounted the tools
-          (integrations.composio
-            ? " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service."
-            : "") +
+          // Still gated on the integration and not on the key — the tool
+          // names only go to a bot whose driver actually mounted them — but
+          // no longer SILENT when it is absent. Three gates can drop the
+          // connectors (this bot's own switch, no broker/key at all, an
+          // engine that cannot mount them) and all three used to end in the
+          // same nothing, which is how an assistant came to deny access to a
+          // Gmail that was connected the whole time. It is now told which.
+          composio.connectorSystemPrompt(
+            composio.connectorAccess({
+              cfg,
+              botComposio: bot.composio,
+              installedFromPackage: Boolean(bot.installedPackage),
+              engineMountsConnectors: instance.adapter.capabilities.composioMcp === true,
+              mounted: Boolean(integrations.composio),
+            }),
+          ) +
+          // What the profile said this assistant's job needs. This is the
+          // ONLY place `installedPackage.requiredApps` reaches the model;
+          // its other reader (package-export.ts) merely round-trips the
+          // field back out into a blueprint.
+          composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
           (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           credentialPrompt +
@@ -6898,14 +6914,38 @@ const server = createServer(async (req, res) => {
       // Snapshot before creating anything so replace never archives the new
       // team. Old bots are hidden only after every new bot was created; a
       // failed import therefore leaves the current workspace untouched.
+      //
+      // The TIER travels with the role. This record is the whole of what the
+      // undo has to work from, and it used to carry `chiefOfStaff` alone —
+      // so a workspace Chief was archived as "leads something" and came back
+      // as a mere section lead, silently demoted by an Undo button. `null`
+      // rather than an absent field for a bot that leads nothing, so the
+      // shape says "asked and answered" instead of "nobody looked".
       const archived = importMode === "replace"
         ? store.bots
             .filter((bot) => !bot.hidden)
-            .map((bot) => ({ id: bot.id, chiefOfStaff: Boolean(bot.chiefOfStaff) }))
+            .map((bot) => ({
+              id: bot.id,
+              chiefOfStaff: Boolean(bot.chiefOfStaff),
+              chiefTier: bot.chiefOfStaff
+                ? bot.chiefScope === "workspace"
+                  ? ("workspace" as const)
+                  : ("section" as const)
+                : null,
+            }))
         : [];
       const importedBots: ReturnType<typeof store.createBot>[] = [];
       const createdGroups: GroupRecord[] = [];
       const createdRoutineIds: string[] = [];
+      /** Skills the profile declared that this import could not deliver.
+       * Collected rather than thrown, and returned rather than logged. */
+      const skillErrors: Array<{
+        botId: string;
+        botName: string;
+        skillId: string;
+        stage: "install" | "enable";
+        error: string;
+      }> = [];
       // Names already in use, hidden bots included: an archived bot can be
       // un-archived later, and a revived duplicate would be just as
       // ambiguous then. In replace mode this means re-importing your own
@@ -6957,15 +6997,29 @@ const server = createServer(async (req, res) => {
           // CLI loads one only when it is used and nothing enters the prompt.
           // One bad id must not fail the whole import — it is reported and the
           // rest of the team still lands.
+          //
+          // Not throwing is right — one bad id must not sink a nine-bot
+          // import — but a console line is not a report. The import used to
+          // answer 201 and say nothing, so a team arrived with fewer skills
+          // than its profile declared and the only trace was the harness's
+          // stderr. The failures now ride back on the response, the way the
+          // two single-skill routes below already do it (`errors` beside
+          // `installed`). This one carries the bot and the skill id too,
+          // because a team import spans many bots and a bare sentence could
+          // not say which assistant is short of what.
           for (const skillId of source.skillIds) {
             const installed = installSkillFromLibrary(created.id, skillId, SKILL_LIBRARY_ROOT);
             if ("error" in installed) {
               console.error(JSON.stringify({ message: "library skill not installed", bot: created.id, skillId, error: installed.error }));
+              skillErrors.push({ botId: created.id, botName: created.name, skillId, stage: "install", error: installed.error });
               continue;
             }
             const enabled = setSkillEnabled(created.id, installed.name, true);
             if ("error" in enabled) {
               console.error(JSON.stringify({ message: "library skill not enabled", bot: created.id, skillId, error: enabled.error }));
+              // Installed but switched off — a different, smaller failure
+              // than "not installed at all", and worth telling apart.
+              skillErrors.push({ botId: created.id, botName: created.name, skillId, stage: "enable", error: enabled.error });
             }
           }
           store.patchBot(created.id, {
@@ -7038,8 +7092,19 @@ const server = createServer(async (req, res) => {
         // Archive only after the complete new structure exists. A package
         // that fails validation or persistence never disturbs the current
         // workspace.
+        //
+        // `chiefOfStaff` goes (a hidden Chief is un-hidden again at the next
+        // load, which is the whole reason the flag is cleared here) but the
+        // TIER stays on the record. It is inert while the flag is false —
+        // `isWorkspaceChief` and `store.workspaceChief()` both require the
+        // flag, and the load-time pass drops a tier with no role above it —
+        // and it is what makes the undo land in the right chair: the PATCH
+        // route treats a bare `chiefOfStaff: true` on a bot that still
+        // carries the workspace tier as a workspace election, so the same
+        // request that used to demote her now both restores her tier and
+        // trips the single-holder guard when someone else took the chair.
         const archivedBots = archived.flatMap(({ id }) => {
-          const bot = store.patchBot(id, { hidden: true, chiefOfStaff: false, chiefScope: undefined });
+          const bot = store.patchBot(id, { hidden: true, chiefOfStaff: false });
           return bot ? [publicBot(bot)] : [];
         });
         const publicBots = importedBots.map((bot) => publicBot(store.bot(bot.id)!));
@@ -7054,6 +7119,10 @@ const server = createServer(async (req, res) => {
           group,
           groups: createdGroups.map((created) => ({ ...created, messages: [] })),
           routines: createdRoutineIds.flatMap((id) => routines!.listRoutines().filter((routine) => routine.id === id)),
+          // Always present, empty when nothing failed: a caller that has to
+          // check whether the field exists before trusting it is a caller
+          // that will forget to check.
+          skillErrors,
         });
       } catch (error) {
         // A room of deleted members must not survive either — patchGroup can
@@ -9566,6 +9635,28 @@ calendarCalls.start();
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
+  // Warm the skill index while nobody is waiting.
+  //
+  // It is built lazily by whichever request needs it first, and all three of
+  // those requests are somebody looking at a screen: the library panel's
+  // browse and search, and the new-bot intake's suggest. After an install or
+  // an upgrade the fingerprint has changed, so that first person paid for the
+  // whole build — seconds of empty panel — while the machine had been idle
+  // since boot.
+  //
+  // INSIDE the listen callback, so the port is already open; `void`, so it is
+  // never on the path to being open; `.catch`, because an index that cannot
+  // be built is a degraded library and not a reason to take the harness down
+  // with it — the routes already answer `indexed: false` for that case.
+  //
+  // browseFacets rather than skillIndexStats: the same build, plus the facet
+  // cache the browse route needs, for the same wait. The build is cached on a
+  // module-level handle keyed to the fingerprint it stamped and shares one
+  // in-flight promise, so a request that arrives mid-prewarm joins this build
+  // instead of starting a second one.
+  void browseFacets().catch((error) => {
+    console.warn("skill index prewarm failed:", error instanceof Error ? error.message : String(error));
+  });
 });
 
 const gracefulShutdown = createGracefulShutdown({

@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { BOT_OPENERS, openerAt } from "../shared/bot-openers.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
@@ -20,22 +21,52 @@ describe("Store", () => {
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
-  it("createBot seeds a greeting and an onboarding card", () => {
+  // Assert the SHAPE of the seed, never the sentence. Three tests in this
+  // repo have already gone stale by pinning greeting copy; the contract is
+  // "one rendered opener, then one open intake question", and that is what
+  // is checked here.
+  it("createBot seeds a rotating opener and the open intake question", () => {
     const store = new Store(selection);
     const bot = store.createBot();
 
     const messages = store.messagesFor(bot.threadId);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ role: "bot", kind: "text" });
-    expect(messages[1].kind).toBe("options");
-    expect(messages[1].card?.options.length).toBeGreaterThan(1);
+    // the greeting is one of the 30 openers, rendered for this bot's name
+    expect(BOT_OPENERS.map((_, i) => openerAt(i, bot.name))).toContain(messages[0].text);
+    expect(messages[0].text).toContain(bot.name);
+    expect(messages[0].text).not.toContain("{name}");
+
+    expect(messages[1]).toMatchObject({ role: "bot", kind: "options" });
+    expect(messages[1].card?.intake).toEqual({ step: "open", asked: 1 });
+    // no chips on the open question: the composer is the answer
+    expect(messages[1].card?.options).toEqual([]);
+    expect(messages[1].card?.title).toBeTruthy();
+    expect(messages[1].card?.subtitle).toBeTruthy();
+    // an intake turn is never a live provider ask (invariant I2)
+    expect(messages[1].card?.requestId).toBeUndefined();
     expect(bot.modelSelection).toEqual(selection());
   });
 
-  it("dismisses the onboarding quiz when the user talks, and leaves live asks", () => {
+  it("seeds no em dash or en dash anywhere in the opening turn", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    const quiz = store.messagesFor(bot.threadId)[1]!;
+    const seeded = store
+      .messagesFor(bot.threadId)
+      .flatMap((m) => [m.text ?? "", m.card?.title ?? "", m.card?.subtitle ?? "", ...(m.card?.options ?? [])])
+      .join("\n");
+    expect(seeded).not.toContain(String.fromCodePoint(0x2014));
+    expect(seeded).not.toContain(String.fromCodePoint(0x2013));
+  });
+
+  it("dismisses a legacy onboarding card when the user talks, and leaves live asks", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    const quiz = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "options",
+      card: { title: "What do you mostly want help with?", subtitle: "Pick one", options: ["a", "b"] },
+    });
     expect(quiz.card?.dismissed).toBeUndefined();
 
     store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hi" });
@@ -59,11 +90,32 @@ describe("Store", () => {
     expect(store.messagesFor(bot.threadId).find((m) => m.id === ask.id)?.card?.dismissed).toBeUndefined();
   });
 
-  it("does not dismiss the quiz for bot-authored messages", () => {
+  // Trap T2. The intake route appends the person's answer as a user text
+  // message, so an unguarded dismiss would hide the question one message
+  // before the reply to it arrives, on every single turn.
+  it("leaves an intake card alone when the user talks", () => {
     const store = new Store(selection);
     const bot = store.createBot();
+    const question = store.messagesFor(bot.threadId)[1]!;
+    expect(question.card?.intake).toBeTruthy();
+
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "chasing invoices" });
+    expect(store.messagesFor(bot.threadId).find((m) => m.id === question.id)?.card?.dismissed).toBeUndefined();
+
+    const reloaded = new Store(selection);
+    expect(reloaded.messagesFor(bot.threadId).find((m) => m.id === question.id)?.card?.dismissed).toBeUndefined();
+  });
+
+  it("does not dismiss a legacy onboarding card for bot-authored messages", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    const quiz = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "options",
+      card: { title: "What do you mostly want help with?", subtitle: "Pick one", options: ["a", "b"] },
+    });
     store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "still here" });
-    expect(store.messagesFor(bot.threadId)[1]?.card?.dismissed).toBeUndefined();
+    expect(store.messagesFor(bot.threadId).find((m) => m.id === quiz.id)?.card?.dismissed).toBeUndefined();
   });
 
   it("marks only the last assistant message from a settled provider turn as terminal", () => {
@@ -516,9 +568,11 @@ describe("Store", () => {
     const card = store.messagesFor(bot.threadId)[1];
 
     const patched = store.patchMessage(bot.threadId, card.id, {
-      card: { ...card.card!, answered: "Work & projects" },
+      card: { ...card.card!, answered: "chasing invoices" },
     });
-    expect(patched?.card?.answered).toBe("Work & projects");
+    expect(patched?.card?.answered).toBe("chasing invoices");
+    // answering an intake card must not lose the payload the next turn reads
+    expect(patched?.card?.intake).toEqual({ step: "open", asked: 1 });
     expect(store.patchMessage(bot.threadId, "nope", {})).toBeNull();
   });
 
@@ -567,7 +621,7 @@ describe("Store", () => {
     const user = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hi" });
 
     const messages = store.messagesFor(bot.threadId);
-    expect(user.parentId).toBe(messages[1].id); // follows the onboarding card
+    expect(user.parentId).toBe(messages[1].id); // follows the seeded intake question
     expect(store.activeLeaf(bot.threadId)).toBe(user.id);
     expect(store.activePath(bot.threadId).map((m) => m.id)).toEqual(messages.map((m) => m.id));
   });
@@ -711,10 +765,14 @@ describe("Store change stream", () => {
     expect(store.messagesFor(bot.threadId).at(-1)).toBe(m);
   });
 
-  it("emits a card patch after a user message hides the onboarding quiz", () => {
+  it("emits a card patch after a user message hides a legacy onboarding card", () => {
     const store = new Store(selection);
-    const bot = store.createBot();
-    const quiz = store.messagesFor(bot.threadId)[1]!;
+    const bot = store.createBot({}, { seedMessages: false });
+    const quiz = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "options",
+      card: { title: "What do you mostly want help with?", subtitle: "Pick one", options: ["a", "b"] },
+    });
     const events = record(store);
     const m = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hi" });
     expect(events.map((event) => event.type)).toEqual(["message", "message.patch"]);
@@ -726,7 +784,15 @@ describe("Store change stream", () => {
     });
   });
 
-  it("announces a new bot before its onboarding messages", () => {
+  it("emits no card patch when the user answers an intake card", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const events = record(store);
+    const m = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "chasing invoices" });
+    expect(events).toEqual([{ type: "message", threadId: bot.threadId, message: m }]);
+  });
+
+  it("announces a new bot before its opening messages", () => {
     const store = new Store(selection);
     const events = record(store);
     const bot = store.createBot();

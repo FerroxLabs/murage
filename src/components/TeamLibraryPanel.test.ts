@@ -15,6 +15,15 @@ const source = readFileSync(
   "utf8",
 );
 
+import {
+  archivedRestorePatch,
+  teamImportSkillSummary,
+  type ArchivedTeamBot,
+  type TeamImportSkillError,
+} from "./TeamLibraryPanel";
+import { botRole } from "@/lib/bot-role";
+
+
 describe("team import is additive", () => {
   it("only ever asks the server for a mode that adds", () => {
     // `add` and `project` both create; `project` additionally opens a room on a
@@ -99,5 +108,76 @@ describe("the agent picker", () => {
     // agents both called "Seam Audit Probe".
     expect(source).toContain("const detail = bot.title?.trim() || bot.description?.trim() || \"\";");
     expect(source).toMatch(/\{detail && <span[^>]*>\{detail\}<\/span>\}/);
+  });
+});
+
+/** The role the org chart would give a bot restored with this patch. The
+ *  point of the tier is that the chart reads three fields together, so the
+ *  assertion is made through the one reader that owns that rule rather than
+ *  against a field name. */
+const restoredRole = (bot: ArchivedTeamBot) => {
+  const patch = archivedRestorePatch(bot);
+  return botRole({
+    chiefOfStaff: patch.chiefOfStaff === true,
+    chiefScope: patch.chiefScope === "workspace" ? "workspace" : undefined,
+  });
+};
+
+describe("archivedRestorePatch", () => {
+  it("puts the workspace Chief back in the workspace chair", () => {
+    expect(restoredRole({ id: "a", chiefOfStaff: true, chiefTier: "workspace" })).toBe("chief");
+  });
+
+  it("puts a section lead back as a section lead", () => {
+    expect(restoredRole({ id: "b", chiefOfStaff: true, chiefTier: "section" })).toBe("leader");
+  });
+
+  it("leads nothing when the archive says it led nothing", () => {
+    const patch = archivedRestorePatch({ id: "c", chiefOfStaff: false, chiefTier: null });
+    expect(patch.chiefOfStaff).toBeUndefined();
+    expect(patch.chiefScope).toBeUndefined();
+    expect(restoredRole({ id: "c", chiefOfStaff: false, chiefTier: null })).toBe("member");
+  });
+
+  it("un-archives every restored bot", () => {
+    for (const bot of [
+      { id: "a", chiefOfStaff: true, chiefTier: "workspace" } as const,
+      { id: "b", chiefOfStaff: true, chiefTier: "section" } as const,
+      { id: "c", chiefOfStaff: false, chiefTier: null } as const,
+    ]) {
+      expect(archivedRestorePatch(bot).hidden).toBe(false);
+    }
+  });
+
+  it("falls back to a bare election for a payload with no tier at all", () => {
+    // A response from a harness older than the tier field. The old meaning
+    // is kept rather than guessed at: an election with no scope, which the
+    // harness reads as this section's lead.
+    expect(restoredRole({ id: "old", chiefOfStaff: true })).toBe("leader");
+  });
+});
+
+describe("teamImportSkillSummary", () => {
+  const failure = (
+    stage: TeamImportSkillError["stage"],
+    skillId: string,
+  ): TeamImportSkillError => ({ botId: "b", botName: "Clerk", skillId, stage, error: "nope" });
+
+  it("says nothing went wrong when nothing went wrong", () => {
+    expect(teamImportSkillSummary({ skillErrors: [] })).toEqual({
+      failed: 0,
+      unavailable: 0,
+      disabled: 0,
+    });
+  });
+
+  it("counts a skill that never arrived apart from one that arrived switched off", () => {
+    const summary = teamImportSkillSummary({
+      skillErrors: [failure("install", "a"), failure("install", "b"), failure("enable", "c")],
+    });
+    // the two are different failures and a sentence written from this must
+    // be able to tell them apart
+    expect(summary).toEqual({ failed: 3, unavailable: 2, disabled: 1 });
+    expect(summary.unavailable + summary.disabled).toBe(summary.failed);
   });
 });

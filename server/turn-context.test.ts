@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { openerAt } from "../shared/bot-openers.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 
 const transcript = [
@@ -69,7 +70,9 @@ describe("buildTurnContext", () => {
 
 describe("engineIsFresh", () => {
   const withUser = transcript;
-  const greetingOnly = [{ role: "assistant" as const, text: "Hey — I'm Wren. Nice to meet you." }];
+  // the real seeded opener, not a copy of one: pinning the sentence is how
+  // this fixture went stale the last time the greeting changed
+  const greetingOnly = [{ role: "assistant" as const, text: openerAt(0, "Wren") }];
 
   it("is false when the same instance ran the last turn and has a cursor", () => {
     expect(engineIsFresh({ instanceId: "claude", lastInstanceId: "claude", resumeCursors: { claude: "s1" }, transcript: withUser })).toBe(false);

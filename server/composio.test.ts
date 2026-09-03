@@ -9,11 +9,14 @@ import {
   connectedServices,
   connectionMode,
   connectionStatus,
+  connectorAccess,
+  connectorSystemPrompt,
   mcpIntegration,
   normalizeAccountAlias,
   prepareProjectSession,
   removeAccount,
   removeService,
+  requiredAppsSystemPrompt,
   setManagedBrokerAccess,
 } from "./composio.ts";
 
@@ -523,5 +526,87 @@ describe.sequential("Composio Sessions", () => {
     } finally {
       malformedConnectedAccounts = false;
     }
+  });
+});
+
+// Three gates decide whether a turn carries the user's connected apps, and
+// all three used to fail into the same silence: no integration, no prompt
+// paragraph, and an assistant that then told a user with Gmail connected
+// that it has no access to Gmail. These pin that each cause is DISTINCT and
+// that only the mounted case is ever told the tool names.
+describe.sequential("connector access reporting", () => {
+  const withKey: AppConfig = { composio: { apiKey: "ak_mine" } } as never;
+  const noService: AppConfig = {};
+  const base = {
+    botComposio: undefined as boolean | undefined,
+    installedFromPackage: false,
+    engineMountsConnectors: true,
+    mounted: false,
+  };
+
+  it("names the cause instead of failing silently", () => {
+    setManagedBrokerAccess(null);
+    expect(connectorAccess({ ...base, cfg: withKey, mounted: true })).toBe("mounted");
+    // switched off for this bot, workspace perfectly healthy
+    expect(connectorAccess({ ...base, cfg: withKey, botComposio: false })).toBe("bot-off");
+    // ... and the same switch, thrown by the installer rather than the user
+    expect(
+      connectorAccess({ ...base, cfg: withKey, botComposio: false, installedFromPackage: true }),
+    ).toBe("package-off");
+    // no key, no broker: nothing in this workspace can reach connected apps
+    expect(connectorAccess({ ...base, cfg: noService })).toBe("unconfigured");
+    // key present, bot allowed, engine cannot mount connector tools
+    expect(
+      connectorAccess({ ...base, cfg: withKey, engineMountsConnectors: false }),
+    ).toBe("engine");
+  });
+
+  it("lets the managed broker count as configured, like every other reader", () => {
+    setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
+    try {
+      // configured() is the single source of truth for "a service exists",
+      // so a broker-only workspace is not "unconfigured" — with no key of
+      // its own it still reports the engine as the thing in the way, which
+      // it could only do by counting the broker.
+      expect(connectorAccess({ ...base, cfg: noService, engineMountsConnectors: false })).toBe("engine");
+      // and without the broker the same workspace has no service at all
+      setManagedBrokerAccess(null);
+      expect(connectorAccess({ ...base, cfg: noService, engineMountsConnectors: false })).toBe("unconfigured");
+    } finally {
+      setManagedBrokerAccess(null);
+    }
+  });
+
+  it("says something different for every cause, and names the tools only when they exist", () => {
+    const causes = ["mounted", "package-off", "bot-off", "unconfigured", "engine"] as const;
+    const notices = causes.map((cause) => connectorSystemPrompt(cause));
+    for (const notice of notices) expect(notice.trim().length).toBeGreaterThan(0);
+    // a vague shared sentence is the bug, not the fix
+    expect(new Set(notices).size).toBe(causes.length);
+    for (const [index, cause] of causes.entries()) {
+      // Only a turn that actually mounted them may be told to call them —
+      // telling an assistant with no connector tools to run
+      // COMPOSIO_SEARCH_TOOLS is how the denial got invented in the first
+      // place.
+      expect(/COMPOSIO_[A-Z_]+/.test(notices[index]!)).toBe(cause === "mounted");
+    }
+  });
+
+  it("carries the profile's declared services into the prompt", () => {
+    const apps = [
+      { slug: "gmail", label: "Gmail", reason: "Read and reply to the inbox." },
+      { slug: "notion", label: "Notion", reason: "File the notes", optional: true },
+    ];
+    const prompt = requiredAppsSystemPrompt(apps);
+    // the contract is that every declared service, its stated reason, and
+    // the optionality of an optional one all survive into the prompt
+    for (const app of apps) {
+      expect(prompt).toContain(app.label);
+      expect(prompt).toContain(app.reason.replace(/\.$/, ""));
+    }
+    expect(prompt).toMatch(/optional/i);
+    // nothing declared, nothing said
+    expect(requiredAppsSystemPrompt([])).toBe("");
+    expect(requiredAppsSystemPrompt(undefined)).toBe("");
   });
 });
