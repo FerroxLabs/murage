@@ -712,6 +712,33 @@
       }
     },
     {
+      "slug": "advisor",
+      "name": "Advisor",
+      "summary": "You are **Advisor**. Someone is deciding something, planning something, or thinking out loud and needs a second head. You help them think — you do not tell them how to live.",
+      "category": "Decide",
+      "outcome": "The decision laid out on the criteria you actually care about, with a pick",
+      "setupMinutes": 2,
+      "manifest": "teams/advisor/advisor.emberteam.json",
+      "readme": "teams/advisor/README.md",
+      "members": 1,
+      "skills": [
+        "teams/advisor/skills/weighted-decision-matrix/SKILL.md",
+        "teams/advisor/skills/decision-journal/SKILL.md",
+        "teams/advisor/skills/decision-maker/SKILL.md",
+        "teams/advisor/skills/major-purchase-decision/SKILL.md",
+        "teams/advisor/skills/first-principles-thinker/SKILL.md",
+        "teams/advisor/skills/second-order-thinking/SKILL.md",
+        "teams/advisor/skills/eisenhower-matrix/SKILL.md",
+        "teams/advisor/skills/task-prioritization/SKILL.md",
+        "teams/advisor/skills/goal-setter/SKILL.md",
+        "teams/advisor/skills/habit-architect/SKILL.md",
+        "teams/advisor/skills/weekly-review/SKILL.md"
+      ],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
       "slug": "beautiful-mermaid",
       "name": "Beautiful Mermaid",
       "summary": "You are a diagram creation assistant specialized in generating beautiful Mermaid diagrams.",
@@ -840,6 +867,35 @@
       }
     },
     {
+      "slug": "builder",
+      "name": "Builder",
+      "summary": "You are **Builder**. You write and debug code, design automations, and help build the next bot or skill. You show the thing running, not a claim that it does.",
+      "category": "Build",
+      "outcome": "Working code with the way you verified it stated, not just asserted",
+      "setupMinutes": 3,
+      "manifest": "teams/builder/builder.emberteam.json",
+      "readme": "teams/builder/README.md",
+      "members": 1,
+      "skills": [
+        "teams/builder/skills/debugger/SKILL.md",
+        "teams/builder/skills/code-reviewer/SKILL.md",
+        "teams/builder/skills/unit-test-writer/SKILL.md",
+        "teams/builder/skills/refactoring-patterns/SKILL.md",
+        "teams/builder/skills/shell-scripter/SKILL.md",
+        "teams/builder/skills/regex-master/SKILL.md",
+        "teams/builder/skills/python-idioms/SKILL.md",
+        "teams/builder/skills/javascript-idioms/SKILL.md",
+        "teams/builder/skills/automation-architect/SKILL.md",
+        "teams/builder/skills/automation-for-life/SKILL.md",
+        "teams/builder/skills/ai-agent-builder/SKILL.md",
+        "teams/builder/skills/prompt-engineering/SKILL.md",
+        "teams/builder/skills/ai-prompt-crafter/SKILL.md"
+      ],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
       "slug": "cli-setup",
       "name": "CLI Setup Expert",
       "summary": "You are the CLI Setup Expert. You help users install, authenticate, and connect coding-agent CLIs as Murage backends: Claude Code, Codex, Kimi Code, OpenCode, and Qwen Code. You get them from \"nothing installed\" to \"this backend answers in Murage\", and you fix broken connections.",
@@ -855,6 +911,27 @@
       }
     },
     {
+      "slug": "concierge",
+      "name": "Concierge",
+      "summary": "You are **Concierge**, the bot someone talks to when they do not want to pick a bot. You work out what the person actually needs, answer it yourself when it is small, and hand it to the right specialist when it is not.",
+      "category": "Everyday",
+      "outcome": "One place to start, instead of a gallery of bots nobody reads",
+      "setupMinutes": 2,
+      "manifest": "teams/concierge/concierge.emberteam.json",
+      "readme": "teams/concierge/README.md",
+      "members": 1,
+      "skills": [
+        "teams/concierge/skills/requirements-analyst/SKILL.md",
+        "teams/concierge/skills/task-delegation-system/SKILL.md",
+        "teams/concierge/skills/task-prioritization/SKILL.md",
+        "teams/concierge/skills/critical-thinker/SKILL.md",
+        "teams/concierge/skills/creative-problem-solver/SKILL.md"
+      ],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
       "slug": "cowork",
       "name": "Cowork",
       "summary": "Outcome-oriented knowledge work: useful, editable, verifiable output",
@@ -865,6 +942,32 @@
       "readme": "teams/cowork/README.md",
       "members": 1,
       "skills": [],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
+      "slug": "creator",
+      "name": "Creator",
+      "summary": "You are **Creator**. You help someone make visual and social content: image prompts that actually produce what they pictured, video scripts, and posts that read like a person wrote them.",
+      "category": "Creative",
+      "outcome": "An image prompt written for the model you're actually using, not a generic one",
+      "setupMinutes": 2,
+      "manifest": "teams/creator/creator.emberteam.json",
+      "readme": "teams/creator/README.md",
+      "members": 1,
+      "skills": [
+        "teams/creator/skills/ai-image-generation-master/SKILL.md",
+        "teams/creator/skills/midjourney-prompting/SKILL.md",
+        "teams/creator/skills/dalle-prompting/SKILL.md",
+        "teams/creator/skills/stable-diffusion-prompting/SKILL.md",
+        "teams/creator/skills/ai-image-style-transfer/SKILL.md",
+        "teams/creator/skills/batch-image-generation/SKILL.md",
+        "teams/creator/skills/video-script-writing/SKILL.md",
+        "teams/creator/skills/short-form-video-planning/SKILL.md",
+        "teams/creator/skills/instagram-caption/SKILL.md",
+        "teams/creator/skills/logo-design-brief/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -900,6 +1003,34 @@
       "readme": "teams/excel-creator/README.md",
       "members": 1,
       "skills": [],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
+      "slug": "explainer",
+      "name": "Explainer",
+      "summary": "You are **Explainer**. You teach: concepts, subjects, step-by-step how-tos. You explain so someone can do it themselves next time, which is the opposite of doing it for them.",
+      "category": "Learn",
+      "outcome": "An explanation you actually follow, at your level, with a worked example",
+      "setupMinutes": 2,
+      "manifest": "teams/explainer/explainer.emberteam.json",
+      "readme": "teams/explainer/README.md",
+      "members": 1,
+      "skills": [
+        "teams/explainer/skills/personal-tutor/SKILL.md",
+        "teams/explainer/skills/feynman-technique/SKILL.md",
+        "teams/explainer/skills/math-tutoring/SKILL.md",
+        "teams/explainer/skills/concept-mapping/SKILL.md",
+        "teams/explainer/skills/active-recall-practice/SKILL.md",
+        "teams/explainer/skills/spaced-repetition/SKILL.md",
+        "teams/explainer/skills/flashcard-creator/SKILL.md",
+        "teams/explainer/skills/learning-path/SKILL.md",
+        "teams/explainer/skills/learning-accelerator/SKILL.md",
+        "teams/explainer/skills/note-synthesis/SKILL.md",
+        "teams/explainer/skills/how-to-guide/SKILL.md",
+        "teams/explainer/skills/homework-help-strategies/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -1094,6 +1225,30 @@
       }
     },
     {
+      "slug": "researcher",
+      "name": "Researcher",
+      "summary": "You are **Researcher**. People come to you instead of a search box. You answer the question, name the source behind every claim, and separate what you verified from what you are only inferring.",
+      "category": "Research",
+      "outcome": "An answer with its sources attached, not a confident paragraph from nowhere",
+      "setupMinutes": 2,
+      "manifest": "teams/researcher/researcher.emberteam.json",
+      "readme": "teams/researcher/README.md",
+      "members": 1,
+      "skills": [
+        "teams/researcher/skills/research-synthesis/SKILL.md",
+        "teams/researcher/skills/research-orchestrator/SKILL.md",
+        "teams/researcher/skills/source-evaluation/SKILL.md",
+        "teams/researcher/skills/fact-check-framework/SKILL.md",
+        "teams/researcher/skills/research-question/SKILL.md",
+        "teams/researcher/skills/literature-search/SKILL.md",
+        "teams/researcher/skills/citation-reference/SKILL.md",
+        "teams/researcher/skills/note-synthesis/SKILL.md"
+      ],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
       "slug": "smart-trader",
       "name": "Smart Trader",
       "summary": "You are **Smart Trader**. You help someone read their own charts and get a clear picture of their",
@@ -1191,6 +1346,33 @@
       "readme": "teams/word-form-creator/README.md",
       "members": 1,
       "skills": [],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
+      "slug": "writer",
+      "name": "Writer",
+      "summary": "You are **Writer**. Most of the time someone hands you text they already wrote and wants it better: clearer, shorter, warmer, less stiff. Editing is the main job. Drafting from nothing is the smaller half.",
+      "category": "Write",
+      "outcome": "Your own text back, edited, with the changes visible rather than silently swallowed",
+      "setupMinutes": 2,
+      "manifest": "teams/writer/writer.emberteam.json",
+      "readme": "teams/writer/README.md",
+      "members": 1,
+      "skills": [
+        "teams/writer/skills/clarity-editing/SKILL.md",
+        "teams/writer/skills/conciseness-editing/SKILL.md",
+        "teams/writer/skills/copy-editing/SKILL.md",
+        "teams/writer/skills/tone-adjustment/SKILL.md",
+        "teams/writer/skills/proofreading/SKILL.md",
+        "teams/writer/skills/structural-editing/SKILL.md",
+        "teams/writer/skills/line-editor/SKILL.md",
+        "teams/writer/skills/professional-email/SKILL.md",
+        "teams/writer/skills/email-composer/SKILL.md",
+        "teams/writer/skills/blog-post-writing/SKILL.md",
+        "teams/writer/skills/newsletter-writing/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }

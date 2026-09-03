@@ -45,13 +45,32 @@ afterEach(() => {
   for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
+/** How many entries the library actually ships, read once from the library.
+ *
+ * These assertions used to hardcode 122 and 58, and every legitimate addition
+ * to `bot-library/` or `library/` broke six tests that had nothing to say
+ * about the change — seven new profiles landed and this file went red on
+ * arithmetic. The number was never the property. What is being tested is that
+ * the OFFLINE path returns everything the shipped catalog holds, and that a
+ * hostile or corrupt cache falls back to exactly that same set.
+ *
+ * The floor is the part that still needs stating: derived-from-itself would
+ * pass just as happily on an empty catalog, which is the one outcome worth
+ * catching. */
+const SHIPPED = loadLocalCatalog()!.teams.length;
+const SHIPPED_SOLO = loadLocalCatalog()!.teams.filter((team) => team.members === 1).length;
+
 describe("the shipped catalog", () => {
   it("passes the same gate a downloaded catalog does", () => {
     const catalog = loadLocalCatalog();
     expect(catalog).not.toBeNull();
     expect(() => parseTeamCatalog(catalog)).not.toThrow();
-    expect(catalog!.teams).toHaveLength(122);
-    expect(catalog!.teams.filter((team) => team.members === 1)).toHaveLength(58);
+    // A floor, not an exact count: an empty or truncated catalog is the
+    // failure worth catching, and 100 is far below anything shippable.
+    expect(SHIPPED).toBeGreaterThan(100);
+    expect(SHIPPED_SOLO).toBeGreaterThan(40);
+    expect(catalog!.teams).toHaveLength(SHIPPED);
+    expect(catalog!.teams.filter((team) => team.members === 1)).toHaveLength(SHIPPED_SOLO);
   });
 
   it("declares no skill it does not ship", () => {
@@ -92,7 +111,7 @@ describe("offline", () => {
     // GET /api/team-library/catalog returned 502 here before P0.
     const catalog = await fetchTeamCatalog(blocked, { cacheFile: noCache() });
     expect(catalog.format).toBe("murage.catalog");
-    expect(catalog.teams).toHaveLength(122);
+    expect(catalog.teams).toHaveLength(SHIPPED);
     expect(blocked).not.toHaveBeenCalled();
   });
 
@@ -185,7 +204,8 @@ describe("the refresh", () => {
     ) as unknown as typeof fetch;
     expect(await refreshRemoteCatalog(fetcher, cacheFile)).not.toBeNull();
     const merged = await fetchTeamCatalog(blocked, { cacheFile });
-    expect(merged.teams).toHaveLength(123);
+    // Everything shipped, plus the one entry only the remote had.
+    expect(merged.teams).toHaveLength(SHIPPED + 1);
     expect(merged.teams.at(-1)!.slug).toBe("brand-new-crew");
   });
 
@@ -204,7 +224,7 @@ describe("the refresh", () => {
     ) as unknown as typeof fetch;
     expect(await refreshRemoteCatalog(hostile, cacheFile)).toBeNull();
     expect(existsSync(cacheFile)).toBe(false);
-    expect((await fetchTeamCatalog(blocked, { cacheFile })).teams).toHaveLength(122);
+    expect((await fetchTeamCatalog(blocked, { cacheFile })).teams).toHaveLength(SHIPPED);
   });
 
   it("keeps the whole library when the download exceeds the entry ceiling", async () => {
@@ -230,13 +250,13 @@ describe("the refresh", () => {
         ),
     ) as unknown as typeof fetch;
     expect(await refreshRemoteCatalog(flood, cacheFile)).toBeNull();
-    expect((await fetchTeamCatalog(blocked, { cacheFile })).teams).toHaveLength(122);
+    expect((await fetchTeamCatalog(blocked, { cacheFile })).teams).toHaveLength(SHIPPED);
   });
 
   it("rejects a cache file that was edited after it was written", async () => {
     const cacheFile = noCache();
     writeFileSync(cacheFile, JSON.stringify({ fetchedAt: Date.now(), catalog: { format: "murage.catalog", version: 1, teams: "not an array" } }));
-    expect((await fetchTeamCatalog(blocked, { cacheFile })).teams).toHaveLength(122);
+    expect((await fetchTeamCatalog(blocked, { cacheFile })).teams).toHaveLength(SHIPPED);
   });
 });
 
