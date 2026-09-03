@@ -93,7 +93,14 @@ function parseUpstream(text: string, id: unknown): Json | null {
         return [];
       }
     });
-  return frames.findLast((frame) => frame.id === id) ?? frames.at(-1) ?? null;
+  // Only the frame that answers THIS request.
+  //
+  // The `?? frames.at(-1)` fallback forwarded a stranger: an SSE frame
+  // carrying a different jsonrpc id was handed back as though it were the
+  // answer, so the client never resolved the id it actually asked about and
+  // waited forever. A mismatched id is a failure, and it has to be reported
+  // as one rather than papered over with whatever arrived last.
+  return frames.findLast((frame) => frame.id === id) ?? null;
 }
 
 async function relay(message: Json, timeoutMs = RELAY_TIMEOUT_MS): Promise<Json | null> {
@@ -111,7 +118,31 @@ async function relay(message: Json, timeoutMs = RELAY_TIMEOUT_MS): Promise<Json 
   });
   const nextSession = response.headers.get("mcp-session-id");
   if (nextSession) upstreamSessionId = nextSession;
-  if (!response.ok) throw new Error(`connector service returned HTTP ${response.status}`);
+  if (!response.ok) {
+    // The body, not just the number.
+    //
+    // Every distinct upstream failure used to collapse to a bare status: an
+    // expired key, a billing hold, a disabled account and the broker's daily
+    // ceiling were all "connector service returned HTTP 4xx". The broker
+    // writes a real sentence — "This install has hit today's connected-app
+    // request limit. It resets at 00:00 UTC." with a `code` and a
+    // `retry-after` — and all of it was discarded before anyone could read
+    // it. That is why a dead connector could never be diagnosed from inside
+    // the app, and why a whole afternoon went into guessing which hop was
+    // broken.
+    //
+    // Bounded and best-effort: a body that will not read must not turn a
+    // useful status into an exception of its own.
+    let detail = "";
+    try {
+      detail = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 300);
+    } catch {
+      detail = "";
+    }
+    throw new Error(
+      `connector service returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
+    );
+  }
   return parseUpstream(await readBounded(response), message.id);
 }
 
@@ -191,7 +222,17 @@ async function handle(message: Json): Promise<void> {
   }
   try {
     const response = await relay(message);
-    if (response && id !== undefined) send(response);
+    // A request is never dropped on the floor.
+    //
+    // `relay()` returns null when the upstream answered with something this
+    // bridge could not parse — an empty 200, or frames that never carried
+    // this id. The old code simply wrote nothing to stdout, and an MCP client
+    // waits on an unanswered id indefinitely. Inside an agent turn a hung
+    // tool call is indistinguishable from the model thinking, so the failure
+    // was invisible in the one place it mattered most.
+    if (id === undefined) return;
+    if (response) send(response);
+    else send(textResult(id, "connector service returned an unreadable response", true));
   } catch (error) {
     if (id === undefined) return;
     const messageText = error instanceof Error ? error.message : String(error);
