@@ -93,23 +93,23 @@ const phase1 = await parallel([
   #9  8be0d3fb — ComposerQueuedMessages is the FIRST child of the composer column
   #11 3ba0ba0d + eac313db (squash; Goal chip hand-placed at Composer.tsx:771)
   NOTE: #10 is NOT yours. It edits acp/core.ts, which Lane E owns.`),
-    { label: 'apply:server', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' }),
+    { label: 'apply:server', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree', model: 'opus' }),
   () => agent(lanePrompt('engines', `
   #6  3ab2426d → 4a72db5a
   #7  ed7a1515 — MURAGE_ACP_* env names, defaults 60-90s NOT 300s; add the
       null session/load test; run fuigo.test.ts and hermes.test.ts`,
     `You own acp/core.ts, fake-acp-cli.ts and acp.test.ts. Item #10 lands in a
      later serial lane on top of your work — do not attempt it here.`),
-    { label: 'apply:engines', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' }),
+    { label: 'apply:engines', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree', model: 'opus' }),
   () => agent(lanePrompt('desktop', `
   #4  509a34b2
   #5  9f27177a → 4eedf162
   #13 7fc09de4
   #21 2ba2dff0 — HAND-PORT for FerroxLabs/murage-releases + RELEASES_PAT; do NOT run any workflow`),
-    { label: 'apply:desktop', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' }),
+    { label: 'apply:desktop', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree', model: 'opus' }),
   () => agent(lanePrompt('sidebar', `
   #12 de7f0232 — keep the desktop === true gate on BOTH SidebarPhoneButton sites`),
-    { label: 'apply:sidebar', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' }),
+    { label: 'apply:sidebar', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree', model: 'opus' }),
 ])
 
 // A worktree agent can silently not run (HANDOFF gotcha). Fail loudly, not quietly.
@@ -133,7 +133,7 @@ const acpImages = serverBranch && enginesBranch
   #10 e8869da2 — the dry-run CLEAN is FALSE: it references generatedImagesByTurn
       from S#9 and fails typecheck without it. Run acp.test.ts, fuigo.test.ts,
       hermes.test.ts, and typecheck.`),
-      { label: 'apply:acp-images', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' })
+      { label: 'apply:acp-images', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree', model: 'opus' })
   : null
 if (!acpImages) log('acp-images lane did not run (server or engines missing)')
 const routines = serverBranch
@@ -146,7 +146,7 @@ const routines = serverBranch
   #18 3e23961d PART (a) ONLY
   #19 50ddda4d + 75b7c154 web hunks (squash) — hand-port; boot check required
   #20 e74e85c1 web hunk`),
-      { label: 'apply:routines', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' })
+      { label: 'apply:routines', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree', model: 'opus' })
   : null
 if (!routines) log('routines lane did not run (no server branch to build on)')
 
@@ -161,7 +161,7 @@ const mcp = mergedSoFar.length === 2
       with a test proving a non-desktop PUT /api/config carrying mcpServers changes
       nothing. Audit every HTTP-reachable saveConfig caller before calling it done.
       Boot check from desktop AND a phone-surface curl → 404`),
-      { label: 'apply:mcp', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' })
+      { label: 'apply:mcp', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree', model: 'opus' })
   : null
 if (!mcp) log('mcp lane did not run (server or routines missing)')
 
@@ -169,7 +169,7 @@ if (!mcp) log('mcp lane did not run (server or routines missing)')
 phase('Verify')
 const reports = [...p1, acpImages, routines, mcp].filter(Boolean)
 const verdicts = await parallel(reports.map(r => () =>
-  agent(verifyPrompt(r.lane, r), { label: `verify:${r.lane}`, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'high' })
+  agent(verifyPrompt(r.lane, r), { label: `verify:${r.lane}`, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'high', model: 'opus' })
 ))
 const v = verdicts.filter(Boolean)
 for (const x of v) log(`${x.lane}: ${x.verdict} (${x.findings.length} findings)`)
@@ -193,7 +193,7 @@ ${PLAN} §0 rule 6 — re-run those once in isolation before calling them red).
 Then boot: MURAGE_PORT=18877 node --experimental-strip-types server/index.ts & and
 curl -s http://127.0.0.1:18877/api/instances, confirm the fuigo instance is present with models > 0, then kill it.
 Never push. Report: branch name, merge results, typecheck/lint/test counts, boot result.
-`, { label: 'stage:merge', phase: 'Stage', isolation: 'worktree' })
+`, { label: 'stage:merge', phase: 'Stage', isolation: 'worktree', model: 'opus' })
   : 'nothing staged — no lane was SOUND'
 
 return {
