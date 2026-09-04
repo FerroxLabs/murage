@@ -41,7 +41,8 @@ const CREDENTIALS: Record<
   composio: {
     label: "Composio project key",
     placeholder: "ak_…",
-    description: "Connect Gmail, GitHub, Slack, Notion, and other apps through your own Composio project.",
+    description:
+      "Required for connected apps. Gmail, GitHub, Slack, Notion and the rest run through your own Composio project, on your own key.",
     href: "https://dashboard.composio.dev",
     linkLabel: "Create or copy a project key",
     optional: true,

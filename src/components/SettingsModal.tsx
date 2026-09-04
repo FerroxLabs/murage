@@ -720,7 +720,7 @@ export function SettingsModal() {
             {desktop === true && section === "connections" && (
               <Card
                 title="Connections"
-                subtitle="Connected apps work automatically in the installed app. Other optional service keys stay on this computer."
+                subtitle="Connect your apps with your own Composio project key. Every key here stays on this computer."
               >
                 <div className="flex flex-col gap-4">
                   {state.config?.composio.mode === "managed" ? (
@@ -739,15 +739,18 @@ export function SettingsModal() {
                       that is what it is: nothing here is required for the app
                       to work, and every engine is authenticated on its own. */}
                   <FluxKeyCard />
+                  {/* Composio sits with the other keys rather than folded into
+                      a "Self-host connected apps" disclosure, which is where it
+                      used to live. That disclosure made sense while Ferrox's
+                      managed broker was the default and bringing your own key
+                      was the exotic case. It is not the default any more —
+                      connected apps need the person's own project key — so
+                      hiding the only way to switch them on behind a collapsed
+                      summary hid the feature itself. */}
+                  <ApiKeyRow section="composio" />
                   <ApiKeyRow section="box" />
                   <VpsConnection />
                   <ApiKeyRow section="opencodeGo" />
-                  <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-                    <summary className="cursor-pointer text-[13px] text-ink-secondary">Self-host connected apps</summary>
-                    <div className="mt-3">
-                      <ApiKeyRow section="composio" />
-                    </div>
-                  </details>
                 </div>
               </Card>
             )}
