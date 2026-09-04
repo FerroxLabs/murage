@@ -188,8 +188,14 @@ export const BUDGET_MAX_BILLED_SECONDS = 60 * 60;
  * The seconds budget is the bound on money; this is the bound on everything
  * else — sockets, uploads, and upstream calls. 240 an hour is one utterance
  * every fifteen seconds sustained for a full hour, which no dictation session
- * approaches, and 240 one-second clips cost four minutes of audio, so it can
- * never be the cap that bites a real user first.
+ * approaches.
+ *
+ * This comment used to finish "240 one-second clips cost four minutes of
+ * audio". That was wrong by 10x: Flux bills `max(seconds, 10)`, so 240 short
+ * clips cost FORTY minutes — two thirds of the hour below, not a fifteenth of
+ * it. The conclusion survives, barely: the request cap still binds before the
+ * seconds cap. The margin it rests on is 1.5x, not 15x, so anyone raising this
+ * number must check the seconds budget rather than assume headroom.
  */
 export const BUDGET_MAX_REQUESTS = 240;
 
@@ -202,8 +208,16 @@ export const BUDGET_MAX_REQUESTS = 240;
  * high is the right direction for a budget: it over-charges a failure, which
  * is rare, rather than under-charging an attack, which is not.
  */
+/** Flux bills `max(seconds, 10)` per clip at 1667 microcents an audio-second
+ *  — confirmed by flux-router 2026-09-04, alongside the `price_unit` field
+ *  they are adding so a per-audio-second figure can never be read as a
+ *  per-image one. Every estimate here has to carry that floor or the budget
+ *  under-counts a short press by up to 10x, which is exactly the shape of
+ *  clip push-to-talk produces most. */
+export const BILLED_SECONDS_FLOOR = 10;
+
 export function estimateBilledSeconds(bytes: number): number {
-  return Math.ceil(bytes / 3000);
+  return Math.max(BILLED_SECONDS_FLOOR, Math.ceil(bytes / 3000));
 }
 
 /**
@@ -533,7 +547,15 @@ export async function handleTranscribeRoute(
     );
     // Charged from what Flux says it billed, never from a guess, whenever it
     // says anything at all.
-    slot.done(transcript.billedSeconds ?? transcript.duration ?? estimateBilledSeconds(bytes.byteLength));
+    // `billedSeconds` is what Flux says it charged and already carries the
+    // 10s floor. `duration` is the clip's own length and does not, so it gets
+    // the floor applied here — a 2s utterance is billed as 10.
+    slot.done(
+      transcript.billedSeconds ??
+        (transcript.duration === undefined
+          ? estimateBilledSeconds(bytes.byteLength)
+          : Math.max(BILLED_SECONDS_FLOOR, Math.ceil(transcript.duration))),
+    );
     json(res, 200, transcript);
     return true;
   } catch (error) {
