@@ -5,7 +5,7 @@
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CodexDriver } from "./codex.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { NATIVE_DIR } from "../config.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
@@ -231,6 +232,48 @@ describe("CodexDriver turns (fake app-server)", () => {
     } finally {
       delete process.env.FLUX_API_KEY;
     }
+  });
+
+  it("normalizes native image generation bytes without exposing the provider path", async () => {
+    await create({ mode: "image" });
+    await instance.adapter.sendTurn({
+      threadId: "t-image",
+      text: "make an image",
+      model: "gpt-5.6-sol",
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const image = recorder.events.find(
+      (event) => event.type === "item.completed" && event.itemType === "assistant_image",
+    );
+    expect(image).toMatchObject({
+      itemType: "assistant_image",
+      itemId: "img1",
+      alt: "a tiny green mouse",
+    });
+    expect(image && "data" in image ? image.data : "").toMatch(/^iVBOR/);
+    // savedPath is the app-server's own file. Reading it would make the
+    // harness depend on a path it did not write; the bytes are the contract.
+    expect(JSON.stringify(image)).not.toContain("provider-owned-path");
+  });
+
+  it("keeps the generated raster out of the native protocol tee", async () => {
+    // ~/.murage/native/*.ndjson is an ordinary file people paste into bug
+    // reports. A megabyte of base64 in it is both useless and a leak of the
+    // provider's local path, so the entry keeps the shape and loses both.
+    await create({ mode: "image" });
+    // appendNative never creates its directory (ensureDirs does that at
+    // boot) and swallows the ENOENT, so the unit test makes it itself.
+    mkdirSync(NATIVE_DIR, { recursive: true });
+    const threadId = `t-image-log-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "make an image", model: "gpt-5.6-sol" });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const logged = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
+    expect(logged).toContain("imageGeneration");
+    expect(logged).toContain("base64 chars]");
+    expect(logged).not.toContain("iVBORw0KGgo");
+    expect(logged).not.toContain("provider-owned-path");
   });
 
   it("keeps the full command when a Windows interpreter prefix is long", async () => {
