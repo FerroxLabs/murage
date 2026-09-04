@@ -100,6 +100,8 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
   text?: string;
+  /** Provider-generated files attached to this assistant response. */
+  attachments?: Array<{ kind: "image"; path: string; mime: string }>;
   card?: OptionCardData;
   connector?: ConnectorCardData;
   secret?: SecretRequestCardData;

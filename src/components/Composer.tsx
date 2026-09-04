@@ -18,6 +18,7 @@ import {
 } from "@/lib/drafts";
 import { BotAvatar } from "./Avatar";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
+import { QueuedComposerMessages } from "./ComposerQueuedMessages";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
   appendPastedText,
@@ -338,7 +339,8 @@ export function Composer({
   // Busy sends are owned by the harness immediately for both channels and
   // 1:1 chats. Keeping a channel follow-up in this component used to lose its
   // auto-send intent whenever navigation unmounted the composer.
-  const pendingCount = (state.pendingQueued[threadId] ?? []).length;
+  const queuedMessages = state.pendingQueued[threadId] ?? [];
+  const pendingCount = queuedMessages.length;
   const canInject = composerCanInjectNow(busy, locked, pendingCount);
   const interruptTurn = () => {
     if (group) dispatch({ type: "interruptGroup", groupId: group.id });
@@ -636,6 +638,17 @@ export function Composer({
             them removes the dead space at every height and gives both clusters
             one baseline. */}
         <div className="relative z-[1] flex flex-col gap-1.5 rounded-3xl bg-raised px-2 py-1.5">
+          {/* First child of the column, so a queued line sits directly above
+              the textarea it came out of and above the controls row — not
+              inside that row, and not at the far end of a transcript the
+              user has scrolled away from. */}
+          <QueuedComposerMessages
+            items={queuedMessages}
+            onCancel={(queueId) => {
+              if (group) dispatch({ type: "cancelGroupQueued", groupId: group.id, threadId, queueId });
+              else if (bot) dispatch({ type: "cancelQueued", botId: bot.id, queueId });
+            }}
+          />
           <input
             ref={fileInput}
             type="file"
@@ -792,7 +805,7 @@ export function Composer({
           <div className="ml-auto flex items-center gap-1">
           {/* Inject is stop-then-steer made visible. The square stop would
               drain the same queue, so it yields while a send is waiting.
-              Cancelling the ghost/chip brings Stop back. */}
+              Cancelling the queued composer card brings Stop back. */}
           {canInject && <ComposerInjectNow onInject={interruptTurn} />}
           {busy && !locked && !canInject && (
           <button
