@@ -14,6 +14,8 @@ import type { ModelSelection } from "./contracts.ts";
 import {
   drainDelegations,
   findDelegationReceipt,
+  formatDelegationElapsed,
+  summarizeDelegatedActivity,
   MAX_BUSY_ATTEMPTS,
   pendingDelegationInfo,
   pendingDelegationSnapshot,
@@ -938,5 +940,55 @@ describe("delegations queued from a room", () => {
     expect(runTargetCalls.map((call) => call.toBotId)).toEqual([lead.id]);
     expect(findDelegationReceipt(blocked.id!)).toMatchObject({ status: "dropped" });
     expect(findDelegationReceipt(ok.id!)).toBeNull(); // dispatched, not dropped
+  });
+});
+
+
+describe("delegated turn status helpers", () => {
+  it("formats elapsed time compactly", () => {
+    expect(formatDelegationElapsed(5_000)).toBe("5s");
+    expect(formatDelegationElapsed(65_000)).toBe("65s");
+    expect(formatDelegationElapsed(95_000)).toBe("1m 35s");
+    expect(formatDelegationElapsed(180_000)).toBe("3m");
+    // a clock that went backwards must not print a negative age
+    expect(formatDelegationElapsed(-5_000)).toBe("0s");
+  });
+
+  it("summarizeDelegatedActivity keeps only post-dispatch activity, newest last, bounded", () => {
+    const messages = [
+      { at: 900, kind: "text", text: "before dispatch (the user's ask)" },
+      { at: 1_100, kind: "activity", tool: { name: "Delegated to @Helper: followup" } },
+      { at: 1_200, kind: "text", text: "peer inbound message" },
+      { at: 1_300, kind: "activity", tool: { name: "tool: Bash" } },
+      { at: 1_400, kind: "text", text: "  multi  space   reply " },
+      { at: 1_500, kind: "activity" },
+      { at: 1_600, kind: "unknown-kind" },
+    ];
+    const lines = summarizeDelegatedActivity(messages, 1_000, 5);
+    expect(lines).toEqual([
+      "tool: Delegated to @Helper: followup",
+      "text: peer inbound message",
+      "tool: tool: Bash",
+      "text: multi space reply",
+    ]);
+  });
+
+  it("summarizeDelegatedActivity bounds the list to the newest lines", () => {
+    const messages = Array.from({ length: 9 }, (_, index) => ({
+      at: 1_000 + index,
+      kind: "activity",
+      tool: { name: `step-${index}` },
+    }));
+    const lines = summarizeDelegatedActivity(messages, 1_000, 3);
+    expect(lines).toEqual(["tool: step-6", "tool: step-7", "tool: step-8"]);
+  });
+
+  it("reports nothing at all when the peer has produced nothing since dispatch", () => {
+    // The empty list is the signal the proxy renders as "may be stuck", so
+    // a pre-dispatch transcript must not leak into it and look like work.
+    expect(summarizeDelegatedActivity(
+      [{ at: 500, kind: "text", text: "the ask" }, { at: 900, kind: "activity", tool: { name: "Bash" } }],
+      1_000,
+    )).toEqual([]);
   });
 });

@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Bug,
-  Clock,
   Copy,
   Folder,
   ListTree,
@@ -671,8 +670,14 @@ function Bubble({
               )}
             </>
           ) : (
-            <MessageBoundary fallbackText={text}>
-              <ChatMarkdown text={text} />
+            <MessageBoundary fallbackText={text || "Generated image"}>
+              {message.attachments?.length ? (
+                <AttachedImageGallery
+                  paths={message.attachments.map((attachment) => attachment.path)}
+                  className={text ? "justify-start" : "mb-0 justify-start"}
+                />
+              ) : null}
+              {text ? <ChatMarkdown text={text} /> : null}
             </MessageBoundary>
           )}
         </div>
@@ -681,8 +686,8 @@ function Bubble({
         {!user && (
           <>
             <div className="flex flex-col gap-0.5 self-end pb-0.5">
-              <CopyButton text={text} />
-              {message.kind === "text" && (
+              {text && <CopyButton text={text} />}
+              {message.kind === "text" && text && (
                 <SpeakButton text={text} botId={bot.id} messageId={message.id} voiceId={bot.voice} />
               )}
               {isLastBotText && !bot.busy && onRegenerate && (
@@ -1191,6 +1196,7 @@ export function ChatView({ bot }: { bot: Bot }) {
     return () => clearTimeout(timer);
   }, [lastMessage?.id, lastMessage?.role, lastMessage?.kind, lastMessage?.text]);
   const presenceVisible = waiting || popping !== null;
+  const poppingMessage = popping ? messages.find((message) => message.id === popping.id) : undefined;
   // Wall-clock anchor for the working row's elapsed readout — set when the
   // turn starts, cleared when it settles, reset on bot switch.
   const [busySince, setBusySince] = useState<number | null>(null);
@@ -1588,39 +1594,18 @@ export function ChatView({ bot }: { bot: Bot }) {
           >
             {popping ? (
               <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-                <MessageBoundary fallbackText={popping.text}>
-                  <ChatMarkdown text={popping.text} />
+                <MessageBoundary fallbackText={popping.text || "Generated image"}>
+                  {poppingMessage?.attachments?.length ? (
+                    <AttachedImageGallery
+                      paths={poppingMessage.attachments.map((attachment) => attachment.path)}
+                      className={popping.text ? "justify-start" : "mb-0 justify-start"}
+                    />
+                  ) : null}
+                  {popping.text ? <ChatMarkdown text={popping.text} /> : null}
                 </MessageBoundary>
               </div>
             ) : null}
           </TurnPresence>
-          {/* Ghost tail: 1:1 sends made mid-turn wait in the server's steer
-              queue and stay off the transcript until drain (they must never
-              become the active leaf). These rows are that queue made visible,
-              in send order, each with its own cancel. */}
-          {bot.busy &&
-            (state.pendingQueued[bot.threadId] ?? []).map((entry) => (
-              <div key={entry.queueId} className="flex flex-col items-end">
-                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
-                  {entry.text}
-                </div>
-                <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
-                  <Clock size={11} aria-hidden="true" />
-                  <span>Queued — wait, or inject now</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      dispatch({ type: "cancelQueued", botId: bot.id, queueId: entry.queueId })
-                    }
-                    aria-label="Cancel queued message"
-                    title="Cancel queued message"
-                    className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
-                  >
-                    <X size={11} strokeWidth={2.5} />
-                  </button>
-                </div>
-              </div>
-            ))}
         </div>
       </div>
 
