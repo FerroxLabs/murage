@@ -12,17 +12,23 @@ export type RoutineRequestRunOn = "ember" | "cloud";
 
 export type RoutineRequestSchedule =
   | { type: "once"; at: number }
-  | { type: "daily"; time: string; weekdays: number[] };
+  | { type: "daily"; time: string; weekdays: number[] }
+  | { type: "interval"; everyMinutes: number; anchorAt?: number };
 
 export interface RoutineRequestDefinition {
   name: string;
   instructions: string;
   schedule: RoutineRequestSchedule;
   runOn: RoutineRequestRunOn;
+  /** Legacy calendar/display length. It does not stop an active run. */
   durationMinutes: number;
+  /** Optional safety cap for active work. Missing means no timeout. */
+  timeoutMinutes?: number;
 }
 
-export type RoutineRequestChanges = Partial<RoutineRequestDefinition>;
+export type RoutineRequestChanges =
+  & Omit<Partial<RoutineRequestDefinition>, "timeoutMinutes">
+  & { /** `null` removes an existing safety cap. */ timeoutMinutes?: number | null };
 
 /** Another bot in the proposer's section that the routine is scheduled for.
  * Captured (id + display name) when the card is created so the card stays

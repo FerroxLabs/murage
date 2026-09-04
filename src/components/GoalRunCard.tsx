@@ -19,6 +19,7 @@ const COPY = {
   "needs-input": { label: "Needs your input", tone: "text-warning", border: "border-warning/35" },
   blocked: { label: "Blocked", tone: "text-warning", border: "border-warning/35" },
   "limit-reached": { label: "Turn limit reached", tone: "text-warning", border: "border-warning/35" },
+  paused: { label: "Paused", tone: "text-warning", border: "border-warning/35" },
   stopped: { label: "Stopped", tone: "text-ink-secondary", border: "border-hairline/45" },
   failed: { label: "Failed", tone: "text-danger", border: "border-danger/35" },
 } satisfies Record<
@@ -42,6 +43,7 @@ function StatusIcon({ status }: { status: GroupGoalRunCardData["status"] }) {
       return <Hand aria-hidden="true" className={cn(className, "text-warning")} />;
     case "blocked":
     case "limit-reached":
+    case "paused":
       return <CircleAlert aria-hidden="true" className={cn(className, "text-warning")} />;
     case "stopped":
       return <Square aria-hidden="true" className={cn(className, "text-ink-secondary")} />;

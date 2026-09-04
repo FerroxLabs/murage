@@ -5,6 +5,7 @@ import {
   GROUP_GOAL_MAX_TURNS,
   groupGoalAssignmentKey,
   groupGoalCompletionTurnId,
+  groupGoalCoordinatorInstructions,
   parseGroupGoalDecision,
   resolveGroupGoalMember,
   selectGroupGoalCoordinator,
@@ -87,5 +88,27 @@ describe("group goal runs", () => {
 
   it("reserves the final bounded turn for coordinator evaluation", () => {
     expect(GROUP_GOAL_MAX_TURNS % 2).toBe(1);
+  });
+});
+
+describe("groupGoalCoordinatorInstructions harness note", () => {
+  const base = {
+    goal: "Ship the release notes",
+    members: [{ id: "lead", name: "Lead" }, { id: "scout", name: "Scout" }],
+    turn: 3,
+    maxTurns: 13,
+    remainingTurns: 10,
+  };
+
+  it("renders a harness note on its own line, before the ledger guidance", () => {
+    const lines = groupGoalCoordinatorInstructions({ ...base, note: "Scout stayed busy for 30 minutes" }).split("\n");
+    const noteAt = lines.indexOf("Harness note: Scout stayed busy for 30 minutes");
+    const ledgerAt = lines.findIndex((line) => line.startsWith("Use the conversation as the progress ledger"));
+    expect(noteAt).toBeGreaterThan(-1);
+    expect(ledgerAt).toBeGreaterThan(noteAt);
+  });
+
+  it("omits the note line entirely when there is nothing to report", () => {
+    expect(groupGoalCoordinatorInstructions(base)).not.toContain("Harness note:");
   });
 });

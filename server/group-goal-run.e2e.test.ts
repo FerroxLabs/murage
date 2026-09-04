@@ -12,6 +12,7 @@ import { freePortBlock } from "./testing/ports.ts";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
+const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
 
 let child: ChildProcess;
 let home = "";
@@ -37,6 +38,23 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
   const response = await fetch(`${base}${path}`, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: response.status, body: await response.json() };
+};
+
+/** Writing a routine definition is desktop-only (server/index.ts:7139): an
+ * interval schedule is a spawn schedule. The scheduled-goal cases below are
+ * exercising goals, not the gate, so they speak as the renderer.
+ * server/routine-write-gate.e2e.test.ts is where the gate itself is proven. */
+const desktopApi = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  const response = await fetch(`${base}${path}`, {
+    method,
+    headers: {
+      "x-murage-surface": "desktop",
+      "x-murage-surface-secret": DESKTOP_SECRET,
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: response.status, body: await response.json() };
@@ -88,6 +106,92 @@ beforeAll(async () => {
         },
         config: { cli: FAKE_CLAUDE },
       },
+      busyGoal: {
+        driver: "claudeAgent",
+        displayName: "Busy goal fixture",
+        environment: {
+          FAKE_CLAUDE_MODE: "slow",
+          FAKE_CLAUDE_REPLIES: JSON.stringify([
+            "The unrelated direct task is complete.",
+            "The queued team goal is complete.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Waited for the lead, then completed normally.\"}</murage-goal>",
+          ]),
+          FAKE_CLAUDE_REPLY_STATE: join(home, "busy-goal-replies.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
+      busyWorkerLead: {
+        driver: "claudeAgent",
+        displayName: "Busy worker lead fixture",
+        environment: {
+          FAKE_CLAUDE_MODE: "happy",
+          FAKE_CLAUDE_REPLIES: JSON.stringify([
+            "I am delegating the research.\n<murage-goal>{\"status\":\"continue\",\"next\":\"Busy specialist\",\"instruction\":\"Research the answer and report evidence\",\"detail\":\"Waiting for specialist research.\"}</murage-goal>",
+            "The specialist's evidence resolves the goal.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Specialist research incorporated after their direct task finished.\"}</murage-goal>",
+          ]),
+          FAKE_CLAUDE_REPLY_STATE: join(home, "busy-worker-lead-replies.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
+      busyWorker: {
+        driver: "claudeAgent",
+        displayName: "Busy worker fixture",
+        environment: {
+          FAKE_CLAUDE_MODE: "slow",
+          FAKE_CLAUDE_REPLIES: JSON.stringify([
+            "The unrelated direct research is complete.",
+            "Evidence gathered for the coordinator.",
+          ]),
+          FAKE_CLAUDE_REPLY_STATE: join(home, "busy-worker-replies.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
+      stopScopedLead: {
+        driver: "claudeAgent",
+        displayName: "Stop-scoped lead fixture",
+        environment: {
+          FAKE_CLAUDE_MODE: "slow",
+          FAKE_CLAUDE_REPLIES: JSON.stringify([
+            "I am delegating this scheduled goal.\n<murage-goal>{\"status\":\"continue\",\"next\":\"Delayed worker\",\"instruction\":\"Finish the scheduled analysis\",\"detail\":\"Waiting for the delayed worker.\"}</murage-goal>",
+            "This is unrelated direct work and should be stopped.",
+            "The scheduled analysis is now complete.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Scheduled goal survived the coordinator's direct Stop.\"}</murage-goal>",
+          ]),
+          FAKE_CLAUDE_REPLY_STATE: join(home, "stop-scoped-lead-replies.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
+      stopScopedWorker: {
+        driver: "claudeAgent",
+        displayName: "Stop-scoped worker fixture",
+        environment: {
+          FAKE_CLAUDE_MODE: "slow",
+          FAKE_CLAUDE_REPLIES: JSON.stringify([
+            "The worker's unrelated direct task completed naturally.",
+            "Scheduled analysis returned to the coordinator.",
+          ]),
+          FAKE_CLAUDE_REPLY_STATE: join(home, "stop-scoped-worker-replies.txt"),
+          FAKE_CLAUDE_TRANSIENTS: "1",
+          FAKE_CLAUDE_STATE: join(home, "stop-scoped-worker-launches.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
+      directHang: {
+        driver: "claudeAgent",
+        displayName: "Direct hang fixture",
+        environment: { FAKE_CLAUDE_MODE: "hang" },
+        config: { cli: FAKE_CLAUDE },
+      },
+      routineGoal: {
+        driver: "claudeAgent",
+        displayName: "Routine goal fixture",
+        environment: {
+          FAKE_CLAUDE_MODE: "slow",
+          FAKE_CLAUDE_REPLIES: JSON.stringify([
+            "The scheduled review is complete.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Scheduled team review completed.\"}</murage-goal>",
+          ]),
+          FAKE_CLAUDE_REPLY_STATE: join(home, "routine-goal-replies.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
     },
   }));
   const port = await freePortBlock([0, 1]);
@@ -102,6 +206,7 @@ beforeAll(async () => {
       MURAGE_PORT: String(port),
       MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_STATIC_DIR: staticDir,
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -172,6 +277,699 @@ describe("goal-driven channel runs", () => {
     expect(JSON.stringify(current.messages)).not.toContain("<murage-goal>");
   });
 
+  it("waits for a busy coordinator without spending a goal turn, then completes on the same card", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Patient lead",
+      modelSelection: { instanceId: "busyGoal", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Patient goal team",
+      memberIds: [lead.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+
+    try {
+      expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "Finish this direct task first" })).status)
+        .toBe(202);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy;
+      }).toBe(true);
+
+      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+        text: "Complete this goal after your current work",
+        mode: "goal",
+      })).status).toBe(202);
+
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const cards = current?.messages.filter((message: { kind: string }) => message.kind === "goal.run") ?? [];
+        return {
+          count: cards.length,
+          status: cards[0]?.goalRun?.status,
+          detail: cards[0]?.goalRun?.detail,
+          turnCount: cards[0]?.goalRun?.turnCount,
+          busyBotId: current?.busyBotId,
+        };
+      }).toMatchObject({
+        count: 1,
+        status: "working",
+        detail: expect.stringMatching(/finishing another conversation/i),
+        turnCount: 0,
+        busyBotId: null,
+      });
+
+      const waitingState = (await api("GET", "/api/bots?messages=30")).body;
+      const waitingRoom = waitingState.groups.find((group: { id: string }) => group.id === room.id);
+      const cardId = waitingRoom.messages.find((message: { kind: string }) => message.kind === "goal.run").id;
+
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const cards = current?.messages.filter((message: { kind: string }) => message.kind === "goal.run") ?? [];
+        return {
+          working: current?.working,
+          count: cards.length,
+          id: cards[0]?.id,
+          status: cards[0]?.goalRun?.status,
+          detail: cards[0]?.goalRun?.detail,
+          turnCount: cards[0]?.goalRun?.turnCount,
+        };
+      }, { timeout: 10_000 }).toEqual({
+        working: false,
+        count: 1,
+        id: cardId,
+        status: "completed",
+        detail: "Waited for the lead, then completed normally.",
+        turnCount: 1,
+      });
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
+      await api("POST", `/api/bots/${lead.id}/interrupt`, {}).catch(() => undefined);
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
+    }
+  });
+
+  it("waits for a busy delegated worker, preserves its direct turn, then resumes the goal", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Worker coordinator",
+      modelSelection: { instanceId: "busyWorkerLead", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const worker = (await api("POST", "/api/bots", {
+      name: "Busy specialist",
+      modelSelection: { instanceId: "busyWorker", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Busy specialist team",
+      memberIds: [lead.id, worker.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+
+    try {
+      expect((await api("POST", `/api/bots/${worker.id}/messages`, {
+        text: "Complete this unrelated direct research first",
+      })).status).toBe(202);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return state.bots.find((bot: { id: string }) => bot.id === worker.id)?.busy;
+      }).toBe(true);
+
+      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+        text: "Research and resolve the team question",
+        mode: "goal",
+      })).status).toBe(202);
+
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const card = current?.messages.find((message: { kind: string }) => message.kind === "goal.run");
+        return {
+          status: card?.goalRun?.status,
+          detail: card?.goalRun?.detail,
+          turnCount: card?.goalRun?.turnCount,
+          roomBusyBotId: current?.busyBotId,
+          workerDirectBusy: state.bots.find((bot: { id: string }) => bot.id === worker.id)?.busy,
+        };
+      }).toMatchObject({
+        status: "working",
+        detail: expect.stringMatching(/Busy specialist is finishing another conversation/i),
+        turnCount: 1,
+        roomBusyBotId: null,
+        workerDirectBusy: true,
+      });
+
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const currentWorker = state.bots.find((bot: { id: string }) => bot.id === worker.id);
+        const cards = current?.messages.filter((message: { kind: string }) => message.kind === "goal.run") ?? [];
+        return {
+          roomWorking: current?.working,
+          cards: cards.length,
+          status: cards[0]?.goalRun?.status,
+          detail: cards[0]?.goalRun?.detail,
+          turnCount: cards[0]?.goalRun?.turnCount,
+          speakers: current?.messages
+            .filter((message: { kind: string; role?: string }) => message.kind === "text" && message.role === "bot")
+            .map((message: { from?: { name?: string } }) => message.from?.name)
+            .filter((name: string | undefined, index: number, names: Array<string | undefined>) =>
+              name !== names[index - 1]
+            ),
+          workerDirectBusy: currentWorker?.busy,
+          directFinishedNaturally: currentWorker?.messages.some((message: { text?: string }) =>
+            message.text?.includes("reply to:")
+          ),
+        };
+      }, { timeout: 10_000 }).toEqual({
+        roomWorking: false,
+        cards: 1,
+        status: "completed",
+        detail: "Specialist research incorporated after their direct task finished.",
+        turnCount: 3,
+        speakers: ["Worker coordinator", "Busy specialist", "Worker coordinator"],
+        workerDirectBusy: false,
+        directFinishedNaturally: true,
+      });
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
+      await api("POST", `/api/bots/${lead.id}/interrupt`, {}).catch(() => undefined);
+      await api("POST", `/api/bots/${worker.id}/interrupt`, {}).catch(() => undefined);
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${worker.id}`).catch(() => undefined);
+    }
+  });
+
+  it("stops a waiting goal without interrupting unrelated direct work, while chat still skips busy bots", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Occupied lead",
+      modelSelection: { instanceId: "directHang", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Scoped stop team",
+      memberIds: [lead.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+
+    try {
+      expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "Keep this direct task running" })).status)
+        .toBe(202);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy;
+      }).toBe(true);
+
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Ordinary room chat" })).status).toBe(202);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        return {
+          working: current?.working,
+          skipped: current?.messages.some((message: { tool?: { name?: string } }) =>
+            /busy in another conversation.+skipped this round/i.test(message.tool?.name ?? "")
+          ),
+        };
+      }).toEqual({ working: false, skipped: true });
+
+      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+        text: "Wait and run this as a goal",
+        mode: "goal",
+      })).status).toBe(202);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const card = current?.messages.find((message: { kind: string }) => message.kind === "goal.run");
+        return {
+          roomWorking: current?.working,
+          roomBusyBotId: current?.busyBotId,
+          status: card?.goalRun?.status,
+          detail: card?.goalRun?.detail,
+          turnCount: card?.goalRun?.turnCount,
+        };
+      }).toMatchObject({
+        roomWorking: true,
+        roomBusyBotId: null,
+        status: "working",
+        detail: expect.stringMatching(/finishing another conversation/i),
+        turnCount: 0,
+      });
+
+      expect((await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const cards = current?.messages.filter((message: { kind: string }) => message.kind === "goal.run") ?? [];
+        return {
+          roomWorking: current?.working,
+          cards: cards.length,
+          status: cards[0]?.goalRun?.status,
+          turnCount: cards[0]?.goalRun?.turnCount,
+          directBusy: state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy,
+        };
+      }).toEqual({
+        roomWorking: false,
+        cards: 1,
+        status: "stopped",
+        turnCount: 0,
+        directBusy: true,
+      });
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
+      await api("POST", `/api/bots/${lead.id}/interrupt`, {}).catch(() => undefined);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy;
+      }, { timeout: 5_000 }).toBe(false);
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
+    }
+  });
+
+  it("stops a detached scheduled goal from the active room and cancels its routine run", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Detached scheduled lead",
+      modelSelection: { instanceId: "directHang", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Detached stop team",
+      memberIds: [lead.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+    const originalThreadId = room.threadId;
+
+    try {
+      const created = await desktopApi("POST", "/api/routines", {
+        name: "Hanging scheduled goal",
+        prompt: "Keep this scheduled team goal running",
+        target: "room-goal",
+        groupId: room.id,
+        botId: lead.id,
+        runOn: "ember",
+        schedule: { type: "once", at: Date.now() + 60_000 },
+        durationMinutes: 30,
+      });
+      expect(created.status).toBe(201);
+      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      expect(started.status).toBe(201);
+      const runId = started.body.run.id;
+
+      let backgroundThreadId = "";
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        const running = calendar.runs.find((run: { id: string }) => run.id === runId);
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        backgroundThreadId = running?.threadId ?? "";
+        return {
+          runStatus: running?.status,
+          detached: Boolean(running?.threadId && running.threadId !== originalThreadId),
+          activeThreadId: current?.threadId,
+          hasBackgroundTask: current?.tasks.some(
+            (task: { threadId: string }) => task.threadId === running?.threadId,
+          ),
+          roomWorking: current?.working,
+          leadBusy: state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy,
+        };
+      }, { timeout: 10_000 }).toEqual({
+        runStatus: "running",
+        detached: true,
+        activeThreadId: originalThreadId,
+        hasBackgroundTask: true,
+        roomWorking: true,
+        leadBusy: true,
+      });
+
+      // No task switch and no explicit thread: the ordinary room Stop must
+      // discover the detached operation rather than targeting the visible task.
+      expect((await api("POST", `/api/groups/${room.id}/interrupt`)).status).toBe(200);
+
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        const stopped = calendar.runs.find((run: { id: string }) => run.id === runId);
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        return {
+          runStatus: stopped?.status,
+          runThreadId: stopped?.threadId,
+          activeThreadId: current?.threadId,
+          roomWorking: current?.working,
+          leadBusy: state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy,
+        };
+      }, { timeout: 10_000 }).toEqual({
+        runStatus: "cancelled",
+        runThreadId: backgroundThreadId,
+        activeThreadId: originalThreadId,
+        roomWorking: false,
+        leadBusy: false,
+      });
+
+      const opened = await api("POST", `/api/groups/${room.id}/tasks/${backgroundThreadId}`);
+      expect(opened.status).toBe(200);
+      expect(opened.body.group.messages.filter((message: { kind: string }) => message.kind === "goal.run"))
+        .toEqual([
+          expect.objectContaining({
+            goalRun: expect.objectContaining({ runId, status: "stopped", detail: "Stopped by you." }),
+          }),
+        ]);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`).catch(() => undefined);
+      await api("POST", `/api/bots/${lead.id}/interrupt`).catch(() => undefined);
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
+    }
+  });
+
+  it("stops a detached scheduled goal from the coordinator's ordinary Stop", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Detached bot-stop lead",
+      modelSelection: { instanceId: "directHang", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Detached bot-stop team",
+      memberIds: [lead.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+    const originalThreadId = room.threadId;
+
+    try {
+      const created = await desktopApi("POST", "/api/routines", {
+        name: "Coordinator-stopped scheduled goal",
+        prompt: "Keep this detached goal running until the coordinator is stopped",
+        target: "room-goal",
+        groupId: room.id,
+        botId: lead.id,
+        runOn: "ember",
+        schedule: { type: "once", at: Date.now() + 60_000 },
+        durationMinutes: 30,
+      });
+      expect(created.status).toBe(201);
+      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      expect(started.status).toBe(201);
+      const runId = started.body.run.id;
+
+      let backgroundThreadId = "";
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        const running = calendar.runs.find((run: { id: string }) => run.id === runId);
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        backgroundThreadId = running?.threadId ?? "";
+        return {
+          runStatus: running?.status,
+          detached: Boolean(running?.threadId && running.threadId !== originalThreadId),
+          activeThreadId: current?.threadId,
+          roomWorking: current?.working,
+          leadBusy: state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy,
+        };
+      }, { timeout: 10_000 }).toEqual({
+        runStatus: "running",
+        detached: true,
+        activeThreadId: originalThreadId,
+        roomWorking: true,
+        leadBusy: true,
+      });
+
+      // The visible room still points at originalThreadId. Bot Stop must use
+      // the detached operation's exact speaker thread, not that visible task.
+      expect((await api("POST", `/api/bots/${lead.id}/interrupt`)).status).toBe(200);
+
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        const stopped = calendar.runs.find((run: { id: string }) => run.id === runId);
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        return {
+          runStatus: stopped?.status,
+          runThreadId: stopped?.threadId,
+          activeThreadId: current?.threadId,
+          roomWorking: current?.working,
+          leadBusy: state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy,
+        };
+      }, { timeout: 10_000 }).toEqual({
+        runStatus: "cancelled",
+        runThreadId: backgroundThreadId,
+        activeThreadId: originalThreadId,
+        roomWorking: false,
+        leadBusy: false,
+      });
+
+      const opened = await api("POST", `/api/groups/${room.id}/tasks/${backgroundThreadId}`);
+      expect(opened.status).toBe(200);
+      expect(opened.body.group.messages.filter((message: { kind: string }) => message.kind === "goal.run"))
+        .toEqual([
+          expect.objectContaining({
+            goalRun: expect.objectContaining({ runId, status: "stopped", detail: "Stopped by you." }),
+          }),
+        ]);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`).catch(() => undefined);
+      await api("POST", `/api/bots/${lead.id}/interrupt`).catch(() => undefined);
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
+    }
+  });
+
+  it("stops the coordinator's direct turn without cancelling a routine goal waiting on its worker", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Stop-scoped coordinator",
+      modelSelection: { instanceId: "stopScopedLead", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const worker = (await api("POST", "/api/bots", {
+      name: "Delayed worker",
+      modelSelection: { instanceId: "stopScopedWorker", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Coordinator stop scope team",
+      memberIds: [lead.id, worker.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+
+    try {
+      expect((await api("POST", `/api/bots/${worker.id}/messages`, {
+        text: "Finish this unrelated worker task first",
+      })).status).toBe(202);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return state.bots.find((bot: { id: string }) => bot.id === worker.id)?.busy;
+      }).toBe(true);
+
+      const created = await desktopApi("POST", "/api/routines", {
+        name: "Worker-gated scheduled goal",
+        prompt: "Complete the scheduled analysis as a team",
+        target: "room-goal",
+        groupId: room.id,
+        botId: lead.id,
+        runOn: "ember",
+        schedule: { type: "once", at: Date.now() + 60_000 },
+        durationMinutes: 30,
+      });
+      expect(created.status).toBe(201);
+      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      expect(started.status).toBe(201);
+      const runId = started.body.run.id;
+
+      let backgroundThreadId = "";
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        const running = calendar.runs.find((run: { id: string }) => run.id === runId);
+        backgroundThreadId = running?.threadId ?? "";
+        return { status: running?.status, threadId: running?.threadId };
+      }, { timeout: 10_000 }).toMatchObject({ status: "running", threadId: expect.any(String) });
+
+      const opened = await api("POST", `/api/groups/${room.id}/tasks/${backgroundThreadId}`);
+      expect(opened.status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const card = current?.messages.find((message: { kind: string }) => message.kind === "goal.run");
+        return {
+          activeThreadId: current?.threadId,
+          roomWorking: current?.working,
+          status: card?.goalRun?.status,
+          detail: card?.goalRun?.detail,
+          turnCount: card?.goalRun?.turnCount,
+          leadBusy: state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy,
+          workerBusy: state.bots.find((bot: { id: string }) => bot.id === worker.id)?.busy,
+        };
+      }, { timeout: 10_000 }).toMatchObject({
+        activeThreadId: backgroundThreadId,
+        roomWorking: true,
+        status: "working",
+        detail: expect.stringMatching(/Delayed worker is finishing another conversation/i),
+        turnCount: 1,
+        leadBusy: false,
+        workerBusy: true,
+      });
+
+      expect((await api("POST", `/api/bots/${lead.id}/messages`, {
+        text: "Start unrelated coordinator work",
+      })).status).toBe(202);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const currentLead = state.bots.find((bot: { id: string }) => bot.id === lead.id);
+        return {
+          busy: currentLead?.busy,
+          directReplyStarted: currentLead?.messages.some((message: { text?: string }) =>
+            message.text?.includes("This is unrelated direct work and should be stopped.")
+          ),
+        };
+      }).toEqual({ busy: true, directReplyStarted: true });
+
+      // The ordinary bot Stop belongs to the direct claim made above. The
+      // coordinator is no longer an active participant in the waiting room
+      // operation, so this must not cancel the scheduled team goal.
+      expect((await api("POST", `/api/bots/${lead.id}/interrupt`)).status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        return state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy;
+      }, { timeout: 5_000 }).toBe(false);
+
+      // The worker may settle and advance the room while Stop is in flight.
+      // Either in-progress or already-completed is valid; cancellation/stopped
+      // is the regression this snapshot must exclude.
+      const afterStopCalendar = (await api("GET", "/api/routines")).body;
+      const afterStopRun = afterStopCalendar.runs.find((run: { id: string }) => run.id === runId);
+      const afterStopState = (await api("GET", "/api/bots?messages=30")).body;
+      const afterStopRoom = afterStopState.groups.find((group: { id: string }) => group.id === room.id);
+      const afterStopCard = afterStopRoom.messages.find((message: { kind: string }) => message.kind === "goal.run");
+      expect(["running", "completed"]).toContain(afterStopRun.status);
+      expect(["working", "completed"]).toContain(afterStopCard.goalRun.status);
+      expect(afterStopCard.goalRun.status).not.toBe("stopped");
+
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        const completed = calendar.runs.find((run: { id: string }) => run.id === runId);
+        const state = (await api("GET", "/api/bots?messages=30")).body;
+        const current = state.groups.find((group: { id: string }) => group.id === room.id);
+        const cards = current?.messages.filter((message: { kind: string }) => message.kind === "goal.run") ?? [];
+        return {
+          runStatus: completed?.status,
+          output: completed?.output,
+          roomWorking: current?.working,
+          cards: cards.length,
+          goalStatus: cards[0]?.goalRun?.status,
+          detail: cards[0]?.goalRun?.detail,
+          turnCount: cards[0]?.goalRun?.turnCount,
+        };
+      }, { timeout: 15_000 }).toEqual({
+        runStatus: "completed",
+        output: "Scheduled goal survived the coordinator's direct Stop.",
+        roomWorking: false,
+        cards: 1,
+        goalStatus: "completed",
+        detail: "Scheduled goal survived the coordinator's direct Stop.",
+        turnCount: 3,
+      });
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`).catch(() => undefined);
+      await api("POST", `/api/bots/${lead.id}/interrupt`).catch(() => undefined);
+      await api("POST", `/api/bots/${worker.id}/interrupt`).catch(() => undefined);
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${worker.id}`).catch(() => undefined);
+    }
+  });
+
+  it("runs a routine as a goal in a new background room task", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Scheduled lead",
+      modelSelection: { instanceId: "routineGoal", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Scheduled review team",
+      memberIds: [lead.id],
+      setup: { bulletin: "Review carefully.", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+    const originalThreadId = room.threadId;
+
+    try {
+      const created = await desktopApi("POST", "/api/routines", {
+        name: "Daily team review",
+        prompt: "Review the release as a team",
+        target: "room-goal",
+        groupId: room.id,
+        botId: lead.id,
+        runOn: "ember",
+        schedule: { type: "once", at: Date.now() + 60_000 },
+        durationMinutes: 30,
+      });
+      expect(created.status).toBe(201);
+      expect(created.body.routine).toMatchObject({
+        target: "room-goal",
+        groupId: room.id,
+        botId: lead.id,
+      });
+
+      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      expect(started.status).toBe(201);
+      const runId = started.body.run.id;
+
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        const running = calendar.runs.find((run: { id: string }) => run.id === runId);
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        const backgroundRoom = state.groups.find((group: { id: string }) => group.id === room.id);
+        return {
+          status: running?.status,
+          threadId: running?.threadId,
+          activeThreadId: backgroundRoom?.threadId,
+          hasTask: backgroundRoom?.tasks.some(
+            (task: { threadId: string }) => task.threadId === running?.threadId,
+          ),
+          working: backgroundRoom?.working,
+        };
+      }).toMatchObject({
+        status: "running",
+        threadId: expect.any(String),
+        activeThreadId: originalThreadId,
+        hasTask: true,
+        working: true,
+      });
+
+      const runningCalendar = (await api("GET", "/api/routines")).body;
+      const running = runningCalendar.runs.find((run: { id: string }) => run.id === runId);
+      const openedWhileWorking = await api("POST", `/api/groups/${room.id}/tasks/${running.threadId}`);
+      expect(openedWhileWorking.status).toBe(200);
+      expect(openedWhileWorking.body.group).toMatchObject({
+        threadId: running.threadId,
+        working: true,
+      });
+
+      await expect.poll(async () => {
+        const calendar = (await api("GET", "/api/routines")).body;
+        return calendar.runs.find((run: { id: string }) => run.id === runId);
+      }, { timeout: 10_000 }).toMatchObject({
+        id: runId,
+        status: "completed",
+        target: "room-goal",
+        groupId: room.id,
+        botId: lead.id,
+        output: "Scheduled team review completed.",
+        threadId: expect.any(String),
+      });
+
+      const calendar = (await api("GET", "/api/routines")).body;
+      const completedRun = calendar.runs.find((run: { id: string }) => run.id === runId);
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      const backgroundRoom = state.groups.find((group: { id: string }) => group.id === room.id);
+      expect(backgroundRoom.threadId).toBe(completedRun.threadId);
+      expect(backgroundRoom.tasks).toContainEqual(expect.objectContaining({
+        threadId: completedRun.threadId,
+        title: "Daily team review",
+      }));
+
+      const switched = await api("POST", `/api/groups/${room.id}/tasks/${completedRun.threadId}`);
+      expect(switched.status).toBe(200);
+      expect(switched.body.group.messages.filter((message: { kind: string }) => message.kind === "goal.run"))
+        .toEqual([
+          expect.objectContaining({
+            goalRun: expect.objectContaining({
+              runId,
+              status: "completed",
+              coordinatorBotId: lead.id,
+              detail: "Scheduled team review completed.",
+            }),
+          }),
+        ]);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
+      await api("POST", `/api/bots/${lead.id}/interrupt`, {}).catch(() => undefined);
+      await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
+      await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
+    }
+  });
+
   it("pauses a non-converging team at the hard turn limit", async () => {
     const looper = (await api("POST", "/api/bots", {
       name: "Looper",
@@ -216,7 +1014,9 @@ describe("goal-driven channel runs", () => {
       const state = (await api("GET", "/api/bots?messages=20")).body;
       const current = state.groups.find((candidate: { id: string }) => candidate.id === room.id);
       return current?.messages.find((message: { kind: string }) => message.kind === "goal.run")?.goalRun;
-    }, { timeout: 10_000 }).toMatchObject({ status: "failed", turnCount: 1 });
+    // the failed attempt is retried once, and a retry is a model call that
+    // costs a turn like any other — so the honest count is two, still failed
+    }, { timeout: 10_000 }).toMatchObject({ status: "failed", turnCount: 2 });
   });
 
   it("validates mode and binds it to the send id", async () => {

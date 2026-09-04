@@ -37,6 +37,7 @@ const RFC3339_WITH_OFFSET =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/i;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const ROUTINE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const MAX_DATE_MS = 8_640_000_000_000_000;
 const ACTION_COPY = {
   create: { title: "Schedule", detail: "Create routine" },
   update: { title: "Update", detail: "Update routine" },
@@ -55,6 +56,11 @@ const routineToolScheduleSchema = z.discriminatedUnion("type", [
     time: z.string().max(5),
     weekdays: z.array(z.string().max(9)).min(1).max(7),
   }).strict(),
+  z.object({
+    type: z.literal("interval"),
+    everyMinutes: z.number(),
+    anchorAt: z.string().max(64).optional(),
+  }).strict(),
 ]);
 
 const routineToolDefinitionSchema = z.object({
@@ -63,9 +69,15 @@ const routineToolDefinitionSchema = z.object({
   schedule: routineToolScheduleSchema,
   runOn: z.enum(["ember", "cloud"]).optional(),
   durationMinutes: z.number().optional(),
+  timeoutMinutes: z.number().nullable().optional(),
 }).strict();
 
-const routineToolChangesSchema = routineToolDefinitionSchema.partial().refine(
+const routineToolChangesSchema = routineToolDefinitionSchema
+  .omit({ timeoutMinutes: true })
+  .partial()
+  .extend({ timeoutMinutes: z.number().nullable().optional() })
+  .strict()
+  .refine(
   (changes) => Object.values(changes).some((value) => value !== undefined),
   "Choose at least one routine field to update",
 );
@@ -96,15 +108,26 @@ const storedScheduleSchema = z.discriminatedUnion("type", [
     time: z.string().regex(TIME),
     weekdays: storedWeekdaysSchema,
   }).strict(),
+  z.object({
+    type: z.literal("interval"),
+    everyMinutes: z.number().int().min(5).max(1_440),
+    anchorAt: z.number().int().nonnegative().max(MAX_DATE_MS).optional(),
+  }).strict(),
 ]);
 const storedDefinitionSchema = z.object({
   name: z.string().trim().min(1).max(80),
   instructions: z.string().trim().min(1).max(20_000),
   schedule: storedScheduleSchema,
   runOn: z.enum(["ember", "cloud"]),
-  durationMinutes: z.number().int().min(15).max(240),
+  durationMinutes: z.number().int().min(5).max(240),
+  timeoutMinutes: z.number().int().min(5).max(240).optional(),
 }).strict();
-const storedChangesSchema = storedDefinitionSchema.partial().refine(
+const storedChangesSchema = storedDefinitionSchema
+  .omit({ timeoutMinutes: true })
+  .partial()
+  .extend({ timeoutMinutes: z.number().int().min(5).max(240).nullable().optional() })
+  .strict()
+  .refine(
   (changes) => Object.values(changes).some((value) => value !== undefined),
   "Stored routine update must change at least one field",
 );
@@ -264,44 +287,74 @@ function runOn(value: RoutineRequestRunOn | undefined): RoutineRequestRunOn {
 
 function duration(value: number | undefined): number {
   const normalized = value ?? 30;
-  if (!Number.isInteger(normalized) || normalized < 15 || normalized > 240) {
-    throw new RoutineRequestError("durationMinutes must be a whole number from 15 to 240");
+  if (!Number.isInteger(normalized) || normalized < 5 || normalized > 240) {
+    throw new RoutineRequestError("durationMinutes must be a whole number from 5 to 240");
   }
   return normalized;
 }
 
+function timeout(value: number | null | undefined): number | null | undefined {
+  if (value == null) return value;
+  if (!Number.isInteger(value) || value < 5 || value > 240) {
+    throw new RoutineRequestError("timeoutMinutes must be a whole number from 5 to 240");
+  }
+  return value;
+}
+
+function rfc3339Instant(value: string, offsetMessage: string): number {
+  const parts = RFC3339_WITH_OFFSET.exec(value);
+  if (!parts) throw new RoutineRequestError(offsetMessage);
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  const hour = Number(parts[4]);
+  const minute = Number(parts[5]);
+  const second = Number(parts[6]);
+  const offsetHour = Number(parts[7] ?? 0);
+  const offsetMinute = Number(parts[8] ?? 0);
+  const daysInMonth = month >= 1 && month <= 12
+    ? new Date(Date.UTC(year, month, 0)).getUTCDate()
+    : 0;
+  if (
+    day < 1 ||
+    day > daysInMonth ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    throw new RoutineRequestError("Choose a valid RFC3339 date and time");
+  }
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) throw new RoutineRequestError("Choose a valid RFC3339 date and time");
+  return at;
+}
+
 function normalizeSchedule(schedule: RoutineToolScheduleInput, now: number): RoutineRequestSchedule {
   if (schedule.type === "once") {
-    const parts = RFC3339_WITH_OFFSET.exec(schedule.at);
-    if (!parts) {
-      throw new RoutineRequestError("One-time schedules need an RFC3339 date-time with an explicit timezone offset");
-    }
-    const year = Number(parts[1]);
-    const month = Number(parts[2]);
-    const day = Number(parts[3]);
-    const hour = Number(parts[4]);
-    const minute = Number(parts[5]);
-    const second = Number(parts[6]);
-    const offsetHour = Number(parts[7] ?? 0);
-    const offsetMinute = Number(parts[8] ?? 0);
-    const daysInMonth = month >= 1 && month <= 12
-      ? new Date(Date.UTC(year, month, 0)).getUTCDate()
-      : 0;
-    if (
-      day < 1 ||
-      day > daysInMonth ||
-      hour > 23 ||
-      minute > 59 ||
-      second > 59 ||
-      offsetHour > 23 ||
-      offsetMinute > 59
-    ) {
-      throw new RoutineRequestError("Choose a valid RFC3339 date and time");
-    }
-    const at = Date.parse(schedule.at);
-    if (!Number.isFinite(at)) throw new RoutineRequestError("Choose a valid date and time");
+    const at = rfc3339Instant(
+      schedule.at,
+      "One-time schedules need an RFC3339 date-time with an explicit timezone offset",
+    );
     if (at <= now) throw new RoutineRequestError("The scheduled date and time must be in the future");
     return { type: "once", at };
+  }
+  if (schedule.type === "interval") {
+    if (!Number.isInteger(schedule.everyMinutes) || schedule.everyMinutes < 5 || schedule.everyMinutes > 1_440) {
+      throw new RoutineRequestError("everyMinutes must be a whole number from 5 to 1440");
+    }
+    if (schedule.anchorAt === undefined) {
+      return { type: "interval", everyMinutes: schedule.everyMinutes };
+    }
+    const anchorAt = rfc3339Instant(
+      schedule.anchorAt,
+      "Interval starts need an RFC3339 date-time with an explicit timezone offset",
+    );
+    if (!Number.isSafeInteger(anchorAt) || anchorAt < 0 || anchorAt > MAX_DATE_MS) {
+      throw new RoutineRequestError("Choose a valid interval start time");
+    }
+    return { type: "interval", everyMinutes: schedule.everyMinutes, anchorAt };
   }
   if (!TIME.test(schedule.time)) {
     throw new RoutineRequestError("Weekly schedule time must use 24-hour HH:MM");
@@ -318,12 +371,14 @@ function normalizeSchedule(schedule: RoutineToolScheduleInput, now: number): Rou
 }
 
 function normalizeDefinition(input: RoutineToolDefinitionInput, now: number): RoutineRequestDefinition {
+  const timeoutMinutes = timeout(input.timeoutMinutes);
   return {
     name: text(input.name, "name", 80),
     instructions: text(input.instructions, "instructions", 20_000),
     schedule: normalizeSchedule(input.schedule, now),
     runOn: runOn(input.runOn),
     durationMinutes: duration(input.durationMinutes),
+    ...(timeoutMinutes == null ? {} : { timeoutMinutes }),
   };
 }
 
@@ -334,6 +389,7 @@ function normalizeChanges(input: RoutineToolChangesInput, now: number): RoutineR
   if (input.schedule !== undefined) changes.schedule = normalizeSchedule(input.schedule, now);
   if (input.runOn !== undefined) changes.runOn = runOn(input.runOn);
   if (input.durationMinutes !== undefined) changes.durationMinutes = duration(input.durationMinutes);
+  if (input.timeoutMinutes !== undefined) changes.timeoutMinutes = timeout(input.timeoutMinutes);
   return changes;
 }
 
@@ -380,14 +436,19 @@ function normalizedOperation(
   return { action: validated.action, routineId: id, expectedUpdatedAt: current.updatedAt };
 }
 
-function asSchedule(schedule: RoutineRequestSchedule): RoutineSchedule {
-  return schedule.type === "once"
-    ? { type: "once", at: schedule.at }
-    : { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
+function asSchedule(schedule: RoutineRequestSchedule, now: number): RoutineSchedule {
+  if (schedule.type === "once") return { type: "once", at: schedule.at };
+  if (schedule.type === "interval") {
+    return { type: "interval", everyMinutes: schedule.everyMinutes, anchorAt: schedule.anchorAt ?? now };
+  }
+  return { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
 }
 
 function nextForOperation(operation: RoutineRequestOperation, manager: RoutineManager, now: number): number | null {
-  if (operation.action === "create") return nextOccurrence(asSchedule(operation.routine.schedule), now);
+  if (operation.action === "create") {
+    if (operation.routine.schedule.type === "interval" && operation.routine.schedule.anchorAt === undefined) return null;
+    return nextOccurrence(asSchedule(operation.routine.schedule, now), now);
+  }
   const current = manager.listRoutines().find((routine) => routine.id === operation.routineId);
   if (!current) return null;
   if (operation.action === "pause" || operation.action === "delete") return null;
@@ -395,7 +456,8 @@ function nextForOperation(operation: RoutineRequestOperation, manager: RoutineMa
   if (operation.action === "resume") return nextOccurrence(current.schedule, now);
   if (!("changes" in operation)) return null;
   if (!current.enabled) return null;
-  const schedule = operation.changes.schedule ? asSchedule(operation.changes.schedule) : current.schedule;
+  if (operation.changes.schedule?.type === "interval" && operation.changes.schedule.anchorAt === undefined) return null;
+  const schedule = operation.changes.schedule ? asSchedule(operation.changes.schedule, now) : current.schedule;
   return nextOccurrence(schedule, now);
 }
 
@@ -413,6 +475,11 @@ function formatInstant(at: number, timeZone: string): string {
 
 function scheduleText(schedule: RoutineRequestSchedule, timeZone: string): string {
   if (schedule.type === "once") return `${formatInstant(schedule.at, timeZone)} (${timeZone})`;
+  if (schedule.type === "interval") {
+    return schedule.anchorAt === undefined
+      ? `Every ${schedule.everyMinutes} minutes, starting one interval after confirmation`
+      : `Every ${schedule.everyMinutes} minutes, anchored at ${formatInstant(schedule.anchorAt, timeZone)} (${timeZone})`;
+  }
   const days = schedule.weekdays.map((day) => WEEKDAY_LABEL[day]).join(", ");
   return `${days} at ${schedule.time} (${timeZone})`;
 }
@@ -427,8 +494,14 @@ function effectiveDefinition(operation: RoutineRequestOperation, manager: Routin
     schedule: { ...existing.schedule },
     runOn: existing.runOn,
     durationMinutes: existing.durationMinutes,
+    ...(existing.timeoutMinutes === undefined ? {} : { timeoutMinutes: existing.timeoutMinutes }),
   };
-  return operation.action === "update" ? { ...base, ...operation.changes } : base;
+  if (operation.action !== "update") return base;
+  const { timeoutMinutes, ...changes } = operation.changes;
+  const merged: RoutineRequestDefinition = { ...base, ...changes };
+  if (timeoutMinutes === null) delete merged.timeoutMinutes;
+  else if (timeoutMinutes !== undefined) merged.timeoutMinutes = timeoutMinutes;
+  return merged;
 }
 
 function cardCopy(
@@ -460,23 +533,29 @@ function cardCopy(
     ? null
     : manager.listRoutines().find((routine) => routine.id === operation.routineId) ?? null;
   const remainsPaused = operation.action === "update" && current?.enabled === false;
-  const nextDescription = nextRunAt !== null
-    ? formatInstant(nextRunAt, timeZone)
-    : remainsPaused
-      ? "None — this routine remains paused"
-      : operation.action === "pause"
-        ? "None — this routine will be paused"
-        : operation.action === "delete"
-          ? "None — this routine will be deleted"
-          : "None";
+  const deferredInterval = definition.schedule.type === "interval" && definition.schedule.anchorAt === undefined;
+  const nextDescription = remainsPaused
+    ? "None — this routine remains paused"
+    : deferredInterval
+      ? "One interval after confirmation"
+      : nextRunAt !== null
+        ? formatInstant(nextRunAt, timeZone)
+        : operation.action === "pause"
+          ? "None — this routine will be paused"
+          : operation.action === "delete"
+            ? "None — this routine will be deleted"
+            : "None";
   const status = remainsPaused ? " · Remains paused" : "";
   // Existing routines may predate nested-card redaction. The approval still
   // shows every instruction, but credential-shaped values never travel back
   // through the bot's MCP response or into the transcript.
   const visibleInstructions = redactSecretsInText(definition.instructions);
+  const runLimit = definition.timeoutMinutes === undefined
+    ? "no run limit"
+    : `${definition.timeoutMinutes} min limit`;
   return {
     title,
-    summary: `${actionLabel} “${name}”${forSuffix} · ${when} · ${destination} · ${definition.durationMinutes} min${status}`,
+    summary: `${actionLabel} “${name}”${forSuffix} · ${when} · ${destination} · ${runLimit}${status}`,
     detail: [
       `Action: ${actionCopy.detail}`,
       `Name: ${name}`,
@@ -484,7 +563,7 @@ function cardCopy(
       `Schedule: ${when}`,
       `Next run: ${nextDescription}`,
       `Runs on: ${destination}`,
-      `Maximum duration: ${definition.durationMinutes} minutes`,
+      `Run limit: ${definition.timeoutMinutes === undefined ? "No limit" : `${definition.timeoutMinutes} minutes`}`,
       "",
       "Instructions:",
       visibleInstructions,
@@ -494,25 +573,27 @@ function cardCopy(
   };
 }
 
-function inputFromDefinition(definition: RoutineRequestDefinition, botId: string): RoutineInput {
+function inputFromDefinition(definition: RoutineRequestDefinition, botId: string, now: number): RoutineInput {
   return {
     name: definition.name,
     prompt: definition.instructions,
     botId,
     runOn: definition.runOn,
     enabled: true,
-    schedule: asSchedule(definition.schedule),
+    schedule: asSchedule(definition.schedule, now),
     durationMinutes: definition.durationMinutes,
+    ...(definition.timeoutMinutes === undefined ? {} : { timeoutMinutes: definition.timeoutMinutes }),
   };
 }
 
-function updateFromChanges(changes: RoutineRequestChanges): Partial<RoutineInput> {
+function updateFromChanges(changes: RoutineRequestChanges, now: number): Partial<RoutineInput> {
   const patch: Partial<RoutineInput> = {};
   if (changes.name !== undefined) patch.name = changes.name;
   if (changes.instructions !== undefined) patch.prompt = changes.instructions;
-  if (changes.schedule !== undefined) patch.schedule = asSchedule(changes.schedule);
+  if (changes.schedule !== undefined) patch.schedule = asSchedule(changes.schedule, now);
   if (changes.runOn !== undefined) patch.runOn = changes.runOn;
   if (changes.durationMinutes !== undefined) patch.durationMinutes = changes.durationMinutes;
+  if (changes.timeoutMinutes !== undefined) patch.timeoutMinutes = changes.timeoutMinutes;
   return patch;
 }
 
@@ -885,9 +966,14 @@ export class RoutineRequestService {
 
   private apply(payload: RoutineRequestCardData, messageId: string, fingerprint: string): string {
     const operation = payload.operation;
+    const confirmationAt = this.now();
     switch (operation.action) {
       case "create":
-        return this.routines.create(inputFromDefinition(operation.routine, operation.forBot?.botId ?? payload.botId), {
+        return this.routines.create(inputFromDefinition(
+          operation.routine,
+          operation.forBot?.botId ?? payload.botId,
+          confirmationAt,
+        ), {
           requestId: payload.requestId,
           messageId,
           botId: payload.botId,
@@ -898,7 +984,7 @@ export class RoutineRequestService {
         }).id;
       case "update": {
         verifyManageSnapshot(operation, this.routines, payload.botId);
-        const updated = this.routines.update(operation.routineId, updateFromChanges(operation.changes), {
+        const updated = this.routines.update(operation.routineId, updateFromChanges(operation.changes, confirmationAt), {
           requestId: payload.requestId,
           messageId,
           botId: payload.botId,
