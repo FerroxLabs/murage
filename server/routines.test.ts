@@ -8,6 +8,7 @@ import {
   nextOccurrence,
   RoutineManager,
   type RoutineManagerOptions,
+  type RoutineRun,
   type RoutineSchedule,
 } from "./routines.ts";
 
@@ -39,7 +40,11 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
   const taskActivations: boolean[] = [];
   const goalTasks: Array<{ groupId: string; title: string }> = [];
   const interruptedTurns: Array<{ botId: string; threadId: string; runOn: string }> = [];
-  const interruptedGoals: Array<{ groupId: string; threadId: string }> = [];
+  const interruptedGoals: Array<{
+    groupId: string;
+    threadId: string;
+    outcome?: { status: "stopped" | "limit-reached"; detail: string };
+  }> = [];
   const emitted: any[] = [];
   const changed: any[] = [];
   const failed: any[] = [];
@@ -68,8 +73,8 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
     interruptTurn: async (botId, threadId, runOn) => {
       interruptedTurns.push({ botId, threadId, runOn });
     },
-    interruptGoal: async (groupId, threadId) => {
-      interruptedGoals.push({ groupId, threadId });
+    interruptGoal: async (groupId, threadId, outcome) => {
+      interruptedGoals.push({ groupId, threadId, ...(outcome ? { outcome } : {}) });
     },
     onRunChanged: (run) => changed.push(run),
     onRunFailed: (run) => failed.push(run),
@@ -113,6 +118,20 @@ describe("nextOccurrence", () => {
     expect(nextOccurrence({ type: "once", at: 200 }, 100)).toBe(200);
     expect(nextOccurrence({ type: "once", at: 100 }, 100)).toBeNull();
   });
+
+  it("keeps interval schedules aligned to their anchor", () => {
+    const anchorAt = Date.parse("2026-08-17T08:05:00Z");
+    const schedule: RoutineSchedule = { type: "interval", everyMinutes: 5, anchorAt };
+
+    expect(nextOccurrence(schedule, anchorAt - 1)).toBe(anchorAt);
+    expect(nextOccurrence(schedule, anchorAt)).toBe(anchorAt + 5 * 60_000);
+    expect(nextOccurrence(schedule, anchorAt + 12 * 60_000)).toBe(anchorAt + 15 * 60_000);
+    expect(nextOccurrence({
+      type: "interval",
+      everyMinutes: 5,
+      anchorAt: 8_640_000_000_000_000,
+    }, 8_640_000_000_000_000)).toBeNull();
+  });
 });
 
 describe("RoutineManager", () => {
@@ -130,6 +149,50 @@ describe("RoutineManager", () => {
     expect(create("Below minimum", 4).durationMinutes).toBe(5);
     expect(create("Default").durationMinutes).toBe(30);
     expect(create("Above maximum", 241).durationMinutes).toBe(240);
+  });
+
+  it("validates, preserves, and clears the optional safety timeout", () => {
+    const h = harness();
+    const input = {
+      name: "Bounded routine",
+      prompt: "Check the queue",
+      botId: "ember-1",
+      schedule: { type: "daily" as const, time: "09:00", weekdays: [1] },
+    };
+    const routine = h.manager.create({ ...input, timeoutMinutes: 5 });
+    expect(routine.timeoutMinutes).toBe(5);
+    expect(h.manager.update(routine.id, { timeoutMinutes: null })).not.toHaveProperty("timeoutMinutes");
+    expect(h.manager.create({ ...input, name: "Unlimited" })).not.toHaveProperty("timeoutMinutes");
+    expect(() => h.manager.create({ ...input, timeoutMinutes: 4 })).toThrow(/5 to 240/);
+    expect(() => h.manager.create({ ...input, timeoutMinutes: 241 })).toThrow(/5 to 240/);
+  });
+
+  it("validates interval cadence and preserves its explicit anchor", () => {
+    const h = harness();
+    const anchorAt = new Date(2026, 7, 17, 8, 5).getTime();
+    const routine = h.manager.create({
+      name: "Frequent check",
+      prompt: "Check the queue",
+      botId: "ember-1",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt },
+    });
+
+    expect(routine.schedule).toEqual({ type: "interval", everyMinutes: 5, anchorAt });
+    expect(routine.nextRunAt).toBe(anchorAt);
+    expect(() => h.manager.create({
+      name: "Too frequent",
+      prompt: "Check too often",
+      botId: "ember-1",
+      schedule: { type: "interval", everyMinutes: 4, anchorAt },
+    })).toThrow(/5 to 1440/);
+    for (const invalidAnchor of [1.5, Number.MAX_SAFE_INTEGER, Number.NaN]) {
+      expect(() => h.manager.create({
+        name: "Bad anchor",
+        prompt: "Check later",
+        botId: "ember-1",
+        schedule: { type: "interval", everyMinutes: 5, anchorAt: invalidAnchor },
+      })).toThrow(/valid interval start time/);
+    }
   });
 
   it("stores routine data with owner-only permissions", () => {
@@ -153,6 +216,7 @@ describe("RoutineManager", () => {
       prompt: "Summarize what changed",
       botId: "ember-1",
       schedule: { type: "once", at: new Date(2026, 7, 17, 8, 5).getTime() },
+      timeoutMinutes: 15,
     });
     h.setNow(routine.nextRunAt!);
     await h.manager.tick();
@@ -167,7 +231,13 @@ describe("RoutineManager", () => {
     const reloaded = new RoutineManager(h.options);
     expect(reloaded.listRoutines()).toHaveLength(1);
     expect(reloaded.listRuns()).toMatchObject([
-      { routineId: routine.id, routineName: "Morning brief", status: "failed", threadId: "thread-1" },
+      {
+        routineId: routine.id,
+        routineName: "Morning brief",
+        status: "failed",
+        threadId: "thread-1",
+        timeoutMinutes: 15,
+      },
     ]);
     // Reload recovery truthfully marks an in-process run as interrupted.
     expect(reloaded.listRuns()[0]!.error).toContain("restarted");
@@ -183,7 +253,7 @@ describe("RoutineManager", () => {
     ]);
   });
 
-  it("persists attachment metadata and migrates old definitions and runs to empty arrays", () => {
+  it("migrates optional attachment and timeout metadata without losing legacy records", () => {
     const h = harness();
     h.setBot("busy");
     const routine = h.manager.create({
@@ -213,16 +283,20 @@ describe("RoutineManager", () => {
 
     const file = h.options.file!;
     const oldFile = JSON.parse(readFileSync(file, "utf8")) as {
-      routines: Array<{ attachments?: unknown }>;
-      runs: Array<{ attachments?: unknown }>;
+      routines: Array<{ attachments?: unknown; timeoutMinutes?: unknown }>;
+      runs: Array<{ attachments?: unknown; timeoutMinutes?: unknown }>;
     };
     delete oldFile.routines[0]!.attachments;
     delete oldFile.runs[0]!.attachments;
+    oldFile.routines[0]!.timeoutMinutes = 2;
+    oldFile.runs[0]!.timeoutMinutes = "invalid";
     writeFileSync(file, JSON.stringify(oldFile));
 
     const migrated = new RoutineManager(h.options);
     expect(migrated.listRoutines()[0]?.attachments).toEqual([]);
     expect(migrated.listRuns()[0]?.attachments).toEqual([]);
+    expect(migrated.listRoutines()[0]).not.toHaveProperty("timeoutMinutes");
+    expect(migrated.listRuns()[0]).not.toHaveProperty("timeoutMinutes");
   });
 
   it("migrates routines and run receipts without a target to bot execution", () => {
@@ -251,6 +325,31 @@ describe("RoutineManager", () => {
     expect(migrated.listRoutines()[0]?.groupId).toBeUndefined();
     expect(migrated.listRuns()[0]).toMatchObject({ target: "bot", botId: "ember-legacy" });
     expect(migrated.listRuns()[0]?.groupId).toBeUndefined();
+  });
+
+  it("ignores one malformed persisted interval without hiding valid routines", () => {
+    const h = harness();
+    const anchorAt = new Date(2026, 7, 17, 8, 5).getTime();
+    const malformed = h.manager.create({
+      name: "Malformed interval",
+      prompt: "Never load this cadence",
+      botId: "ember-legacy",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt },
+    });
+    const valid = h.manager.create({
+      name: "Valid interval",
+      prompt: "Keep this cadence",
+      botId: "ember-valid",
+      schedule: { type: "interval", everyMinutes: 15, anchorAt },
+    });
+    const stored = JSON.parse(readFileSync(h.options.file!, "utf8")) as {
+      routines: Array<{ id: string; schedule: { anchorAt?: unknown } }>;
+    };
+    stored.routines.find((routine) => routine.id === malformed.id)!.schedule.anchorAt = Number.MAX_SAFE_INTEGER;
+    writeFileSync(h.options.file!, JSON.stringify(stored));
+
+    const reloaded = new RoutineManager(h.options);
+    expect(reloaded.listRoutines()).toMatchObject([{ id: valid.id, name: "Valid interval" }]);
   });
 
   it("persists confirmation receipts with the scheduler mutation and removes them after settlement", () => {
@@ -491,6 +590,270 @@ describe("RoutineManager", () => {
     expect(h.manager.activeRunForBot("ember-2")?.threadId).toBe("thread-1");
     expect(h.manager.isActiveThread("thread-1")).toBe(true);
     expect(h.taskActivations).toEqual([false]);
+  });
+
+  it("skips interval ticks while the previous run is still active", async () => {
+    const h = harness();
+    const anchorAt = new Date(2026, 7, 17, 8, 5).getTime();
+    h.manager.create({
+      name: "Frequent check",
+      prompt: "Check the queue",
+      botId: "ember-interval",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt },
+      durationMinutes: 30,
+    });
+
+    h.setNow(anchorAt);
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(1);
+    expect(h.manager.listRuns()[0]).toMatchObject({ status: "running", scheduledFor: anchorAt });
+
+    h.setNow(anchorAt + 5 * 60_000);
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(1);
+    expect(h.manager.listRoutines()[0]?.nextRunAt).toBe(anchorAt + 10 * 60_000);
+
+    h.manager.failThread("thread-1", "Finished test run");
+    h.setNow(anchorAt + 10 * 60_000);
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(2);
+    expect(h.started).toHaveLength(2);
+  });
+
+  it("catches up at most the latest interval occurrence without a backlog", async () => {
+    const h = harness();
+    const anchorAt = new Date(2026, 7, 17, 8, 5).getTime();
+    h.manager.create({
+      name: "Frequent check",
+      prompt: "Check the queue",
+      botId: "ember-interval",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt },
+    });
+
+    h.setNow(anchorAt + 12 * 60_000);
+    await h.manager.tick();
+
+    expect(h.manager.listRuns()).toMatchObject([{
+      status: "running",
+      scheduledFor: anchorAt + 10 * 60_000,
+    }]);
+    expect(h.manager.listRoutines()[0]?.nextRunAt).toBe(anchorAt + 15 * 60_000);
+  });
+
+  it("rebases a scheduled interval queued behind a busy bot before dispatch", async () => {
+    const h = harness();
+    h.setBot("busy");
+    const anchorAt = new Date(2026, 7, 17, 8, 5).getTime();
+    h.manager.create({
+      name: "Frequent check",
+      prompt: "Check the latest queue",
+      botId: "ember-interval",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt },
+    });
+
+    h.setNow(anchorAt);
+    await h.manager.tick();
+    expect(h.manager.listRuns()[0]).toMatchObject({ status: "queued", scheduledFor: anchorAt });
+
+    const readyAt = anchorAt + 12 * 60 * 60_000 + 7 * 60_000;
+    const latestAt = anchorAt + 12 * 60 * 60_000 + 5 * 60_000;
+    h.setNow(readyAt);
+    h.setBot("ready");
+    await h.manager.tick();
+
+    expect(h.manager.listRuns()).toMatchObject([{
+      status: "running",
+      scheduledFor: latestAt,
+      threadId: "thread-1",
+    }]);
+    expect(h.started).toEqual([{
+      botId: "ember-interval",
+      threadId: "thread-1",
+      prompt: "Check the latest queue",
+    }]);
+  });
+
+  it("preserves exact timestamps for manual and webhook interval work", async () => {
+    const start = new Date(2026, 7, 17, 8, 0).getTime();
+    const manualHarness = harness(start);
+    manualHarness.setBot("busy");
+    const manualRoutine = manualHarness.manager.create({
+      name: "Manual interval check",
+      prompt: "Run exactly when requested",
+      botId: "ember-manual",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt: start },
+    });
+    const manual = manualHarness.manager.runNow(manualRoutine.id)!;
+    manualHarness.setNow(start + 13 * 60 * 60_000);
+    manualHarness.setBot("ready");
+    await manualHarness.manager.tick();
+    expect(manualHarness.manager.listRuns().find((run) => run.id === manual.id)).toMatchObject({
+      triggerSource: "manual",
+      scheduledFor: start,
+      status: "running",
+    });
+
+    const webhookHarness = harness(start);
+    webhookHarness.setBot("busy");
+    const webhookRoutine = webhookHarness.manager.create({
+      name: "Webhook id collision",
+      prompt: "Keep the delivery timestamp",
+      botId: "ember-webhook",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt: start },
+    });
+    const webhook = webhookHarness.manager.enqueueWebhook({
+      webhookId: webhookRoutine.id,
+      webhookName: "Incoming delivery",
+      prompt: "Handle the delivery",
+      botId: "ember-webhook",
+      runOn: "ember",
+      deliveryId: "delivery-exact",
+      receivedAt: start,
+    });
+    webhookHarness.setNow(start + 13 * 60 * 60_000);
+    webhookHarness.setBot("ready");
+    await webhookHarness.manager.tick();
+    expect(webhookHarness.manager.listRuns().find((run) => run.id === webhook.id)).toMatchObject({
+      triggerSource: "webhook",
+      scheduledFor: start,
+      status: "running",
+    });
+  });
+
+  it("retains an old waiting run when trimming terminal receipt history", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Waiting approval",
+      prompt: "Wait for approval",
+      botId: "ember-waiting",
+      schedule: { type: "daily", time: "23:59", weekdays: [1] },
+    });
+    const waiting = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    h.manager.handleRuntimeEvent({
+      eventId: "waiting-request",
+      provider: "fake",
+      threadId: "thread-1",
+      createdAt: new Date().toISOString(),
+      type: "request.opened",
+      requestType: "permission",
+      tool: "write",
+      summary: "Approve the write",
+    });
+
+    // Seed terminal history directly so this capacity regression does not do
+    // two thousand quadratic fixture writes. The final enqueue still crosses
+    // the real manager save/retention path that used to evict index zero.
+    const internal = h.manager as unknown as { runs: RoutineRun[] };
+    const base = internal.runs.find((run) => run.id === waiting.id)!;
+    for (let index = 0; index < 1_999; index += 1) {
+      internal.runs.push({
+        ...base,
+        id: `terminal-${index}`,
+        status: "completed",
+        attention: undefined,
+        finishedAt: index + 1,
+      });
+    }
+    h.setBot("busy");
+    const queued = h.manager.enqueueWebhook({
+      webhookId: "hook-capacity",
+      webhookName: "Capacity check",
+      prompt: "Keep active receipts",
+      botId: "ember-capacity",
+      runOn: "ember",
+      deliveryId: "delivery-capacity",
+      receivedAt: 2_001,
+    });
+
+    const retained = h.manager.listRuns();
+    expect(retained).toHaveLength(2_000);
+    expect(retained.some((run) => run.id === waiting.id && run.status === "waiting")).toBe(true);
+    expect(retained.some((run) => run.id === queued.id && run.status === "queued")).toBe(true);
+    expect(retained.some((run) => run.id === "terminal-0")).toBe(false);
+  });
+
+  it("enforces only the optional run limit from the actual start time", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Bounded check",
+      prompt: "Check the queue",
+      botId: "ember-timeout",
+      schedule: { type: "daily", time: "23:59", weekdays: [1] },
+      durationMinutes: 90,
+      timeoutMinutes: 5,
+    });
+    const run = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    const startedAt = h.manager.listRuns().find((candidate) => candidate.id === run.id)?.startedAt;
+    expect(startedAt).toBeDefined();
+
+    h.setNow(startedAt! + 5 * 60_000);
+    await h.manager.tick();
+
+    expect(h.manager.listRuns().find((candidate) => candidate.id === run.id)).toMatchObject({
+      status: "failed",
+      error: "Stopped after reaching the 5-minute run limit",
+      finishedAt: startedAt! + 5 * 60_000,
+    });
+    expect(h.interruptedTurns).toEqual([
+      { botId: "ember-timeout", threadId: "thread-1", runOn: "ember" },
+    ]);
+  });
+
+  it("keeps legacy duration metadata without imposing a timeout", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Unbounded check",
+      prompt: "Keep checking",
+      botId: "ember-unbounded",
+      schedule: { type: "daily", time: "23:59", weekdays: [1] },
+      durationMinutes: 5,
+    });
+    const run = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    const startedAt = h.manager.listRuns().find((candidate) => candidate.id === run.id)?.startedAt;
+    h.setNow(startedAt! + 6 * 60_000);
+    await h.manager.tick();
+
+    expect(h.manager.listRuns().find((candidate) => candidate.id === run.id)).toMatchObject({
+      status: "running",
+      durationMinutes: 5,
+    });
+    expect(h.manager.listRuns().find((candidate) => candidate.id === run.id)).not.toHaveProperty("timeoutMinutes");
+    expect(h.interruptedTurns).toEqual([]);
+  });
+
+  it("reports a timed-out room goal as limit-reached", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Bounded team goal",
+      prompt: "Coordinate until the limit",
+      target: "room-goal",
+      botId: "chief-1",
+      groupId: "room-1",
+      schedule: { type: "daily", time: "23:59", weekdays: [1] },
+      timeoutMinutes: 5,
+    });
+    const run = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    const startedAt = h.manager.listRuns().find((candidate) => candidate.id === run.id)?.startedAt;
+    h.setNow(startedAt! + 5 * 60_000);
+    await h.manager.tick();
+
+    expect(h.manager.listRuns().find((candidate) => candidate.id === run.id)).toMatchObject({
+      status: "failed",
+      goalStatus: "limit-reached",
+      error: "Stopped after reaching the 5-minute run limit",
+    });
+    expect(h.interruptedGoals).toEqual([{
+      groupId: "room-1",
+      threadId: "goal-thread-1",
+      outcome: {
+        status: "limit-reached",
+        detail: "Stopped after reaching the 5-minute run limit",
+      },
+    }]);
   });
 
   it("distinguishes direct bot work from room goals coordinated by the same bot", async () => {

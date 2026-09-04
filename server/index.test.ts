@@ -2083,7 +2083,7 @@ describe("harness HTTP API", () => {
       nextRunAt: null,
     });
 
-    await api("DELETE", `/api/routines/${installed.body.routines[0].id}`);
+    await desktopApi("DELETE", `/api/routines/${installed.body.routines[0].id}`);
     await api("DELETE", `/api/groups/${installed.body.groups[0].id}`);
     for (const bot of installed.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
   });
@@ -2732,7 +2732,7 @@ describe("harness HTTP API", () => {
       const bot = (await api("POST", "/api/bots")).body.bot;
       botId = bot.id;
       expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" })).status).toBe(200);
-      const created = await api("POST", "/api/routines", {
+      const created = await desktopApi("POST", "/api/routines", {
         name: "Cloud check",
         prompt: "look at the cloud desktop",
         target: "bot",
@@ -2762,7 +2762,7 @@ describe("harness HTTP API", () => {
       ]);
     } finally {
       stream?.close();
-      if (routineId) await api("DELETE", `/api/routines/${routineId}`);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
       if (botId) await api("DELETE", `/api/bots/${botId}`);
       await api("PUT", "/api/config", { box: { token: "" } });
     }
@@ -3702,7 +3702,7 @@ describe("harness HTTP API", () => {
       modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       requireAvailableModel: true,
     })).body.bot;
-    const routine = (await api("POST", "/api/routines", {
+    const routine = (await desktopApi("POST", "/api/routines", {
       name: "Deletion safety routine",
       prompt: "Keep running until interrupted.",
       botId: bot.id,
@@ -3729,7 +3729,7 @@ describe("harness HTTP API", () => {
       )).toBe(true);
     } finally {
       if (runId) await api("POST", `/api/routine-runs/${runId}/cancel`).catch(() => undefined);
-      await api("DELETE", `/api/routines/${routine.id}`).catch(() => undefined);
+      await desktopApi("DELETE", `/api/routines/${routine.id}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
     }
   });
@@ -3765,7 +3765,7 @@ describe("harness HTTP API", () => {
       }, { timeout: 5_000 }).toBe(false);
       expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
 
-      const routine = await api("POST", "/api/routines", {
+      const routine = await desktopApi("POST", "/api/routines", {
         name: "Emergency stop routine",
         prompt: "Keep running until interrupted.",
         botId: bot.id,
@@ -3793,7 +3793,7 @@ describe("harness HTTP API", () => {
       }, { timeout: 5_000 }).toBe("cancelled");
     } finally {
       if (runId) await api("POST", `/api/routine-runs/${runId}/cancel`).catch(() => undefined);
-      if (routineId) await api("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
       await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
       await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
@@ -5115,7 +5115,7 @@ describe("harness HTTP API", () => {
       // bounded preview, and tell the model when that preview is incomplete.
       const fakeSecret = `Bearer ${"a".repeat(24)}`;
       const fakeNameSecret = `sk-proj-${"b".repeat(24)}`;
-      const legacy = await api("POST", "/api/routines", {
+      const legacy = await desktopApi("POST", "/api/routines", {
         name: `Legacy ${fakeNameSecret}`,
         prompt: `${fakeSecret}\n${"Review the archive. ".repeat(180)}`,
         botId: bot.id,
@@ -5154,9 +5154,9 @@ describe("harness HTTP API", () => {
       });
       expect(wrongThread.status).toBe(403);
     } finally {
-      if (legacyRoutineId) await api("DELETE", `/api/routines/${legacyRoutineId}`);
-      if (orphanRoutineId) await api("DELETE", `/api/routines/${orphanRoutineId}`);
-      if (routineId) await api("DELETE", `/api/routines/${routineId}`);
+      if (legacyRoutineId) await desktopApi("DELETE", `/api/routines/${legacyRoutineId}`);
+      if (orphanRoutineId) await desktopApi("DELETE", `/api/routines/${orphanRoutineId}`);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await api("DELETE", `/api/bots/${bot.id}`);
     }

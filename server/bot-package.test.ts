@@ -138,6 +138,50 @@ describe("bot packages", () => {
     })).toThrow(/expected number to be >=5/);
   });
 
+  it("round-trips interval routine schedules", () => {
+    const document = {
+      ...validPackage,
+      package: {
+        ...validPackage.package,
+        routines: [{
+          key: "frequent-check",
+          name: "Frequent check",
+          agent: "lead",
+          prompt: "Check the queue.",
+          runOn: "ember",
+          schedule: { type: "interval", everyMinutes: 15, anchorAt: 1_788_254_400_000 },
+          durationMinutes: 30,
+          timeoutMinutes: 20,
+          enabledAfterInstall: false,
+        }],
+      },
+    };
+
+    const parsed = parseBotPackage(document);
+    expect(parsed.package.routines?.[0]?.schedule).toEqual({
+      type: "interval",
+      everyMinutes: 15,
+      anchorAt: 1_788_254_400_000,
+    });
+    expect(parsed.package.routines?.[0]?.timeoutMinutes).toBe(20);
+    expect(renderBotPackageMarkdown(parsed)).toContain("every 15 minutes");
+    expect(renderBotPackageMarkdown(parsed)).toContain("**Run limit:** 20 minutes");
+    expect(() => parseBotPackage({
+      ...document,
+      package: {
+        ...document.package,
+        routines: [{
+          ...document.package.routines[0],
+          schedule: {
+            type: "interval",
+            everyMinutes: 15,
+            anchorAt: Number.MAX_SAFE_INTEGER,
+          },
+        }],
+      },
+    })).toThrow();
+  });
+
   it("rejects dangling agent, room, playbook, chief, and routine references", () => {
     expect(() => parseBotPackage({
       ...validPackage,

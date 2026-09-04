@@ -12,7 +12,8 @@ import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
-  | { type: "daily"; time: string; weekdays: number[] };
+  | { type: "daily"; time: string; weekdays: number[] }
+  | { type: "interval"; everyMinutes: number; anchorAt: number };
 
 /** `cloud` runs the agent itself inside the bot's Box VM. `ember` keeps
  * using the provider selected on the EMBER and only borrows its configured
@@ -53,7 +54,10 @@ export interface Routine {
   runOn: RoutineRunOn;
   enabled: boolean;
   schedule: RoutineSchedule;
+  /** Legacy calendar/display length. Kept for persisted-data compatibility. */
   durationMinutes: number;
+  /** Optional safety cap for active work. Missing means no timeout. */
+  timeoutMinutes?: number;
   attachments?: RoutineContextAttachment[];
   /** Conversation that created this routine in chat. Calendar/import-created
    * routines intentionally have no source, and older files migrate in place. */
@@ -69,7 +73,10 @@ export interface RoutineRun {
   routineName: string;
   /** Snapshot the work so an edited/deleted definition cannot rewrite history. */
   prompt?: string;
+  /** Snapshot of the legacy calendar/display length. */
   durationMinutes?: number;
+  /** Snapshot of the optional active-work safety cap. */
+  timeoutMinutes?: number;
   attachments?: RoutineContextAttachment[];
   target: RoutineTarget;
   /** Exact terminal room outcome. `status` remains the scheduler lifecycle
@@ -141,6 +148,8 @@ export interface RoutineInput {
   enabled?: boolean;
   schedule: RoutineSchedule;
   durationMinutes?: number;
+  /** `null` deliberately removes an existing safety cap. */
+  timeoutMinutes?: number | null;
   attachments?: RoutineContextAttachment[];
 }
 
@@ -185,7 +194,11 @@ export interface RoutineManagerOptions {
     onDispatchError: (message: string) => void,
   ) => Promise<void>;
   interruptTurn?: (botId: string, threadId: string, runOn: RoutineRunOn) => Promise<void>;
-  interruptGoal?: (groupId: string, threadId: string) => Promise<void>;
+  interruptGoal?: (
+    groupId: string,
+    threadId: string,
+    outcome?: { status: "stopped" | "limit-reached"; detail: string },
+  ) => Promise<void>;
   /** Projects every durable transition into the source conversation. */
   onRunChanged?: (run: RoutineRun) => void;
   onRunFailed?: (run: RoutineRun) => void;
@@ -193,6 +206,7 @@ export interface RoutineManagerOptions {
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const CATCH_UP_MS = 12 * 60 * 60_000;
+const MAX_DATE_MS = 8_640_000_000_000_000;
 const MAX_RUNS = 2_000;
 const MAX_ATTACHMENTS = 50;
 const attachmentSchema = z.object({
@@ -238,6 +252,22 @@ function cleanAttachments(value: unknown): RoutineContextAttachment[] {
   });
 }
 
+function cleanTimeoutMinutes(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 5 || value > 240) {
+    throw new Error("Run limit must be a whole number from 5 to 240 minutes");
+  }
+  return value;
+}
+
+function loadTimeoutMinutes(value: unknown): number | undefined {
+  try {
+    return cleanTimeoutMinutes(value);
+  } catch {
+    return undefined;
+  }
+}
+
 /** A malformed legacy metadata field must not make the scheduler forget the
  * otherwise valid routine or run that owns it. New writes still fail closed. */
 function loadAttachments(value: unknown): RoutineContextAttachment[] {
@@ -249,9 +279,11 @@ function loadAttachments(value: unknown): RoutineContextAttachment[] {
 }
 
 function cloneSchedule(schedule: RoutineSchedule): RoutineSchedule {
-  return schedule.type === "once"
-    ? { type: "once", at: schedule.at }
-    : { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
+  if (schedule.type === "once") return { type: "once", at: schedule.at };
+  if (schedule.type === "interval") {
+    return { type: "interval", everyMinutes: schedule.everyMinutes, anchorAt: schedule.anchorAt };
+  }
+  return { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
 }
 
 function cloneAttachments(attachments: readonly RoutineContextAttachment[] | undefined): RoutineContextAttachment[] {
@@ -331,12 +363,42 @@ function cleanSchedule(schedule: RoutineSchedule): RoutineSchedule {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("Time must use HH:MM");
     return { type: "daily", time, weekdays: cleanDays(schedule.weekdays) };
   }
+  if (schedule?.type === "interval") {
+    const { everyMinutes, anchorAt } = schedule;
+    if (typeof everyMinutes !== "number" || !Number.isInteger(everyMinutes) || everyMinutes < 5 || everyMinutes > 1_440) {
+      throw new Error("Interval must be a whole number from 5 to 1440 minutes");
+    }
+    if (
+      typeof anchorAt !== "number" ||
+      !Number.isSafeInteger(anchorAt) ||
+      anchorAt < 0 ||
+      anchorAt > MAX_DATE_MS
+    ) {
+      throw new Error("Choose a valid interval start time");
+    }
+    return { type: "interval", everyMinutes, anchorAt };
+  }
   throw new Error("Choose a supported schedule");
+}
+
+function loadSchedule(value: unknown): RoutineSchedule | null {
+  try {
+    return cleanSchedule(value as RoutineSchedule);
+  } catch {
+    return null;
+  }
 }
 
 /** Next wall-clock occurrence in this computer's timezone, strictly after `after`. */
 export function nextOccurrence(schedule: RoutineSchedule, after: number): number | null {
   if (schedule.type === "once") return schedule.at > after ? schedule.at : null;
+  if (schedule.type === "interval") {
+    if (schedule.anchorAt > after) return schedule.anchorAt;
+    const intervalMs = schedule.everyMinutes * 60_000;
+    const intervalsElapsed = Math.floor((after - schedule.anchorAt) / intervalMs);
+    const candidate = schedule.anchorAt + (intervalsElapsed + 1) * intervalMs;
+    return Number.isSafeInteger(candidate) && candidate <= MAX_DATE_MS ? candidate : null;
+  }
   const [hour, minute] = schedule.time.split(":").map(Number);
   const weekdays = new Set(cleanDays(schedule.weekdays));
   for (let offset = 0; offset <= 8; offset++) {
@@ -346,6 +408,15 @@ export function nextOccurrence(schedule: RoutineSchedule, after: number): number
     if (d.getTime() > after && weekdays.has(d.getDay())) return d.getTime();
   }
   return null;
+}
+
+function latestIntervalOccurrence(
+  schedule: Extract<RoutineSchedule, { type: "interval" }>,
+  at: number,
+): number | null {
+  if (schedule.anchorAt > at) return null;
+  const intervalMs = schedule.everyMinutes * 60_000;
+  return schedule.anchorAt + Math.floor((at - schedule.anchorAt) / intervalMs) * intervalMs;
 }
 
 function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | "updatedAt" | "nextRunAt"> {
@@ -362,6 +433,7 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   const runOn = input.runOn ?? "ember";
   if (runOn !== "ember" && runOn !== "cloud") throw new Error("Choose where this routine runs");
   const attachments = cleanAttachments(input.attachments);
+  const timeoutMinutes = cleanTimeoutMinutes(input.timeoutMinutes);
   if (target === "room-goal" && runOn === "cloud") {
     throw new Error("Room goals can only run on this computer");
   }
@@ -381,6 +453,7 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
     enabled: input.enabled !== false,
     schedule: cleanSchedule(input.schedule),
     durationMinutes: Math.min(240, Math.max(5, Math.round(Number(input.durationMinutes) || 30))),
+    ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
     attachments,
   };
 }
@@ -402,30 +475,39 @@ export class RoutineManager {
     try {
       const disk = JSON.parse(readFileSync(this.file, "utf8")) as Partial<RoutineFile>;
       this.routines = Array.isArray(disk.routines)
-        ? disk.routines.map((routine) => {
+        ? disk.routines.flatMap((routine) => {
+            const schedule = loadSchedule(routine.schedule);
+            if (!schedule) return [];
             const target = loadTarget(routine.target);
-            return {
+            const loaded: Routine = {
               ...routine,
+              schedule,
               target,
               groupId: loadGroupId(routine.groupId, target),
               runOn: routine.runOn ?? "ember",
+              timeoutMinutes: loadTimeoutMinutes(routine.timeoutMinutes),
               attachments: loadAttachments(routine.attachments),
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
             };
+            if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
+            return [loaded];
           })
         : [];
       this.runs = Array.isArray(disk.runs)
         ? disk.runs.map((run) => {
             const target = loadTarget(run.target);
-            return {
+            const loaded: RoutineRun = {
               ...run,
               target,
               goalStatus: loadGoalStatus(run.goalStatus, target),
               groupId: loadGroupId(run.groupId, target),
               runOn: run.runOn ?? "ember",
+              timeoutMinutes: loadTimeoutMinutes(run.timeoutMinutes),
               attachments: loadAttachments(run.attachments),
               sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
             };
+            if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
+            return loaded;
           })
         : [];
       this.routineRequestReceipts = Array.isArray(disk.routineRequestReceipts)
@@ -611,6 +693,7 @@ export class RoutineManager {
       enabled: patch.enabled ?? routine.enabled,
       schedule: patch.schedule ?? routine.schedule,
       durationMinutes: patch.durationMinutes ?? routine.durationMinutes,
+      timeoutMinutes: Object.hasOwn(patch, "timeoutMinutes") ? patch.timeoutMinutes : routine.timeoutMinutes,
       attachments: patch.attachments ?? routine.attachments,
     });
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
@@ -622,6 +705,9 @@ export class RoutineManager {
         // confirmation cards. Keep it monotonic even for two writes in one ms.
         updatedAt: Math.max(now, routine.updatedAt + 1),
       });
+      if (Object.hasOwn(patch, "timeoutMinutes") && patch.timeoutMinutes == null) {
+        delete routine.timeoutMinutes;
+      }
       if (patch.enabled === false) {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;
@@ -782,7 +868,6 @@ export class RoutineManager {
       createdAt: this.now(),
     };
     this.runs.push(run);
-    if (this.runs.length > MAX_RUNS) this.runs.splice(0, this.runs.length - MAX_RUNS);
     this.save();
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
@@ -857,27 +942,65 @@ export class RoutineManager {
     this.ticking = true;
     try {
       const now = this.now();
+      for (const run of this.runs) {
+        if (
+          !["running", "waiting"].includes(run.status) ||
+          run.startedAt == null ||
+          run.timeoutMinutes == null ||
+          now - run.startedAt < run.timeoutMinutes * 60_000
+        ) continue;
+        const threadId = run.threadId;
+        const detail = `Stopped after reaching the ${run.timeoutMinutes}-minute run limit`;
+        if (run.target === "room-goal") run.goalStatus = "limit-reached";
+        this.failRun(run, detail);
+        if (!threadId) continue;
+        if (run.target === "room-goal" && run.groupId) {
+          await this.options.interruptGoal?.(run.groupId, threadId, {
+            status: "limit-reached",
+            detail,
+          }).catch(() => {});
+        } else {
+          await this.options.interruptTurn?.(run.botId, threadId, run.runOn ?? "ember").catch(() => {});
+        }
+      }
       let changed = false;
       const missedRuns: RoutineRun[] = [];
       for (const routine of this.routines) {
         if (!routine.enabled || routine.nextRunAt == null || routine.nextRunAt > now) continue;
-        const scheduledFor = routine.nextRunAt;
-        const late = now - scheduledFor;
-        if (late > CATCH_UP_MS) {
-          const missed = this.newRun(routine, scheduledFor, false);
-          missed.status = "missed";
-          missed.finishedAt = now;
-          missed.error = "This computer was offline for more than 12 hours after the scheduled time";
-          this.emitRun(missed);
-          missedRuns.push(cloneRun(missed));
-        } else {
-          const run = this.newRun(routine, scheduledFor, false);
-          this.emitRun(run);
+        const pendingAt = routine.nextRunAt;
+        const late = now - pendingAt;
+        const scheduledFor = routine.schedule.type === "interval" && late <= CATCH_UP_MS
+          ? latestIntervalOccurrence(routine.schedule, now) ?? pendingAt
+          : pendingAt;
+        // One slow interval run must not build an unbounded queue of stale
+        // copies behind it. The series still advances on its original phase.
+        const overlapping = routine.schedule.type === "interval" && this.runs.some(
+          (run) => run.routineId === routine.id && ["queued", "running", "waiting"].includes(run.status),
+        );
+        if (!overlapping) {
+          if (late > CATCH_UP_MS) {
+            const missed = this.newRun(routine, scheduledFor, false);
+            missed.status = "missed";
+            missed.finishedAt = now;
+            missed.error = "This computer was offline for more than 12 hours after the scheduled time";
+            this.emitRun(missed);
+            missedRuns.push(cloneRun(missed));
+          } else {
+            const run = this.newRun(routine, scheduledFor, false);
+            this.emitRun(run);
+          }
         }
         routine.nextRunAt =
           routine.schedule.type === "once" ? null : nextOccurrence(routine.schedule, Math.max(now, scheduledFor));
-        if (routine.schedule.type === "once") routine.enabled = false;
-        routine.updatedAt = Math.max(now, routine.updatedAt + 1);
+        // `updatedAt` is the optimistic definition revision carried by
+        // routine confirmation cards. Moving the scheduler cursor is runtime
+        // progress, not a definition edit, so recurring ticks must not make a
+        // still-accurate pending confirmation stale. A one-time routine does
+        // mutate its definition by auto-disabling after its occurrence.
+        if (routine.schedule.type === "once") {
+          routine.enabled = false;
+          routine.updatedAt = Math.max(now, routine.updatedAt + 1);
+        }
         this.emitRoutine(routine);
         changed = true;
       }
@@ -886,6 +1009,23 @@ export class RoutineManager {
 
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
+        // A queued interval represents the latest useful check, not a backlog
+        // item. If the bot stayed busy across later occurrences, align this
+        // scheduled receipt to the newest due point immediately before it can
+        // dispatch. Manual runs and webhook deliveries retain their exact
+        // requested/received timestamps.
+        const triggerSource = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+        const definition = triggerSource === "schedule"
+          ? this.routines.find((routine) => routine.id === run.routineId)
+          : undefined;
+        if (definition?.schedule.type === "interval") {
+          const latest = latestIntervalOccurrence(definition.schedule, now);
+          if (latest !== null && latest > run.scheduledFor) {
+            run.scheduledFor = latest;
+            this.save();
+            this.emitRun(run);
+          }
+        }
         const state = this.targetState(run);
         if (state === "busy") continue;
         if (state === "missing") {
@@ -1082,6 +1222,7 @@ export class RoutineManager {
       routineName: routine.name,
       prompt: routine.prompt,
       durationMinutes: routine.durationMinutes,
+      ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
       attachments: cloneAttachments(routine.attachments),
       target: routine.target,
       groupId: routine.groupId,
@@ -1095,7 +1236,6 @@ export class RoutineManager {
       createdAt: this.now(),
     };
     this.runs.push(run);
-    if (this.runs.length > MAX_RUNS) this.runs.splice(0, this.runs.length - MAX_RUNS);
     return run;
   }
 
@@ -1171,6 +1311,19 @@ export class RoutineManager {
   }
 
   private save() {
+    // Active receipts own cancellation, timeout, and provider-event routing;
+    // evicting one would strand live work. Treat MAX_RUNS as a soft history
+    // cap and reclaim only the oldest terminal receipts. An unusually large
+    // active queue may exceed it until work settles.
+    let excess = this.runs.length - MAX_RUNS;
+    for (let index = 0; index < this.runs.length && excess > 0;) {
+      if (["queued", "running", "waiting"].includes(this.runs[index]!.status)) {
+        index += 1;
+        continue;
+      }
+      this.runs.splice(index, 1);
+      excess -= 1;
+    }
     mkdirSync(dirname(this.file), { recursive: true });
     writeFileAtomic(this.file, JSON.stringify({
       version: 1,

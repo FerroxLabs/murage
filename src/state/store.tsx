@@ -41,6 +41,25 @@ import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 
+const MAX_ROUTINE_RUNS = 2_000;
+const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting"]);
+
+function trimRoutineRuns(runs: readonly RoutineRun[]): RoutineRun[] {
+  const sorted = [...runs].sort((a, b) => b.scheduledFor - a.scheduledFor);
+  if (sorted.length <= MAX_ROUTINE_RUNS) return sorted;
+  const activeCount = sorted.reduce(
+    (count, run) => count + (ACTIVE_ROUTINE_RUN_STATUSES.has(run.status) ? 1 : 0),
+    0,
+  );
+  let terminalSlots = Math.max(0, MAX_ROUTINE_RUNS - activeCount);
+  return sorted.filter((run) => {
+    if (ACTIVE_ROUTINE_RUN_STATUSES.has(run.status)) return true;
+    if (terminalSlots === 0) return false;
+    terminalSlots -= 1;
+    return true;
+  });
+}
+
 export type { EmberColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
 
@@ -860,7 +879,7 @@ export function reducer(state: AppState, action: Action): AppState {
         pluginsOpen: false,
       };
     case "routinesHydrated":
-      return { ...state, routines: action.routines, routineRuns: action.runs };
+      return { ...state, routines: action.routines, routineRuns: trimRoutineRuns(action.runs) };
     case "routinePatched": {
       const exists = state.routines.some((routine) => routine.id === action.routine.id);
       return {
@@ -877,7 +896,10 @@ export function reducer(state: AppState, action: Action): AppState {
       const runs = exists
         ? state.routineRuns.map((run) => (run.id === action.run.id ? action.run : run))
         : [action.run, ...state.routineRuns];
-      return { ...state, routineRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
+      return {
+        ...state,
+        routineRuns: trimRoutineRuns(runs),
+      };
     }
     case "webhooksHydrated":
       return { ...state, webhooks: action.webhooks, webhookAttempts: action.attempts, webhookIngress: action.ingress };

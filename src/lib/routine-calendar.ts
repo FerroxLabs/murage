@@ -1,6 +1,8 @@
 import type { Routine, RoutineRun, RoutineSchedule } from "./routines";
 
 export const CALENDAR_SLOT_MINUTES = 5;
+const ROUTINE_MARKER_MINUTES = 30;
+const MAX_RECEIPTS_PER_ROUTINE_PER_RANGE = 12;
 
 export type RoutineCalendarItem = {
   id: string;
@@ -129,6 +131,13 @@ export function slotAt(day: number, clientY: number, top: number, hourHeight: nu
 
 export function scheduleAt(schedule: RoutineSchedule, occurrenceAt: number, nextAt: number): RoutineSchedule {
   if (schedule.type === "once") return { type: "once", at: nextAt };
+  if (schedule.type === "interval") {
+    return {
+      type: "interval",
+      everyMinutes: schedule.everyMinutes,
+      anchorAt: schedule.anchorAt + (nextAt - occurrenceAt),
+    };
+  }
   const dayDelta = Math.round((startOfDay(nextAt) - startOfDay(occurrenceAt)) / 86_400_000);
   return {
     type: "daily",
@@ -143,13 +152,29 @@ export function projectedRoutineItems(
   from: number,
   to: number,
 ): RoutineCalendarItem[] {
-  const items: RoutineCalendarItem[] = runs
+  const routineById = new Map(routines.map((routine) => [routine.id, routine]));
+  const receiptCounts = new Map<string, number>();
+  const visibleRuns = runs
     .filter((run) => run.scheduledFor >= from && run.scheduledFor < to)
+    .sort((left, right) => right.scheduledFor - left.scheduledFor)
+    .filter((run) => {
+      if (run.status === "queued" || run.status === "running" || run.status === "waiting") {
+        return true;
+      }
+      // A routine may later be edited or deleted, so the current definition
+      // cannot safely tell us whether its history came from a dense interval.
+      // Keep active receipts unbounded above, while trimming terminal history.
+      const count = receiptCounts.get(run.routineId) ?? 0;
+      if (count >= MAX_RECEIPTS_PER_ROUTINE_PER_RANGE) return false;
+      receiptCounts.set(run.routineId, count + 1);
+      return true;
+    });
+  const items: RoutineCalendarItem[] = visibleRuns
     .map((run) => ({
       id: `run-${run.id}`,
       at: run.scheduledFor,
-      durationMinutes: run.durationMinutes ?? 30,
-      routine: routines.find((routine) => routine.id === run.routineId) ?? null,
+      durationMinutes: ROUTINE_MARKER_MINUTES,
+      routine: routineById.get(run.routineId) ?? null,
       run,
     }));
 
@@ -164,7 +189,23 @@ export function projectedRoutineItems(
         items.push({
           id: `next-${routine.id}-${at}`,
           at,
-          durationMinutes: routine.durationMinutes,
+          durationMinutes: ROUTINE_MARKER_MINUTES,
+          routine,
+          run: null,
+        });
+      }
+      continue;
+    }
+    if (routine.schedule.type === "interval") {
+      // The scheduler deliberately skips overlapping and stale interval ticks.
+      // Its persisted nextRunAt is the only future occurrence users can act on;
+      // reconstructing an unreceipted tick would resurrect work it skipped.
+      const at = routine.nextRunAt;
+      if (at != null && at >= from && at < to && !hasReceipt(routine.id, at)) {
+        items.push({
+          id: `next-${routine.id}-${at}`,
+          at,
+          durationMinutes: ROUTINE_MARKER_MINUTES,
           routine,
           run: null,
         });
@@ -178,7 +219,7 @@ export function projectedRoutineItems(
         items.push({
           id: `next-${routine.id}-${at}`,
           at,
-          durationMinutes: routine.durationMinutes,
+          durationMinutes: ROUTINE_MARKER_MINUTES,
           routine,
           run: null,
         });
