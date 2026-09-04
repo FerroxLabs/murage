@@ -3,7 +3,7 @@
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, ChevronDown, Clock, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, Search, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, Search, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -251,7 +251,7 @@ const Transcript = memo(function Transcript({
             m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
               <RoomToolChip message={m} />
             ) : null
-          ) : m.kind === "text" && m.text ? (
+          ) : m.kind === "text" && (m.text || m.attachments?.length) ? (
             <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
               <div className={cn("flex w-full items-end gap-1.5", user ? "justify-end" : "justify-start")}>
                 {/* HOVER-ONLY RAIL — `opacity-0` until a pointer hovers the
@@ -331,7 +331,17 @@ const Transcript = memo(function Transcript({
                       )}
                       {attachments?.display ?? m.text}
                     </>
-                  ) : <ChatMarkdown text={m.text} />}
+                  ) : (
+                    <>
+                      {m.attachments?.length ? (
+                        <AttachedImageGallery
+                          paths={m.attachments.map((attachment) => attachment.path)}
+                          className={m.text ? "justify-start" : "mb-0 justify-start"}
+                        />
+                      ) : null}
+                      {m.text ? <ChatMarkdown text={m.text} /> : null}
+                    </>
+                  )}
                 </div>
                 {/* the other side of the same hover-only rail */}
                 <div className="max-md:hidden md:contents">
@@ -974,6 +984,7 @@ export function GroupView({ group }: { group: Group }) {
     lastGroupMessage?.from?.botId,
   ]);
   const presenceVisible = waiting || popping !== null;
+  const poppingMessage = popping ? group.messages.find((message) => message.id === popping.id) : undefined;
   const presenceSpeaker = speaker ?? members.find((member) => member.id === popping?.botId) ?? members[0];
 
   // Windowed transcript, mirroring ChatView: only a tail of the room mounts;
@@ -1341,38 +1352,17 @@ export function GroupView({ group }: { group: Group }) {
             >
               {popping ? (
                 <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-                  <ChatMarkdown text={popping.text} />
+                  {poppingMessage?.attachments?.length ? (
+                    <AttachedImageGallery
+                      paths={poppingMessage.attachments.map((attachment) => attachment.path)}
+                      className={popping.text ? "justify-start" : "mb-0 justify-start"}
+                    />
+                  ) : null}
+                  {popping.text ? <ChatMarkdown text={popping.text} /> : null}
                 </div>
               ) : null}
             </TurnPresence>
           )}
-          {(state.pendingQueued[group.threadId] ?? []).map((entry) => (
-            <div key={entry.queueId} className="flex flex-col items-end">
-              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full whitespace-pre-wrap rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed text-ink-secondary">
-                {entry.text}
-              </div>
-              <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
-                <Clock size={11} aria-hidden="true" />
-                <span>{group.working ? "Queued — wait, or inject now" : "Queued — sending now"}</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    dispatch({
-                      type: "cancelGroupQueued",
-                      groupId: group.id,
-                      threadId: group.threadId,
-                      queueId: entry.queueId,
-                    })
-                  }
-                  aria-label="Cancel queued message"
-                  title="Cancel queued message"
-                  className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
-                >
-                  <X size={11} strokeWidth={2.5} />
-                </button>
-              </div>
-            </div>
-          ))}
         </div>
         )}
       </div>

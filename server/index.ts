@@ -262,6 +262,7 @@ import {
   type BrowserConnection,
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
+import { decodeGeneratedImage } from "./generated-image.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
@@ -544,6 +545,21 @@ type DirectTurnDispatchClaim = {
 class DirectTurnSetupCancelled extends Error {}
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directTurnGenerationByBot = new Map<string, string>();
+
+/** Images a provider turn has produced but not yet attached to a message.
+ * The bytes land on disk as they arrive and are folded onto the turn's
+ * terminal assistant message at turn.completed, so a turn that emits an
+ * image and then keeps talking still ends up with one message carrying
+ * both. Keyed per thread AND provider turn: two turns on one thread must
+ * never inherit each other's staging. */
+const generatedImagesByTurn = new Map<
+  string,
+  Array<NonNullable<Message["attachments"]>[number]>
+>();
+
+function generatedImageTurnKey(threadId: string, turnId?: string): string {
+  return `${threadId}:${turnId ?? "active"}`;
+}
 const retiredProviderTurns = new RetiredTurnRegistry();
 const pendingCancelledProviderHandshakes = new PendingTurnCancellations();
 
@@ -557,6 +573,16 @@ function clearCancelledProviderHandshake(threadId: string, ownerId: string): voi
 
 function retireProviderTurn(turnId: string): void {
   retiredProviderTurns.retire(turnId);
+  // A stopped/replaced turn is never folded again. Delete only image files
+  // that were staged for that exact provider turn so unattached output does
+  // not accumulate invisibly on disk.
+  for (const [key, attachments] of generatedImagesByTurn) {
+    if (!key.endsWith(`:${turnId}`)) continue;
+    generatedImagesByTurn.delete(key);
+    for (const attachment of attachments) {
+      try { unlinkSync(attachment.path); } catch { /* already gone */ }
+    }
+  }
 }
 
 function shouldIgnoreProviderEvent(event: RuntimeEvent): boolean {
@@ -1802,6 +1828,13 @@ bus.subscribe((event: RuntimeEvent) => {
     if (goalCoordinatorTurn && !goalCoordinatorTurn.discard) goalCoordinatorTurn.assistantItems.push(event.text);
     return;
   }
+  // Goal coordinators speak a private control envelope. Their incidental
+  // artifacts are private too; never leak one into the public room.
+  if (
+    event.type === "item.completed" &&
+    event.itemType === "assistant_image" &&
+    (goalCoordinatorTurn || ambiguousCoordinatorText)
+  ) return;
   if (
     event.type === "content.delta" &&
     event.streamKind === "assistant_text" &&
@@ -1823,8 +1856,11 @@ bus.subscribe((event: RuntimeEvent) => {
     };
     broadcast({ kind: "runtime", event: publicAssistantEvent });
   }
-  broadcast({ kind: "runtime", event });
-  const routineRun = routines?.handleRuntimeEvent(event) ?? null;
+  const privateImageEvent = event.type === "item.completed" && event.itemType === "assistant_image";
+  // The durable message patch below is the public frame. Sending raw base64
+  // through runtime SSE would multiply large bytes across every app window.
+  if (!privateImageEvent) broadcast({ kind: "runtime", event });
+  const routineRun = privateImageEvent ? null : (routines?.handleRuntimeEvent(event) ?? null);
   const bot = store.botByThread(event.threadId);
   const group = bot ? undefined : store.groupByThread(event.threadId);
   if (!bot && !group) return;
@@ -1853,6 +1889,24 @@ bus.subscribe((event: RuntimeEvent) => {
         // kept so "finished" can say what it finished with, rather than
         // just that something ended
         lastReply.set(event.threadId, text);
+      } else if (event.itemType === "assistant_image") {
+        try {
+          const decoded = decodeGeneratedImage(event.data);
+          const saved = saveImage(decoded.bytes, decoded.mime);
+          const key = generatedImageTurnKey(event.threadId, event.turnId);
+          const current = generatedImagesByTurn.get(key) ?? [];
+          current.push({ kind: "image", path: saved.path, mime: saved.mime });
+          generatedImagesByTurn.set(key, current);
+        } catch (error) {
+          pushMessage({
+            role: "bot",
+            kind: "activity",
+            tool: {
+              name: `generated image could not be attached — ${error instanceof Error ? error.message : "invalid image"}`.slice(0, 160),
+              ok: false,
+            },
+          });
+        }
       } else if (event.itemType === "tool" && event.itemId) {
         const itemKey = `${event.threadId}:${event.itemId}`;
         const messageId = toolMessageByItem.get(itemKey);
@@ -2131,6 +2185,32 @@ bus.subscribe((event: RuntimeEvent) => {
       turnUsage.set(event.threadId, { input: event.input, output: event.output, cachedInput: event.cachedInput });
       break;
     case "turn.completed": {
+      const generatedKey = generatedImageTurnKey(event.threadId, event.turnId);
+      const generated = generatedImagesByTurn.get(generatedKey) ?? [];
+      generatedImagesByTurn.delete(generatedKey);
+      if (generated.length) {
+        const response = [...store.messagesFor(event.threadId)].reverse().find(
+          (message) =>
+            message.role === "bot" &&
+            message.kind === "text" &&
+            message.turnId === completedTurnId,
+        );
+        if (response) {
+          store.patchMessage(event.threadId, response.id, {
+            attachments: [...(response.attachments ?? []), ...generated],
+          });
+        } else {
+          // Some image turns have no textual epilogue. Keep the image as the
+          // terminal assistant response instead of inventing model words.
+          pushMessage({
+            role: "bot",
+            kind: "text",
+            text: "",
+            attachments: generated,
+            turnId: completedTurnId,
+          });
+        }
+      }
       if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId);
       const reply = lastReply.get(event.threadId) ?? "";
       lastReply.delete(event.threadId);
