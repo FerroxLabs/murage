@@ -76,9 +76,21 @@ export function geminiIsAuthenticated(env: Record<string, string | undefined>): 
 const support: AcpSupport = {
   driverKind: "geminiAgent",
   displayName: "Gemini",
+  // Every id below was read back from Google's own
+  // generativelanguage /v1beta/models on 2026-09-04, filtered to rows that
+  // support generateContent -- not typed from a changelog. 3.8 Flash is the
+  // newest; 3.7 Flash is the default because it is the newest one that has
+  // been GA long enough to be everywhere. The 2.5 rows stay because Google
+  // still serves them and a saved bot may still name one.
   models: {
-    default: "gemini-2.5-pro",
+    default: "gemini-3.7-flash",
     options: [
+      { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+      { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+      { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
       { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
       { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     ],
