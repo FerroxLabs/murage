@@ -4896,7 +4896,19 @@ describe("harness HTTP API", () => {
       });
       expect(card?.card.answered).toBeUndefined();
 
-      const confirmed = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      // Confirming a routine card WRITES a live schedule — resolve() reaches
+      // routines.create with `enabled: true` — so it is desktop-only for the
+      // same reason POST /api/routines is. A phone gets the refusal first,
+      // which is the half that used to be missing: the gate on /api/routines
+      // was decorative while this door stayed open.
+      expect(
+        (await api("POST", `/api/threads/${bot.threadId}/respond`, {
+          requestId: proposal.requestId,
+          behavior: "allow",
+        })).status,
+      ).toBe(403);
+
+      const confirmed = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: proposal.requestId,
         behavior: "allow",
       });
@@ -4916,7 +4928,11 @@ describe("harness HTTP API", () => {
         botId: bot.id,
         sourceThreadId: bot.threadId,
       });
-      const duplicate = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      // Idempotency is a property of the path that can actually apply, so the
+      // second allow goes through the desktop helper too. From a phone this
+      // request is refused before it reaches resolve() at all, which the 403
+      // above already pins.
+      const duplicate = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: proposal.requestId,
         behavior: "allow",
       });
@@ -4970,7 +4986,7 @@ describe("harness HTTP API", () => {
         .find((candidate: { id: string }) => candidate.id === bot.id)
         ?.messages.find((message: { card?: { requestId?: string } }) => message.card?.requestId === crossProposal.requestId);
       expect(crossCard?.card.title).toContain(`for @${teammate.name}`);
-      const crossConfirmed = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+      const crossConfirmed = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: crossProposal.requestId,
         behavior: "allow",
       });
@@ -5093,7 +5109,7 @@ describe("harness HTTP API", () => {
       });
       expect(orphanProposalResponse.status).toBe(201);
       const orphanProposal = z.object({ requestId: z.string() }).parse(await orphanProposalResponse.json());
-      const orphanConfirmed = await api("POST", `/api/threads/${orphanThreadId}/respond`, {
+      const orphanConfirmed = await desktopApi("POST", `/api/threads/${orphanThreadId}/respond`, {
         requestId: orphanProposal.requestId,
         behavior: "allow",
       });
