@@ -28,6 +28,7 @@ import {
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
+import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName, withSavableFile } from "./save-file.mjs";
@@ -1273,13 +1274,29 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
   desktopViewerWindow = viewer;
   const viewerOrigin = url.origin;
 
-  // VNC needs rendering, keyboard/mouse input and WebSockets — never host
-  // camera, microphone, geolocation, notifications, USB, or other privileged
-  // browser capabilities in this remote-content window.
-  viewer.webContents.session.setPermissionCheckHandler(() => false);
-  viewer.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  // VNC needs rendering, keyboard/mouse input and WebSockets, plus the few
+  // permission-gated input capabilities a viewer page asks for: keyboard and
+  // pointer capture, the clipboard for paste, full screen. Those go to the
+  // viewer's own origin only — never camera, microphone, geolocation,
+  // notifications, USB, or any other privileged browser capability in this
+  // remote-content window (see desktop-viewer-permissions.mjs).
+  viewer.webContents.session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
+    desktopViewerPermissionAllowed(permission, requestingOrigin, viewerOrigin),
+  );
+  viewer.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) =>
+    callback(desktopViewerPermissionAllowed(permission, details?.requestingUrl || webContents.getURL(), viewerOrigin)),
+  );
 
-  viewer.on("ready-to-show", () => viewer.show());
+  // A child window floats above the app but does not take the keyboard until
+  // it is focused: clicks land in the VNC canvas either way, keystrokes only
+  // reach the key window. Left unfocused, typing "into the VM" lands in the
+  // composer and ⌘1–9 switch bots while the mouse appears to work.
+  viewer.once("ready-to-show", () => {
+    if (viewer.isDestroyed()) return;
+    viewer.show();
+    viewer.focus();
+    viewer.webContents.focus();
+  });
   viewer.on("closed", () => {
     if (desktopViewerWindow !== viewer) return;
     desktopViewerWindow = null;
