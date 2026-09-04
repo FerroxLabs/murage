@@ -262,11 +262,13 @@ async function stageTarget(root, target) {
       `${JSON.stringify(expectedManifest(target), null, 2)}\n`,
       { mode: 0o600 },
     );
-    rmSync(finalDirectory, { recursive: true, force: true });
+    rmSync(finalDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     renameSync(stagedDirectory, finalDirectory);
     console.log(`staged cloudflared ${CLOUDFLARED_VERSION} for ${target}`);
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    // Windows Defender can briefly retain the executable after the version
+    // probe exits. Node retries EPERM for recursive removals when asked.
+    rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }
 
