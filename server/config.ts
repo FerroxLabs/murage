@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
+import { parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 
 const optionalText = z.string().optional();
@@ -404,6 +405,19 @@ export function loadBrowserProfileIdAliases(): ReadonlyMap<string, string> {
 }
 
 export function parseConfigPatch(value: JsonValue): ConfigPatch {
+  // saveConfig now knows how to write `mcpServers`, and that field decides
+  // which local processes every capable bot spawns as tool servers. It is
+  // therefore settable ONLY through the desktop-gated /api/mcp/servers
+  // routes. PUT/PATCH /api/config is reachable from a paired phone, so it
+  // refuses the field outright rather than leaning on the patch schema's
+  // silent strip — a strip is a side effect of `.omit()` that a later schema
+  // change could quietly undo, and this must be a code property.
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "mcpServers")) {
+    throw Object.assign(
+      new Error("mcpServers is managed from the MCP servers panel on the desktop, not this route"),
+      { status: 400 },
+    );
+  }
   const parsed = appConfigPatchSchema.safeParse(value);
   if (!parsed.success) {
     throw Object.assign(new Error(schemaIssue(parsed.error, "Invalid configuration")), { status: 400 });
@@ -652,6 +666,13 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     disk[key] = merged;
   }
   if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);
+  // Custom MCP mutations arrive only from the desktop-gated /api/mcp/servers
+  // routes (parseConfigPatch refuses the field on the generic config route),
+  // but saveConfig stays the single atomic persistence boundary. The whole
+  // map is the unit of change, so a delete arrives as the shorter map.
+  if (checkedPatch.mcpServers !== undefined) {
+    disk.mcpServers = jsonObjectSchema.parse(checkedPatch.mcpServers);
+  }
   // scalar, not a section: the merge loop above only walks objects
   if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
   // the whole list is the unit of change: an add or a delete arrives as the
@@ -873,30 +894,6 @@ export interface CustomMcpServer {
   env: Record<string, string>;
 }
 
-const customMcpEntrySchema = z
-  .object({
-    command: z.string().min(1),
-    args: z.array(z.string()).optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
-
-const CUSTOM_MCP_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
-/** Server keys the harness mounts itself — a custom entry must never
- * shadow or clobber one of these across any driver's namespace. */
-const RESERVED_MCP_NAMES = new Set([
-  "muragebox",
-  "computer",
-  "agents",
-  "composio",
-  "browser",
-  "phone",
-  "dweb",
-  "murage_connectors",
-  "murage_phone",
-]);
-
 const reportedMcpSkips = new Set<string>();
 function skipMcpEntry(name: string, why: string): void {
   const key = `${name}: ${why}`;
@@ -909,28 +906,23 @@ function skipMcpEntry(name: string, why: string): void {
 export function customMcpServers(cfg: AppConfig): Record<string, CustomMcpServer> {
   const out: Record<string, CustomMcpServer> = {};
   for (const [name, raw] of Object.entries(cfg.mcpServers ?? {})) {
-    if (!CUSTOM_MCP_NAME.test(name)) {
-      skipMcpEntry(name, "server names are lowercase letters, digits, _ or - (max 32 chars), starting with a letter");
-      continue;
-    }
-    if (RESERVED_MCP_NAMES.has(name)) {
-      skipMcpEntry(name, "that name is reserved for a built-in server — pick another");
-      continue;
-    }
     if (raw && typeof raw === "object" && "url" in raw) {
       skipMcpEntry(name, 'only stdio servers ("command") are supported so far — HTTP transports are a planned follow-up');
       continue;
     }
-    const parsed = customMcpEntrySchema.safeParse(raw);
-    if (!parsed.success) {
-      skipMcpEntry(name, `invalid entry (${parsed.error.issues[0]?.message ?? "schema mismatch"}) — expected { "command": "npx", "args": [...], "env": { ... } }`);
+    // One parser for the file and the settings panel: mcp-registry.ts owns
+    // the name rules, the reserved list and the entry shape, so a server the
+    // UI accepts is exactly a server the fleet will mount.
+    const parsed = parseStoredMcpServer(name, raw);
+    if (!parsed.ok) {
+      skipMcpEntry(name, `${parsed.error} Expected { "command": "npx", "args": [...], "env": { ... } }`);
       continue;
     }
-    if (parsed.data.enabled === false) continue;
+    if (!parsed.server.enabled) continue;
     out[name] = {
-      command: parsed.data.command,
-      args: parsed.data.args ?? [],
-      env: parsed.data.env ?? {},
+      command: parsed.server.command,
+      args: parsed.server.args,
+      env: parsed.server.env,
     };
   }
   return out;
