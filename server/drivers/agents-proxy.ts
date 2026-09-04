@@ -58,12 +58,12 @@ const ROUTINE_SCHEDULE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   description:
-    'Either {"type":"once","at":RFC3339} for one future run, {"type":"weekly","time":"HH:MM","weekdays":[...]} for chosen days, or {"type":"daily","time":"HH:MM"} to run every day. Sub-day intervals (every N minutes/hours) are not supported.',
+    'Either {"type":"once","at":RFC3339} for one future run, {"type":"weekly","time":"HH:MM","weekdays":[...]} for chosen days, {"type":"daily","time":"HH:MM"} for every day, or {"type":"interval","every_minutes":15,"starts_at":RFC3339} to repeat from an optional starting point.',
   properties: {
     type: {
       type: "string",
-      enum: ["once", "weekly", "daily"],
-      description: "once = a single future run; weekly = chosen weekdays; daily = every day of the week.",
+      enum: ["once", "weekly", "daily", "interval"],
+      description: "once = a single future run; weekly = chosen weekdays; daily = every day; interval = every N minutes.",
     },
     at: {
       type: "string",
@@ -78,6 +78,17 @@ const ROUTINE_SCHEDULE_SCHEMA = {
       type: "array",
       items: { type: "string", enum: WEEKDAYS },
       description: "Only for type weekly: which days the routine runs, in the computer's local timezone.",
+    },
+    every_minutes: {
+      type: "integer",
+      minimum: 5,
+      maximum: 1_440,
+      description: "Only for type interval: whole minutes between runs, from 5 to 1440.",
+    },
+    starts_at: {
+      type: "string",
+      description:
+        "Optional for type interval: RFC3339 date-time with an explicit timezone offset that anchors the cadence. Omit to start one interval after confirmation.",
     },
   },
   required: ["type"],
@@ -98,7 +109,8 @@ const SHORT_WEEKDAYS = {
 
 const SUPPORTED_SCHEDULES =
   'Supported schedules: {"type":"once","at":"2026-09-01T09:00:00+05:30"} (future RFC3339 with explicit offset), ' +
-  '{"type":"weekly","time":"09:00","weekdays":["monday","friday"]}, or {"type":"daily","time":"09:00"} for every day.';
+  '{"type":"weekly","time":"09:00","weekdays":["monday","friday"]}, {"type":"daily","time":"09:00"}, ' +
+  'or {"type":"interval","every_minutes":15}.';
 
 /** The outcome of coercing a model-sent schedule: the harness-dialect
  * schedule, or a message telling the model exactly what to send instead. */
@@ -155,8 +167,26 @@ function normalizeScheduleInput(args: Json): NormalizedSchedule {
     }
     return { schedule: { type: "weekly", time, weekdays: normalized } };
   }
-  if (type === "interval" || type === "cron" || type === "hourly" || type === "minutes") {
-    return { error: `Routines cannot run on sub-day intervals. ${SUPPORTED_SCHEDULES} Pick the closest daily or weekly time and tell the user about this limit.` };
+  if (type === "interval") {
+    const rawMinutes = raw.every_minutes ?? raw.everyMinutes;
+    const everyMinutes = Number(rawMinutes);
+    if (!Number.isInteger(everyMinutes) || everyMinutes < 5 || everyMinutes > 1_440) {
+      return { error: 'An interval schedule needs "every_minutes": a whole number from 5 to 1440.' };
+    }
+    const rawStart = raw.starts_at ?? raw.anchorAt;
+    if (rawStart !== undefined && (typeof rawStart !== "string" || !rawStart.trim())) {
+      return { error: '"starts_at" must be an RFC3339 date-time with an explicit timezone offset.' };
+    }
+    return {
+      schedule: {
+        type: "interval",
+        everyMinutes,
+        ...(typeof rawStart === "string" ? { anchorAt: rawStart.trim() } : {}),
+      },
+    };
+  }
+  if (type === "cron" || type === "hourly" || type === "minutes") {
+    return { error: `Use an interval schedule for every-N-minutes work. ${SUPPORTED_SCHEDULES}` };
   }
   return { error: `Unknown schedule type "${type || "(missing)"}". ${SUPPORTED_SCHEDULES}` };
 }
@@ -175,11 +205,16 @@ const ROUTINE_FIELDS_SCHEMA = {
     enum: ["ember", "cloud"],
     description: "Where the routine runs. Defaults to ember (this Murage setup).",
   },
-  duration_minutes: {
+  timeout_minutes: {
     type: "integer",
-    minimum: 15,
+    minimum: 5,
     maximum: 240,
-    description: "Maximum run duration in minutes. Defaults to 30.",
+    description:
+      "Optional safety limit for active work, from 5 to 240 minutes. Omit for no limit.",
+  },
+  clear_timeout: {
+    type: "boolean",
+    description: "Only for updates: set true to remove an existing safety limit. Do not combine with timeout_minutes.",
   },
 } as const;
 
@@ -410,6 +445,9 @@ function routineAction(value: unknown): RoutineAction | null {
 
 function routineFields(args: Json): { fields: Json; error?: string } {
   const fields: Json = {};
+  if (args.clear_timeout === true && typeof args.timeout_minutes === "number") {
+    return { fields, error: "Choose timeout_minutes or clear_timeout, not both." };
+  }
   if (typeof args.name === "string") fields.name = args.name.trim();
   if (typeof args.instructions === "string") fields.instructions = args.instructions.trim();
   if (args.schedule !== undefined && args.schedule !== null) {
@@ -418,7 +456,8 @@ function routineFields(args: Json): { fields: Json; error?: string } {
     fields.schedule = normalized.schedule;
   }
   if (typeof args.run_on === "string") fields.runOn = args.run_on;
-  if (typeof args.duration_minutes === "number") fields.durationMinutes = args.duration_minutes;
+  if (args.clear_timeout === true) fields.timeoutMinutes = null;
+  else if (typeof args.timeout_minutes === "number") fields.timeoutMinutes = args.timeout_minutes;
   return { fields };
 }
 

@@ -153,6 +153,19 @@ export function updateMessage(threadId: string, message: Message): void {
     .run(message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message), threadId, message.id);
 }
 
+/** Goal cards are new SQLite-backed messages, so crash recovery can locate
+ * the tiny set of unfinished receipts without eagerly loading every room
+ * transcript into memory at startup. */
+export function workingGoalRunMessages(): Array<{ threadId: string; message: Message }> {
+  const rows = db()
+    .prepare(
+      "SELECT thread_id, json FROM messages " +
+      "WHERE kind = 'goal.run' AND json_extract(json, '$.goalRun.status') = 'working'",
+    )
+    .all() as Array<{ thread_id: string; json: string }>;
+  return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
+}
+
 export function setActiveLeaf(threadId: string, leafId: string | null): void {
   db()
     .prepare(

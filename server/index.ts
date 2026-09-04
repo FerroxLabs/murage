@@ -991,9 +991,11 @@ type GroupTurnOperation = {
   threadId: string;
   botIds: Set<string>;
   cancelled: boolean;
+  cancellation: AbortController;
   providerHandshakePending: boolean;
   goalRun?: {
     runId: string;
+    cardMessageId: string;
     goal: string;
     coordinatorBotId: string;
     coordinatorName: string;
@@ -1103,6 +1105,7 @@ function beginGroupTurnOperation(
     threadId,
     botIds: new Set(botIds),
     cancelled: false,
+    cancellation: new AbortController(),
     providerHandshakePending: false,
   };
   const operations = groupTurnOperations.get(groupId) ?? new Set<GroupTurnOperation>();
@@ -1139,20 +1142,52 @@ function finishGroupGoalRun(
   if (!run || run.finished) return;
   run.finished = true;
   const finishedAt = Date.now();
+  const safeDetail = redactSecretsInText(detail.trim()).slice(0, 500);
   const card: GroupGoalRunCardData = {
     runId: run.runId,
-    goal: run.goal,
+    goal: redactSecretsInText(run.goal),
     status,
     coordinatorBotId: run.coordinatorBotId,
-    coordinatorName: run.coordinatorName,
+    coordinatorName: redactSecretsInText(run.coordinatorName),
     turnCount: run.turnCount,
     maxTurns: run.maxTurns,
-    detail: detail.trim().slice(0, 500),
+    detail: safeDetail,
     startedAt: run.startedAt,
     finishedAt,
   };
+  // A calendar-triggered team goal reuses its RoutineRun id for this card.
+  // Manual goals have unrelated ids, so the manager safely ignores them.
+  const routineRun = routines?.finishGoalRun(run.runId, status, safeDetail);
+  // Member-level turn completions are intentionally private/intermediate for
+  // a team goal, so the normal direct-routine notification path never fires.
+  // Notify once from the correlated terminal receipt instead.
+  // A scheduled team goal that stops to ask is the one outcome a person
+  // most needs to hear about — it must never be filed as a quiet completion.
+  if (routineRun?.status === "waiting") {
+    const coordinator = store.bot(routineRun.botId);
+    if (coordinator) {
+      notify(buildNotification(
+        "question",
+        coordinator,
+        routineSourceThread(routineRun) ?? routineRun.threadId ?? operation.threadId,
+        safeDetail || `${routineRun.routineName} needs your input`,
+        { avatarUrl: coordinator.avatarUrl },
+      ));
+    }
+  }
+  if (routineRun?.status === "completed") {
+    const coordinator = store.bot(routineRun.botId);
+    if (coordinator) {
+      notify(buildNotification(
+        "done",
+        coordinator,
+        routineSourceThread(routineRun) ?? routineRun.threadId ?? operation.threadId,
+        safeDetail || routineRun.routineName,
+        { avatarUrl: coordinator.avatarUrl },
+      ));
+    }
+  }
   const group = store.group(groupId);
-  const coordinator = store.bot(run.coordinatorBotId);
   const ownsThread = group?.dm
     ? group.threadId === operation.threadId
     : Boolean(group && store.groupTaskByThread(group.id, operation.threadId));
@@ -1162,24 +1197,108 @@ function finishGroupGoalRun(
     : status === "needs-input"
       ? "needs your input"
       : status === "limit-reached"
-        ? "reached its turn limit"
+        ? "reached its limit"
         : status;
-  store.appendMessage(operation.threadId, {
-    role: "bot",
-    kind: "goal.run",
-    text: `Goal ${fallbackState}: ${card.detail ?? card.goal}`,
-    from: coordinator
-      ? { botId: coordinator.id, name: coordinator.name, color: coordinator.color }
-      : undefined,
+  store.patchMessage(operation.threadId, run.cardMessageId, {
+    text: `Goal ${fallbackState}: ${card.detail || card.goal}`,
     goalRun: card,
   });
 }
 
-function cancelGroupTurnOperations(groupId: string, threadId: string) {
+function updateGroupGoalRunProgress(operation: GroupTurnOperation, detail: string): void {
+  const run = operation.goalRun;
+  if (!run || run.finished) return;
+  const safeDetail = redactSecretsInText(detail.trim()).slice(0, 500);
+  const current = store.messagesFor(operation.threadId).find((message) => message.id === run.cardMessageId);
+  if (current?.goalRun?.status === "working" && current.goalRun.detail === safeDetail) return;
+  store.patchMessage(operation.threadId, run.cardMessageId, {
+    text: `Goal in progress: ${safeDetail || redactSecretsInText(run.goal)}`,
+    goalRun: {
+      runId: run.runId,
+      goal: redactSecretsInText(run.goal),
+      status: "working",
+      coordinatorBotId: run.coordinatorBotId,
+      coordinatorName: redactSecretsInText(run.coordinatorName),
+      turnCount: run.turnCount,
+      maxTurns: run.maxTurns,
+      ...(safeDetail ? { detail: safeDetail } : {}),
+      startedAt: run.startedAt,
+    },
+  });
+}
+
+type GroupGoalBotAvailability = "ready" | "busy" | "unavailable" | "cancelled" | "timed_out";
+
+function groupGoalBotAvailability(botId: string, operation: GroupTurnOperation): GroupGoalBotAvailability {
+  if (operation.cancelled || operation.cancellation.signal.aborted) return "cancelled";
+  const bot = store.bot(botId);
+  if (!bot || bot.hidden) return "unavailable";
+  return bot.busy ? "busy" : "ready";
+}
+
+/** Goal runs are patient with work already in progress. Store changes are
+ * the wake-up signal, so waiting consumes neither a model turn nor a polling
+ * loop. The operation's abort signal lets the room Stop button release the
+ * listener immediately without touching the unrelated turn that owns bot.busy. */
+async function waitForGroupGoalBot(
+  bot: BotRecord,
+  operation: GroupTurnOperation,
+): Promise<Exclude<GroupGoalBotAvailability, "busy">> {
+  operation.botIds.delete(bot.id);
+  const initial = groupGoalBotAvailability(bot.id, operation);
+  if (initial !== "busy") return initial;
+  updateGroupGoalRunProgress(
+    operation,
+    `${bot.name} is finishing another conversation. This goal will continue when they are available.`,
+  );
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe = () => {};
+    const finish = (availability: Exclude<GroupGoalBotAvailability, "busy">) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(waitCap);
+      unsubscribe();
+      operation.cancellation.signal.removeEventListener("abort", onAbort);
+      resolve(availability);
+    };
+    // unref'd: a parked goal must never keep the process alive on its own
+    const waitCap = setTimeout(() => finish("timed_out"), GROUP_GOAL_WAIT_MAX_MS);
+    waitCap.unref?.();
+    const check = () => {
+      const availability = groupGoalBotAvailability(bot.id, operation);
+      if (availability !== "busy") finish(availability);
+    };
+    const onAbort = () => finish("cancelled");
+    unsubscribe = store.onChange((change) => {
+      if (
+        (change.type === "bot" && change.botId === bot.id) ||
+        (change.type === "bot.deleted" && change.botId === bot.id)
+      ) {
+        check();
+      }
+    });
+    operation.cancellation.signal.addEventListener("abort", onAbort, { once: true });
+    // Close the read→subscribe race: the bot may have settled between the
+    // initial check and listener registration.
+    check();
+  });
+}
+
+function cancelGroupTurnOperations(
+  groupId: string,
+  threadId: string,
+  outcome: { status: "stopped" | "limit-reached"; detail: string } = {
+    status: "stopped",
+    detail: "Stopped by you.",
+  },
+) {
   for (const operation of groupTurnOperations.get(groupId) ?? []) {
     if (operation.threadId !== threadId) continue;
     operation.cancelled = true;
-    finishGroupGoalRun(groupId, operation, "stopped", "Stopped by you.");
+    operation.cancellation.abort();
+    finishGroupGoalRun(groupId, operation, outcome.status, outcome.detail);
     if (operation.providerHandshakePending) {
       markCancelledProviderHandshake(operation.threadId, `group:${operation.id}`);
     }
@@ -1197,12 +1316,23 @@ function groupProviderHandshakeSettled(operation: GroupTurnOperation): void {
 
 function activeGroupTurnForBot(botId: string): { group: GroupRecord; threadId: string } | null {
   for (const group of store.groups) {
-    if (group.busyBotId === botId) return { group, threadId: group.threadId };
     for (const operation of groupTurnOperations.get(group.id) ?? []) {
       if (!operation.cancelled && operation.botIds.has(botId)) {
         return { group, threadId: operation.threadId };
       }
     }
+    if (group.busyBotId !== botId) continue;
+    // A detached scheduled goal deliberately leaves group.threadId pointing
+    // at the task visible before the routine began. Resolve the live speaker
+    // by its exact room task before falling back to legacy active-task work.
+    for (const [threadId, speaker] of groupSpeakers) {
+      if (speaker.botId !== botId) continue;
+      const ownsThread = group.dm
+        ? group.threadId === threadId
+        : Boolean(store.groupTaskByThread(group.id, threadId));
+      if (ownsThread) return { group, threadId };
+    }
+    return { group, threadId: group.threadId };
   }
   return null;
 }
@@ -1542,6 +1672,17 @@ const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) 
 /** How long ask_bot waits synchronously before the ask is converted into a
  * delegation claim ticket (the peer's turn keeps running either way). */
 const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.MURAGE_ASK_BOT_TIMEOUT_MS) || 4 * 60_000);
+// A goal waits for a busy teammate instead of failing, but never forever: a
+// bot parked on a permission card in another chat is "busy" until a human
+// returns. Past this cap the lead is told the teammate could not free up and
+// reassigns — the wait ends as data, not as a dead goal. Tests shrink it.
+// Five minutes, not upstream's thirty: this is a single-operator box, so a
+// teammate still parked after five is waiting on Sean, and Sean is the one
+// person who would rather be told than have a goal sit silent for half an hour.
+const GROUP_GOAL_WAIT_MAX_MS = Math.max(1_000, Number(process.env.MURAGE_GOAL_WAIT_MAX_MS) || 5 * 60_000);
+// Reassigning around a busy teammate is bounded too: after this many
+// exhausted waits in one run the team is blocked on availability, not stuck.
+const GROUP_GOAL_MAX_WAIT_EXHAUSTIONS = 3;
 const roomStallCompletions = new RoomTurnStallRegistry();
 const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
@@ -3405,6 +3546,7 @@ function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
     routineName: redactSecretsInText(run.routineName),
     status: run.status,
   };
+  if (run.goalStatus) card.goalStatus = run.goalStatus;
   if (run.threadId) card.executionThreadId = run.threadId;
   if (summary) card.summary = summary;
   if (error) card.error = error;
@@ -3412,7 +3554,18 @@ function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
 }
 
 function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): string {
-  const state =
+  const goalState = card.goalStatus === "needs-input"
+    ? "needs your input"
+    : card.goalStatus === "blocked"
+      ? "was blocked"
+      : card.goalStatus === "limit-reached"
+        ? "reached its limit"
+        : card.goalStatus === "stopped"
+          ? "was stopped"
+          : card.goalStatus === "failed"
+            ? "failed"
+            : undefined;
+  const state = goalState ?? (
     card.status === "waiting"
       ? "needs your attention"
       : card.status === "completed"
@@ -3423,7 +3576,8 @@ function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): strin
             ? "was cancelled"
             : card.status === "missed"
               ? "was missed"
-              : card.status;
+              : card.status
+  );
   return `Routine “${card.routineName}” ${state}`;
 }
 
@@ -3464,11 +3618,41 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
   return sourceThreadId;
 }
 
+async function interruptRoutineGroupGoal(
+  groupId: string,
+  threadId: string,
+  outcome?: { status: "stopped" | "limit-reached"; detail: string },
+): Promise<void> {
+  const speaker = groupSpeakers.get(threadId);
+  const bot = speaker ? store.bot(speaker.botId) : undefined;
+  cancelGroupTurnOperations(groupId, threadId, outcome);
+  await releaseBrowserCapabilityForThread(threadId);
+  await (bot ? registry.get(bot.modelSelection.instanceId) : undefined)
+    ?.adapter.interruptTurn(threadId)
+    .catch(() => {});
+  closeOpenApprovals(threadId);
+}
+
 routines = new RoutineManager({
   emit: broadcast,
   botState: (botId) => {
     const bot = store.bot(botId);
     return !bot ? "missing" : bot.busy ? "busy" : "ready";
+  },
+  goalState: (groupId, coordinatorBotId) => {
+    const group = store.group(groupId);
+    const coordinator = store.bot(coordinatorBotId);
+    if (
+      !group ||
+      group.dm ||
+      roomSetupPending(group) ||
+      !coordinator ||
+      coordinator.hidden ||
+      !group.memberIds.includes(coordinator.id)
+    ) {
+      return "missing";
+    }
+    return groupIsWorking(group) || coordinator.busy ? "busy" : "ready";
   },
   createTask: (botId, title, activate = false) => {
     const task = store.createTask(botId, title, activate);
@@ -3476,9 +3660,17 @@ routines = new RoutineManager({
     if (task && bot) broadcast({ kind: "bot", bot: publicBot(bot) });
     return task;
   },
+  createGoalTask: (groupId, title) => store.createGroupTask(groupId, title, false),
   startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError) =>
     startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError })
       .then(() => undefined),
+  startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
+    startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {
+      threadId,
+      goalCoordinatorBotId: coordinatorBotId,
+      goalRunId: runId,
+    });
+  },
   interruptTurn: async (botId, threadId, runOn) => {
     const bot = store.bot(botId);
     cancelDirectTurnDispatch(botId, threadId);
@@ -3487,8 +3679,14 @@ routines = new RoutineManager({
       : bot
         ? registry.get(bot.modelSelection.instanceId)
         : null;
-    await instance?.adapter.interruptTurn(threadId);
+    try {
+      await releaseBrowserCapabilityForThread(threadId);
+      await instance?.adapter.interruptTurn(threadId);
+    } finally {
+      closeOpenApprovals(threadId);
+    }
   },
+  interruptGoal: interruptRoutineGroupGoal,
   onRunChanged: syncRoutineRunToSource,
   onRunFailed: (run) => {
     const bot = store.bot(run.botId);
@@ -3496,6 +3694,33 @@ routines = new RoutineManager({
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
   },
+});
+// The scheduler receipt and room transcript live in separate durable stores.
+// If the process exited between those two writes, prefer the correlated
+// RoutineRun's terminal truth; an uncorrelated manual goal is simply failed
+// because no in-memory orchestrator can survive a restart.
+const recoveredRoutineGoalRuns = new Map(
+  routines.listRuns().filter((run) => run.target === "room-goal").map((run) => [run.id, run]),
+);
+const groupGoalRecoveryAt = Date.now();
+store.reconcileInterruptedGroupGoals((runId, threadId) => {
+  const run = recoveredRoutineGoalRuns.get(runId);
+  if (!run || run.threadId !== threadId) return null;
+  const status = run.goalStatus ?? (
+    run.status === "completed"
+      ? "completed"
+      : run.status === "cancelled"
+        ? "stopped"
+        : "failed"
+  );
+  const detail = run.output ?? run.error ?? (
+    status === "completed"
+      ? "The scheduled team goal completed before Murage restarted."
+      : status === "stopped"
+        ? "The scheduled team goal was stopped."
+        : "Murage restarted before this scheduled team goal finished."
+  );
+  return { status, detail, finishedAt: run.finishedAt ?? groupGoalRecoveryAt };
 });
 calendarCalls = new CalendarCallManager({
   botExists: (botId) => Boolean(store.bot(botId)),
@@ -3584,13 +3809,20 @@ const agentRoutine = (
     enabled: routine.enabled,
     runOn: routine.runOn,
     durationMinutes: routine.durationMinutes,
+    ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
     schedule: routine.schedule.type === "once"
       ? { type: "once" as const, at: new Date(routine.schedule.at).toISOString() }
-      : {
-          type: "weekly" as const,
-          time: routine.schedule.time,
-          weekdays: routine.schedule.weekdays.map((day) => ROUTINE_WEEKDAY_NAMES[day]),
-        },
+      : routine.schedule.type === "interval"
+        ? {
+            type: "interval" as const,
+            everyMinutes: routine.schedule.everyMinutes,
+            anchorAt: new Date(routine.schedule.anchorAt).toISOString(),
+          }
+        : {
+            type: "weekly" as const,
+            time: routine.schedule.time,
+            weekdays: routine.schedule.weekdays.map((day) => ROUTINE_WEEKDAY_NAMES[day]),
+          },
     nextRunAt: routine.nextRunAt === null ? null : new Date(routine.nextRunAt).toISOString(),
     latestRun: latestRun
       ? {
@@ -3639,7 +3871,13 @@ function sendRoutineResolution(
 }
 function resolveAndSendRoutine(
   res: ServerResponse,
-  args: { botId: string; botName?: string; threadId: string; requestId: string; behavior: string },
+  args: {
+    botId: string;
+    botName?: string;
+    threadId: string;
+    requestId: string;
+    behavior: string;
+  },
 ): boolean {
   const card = store.messagesFor(args.threadId).find(
     (message) => message.card?.requestId === args.requestId && message.card.routineRequest,
@@ -3704,11 +3942,20 @@ const groupQueues = new Map<string, Promise<void>>();
 const GROUP_CONTEXT_MESSAGES = 30;
 const MAX_GROUP_HOPS = 1;
 
-type GroupMemberTurnOutcome = "settled" | "provider_failed" | "dispatch_failed" | "stalled" | "timed_out" | "cancelled";
+type GroupMemberTurnOutcome =
+  | "settled"
+  | "provider_failed"
+  | "dispatch_failed"
+  | "stalled"
+  | "timed_out"
+  | "cancelled"
+  | "busy"
+  | "unavailable";
 type GroupTurnOrchestration = {
   systemInstructions: string;
   followMentions: boolean;
   result: { replyText?: string; outcome?: GroupMemberTurnOutcome; stopReason?: string | null };
+  onClaimed?: () => void;
   onTurnStarted?: (turnId: string) => void;
 };
 
@@ -3794,6 +4041,10 @@ async function runGroupMemberTurn(
   // processes, interleaved token spend, and an interrupt that only ever
   // reached one of them.
   if (bot.busy) {
+    if (orchestration) {
+      orchestration.result.outcome = "busy";
+      return true;
+    }
     const message = `${bot.name} is busy in another conversation — skipped this round`;
     store.appendMessage(threadId, {
       role: "bot",
@@ -3864,6 +4115,13 @@ async function runGroupMemberTurn(
   const readyBot = store.bot(bot.id);
   if (!readyBot) return false;
   if (readyBot.busy) {
+    if (orchestration) {
+      // Connected-app discovery yields. A direct turn can legitimately win
+      // the claim during that gap; tell goal mode to wait and retry instead
+      // of misclassifying the lost race as a failed team turn.
+      orchestration.result.outcome = "busy";
+      return true;
+    }
     const message = `${bot.name} became busy in another conversation — skipped this round`;
     store.appendMessage(threadId, {
       role: "bot",
@@ -3875,6 +4133,7 @@ async function runGroupMemberTurn(
     return true;
   }
   store.setActivity(bot.id, "working");
+  orchestration?.onClaimed?.();
 
   // Connected-app discovery above can yield for a network round trip. A
   // profile may be removed, or the browser feature switched off, during that
@@ -4262,59 +4521,112 @@ async function runGroupGoalStep(args: {
   if (!run || args.operation.cancelled || run.turnCount >= run.maxTurns) {
     return { ran: false, replyText: "" };
   }
-  run.turnCount += 1;
-  args.operation.botIds.add(args.bot.id);
-  const result: GroupTurnOrchestration["result"] = {};
-  const token = Symbol("goal-coordinator-turn");
-  const coordinatorTurn: GroupGoalCoordinatorTurn | undefined = args.coordinator
-    ? { token, assistantItems: [], discard: false }
-    : undefined;
-  if (coordinatorTurn) addGroupGoalCoordinatorTurn(args.threadId, coordinatorTurn);
-  try {
-    const ran = await runGroupMemberTurn(
-      args.groupId,
-      args.threadId,
-      args.bot.id,
-      run.turnCount === 1 ? 0 : 1,
-      new Set(),
-      undefined,
-      undefined,
-      () => args.operation.cancelled,
-      () => groupProviderHandshakeStarted(args.operation),
-      () => groupProviderHandshakeSettled(args.operation),
-      args.skillAuthoringClaim,
-      {
-        systemInstructions: args.instructions,
-        followMentions: false,
-        result,
-        onTurnStarted: (turnId) => {
-          if (coordinatorTurn && !coordinatorTurn.turnId) coordinatorTurn.turnId = turnId;
+  let retriedTransient = false;
+  for (;;) {
+    const availability = await waitForGroupGoalBot(args.bot, args.operation);
+    if (availability === "cancelled") return { ran: false, replyText: "", outcome: "cancelled" };
+    if (availability === "unavailable") {
+      return { ran: false, replyText: "", outcome: "unavailable", stopReason: `${args.bot.name} is no longer available` };
+    }
+    if (availability === "timed_out") {
+      // still busy after the cap: surface it as a busy outcome the loop can
+      // route around, never as a provider failure
+      const minutes = Math.max(1, Math.round(GROUP_GOAL_WAIT_MAX_MS / 60_000));
+      return {
+        ran: false,
+        replyText: "",
+        outcome: "busy",
+        stopReason: `${args.bot.name} stayed busy in another conversation for ${minutes} minute${minutes === 1 ? "" : "s"}`,
+      };
+    }
+    if (run.turnCount >= run.maxTurns) return { ran: false, replyText: "" };
+
+    const result: GroupTurnOrchestration["result"] = {};
+    let claimed = false;
+    const coordinatorTurn: GroupGoalCoordinatorTurn | undefined = args.coordinator
+      ? { token: Symbol("goal-coordinator-turn"), assistantItems: [], discard: false }
+      : undefined;
+    if (coordinatorTurn) addGroupGoalCoordinatorTurn(args.threadId, coordinatorTurn);
+    try {
+      const ran = await runGroupMemberTurn(
+        args.groupId,
+        args.threadId,
+        args.bot.id,
+        run.turnCount === 0 ? 0 : 1,
+        new Set(),
+        undefined,
+        undefined,
+        () => args.operation.cancelled,
+        () => groupProviderHandshakeStarted(args.operation),
+        () => groupProviderHandshakeSettled(args.operation),
+        args.skillAuthoringClaim,
+        {
+          systemInstructions: args.instructions,
+          followMentions: false,
+          result,
+          onClaimed: () => {
+            if (claimed) return;
+            claimed = true;
+            run.turnCount += 1;
+            args.operation.botIds.add(args.bot.id);
+            updateGroupGoalRunProgress(
+              args.operation,
+              `${args.bot.name} is working on team turn ${run.turnCount} of ${run.maxTurns}.`,
+            );
+          },
+          onTurnStarted: (turnId) => {
+            if (coordinatorTurn && !coordinatorTurn.turnId) coordinatorTurn.turnId = turnId;
+          },
         },
-      },
-    );
-    return {
-      ran,
-      replyText: result.replyText ?? "",
-      outcome: result.outcome,
-      stopReason: result.stopReason,
-    };
-  } finally {
-    if (coordinatorTurn && groupGoalCoordinatorTurns.get(args.threadId)?.has(coordinatorTurn)) {
-      if (result.outcome === "timed_out" || result.outcome === "stalled") {
-        // interruptTurn is asynchronous: the orchestration can stop before
-        // the provider emits its final text/completion. Retain a discard-only
-        // guard so a late private decision envelope never reaches the room.
-        // Broken providers get a bounded fallback; the token check keeps an
-        // old timer from deleting a newer goal turn on the same thread.
-        coordinatorTurn.discard = true;
-        coordinatorTurn.assistantItems = [];
-        const cleanupTimer = setTimeout(() => {
+      );
+      if (result.outcome === "busy") continue;
+      // One retry for a transient provider failure: a 13-turn goal must not
+      // die on a single blip at turn 11. The retry claims the bot again and
+      // so costs a turn like any other model call — budget is spent, never
+      // stretched, and the cap still holds.
+      const outcome = result.outcome;
+      const transient =
+        outcome === "provider_failed" ||
+        outcome === "dispatch_failed" ||
+        outcome === "stalled" ||
+        outcome === "timed_out";
+      if (transient && !retriedTransient) {
+        retriedTransient = true;
+        updateGroupGoalRunProgress(
+          args.operation,
+          `${args.bot.name}'s turn did not settle (${outcome.replace("_", " ")}) — retrying once.`,
+        );
+        continue;
+      }
+      return {
+        ran,
+        replyText: result.replyText ?? "",
+        outcome: result.outcome,
+        stopReason: result.stopReason,
+      };
+    } finally {
+      // Membership here means this bot is part of the room operation NOW,
+      // not merely the next teammate the coordinator hopes to use. In
+      // particular, an idle waiter must never redirect the bot's Stop button
+      // away from unrelated direct work.
+      args.operation.botIds.delete(args.bot.id);
+      if (coordinatorTurn && groupGoalCoordinatorTurns.get(args.threadId)?.has(coordinatorTurn)) {
+        if (result.outcome === "timed_out" || result.outcome === "stalled") {
+          // interruptTurn is asynchronous: the orchestration can stop before
+          // the provider emits its final text/completion. Retain a discard-only
+          // guard so a late private decision envelope never reaches the room.
+          // Broken providers get a bounded fallback; the token check keeps an
+          // old timer from deleting a newer goal turn on the same thread.
+          coordinatorTurn.discard = true;
+          coordinatorTurn.assistantItems = [];
+          const cleanupTimer = setTimeout(() => {
+            removeGroupGoalCoordinatorTurn(args.threadId, coordinatorTurn);
+          }, GROUP_GOAL_COORDINATOR_GUARD_MS);
+          cleanupTimer.unref?.();
+          coordinatorTurn.cleanupTimer = cleanupTimer;
+        } else {
           removeGroupGoalCoordinatorTurn(args.threadId, coordinatorTurn);
-        }, GROUP_GOAL_COORDINATOR_GUARD_MS);
-        cleanupTimer.unref?.();
-        coordinatorTurn.cleanupTimer = cleanupTimer;
-      } else {
-        removeGroupGoalCoordinatorTurn(args.threadId, coordinatorTurn);
+        }
       }
     }
   }
@@ -4338,8 +4650,14 @@ async function runGroupGoalOperation(args: {
     chiefOfStaff: member.chiefOfStaff,
   }));
 
+  // A teammate that stayed busy past the wait cap comes back to the lead as
+  // a note on its next turn, so the lead reassigns instead of the run dying.
+  let coordinatorNote: string | undefined;
+  let waitExhaustions = 0;
   while (!args.operation.cancelled && run.turnCount < run.maxTurns) {
     const coordinatorTurn = run.turnCount + 1;
+    const note = coordinatorNote;
+    coordinatorNote = undefined;
     const coordinatorResult = await runGroupGoalStep({
       ...args,
       bot: args.coordinator,
@@ -4351,9 +4669,25 @@ async function runGroupGoalOperation(args: {
         turn: coordinatorTurn,
         maxTurns: run.maxTurns,
         remainingTurns: run.maxTurns - coordinatorTurn,
+        note,
       }),
     });
     if (args.operation.cancelled) return;
+    if (coordinatorResult.outcome === "unavailable") {
+      finishGroupGoalRun(args.groupId, args.operation, "blocked", `${args.coordinator.name} is not available.`);
+      return;
+    }
+    if (coordinatorResult.outcome === "busy") {
+      // The lead is the one member the run cannot route around. Blocked, not
+      // failed: the goal text is intact and nothing about the team broke.
+      finishGroupGoalRun(
+        args.groupId,
+        args.operation,
+        "blocked",
+        `${coordinatorResult.stopReason ?? `${args.coordinator.name} stayed busy`} — send the goal again when they are free.`,
+      );
+      return;
+    }
     if (!coordinatorResult.ran || coordinatorResult.outcome !== "settled") {
       const reason = coordinatorResult.stopReason?.trim().slice(0, 120);
       finishGroupGoalRun(
@@ -4424,6 +4758,39 @@ async function runGroupGoalOperation(args: {
       }),
     });
     if (args.operation.cancelled) return;
+    if (workerResult.outcome === "unavailable") {
+      finishGroupGoalRun(args.groupId, args.operation, "blocked", `${workerBot.name} is not available.`);
+      return;
+    }
+    if (workerResult.outcome === "busy") {
+      // bounded: a team that keeps landing on busy teammates is blocked, not
+      // looping — three exhausted waits per run, then stop and say so
+      waitExhaustions += 1;
+      if (waitExhaustions >= GROUP_GOAL_MAX_WAIT_EXHAUSTIONS) {
+        finishGroupGoalRun(
+          args.groupId,
+          args.operation,
+          "blocked",
+          `Teammates stayed busy past the wait limit ${waitExhaustions} times — try again when the team is free.`,
+        );
+        return;
+      }
+      // Soft failure, returned to the lead as data (the way a delegation
+      // error reaches a manager): the goal keeps going with the remaining
+      // team instead of ending on one teammate's calendar.
+      const reason = workerResult.stopReason?.trim().slice(0, 120) ?? `${workerBot.name} stayed busy`;
+      store.appendMessage(args.threadId, {
+        role: "bot",
+        kind: "activity",
+        from: { botId: args.coordinator.id, name: args.coordinator.name, color: args.coordinator.color },
+        tool: { name: `${reason} — asking ${args.coordinator.name} to reassign`, ok: false },
+      });
+      updateGroupGoalRunProgress(args.operation, `${reason}. ${args.coordinator.name} is reassigning.`);
+      coordinatorNote =
+        `${reason} and could not take the assignment "${decision.instruction.slice(0, 160)}". ` +
+        "Reassign it to another available member, do it yourself if you can, or report blocked.";
+      continue;
+    }
     if (!workerResult.ran || workerResult.outcome !== "settled" || !workerResult.replyText.trim()) {
       const reason = workerResult.stopReason?.trim().slice(0, 120);
       finishGroupGoalRun(
@@ -4446,6 +4813,15 @@ async function runGroupGoalOperation(args: {
   }
 }
 
+type StartGroupTurnOptions = {
+  /** Run against an existing background room task instead of the active UI task. */
+  threadId?: string;
+  /** Internal routine goals choose their lead explicitly rather than by @mention/default. */
+  goalCoordinatorBotId?: string;
+  /** Correlates a room goal card with its durable RoutineRun receipt. */
+  goalRunId?: string;
+};
+
 function startGroupTurn(
   groupId: string,
   text: string,
@@ -4453,15 +4829,32 @@ function startGroupTurn(
   sendId?: string,
   channelMode: "chat" | "goal" = "chat",
   queueId?: string,
+  options: StartGroupTurnOptions = {},
 ) {
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
   if (roomSetupPending(group)) {
     throw Object.assign(new Error("finish room setup before sending the first message"), { status: 409 });
   }
-  // Capture the active thread once. Every queued responder below is bound to
-  // this task even if another client asks to switch later.
-  const threadId = group.threadId;
+  // Capture the chosen thread once. Manual sends use the active task; a
+  // scheduled team goal supplies its detached background task explicitly.
+  const threadId = options.threadId ?? group.threadId;
+  const ownsThread = group.dm
+    ? group.threadId === threadId
+    : Boolean(store.groupTaskByThread(group.id, threadId));
+  if (!ownsThread) {
+    throw Object.assign(new Error("no such room task"), { status: 404 });
+  }
+  const members = group.memberIds
+    .map((id) => store.bot(id))
+    .filter((bot): bot is NonNullable<typeof bot> => Boolean(bot));
+  const availableMembers = members.filter((member) => !member.hidden);
+  const requestedGoalCoordinator = options.goalCoordinatorBotId
+    ? availableMembers.find((member) => member.id === options.goalCoordinatorBotId)
+    : undefined;
+  if (options.goalCoordinatorBotId && (channelMode !== "goal" || !requestedGoalCoordinator)) {
+    throw Object.assign(new Error("the selected goal coordinator is not an active room member"), { status: 409 });
+  }
   const message = store.appendMessage(threadId, {
     role: "user",
     kind: "text",
@@ -4473,10 +4866,6 @@ function startGroupTurn(
   });
   if (!group.dm) store.titleGroupTaskFromFirstMessage(group.id, text, threadId);
 
-  const members = group.memberIds
-    .map((id) => store.bot(id))
-    .filter((b): b is NonNullable<typeof b> => Boolean(b));
-  const availableMembers = members.filter((member) => !member.hidden);
   const archived = members.filter((member) => member.hidden);
   const mentionedArchived = mentionedBots(text, archived.map(({ name }) => ({ name })))[0];
   if (mentionedArchived) {
@@ -4492,7 +4881,7 @@ function startGroupTurn(
   let responders = roomResponders(text, members, group.defaultResponder);
   const explicitlyMentionedLead = roomResponders(text, availableMembers, { kind: "mentions" })[0];
   const goalCoordinator = channelMode === "goal"
-    ? explicitlyMentionedLead ?? selectGroupGoalCoordinator(availableMembers, group.defaultResponder)
+    ? requestedGoalCoordinator ?? explicitlyMentionedLead ?? selectGroupGoalCoordinator(availableMembers, group.defaultResponder)
     : null;
   // bot⇄bot channels: chipping in without a tag addresses the last speaker
   if (!responders.length && group.dm) {
@@ -4524,17 +4913,38 @@ function startGroupTurn(
   const operation = beginGroupTurnOperation(
     groupId,
     threadId,
-    goalCoordinator ? [goalCoordinator.id] : responders.map((responder) => responder.id),
+    goalCoordinator ? [] : responders.map((responder) => responder.id),
   );
   if (goalCoordinator) {
+    const runId = options.goalRunId?.trim() || `goal-${Date.now().toString(36)}-${randomUUID()}`;
+    const startedAt = Date.now();
+    const detail = `${goalCoordinator.name} is coordinating this goal.`;
+    const card = store.appendMessage(threadId, {
+      role: "bot",
+      kind: "goal.run",
+      text: `Goal in progress: ${detail}`,
+      from: { botId: goalCoordinator.id, name: goalCoordinator.name, color: goalCoordinator.color },
+      goalRun: {
+        runId,
+        goal: text,
+        status: "working",
+        coordinatorBotId: goalCoordinator.id,
+        coordinatorName: goalCoordinator.name,
+        turnCount: 0,
+        maxTurns: GROUP_GOAL_MAX_TURNS,
+        detail,
+        startedAt,
+      },
+    });
     operation.goalRun = {
-      runId: `goal-${Date.now().toString(36)}-${randomUUID()}`,
+      runId,
+      cardMessageId: card.id,
       goal: text,
       coordinatorBotId: goalCoordinator.id,
       coordinatorName: goalCoordinator.name,
       turnCount: 0,
       maxTurns: GROUP_GOAL_MAX_TURNS,
-      startedAt: Date.now(),
+      startedAt,
       finished: false,
     };
   }
@@ -6732,6 +7142,22 @@ const server = createServer(async (req, res) => {
         runs: routines!.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
       });
     }
+    // Writing a routine definition is now writing a spawn schedule. An
+    // interval routine says "start this bot every N minutes, forever", with
+    // no further human act between the write and the process — which is the
+    // exact shape the desktop gate exists for (`/api/cli-test`, the local-VM
+    // lifecycle routes). 404 rather than 403, for the same reason as those:
+    // a 403 confirms the route is here and worth attacking.
+    //
+    // `/api/teams/import` deliberately stays open: a package's routines are
+    // created `enabled: false`, so that path cannot schedule anything until
+    // someone comes back through the PATCH below.
+    const routineWrite =
+      (path === "/api/routines" && method === "POST") ||
+      (/^\/api\/routines\/[\w-]+$/.test(path) && (method === "PATCH" || method === "DELETE"));
+    if (routineWrite && requestSurface(req.headers, url.searchParams) !== "desktop") {
+      return json(res, 404, { error: "no such route" });
+    }
     if (path === "/api/routines" && method === "POST") {
       return json(res, 201, { routine: routines!.create(await readBody(req)) });
     }
@@ -7619,6 +8045,7 @@ const server = createServer(async (req, res) => {
             enabled: false,
             schedule: routine.schedule,
             durationMinutes: routine.durationMinutes,
+            ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
           });
           createdRoutineIds.push(created.id);
         }
@@ -7742,6 +8169,26 @@ const server = createServer(async (req, res) => {
         ),
       );
 
+    // A scheduled goal starts in a detached task. Let the user open the
+    // exact task that owns the live operation (or a durable approval card)
+    // so they can observe or unblock it; switching to an unrelated task is
+    // still forbidden until the room settles.
+    const channelTaskSwitchBlocked = (group: GroupRecord, targetThreadId: string) => {
+      const operationOwnsTarget = [...(groupTurnOperations.get(group.id) ?? [])]
+        .some((operation) => !operation.cancelled && operation.threadId === targetThreadId);
+      if (groupIsWorking(group) && !operationOwnsTarget) return true;
+      const openApprovalThreads = store.groupTasks(group.id).flatMap((task) =>
+        store.messagesFor(task.threadId).some(
+          (message) =>
+            message.kind === "options" &&
+            message.card?.requestId &&
+            !message.card.answered &&
+            !message.card.dismissed,
+        ) ? [task.threadId] : [],
+      );
+      return openApprovalThreads.length > 0 && !openApprovalThreads.includes(targetThreadId);
+    };
+
     m = path.match(/^\/api\/groups\/([\w-]+)\/tasks$/);
     if (m && method === "POST") {
       const group = store.group(m[1]);
@@ -7768,8 +8215,8 @@ const server = createServer(async (req, res) => {
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such channel" });
       if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
-      if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+      if (channelTaskSwitchBlocked(group, m[2])) {
+        return json(res, 409, { error: "this channel is working or waiting on you in another task" });
       }
       const switched = store.switchGroupTask(group.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such channel task" });
@@ -7851,6 +8298,24 @@ const server = createServer(async (req, res) => {
         if (existing.dm) return json(res, 400, { error: "direct-message channels cannot change members" });
         const roster = checkedMemberIds(body.memberIds);
         if (!roster.ok) return json(res, 400, { error: roster.error.replace("channel", "room") });
+        const removedGoalLead = routines!.listRoutines().some(
+          (routine) =>
+            routine.enabled &&
+            routine.target === "room-goal" &&
+            routine.groupId === existing.id &&
+            !roster.memberIds.includes(routine.botId),
+        ) || routines!.listRuns().some(
+          (run) =>
+            run.target === "room-goal" &&
+            run.groupId === existing.id &&
+            ["queued", "running", "waiting"].includes(run.status) &&
+            !roster.memberIds.includes(run.botId),
+        );
+        if (removedGoalLead) {
+          return json(res, 409, {
+            error: "pause or reassign this room's team-goal routine before removing its lead",
+          });
+        }
         patch.memberIds = roster.memberIds;
       }
       if (body.defaultResponder !== undefined) {
@@ -7909,6 +8374,7 @@ const server = createServer(async (req, res) => {
       const threadIds = new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)]);
       const stagedSkillCleanups = [...threadIds].flatMap(stagedSkillCleanupsForThread);
       for (const threadId of threadIds) lastReply.delete(threadId);
+      routines!.disableForGroup(group.id);
       store.deleteGroup(group.id);
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       for (const threadId of threadIds) {
@@ -8015,18 +8481,53 @@ const server = createServer(async (req, res) => {
       if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
         return json(res, 400, { error: "threadId must be a task id" });
       }
-      if (body.threadId !== undefined && body.threadId !== group.threadId) {
-        return json(res, 409, { error: "the channel switched tasks before it could be interrupted" });
+      if (body.threadId !== undefined) {
+        const ownsThread = group.dm
+          ? body.threadId === group.threadId
+          : Boolean(store.groupTaskByThread(group.id, body.threadId));
+        if (!ownsThread) {
+          return json(res, 409, { error: "the channel switched tasks before it could be interrupted" });
+        }
       }
-      // Mark the whole room operation cancelled before awaiting the provider.
-      // This covers setup-before-busy and responder handoffs, and makes every
-      // queued responder observe cancellation before it can start.
-      cancelGroupTurnOperations(group.id, group.threadId);
-      const busy = group.busyBotId ? store.bot(group.busyBotId) : undefined;
-      const instance = busy ? registry.get(busy.modelSelection.instanceId) : undefined;
-      await releaseBrowserCapabilityForThread(group.threadId);
-      await instance?.adapter.interruptTurn(group.threadId).catch(() => {});
-      closeOpenApprovals(group.threadId);
+      const activeOperations = [...(groupTurnOperations.get(group.id) ?? [])]
+        .filter((operation) => !operation.cancelled);
+      if (
+        body.threadId !== undefined &&
+        activeOperations.length > 0 &&
+        !activeOperations.some((operation) => operation.threadId === body.threadId)
+      ) {
+        return json(res, 409, { error: "this channel is working in another task" });
+      }
+      // Without an explicit task, Stop means the room's live operation—not
+      // merely whichever task the UI was showing when a detached routine
+      // began. There is normally one operation; cancel every active thread
+      // defensively so no queued handoff survives a room-level stop.
+      const targetThreadIds = body.threadId !== undefined
+        ? [body.threadId]
+        : activeOperations.length > 0
+          ? [...new Set(activeOperations.map((operation) => operation.threadId))]
+          : [group.threadId];
+      const interruptTargets = targetThreadIds.map((threadId) => {
+        const speaker = groupSpeakers.get(threadId);
+        const busy = speaker
+          ? store.bot(speaker.botId)
+          : threadId === group.threadId && group.busyBotId
+            ? store.bot(group.busyBotId)
+            : undefined;
+        return {
+          threadId,
+          instance: busy ? registry.get(busy.modelSelection.instanceId) : undefined,
+        };
+      });
+      // Abort every queued operation before the first provider round trip;
+      // otherwise one queued task could begin while Stop awaits interruption
+      // of the task ahead of it.
+      for (const { threadId } of interruptTargets) cancelGroupTurnOperations(group.id, threadId);
+      for (const { threadId, instance } of interruptTargets) {
+        await releaseBrowserCapabilityForThread(threadId);
+        await instance?.adapter.interruptTurn(threadId).catch(() => {});
+        closeOpenApprovals(threadId);
+      }
       return json(res, 200, { ok: true });
     }
 
@@ -8485,7 +8986,7 @@ const server = createServer(async (req, res) => {
         store.bots
           .filter((bot) => bot.computer === "local")
           .map(async (bot) => {
-            const routineRun = routines!.activeRunForBot(bot.id);
+            const routineRun = routines!.activeBotRunForBot(bot.id);
             if (routineRun) {
               cancelDirectTurnDispatch(bot.id, routineRun.threadId);
               if (routineRun.threadId) await releaseBrowserCapabilityForThread(routineRun.threadId);
@@ -9307,7 +9808,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "threadId must be a task id" });
       }
       const directClaim = directTurnDispatchClaims.get(bot.id);
-      const routineRun = routines!.activeRunForBot(bot.id);
+      const routineRun = routines!.activeBotRunForBot(bot.id);
       if (routineRun) {
         if (expectedThreadId !== undefined && routineRun.threadId !== expectedThreadId) {
           return json(res, 409, { error: "this bot is running a routine in another conversation" });

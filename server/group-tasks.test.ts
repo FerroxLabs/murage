@@ -93,6 +93,74 @@ describe("channel tasks", () => {
     expect(store.createGroupTask(channel.id, `  ${longTitle}  `)?.title).toBe(longTitle.slice(0, 80));
   });
 
+  it("can create a background task without changing the active conversation", async () => {
+    const { store } = await freshStore();
+    const bot = store.createBot();
+    const channel = store.createGroup("Product", [bot.id]);
+    const activeThreadId = channel.threadId;
+    store.patchGroup(channel.id, { pinnedMessageId: "active-pin" });
+
+    const background = store.createGroupTask(channel.id, "Daily team goal", false)!;
+
+    expect(background.threadId).not.toBe(activeThreadId);
+    expect(store.groupTaskByThread(channel.id, background.threadId)).toEqual(background);
+    expect(store.group(channel.id)).toMatchObject({
+      threadId: activeThreadId,
+      pinnedMessageId: "active-pin",
+    });
+  });
+
+  it("fails durable working goal cards after a process restart", async () => {
+    const { store } = await freshStore();
+    const bot = store.createBot();
+    const channel = store.createGroup("Product", [bot.id]);
+    const background = store.createGroupTask(channel.id, "Scheduled goal", false)!;
+    const working = store.appendMessage(background.threadId, {
+      role: "bot",
+      kind: "goal.run",
+      text: "Goal in progress",
+      goalRun: {
+        runId: "goal-working",
+        goal: "Prepare the report",
+        status: "working",
+        coordinatorBotId: bot.id,
+        coordinatorName: bot.name,
+        turnCount: 2,
+        maxTurns: 12,
+        startedAt: 100,
+      },
+    });
+    const settled = store.appendMessage(channel.threadId, {
+      role: "bot",
+      kind: "goal.run",
+      text: "Goal completed",
+      goalRun: {
+        runId: "goal-complete",
+        goal: "Ship the report",
+        status: "completed",
+        coordinatorBotId: bot.id,
+        coordinatorName: bot.name,
+        turnCount: 3,
+        maxTurns: 12,
+        startedAt: 50,
+        finishedAt: 90,
+      },
+    });
+
+    expect(store.reconcileInterruptedGroupGoals(undefined, "Restarted during this goal.", 200)).toBe(1);
+    expect(store.messagesFor(background.threadId).find((message) => message.id === working.id)).toMatchObject({
+      text: "Goal failed: Restarted during this goal.",
+      goalRun: {
+        status: "failed",
+        detail: "Restarted during this goal.",
+        turnCount: 2,
+        finishedAt: 200,
+      },
+    });
+    expect(store.messagesFor(channel.threadId).find((message) => message.id === settled.id)?.goalRun?.status)
+      .toBe("completed");
+  });
+
   it("adopts a legacy channel thread without losing its folder or pin", async () => {
     const { store, Store } = await freshStore();
     const bot = store.createBot();
