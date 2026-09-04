@@ -133,7 +133,13 @@ exists because of — read that header before changing anything in it.
 
 **Check before you tag:**
 
-1. **Version drift.** `package.json` says `0.1.44`; the newest tag is `v0.1.46`.
+1. **There is no version drift — and no release yet.** `package.json` says `0.1.44`, which is
+   the fork-point version. Every `v0.1.4x` tag in a local clone is an UPSTREAM tag pulled in by
+   `git fetch upstream --tags`; none is an ancestor of `main`, and `gh release list` is empty for
+   both `FerroxLabs/murage` and `FerroxLabs/murage-releases`. Murage has cut zero tags and zero
+   releases. Before the first one: pick a version (0.1.45 is the honest next number), and either
+   `git tag -d` the upstream tags or re-fetch with `--no-tags` so `git tag` stops lying.
+   Verified 2026-09-04 during the upstream sweep (`docs/plans/UPSTREAM-SWEEP-2026-09-04.md`).
    Establish which is authoritative before releasing, or the feed and the app
    will disagree about what is installed.
 2. **The icons are new and unproven in a real package.** Every artefact was
