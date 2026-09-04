@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="t d">
+<!-- Murage MASKABLE icon. Full-bleed ground on purpose: Android and iOS crop
+     this to their own shape, so a squircle baked in here would be cropped twice
+     and read as a rounded rect floating inside a circle. The glyph sits at 44%,
+     well inside the 80% safe zone every masker guarantees. -->
+  <title id="t">Murage</title>
+  <desc id="d">A galaxy in Forge Orange, full-bleed black.</desc>
+  <rect width="1024" height="1024" fill="#000000"/>
+  <g transform="translate(286.72 286.72) scale(18.77333)" fill="none" stroke="#ff6b35"
+     stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M16.005 15.108a5.041 6.52 28.25 00-8.008-6.217 5.041 6.52 28.25 008.008 6.217A11.884 7.288-60.76 014.029 7.001"/>
+    <path d="M17 21h.01"/>
+    <path d="M7 3h.01"/>
+    <path d="M7.997 8.891a11.885 7.288-60.756 0111.977 8.107"/>
+    <circle cx="12" cy="12" r="1" fill="#ff6b35" stroke="none"/>
+  </g>
+</svg>
