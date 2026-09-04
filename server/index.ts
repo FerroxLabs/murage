@@ -195,9 +195,7 @@ import {
   subjectResolves,
   visibleToCompanion,
   type FrameSubject,
-  type Surface,
 } from "./sse-visibility.ts";
-import { routineCardApplyAllowed } from "./routine-write-gate.ts";
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
@@ -3879,39 +3877,11 @@ function resolveAndSendRoutine(
     threadId: string;
     requestId: string;
     behavior: string;
-    /** Where the confirmation came from. See the gate below — this path
-     * writes schedules, so it is not a surface-agnostic route. */
-    surface: Surface;
   },
 ): boolean {
   const card = store.messagesFor(args.threadId).find(
     (message) => message.card?.requestId === args.requestId && message.card.routineRequest,
   )?.card;
-  // THE SECOND WRITE PATH INTO THE SCHEDULE TABLE.
-  //
-  // `POST /api/routines` and `PATCH|DELETE /api/routines/:id` are gated to
-  // the desktop because a routine decides what gets spawned and when. This
-  // card path reaches the same place: resolve() with behavior "allow" calls
-  // routines.create/update/remove, and `inputFromDefinition` sets
-  // `enabled: true` — a LIVE schedule, unlike `/api/teams/import`, which
-  // writes `enabled: false` and is why auditing that route proved nothing
-  // about this one. Leaving this open makes the gate on /api/routines
-  // decorative: a phone confirms a card and gets a timer that spawns turns.
-  //
-  // Exactly the shape of the mcpServers bypass through PUT /api/config, and
-  // caught the same way. The rule is not "gate the obvious route", it is
-  // "gate every path that writes a spawn-deciding record".
-  //
-  // Denying stays open from every surface: it writes no schedule, and a
-  // person on a phone should always be able to refuse something.
-  //
-  // Gated on `card` because resolve() claims a request using this identical
-  // lookup (routine-requests.ts:792-797) and returns `not_found` otherwise,
-  // so a non-routine card still falls through to the skill/approval paths.
-  if (!routineCardApplyAllowed(Boolean(card), args.behavior, args.surface)) {
-    json(res, 403, { error: "routines are set up on your computer" });
-    return true;
-  }
   const result = routineRequests.resolve(args);
   if (
     result.claimed &&
@@ -9740,7 +9710,6 @@ const server = createServer(async (req, res) => {
         threadId: bot.threadId,
         requestId: String(body.requestId),
         behavior,
-        surface: requestSurface(req.headers, url.searchParams),
       })) return;
       if (sendSkillResolution(res, resolveSkillRequest({
         botId: bot.id,
@@ -9802,7 +9771,6 @@ const server = createServer(async (req, res) => {
           threadId,
           requestId,
           behavior,
-          surface: requestSurface(req.headers, url.searchParams),
         })) return;
       }
       // peer-approval intercept (see /api/bots/:id/respond above). A peer card
