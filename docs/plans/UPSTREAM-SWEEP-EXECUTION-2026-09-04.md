@@ -94,22 +94,37 @@ Owns: `server/index.ts`, `server/index.test.ts`, `server/notify.ts`, `server/wor
 |---|---|---|---|
 | 1 | MEMORY.md atomic write | `006c977f` + `7fa78666` squash | `workspace.ts:39,:103` use `writeFileAtomic` from `./atomic.ts`. Test: `server/workspace.test.ts`. Control: revert one call → the new atomicity test red |
 | 2 | Screenshot settles only when screen changed | `48ed8acb` | New `server/screen-frame-gate.ts` + test. `index.ts:1873` poke uses `touchesScreen()`; `:2592` no longer unconditional; `finalScreenFrame` refuses identical hash. Tests: `server/screen-frame-gate.test.ts`, `server/index.test.ts` (run twice if red). Boot check: not needed |
-| 3 | "Bot couldn't start" notification | `2689be08` + `bfe6df25` + `bb0a36d9` **as ONE commit** | `notify.ts` gains `turn-failed`; catch at `index.ts:~3228` notifies only when `automationSource === undefined && !commsDepth && !cardContinuation`; body wrapped in `redactSecretsInText`. Drop `bfe6df25`'s test hunks for the two cloud-desktop tests we don't have. Rebrand `OMB_COMMS_TOKEN`→`MURAGE_COMMS_TOKEN` in the new test. Control: remove the redact wrapper → the redaction test red |
+| 3 | "Bot couldn't start" notification | `2689be08` + `bfe6df25` + `bb0a36d9` **as ONE commit** | `notify.ts` gains `turn-failed`; catch at `index.ts:~3228` notifies only when `automationSource === undefined && !commsDepth && !cardContinuation`; body wrapped in `redactSecretsInText`. Drop `bfe6df25`'s test hunks for the two cloud-desktop tests we don't have. Rebrand `OMB_COMMS_TOKEN`→`MURAGE_COMMS_TOKEN` in the new test. Controls, one at a time: remove the redact wrapper → redaction test red; then flip each suppression predicate (`automationSource`, `commsDepth`, `cardContinuation`) independently → its own test red. One test per predicate asserting ZERO notifications, plus one positive case for an attended user turn |
 | 8 | Delegation live status (STATUS HALF ONLY) | `e1f4207e` partial | Take: `startedAtMs` on `delegationWatch`, `summarizeDelegatedActivity`, `formatDelegationElapsed`, the `check_delegation` payload (`index.ts:~6205`), `agents-proxy.ts` rendering, the two prompt-copy edits. **Do NOT take** `wakeDelegationSource`, `pendingDelegationWakes`, `drainDelegationWakes`, `DelegationWakeBudget`, `buildDelegation*Prompt`. **Delete outright** the `console.error(\`[omb-turn] …\`)` line — it logs 70 chars of every prompt. Tests: `server/delegations.test.ts` (adapt EOF-append), `server/index.test.ts` |
-| 9 | Generated images + composer queue | `8be0d3fb` | New `server/generated-image.ts`; `assistant_image` in `contracts.ts`; `Message.attachments` in `store.ts` + `state/store.tsx`; `generatedImagesByTurn` staging folded on `turn.completed`; codex log redaction. Ghost-tail moves from `ChatView.tsx:~1602` / `GroupView.tsx:~1349` into new `ComposerQueuedMessages.tsx` rendered inside the Composer's controls row region — place it ABOVE the textarea in our column layout. `codex.test.ts` conflicts: our file is reworked (+158); re-apply the two image cases by hand. Tests: `server/generated-image.test.ts`, `server/drivers/codex.test.ts`, `src/components/*.test.ts`. Typecheck must pass |
-| 10 | ACP image blocks | `e8869da2` | ONLY after #9 (false-clean: references `generatedImagesByTurn`). Adds `image` mode to `fake-acp-cli.ts` — coordinate: LANE E also edits that file (#7). Rule: LANE S lands #10 first; LANE E rebases #7's `| image` doc-token conflict onto it. Tests: `server/drivers/acp/acp.test.ts`, **`server/drivers/acp/fuigo.test.ts`** |
+| 9 | Generated images + composer queue | `8be0d3fb` | New `server/generated-image.ts`; `assistant_image` in `contracts.ts`; `Message.attachments` in `store.ts` + `state/store.tsx`; `generatedImagesByTurn` staging folded on `turn.completed`; codex log redaction. Ghost-tail moves from `ChatView.tsx:~1602` / `GroupView.tsx:~1349` into new `ComposerQueuedMessages.tsx`. **Exact placement, because the first draft said two contradictory things:** the Composer's outer element is now a COLUMN (`flex flex-col gap-1.5 rounded-3xl bg-raised`). Render `<ComposerQueuedMessages/>` as the FIRST child of that column — above the `<textarea>`, which is second, and above the controls row, which is last. It is not inside the controls row. Add a component test asserting that sibling order and that send/mic keep their trailing `ml-auto` alignment. `codex.test.ts` conflicts: our file is reworked (+158); re-apply the two image cases by hand. Tests: `server/generated-image.test.ts`, `server/drivers/codex.test.ts`, `src/components/*.test.ts`. Typecheck must pass |
 | 11 | Composer slash menu `/goal` `/learn` | `3ba0ba0d` + `eac313db` squash | New `src/lib/composer-commands.ts` + test. `pickerOpen`→`mentionPickerOpen` at `Composer.tsx:309,557,698`. Goal-chip hunk hand-placed at `:771-786` (content is position-independent). `effectiveText`/`effectiveChannelMode` replace `text`/`channelMode` at `:289,377,409,425,435,438`. The listbox is `absolute bottom-full left-2`; verify it renders above the whole two-row bar. Tests: `src/lib/composer-commands.test.ts`, `src/components/` suite. **Manual check:** open the app, type `/` in a room, see the menu; type `/goal x`, chip lights |
 
-Order inside the lane is fixed: 1 → 2 → 3 → 8 → 9 → 10 → 11. #3 before #8 (same catch block). #9 before #10. #9 before #11 (both edit Composer).
+Order inside the lane is fixed: 1 → 2 → 3 → 8 → 9 → 11. #3 before #8 (same catch
+block). #9 before #11 (both edit Composer).
+
+**#10 is NOT in this lane.** It was, and that was a defect: `e8869da2` edits
+`server/drivers/acp/core.ts`, which Lane E owns and which the default engine
+(fuigo) runs through. It now has its own serial lane (LANE I) after S and E.
+**#8's `server/drivers/agents-proxy.ts` hunk IS this lane's**, and Lane R edits
+that same file later for #18/#19 — safe only because R merges S first.
 
 ### LANE E — `sweep/engines` (parallel with S; owns ACP core + picker)
-Owns: `server/drivers/acp/core.ts`, `server/testing/fake-acp-cli.ts` (shared with S#10 — see rule),
+Owns: `server/drivers/acp/core.ts`, `server/testing/fake-acp-cli.ts`,
+`server/drivers/acp/acp.test.ts` (WRITABLE — #7 adds a case),
 `server/harness/registry.test.ts`, `src/components/ModelPicker.tsx`.
 
 | # | item | sha(s) | acceptance |
 |---|---|---|---|
 | 6 | Catalog refresh button + offline hardening | `3ab2426d` → `4a72db5a` | `ModelPicker.tsx:133` gains `refreshingRef` guard + button; `.catch()` keeps last catalog offline. Tests: `server/harness/registry.test.ts`, `src/components/` suite. Boot check: open picker, click refresh, no double-fire |
 | 7 | ACP handshake timeouts + null `session/load` guard | `ed7a1515` adapted | `core.ts:~612` becomes `if (sessionResult) sessionId = cursor` (or equivalent); the four timeouts read `MURAGE_ACP_INIT_MS` / `MURAGE_ACP_SESSION_CONFIG_MS` / `MURAGE_ACP_SESSION_NEW_MS` / `MURAGE_ACP_SESSION_LOAD_MS` (name them after upstream's, prefix swapped) with defaults **60_000–90_000, not 300_000**. Test: `server/drivers/acp/acp.test.ts` (add a case: `session/load` returns `null` → `session/new` is called). Control: revert the guard → that case red. Then run **`fuigo.test.ts`** and `hermes.test.ts`. If LANE S has landed #10, rebase the `fake-acp-cli.ts` doc-comment conflict onto it; otherwise apply and let S rebase |
+
+
+### LANE I — `sweep/acp-images` (SERIAL; runs AFTER both S and E merge)
+Owns: `server/drivers/acp/core.ts`, `server/testing/fake-acp-cli.ts`, `server/drivers/acp/acp.test.ts`, `server/index.ts` (the one purge hook).
+
+| # | item | sha | acceptance |
+|---|---|---|---|
+| 10 | ACP image content blocks | `e8869da2` | Merge `sweep/server` and `sweep/engines` into this branch FIRST. The dry-run's CLEAN is a FALSE clean: this references `generatedImagesByTurn`, which only exists after S#9, so it applies textually and fails typecheck alone. Adds `image` mode to `fake-acp-cli.ts` (E#7 touched its doc comment — keep both tokens) and `purgeGeneratedImagesForThread`. Tests: `server/drivers/acp/acp.test.ts`, **`server/drivers/acp/fuigo.test.ts`**, `server/drivers/acp/hermes.test.ts`. Typecheck must pass |
 
 ### LANE D — `sweep/desktop` (parallel; owns electron/ + scripts + CI)
 Owns: `electron/main.mjs`, `electron/window-state.cjs`, `electron/desktop-viewer-permissions.mjs` (new) + node-test,
@@ -120,7 +135,7 @@ Owns: `electron/main.mjs`, `electron/window-state.cjs`, `electron/desktop-viewer
 | 4 | Windows `rmSync` retry on cloudflared staging | `509a34b2` | `prepare-cloudflared.mjs:265,:269` gain `{ maxRetries: 10, retryDelay: 200 }`. Test: `node scripts/prepare-cloudflared.mjs --current` still stages. |
 | 5 | Viewer permission policy + keyboard | `9f27177a` → `4eedf162` | New `electron/desktop-viewer-permissions.mjs` + `.node-test.mjs`; `main.mjs:~1279-1285` wires both handlers and `viewer.once("ready-to-show", …show(); focus(); webContents.focus())` with `isDestroyed()` guard. Test: `pnpm test:electron`. **Manual check:** open a Box viewer, type — keystrokes land in the viewer, not the composer |
 | 13 | Calmer first-launch window | `7fc09de4` | `window-state.cjs` DEFAULT 1100×780, MIN 840×620; `main.mjs:~1563` imports `MIN_BOUNDS` instead of hardcoding. Test: `pnpm test:electron`. Taste item — skip if Sean says so |
-| 21 | Release version prep | `2ba2dff0` HAND-PORT | New `.github/workflows/prepare-release.yml` rewritten for `FerroxLabs/murage-releases` + `RELEASES_PAT`, PR body says Murage; `release.yml` gains `push: paths: [package.json]` + `should_release` fail-closed guard + `ref: github.sha` + `fetch-depth: 0` on OUR single-step prepare job (`:56`); `ci.yml` gains `workflow_dispatch`. Acceptance: `actionlint` clean if present, else YAML parses; **no** `milind-soni` string anywhere in `.github/`. Do NOT run the workflow |
+| 21 | Release version prep | `2ba2dff0` HAND-PORT | New `.github/workflows/prepare-release.yml` rewritten for `FerroxLabs/murage-releases` + `RELEASES_PAT`, PR body says Murage; `release.yml` gains `push: paths: [package.json]` + `should_release` fail-closed guard + `ref: github.sha` + `fetch-depth: 0` on OUR single-step prepare job (`:56`); `ci.yml` gains `workflow_dispatch`. Acceptance: `actionlint` clean if present, else YAML parses; **no** `milind-soni` anywhere in `.github/`. Plus static assertions, because a merge to `package.json` now auto-starts a signed build: the trigger paths, that `publish` is unset so it drafts, the repository owner is `FerroxLabs`, `permissions` are no broader than upstream's, `RELEASES_PAT` is the secret used, and `should_release` FAILS CLOSED when the base blob is unreachable. Do NOT run the workflow |
 
 ### LANE U — `sweep/sidebar` (parallel; owns Sidebar)
 Owns: `src/components/Sidebar.tsx`, `src/components/SidebarMoreMenu.tsx` (new).
@@ -140,14 +155,17 @@ Owns: `server/routines.ts`, `server/routines.test.ts`, `server/routine-requests.
 | # | item | sha(s) | acceptance |
 |---|---|---|---|
 | 14 | Durable room goals | `ac41eb81` + `2c4e5b70` + `bd59135e` squash | `RoutineTarget`, `patchMessage` goal card, `store.reconcileInterruptedGroupGoals`, `mdb.workingGoalRunMessages`, `waitForGroupGoalBot` + `AbortController`, `"paused"` status across `shared/group-goal-run.ts`, `GoalRunCard`, `RoutineRunCard`, `sidebar-layout.ts`. All `"maus"`→`"ember"`. Do NOT port the dead legacy loop. Tests: `server/routines.test.ts`, `server/group-goal-run.e2e.test.ts`, `server/index.test.ts`, `server/package-export.test.ts` |
-| 15 | Wait cap + reassign | `cd67a557` | `MURAGE_GOAL_WAIT_MAX_MS` **default 5 min** (Sean's box is single-user; upstream's 30 is for teams), unref'd timer; `GROUP_GOAL_MAX_WAIT_EXHAUSTIONS = 3`; busy coordinator ends `blocked`. New `group-goal-wait-cap.e2e.test.ts` rebranded. Control: revert the cap → the cap test red |
+| 15 | Wait cap + reassign — **squash into #14** | `cd67a557` | `MURAGE_GOAL_WAIT_MAX_MS` **default 5 min** (Sean's box is single-user; upstream's 30 is for teams), unref'd timer; `GROUP_GOAL_MAX_WAIT_EXHAUSTIONS = 3`; busy coordinator ends `blocked`. New `group-goal-wait-cap.e2e.test.ts` rebranded. Control: revert the cap → the cap test red |
 | 16 | Rooms wait for busy member | `803ba1cc` + `f4a6b89a` + `d9099fbe` squash | **GATED: requires Sean's YES (recommended).** If not yet decided, skip #16-17 and report. `waitForGroupMemberBot` + `onWaiting` callback; responder loop at `index.ts:~4419` waits; `runGroupMemberTurn` threads `operation`. New `room-chat-wait.e2e.test.ts`. Tests as named + the 1:1-survives case |
 | 17 | Name the awaited member | `ecf211aa` | `turn-tail.ts` `awaitedMemberId()`; `GroupView.tsx:~940-948,:977,:1330` presence. Only with #16 |
 | 18 | Five-minute floor (part a ONLY) | `3e23961d` partial | 15→5 in `routines.ts:~380`, `routine-requests.ts:~102,264`, `calendar-calls.ts:~83,157`, `bot-package.ts:~100`, `agents-proxy.ts:~177`; `CALENDAR_SLOT_MINUTES` 15→5; `visualEnd()` in the calendar. **Do NOT take part (b)** (Automations/Sidebar/SettingsPanel/WebhooksPanel restructure). Tests: `server/routines.test.ts`, `server/routine-requests.test.ts`, `src/lib/routine-calendar.test.ts`, `server/bot-package.test.ts` |
-| 19 | Interval schedules | `50ddda4d` + `75b7c154` (web hunks) squash | `{ type: "interval"; everyMinutes: 5-1440; anchorAt }`, `nextOccurrence`/`latestIntervalOccurrence`, overlap suppression, receipt realign, no `updatedAt` bump on ticks, `timeoutMinutes` 5-240 enforced in `tick()` via `interruptGoal`/`interruptTurn`, soft `MAX_RUNS`, live receipts bypass the 12-cap trim. `agents-proxy.ts`: field rename `duration_minutes`→`timeout_minutes` + `clear_timeout`. Skip every android/ios/docs path. Hand-port the interval hunks out of `routines.ts` — they interleave with #14's. Tests: all routines tests + `src/state/store.test.ts` + `server/drivers/agents-proxy.test.ts`. **Boot check:** create an interval routine via the API, confirm the next occurrence and that a running one skips the next tick |
+| 19 | Interval schedules | `50ddda4d` + `75b7c154` (web hunks) squash | `{ type: "interval"; everyMinutes: 5-1440; anchorAt }`, `nextOccurrence`/`latestIntervalOccurrence`, overlap suppression, receipt realign, no `updatedAt` bump on ticks, `timeoutMinutes` 5-240 enforced in `tick()` via `interruptGoal`/`interruptTurn`, soft `MAX_RUNS`, live receipts bypass the 12-cap trim. `agents-proxy.ts`: field rename `duration_minutes`→`timeout_minutes` + `clear_timeout`. Skip every android/ios/docs path. Hand-port the interval hunks out of `routines.ts` — they interleave with #14's. Tests: all routines tests + `src/state/store.test.ts` + `server/drivers/agents-proxy.test.ts`. **Boot check:** create an interval routine via the API, confirm the next occurrence and that a running one skips the next tick.
+**Gate:** an interval schedule decides when a bot is spawned, so every create/update/delete route that can write one takes `requestSurface(...) !== "desktop"` → 404, with a test per method from a non-desktop surface. **Timeout test:** fake timers, a routine that runs past `timeoutMinutes`, asserting `interruptGoal`/`interruptTurn` is actually called — storage and validation tests all pass while the timer is never armed |
 | 20 | Interval editor | `e74e85c1` web hunk | `RoutineCalendarPage.tsx:~585-655` preset `<select>` + Custom, "starting <date> at <time>", generic date/time hidden for `interval`. Copy "aligned from"→"starting". **Manual check:** create a 5-min and a custom 37-min routine |
 
-Order fixed: 14 → 15 → (16 → 17 if decided) → 18 → 19 → 20. If Chain A (#14-17) is deferred, #18-20 still apply but become a fuller hand-port of `routines.ts`.
+Order fixed: **[14+15 as ONE commit]** → (16 → 17 if decided) → 18 → 19 → 20.
+#14 alone leaves an unbounded wait — a known-bad intermediate state that a
+revert or bisect could land on — so the cap ships in the same commit. If Chain A (#14-17) is deferred, #18-20 still apply but become a fuller hand-port of `routines.ts`.
 
 ### LANE M — `sweep/mcp` (SERIAL; runs LAST, after S and R merge)
 Owns: `server/mcp-registry.ts` (new), `server/mcp-probe.ts` (new) + tests, `src/components/McpServersPanel.tsx` (new),
@@ -156,7 +174,9 @@ registration in `server/index.ts`.
 
 | # | item | sha | acceptance |
 |---|---|---|---|
-| 22 | Custom MCP server management | `074d2f7e` adapted | **DECIDED: take.** Port `mcp-registry.ts`, `mcp-probe.ts`, `McpServersPanel.tsx`, the `config.ts` refactor + `saveConfig` support. **Drop** `server/request-auth.ts` and its test entirely. Rebrand `RESERVED_MCP_NAMES` to our current list. **All six routes** (`GET/POST /api/mcp/servers`, `PUT/PATCH/DELETE /api/mcp/servers/:name`, `POST /api/mcp/servers/:name/test`) gated `requestSurface(…) !== "desktop"` → 404, same shape as `index.ts:9472-9480`. Tests: new `mcp-registry.test.ts`, `mcp-probe.test.ts`, plus a gate test: each route from a non-desktop surface → 404. Control: remove one gate → its test red. **Boot check:** from the desktop, add a server, `test` it, see tools listed; `curl` the same route with a phone surface header → 404 |
+| 22 | Custom MCP server management | `074d2f7e` adapted | **DECIDED: take.** Port `mcp-registry.ts`, `mcp-probe.ts`, `McpServersPanel.tsx`, the `config.ts` refactor + `saveConfig` support. **Drop** `server/request-auth.ts` and its test entirely. Rebrand `RESERVED_MCP_NAMES` to our current list. **All six routes** (`GET/POST /api/mcp/servers`, `PUT/PATCH/DELETE /api/mcp/servers/:name`, `POST /api/mcp/servers/:name/test`) gated `requestSurface(…) !== "desktop"` → 404, same shape as `index.ts:9472-9480`.
+**AND THE SECOND WRITE PATH, which the first draft of this plan missed:** this item teaches `saveConfig` about `mcpServers`, and we already expose a generic `PUT`/`PATCH /api/config` at `server/index.ts:9556`. Left alone, that route writes `mcpServers` — i.e. decides what process gets spawned — while bypassing all six gated routes. Required: `parseConfigPatch` must **strip or reject `mcpServers`** so the field is settable only through the gated MCP routes (or, if that proves impractical, `PUT/PATCH /api/config` itself takes the desktop gate). Audit every other `saveConfig` caller reachable from HTTP before declaring this done.
+Tests: new `mcp-registry.test.ts`, `mcp-probe.test.ts`; a gate test per route (non-desktop surface → 404); **and a test that `PUT /api/config` carrying `mcpServers` from a non-desktop surface does not change the stored servers.** Control: remove one gate → its test red; remove the `parseConfigPatch` guard → the config-bypass test red. **Boot check:** from the desktop, add a server, `test` it, see tools listed; `curl` the same route with a phone surface header → 404 |
 
 ### NOT IN ANY LANE (defer/reject — do not touch)
 `d2635669` (profile menu — needs Ferrox URLs), `ed2ddb69` (attachment previews — feature build), `e1f4207e` wake half,
@@ -167,22 +187,32 @@ registration in `server/index.ts`.
 
 ## 2. File-ownership matrix (collision guard)
 
-| file | S | E | D | U | R | M |
-|---|---|---|---|---|---|---|
-| `server/index.ts` | **owner** | — | — | — | after S | after S,R |
-| `server/drivers/acp/core.ts` | — | **owner** | — | — | — | — |
-| `server/testing/fake-acp-cli.ts` | #10 | #7 (rebase onto S) | — | — | — | — |
-| `src/components/Composer.tsx` | **owner** | — | — | — | — | — |
-| `src/components/ModelPicker.tsx` | — | **owner** | — | — | — | — |
-| `src/components/Sidebar.tsx` | — | — | — | **owner** | — | — |
-| `src/components/GroupView.tsx` | #9 | — | — | — | #17 after S | — |
-| `electron/main.mjs` | — | — | **owner** | — | — | — |
-| `server/routines.ts` & friends | — | — | — | — | **owner** | — |
-| `server/config.ts` | — | — | — | — | — | **owner** (mcpServers only) |
-| `.github/workflows/*` | — | — | **owner** | — | — | — |
+| file | S | E | I | D | U | R | M |
+|---|---|---|---|---|---|---|---|
+| `server/index.ts` | **owner** | — | #10 hook (after S,E) | — | — | after S | after S,R |
+| `server/drivers/acp/core.ts` | — | **owner** | after E | — | — | — | — |
+| `server/testing/fake-acp-cli.ts` | — | **owner** | after E | — | — | — | — |
+| `server/drivers/acp/acp.test.ts` | — | **owner (writable)** | after E | — | — | — | — |
+| `server/drivers/agents-proxy.ts` | **owner** (#8) | — | — | — | — | after S (#18/#19) | — |
+| `src/components/Composer.tsx` | **owner** | — | — | — | — | — | — |
+| `src/components/ModelPicker.tsx` | — | **owner** | — | — | — | — | — |
+| `src/components/Sidebar.tsx` | — | — | — | — | **owner** | — | — |
+| `src/components/GroupView.tsx` | #9 | — | — | — | — | #17 after S | — |
+| `electron/main.mjs` | — | — | — | **owner** | — | — | — |
+| `server/routines.ts` & friends | — | — | — | — | — | **owner** | — |
+| `server/config.ts` | — | — | — | — | — | — | **owner** (mcpServers + the `parseConfigPatch` guard) |
+| `.github/workflows/*` | — | — | — | **owner** | — | — | — |
 
-Phase 1 (parallel): S, E, D, U. Phase 2: R. Phase 3: M. Merge order into
-`upstream-sweep-2026-09`: S → E → D → U → R → M.
+**Writable test files are part of ownership.** A lane may create and edit the
+test files its items name (S: `screen-frame-gate.test.ts`, `generated-image.test.ts`,
+`composer-commands.test.ts`; E: `acp.test.ts`; M: `mcp-registry.test.ts`,
+`mcp-probe.test.ts`). Every other test is RUN-ONLY: if an item seems to need an
+edit to a test outside your list, stop and report. The first draft omitted this
+and would have made a compliant agent halt on its own acceptance criteria.
+
+Phase 1 (parallel): S, E, D, U. Phase 2: I (needs S and E). Phase 3: R (needs S).
+Phase 4: M (needs S and R). Merge order into `upstream-sweep-2026-09`:
+S → E → I → D → U → R → M.
 
 ---
 
@@ -195,7 +225,12 @@ npx tsc -b && npx tsc -p tsconfig.server.json        # both must be clean
 npx oxlint .                                          # clean
 npx vitest run <the lane's named test paths>          # green
 git diff main --name-only                             # ONLY files in your ownership row
-git diff main | grep -iE "openmausbot|milind|omb_|ogb|openmaus|maus\"|MausState"   # must be EMPTY
+# ADDED lines only -- the old form scanned removed lines too, so deleting an
+# upstream string counted as a violation, and it missed MAUS_COLORS and their
+# bare domain. Both halves must be empty:
+git diff main | grep '^+' | grep -ivE '^\+\+\+' \
+  | grep -iE "openmausbot|milind-soni|omb_|ogb_|openmaus|MausState|MAUS_COLORS|\"maus\"|discord\.gg/9Wb8MEpXRs"
+git grep -iE "openmausbot|milind-soni|MausState|MAUS_COLORS|\"maus\"" -- src server shared electron companion scripts .github
 ```
 Plus the manual/boot checks named per item. Report: branch name, commits (sha + item #), test counts, every negative control run with its failure text, anything skipped and why.
 

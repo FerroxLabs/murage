@@ -90,16 +90,16 @@ const phase1 = await parallel([
   #2  48ed8acb
   #3  2689be08 + bfe6df25 + bb0a36d9 (ONE commit)
   #8  e1f4207e — STATUS HALF ONLY; delete the [omb-turn] console.error
-  #9  8be0d3fb
-  #10 e8869da2 (after #9; runs fuigo.test.ts)
-  #11 3ba0ba0d + eac313db (squash; Goal chip hand-placed at Composer.tsx:771)`),
+  #9  8be0d3fb — ComposerQueuedMessages is the FIRST child of the composer column
+  #11 3ba0ba0d + eac313db (squash; Goal chip hand-placed at Composer.tsx:771)
+  NOTE: #10 is NOT yours. It edits acp/core.ts, which Lane E owns.`),
     { label: 'apply:server', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' }),
   () => agent(lanePrompt('engines', `
   #6  3ab2426d → 4a72db5a
   #7  ed7a1515 — MURAGE_ACP_* env names, defaults 60-90s NOT 300s; add the
       null session/load test; run fuigo.test.ts and hermes.test.ts`,
-    `If server/testing/fake-acp-cli.ts conflicts on the "| image" doc token,
-     that is LANE S's #10; resolve by keeping both tokens and note it.`),
+    `You own acp/core.ts, fake-acp-cli.ts and acp.test.ts. Item #10 lands in a
+     later serial lane on top of your work — do not attempt it here.`),
     { label: 'apply:engines', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' }),
   () => agent(lanePrompt('desktop', `
   #4  509a34b2
@@ -122,6 +122,20 @@ for (const r of p1) log(`${r.lane}: ${r.commits.length} commits, ${r.tests.passe
 // against a worktree that has merged the earlier lanes, so the executor is
 // told which branches to merge in before starting.
 const serverBranch = p1.find(r => r.lane === 'server')?.branch
+const enginesBranch = p1.find(r => r.lane === 'engines')?.branch
+
+// #10 was originally inside Lane S. Two independent auditors (GPT-5.6 and
+// Gemini 3.8 Flash) caught that it edits acp/core.ts -- Lane E's file, and the
+// path the default engine runs through. It now runs alone, on top of both.
+const acpImages = serverBranch && enginesBranch
+  ? await agent(lanePrompt('acp-images', `
+  (first: git merge --no-ff ${serverBranch}, then ${enginesBranch}, into your branch)
+  #10 e8869da2 — the dry-run CLEAN is FALSE: it references generatedImagesByTurn
+      from S#9 and fails typecheck without it. Run acp.test.ts, fuigo.test.ts,
+      hermes.test.ts, and typecheck.`),
+      { label: 'apply:acp-images', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' })
+  : null
+if (!acpImages) log('acp-images lane did not run (server or engines missing)')
 const routines = serverBranch
   ? await agent(lanePrompt('routines', `
   (first: git merge --no-ff ${serverBranch} into your branch)
@@ -142,14 +156,18 @@ const mcp = mergedSoFar.length === 2
   (first: git merge --no-ff ${mergedSoFar.join(' then ')} into your branch)
   #22 074d2f7e — drop server/request-auth.ts and its test; rebrand RESERVED_MCP_NAMES
       to our current list; ALL SIX routes gated requestSurface(...) !== "desktop" → 404;
-      add a gate test per route; boot check from desktop AND a phone-surface curl → 404`),
+      AND close the second write path: PUT/PATCH /api/config (server/index.ts:9556)
+      must not be able to write mcpServers -- strip/reject it in parseConfigPatch,
+      with a test proving a non-desktop PUT /api/config carrying mcpServers changes
+      nothing. Audit every HTTP-reachable saveConfig caller before calling it done.
+      Boot check from desktop AND a phone-surface curl → 404`),
       { label: 'apply:mcp', phase: 'Apply', schema: LANE_SCHEMA, isolation: 'worktree' })
   : null
 if (!mcp) log('mcp lane did not run (server or routines missing)')
 
 // ---------------------------------------------------------------- Phase 2
 phase('Verify')
-const reports = [...p1, routines, mcp].filter(Boolean)
+const reports = [...p1, acpImages, routines, mcp].filter(Boolean)
 const verdicts = await parallel(reports.map(r => () =>
   agent(verifyPrompt(r.lane, r), { label: `verify:${r.lane}`, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'high' })
 ))
@@ -159,7 +177,7 @@ for (const x of v) log(`${x.lane}: ${x.verdict} (${x.findings.length} findings)`
 // ---------------------------------------------------------------- Phase 3
 phase('Stage')
 const sound = v.filter(x => x.verdict === 'SOUND').map(x => x.lane)
-const order = ['server', 'engines', 'desktop', 'sidebar', 'routines', 'mcp'].filter(l => sound.includes(l))
+const order = ['server', 'engines', 'acp-images', 'desktop', 'sidebar', 'routines', 'mcp'].filter(l => sound.includes(l))
 const branches = order.map(l => reports.find(r => r.lane === l).branch)
 
 // The staging merge is deliberately an agent in ITS OWN worktree, so a merge
