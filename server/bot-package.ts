@@ -100,7 +100,7 @@ const packageSchema = z.object({
           weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
         }),
       ]),
-      durationMinutes: z.number().int().min(15).max(240),
+      durationMinutes: z.number().int().min(5).max(240),
       enabledAfterInstall: z.literal(false),
     })).max(50).optional(),
     playbooks: z.array(z.object({

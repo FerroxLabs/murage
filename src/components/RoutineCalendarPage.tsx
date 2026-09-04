@@ -53,6 +53,7 @@ import { EMBER_COLORS, type EmberState } from "@/lib/mascot";
 import {
   addDays,
   atLocalTime,
+  CALENDAR_SLOT_MINUTES,
   calendarRangeLabel,
   formatGmtOffset,
   fromLocalDateAndTime,
@@ -82,6 +83,7 @@ const HOUR_HEIGHT = 64;
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const WEEKDAYS = [1, 2, 3, 4, 5];
+const EVENT_DURATION_OPTIONS = Array.from({ length: 240 / CALENDAR_SLOT_MINUTES }, (_, index) => (index + 1) * CALENDAR_SLOT_MINUTES);
 const BOT_DRAG_TYPE = "application/x-murage-bot";
 const EVENT_DRAG_TYPE = "application/x-murage-calendar-event";
 
@@ -151,6 +153,12 @@ function niceTime(at: number): string {
 
 function niceDate(at: number): string {
   return new Date(at).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+}
+
+function durationLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes % 60 === 0) return `${minutes / 60} hr`;
+  return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
 }
 
 function scheduleLabel(schedule: RoutineSchedule | CalendarCall["schedule"]): string {
@@ -498,11 +506,11 @@ function EventEditor({
             <div className="min-w-0 flex-1 space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
-                <input type="time" step={900} value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
+                <input type="time" step={CALENDAR_SLOT_MINUTES * 60} value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
                 <span className="text-[12px] text-ink-secondary">to</span>
                 <span className="rounded-lg border border-hairline/40 bg-inset/60 px-3 py-2 text-[13px] text-ink">{niceTime(endAt)}</span>
                 <select value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12px] text-ink outline-none focus:border-accent">
-                  {[15, 30, 45, 60, 90, 120, 180, 240].map((minutes) => <option key={minutes} value={minutes}>{minutes < 60 ? `${minutes} min` : `${minutes / 60} hr`}</option>)}
+                  {EVENT_DURATION_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>)}
                 </select>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -810,7 +818,7 @@ function CalendarEventCard({
     const startDuration = previewDuration;
     let next = startDuration;
     const move = (pointer: PointerEvent) => {
-      next = Math.max(15, Math.min(240, Math.round((startDuration + ((pointer.clientY - startY) / HOUR_HEIGHT) * 60) / 15) * 15));
+      next = Math.max(CALENDAR_SLOT_MINUTES, Math.min(240, Math.round((startDuration + ((pointer.clientY - startY) / HOUR_HEIGHT) * 60) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_MINUTES));
       setPreviewDuration(next);
     };
     const up = () => {
@@ -907,14 +915,14 @@ function CalendarGrid({
     setSelection({ day, start, end });
     const move = (pointer: PointerEvent) => {
       const current = slotAt(day, pointer.clientY, rect.top, HOUR_HEIGHT);
-      end = Math.max(start + 15 * 60_000, current + 15 * 60_000);
+      end = Math.max(start + CALENDAR_SLOT_MINUTES * 60_000, current + CALENDAR_SLOT_MINUTES * 60_000);
       setSelection({ day, start, end });
     };
     const up = (pointer: PointerEvent) => {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
       setSelection(null);
-      onCreate({ kind: "routine", at: start, durationMinutes: Math.max(15, Math.round((end - start) / 60_000)), botIds: [], anchor: { x: pointer.clientX, y: pointer.clientY } });
+      onCreate({ kind: "routine", at: start, durationMinutes: Math.max(CALENDAR_SLOT_MINUTES, Math.round((end - start) / 60_000)), botIds: [], anchor: { x: pointer.clientX, y: pointer.clientY } });
     };
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up, { once: true });

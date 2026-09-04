@@ -112,6 +112,32 @@ describe("bot packages", () => {
     expect(() => parseBotPackage(withSkills(ids(201)))).toThrow();
   });
 
+  it("accepts five-minute routine windows and rejects shorter ones", () => {
+    const routine = {
+      key: "morning-brief",
+      name: "Morning brief",
+      agent: "lead",
+      prompt: "Summarize the overnight queue.",
+      runOn: "ember",
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+      durationMinutes: 5,
+      enabledAfterInstall: false,
+    };
+    const document = {
+      ...validPackage,
+      package: { ...validPackage.package, routines: [routine] },
+    };
+
+    expect(parseBotPackage(document).package.routines?.[0]?.durationMinutes).toBe(5);
+    expect(() => parseBotPackage({
+      ...document,
+      package: {
+        ...document.package,
+        routines: [{ ...routine, durationMinutes: 4 }],
+      },
+    })).toThrow(/expected number to be >=5/);
+  });
+
   it("rejects dangling agent, room, playbook, chief, and routine references", () => {
     expect(() => parseBotPackage({
       ...validPackage,

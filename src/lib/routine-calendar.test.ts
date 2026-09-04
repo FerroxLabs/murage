@@ -14,13 +14,13 @@ import {
 } from "./routine-calendar";
 
 describe("routine calendar geometry", () => {
-  it("snaps pointer positions to 15 minute slots", () => {
-    expect(snapMinutes(7)).toBe(0);
-    expect(snapMinutes(8)).toBe(15);
-    expect(snapMinutes(24 * 60)).toBe(23 * 60 + 45);
+  it("snaps pointer positions to 5 minute slots", () => {
+    expect(snapMinutes(2)).toBe(0);
+    expect(snapMinutes(3)).toBe(5);
+    expect(snapMinutes(24 * 60)).toBe(23 * 60 + 55);
     const day = new Date(2026, 7, 31).getTime();
-    expect(new Date(slotAt(day, 100 + 9.25 * 64, 100, 64)).getHours()).toBe(9);
-    expect(new Date(slotAt(day, 100 + 9.25 * 64, 100, 64)).getMinutes()).toBe(15);
+    expect(new Date(slotAt(day, 100 + 9.1 * 64, 100, 64)).getHours()).toBe(9);
+    expect(new Date(slotAt(day, 100 + 9.1 * 64, 100, 64)).getMinutes()).toBe(5);
   });
 
   it("starts weeks on Monday", () => {
@@ -62,6 +62,17 @@ describe("routine calendar geometry", () => {
 
     expect(layouts.get("one")).toEqual({ column: 0, columns: 1 });
     expect(layouts.get("two")).toEqual({ column: 0, columns: 1 });
+  });
+
+  it("packs adjacent five minute events around their minimum visual height", () => {
+    const at = new Date(2026, 7, 31, 9).getTime();
+    const layouts = packCalendarCollisions([
+      { id: "one", at, durationMinutes: 5 },
+      { id: "two", at: at + 5 * 60_000, durationMinutes: 5 },
+    ]);
+
+    expect(layouts.get("one")).toEqual({ column: 0, columns: 2 });
+    expect(layouts.get("two")).toEqual({ column: 1, columns: 2 });
   });
 
   it("formats whole-hour and fractional GMT offsets", () => {

@@ -260,6 +260,7 @@ describe("agents-proxy MCP surface", () => {
       "saturday",
       "sunday",
     ]);
+    expect(create.inputSchema.properties.duration_minutes).toMatchObject({ minimum: 5, maximum: 240 });
     expect(create.description).toContain("does NOT enable");
   });
 

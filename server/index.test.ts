@@ -3605,10 +3605,13 @@ describe("harness HTTP API", () => {
       });
       expect(edited.status).toBe(200);
       expect(edited.body.call.schedule).toEqual({ type: "daily", time: "11:15", weekdays: [1, 2, 3, 4, 5] });
-      const invalidPatch = await api("PATCH", `/api/calendar-calls/${callId}`, { durationMinutes: 5 });
+      const fiveMinutePatch = await api("PATCH", `/api/calendar-calls/${callId}`, { durationMinutes: 5 });
+      expect(fiveMinutePatch.status).toBe(200);
+      expect(fiveMinutePatch.body.call.durationMinutes).toBe(5);
+      const invalidPatch = await api("PATCH", `/api/calendar-calls/${callId}`, { durationMinutes: 4 });
       expect(invalidPatch.status).toBe(400);
       expect((await api("GET", "/api/calendar-calls")).body.calls).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: callId, name: "Weekly bot sync" })]),
+        expect.arrayContaining([expect.objectContaining({ id: callId, name: "Weekly bot sync", durationMinutes: 5 })]),
       );
 
       expect((await api("DELETE", `/api/calendar-calls/${callId}`)).status).toBe(200);
