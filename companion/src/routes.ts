@@ -205,7 +205,6 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   // simply never offered an install -- which looks like a working app that has
   // decided not to be installable rather than a missing route.
   { method: "GET", path: /^\/sw\.js$/ },
-  { method: "GET", path: /^\/sw\.js$/ },
   // Enumerated, not `murage-[\w-]+`: this list's whole property is that
   // adding a path is a decision someone made. `maskable-` is a third
   // family, not a size — Android crops an adaptive icon and only these
