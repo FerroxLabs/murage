@@ -17,6 +17,7 @@ const GOAL_RUN_PREVIEW_LABEL = {
   "needs-input": "Needs your input",
   blocked: "Blocked",
   "limit-reached": "Turn limit reached",
+  paused: "Paused",
   stopped: "Stopped",
   failed: "Failed",
 } satisfies Record<GroupGoalRunCardData["status"], string>;

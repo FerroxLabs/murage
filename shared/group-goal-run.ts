@@ -5,6 +5,8 @@ export type GroupGoalRunStatus =
   | "needs-input"
   | "blocked"
   | "limit-reached"
+  /** The operator (or a guard) parked the run; resumable once a resume path exists. */
+  | "paused"
   | "stopped"
   | "failed";
 
