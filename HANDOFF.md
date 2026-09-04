@@ -103,50 +103,62 @@ symptom.
 - **Another session on the same machine competes.** Load average hit 61 with a
   second project's full suite running. A slow suite may not be your suite.
 
-## STATE — 15 commits this session, pushed, `main` in sync
+## STATE — 26 commits this session, pushed, `main` in sync
 
-**Five build lanes, then a three-way cross-audit, then three repair lanes.** The
-audit found 10 real defects in work that was already committed and green, and
-the single worst one was in a commit I had titled as finished. That is the
-argument for running it: every lane's tests passed the whole time.
+Five build lanes, a three-way cross-audit, three repair lanes, then a brand pass.
+The audit found **ten defects in work that was already committed and green**, and
+the worst was in a commit titled as finished. Every lane's tests passed
+throughout. That is the argument for running it.
 
-Everything below is committed and green. Highlights from the last session, all
-verified rather than relayed:
+## WHERE THE PRODUCT IS — capability by capability
 
-- **Fuigo is an engine.** It was 165MB of shipped shelf-ware with zero callers.
-  Verified by booting the harness, not by a test: `fuigo | fuigoAgent |
-  available | models: 83`, first in the fleet. A cross-audit caught that the
-  first attempt registered the DRIVER but created no INSTANCE, so it was still
-  unreachable — see the briefing note above, it is the most useful thing here.
-- **Fuigo 1.0.4**, scoped `@fuigo/*`, six targets pinned, twelve digests.
-- **Phone dictation**, server-side, on Groq.
-- **Paste-and-extract keys**, where the pasted blob is never React state.
-- **The ferret matcher**, 391ms -> 5.4ms and 26 of 27 queries correct.
-- **Composio's terms question closed** — multi-tenancy is the product.
+| capability | state |
+|---|---|
+| **Fuigo as the shipped default engine** | LIVE. A new bot gets `instanceId: "fuigo"`, `model: "flux-auto"`. Verified by booting the harness, not by a test. 83 models. |
+| **Fuigo 1.0.4 bundled** | LIVE. Six targets pinned, scoped `@fuigo/*`, twelve digests. `build:fuigo` IS in the `package:prepare` chain, so packaging stages it. |
+| **Phone dictation (Groq STT)** | BUILT. Route + recorder + metering. UNPROVEN END TO END: the workspace key returns 402 `premium_locked` for transcription, so no real transcript has ever come back. |
+| **Paste-and-extract keys** | LIVE in Settings. Plaintext never enters React state. |
+| **Intake matcher** | LIVE. 264 ordinary-English terms removed, 391ms -> 5.4ms, 26/27 measured queries. |
+| **Brand: icon, engine mark, wordmark** | LIVE. Every artefact regenerated from one 921-byte vector. |
+| **Composio behind Flux** | CLEARED to build, not built. Terms question closed; the work is Flux-side. |
+| **Image generation tool** | BLOCKED on Flux. Re-probed 2026-09-04: `/v1/models` still lacks `capability`/`display_name`/`list_price_microcents`/`entitlement`. |
 
-### What the cross-audit caught, after everything was "green"
+## IF YOU ARE PUBLISHING A VERSION — read this first
 
-- **The engine had no instance.** `BUILT_IN_DRIVERS` populates `driversByKind`;
-  `instanceConfigs()` is the only source of instances. Fuigo was unreachable and
-  `defaultSelection()`'s preference was dead code. Fixed in BOTH fleets —
-  `DEFAULT_FLEET` alone reaches nobody who has ever launched Murage before.
-- **"available" does not mean usable.** `snapshot()` sets available iff
-  `--version` exits 0. Murage ships the binary, so Fuigo was about to always win
-  and hand every new bot `model: ""`.
-- **The matcher's remaining 559 terms.** Not the ~57 the audit first estimated:
-  probing all 849 curated terms found 559 that alone produce a one-press confirm
-  card. "please save my marriage" offered Customer Success Org. 264 removed.
-- **PasteKeys addressed rows by array index across an async boundary**, marking
-  the WRONG key saved and destroying its value; and every extracted key really
-  was in React state and props despite a header comment saying otherwise.
-- **Dictation discarded up to two minutes of speech** if you typed while it
-  transcribed, and was an unmetered billable path from a phone.
-- **On Windows the bundled binary shadowed a user's own newer install**, because
-  `findCliCandidates` could never match a name that already carries `.exe`.
+There is a **one-button release**: `.github/workflows/release.yml`. It builds
+macOS arm64+x64 signed/notarized/stapled, Windows and Ubuntu from ONE commit,
+assembles a draft on `FerroxLabs/murage-releases`, and publishes only after a
+human approves the draft. Its header lists the gates and the release each gate
+exists because of — read that header before changing anything in it.
 
-Four of my own written claims were wrong and are corrected in place rather than
-left standing: the ogg/webm support order, a `fluxConfigured` justification, a
-memo-TTL guarantee, and a comment about vite not collecting `shared/`.
+**Check before you tag:**
+
+1. **Version drift.** `package.json` says `0.1.44`; the newest tag is `v0.1.46`.
+   Establish which is authoritative before releasing, or the feed and the app
+   will disagree about what is installed.
+2. **The icons are new and unproven in a real package.** Every artefact was
+   regenerated this session and `scripts/render-brand-icons.mjs --check` passes,
+   but no signed build has been produced since. macOS is the risk: the icon is
+   inside the signed bundle, and 0.1.15 shipped "app is damaged" from a stale
+   `dist/`. Do a `pnpm package:mac` and open the result before tagging.
+3. **Fuigo is 165MB inside the bundle now.** It is staged by `build:fuigo` in
+   `package:prepare`. Confirm the artefact size is what you expect and that
+   notarization still completes — this is the first release carrying it as a
+   REACHABLE engine rather than dead weight.
+4. **Three tests are red and NONE are ours** — see the table below. Do not let
+   them block a release, and do not "fix" them under time pressure.
+
+**Known gaps a first user could hit, in the order they would hit them:**
+
+- A user with `fuigo login` and NO Flux key in App Settings gets an empty model
+  picker for the one engine that would work for them, and a persisted
+  `flux-auto` is refused at spawn with a message telling them to buy a Flux key
+  they do not need. Written up under THE FUIGO LOGIN GAP below. **This is the
+  most likely first-run complaint.**
+- Voice typing and image generation both answer 402 on a free Flux plan. The
+  copy is honest about it ("the key is fine, the plan does not cover it yet"),
+  but neither has ever been seen working end to end from this repo.
+- 19 catalogue slugs declare zero skills and can never be suggested.
 
 ## KNOWN RED — all three traced, none from this session
 
@@ -187,6 +199,23 @@ the remainder traced to this file plus two defects that were found and fixed
 (`server/unattended.test.ts` and `src/lib/flux-invite.test.ts`).
 
 ## QUEUE — what is actually left
+
+### 0. BRAND — SETTLED, do not reopen
+Sean approved the galaxy on 2026-09-04 ("keep it as is"). The mark is lucide's
+`galaxy` in Forge Orange `#ff6b35` on black. Every artefact regenerates from
+`brand/app-icon.svg` via `scripts/render-brand-icons.mjs`, and the two wordmark
+PNGs from `brand/logo-*.svg` via `scripts/render-brand-logos.mjs`. Both take
+`--check` so CI can catch the vector and the rasters drifting apart.
+
+**The wordmark stays a BAKED PNG PAIR and that is deliberate.** Onboarding.tsx
+loads it through an `<img>`, and an SVG loaded that way cannot reach the page's
+fonts — Sora 800 would fall back per machine, which is the one thing a wordmark
+may not do. The renderer refuses to draw unless `document.fonts.check` says Sora
+resolved, because a Helvetica fallback does not look broken, only subtly wrong.
+
+The question that was raised and NOT pursued: the galaxy has no letterform tie
+to "Murage" the way the retired wings mark was literally an M. Sean was asked
+and chose to keep it.
 
 The six-item queue from the previous handoff is DONE except where an external
 dependency blocks it. What follows is the real remainder.
