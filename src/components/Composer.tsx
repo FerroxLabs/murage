@@ -628,7 +628,14 @@ export function Composer({
             aria-hidden
             className="absolute -left-5 -right-5 top-1/2 h-[50vh] bg-app"
           />
-        <div className="relative z-[1] flex items-end gap-1 rounded-3xl bg-raised px-2 py-1.5">
+        {/* A COLUMN, not a row. As a row this was `items-end`, so the chip
+            cluster sat at the bottom of a container whose height is set by the
+            textarea -- and the textarea grows to 9rem. Long dictation therefore
+            left ~112px of empty column above Auto, while the send cluster,
+            being `items-center`, floated at a different height again. Stacking
+            them removes the dead space at every height and gives both clusters
+            one baseline. */}
+        <div className="relative z-[1] flex flex-col gap-1.5 rounded-3xl bg-raised px-2 py-1.5">
           <input
             ref={fileInput}
             type="file"
@@ -640,41 +647,6 @@ export function Composer({
               e.target.value = "";
             }}
           />
-          {!locked && (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                aria-label="Attach a file"
-                title="Attach a file"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-control hover:text-ink"
-              >
-                <Paperclip size={17} />
-              </button>
-              {group && !group.dm && (
-                <button
-                  type="button"
-                  aria-pressed={channelMode === "goal"}
-                  aria-label="Finish together"
-                  title="Finish together — the team keeps working until the goal is complete"
-                  onClick={() => {
-                    markDraftEdited(draftId);
-                    setChannelMode((current) => current === "goal" ? "chat" : "goal");
-                  }}
-                  className={cn(
-                    "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[13px] transition-colors",
-                    channelMode === "goal"
-                      ? "border-accent/35 bg-accent/10 text-accent"
-                      : "border-hairline/20 bg-transparent text-ink-secondary hover:bg-raised hover:text-ink",
-                  )}
-                >
-                  <Target size={14} aria-hidden="true" />
-                  Goal
-                </button>
-              )}
-              {autoBot && <PermissionModeSelector bot={autoBot} onSetAuto={setAuto} />}
-            </div>
-          )}
           <textarea
           ref={inputRef}
           rows={1}
@@ -777,9 +749,47 @@ export function Composer({
                   : `Message ${bot?.name ?? ""}`
           }
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
-            className="max-h-[9rem] min-h-6 min-w-0 flex-1 resize-none overflow-y-auto self-center bg-transparent px-1 py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
+            className="max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
           />
+          {/* One controls row: chips on the left, send and dictation on the
+              right, sharing a baseline at every composer height. */}
           <div className="flex items-center gap-1">
+          {!locked && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                aria-label="Attach a file"
+                title="Attach a file"
+                className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-control hover:text-ink"
+              >
+                <Paperclip size={17} />
+              </button>
+              {group && !group.dm && (
+                <button
+                  type="button"
+                  aria-pressed={channelMode === "goal"}
+                  aria-label="Finish together"
+                  title="Finish together — the team keeps working until the goal is complete"
+                  onClick={() => {
+                    markDraftEdited(draftId);
+                    setChannelMode((current) => current === "goal" ? "chat" : "goal");
+                  }}
+                  className={cn(
+                    "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[13px] transition-colors",
+                    channelMode === "goal"
+                      ? "border-accent/35 bg-accent/10 text-accent"
+                      : "border-hairline/20 bg-transparent text-ink-secondary hover:bg-raised hover:text-ink",
+                  )}
+                >
+                  <Target size={14} aria-hidden="true" />
+                  Goal
+                </button>
+              )}
+              {autoBot && <PermissionModeSelector bot={autoBot} onSetAuto={setAuto} />}
+            </div>
+          )}
+          <div className="ml-auto flex items-center gap-1">
           {/* Inject is stop-then-steer made visible. The square stop would
               drain the same queue, so it yields while a send is waiting.
               Cancelling the ghost/chip brings Stop back. */}
@@ -864,6 +874,7 @@ export function Composer({
             {busy && !canSteer ? <Clock size={15} /> : <ArrowUp size={17} />}
           </button>
           )}
+          </div>
           </div>
         </div>
         </div>
