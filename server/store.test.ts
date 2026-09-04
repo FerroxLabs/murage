@@ -1716,3 +1716,99 @@ describe("a team's first lead", () => {
     expect(store.bot(kessler.id)!.chiefOfStaff).toBe(true);
   });
 });
+
+// Crash recovery for room goals. The orchestrator that drives a goal lives
+// only in memory, so a durable "working" card is a lie the moment the
+// process dies. reconcileInterruptedGroupGoals is what makes the transcript
+// honest again before any client reads it.
+describe("Store.reconcileInterruptedGroupGoals", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  const seedWorkingGoal = (store: Store, threadId: string, runId: string) =>
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "goal.run",
+      text: "Goal in progress: coordinating.",
+      goalRun: {
+        runId,
+        goal: "Ship the release notes",
+        status: "working",
+        coordinatorBotId: "lead-1",
+        coordinatorName: "Lead",
+        turnCount: 2,
+        maxTurns: 13,
+        startedAt: 1,
+      },
+    });
+
+  it("fails an orphaned working goal card that no scheduler run explains", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Launch team", [bot.id]);
+    const card = seedWorkingGoal(store, room.threadId, "orphan-run");
+
+    expect(store.reconcileInterruptedGroupGoals(undefined, "Murage restarted before this goal finished.", 99)).toBe(1);
+
+    const patched = store.messagesFor(room.threadId).find((message) => message.id === card.id);
+    expect(patched).toMatchObject({
+      text: "Goal failed: Murage restarted before this goal finished.",
+      goalRun: {
+        status: "failed",
+        detail: "Murage restarted before this goal finished.",
+        turnCount: 2,
+        finishedAt: 99,
+      },
+    });
+  });
+
+  it("prefers the scheduler's terminal truth over the fallback failure", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Launch team", [bot.id]);
+    const card = seedWorkingGoal(store, room.threadId, "scheduled-run");
+
+    const recovered = store.reconcileInterruptedGroupGoals((runId, threadId) =>
+      runId === "scheduled-run" && threadId === room.threadId
+        ? { status: "completed", detail: "The scheduled report shipped.", finishedAt: 6 }
+        : null,
+    );
+
+    expect(recovered).toBe(1);
+    expect(store.messagesFor(room.threadId).find((message) => message.id === card.id)).toMatchObject({
+      text: "Goal completed: The scheduled report shipped.",
+      goalRun: { status: "completed", detail: "The scheduled report shipped.", finishedAt: 6 },
+    });
+  });
+
+  it("leaves already-settled cards and threads no room owns alone", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Launch team", [bot.id]);
+    const settled = store.appendMessage(room.threadId, {
+      role: "bot",
+      kind: "goal.run",
+      text: "Goal completed: done already.",
+      goalRun: {
+        runId: "settled-run",
+        goal: "Already done",
+        status: "completed",
+        coordinatorBotId: "lead-1",
+        coordinatorName: "Lead",
+        turnCount: 3,
+        maxTurns: 13,
+        startedAt: 1,
+        finishedAt: 2,
+      },
+    });
+    // a direct bot thread is not a room thread: its card must not be touched
+    const stray = seedWorkingGoal(store, bot.threadId, "stray-run");
+
+    expect(store.reconcileInterruptedGroupGoals()).toBe(0);
+    expect(store.messagesFor(room.threadId).find((message) => message.id === settled.id)?.goalRun?.status)
+      .toBe("completed");
+    expect(store.messagesFor(bot.threadId).find((message) => message.id === stray.id)?.goalRun?.status)
+      .toBe("working");
+  });
+});

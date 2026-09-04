@@ -20,6 +20,7 @@ import {
 import { intakeChips, type IntakeCardData } from "../../shared/intake-turn.js";
 import { openLiveEvents, type LiveEventSourceLike, type LiveEventsPlatform } from "../lib/live-events";
 import { openerAt } from "../../shared/bot-openers.js";
+import type { RoutineRun } from "../lib/routines";
 
 type SnapshotFrame =
   | { kind: "hello"; resumed: boolean; cursor: string }
@@ -456,6 +457,51 @@ describe("cross-client bot creation", () => {
     });
 
     expect(greeted.bots[0]?.messages).toEqual([greeting]);
+  });
+});
+
+describe("routine receipt retention", () => {
+  const run = (id: string, scheduledFor: number, status: RoutineRun["status"]): RoutineRun => ({
+    id,
+    routineId: "routine",
+    routineName: "Check inbox",
+    target: "bot",
+    botId: "echo",
+    runOn: "ember",
+    scheduledFor,
+    status,
+    manual: false,
+    createdAt: scheduledFor,
+  });
+
+  it("trims finished history without hiding older active work", () => {
+    const waiting = run("waiting", 0, "waiting");
+    const history = Array.from({ length: 2_000 }, (_, index) =>
+      run(`finished-${index}`, index + 1, "completed"),
+    );
+
+    const hydrated = reducer(initialState, {
+      type: "routinesHydrated",
+      routines: [],
+      runs: [waiting, ...history],
+    });
+    expect(hydrated.routineRuns).toHaveLength(2_000);
+    expect(hydrated.routineRuns).toContainEqual(waiting);
+
+    const running = { ...waiting, status: "running" as const, startedAt: 2_000 };
+    const activePatched = reducer(hydrated, {
+      type: "routineRunPatched",
+      run: running,
+    });
+    expect(activePatched.routineRuns).toContainEqual(running);
+
+    const next = reducer(activePatched, {
+      type: "routineRunPatched",
+      run: run("newest", 2_001, "completed"),
+    });
+    expect(next.routineRuns).toHaveLength(2_000);
+    expect(next.routineRuns).toContainEqual(running);
+    expect(next.routineRuns[0]?.id).toBe("newest");
   });
 });
 
