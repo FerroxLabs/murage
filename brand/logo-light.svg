@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="560" height="96" viewBox="0 0 560 96" role="img" aria-labelledby="t">
-<!-- Murage brand mark. The swirl is lucide `galaxy` (ISC). Forge Orange
-     #ff6b35 is styles.css:122, the unmodified brand value. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="128" viewBox="0 0 620 128" role="img" aria-labelledby="t">
+<!-- Murage logo. The swirl is lucide `galaxy` (ISC), replacing the wings-and-flame
+     mark. Proportions measured off brand/MurageLogo-Dark.png so the new lockup sits
+     the way the old one did: mark height 1.43x cap height, gap 0.35x cap. -->
   <title id="t">Murage</title>
-  <rect width="96" height="96" rx="21.5" fill="#000000"/>
-  <g transform="translate(19.20 19.20) scale(2.40000)" fill="none" stroke="#ff6b35"
+  <g transform="translate(8.00 22.52) scale(3.60360)" fill="none" stroke="#ff6b35"
      stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
   <path d="M16.005 15.108a5.041 6.52 28.25 00-8.008-6.217 5.041 6.52 28.25 008.008 6.217A11.884 7.288-60.76 014.029 7.001"/>
     <path d="M17 21h.01"/>
@@ -11,9 +11,8 @@
     <path d="M7.997 8.891a11.885 7.288-60.756 0111.977 8.107"/>
     <circle cx="12" cy="12" r="1" fill="#ff6b35" stroke="none"/>
   </g>
-  <!-- Sora 800 is the heaviest weight the family ships. Kept as TEXT so the
-       wordmark stays selectable and re-weightable; the app self-hosts Sora.
-       For a context without the font, outline this before use. -->
-  <text x="128.6" y="70.6" font-family="Sora, sans-serif" font-weight="800"
-        font-size="69.1" letter-spacing="-1.5" fill="#111111">MURAGE</text>
+  <!-- Sora 800, the heaviest weight the family ships. Kept as TEXT so it stays
+       selectable; outline it for any context without Sora. -->
+  <text x="115.7" y="96.0" font-family="Sora, sans-serif" font-weight="800"
+        font-size="84.0" letter-spacing="-2" fill="#111111">MURAGE</text>
 </svg>
