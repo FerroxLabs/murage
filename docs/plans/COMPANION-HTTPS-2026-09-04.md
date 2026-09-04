@@ -166,3 +166,69 @@ The four production `flux-pool-r2-*` droplets are never touched.
    is degraded (Fix D).
 5. A remote tailnet device pairs over HTTPS and sends a message that appears
    in the desktop transcript. (L3)
+
+---
+
+# ADDENDUM — 2026-09-04 overnight
+
+## Shipped on this branch already
+
+| commit | what | controls |
+|---|---|---|
+| `5c6c3546` | PWA: manifest fetched with credentials; duplicate `/sw.js` route dropped | 2, both RED then green |
+| `8b20fe46` | Web: stop retrying a surface gate forever; `api()` now carries the status | 2, one exposed a hole in my own test |
+
+### The PWA bug, stated plainly
+The service worker was necessary and NOT sufficient. `<link rel="manifest">`
+without `crossorigin="use-credentials"` is fetched in omit mode, the door
+answers 401, and Chrome silently refuses to consider the site installable.
+Measured live while signed in: omit 401, same-origin 200, include 200.
+
+### A control that stayed green
+Reverting the `api()` status attachment did not fail
+`surface-refusal.test.ts`, because that file builds its own errors. Per our
+own rule -- a green control means the TEST is wrong -- `api-status.test.ts`
+was added to stub fetch and call `api()` for real. It now fails with
+"expected undefined to be 403" when the change is reverted.
+
+## Must fix before the sweep's staging branch is merged
+
+### M-1 | HIGH | `server/mcp-probe.ts:87-92` (on `sweep/mcp`)
+No `child.stdin.on("error")` listener; `write()` guards only synchronous
+throws. An unhandled stream 'error' event terminates the process, so a
+custom MCP server can kill the whole harness from the Test button.
+
+Measured on node v22.23.1 -- the trigger BOTH auditors gave was wrong:
+    child exits            -> ERR_STREAM_DESTROYED to the write callback, NO 'error' event
+    stdin destroyed        -> ERR_STREAM_DESTROYED to the write callback, NO 'error' event
+    child CLOSES STDIN and KEEPS RUNNING -> stdin 'error' EPIPE fires
+End-to-end repro of mcp-probe's exact listener shape exits 42 on an uncaught
+EPIPE. The probe writes three frames (initialize, notifications/initialized,
+tools/list), so a server that closes stdin after the handshake hits it.
+
+    child.stdin.on("error", () => finish({ ok: false, error: publicProbeError("closed") }));
+
+Test: fixture that does `exec 0<&-` then sleeps; assert the probe returns
+`{ ok: false }` and the process survives. Negative control: remove the
+listener, watch the test runner die rather than fail.
+
+### M-2 | MED | `src/components/PluginsPanel.tsx:516`
+`(["apps","mcp"] as const).map(...)` renders the MCP tab with no desktop
+check, on a surface where every backing route 404s by design. Same class as
+the retry loop fixed in `8b20fe46`.
+
+### R-1 | LOW | `server/index.ts:1682` (on `sweep/routines`)
+`GROUP_GOAL_WAIT_MAX_MS` floors at 1s with no ceiling. Node clamps a
+setTimeout delay above 2^31-1 to 1ms (measured), so a deliberately long wait
+becomes an instant timeout and every busy teammate reassigns immediately.
+Wrap in `Math.min(2_147_483_647, ...)`.
+
+## Still unproven, needs Sean
+- A genuinely remote device pairing over HTTPS. Same-host browser pairing IS
+  proven end to end tonight: POST /pairing minted code 113872, /enter signed
+  in over the ts.net name, the full app rendered, `isSecureContext: true` and
+  `crypto.randomUUID` live. What is NOT proven is a second physical device.
+  Needs an ephemeral tailnet auth key to stand up `murage-test-<id>`.
+- Does Ferrox own `murage.ai`? `DEFAULT_COMPANION_CONTROL_PLANE_URL` is
+  `https://accounts.murage.ai`, which does not resolve; the apex is parked on
+  Namecheap. Packaged builds send account OTPs and bearer tokens there.
