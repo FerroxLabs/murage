@@ -101,3 +101,43 @@ describe("the installable web app", () => {
     }
   });
 });
+
+describe("the service worker, without which none of the above fires", () => {
+  // Chrome does not offer to install a site that has no service worker. Every
+  // other piece of this contract was already correct and the app was still
+  // never installable on Android — `installInvite` returned "hidden" because
+  // `beforeinstallprompt` had never fired, and nothing anywhere said why.
+  //
+  // So the worker gets the same treatment as the manifest: asserted to exist,
+  // to be registered, to be reachable through the door, and to keep its hands
+  // off the harness.
+  const sw = readFileSync(join(root, "public/sw.js"), "utf8");
+
+  it("ships and has a fetch handler, which is the installability requirement", () => {
+    expect(existsSync(join(root, "public/sw.js"))).toBe(true);
+    expect(sw).toContain('addEventListener("fetch"');
+  });
+
+  it("is actually registered by the app, not merely present", () => {
+    // A worker nobody registers is a file, not a worker.
+    const entry = readFileSync(join(root, "src/main.tsx"), "utf8");
+    expect(entry).toContain("registerServiceWorker()");
+    const register = readFileSync(join(root, "src/lib/register-sw.ts"), "utf8");
+    expect(register).toContain('navigator.serviceWorker.register("/sw.js"');
+  });
+
+  it("can be fetched through the browser door", () => {
+    // Same default-deny allowlist as the manifest. A missing entry here 404s
+    // registration and the failure is completely silent.
+    const denial = denyReason({ method: "GET", path: "/sw.js", authenticated: true, surface: "browser" });
+    expect(denial, `the door refuses GET /sw.js: ${denial?.error}`).toBeNull();
+  });
+
+  it("never intercepts the harness", () => {
+    // A cached /api response is a stale bot roster or a replayed turn. The
+    // worker must fall through, and this asserts the guard rather than the
+    // intent behind it.
+    expect(sw).toContain('url.pathname.startsWith("/api/")');
+    expect(sw).toContain('request.method !== "GET"');
+  });
+});
