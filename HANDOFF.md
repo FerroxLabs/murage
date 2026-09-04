@@ -116,12 +116,12 @@ throughout. That is the argument for running it.
 |---|---|
 | **Fuigo as the shipped default engine** | LIVE. A new bot gets `instanceId: "fuigo"`, `model: "flux-auto"`. Verified by booting the harness, not by a test. 83 models. |
 | **Fuigo 1.0.4 bundled** | LIVE. Six targets pinned, scoped `@fuigo/*`, twelve digests. `build:fuigo` IS in the `package:prepare` chain, so packaging stages it. |
-| **Phone dictation (Groq STT)** | BUILT. Route + recorder + metering. UNPROVEN END TO END: the workspace key returns 402 `premium_locked` for transcription, so no real transcript has ever come back. |
+| **Phone dictation (Groq STT)** | **LIVE, proven end to end 2026-09-04.** `POST /api/voice/transcribe` returned a real transcript (`flux-voice-fast`, `billedSeconds: 10`). The earlier 402 was a dogfood key, not a plan limit — see `docs/plans/FLUX-CHECKIN-2026-09-04.md`. |
 | **Paste-and-extract keys** | LIVE in Settings. Plaintext never enters React state. |
 | **Intake matcher** | LIVE. 264 ordinary-English terms removed, 391ms -> 5.4ms, 26/27 measured queries. |
 | **Brand: icon, engine mark, wordmark** | LIVE. Every artefact regenerated from one 921-byte vector. |
 | **Composio behind Flux** | CLEARED to build, not built. Terms question closed; the work is Flux-side. |
-| **Image generation tool** | BLOCKED on Flux. Re-probed 2026-09-04: `/v1/models` still lacks `capability`/`display_name`/`list_price_microcents`/`entitlement`. |
+| **Image generation tool** | UNBLOCKED, not started. `/v1/models` now carries `capability`/`display_name`/`list_price_microcents`/`entitlement`, and generation returns 200 (1024x1024 PNG) on the paid key. Caveat: `entitlement` is a constant `"open"` until flux-router ships the per-key fix, so do not gate the picker on it yet. |
 
 ## IF YOU ARE PUBLISHING A VERSION — read this first
 
@@ -155,7 +155,9 @@ exists because of — read that header before changing anything in it.
   `flux-auto` is refused at spawn with a message telling them to buy a Flux key
   they do not need. Written up under THE FUIGO LOGIN GAP below. **This is the
   most likely first-run complaint.**
-- Voice typing and image generation both answer 402 on a free Flux plan. The
+- Voice typing and image generation both answer 402 on an INTERNAL/dogfood Flux
+  key, which is not a plan limit and was the source of a day of wrong diagnosis.
+  On the paid key both return 200. Check `FLUX_API_KEY` before believing a 402. The
   copy is honest about it ("the key is fine, the plan does not cover it yet"),
   but neither has ever been seen working end to end from this repo.
 - 19 catalogue slugs declare zero skills and can never be suggested.
@@ -235,7 +237,8 @@ owned_by`. Flux reports Request 1 as built, route wiring left.
 - **`flux-image-nano-banana-pro-2k` DOES NOT EXIST** and would 400 for every
   caller. The live arms are `-pro` and `-pro-4k`. The old price table is wrong.
 - `flux-image-together-flux` is retired but STILL ADVERTISED in `/v1/models`.
-- **Image generation answers `402 premium_locked` on our key.** So
+- **Image generation answered `402 premium_locked` on the DOGFOOD key** (resolved
+  2026-09-04: it is 200 on the paid key). So
   `premium_locked` is the FIRST thing a new user hits, not an edge case. Reuse
   the vocabulary `server/voice/flux-voice.ts` already established for the same
   distinction — the key is fine, the plan is not.
