@@ -122,6 +122,13 @@ import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
 import { fluxSelectionRefusal } from "./flux-surface.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
+import {
+  MAX_MCP_SERVERS,
+  listMcpServers,
+  parseMcpServerMutation,
+  parseStoredMcpServer,
+} from "./mcp-registry.ts";
+import { probeMcpServer } from "./mcp-probe.ts";
 import { buildNotification, type Notification } from "./notify.ts";
 import {
   isEffortLevel,
@@ -5766,6 +5773,20 @@ function configStatus() {
   };
 }
 
+/** Environment NAMES only — a configured value never leaves this process. */
+function mcpServerResponse() {
+  return { servers: listMcpServers(cfg.mcpServers) };
+}
+
+function persistMcpServers(next: Record<string, unknown>): void {
+  saveConfig({ mcpServers: next });
+  // Do not reload the provider fleet: integrations are assembled from cfg at
+  // the next turn boundary. Updating this property directly also correctly
+  // clears the final entry; Object.assign(loadConfig()) would leave it stale
+  // when an empty section is omitted by an older config file.
+  cfg.mcpServers = next;
+}
+
 /** Rebuild the provider fleet after a config change so new keys take
  * effect without a server restart (kills any in-flight turns). */
 async function reloadProviders() {
@@ -5809,6 +5830,12 @@ async function reloadProviders() {
 // and reload sequence single-flight so two settings requests cannot drop one
 // another's changes or dispose a fleet while another reload is creating it.
 let providerConfigBusy = false;
+
+// The custom MCP registry is read-modify-written the same way, and a probe
+// spawns a process, so both are bounded.
+let mcpConfigBusy = false;
+const MAX_CONCURRENT_MCP_PROBES = 2;
+let mcpProbesInFlight = 0;
 
 /** Catalog entries for ranked team search, memoised.
  *
@@ -10185,6 +10212,124 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { instances: await registry.describe() });
       } finally {
         providerConfigBusy = false;
+      }
+    }
+
+    // ── custom MCP servers (stdio, local, secrets write-only) ──
+    //
+    // Every one of these six is desktop-only. An mcpServers entry is a
+    // command line that every capable bot spawns as a tool server on its next
+    // turn, so writing one is remote code execution with one request — the
+    // same class as /api/cli-test and the local-VM lifecycle routes — and the
+    // /test route spawns it immediately. 404 rather than 403 so a caller
+    // cannot learn from the status code that there is anything here.
+    //
+    // The read is gated too. It reports each server's command line and the
+    // NAMES of its configured secrets, which is a map of what is worth
+    // attacking; a phone has no MCP settings UI, so nothing legitimate loses
+    // anything by the closed door. Upstream gates these through the scope
+    // table we rejected (79b0ff55), so a port of theirs arrives ungated here.
+    const mcpTest = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]{0,31})\/test$/.exec(path);
+    const mcpServerRoute = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]{0,31})$/.exec(path);
+    const mcpRouteMatched = (path === "/api/mcp/servers" && (method === "GET" || method === "POST"))
+      || (mcpTest !== null && method === "POST")
+      || (mcpServerRoute !== null && (method === "PUT" || method === "PATCH" || method === "DELETE"));
+    if (mcpRouteMatched && requestSurface(req.headers, url.searchParams) !== "desktop") {
+      return json(res, 404, { error: "no such route" });
+    }
+
+    if (method === "GET" && path === "/api/mcp/servers") {
+      return json(res, 200, mcpServerResponse());
+    }
+
+    if (method === "POST" && mcpTest) {
+      const raw = cfg.mcpServers?.[mcpTest[1]];
+      if (raw === undefined) return json(res, 404, { error: "MCP server not found." });
+      const parsed = parseStoredMcpServer(mcpTest[1], raw);
+      if (!parsed.ok) return json(res, 400, { error: parsed.error });
+      if (mcpProbesInFlight >= MAX_CONCURRENT_MCP_PROBES) {
+        return json(res, 429, { error: "Two MCP connection tests are already running." });
+      }
+      const controller = new AbortController();
+      const disconnect = () => {
+        if (!res.writableEnded) controller.abort();
+      };
+      res.once("close", disconnect);
+      mcpProbesInFlight += 1;
+      try {
+        return json(res, 200, await probeMcpServer(parsed.server, undefined, controller.signal));
+      } finally {
+        res.off("close", disconnect);
+        mcpProbesInFlight -= 1;
+      }
+    }
+
+    if (method === "POST" && path === "/api/mcp/servers") {
+      // same non-simple-request gate as the local-VM lifecycle routes: this
+      // decides what gets executed, so a hostile page must not be able to
+      // submit it as a simple text/plain cross-origin request
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
+      mcpConfigBusy = true;
+      try {
+        const body = await readBody(req);
+        const name = typeof body?.name === "string" ? body.name : "";
+        const current = cfg.mcpServers ?? {};
+        if (Object.hasOwn(current, name)) return json(res, 409, { error: "An MCP server with that name already exists." });
+        if (Object.keys(current).length >= MAX_MCP_SERVERS) {
+          return json(res, 400, { error: `You can add at most ${MAX_MCP_SERVERS} MCP servers.` });
+        }
+        const parsed = parseMcpServerMutation(name, {
+          command: body?.command,
+          args: body?.args,
+          env: body?.env,
+          enabled: body?.enabled,
+        });
+        if (!parsed.ok) return json(res, 400, { error: parsed.error });
+        persistMcpServers({ ...current, [name]: parsed.server });
+        return json(res, 201, mcpServerResponse());
+      } finally {
+        mcpConfigBusy = false;
+      }
+    }
+
+    if (mcpServerRoute && ["PUT", "PATCH", "DELETE"].includes(method)) {
+      if (method !== "DELETE" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
+      mcpConfigBusy = true;
+      try {
+        const name = mcpServerRoute[1];
+        const current = cfg.mcpServers ?? {};
+        if (!Object.hasOwn(current, name)) return json(res, 404, { error: "MCP server not found." });
+        if (method === "DELETE") {
+          const next = { ...current };
+          delete next[name];
+          persistMcpServers(next);
+          return json(res, 200, mcpServerResponse());
+        }
+
+        const existing = parseStoredMcpServer(name, current[name]);
+        if (!existing.ok) return json(res, 400, { error: existing.error });
+        const body = await readBody(req);
+        if (method === "PATCH") {
+          if (!body || typeof body !== "object" || Array.isArray(body)
+            || Object.keys(body).length !== 1 || typeof body.enabled !== "boolean") {
+            return json(res, 400, { error: "Only an enabled boolean can be changed here." });
+          }
+          persistMcpServers({ ...current, [name]: { ...existing.server, enabled: body.enabled } });
+          return json(res, 200, mcpServerResponse());
+        }
+
+        const parsed = parseMcpServerMutation(name, body, existing.server);
+        if (!parsed.ok) return json(res, 400, { error: parsed.error });
+        persistMcpServers({ ...current, [name]: parsed.server });
+        return json(res, 200, mcpServerResponse());
+      } finally {
+        mcpConfigBusy = false;
       }
     }
 
