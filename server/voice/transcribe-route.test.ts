@@ -19,8 +19,10 @@ import {
   TRANSCRIBE_PATH,
   containerOf,
   filenameFor,
+  BILLED_SECONDS_FLOOR,
   BUDGET_MAX_BILLED_SECONDS,
   BUDGET_MAX_REQUESTS,
+  estimateBilledSeconds,
   BUDGET_WINDOW_MS,
   MAX_CLIP_BYTES,
   createVoiceBudget,
@@ -202,6 +204,45 @@ describe("what the route sends to Flux", () => {
       model: "flux-voice-fast",
       billedSeconds: 4,
     });
+  });
+});
+
+describe("the 10-second billing floor", () => {
+  // Flux bills `max(seconds, 10)` at 1667 microcents an audio-second —
+  // confirmed against the live service 2026-09-04, where a one-second clip
+  // came back `x-flux-billed-seconds: 10` and `x-flux-cost-usd: 0.016670`.
+  //
+  // Both fallbacks below used to charge the clip's own length. Push-to-talk
+  // produces short clips almost exclusively, so the budget under-counted real
+  // spend by up to 10x on the traffic shape this route exists to serve.
+
+  it("never estimates below the floor, however small the clip", () => {
+    // 300 bytes is a tenth of a second of audio. Before the fix this returned
+    // 1, and the budget believed a burst of them was a tenth of its true cost.
+    expect(estimateBilledSeconds(300)).toBe(BILLED_SECONDS_FLOOR);
+    expect(estimateBilledSeconds(1)).toBe(BILLED_SECONDS_FLOOR);
+    // Above the floor the real size still governs: 60_000 bytes is 20 seconds.
+    expect(estimateBilledSeconds(60_000)).toBe(20);
+  });
+
+  it("charges the floor when Flux reports a duration but no billed seconds", async () => {
+    // A 3.2s clip. Flux would bill 10; the route used to charge 4 because it
+    // rounded the duration and stopped there.
+    answer = { ok: { text: "ship it", duration: 3.2, model: "flux-voice-fast" } };
+    const charged: number[] = [];
+    budget = { begin: () => ({ ok: true as const, done: (seconds: number) => charged.push(seconds) }) };
+    expect((await post(CLIP)).status).toBe(200);
+    expect(charged).toEqual([BILLED_SECONDS_FLOOR]);
+  });
+
+  it("still trusts what Flux says it billed, floor or not", async () => {
+    // `billedSeconds` is the authority: it already carries the floor upstream,
+    // so the route must not re-apply or second-guess it.
+    answer = { ok: { text: "ship it", duration: 3.2, model: "flux-voice-fast", billedSeconds: 42 } };
+    const charged: number[] = [];
+    budget = { begin: () => ({ ok: true as const, done: (seconds: number) => charged.push(seconds) }) };
+    expect((await post(CLIP)).status).toBe(200);
+    expect(charged).toEqual([42]);
   });
 });
 
