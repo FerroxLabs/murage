@@ -15,6 +15,12 @@ import { mergeLocalInject } from "./local-inject.ts";
 export const STATIC_CODEX_MODELS: ModelCatalog = {
   default: "gpt-5.6-sol",
   options: [
+    // gpt-6-astra: OpenAI's id, from developers.openai.com/api/docs/models and
+    // the Sep 3 2026 changelog entry. Listed first because it is the newest;
+    // NOT the default because it is rolling out through the Trusted Access
+    // Program and most keys cannot run it yet -- a default that 404s is worse
+    // than one that is merely a version behind.
+    { id: "gpt-6-astra", label: "GPT-6 Astra" },
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
