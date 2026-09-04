@@ -1,6 +1,6 @@
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, Square, Target, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
@@ -19,6 +19,13 @@ import {
 import { BotAvatar } from "./Avatar";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { QueuedComposerMessages } from "./ComposerQueuedMessages";
+import { skillRecorderEnabled } from "@/lib/feature-flags";
+import {
+  composerSlashTrigger,
+  goalTextFromComposer,
+  replaceComposerSlashTrigger,
+  type ComposerSlashCommand,
+} from "@/lib/composer-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
   appendPastedText,
@@ -52,6 +59,18 @@ function mentionQueryAt(text: string, caret: number): { start: number; query: st
 }
 
 type MentionChoice = { id: string; name: string; bot?: Bot };
+
+const GOAL_COMMAND: ComposerSlashCommand = {
+  id: "goal",
+  label: "/goal",
+  description: "Keep a team working until the goal is complete",
+};
+
+const LEARN_COMMAND: ComposerSlashCommand = {
+  id: "learn",
+  label: "/learn",
+  description: "Teach a reusable workflow from this conversation",
+};
 
 interface ComposerDraftSnapshot extends ComposerSendSnapshot {
   reply: Message | null;
@@ -267,6 +286,7 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
+  const [dismissedSlashAt, setDismissedSlashAt] = useState<number | null>(null); // Esc'd this /
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
@@ -287,7 +307,42 @@ export function Composer({
     const responders = roomRespondersForComposer(message, members ?? [], group);
     return responders.length > 0 && responders.every(botSupportsImages);
   };
-  const engineSupportsImages = imageTargetsSupport(text, channelMode);
+  // A typed "/goal …" IS Goal mode — the same send, reached by keyboard. The
+  // draft keeps the literal text (so the chip can un-type it), and everything
+  // downstream reads the effective pair instead.
+  const typedGoalText = group && !group.dm ? goalTextFromComposer(text) : null;
+  const effectiveText = typedGoalText ?? text;
+  const effectiveChannelMode = typedGoalText !== null ? "goal" : channelMode;
+  const engineSupportsImages = imageTargetsSupport(effectiveText, effectiveChannelMode);
+
+  // ── slash command menu (configure the whole send) ────────────────────
+  const slash = composerSlashTrigger(text, caret);
+  const commandCandidates = useMemo(() => {
+    if (!slash || slash.start === dismissedSlashAt) return [];
+    const supportsAgents = (candidate?: Bot) =>
+      Boolean(
+        candidate &&
+          state.instances.find(
+            (instance) => instance.instanceId === candidate.modelSelection.instanceId,
+          )?.capabilities?.agentsMcp,
+      );
+    const available: ComposerSlashCommand[] = [];
+    if (group && !group.dm) available.push(GOAL_COMMAND);
+    if (
+      skillRecorderEnabled(state.config) &&
+      (group ? (members ?? []).some(supportsAgents) : supportsAgents(bot))
+    ) {
+      available.push(LEARN_COMMAND);
+    }
+    const query = slash.query.toLowerCase();
+    return available.filter(
+      (command) =>
+        !query ||
+        command.id.startsWith(query) ||
+        command.description.toLowerCase().includes(query),
+    );
+  }, [slash, dismissedSlashAt, group, members, bot, state.config, state.instances]);
+  const commandPickerOpen = commandCandidates.length > 0;
 
   // ── @mention picker (tag another bot; the agent reaches it via ask_bot) ──
   const mention = mentionQueryAt(text, caret);
@@ -307,9 +362,12 @@ export function Composer({
     if (mention.query.endsWith(" ") && pool.some((b) => b.name.toLowerCase() === q)) return [];
     return pool.filter((b) => !q || b.name.toLowerCase().includes(q)).slice(0, 6);
   }, [mention, dismissedAt, state.bots, bot?.id, group, members]);
-  const pickerOpen = candidates.length > 0;
+  const mentionPickerOpen = candidates.length > 0;
 
-  useEffect(() => setHighlight(0), [mention?.start, mention?.query]);
+  useEffect(
+    () => setHighlight(0),
+    [mention?.start, mention?.query, slash?.start, slash?.query],
+  );
 
   // one line at rest, then grow with the draft — hard cap at six lines
   useEffect(() => {
@@ -333,6 +391,22 @@ export function Composer({
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(newCaret, newCaret);
+    });
+  };
+
+  const pickCommand = (command: ComposerSlashCommand) => {
+    if (!slash) return;
+    // /goal leaves NO text behind: the mode is the chip, and the draft is
+    // just the goal. /learn stays literal because the harness reads it.
+    const replacement = command.id === "learn" ? "/learn " : "";
+    const next = replaceComposerSlashTrigger(text, slash, replacement);
+    editText(next.text);
+    setCaret(next.caret);
+    setDismissedSlashAt(slash.start);
+    setChannelMode(command.id === "goal" ? "goal" : "chat");
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next.caret, next.caret);
     });
   };
 
@@ -376,7 +450,7 @@ export function Composer({
     dispatch({ type: "updateBot", botId: autoBot.id, patch: { autoApprove: auto } });
   };
 
-  const hasContent = Boolean(text.trim()) || attachments.length > 0;
+  const hasContent = Boolean(effectiveText.trim()) || attachments.length > 0;
   const retryFailedSend = (failed: FailedComposerSend) => {
     const failedMode = failed.channelMode ?? "chat";
     if (failed.requestText.includes("<attached-image ") && !imageTargetsSupport(failed.requestText, failedMode)) {
@@ -408,11 +482,14 @@ export function Composer({
   };
   const send = () => {
     if (locked) return;
-    if (attachments.some((attachment) => attachment.kind === "image") && !imageTargetsSupport(text, channelMode)) {
+    if (
+      attachments.some((attachment) => attachment.kind === "image") &&
+      !imageTargetsSupport(effectiveText, effectiveChannelMode)
+    ) {
       dispatch({ type: "error", message: "The selected responder does not support image attachments." });
       return;
     }
-    const t = composeMessage(text, attachments);
+    const t = composeMessage(effectiveText, attachments);
     if (!t) return;
     const sentDraft: ComposerDraftSnapshot = {
       draftId,
@@ -424,7 +501,7 @@ export function Composer({
       reply: replyTo ?? null,
       replyToId: replyTo?.id,
       threadId,
-      channelMode: group ? channelMode : undefined,
+      channelMode: group ? effectiveChannelMode : undefined,
     };
     if (group) {
       dispatch({
@@ -434,10 +511,10 @@ export function Composer({
         sendId: sentDraft.sendId,
         replyToId: replyTo?.id,
         threadId,
-        mode: channelMode,
+        mode: effectiveChannelMode,
         onError: () => restoreDraft(sentDraft),
       });
-      track("message_sent", { room: true, mode: channelMode, queued: busy });
+      track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
       // A SETUP QUESTION ON THE TABLE TAKES THE ANSWER.
       //
@@ -556,7 +633,47 @@ export function Composer({
             </button>
           </div>
         ))}
-        {pickerOpen && (
+        {commandPickerOpen && (
+          <div
+            role="listbox"
+            aria-label="Composer commands"
+            className="absolute bottom-full left-2 z-20 mb-2 w-80 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
+          >
+            <div className="border-b border-hairline/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
+              Commands
+            </div>
+            {commandCandidates.map((command, index) => (
+              <button
+                key={command.id}
+                type="button"
+                role="option"
+                aria-selected={index === highlight}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => pickCommand(command)}
+                onMouseEnter={() => setHighlight(index)}
+                className={cn(
+                  "flex w-full items-center gap-3 px-3 py-2.5 text-left",
+                  index === highlight ? "bg-raised-hover" : "",
+                )}
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  {command.id === "goal" ? (
+                    <Target size={15} aria-hidden="true" />
+                  ) : (
+                    <BookOpen size={15} aria-hidden="true" />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[14px] font-medium text-accent">{command.label}</span>
+                  <span className="block truncate text-xs text-ink-secondary">
+                    {command.description}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {mentionPickerOpen && (
           <div
             role="listbox"
             aria-label="Tag a bot"
@@ -668,6 +785,7 @@ export function Composer({
             editText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
             setDismissedAt(null);
+            setDismissedSlashAt(null);
           }}
           onPaste={(e) => {
             // an image from the clipboard becomes an uploaded attachment —
@@ -708,7 +826,27 @@ export function Composer({
           onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => {
-            if (pickerOpen) {
+            if (commandPickerOpen) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const delta = e.key === "ArrowDown" ? 1 : -1;
+                setHighlight((current) =>
+                  (current + delta + commandCandidates.length) % commandCandidates.length,
+                );
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickCommand(commandCandidates[highlight]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setDismissedSlashAt(slash?.start ?? null);
+                return;
+              }
+            }
+            if (mentionPickerOpen) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
                 const delta = e.key === "ArrowDown" ? 1 : -1;
@@ -781,22 +919,36 @@ export function Composer({
               {group && !group.dm && (
                 <button
                   type="button"
-                  aria-pressed={channelMode === "goal"}
+                  aria-pressed={effectiveChannelMode === "goal"}
                   aria-label="Finish together"
                   title="Finish together — the team keeps working until the goal is complete"
                   onClick={() => {
                     markDraftEdited(draftId);
+                    // Typed "/goal …" and pressed the lit chip: that reads as
+                    // "no, not a goal", so un-type the command rather than
+                    // leaving a lit chip the draft still contradicts.
+                    if (typedGoalText !== null) {
+                      const nextCaret = Math.max(0, caret - (text.length - typedGoalText.length));
+                      editText(typedGoalText);
+                      setCaret(nextCaret);
+                      setChannelMode("chat");
+                      requestAnimationFrame(() => {
+                        inputRef.current?.focus();
+                        inputRef.current?.setSelectionRange(nextCaret, nextCaret);
+                      });
+                      return;
+                    }
                     setChannelMode((current) => current === "goal" ? "chat" : "goal");
                   }}
                   className={cn(
                     "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[13px] transition-colors",
-                    channelMode === "goal"
+                    effectiveChannelMode === "goal"
                       ? "border-accent/35 bg-accent/10 text-accent"
                       : "border-hairline/20 bg-transparent text-ink-secondary hover:bg-raised hover:text-ink",
                   )}
                 >
                   <Target size={14} aria-hidden="true" />
-                  Goal
+                  {effectiveChannelMode === "goal" ? "/goal" : "Goal"}
                 </button>
               )}
               {autoBot && <PermissionModeSelector bot={autoBot} onSetAuto={setAuto} />}
