@@ -149,7 +149,7 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { searchMessages } from "./message-db.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -262,6 +262,8 @@ import {
   type BrowserConnection,
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
+import { decodeGeneratedImage } from "./generated-image.ts";
+import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
 import { scoutProject, suggestTeam } from "./project-scout.ts";
@@ -543,6 +545,21 @@ type DirectTurnDispatchClaim = {
 class DirectTurnSetupCancelled extends Error {}
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directTurnGenerationByBot = new Map<string, string>();
+
+/** Images a provider turn has produced but not yet attached to a message.
+ * The bytes land on disk as they arrive and are folded onto the turn's
+ * terminal assistant message at turn.completed, so a turn that emits an
+ * image and then keeps talking still ends up with one message carrying
+ * both. Keyed per thread AND provider turn: two turns on one thread must
+ * never inherit each other's staging. */
+const generatedImagesByTurn = new Map<
+  string,
+  Array<NonNullable<Message["attachments"]>[number]>
+>();
+
+function generatedImageTurnKey(threadId: string, turnId?: string): string {
+  return `${threadId}:${turnId ?? "active"}`;
+}
 const retiredProviderTurns = new RetiredTurnRegistry();
 const pendingCancelledProviderHandshakes = new PendingTurnCancellations();
 
@@ -556,6 +573,16 @@ function clearCancelledProviderHandshake(threadId: string, ownerId: string): voi
 
 function retireProviderTurn(turnId: string): void {
   retiredProviderTurns.retire(turnId);
+  // A stopped/replaced turn is never folded again. Delete only image files
+  // that were staged for that exact provider turn so unattached output does
+  // not accumulate invisibly on disk.
+  for (const [key, attachments] of generatedImagesByTurn) {
+    if (!key.endsWith(`:${turnId}`)) continue;
+    generatedImagesByTurn.delete(key);
+    for (const attachment of attachments) {
+      try { unlinkSync(attachment.path); } catch { /* already gone */ }
+    }
+  }
 }
 
 function shouldIgnoreProviderEvent(event: RuntimeEvent): boolean {
@@ -1801,6 +1828,13 @@ bus.subscribe((event: RuntimeEvent) => {
     if (goalCoordinatorTurn && !goalCoordinatorTurn.discard) goalCoordinatorTurn.assistantItems.push(event.text);
     return;
   }
+  // Goal coordinators speak a private control envelope. Their incidental
+  // artifacts are private too; never leak one into the public room.
+  if (
+    event.type === "item.completed" &&
+    event.itemType === "assistant_image" &&
+    (goalCoordinatorTurn || ambiguousCoordinatorText)
+  ) return;
   if (
     event.type === "content.delta" &&
     event.streamKind === "assistant_text" &&
@@ -1822,8 +1856,11 @@ bus.subscribe((event: RuntimeEvent) => {
     };
     broadcast({ kind: "runtime", event: publicAssistantEvent });
   }
-  broadcast({ kind: "runtime", event });
-  const routineRun = routines?.handleRuntimeEvent(event) ?? null;
+  const privateImageEvent = event.type === "item.completed" && event.itemType === "assistant_image";
+  // The durable message patch below is the public frame. Sending raw base64
+  // through runtime SSE would multiply large bytes across every app window.
+  if (!privateImageEvent) broadcast({ kind: "runtime", event });
+  const routineRun = privateImageEvent ? null : (routines?.handleRuntimeEvent(event) ?? null);
   const bot = store.botByThread(event.threadId);
   const group = bot ? undefined : store.groupByThread(event.threadId);
   if (!bot && !group) return;
@@ -1852,6 +1889,24 @@ bus.subscribe((event: RuntimeEvent) => {
         // kept so "finished" can say what it finished with, rather than
         // just that something ended
         lastReply.set(event.threadId, text);
+      } else if (event.itemType === "assistant_image") {
+        try {
+          const decoded = decodeGeneratedImage(event.data);
+          const saved = saveImage(decoded.bytes, decoded.mime);
+          const key = generatedImageTurnKey(event.threadId, event.turnId);
+          const current = generatedImagesByTurn.get(key) ?? [];
+          current.push({ kind: "image", path: saved.path, mime: saved.mime });
+          generatedImagesByTurn.set(key, current);
+        } catch (error) {
+          pushMessage({
+            role: "bot",
+            kind: "activity",
+            tool: {
+              name: `generated image could not be attached — ${error instanceof Error ? error.message : "invalid image"}`.slice(0, 160),
+              ok: false,
+            },
+          });
+        }
       } else if (event.itemType === "tool" && event.itemId) {
         const itemKey = `${event.threadId}:${event.itemId}`;
         const messageId = toolMessageByItem.get(itemKey);
@@ -1869,9 +1924,15 @@ bus.subscribe((event: RuntimeEvent) => {
         // the bot just acted ON ITS SCREEN — refresh the preview now. Only
         // computer tools can change the screen, and each capture competes
         // with the agent for the box's command endpoint, so a bot grinding
-        // through file edits must not trigger one per tool.
-        if (bot && /computer|screenshot|click|type_text|press_key|scroll|open_url|wait_for|browser_/i.test(toolName)) {
-          pokeScreenPoller(bot.id);
+        // through file edits must not trigger one per tool. The refresh is
+        // deliberately broad (a computer_exec may well have launched a
+        // window); whether the turn has EARNED a settled screenshot is the
+        // narrower question, and only the allow-list answers it.
+        if (bot) {
+          const touches = screenTouchingTool(toolName);
+          if (touches || /computer|screenshot|click|type_text|press_key|scroll|open_url|wait_for|browser_/i.test(toolName)) {
+            pokeScreenPoller(bot.id, touches);
+          }
         }
       }
       break;
@@ -2124,6 +2185,32 @@ bus.subscribe((event: RuntimeEvent) => {
       turnUsage.set(event.threadId, { input: event.input, output: event.output, cachedInput: event.cachedInput });
       break;
     case "turn.completed": {
+      const generatedKey = generatedImageTurnKey(event.threadId, event.turnId);
+      const generated = generatedImagesByTurn.get(generatedKey) ?? [];
+      generatedImagesByTurn.delete(generatedKey);
+      if (generated.length) {
+        const response = [...store.messagesFor(event.threadId)].reverse().find(
+          (message) =>
+            message.role === "bot" &&
+            message.kind === "text" &&
+            message.turnId === completedTurnId,
+        );
+        if (response) {
+          store.patchMessage(event.threadId, response.id, {
+            attachments: [...(response.attachments ?? []), ...generated],
+          });
+        } else {
+          // Some image turns have no textual epilogue. Keep the image as the
+          // terminal assistant response instead of inventing model words.
+          pushMessage({
+            role: "bot",
+            kind: "text",
+            text: "",
+            attachments: generated,
+            turnId: completedTurnId,
+          });
+        }
+      }
       if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId);
       const reply = lastReply.get(event.threadId) ?? "";
       lastReply.delete(event.threadId);
@@ -2176,7 +2263,7 @@ bus.subscribe((event: RuntimeEvent) => {
           // it arrives — otherwise the user's next message ends up stranded
           // above the screenshot (the browser-mode ordering bug).
           const settleLeafId = store.activePath(event.threadId).at(-1)?.id;
-          void finalScreenFrame(bot.id).then((frame) => {
+          void finalScreenFrame(bot.id, event.threadId).then((frame) => {
             // the bot may have been deleted while the capture ran
             if (frame && store.bot(bot.id)) {
               if (group) pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
@@ -2225,6 +2312,8 @@ const delegationWatch = new Map<string, {
   toBotName?: string;
   taskId?: string;
   sourceThreadId?: string;
+  /** when the delegated turn was dispatched — elapsed time for status checks */
+  startedAtMs?: number;
 }>();
 
 // Provider-native sessions only know about messages produced inside their
@@ -2380,6 +2469,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
         toBotName: target?.name,
         taskId,
         sourceThreadId,
+        startedAtMs: Date.now(),
       });
     }
     let failureReported = false;
@@ -2529,7 +2619,8 @@ const SCREEN_MIN_GAP_MS = 3000;
 
 /** `screenIsTheWork` starts the turn already counting as screen usage: a
  * boxAgent's whole session runs ON the box, so every tool it calls acts on
- * that screen even though none of them is named like a computer tool. */
+ * that screen even though none of them is named like a computer tool. Its
+ * shell-only turns are kept honest by the settle-time hash gate instead. */
 function startScreenPoller(
   botId: string,
   capture: () => Promise<{ png: string; format: string }>,
@@ -2583,13 +2674,17 @@ function startScreenPoller(
  * instead of waiting for the next interval tick. Rate-limited inside
  * capture() — a tool-heavy turn used to fire one full REST chain per
  * completed tool, competing with the agent for the same endpoint. */
-function pokeScreenPoller(botId: string) {
+function pokeScreenPoller(botId: string, touches: boolean) {
   const entry = screenPollers.get(botId);
   if (!entry) return;
   // the same signal, read twice: a completed computer tool is both the
-  // reason to refresh the preview NOW and the proof that this turn's
-  // final frame is worth settling into the transcript
-  entry.touched = true;
+  // reason to refresh the preview NOW and — when it acted on or looked at
+  // the screen — the proof that this turn's final frame is worth settling
+  // into the transcript. A shell command or a status read earns only the
+  // refresh: under the Claude driver every tool of the computer server is
+  // named mcp__computer__*, and matching that alone used to append an
+  // untouched desktop to every curl-and-answer reply.
+  if (touches) entry.touched = true;
   void entry.capture();
 }
 
@@ -2600,20 +2695,41 @@ function stopScreenPoller(botId: string) {
   screenPollers.delete(botId);
 }
 
+/** sha256 of the frame each bot last settled into a transcript — the
+ * comparison the hash gate needs is "this turn's end state against what
+ * the reader can already see". Keyed per bot (one physical screen, however
+ * many threads it reports into); a cold entry is seeded from the thread's
+ * newest screen message so a restart does not re-picture the same idle
+ * desktop either. */
+const settledScreenHashes = new Map<string, string>();
+
+function shownScreenHash(botId: string, threadId: string): string | undefined {
+  const known = settledScreenHashes.get(botId);
+  if (known) return known;
+  const shown = store.messagesFor(threadId).findLast((m) => m.kind === "screen" && Boolean(m.png));
+  return shown?.png ? screenFrameHash(shown.png) : undefined;
+}
+
 /** Turn end: stop polling, then take ONE last fresh frame (awaiting any
  * in-flight poke first) so the settled screenshot shows the screen's actual
  * end state, not the previous action's. A turn that never touched the
  * screen settles nothing — and skips the capture, which is one less
- * command on the box's single endpoint. Either way the poller is torn down
- * here, so no per-turn state survives the turn. */
-async function finalScreenFrame(botId: string): Promise<Frame | null> {
+ * command on the box's single endpoint. A frame the reader can already see
+ * settles nothing either: the boxAgent pre-touch counts every turn as
+ * screen work, so without this its shell-only replies would all end in the
+ * same idle desktop. Either way the poller is torn down here, so no
+ * per-turn state survives the turn. */
+async function finalScreenFrame(botId: string, threadId: string): Promise<Frame | null> {
   const entry = screenPollers.get(botId);
   if (!entry) return null;
   if (entry.timer) clearInterval(entry.timer);
   screenPollers.delete(botId);
   if (!entry.touched) return null;
   await entry.capture();
-  return entry.last;
+  const frame = entry.last;
+  if (!frame || !settledFrameIsNews(shownScreenHash(botId, threadId), frame.png)) return null;
+  settledScreenHashes.set(botId, screenFrameHash(frame.png));
+  return frame;
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
@@ -3226,6 +3342,27 @@ async function startTurn(
         kind: "activity",
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
+      // Worth a buzz for the same reason a routine failure is, and the rule
+      // notify.ts encodes: the bot is not working, and the cause is usually
+      // a setting only a person can change — an unattended user would
+      // otherwise learn nothing until they next opened the thread.
+      //
+      // Only for a turn the person started themselves, which is the same
+      // three-part test the unattended window uses at :2695. A routine
+      // reaches this same catch and then reports through onDispatchError,
+      // which raises routine-failed; buzzing here too would ring twice for
+      // one failure. A delegated sub-turn is reported to the bot that asked
+      // for it, in its own thread, so it does not need a second channel. And
+      // a card continuation is a resume the person is already looking at —
+      // the card itself carries the error.
+      //
+      // The body is redacted: a dispatch failure can carry a provider's
+      // verbatim stderr, and this one goes to an OS notification banner.
+      if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) {
+        notify(
+          buildNotification("turn-failed", bot, threadId, redactSecretsInText(message), { avatarUrl: bot.avatarUrl }),
+        );
+      }
       store.setActivity(bot.id, "idle");
       retryDelegationsWaitingOn(bot.id);
       opts?.onDispatchError?.(message);
@@ -6164,6 +6301,8 @@ const server = createServer(async (req, res) => {
             toBotName: currentTarget.name,
             taskId,
             sourceThreadId: fromThreadId,
+            // the peer's turn began when the ask was dispatched, not now
+            startedAtMs: Date.now() - ASK_BOT_TIMEOUT_MS,
           });
           store.appendMessage(fromThreadId, {
             role: "bot",
@@ -6211,14 +6350,33 @@ const server = createServer(async (req, res) => {
             return json(res, 200, { status: receipt.status, toBotName: receipt.toBotName, result: receipt.result ?? "" });
           }
           const stillQueued = pendingDelegationInfo(taskId);
-          const running = [...delegationWatch.values()].find((watch) => watch.taskId === taskId);
+          const runningEntry = [...delegationWatch.entries()].find(([, watch]) => watch.taskId === taskId);
+          const running = runningEntry?.[1];
           const owner = stillQueued?.sourceThreadId ?? running?.sourceThreadId;
           if (!owner) return json(res, 404, { error: "unknown task id — delegation receipts are kept for about 48 hours" });
           if (owner !== fromThreadId) return json(res, 403, { error: "that task belongs to a different conversation" });
           if (Date.now() >= deadline) {
             const toBotId = stillQueued?.toBotId ?? running?.toBotId ?? "";
+            // "running" on its own tells a coordinating bot nothing it can
+            // act on. Report how long the peer has been at it and what its
+            // thread has produced since dispatch, so the caller can tell
+            // work from a stall instead of waiting blindly. An empty list
+            // is the signal, not a gap: the proxy renders it as "may be
+            // stuck". The formatted elapsed rides along so the harness owns
+            // that wording once, rather than the proxy re-deriving it.
+            if (running && runningEntry) {
+              const startedAtMs = running.startedAtMs ?? Date.now();
+              const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+              return json(res, 200, {
+                status: "running",
+                toBotName: store.bot(toBotId)?.name ?? toBotId,
+                elapsedMs,
+                elapsed: formatDelegationElapsed(elapsedMs),
+                recentActivity: summarizeDelegatedActivity(store.messagesFor(runningEntry[0]), startedAtMs),
+              });
+            }
             return json(res, 200, {
-              status: running ? "running" : "queued",
+              status: "queued",
               toBotName: store.bot(toBotId)?.name ?? toBotId,
             });
           }

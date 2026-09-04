@@ -437,6 +437,22 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 state.sawStreamDelta = false;
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: item.text });
               }
+            } else if (item.type === "imageGeneration" && item.status !== "failed") {
+              // Current Codex app-server returns the generated raster as
+              // base64 `result` and may also expose a local `savedPath`. Use
+              // the bytes, never the provider-owned path: the harness will
+              // validate them and copy them into its private attachment
+              // store, and a path we did not write is not ours to read.
+              if (typeof item.result === "string" && item.result.trim()) {
+                emit({
+                  ...base(threadId, turnId),
+                  type: "item.completed",
+                  itemType: "assistant_image",
+                  itemId: item.id,
+                  data: item.result,
+                  alt: typeof item.revisedPrompt === "string" ? item.revisedPrompt : undefined,
+                });
+              }
             } else if (["commandExecution", "fileChange", "mcpToolCall", "webSearch"].includes(item.type)) {
               emit({
                 ...base(threadId, turnId),
@@ -514,7 +530,24 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           } catch {
             continue;
           }
-          appendNative(threadId, { dir: "in", source: "codex.app-server", msg });
+          // The native tee is a plain file people paste into issues. A
+          // generated image would put megabytes of base64 in it and the
+          // provider's own filesystem path beside them; keep the SHAPE and
+          // lose both, the same trade server/redact.ts makes for secrets.
+          const loggedMessage = msg.method === "item/completed" && msg.params?.item?.type === "imageGeneration"
+            ? {
+                ...msg,
+                params: {
+                  ...msg.params,
+                  item: {
+                    ...msg.params.item,
+                    result: `[generated image omitted · ${String(msg.params.item.result ?? "").length} base64 chars]`,
+                    savedPath: undefined,
+                  },
+                },
+              }
+            : msg;
+          appendNative(threadId, { dir: "in", source: "codex.app-server", msg: loggedMessage });
           if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
             const pend = rpcPending.get(msg.id);
             if (pend) {
