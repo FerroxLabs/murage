@@ -228,9 +228,9 @@ describe("RoutineRequestService", () => {
       service.propose({
         botId: "bot-a",
         threadId: "thread-a",
-        proposal: createProposal({ durationMinutes: 5 }),
+        proposal: createProposal({ durationMinutes: 4 }),
       }),
-    ).rejects.toThrow(/15 to 240/);
+    ).rejects.toThrow("durationMinutes must be a whole number from 5 to 240");
     await expect(
       service.propose({
         botId: "bot-a",
@@ -419,7 +419,11 @@ describe("RoutineRequestService", () => {
 
   it("creates only after confirmation, pins ownership, and is durable-idempotent", async () => {
     const { service, routines, store, clock } = harness();
-    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
+    const proposal = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({ durationMinutes: 5 }),
+    });
 
     // Model a crash after routines.json was atomically written but before the
     // transcript card was settled.
@@ -432,7 +436,7 @@ describe("RoutineRequestService", () => {
       runOn: "ember",
       enabled: true,
       schedule: { type: "daily", time: "09:00", weekdays: [1, 3] },
-      durationMinutes: 30,
+      durationMinutes: 5,
     }, {
       requestId: proposal.requestId,
       messageId: message.id,
@@ -458,6 +462,7 @@ describe("RoutineRequestService", () => {
       botId: "bot-a",
       name: "Morning brief",
       enabled: true,
+      durationMinutes: 5,
       sourceThreadId: "thread-a",
     }]);
     expect(routines.routineRequestReceipt(proposal.requestId)).toBeNull();

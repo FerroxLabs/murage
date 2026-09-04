@@ -116,6 +116,22 @@ describe("nextOccurrence", () => {
 });
 
 describe("RoutineManager", () => {
+  it("accepts five-minute windows and preserves the manager's clamping semantics", () => {
+    const h = harness();
+    const create = (name: string, durationMinutes?: number) => h.manager.create({
+      name,
+      prompt: "Check the queue",
+      botId: "ember-1",
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+      durationMinutes,
+    });
+
+    expect(create("Minimum", 5).durationMinutes).toBe(5);
+    expect(create("Below minimum", 4).durationMinutes).toBe(5);
+    expect(create("Default").durationMinutes).toBe(30);
+    expect(create("Above maximum", 241).durationMinutes).toBe(240);
+  });
+
   it("stores routine data with owner-only permissions", () => {
     const h = harness();
     h.manager.create({

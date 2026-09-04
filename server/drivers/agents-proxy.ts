@@ -177,7 +177,7 @@ const ROUTINE_FIELDS_SCHEMA = {
   },
   duration_minutes: {
     type: "integer",
-    minimum: 15,
+    minimum: 5,
     maximum: 240,
     description: "Maximum run duration in minutes. Defaults to 30.",
   },

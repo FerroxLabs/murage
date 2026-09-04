@@ -1,6 +1,6 @@
 import type { Routine, RoutineRun, RoutineSchedule } from "./routines";
 
-export const CALENDAR_SLOT_MINUTES = 15;
+export const CALENDAR_SLOT_MINUTES = 5;
 
 export type RoutineCalendarItem = {
   id: string;
@@ -72,9 +72,13 @@ export function snapMinutes(minutes: number, increment = CALENDAR_SLOT_MINUTES):
 export function packCalendarCollisions(
   items: readonly CalendarCollisionItem[],
 ): Map<string, CalendarCollisionLayout> {
+  // Short events keep a 16px hit target in the renderer. Pack against that
+  // same visual footprint so adjacent five-minute cards never cover each other.
+  const visualEnd = (item: CalendarCollisionItem) =>
+    item.at + Math.max(15, item.durationMinutes) * 60_000;
   const sorted = [...items].sort((left, right) =>
     left.at - right.at
-    || left.at + left.durationMinutes * 60_000 - (right.at + right.durationMinutes * 60_000)
+    || visualEnd(left) - visualEnd(right)
     || left.id.localeCompare(right.id),
   );
   const result = new Map<string, CalendarCollisionLayout>();
@@ -86,7 +90,7 @@ export function packCalendarCollisions(
       const item = sorted[cursor]!;
       if (cluster.length > 0 && item.at >= clusterEnd) break;
       cluster.push(item);
-      clusterEnd = Math.max(clusterEnd, item.at + Math.max(1, item.durationMinutes) * 60_000);
+      clusterEnd = Math.max(clusterEnd, visualEnd(item));
       cursor += 1;
     }
 
@@ -94,7 +98,7 @@ export function packCalendarCollisions(
     const assignments = cluster.map((item) => {
       const available = columnEnds.findIndex((end) => end <= item.at);
       const column = available === -1 ? columnEnds.length : available;
-      columnEnds[column] = item.at + Math.max(1, item.durationMinutes) * 60_000;
+      columnEnds[column] = visualEnd(item);
       return { id: item.id, column };
     });
     const columns = Math.max(1, columnEnds.length);

@@ -83,7 +83,7 @@ const callSchema = z.object({
   description: z.string(),
   botIds: z.array(z.string().min(1)).min(1).max(MAX_BOTS),
   schedule: scheduleSchema,
-  durationMinutes: z.number().int().min(15).max(240),
+  durationMinutes: z.number().int().min(5).max(240),
   attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS),
   roomId: z.string().min(1).optional(),
   nextRunAt: z.number().finite().nonnegative().nullable().optional(),
@@ -157,8 +157,8 @@ function cleanInput(
   if (botIds.some((botId) => !botExists(botId))) throw new Error("One or more bots no longer exist");
 
   const duration = input.durationMinutes ?? 30;
-  if (!Number.isInteger(duration) || duration < 15 || duration > 240) {
-    throw new Error("Call duration must be between 15 and 240 minutes");
+  if (!Number.isInteger(duration) || duration < 5 || duration > 240) {
+    throw new Error("Call duration must be between 5 and 240 minutes");
   }
 
   return {
