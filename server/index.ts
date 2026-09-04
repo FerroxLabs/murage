@@ -262,6 +262,7 @@ import {
   type BrowserConnection,
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
+import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
 import { scoutProject, suggestTeam } from "./project-scout.ts";
@@ -1869,9 +1870,15 @@ bus.subscribe((event: RuntimeEvent) => {
         // the bot just acted ON ITS SCREEN — refresh the preview now. Only
         // computer tools can change the screen, and each capture competes
         // with the agent for the box's command endpoint, so a bot grinding
-        // through file edits must not trigger one per tool.
-        if (bot && /computer|screenshot|click|type_text|press_key|scroll|open_url|wait_for|browser_/i.test(toolName)) {
-          pokeScreenPoller(bot.id);
+        // through file edits must not trigger one per tool. The refresh is
+        // deliberately broad (a computer_exec may well have launched a
+        // window); whether the turn has EARNED a settled screenshot is the
+        // narrower question, and only the allow-list answers it.
+        if (bot) {
+          const touches = screenTouchingTool(toolName);
+          if (touches || /computer|screenshot|click|type_text|press_key|scroll|open_url|wait_for|browser_/i.test(toolName)) {
+            pokeScreenPoller(bot.id, touches);
+          }
         }
       }
       break;
@@ -2176,7 +2183,7 @@ bus.subscribe((event: RuntimeEvent) => {
           // it arrives — otherwise the user's next message ends up stranded
           // above the screenshot (the browser-mode ordering bug).
           const settleLeafId = store.activePath(event.threadId).at(-1)?.id;
-          void finalScreenFrame(bot.id).then((frame) => {
+          void finalScreenFrame(bot.id, event.threadId).then((frame) => {
             // the bot may have been deleted while the capture ran
             if (frame && store.bot(bot.id)) {
               if (group) pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
@@ -2529,7 +2536,8 @@ const SCREEN_MIN_GAP_MS = 3000;
 
 /** `screenIsTheWork` starts the turn already counting as screen usage: a
  * boxAgent's whole session runs ON the box, so every tool it calls acts on
- * that screen even though none of them is named like a computer tool. */
+ * that screen even though none of them is named like a computer tool. Its
+ * shell-only turns are kept honest by the settle-time hash gate instead. */
 function startScreenPoller(
   botId: string,
   capture: () => Promise<{ png: string; format: string }>,
@@ -2583,13 +2591,17 @@ function startScreenPoller(
  * instead of waiting for the next interval tick. Rate-limited inside
  * capture() — a tool-heavy turn used to fire one full REST chain per
  * completed tool, competing with the agent for the same endpoint. */
-function pokeScreenPoller(botId: string) {
+function pokeScreenPoller(botId: string, touches: boolean) {
   const entry = screenPollers.get(botId);
   if (!entry) return;
   // the same signal, read twice: a completed computer tool is both the
-  // reason to refresh the preview NOW and the proof that this turn's
-  // final frame is worth settling into the transcript
-  entry.touched = true;
+  // reason to refresh the preview NOW and — when it acted on or looked at
+  // the screen — the proof that this turn's final frame is worth settling
+  // into the transcript. A shell command or a status read earns only the
+  // refresh: under the Claude driver every tool of the computer server is
+  // named mcp__computer__*, and matching that alone used to append an
+  // untouched desktop to every curl-and-answer reply.
+  if (touches) entry.touched = true;
   void entry.capture();
 }
 
@@ -2600,20 +2612,41 @@ function stopScreenPoller(botId: string) {
   screenPollers.delete(botId);
 }
 
+/** sha256 of the frame each bot last settled into a transcript — the
+ * comparison the hash gate needs is "this turn's end state against what
+ * the reader can already see". Keyed per bot (one physical screen, however
+ * many threads it reports into); a cold entry is seeded from the thread's
+ * newest screen message so a restart does not re-picture the same idle
+ * desktop either. */
+const settledScreenHashes = new Map<string, string>();
+
+function shownScreenHash(botId: string, threadId: string): string | undefined {
+  const known = settledScreenHashes.get(botId);
+  if (known) return known;
+  const shown = store.messagesFor(threadId).findLast((m) => m.kind === "screen" && Boolean(m.png));
+  return shown?.png ? screenFrameHash(shown.png) : undefined;
+}
+
 /** Turn end: stop polling, then take ONE last fresh frame (awaiting any
  * in-flight poke first) so the settled screenshot shows the screen's actual
  * end state, not the previous action's. A turn that never touched the
  * screen settles nothing — and skips the capture, which is one less
- * command on the box's single endpoint. Either way the poller is torn down
- * here, so no per-turn state survives the turn. */
-async function finalScreenFrame(botId: string): Promise<Frame | null> {
+ * command on the box's single endpoint. A frame the reader can already see
+ * settles nothing either: the boxAgent pre-touch counts every turn as
+ * screen work, so without this its shell-only replies would all end in the
+ * same idle desktop. Either way the poller is torn down here, so no
+ * per-turn state survives the turn. */
+async function finalScreenFrame(botId: string, threadId: string): Promise<Frame | null> {
   const entry = screenPollers.get(botId);
   if (!entry) return null;
   if (entry.timer) clearInterval(entry.timer);
   screenPollers.delete(botId);
   if (!entry.touched) return null;
   await entry.capture();
-  return entry.last;
+  const frame = entry.last;
+  if (!frame || !settledFrameIsNews(shownScreenHash(botId, threadId), frame.png)) return null;
+  settledScreenHashes.set(botId, screenFrameHash(frame.png));
+  return frame;
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
