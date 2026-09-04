@@ -149,7 +149,7 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { searchMessages } from "./message-db.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -2232,6 +2232,8 @@ const delegationWatch = new Map<string, {
   toBotName?: string;
   taskId?: string;
   sourceThreadId?: string;
+  /** when the delegated turn was dispatched — elapsed time for status checks */
+  startedAtMs?: number;
 }>();
 
 // Provider-native sessions only know about messages produced inside their
@@ -2387,6 +2389,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
         toBotName: target?.name,
         taskId,
         sourceThreadId,
+        startedAtMs: Date.now(),
       });
     }
     let failureReported = false;
@@ -6218,6 +6221,8 @@ const server = createServer(async (req, res) => {
             toBotName: currentTarget.name,
             taskId,
             sourceThreadId: fromThreadId,
+            // the peer's turn began when the ask was dispatched, not now
+            startedAtMs: Date.now() - ASK_BOT_TIMEOUT_MS,
           });
           store.appendMessage(fromThreadId, {
             role: "bot",
@@ -6265,14 +6270,33 @@ const server = createServer(async (req, res) => {
             return json(res, 200, { status: receipt.status, toBotName: receipt.toBotName, result: receipt.result ?? "" });
           }
           const stillQueued = pendingDelegationInfo(taskId);
-          const running = [...delegationWatch.values()].find((watch) => watch.taskId === taskId);
+          const runningEntry = [...delegationWatch.entries()].find(([, watch]) => watch.taskId === taskId);
+          const running = runningEntry?.[1];
           const owner = stillQueued?.sourceThreadId ?? running?.sourceThreadId;
           if (!owner) return json(res, 404, { error: "unknown task id — delegation receipts are kept for about 48 hours" });
           if (owner !== fromThreadId) return json(res, 403, { error: "that task belongs to a different conversation" });
           if (Date.now() >= deadline) {
             const toBotId = stillQueued?.toBotId ?? running?.toBotId ?? "";
+            // "running" on its own tells a coordinating bot nothing it can
+            // act on. Report how long the peer has been at it and what its
+            // thread has produced since dispatch, so the caller can tell
+            // work from a stall instead of waiting blindly. An empty list
+            // is the signal, not a gap: the proxy renders it as "may be
+            // stuck". The formatted elapsed rides along so the harness owns
+            // that wording once, rather than the proxy re-deriving it.
+            if (running && runningEntry) {
+              const startedAtMs = running.startedAtMs ?? Date.now();
+              const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+              return json(res, 200, {
+                status: "running",
+                toBotName: store.bot(toBotId)?.name ?? toBotId,
+                elapsedMs,
+                elapsed: formatDelegationElapsed(elapsedMs),
+                recentActivity: summarizeDelegatedActivity(store.messagesFor(runningEntry[0]), startedAtMs),
+              });
+            }
             return json(res, 200, {
-              status: running ? "running" : "queued",
+              status: "queued",
               toBotName: store.bot(toBotId)?.name ?? toBotId,
             });
           }
