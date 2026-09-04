@@ -10,6 +10,15 @@ says so.
 
 ---
 
+## CORRECTION, same day, after this document was sent
+
+**Request 1 HAS rolled. The section below headed "still not rolled" was wrong**
+and is corrected in place. Sean Donahoe checked the live listing and caught it;
+re-probed with `FLUX_API_KEY` and confirmed. What we got wrong and what we found
+instead is the next section. Everything else in this document stands.
+
+---
+
 ## THE HEADLINE, and it is not a request
 
 **Murage now ships Fuigo as its default engine, and Fuigo is a native FluxRouter
@@ -26,23 +35,51 @@ You may want to plan capacity around that rather than hear about it from a graph
 
 ---
 
-## BLOCKING US: Request 1 has still not rolled
+## REQUEST 1 SHIPPED — and its `entitlement` field says the opposite of the API
 
-`GET /v1/models`, probed 2026-09-04. 105 rows. The keys on every row are exactly:
+`GET /v1/models`, re-probed 2026-09-04. 105 rows. Every row now carries all four
+fields we asked for:
 
-    created, id, max_input_tokens, max_output_tokens, object, owned_by
+    capability, created, display_name, entitlement, id,
+    list_price_microcents, max_input_tokens, max_output_tokens, object, owned_by
 
-No `capability`. No `display_name`. No `list_price_microcents`. No `entitlement`.
+`capability` splits 87 chat / 15 image / 3 audio. `display_name` is populated
+throughout. `list_price_microcents` is populated on every chat and image row
+(null on the three audio rows — see below). **Thank you. This is the thing we
+wanted most and it is here.**
 
-Your last reply reported Request 1 as "built, route wiring left". It is still
-there. **Murage's image-generation tool is specced, reviewed and unstarted
-because of it** — we are deliberately not building against a guess, since the
-whole point of the request was that a picker and a price should not require a
-Murage release per arm you ship.
+Now the problem, and it is the reason we are writing again the same day.
 
-This is the single thing we want most.
+**`entitlement` is `"open"` on all 105 rows. Not most — all of them.** Meanwhile,
+on the same key, in the same minute:
 
----
+    POST /v1/chat/completions   model=flux-fast            -> 200
+    POST /v1/images/generations model=flux-image-gpt2-low  -> 402 premium_locked
+    POST /v1/audio/transcriptions model=flux-voice         -> 402 premium_locked
+    POST /v1/audio/transcriptions model=flux-voice-fast    -> 402 premium_locked
+
+So the field exists, is well-formed, and carries no information. It reports
+`open` for the fifteen image arms that refuse the call and for the three voice
+arms that refuse the call, identically to the eighty-seven chat arms that serve
+it.
+
+**This matters more than the field being absent did.** Absent, we could not build
+the picker. Present-and-wrong, we build the picker, it renders fifteen image
+models as available, and every one of them 402s at the moment a user presses
+the button — with the failure landing on us, in our UI, after we told them it
+would work. A gate that always says yes is worse than no gate, because it is
+load-bearing before anyone notices.
+
+Two ways out, either is fine by us:
+
+- Make `entitlement` reflect the calling key (`open` / `premium` / whatever the
+  vocabulary is), so a picker can grey out what this key cannot call; or
+- If it is not per-key by design, say so and we will treat it as a static
+  catalogue property and gate on the 402 instead — but then it should not be
+  named `entitlement`, because that is what every consumer will read it as.
+
+The image tool stays unstarted until we know which. Not blocked on the field
+existing any more — blocked on knowing whether it can be trusted.
 
 ## THREE CORRECTIONS TO THE ARM LIST
 
@@ -61,14 +98,17 @@ flagging it in case the same name is in a doc on your side.
 correction to us said Together retired FLUX.1-schnell and that arm has been
 failing since 2026-07-17. A dead arm in the discovery response is worse than a
 dead arm alone: the discovery-driven picker Request 1 enables would list it on
-your authority, and we would ship it. We could not confirm it still fails — see
-the next section for why.
+your authority, and we would ship it. It is now advertised at 36000
+microcents with `entitlement: "open"` — the listing states positively that this
+key may call it. We still could not confirm whether it fails, because every
+image call 402s before reaching the arm.
 
 ---
 
-## THE ENTITLEMENT GATE IS LIVE, AND IT BLOCKS OUR TESTING
+## THE 402 WALL — real, and invisible to the discovery response
 
-Our workspace key is `premium_locked` for both media capabilities:
+Re-confirmed 2026-09-04, on the same key whose `/v1/models` reports every one
+of these arms as `entitlement: "open"`:
 
     POST /v1/images/generations       -> 402 {"code":"premium_locked",
                                               "message":"image generation requires a paid plan"}
@@ -77,6 +117,12 @@ Our workspace key is `premium_locked` for both media capabilities:
                                          (all three arms: flux-voice,
                                           flux-voice-fast, flux-voice-accurate)
     with a bad bearer                 -> 401 {"message":"unauthorized"}
+
+One smaller listing gap while you are in there: `list_price_microcents` is
+`null` on all three audio rows (`flux-voice`, `flux-voice-fast`,
+`flux-voice-accurate`) though it is populated on every chat and image row. We
+meter dictation by billed seconds, so we need a per-second figure from
+somewhere; right now it can only be hard-coded.
 
 The 401/402 split is clean and we handle it properly — Murage's copy says the key
 is fine and the plan is not, rather than sending someone to re-paste a working
@@ -143,12 +189,22 @@ one occurrence, not reproduced.
 
 ## SUMMARY OF ASKS, in the order they matter to us
 
-1. **Roll Request 1** (`capability` / `display_name` / `list_price_microcents` /
-   `entitlement` on `/v1/models`). Unblocks the image tool entirely.
-2. **Drop `flux-image-together-flux` from `/v1/models`**, or revive it.
-3. **A key we can actually test media on** — image and voice are both built or
-   specced against a 402 wall.
-4. **Connectors**: base URL, token shape, and the callback story.
+1. **Make `entitlement` mean something, or rename it.** It is `"open"` on all
+   105 rows including the 18 that 402. This is now the one thing standing
+   between us and building the image tool — a picker built on a field that
+   always says yes ships a button that always fails.
+2. **A key we can actually test media on** — image and voice both 402. Phone
+   dictation is written, metered and error-mapped, and has never seen a real
+   transcript.
+3. **`list_price_microcents` on the three audio rows** — null today, and we
+   bill dictation by the second.
+4. **Drop `flux-image-together-flux` from `/v1/models`**, or revive it. It is
+   currently advertised as open at 36000 microcents.
+5. **Connectors**: base URL, token shape, and the callback story.
+
+And with thanks: Request 1's four fields are live and the other three are
+correct and useful. `capability` and `display_name` alone remove a whole class
+of hard-coding from our side.
 
 And the thing that is not an ask: Fuigo now ships as Murage's default engine, so
 your default-model traffic is about to change shape.
