@@ -173,7 +173,7 @@ function intervalLabel(minutes: number): string {
 function scheduleLabel(schedule: RoutineSchedule | CalendarCall["schedule"]): string {
   if (schedule.type === "once") return `${niceDate(schedule.at)}, ${niceTime(schedule.at)}`;
   if (schedule.type === "interval") {
-    return `${intervalLabel(schedule.everyMinutes)} · aligned from ${niceDate(schedule.anchorAt)}, ${niceTime(schedule.anchorAt)}`;
+    return `${intervalLabel(schedule.everyMinutes)} · starting ${niceDate(schedule.anchorAt)}, ${niceTime(schedule.anchorAt)}`;
   }
   const days = schedule.weekdays;
   const label = days.length === 7
@@ -547,24 +547,26 @@ function EventEditor({
           <div className="flex items-start gap-4">
             <Clock3 size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
             <div className="min-w-0 flex-1 space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {kind === "routine" && (recurrence === "none" || recurrence === "interval") && <span className="text-[12px] font-medium text-ink-secondary">Starts</span>}
-                {kind === "routine" && recurrence === "weekly" && <span className="text-[12px] font-medium text-ink-secondary">On</span>}
-                {(kind === "call" || recurrence === "none" || recurrence === "interval" || recurrence === "weekly") && <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />}
-                <input type="time" step={CALENDAR_SLOT_MINUTES * 60} value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
-                {kind === "call" && <>
-                  <span className="text-[12px] text-ink-secondary">to</span>
-                  <span className="rounded-lg border border-hairline/40 bg-inset/60 px-3 py-2 text-[13px] text-ink">{niceTime(endAt)}</span>
-                  <select aria-label="Call duration" value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12px] text-ink outline-none focus:border-accent">
-                    {EVENT_DURATION_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>)}
-                  </select>
-                </>}
-              </div>
+              {recurrence !== "interval" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {kind === "routine" && recurrence === "none" && <span className="text-[12px] font-medium text-ink-secondary">Starts</span>}
+                  {kind === "routine" && recurrence === "weekly" && <span className="text-[12px] font-medium text-ink-secondary">On</span>}
+                  {(kind === "call" || recurrence === "none" || recurrence === "weekly") && <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />}
+                  <input type="time" step={CALENDAR_SLOT_MINUTES * 60} value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
+                  {kind === "call" && <>
+                    <span className="text-[12px] text-ink-secondary">to</span>
+                    <span className="rounded-lg border border-hairline/40 bg-inset/60 px-3 py-2 text-[13px] text-ink">{niceTime(endAt)}</span>
+                    <select aria-label="Call duration" value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12px] text-ink outline-none focus:border-accent">
+                      {EVENT_DURATION_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>)}
+                    </select>
+                  </>}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <Repeat2 size={14} className="text-ink-secondary" />
                 <select value={recurrence} onChange={(event) => selectRecurrence(event.target.value as RecurrenceChoice)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] text-ink outline-none focus:border-accent">
                   <option value="none">Does not repeat</option>
-                  {kind === "routine" && <option value="interval">Every few minutes…</option>}
+                  {kind === "routine" && <option value="interval">Every X minutes</option>}
                   <option value="daily">Daily</option>
                   <option value="weekdays">Every weekday (Monday to Friday)</option>
                   <option value="weekly">Weekly on {DAY_NAMES[new Date(at).getDay()]}</option>
@@ -577,38 +579,41 @@ function EventEditor({
                 </div>
               )}
               {recurrence === "interval" && kind === "routine" && (
-                <div className="rounded-xl border border-accent/30 bg-accent/[0.055] p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[12.5px] font-medium text-ink">Run every</span>
-                    <input
-                      type="number"
-                      min={5}
-                      max={1_440}
-                      step={1}
-                      value={intervalMinutes || ""}
-                      onChange={(event) => setIntervalMinutes(Number(event.target.value))}
-                      aria-label="Interval in minutes"
-                      aria-invalid={intervalInvalid}
-                      aria-describedby={intervalInvalid ? "routine-interval-error" : "routine-interval-help"}
-                      className={cn("w-20 rounded-lg border bg-inset px-3 py-2 text-[12.5px] tabular-nums text-ink outline-none focus:border-accent", intervalInvalid ? "border-danger/70" : "border-hairline/50")}
-                    />
-                    <span className="text-[12px] text-ink-secondary">minutes</span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {INTERVAL_PRESETS.map((minutes) => (
-                      <button
-                        key={minutes}
-                        type="button"
-                        onClick={() => setIntervalMinutes(minutes)}
-                        aria-pressed={intervalMinutes === minutes}
-                        className={cn("rounded-full px-2.5 py-1 text-[10.5px] font-medium", intervalMinutes === minutes ? "bg-accent text-white" : "bg-inset text-ink-secondary hover:bg-raised hover:text-ink")}
-                      >
-                        {minutes} min
-                      </button>
-                    ))}
+                <div>
+                  <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
+                    <span className="font-medium">Runs every</span>
+                    <select
+                      value={INTERVAL_PRESETS.includes(intervalMinutes) ? String(intervalMinutes) : "custom"}
+                      onChange={(event) => setIntervalMinutes(event.target.value === "custom" ? 0 : Number(event.target.value))}
+                      aria-label="How often this routine runs"
+                      className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] tabular-nums text-ink outline-none focus:border-accent"
+                    >
+                      {INTERVAL_PRESETS.map((minutes) => <option key={minutes} value={minutes}>{minutes}</option>)}
+                      <option value="custom">Custom…</option>
+                    </select>
+                    {!INTERVAL_PRESETS.includes(intervalMinutes) && (
+                      <input
+                        type="number"
+                        min={5}
+                        max={1_440}
+                        step={1}
+                        value={intervalMinutes || ""}
+                        onChange={(event) => setIntervalMinutes(Number(event.target.value))}
+                        aria-label="Custom interval in minutes"
+                        aria-invalid={intervalInvalid}
+                        aria-describedby={intervalInvalid ? "routine-interval-error" : "routine-interval-help"}
+                        autoFocus
+                        className={cn("w-20 rounded-lg border bg-inset px-3 py-2 text-[12.5px] tabular-nums text-ink outline-none focus:border-accent", intervalInvalid ? "border-danger/70" : "border-hairline/50")}
+                      />
+                    )}
+                    <span>minutes, starting</span>
+                    <input aria-label="Interval start date" type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
+                    <span>at</span>
+                    <input aria-label="Interval start time" type="time" step={CALENDAR_SLOT_MINUTES * 60} value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
+                    <span>.</span>
                   </div>
                   <div id="routine-interval-help" className="mt-2 text-[11px] leading-relaxed text-ink-secondary">
-                    The cadence is aligned from the date and time above; the next future occurrence runs. If the previous run is still active, that occurrence is skipped.
+                    The cadence continues from this starting point. If a run is still active, the next occurrence is skipped instead of queued.
                   </div>
                   {intervalInvalid && (
                     <div id="routine-interval-error" className="mt-2 text-[11px] text-danger">Choose a whole number from 5 to 1,440 minutes.</div>
