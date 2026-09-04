@@ -1594,6 +1594,34 @@ function createWindow() {
   });
   win.webContents.on("did-finish-load", () => deliverPackageInstall(win));
 
+  // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
+  // "Murage failed to render" to the renderer console, and the renderer
+  // console is not the terminal -- so a black window was the only artefact a
+  // developer or a packaged user ever saw. That is the exact mystery the
+  // boundary's own header comment says it exists to prevent, undone one
+  // process boundary later.
+  //
+  // Errors and warnings only: forwarding `info` would tee every log the app
+  // makes into the terminal it was never written for.
+  win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (level < 2) return;
+    console.error(`[renderer] ${message}${sourceId ? ` (${sourceId}:${line})` : ""}`);
+  });
+  // The renderer dying outright -- OOM, a GPU fault, a killed process. Same
+  // symptom as a render throw (black window), completely different cause, and
+  // previously indistinguishable from it.
+  win.webContents.on("render-process-gone", (_event, details) => {
+    console.error(`[renderer] process gone: ${details.reason} (exitCode ${details.exitCode})`);
+  });
+  // The dev server being down is the other black-window cause, and it is the
+  // one that has actually bitten: Electron loads DEV_URL once and never
+  // retries, so a vite that died during sleep leaves a window with nothing in
+  // it and no message.
+  win.webContents.on("did-fail-load", (_event, code, description, failedUrl, isMainFrame) => {
+    if (!isMainFrame) return;
+    console.error(`[renderer] failed to load ${failedUrl}: ${description} (${code})`);
+  });
+
   // Native context menu for text inputs — without this, right-click does
   // nothing in the Electron window (no Cut/Copy/Paste/Select All).
   win.webContents.on("context-menu", (_event, params) => {
