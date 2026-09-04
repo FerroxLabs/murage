@@ -103,8 +103,15 @@ export function createBotPackageExport(input: {
       runOn: routine.runOn,
       schedule: routine.schedule.type === "once"
         ? { type: "once", at: routine.schedule.at }
-        : { type: "daily", time: routine.schedule.time, weekdays: [...routine.schedule.weekdays] },
+        : routine.schedule.type === "interval"
+          ? {
+              type: "interval",
+              everyMinutes: routine.schedule.everyMinutes,
+              anchorAt: routine.schedule.anchorAt,
+            }
+          : { type: "daily", time: routine.schedule.time, weekdays: [...routine.schedule.weekdays] },
       durationMinutes: routine.durationMinutes,
+      ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
       enabledAfterInstall: false as const,
     }];
   });

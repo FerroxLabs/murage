@@ -144,7 +144,13 @@ describe("RoutineRequestService", () => {
           durationMinutes: routine.durationMinutes,
           schedule: routine.schedule.type === "once"
             ? { at: routine.schedule.at, type: "once" }
-            : { weekdays: [...routine.schedule.weekdays], time: routine.schedule.time, type: "daily" },
+            : routine.schedule.type === "interval"
+              ? {
+                  anchorAt: routine.schedule.anchorAt,
+                  everyMinutes: routine.schedule.everyMinutes,
+                  type: "interval",
+                }
+              : { weekdays: [...routine.schedule.weekdays], time: routine.schedule.time, type: "daily" },
           instructions: routine.instructions,
           runOn: routine.runOn,
           name: routine.name,
@@ -235,6 +241,13 @@ describe("RoutineRequestService", () => {
       service.propose({
         botId: "bot-a",
         threadId: "thread-a",
+        proposal: createProposal({ timeoutMinutes: 4 }),
+      }),
+    ).rejects.toThrow("timeoutMinutes must be a whole number from 5 to 240");
+    await expect(
+      service.propose({
+        botId: "bot-a",
+        threadId: "thread-a",
         proposal: malformedProposal({
           action: "create",
           routine: {
@@ -276,6 +289,75 @@ describe("RoutineRequestService", () => {
         proposal: createProposal({ instructions: secretAtLimit }),
       }),
     ).rejects.toThrow(/20,000 characters or fewer after credentials are removed/);
+  });
+
+  it("normalizes interval schedules with an optional cadence anchor", async () => {
+    const now = Date.parse("2026-08-28T10:00:00Z");
+    const { service, store, routines, clock } = harness(now);
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({
+        schedule: {
+          type: "interval",
+          everyMinutes: 15,
+          anchorAt: "2026-08-28T10:07:00Z",
+        },
+      }),
+    });
+
+    expect(proposed.summary).toContain("Every 15 minutes");
+    expect(proposed.summary).toContain("no run limit");
+    expect(store.messagesFor("thread-a")[0]?.card?.routineRequest?.operation).toMatchObject({
+      action: "create",
+      routine: {
+        schedule: {
+          type: "interval",
+          everyMinutes: 15,
+          anchorAt: Date.parse("2026-08-28T10:07:00Z"),
+        },
+      },
+    });
+
+    const withoutAnchor = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-b",
+      proposal: createProposal({ schedule: { type: "interval", everyMinutes: 5 } }),
+    });
+    expect(withoutAnchor.nextRunAt).toBeNull();
+    expect(withoutAnchor.detail).toContain("One interval after confirmation");
+    expect(store.messagesFor("thread-b")[0]?.card?.routineRequest?.operation).toMatchObject({
+      action: "create",
+      routine: { schedule: { type: "interval", everyMinutes: 5 } },
+    });
+    const deferred = store.messagesFor("thread-b")[0]?.card?.routineRequest?.operation;
+    if (deferred?.action !== "create") throw new Error("Expected a create operation");
+    expect(deferred.routine.schedule).not.toHaveProperty("anchorAt");
+
+    clock.now = now + 7 * 60_000;
+    expect(service.resolve({
+      botId: "bot-a",
+      threadId: "thread-b",
+      requestId: withoutAnchor.requestId,
+      behavior: "allow",
+    })).toMatchObject({ claimed: true, state: "applied" });
+    expect(routines.listRoutines().find((routine) => routine.sourceThreadId === "thread-b")).toMatchObject({
+      schedule: { type: "interval", everyMinutes: 5, anchorAt: clock.now },
+      nextRunAt: clock.now + 5 * 60_000,
+    });
+
+    await expect(service.propose({
+      botId: "bot-a",
+      threadId: "thread-c",
+      proposal: createProposal({ schedule: { type: "interval", everyMinutes: 4 } }),
+    })).rejects.toThrow(/5 to 1440/);
+    await expect(service.propose({
+      botId: "bot-a",
+      threadId: "thread-c",
+      proposal: createProposal({
+        schedule: { type: "interval", everyMinutes: 5, anchorAt: "1969-12-31T23:59:59Z" },
+      }),
+    })).rejects.toThrow(/valid interval start time/);
   });
 
   it("refuses a cloud routine before creating a card when cloud execution is not ready", async () => {
@@ -422,7 +504,7 @@ describe("RoutineRequestService", () => {
     const proposal = await service.propose({
       botId: "bot-a",
       threadId: "thread-a",
-      proposal: createProposal({ durationMinutes: 5 }),
+      proposal: createProposal({ durationMinutes: 5, timeoutMinutes: 15 }),
     });
 
     // Model a crash after routines.json was atomically written but before the
@@ -437,6 +519,7 @@ describe("RoutineRequestService", () => {
       enabled: true,
       schedule: { type: "daily", time: "09:00", weekdays: [1, 3] },
       durationMinutes: 5,
+      timeoutMinutes: 15,
     }, {
       requestId: proposal.requestId,
       messageId: message.id,
@@ -463,6 +546,7 @@ describe("RoutineRequestService", () => {
       name: "Morning brief",
       enabled: true,
       durationMinutes: 5,
+      timeoutMinutes: 15,
       sourceThreadId: "thread-a",
     }]);
     expect(routines.routineRequestReceipt(proposal.requestId)).toBeNull();
@@ -521,13 +605,22 @@ describe("RoutineRequestService", () => {
     await apply({
       action: "update",
       routineId: routine.id,
-      changes: { name: "New name", instructions: "New instructions", durationMinutes: 45 },
+      changes: {
+        name: "New name",
+        instructions: "New instructions",
+        durationMinutes: 45,
+        timeoutMinutes: 10,
+      },
     });
     expect(routines.listRoutines()[0]).toMatchObject({
       name: "New name",
       prompt: "New instructions",
       durationMinutes: 45,
+      timeoutMinutes: 10,
     });
+
+    await apply({ action: "update", routineId: routine.id, changes: { timeoutMinutes: null } });
+    expect(routines.listRoutines()[0]).not.toHaveProperty("timeoutMinutes");
 
     await apply({ action: "pause", routineId: routine.id });
     expect(routines.listRoutines()[0]!.enabled).toBe(false);
@@ -600,6 +693,63 @@ describe("RoutineRequestService", () => {
     })).toMatchObject({ claimed: true, state: "invalid", status: 409 });
     expect(routines.listRoutines()[0]).toMatchObject({ name: "Changed elsewhere", enabled: true });
     expect(store.messagesFor("thread-a")[0]!.card?.held).toMatch(/changed after this confirmation card/);
+  });
+
+  it("keeps a pending manage confirmation valid across recurring scheduler progress", async () => {
+    const { service, routines, clock } = harness();
+    const anchorAt = clock.now + 5 * 60_000;
+    const routine = routines.create({
+      botId: "bot-a",
+      name: "Frequent check",
+      prompt: "Check the queue",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt },
+    });
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: { action: "update", routineId: routine.id, changes: { name: "Frequent review" } },
+    });
+
+    clock.now = anchorAt;
+    await routines.tick();
+    expect(routines.listRoutines()[0]).toMatchObject({
+      updatedAt: routine.updatedAt,
+      nextRunAt: anchorAt + 5 * 60_000,
+    });
+    expect(service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposed.requestId,
+      behavior: "allow",
+    })).toMatchObject({ claimed: true, state: "applied" });
+    expect(routines.listRoutines()[0]).toMatchObject({ name: "Frequent review" });
+  });
+
+  it("invalidates a pending confirmation when a one-time routine auto-disables", async () => {
+    const { service, routines, clock } = harness();
+    const scheduledAt = clock.now + 5 * 60_000;
+    const routine = routines.create({
+      botId: "bot-a",
+      name: "One-time check",
+      prompt: "Check once",
+      schedule: { type: "once", at: scheduledAt },
+    });
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: { action: "update", routineId: routine.id, changes: { name: "Renamed check" } },
+    });
+
+    clock.now = scheduledAt;
+    await routines.tick();
+    expect(routines.listRoutines()[0]).toMatchObject({ enabled: false, nextRunAt: null });
+    expect(routines.listRoutines()[0]!.updatedAt).toBeGreaterThan(routine.updatedAt);
+    expect(service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposed.requestId,
+      behavior: "allow",
+    })).toMatchObject({ claimed: true, state: "invalid", status: 409 });
   });
 
   it("settles manage cards whose requested mutation already committed before a crash", async () => {

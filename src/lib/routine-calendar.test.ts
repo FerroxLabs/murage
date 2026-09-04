@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Routine } from "./routines";
+import type { Routine, RoutineRun } from "./routines";
 import {
   atLocalTime,
   formatGmtOffset,
@@ -37,6 +37,17 @@ describe("routine calendar geometry", () => {
       type: "daily",
       time: "14:30",
       weekdays: [2, 4],
+    });
+  });
+
+  it("shifts an interval series without changing its cadence", () => {
+    const anchor = new Date(2026, 7, 31, 9).getTime();
+    const occurrence = anchor + 15 * 60_000;
+    const moved = new Date(2026, 7, 31, 10, 5).getTime();
+    expect(scheduleAt({ type: "interval", everyMinutes: 15, anchorAt: anchor }, occurrence, moved)).toEqual({
+      type: "interval",
+      everyMinutes: 15,
+      anchorAt: new Date(2026, 7, 31, 9, 50).getTime(),
     });
   });
 
@@ -120,5 +131,164 @@ describe("routine calendar projection", () => {
     expect(items).toHaveLength(2);
     expect(items.map((item) => new Date(item.at).getDay())).toEqual([1, 2]);
     expect(items[0]?.run?.id).toBe("run1");
+  });
+
+  it("shows one next interval occurrence instead of filling the calendar", () => {
+    const from = new Date(2026, 7, 31, 9).getTime();
+    const receiptAt = from;
+    const routine: Routine = {
+      id: "interval-routine",
+      name: "Pulse",
+      prompt: "Check status",
+      target: "bot",
+      botId: "b1",
+      runOn: "ember",
+      enabled: true,
+      schedule: { type: "interval", everyMinutes: 5, anchorAt: from },
+      durationMinutes: 30,
+      nextRunAt: from + 5 * 60_000,
+      createdAt: from,
+      updatedAt: from,
+    };
+    const items = projectedRoutineItems(
+      [routine],
+      [{
+        id: "interval-run",
+        routineId: routine.id,
+        routineName: routine.name,
+        target: "bot",
+        botId: routine.botId,
+        runOn: "ember",
+        scheduledFor: receiptAt,
+        status: "completed",
+        manual: false,
+        createdAt: receiptAt,
+      }],
+      from,
+      from + 60 * 60_000,
+    );
+
+    expect(items).toHaveLength(2);
+    expect(items[0]?.run?.id).toBe("interval-run");
+    expect(items[1]?.at).toBe(from + 5 * 60_000);
+    expect(items[1]?.run).toBeNull();
+  });
+
+  it("does not resurrect an interval occurrence the scheduler skipped", () => {
+    const from = new Date(2026, 7, 31, 9).getTime();
+    const routine: Routine = {
+      id: "interval-routine",
+      name: "Pulse",
+      prompt: "Check status",
+      target: "bot",
+      botId: "b1",
+      runOn: "ember",
+      enabled: true,
+      schedule: { type: "interval", everyMinutes: 5, anchorAt: from },
+      durationMinutes: 30,
+      nextRunAt: from + 15 * 60_000,
+      createdAt: from,
+      updatedAt: from,
+    };
+
+    const items = projectedRoutineItems([routine], [], from, from + 60 * 60_000);
+
+    expect(items.map((item) => item.at)).toEqual([from + 15 * 60_000]);
+  });
+
+  it("caps dense interval receipts so a week view stays responsive", () => {
+    const from = new Date(2026, 7, 31, 9).getTime();
+    const routine: Routine = {
+      id: "interval-routine",
+      name: "Pulse",
+      prompt: "Check status",
+      target: "bot",
+      botId: "b1",
+      runOn: "ember",
+      enabled: false,
+      schedule: { type: "interval", everyMinutes: 5, anchorAt: from },
+      durationMinutes: 30,
+      nextRunAt: null,
+      createdAt: from,
+      updatedAt: from,
+    };
+    const runs: RoutineRun[] = Array.from({ length: 100 }, (_, index) => ({
+      id: `run-${index}`,
+      routineId: routine.id,
+      routineName: routine.name,
+      target: "bot",
+      botId: routine.botId,
+      runOn: "ember",
+      scheduledFor: from + index * 5 * 60_000,
+      status: "completed",
+      manual: false,
+      createdAt: from + index * 5 * 60_000,
+    }));
+
+    const items = projectedRoutineItems([routine], runs, from, from + 24 * 60 * 60_000);
+
+    expect(items).toHaveLength(12);
+    expect(items.at(-1)?.at).toBe(from + 99 * 5 * 60_000);
+  });
+
+  it("keeps queued, running, and waiting receipts outside the terminal history cap", () => {
+    const from = new Date(2026, 7, 31, 9).getTime();
+    const terminalRuns: RoutineRun[] = Array.from({ length: 20 }, (_, index) => ({
+      id: `completed-run-${index}`,
+      routineId: "interval-routine",
+      routineName: "Pulse",
+      target: "bot",
+      botId: "b1",
+      runOn: "ember",
+      scheduledFor: from + (index + 3) * 5 * 60_000,
+      status: "completed",
+      manual: false,
+      createdAt: from + (index + 3) * 5 * 60_000,
+    }));
+    const activeRuns: RoutineRun[] = (["queued", "running", "waiting"] as const).map((status, index) => ({
+      id: `${status}-run`,
+      routineId: "interval-routine",
+      routineName: "Pulse",
+      target: "bot",
+      botId: "b1",
+      runOn: "ember",
+      scheduledFor: from + index * 5 * 60_000,
+      status,
+      manual: false,
+      createdAt: from + index * 5 * 60_000,
+    }));
+
+    const items = projectedRoutineItems(
+      [],
+      [...activeRuns, ...terminalRuns],
+      from,
+      from + 24 * 60 * 60_000,
+    );
+
+    expect(items.filter((item) => item.run?.status === "completed")).toHaveLength(12);
+    expect(items.filter((item) => item.run?.status === "queued")).toHaveLength(1);
+    expect(items.filter((item) => item.run?.status === "running")).toHaveLength(1);
+    expect(items.filter((item) => item.run?.status === "waiting")).toHaveLength(1);
+  });
+
+  it("keeps dense history bounded after its routine is deleted", () => {
+    const from = new Date(2026, 7, 31, 9).getTime();
+    const runs: RoutineRun[] = Array.from({ length: 100 }, (_, index) => ({
+      id: `orphaned-run-${index}`,
+      routineId: "deleted-interval-routine",
+      routineName: "Deleted pulse",
+      target: "bot",
+      botId: "b1",
+      runOn: "ember",
+      scheduledFor: from + index * 5 * 60_000,
+      status: "completed",
+      manual: false,
+      createdAt: from + index * 5 * 60_000,
+    }));
+
+    const items = projectedRoutineItems([], runs, from, from + 24 * 60 * 60_000);
+
+    expect(items).toHaveLength(12);
+    expect(items.at(-1)?.at).toBe(from + 99 * 5 * 60_000);
   });
 });

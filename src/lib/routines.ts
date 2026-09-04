@@ -1,6 +1,7 @@
 export type RoutineSchedule =
   | { type: "once"; at: number }
-  | { type: "daily"; time: string; weekdays: number[] };
+  | { type: "daily"; time: string; weekdays: number[] }
+  | { type: "interval"; everyMinutes: number; anchorAt: number };
 
 export type RoutineRunOn = "ember" | "cloud";
 
@@ -44,6 +45,8 @@ export interface Routine {
   enabled: boolean;
   schedule: RoutineSchedule;
   durationMinutes: number;
+  /** Optional wall-clock safety limit. Missing means the run is unlimited. */
+  timeoutMinutes?: number;
   attachments?: RoutineContextAttachment[];
   nextRunAt: number | null;
   createdAt: number;
@@ -56,6 +59,7 @@ export interface RoutineRun {
   routineName: string;
   prompt?: string;
   durationMinutes?: number;
+  timeoutMinutes?: number;
   attachments?: RoutineContextAttachment[];
   target: RoutineTarget;
   goalStatus?: RoutineGoalStatus;
@@ -93,5 +97,7 @@ export interface RoutineInput {
   enabled?: boolean;
   schedule: RoutineSchedule;
   durationMinutes?: number;
+  /** `null` explicitly removes the limit; omission preserves it on updates. */
+  timeoutMinutes?: number | null;
   attachments?: RoutineContextAttachment[];
 }

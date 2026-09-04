@@ -12,6 +12,7 @@ import { freePortBlock } from "./testing/ports.ts";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
+const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
 
 let child: ChildProcess;
 let home = "";
@@ -37,6 +38,23 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
   const response = await fetch(`${base}${path}`, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: response.status, body: await response.json() };
+};
+
+/** Writing a routine definition is desktop-only (server/index.ts:7139): an
+ * interval schedule is a spawn schedule. The scheduled-goal cases below are
+ * exercising goals, not the gate, so they speak as the renderer.
+ * server/routine-write-gate.e2e.test.ts is where the gate itself is proven. */
+const desktopApi = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  const response = await fetch(`${base}${path}`, {
+    method,
+    headers: {
+      "x-murage-surface": "desktop",
+      "x-murage-surface-secret": DESKTOP_SECRET,
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: response.status, body: await response.json() };
@@ -188,6 +206,7 @@ beforeAll(async () => {
       MURAGE_PORT: String(port),
       MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_STATIC_DIR: staticDir,
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -526,7 +545,7 @@ describe("goal-driven channel runs", () => {
     const originalThreadId = room.threadId;
 
     try {
-      const created = await api("POST", "/api/routines", {
+      const created = await desktopApi("POST", "/api/routines", {
         name: "Hanging scheduled goal",
         prompt: "Keep this scheduled team goal running",
         target: "room-goal",
@@ -621,7 +640,7 @@ describe("goal-driven channel runs", () => {
     const originalThreadId = room.threadId;
 
     try {
-      const created = await api("POST", "/api/routines", {
+      const created = await desktopApi("POST", "/api/routines", {
         name: "Coordinator-stopped scheduled goal",
         prompt: "Keep this detached goal running until the coordinator is stopped",
         target: "room-goal",
@@ -724,7 +743,7 @@ describe("goal-driven channel runs", () => {
         return state.bots.find((bot: { id: string }) => bot.id === worker.id)?.busy;
       }).toBe(true);
 
-      const created = await api("POST", "/api/routines", {
+      const created = await desktopApi("POST", "/api/routines", {
         name: "Worker-gated scheduled goal",
         prompt: "Complete the scheduled analysis as a team",
         target: "room-goal",
@@ -855,7 +874,7 @@ describe("goal-driven channel runs", () => {
     const originalThreadId = room.threadId;
 
     try {
-      const created = await api("POST", "/api/routines", {
+      const created = await desktopApi("POST", "/api/routines", {
         name: "Daily team review",
         prompt: "Review the release as a team",
         target: "room-goal",

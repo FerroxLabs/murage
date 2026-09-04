@@ -250,7 +250,7 @@ describe("agents-proxy MCP surface", () => {
     expect(JSON.stringify(create.inputSchema)).not.toMatch(/"oneOf"|"anyOf"|"allOf"|"const"/);
     expect(schedule.type).toBe("object");
     expect(schedule.required).toEqual(["type"]);
-    expect(schedule.properties.type.enum).toEqual(["once", "weekly", "daily"]);
+    expect(schedule.properties.type.enum).toEqual(["once", "weekly", "daily", "interval"]);
     expect(schedule.properties.weekdays.items.enum).toEqual([
       "monday",
       "tuesday",
@@ -260,7 +260,10 @@ describe("agents-proxy MCP surface", () => {
       "saturday",
       "sunday",
     ]);
-    expect(create.inputSchema.properties.duration_minutes).toMatchObject({ minimum: 5, maximum: 240 });
+    expect(create.inputSchema.properties).not.toHaveProperty("duration_minutes");
+    expect(create.inputSchema.properties.timeout_minutes).toMatchObject({ minimum: 5, maximum: 240 });
+    expect(create.inputSchema.properties.clear_timeout.type).toBe("boolean");
+    expect(schedule.properties.every_minutes).toMatchObject({ minimum: 5, maximum: 1_440 });
     expect(create.description).toContain("does NOT enable");
   });
 
@@ -480,7 +483,7 @@ describe("agents-proxy MCP surface", () => {
       instructions: "Summarize today's priorities.",
       schedule: { type: "weekly", time: "09:00", weekdays: ["monday", "friday"] },
       run_on: "ember",
-      duration_minutes: 45,
+      timeout_minutes: 15,
     });
     expect(lastRoutineRequestBody).toEqual({
       fromBotId: "bot-asker",
@@ -491,7 +494,7 @@ describe("agents-proxy MCP surface", () => {
         instructions: "Summarize today's priorities.",
         schedule: { type: "weekly", time: "09:00", weekdays: ["monday", "friday"] },
         runOn: "ember",
-        durationMinutes: 45,
+        timeoutMinutes: 15,
       },
     });
     expect(res.result.content[0].text).toContain("confirmation card");
@@ -527,18 +530,35 @@ describe("agents-proxy MCP surface", () => {
     });
   });
 
+  it("proposes an interval routine with an optional start anchor", async () => {
+    await callTool("propose_routine", {
+      name: "Frequent check",
+      instructions: "Check the queue.",
+      schedule: {
+        type: "interval",
+        every_minutes: 5,
+        starts_at: "2026-09-01T09:00:00+05:30",
+      },
+    });
+    expect(lastRoutineRequestBody.routine.schedule).toEqual({
+      type: "interval",
+      everyMinutes: 5,
+      anchorAt: "2026-09-01T09:00:00+05:30",
+    });
+  });
+
   it("proposes routine updates and destructive actions without applying them", async () => {
     const update = await callTool("propose_routine_action", {
       routine_id: "routine-1",
       action: "update",
-      changes: { name: "Weekday brief", duration_minutes: 60 },
+      changes: { name: "Weekday brief", clear_timeout: true },
     });
     expect(lastRoutineRequestBody).toEqual({
       fromBotId: "bot-asker",
       fromThreadId: "thread-asker-routine",
       action: "update",
       routineId: "routine-1",
-      changes: { name: "Weekday brief", durationMinutes: 60 },
+      changes: { name: "Weekday brief", timeoutMinutes: null },
     });
     expect(update.result.content[0].text).toContain("has not been applied");
 
@@ -582,7 +602,7 @@ describe("agents-proxy MCP surface", () => {
     expect(lastRoutineRequestBody.routine.schedule).toEqual({ type: "weekly", time: "09:00", weekdays: ["monday"] });
   });
 
-  it("answers unsupported schedules with instructions, before calling the harness", async () => {
+  it("answers invalid and unsupported schedules with instructions, before calling the harness", async () => {
     lastRoutineRequestBody = null;
     const interval = await callTool("propose_routine", {
       name: "Interval",
@@ -590,8 +610,7 @@ describe("agents-proxy MCP surface", () => {
       schedule: { type: "interval", minutes: 30 },
     });
     expect(interval.result.isError).toBe(true);
-    expect(interval.result.content[0].text).toContain("sub-day intervals");
-    expect(interval.result.content[0].text).toContain('"type":"daily"');
+    expect(interval.result.content[0].text).toContain("every_minutes");
 
     const noDays = await callTool("propose_routine", {
       name: "NoDays",
