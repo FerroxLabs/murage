@@ -246,6 +246,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const emit = (event: RuntimeEvent) => {
         for (const l of [...listeners]) l(event);
       };
+
+      // ACP content blocks may carry a complete raster image inline. Keep the
+      // bytes available to the normalizer, but never duplicate megabytes of
+      // base64 into the provider-native diagnostic log.
+      const nativeLogMessage = (msg: any): unknown => {
+        const content = msg?.params?.update?.content;
+        if (
+          msg?.method !== "session/update" ||
+          msg?.params?.update?.sessionUpdate !== "agent_message_chunk" ||
+          content?.type !== "image" ||
+          typeof content.data !== "string"
+        ) return msg;
+        return {
+          ...msg,
+          params: {
+            ...msg.params,
+            update: {
+              ...msg.params.update,
+              content: { ...content, data: `[image data: ${content.data.length} base64 chars]` },
+            },
+          },
+        };
+      };
       const base = (threadId: string, turnId: string) => ({
         eventId: newEventId(),
         provider: DRIVER_KIND,
@@ -479,8 +502,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const u = p.update ?? {};
           switch (u.sessionUpdate) {
             case "agent_message_chunk": {
-              const delta = u.content?.text;
-              if (typeof delta === "string" && delta) {
+              const content = u.content;
+              const delta = content?.text;
+              if (content?.type === "image" && typeof content.data === "string" && content.data) {
+                flushAssistantText();
+                emit({
+                  ...base(threadId, turnId),
+                  type: "item.completed",
+                  itemType: "assistant_image",
+                  data: content.data,
+                  alt: "Generated image",
+                });
+              } else if (typeof delta === "string" && delta) {
                 state.text += delta;
                 emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
               }
@@ -536,7 +569,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             } catch {
               continue;
             }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg });
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
             if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
               const pend = rpcPending.get(msg.id);
               if (pend) {
