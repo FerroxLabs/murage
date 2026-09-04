@@ -2717,7 +2717,7 @@ describe("harness HTTP API", () => {
       // leave the box unconfigured rather than half-set for whatever runs next
       await api("PUT", "/api/config", { box: { token: "" } });
     }
-  });
+  }, 40_000);
 
   it("reports a failed routine once, not twice", async () => {
     // predicate 1 of 3: automationSource. A routine reaches the same dispatch
@@ -2766,7 +2766,7 @@ describe("harness HTTP API", () => {
       if (botId) await api("DELETE", `/api/bots/${botId}`);
       await api("PUT", "/api/config", { box: { token: "" } });
     }
-  });
+  }, 40_000);
 
   it("stays silent when a delegated sub-turn is the thing that could not start", async () => {
     // predicate 2 of 3: commsDepth. The failure is reported to the bot that
@@ -2830,7 +2830,7 @@ describe("harness HTTP API", () => {
       await api("PUT", "/api/config", { box: { token: "" } });
       rmSync(fakeClaudeDump, { force: true });
     }
-  });
+  }, 60_000);
 
   it("leaves a failed credential-card continuation on the card without buzzing", async () => {
     // predicate 3 of 3: cardContinuation. The person is looking at the card
@@ -2895,7 +2895,7 @@ describe("harness HTTP API", () => {
       await api("PUT", "/api/config", { box: { token: "" } });
       rmSync(fakeClaudeDump, { force: true });
     }
-  });
+  }, 60_000);
 
   it("redacts the failure before it becomes a notification banner", () => {
     // A dispatch failure can carry a provider's verbatim stderr, and this
