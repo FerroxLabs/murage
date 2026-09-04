@@ -25,6 +25,7 @@ import {
   type IntakeCardData,
 } from "../shared/intake-turn.ts";
 import { connectorSystemPrompt, requiredAppsSystemPrompt } from "./composio.ts";
+import { redactSecretsInText } from "./redact.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -2646,6 +2647,268 @@ describe("harness HTTP API", () => {
 
     expect(patched.status).toBe(400);
     expect(patched.body.error).toContain("not recognized");
+  });
+
+  /** Ordering barrier for the three zero-buzz cases below.
+   *
+   * A suppressed buzz would be emitted BEFORE the call that triggered it
+   * returns, but it still has to cross the SSE socket, so `frames` read
+   * straight after that call proves nothing. This fails a SEPARATE, plainly
+   * attended bot's dispatch on the same stream and waits for ITS buzz.
+   * Frames on one stream are ordered, so once the barrier's buzz has landed,
+   * a suppressed one could only have landed earlier — and it is a different
+   * bot, so `until` cannot resolve on the frame we are trying to disprove. */
+  const buzzBarrier = async (stream: Awaited<ReturnType<typeof openSse>>): Promise<string> => {
+    const canary = (await api("POST", "/api/bots")).body.bot;
+    expect((await api("PATCH", `/api/bots/${canary.id}`, { computer: "cloud" })).status).toBe(200);
+    expect((await api("POST", `/api/bots/${canary.id}/messages`, { text: "barrier" })).status).toBe(202);
+    const buzz = await stream.until(
+      (frame) =>
+        frame.kind === "notify" &&
+        frame.notification?.kind === "turn-failed" &&
+        frame.notification?.botId === canary.id,
+      10_000,
+    );
+    expect(buzz.notification.botId).toBe(canary.id);
+    return canary.id;
+  };
+
+  // ── a turn that dies before it starts ────────────────────────────────
+  //
+  // Every one of these forces the SAME async dispatch failure — a bot whose
+  // computer is "cloud" while no Box token is configured throws inside the
+  // turn's own try block, without touching the network — and then varies
+  // only who started the turn. Three of the four assert a COUNT of zero, not
+  // an absence of a particular frame, because the bug they guard is a second
+  // buzz for one failure.
+
+  it("buzzes when an attended turn dies before it can start", async () => {
+    let botId: string | undefined;
+    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
+    try {
+      expect((await api("PUT", "/api/config", { box: { token: "" } })).status).toBe(200);
+      const bot = (await api("POST", "/api/bots")).body.bot;
+      botId = bot.id;
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" })).status).toBe(200);
+      stream = await openSse(`${BASE}/api/events`);
+      await stream.until((frame) => frame.kind === "hello");
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "go" })).status).toBe(202);
+      const buzz = await stream.until(
+        (frame) => frame.kind === "notify" && frame.notification?.kind === "turn-failed",
+        10_000,
+      );
+      expect(buzz.notification).toMatchObject({
+        botId: bot.id,
+        threadId: bot.threadId,
+        title: `${bot.name} couldn't start`,
+      });
+      expect(String(buzz.notification.body)).toMatch(/box|cloud/i);
+
+      // the error row the chat already renders stays exactly as it was
+      await expect.poll(async () => {
+        const current = (await api("GET", "/api/bots?messages=20")).body.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id);
+        return Boolean(current?.messages.at(-1)?.tool?.name?.startsWith("error: "));
+      }, { timeout: 5_000 }).toBe(true);
+    } finally {
+      stream?.close();
+      if (botId) await api("DELETE", `/api/bots/${botId}`);
+      // the token is write-only, so there is no prior value to restore —
+      // leave the box unconfigured rather than half-set for whatever runs next
+      await api("PUT", "/api/config", { box: { token: "" } });
+    }
+  });
+
+  it("reports a failed routine once, not twice", async () => {
+    // predicate 1 of 3: automationSource. A routine reaches the same dispatch
+    // catch and then reports through onDispatchError, which raises
+    // routine-failed. Without the guard the person is buzzed twice for one
+    // failure, so this pins the count rather than merely the presence.
+    let botId: string | undefined;
+    let routineId: string | undefined;
+    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
+    try {
+      expect((await api("PUT", "/api/config", { box: { token: "" } })).status).toBe(200);
+      const bot = (await api("POST", "/api/bots")).body.bot;
+      botId = bot.id;
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" })).status).toBe(200);
+      const created = await api("POST", "/api/routines", {
+        name: "Cloud check",
+        prompt: "look at the cloud desktop",
+        target: "bot",
+        botId: bot.id,
+        runOn: "ember",
+        enabled: true,
+        schedule: { type: "daily", time: "10:00", weekdays: [1, 2, 3, 4, 5] },
+      });
+      expect(created.status).toBe(201);
+      routineId = created.body.routine.id;
+      stream = await openSse(`${BASE}/api/events`);
+      await stream.until((frame) => frame.kind === "hello");
+      expect((await api("POST", `/api/routines/${routineId}/run`)).status).toBe(201);
+      await stream.until(
+        (frame) =>
+          frame.kind === "notify" &&
+          frame.notification?.kind === "routine-failed" &&
+          frame.notification?.botId === bot.id,
+        10_000,
+      );
+      const buzzes = stream.frames.filter(
+        (frame: { kind?: string; notification?: { kind?: string; botId?: string } }) =>
+          frame.kind === "notify" && frame.notification?.botId === bot.id,
+      );
+      expect(buzzes.map((frame: { notification: { kind: string } }) => frame.notification.kind)).toEqual([
+        "routine-failed",
+      ]);
+    } finally {
+      stream?.close();
+      if (routineId) await api("DELETE", `/api/routines/${routineId}`);
+      if (botId) await api("DELETE", `/api/bots/${botId}`);
+      await api("PUT", "/api/config", { box: { token: "" } });
+    }
+  });
+
+  it("stays silent when a delegated sub-turn is the thing that could not start", async () => {
+    // predicate 2 of 3: commsDepth. The failure is reported to the bot that
+    // asked, in its own thread — a second, user-facing channel for the same
+    // event would buzz for work the person never started.
+    let askerId: string | undefined;
+    let targetId: string | undefined;
+    let canaryId: string | undefined;
+    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
+    try {
+      expect((await api("PUT", "/api/config", { box: { token: "" } })).status).toBe(200);
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      askerId = asker.id;
+      const target = (await api("POST", "/api/bots")).body.bot;
+      targetId = target.id;
+      expect((await api("PATCH", `/api/bots/${asker.id}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${target.id}`, { computer: "cloud" })).status).toBe(200);
+
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "delegate this" })).status).toBe(202);
+      const dump = await readJsonFileWhenReady<{
+        mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
+      }>(fakeClaudeDump);
+      const token = dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+
+      stream = await openSse(`${BASE}/api/events`);
+      await stream.until((frame) => frame.kind === "hello");
+      const asked = await fetch(`${BASE}/api/internal/ask-bot`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          fromBotId: asker.id,
+          fromThreadId: asker.threadId,
+          toBotId: target.id,
+          message: "look at the cloud desktop",
+        }),
+      });
+      expect(asked.status).toBe(200);
+      // the asker learns about it the way it is supposed to: in its own reply
+      expect(JSON.stringify(await asked.json())).toMatch(/couldn't start that bot/i);
+
+      canaryId = await buzzBarrier(stream);
+      // and the person is not buzzed for a turn they did not start
+      expect(
+        stream.frames.filter(
+          (frame: { kind?: string; notification?: { kind?: string; botId?: string } }) =>
+            frame.kind === "notify" &&
+            frame.notification?.kind === "turn-failed" &&
+            frame.notification?.botId === target.id,
+        ),
+      ).toEqual([]);
+    } finally {
+      stream?.close();
+      if (askerId) await api("POST", `/api/bots/${askerId}/interrupt`).catch(() => undefined);
+      if (canaryId) await api("DELETE", `/api/bots/${canaryId}`);
+      if (targetId) await api("DELETE", `/api/bots/${targetId}`);
+      if (askerId) await api("DELETE", `/api/bots/${askerId}`);
+      await api("PUT", "/api/config", { box: { token: "" } });
+      rmSync(fakeClaudeDump, { force: true });
+    }
+  });
+
+  it("leaves a failed credential-card continuation on the card without buzzing", async () => {
+    // predicate 3 of 3: cardContinuation. The person is looking at the card
+    // that failed to resume, and the card itself carries the error.
+    let botId: string | undefined;
+    let canaryId: string | undefined;
+    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
+    try {
+      expect((await api("PUT", "/api/config", { box: { token: "" } })).status).toBe(200);
+      const bot = (await api("POST", "/api/bots")).body.bot;
+      botId = bot.id;
+      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "stay active" })).status).toBe(202);
+      const dump = await readJsonFileWhenReady<{
+        mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
+      }>(fakeClaudeDump);
+      const token = dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
+      const requested = await fetch(`${BASE}/api/internal/request-credential`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          fromBotId: bot.id,
+          fromThreadId: bot.threadId,
+          credentialId: "openaiImageApiKey",
+          reason: "needed for the task",
+        }),
+      });
+      expect(requested.status).toBe(201);
+      const { messageId } = (await requested.json()) as { messageId: string };
+
+      stream = await openSse(`${BASE}/api/events`);
+      await stream.until((frame) => frame.kind === "hello");
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" })).status).toBe(200);
+      expect((await api("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, {
+        threadId: bot.threadId,
+      })).status).toBe(200);
+
+      await expect.poll(async () => {
+        const current = (await api("GET", "/api/bots?messages=20")).body.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id);
+        return current?.messages.find((message: { id: string }) => message.id === messageId)?.secret?.error;
+      }, { timeout: 10_000 }).toMatch(/box|cloud/i);
+      canaryId = await buzzBarrier(stream);
+      expect(
+        stream.frames.filter(
+          (frame: { kind?: string; notification?: { kind?: string; botId?: string } }) =>
+            frame.kind === "notify" &&
+            frame.notification?.kind === "turn-failed" &&
+            frame.notification?.botId === bot.id,
+        ),
+      ).toEqual([]);
+    } finally {
+      if (botId) await api("POST", `/api/bots/${botId}/interrupt`).catch(() => undefined);
+      stream?.close();
+      if (canaryId) await api("DELETE", `/api/bots/${canaryId}`);
+      if (botId) await api("DELETE", `/api/bots/${botId}`);
+      await api("PUT", "/api/config", { box: { token: "" } });
+      rmSync(fakeClaudeDump, { force: true });
+    }
+  });
+
+  it("redacts the failure before it becomes a notification banner", () => {
+    // A dispatch failure can carry a provider's verbatim stderr, and this
+    // body goes to an OS notification. server/index.ts boots a server on
+    // import, so it cannot be pulled into a unit test — same wiring-pin shape
+    // as server/flux-surface.test.ts. The behaviour of the wrapper itself is
+    // asserted here too, so this is not a purely syntactic pin.
+    const indexSource = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const notifyAt = indexSource.indexOf('buildNotification("turn-failed"');
+    expect(notifyAt).toBeGreaterThan(-1);
+    expect(indexSource.slice(notifyAt, notifyAt + 200)).toContain("redactSecretsInText(message)");
+    expect(redactSecretsInText("engine refused: Authorization: Bearer sk-ant-api03-AAAAAAAAAAAAAAAAAAAA"))
+      .not.toContain("sk-ant-api03-AAAAAAAAAAAAAAAAAAAA");
   });
 
   it("creates a fully configured bot in one request and greets with its final name", async () => {
