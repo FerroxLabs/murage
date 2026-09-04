@@ -12,10 +12,18 @@ says so.
 
 ## CORRECTION, same day, after this document was sent
 
-**Request 1 HAS rolled. The section below headed "still not rolled" was wrong**
-and is corrected in place. Sean Donahoe checked the live listing and caught it;
-re-probed with `FLUX_API_KEY` and confirmed. What we got wrong and what we found
-instead is the next section. Everything else in this document stands.
+**Request 1 HAS rolled** and the section below headed "still not rolled" is
+corrected in place. Sean Donahoe checked the live listing and caught it.
+
+On the timing, since flux-router asked: they date the `capability` roll to
+~18:10Z (ReplicaSet 17:49Z, re-attempted 18:01Z). Our original probe ran during
+2026-09-03 Bangkok daytime, which is ahead of that roll; our re-probe ran
+2026-09-04 03:52:18 GMT and sees the field. So this document was accurate when
+measured and stale by morning. We are not claiming it was right — we sent it
+after the roll, which is our error — but the "re-probed today, still dark"
+reading flux-router inferred is not what happened. See the discriminator below.
+
+**The discriminator result does not match either of their expected rows.**
 
 ---
 
@@ -34,6 +42,51 @@ You may want to plan capacity around that rather than hear about it from a graph
 `flux-auto` is the model id it will arrive as.
 
 ---
+
+## THE DISCRIMINATOR PROBE, run verbatim
+
+flux-router sent a probe to identify which key we run and settle whether we had
+simply probed early. Run unmodified, 2026-09-04 03:52 GMT:
+
+    key prefix : sk-B0gKjPvHY_0xm...
+    total rows : 105
+    capability field present : True
+    image by capability : 15
+    image by name       : 15
+    audio by name       : 3
+
+Against their expected readings:
+
+- **Not "13 by name, 0 by capability"** — the field is present for us, so we did
+  not probe before the roll.
+- **Not "image by name 0"** — we see the image rows, so it is not an allowlist
+  that hides them.
+- Their crucible key returns **13/13/3**. We return **15/15/3**. Same endpoint,
+  different key, and ours sees **two more** image arms, not fewer. The printed
+  prefix is above; note it is not the `sk-flux-...` shape their example assumed.
+
+**And the 402 survives all of it.** Same key, same minute, plain `curl` straight
+to `api.fluxrouter.ai` with no MCP gateway anywhere in the path:
+
+    POST /v1/images/generations   flux-image-gpt2-low  -> 402 premium_locked
+                                  cf-ray a35a0a6919057b6c-BKK
+    POST /v1/audio/transcriptions flux-voice-fast      -> 402 premium_locked
+                                  cf-ray a35a0a6bad767b50-BKK
+    POST /v1/audio/transcriptions whisper-1            -> 401
+    POST /v1/chat/completions     flux-fast            -> 200
+
+Those two cf-ray ids are traceable on your side.
+
+The `whisper-1 -> 401` control is the useful one: it fires exactly as
+flux-router predicted, which means the key is valid and recognised and the 402
+is a deliberate plan decision about this key, not an auth artefact and not a
+gateway rewriting our request.
+
+So the blocker is neither roll timing nor the path. It is that **this key is
+entitled differently from the crucible key, and `/v1/models` does not say so** —
+it reports `entitlement: "open"` on all fifteen image rows that then refuse the
+call. On the crucible key the field happens to be correct, which is precisely
+why the bug is invisible from that side.
 
 ## REQUEST 1 SHIPPED — and its `entitlement` field says the opposite of the API
 
