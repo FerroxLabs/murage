@@ -95,13 +95,40 @@ function buildIco(images) {
   return Buffer.concat([header, ...entries, ...images.map((i) => i.png)]);
 }
 
+/** One rasterising routine, shared by the square icon and the maskable one.
+ *  `__SRC__` and `__SIZES__` are substituted before it is evaluated in the page. */
+const RENDER = `(async () => {
+  const img = new Image();
+  img.src = __SRC__;
+  await img.decode();
+  const out = {};
+  for (const size of __SIZES__) {
+    const ss = size * 4;
+    const big = new OffscreenCanvas(ss, ss);
+    const bx = big.getContext("2d");
+    bx.clearRect(0, 0, ss, ss);
+    bx.drawImage(img, 0, 0, ss, ss);
+    const c = new OffscreenCanvas(size, size);
+    const x = c.getContext("2d");
+    x.imageSmoothingEnabled = true;
+    x.imageSmoothingQuality = "high";
+    x.clearRect(0, 0, size, size);
+    x.drawImage(big, 0, 0, size, size);
+    const buf = new Uint8Array(await (await c.convertToBlob({ type: "image/png" })).arrayBuffer());
+    let s = "";
+    for (const b of buf) s += String.fromCharCode(b);
+    out[size] = btoa(s);
+  }
+  return out;
+})()`;
+
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 12);
 
 async function main() {
   const svg = readFileSync(SOURCE, "utf8");
   const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 
-  const sizes = [...new Set([...ICONSET_FILES.map(([, s]) => s), ...ICO_SIZES, 1024])].sort(
+  const sizes = [...new Set([...ICONSET_FILES.map(([, s]) => s), ...ICO_SIZES, 180, 192, 1024])].sort(
     (a, b) => a - b,
   );
 
@@ -116,32 +143,9 @@ async function main() {
   // glyph at 16px has far cleaner edges this way than drawn straight to 16px.
   const win = new BrowserWindow({ show: false, width: 64, height: 64 });
   await win.loadURL("data:text/html,<body></body>");
-  const encoded = await win.webContents.executeJavaScript(`(async () => {
-    const img = new Image();
-    img.src = ${JSON.stringify(dataUrl)};
-    await img.decode();
-    const out = {};
-    for (const size of ${JSON.stringify(sizes)}) {
-      const ss = size * 4;
-      const big = new OffscreenCanvas(ss, ss);
-      const bx = big.getContext("2d");
-      bx.clearRect(0, 0, ss, ss);
-      bx.drawImage(img, 0, 0, ss, ss);
-      const c = new OffscreenCanvas(size, size);
-      const x = c.getContext("2d");
-      x.imageSmoothingEnabled = true;
-      x.imageSmoothingQuality = "high";
-      x.clearRect(0, 0, size, size);
-      x.drawImage(big, 0, 0, size, size);
-      const blob = await c.convertToBlob({ type: "image/png" });
-      const buf = new Uint8Array(await blob.arrayBuffer());
-      let s = "";
-      for (const b of buf) s += String.fromCharCode(b);
-      out[size] = btoa(s);
-    }
-    return out;
-  })()`);
-  win.destroy();
+  const encoded = await win.webContents.executeJavaScript(
+    RENDER.replace("__SRC__", JSON.stringify(dataUrl)).replace("__SIZES__", JSON.stringify(sizes)),
+  );
 
   const rendered = new Map();
   for (const size of sizes) {
@@ -155,8 +159,35 @@ async function main() {
     rendered.set(size, png);
   }
 
+  // The PWA set the browser door and phone home screen use. Rendered from the
+  // SAME vector so a phone icon can never drift from the desktop one.
+  const pwa = [
+    ["public/icons/murage-180.png", 180],
+    ["public/icons/murage-192.png", 192],
+    ["public/icons/murage-512.png", 512],
+  ];
+
+  // Maskable icons come from a DIFFERENT vector: the ground bleeds edge to edge,
+  // because Android and iOS crop these to their own shape. Baking a squircle in
+  // would be cropped twice and read as a rounded rect floating inside a circle.
+  const maskSvg = readFileSync(join(ROOT, "brand", "app-icon-maskable.svg"), "utf8");
+  const maskUrl = `data:image/svg+xml;base64,${Buffer.from(maskSvg).toString("base64")}`;
+  // Same window, deliberately: creating a second BrowserWindow after destroying
+  // the first raced and failed the data-URL load with ERR_FAILED.
+  const maskEncoded = await win.webContents.executeJavaScript(
+    RENDER.replace("__SRC__", JSON.stringify(maskUrl)).replace("__SIZES__", JSON.stringify([192, 512])),
+  );
+  win.destroy();
+
   const writes = [];
   mkdirSync(ICONSET, { recursive: true });
+  for (const [rel, size] of pwa) writes.push([join(ROOT, rel), rendered.get(size)]);
+  for (const size of [192, 512]) {
+    writes.push([
+      join(ROOT, "public", "icons", `murage-maskable-${size}.png`),
+      Buffer.from(maskEncoded[String(size)], "base64"),
+    ]);
+  }
   for (const [name, size] of ICONSET_FILES) writes.push([join(ICONSET, name), rendered.get(size)]);
   writes.push([join(ROOT, "electron", "resources", "app-icon.png"), rendered.get(1024)]);
   writes.push([
