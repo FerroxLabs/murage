@@ -43,6 +43,85 @@ You may want to plan capacity around that rather than hear about it from a graph
 
 ---
 
+## RESOLVED, 2026-09-04 — it was our key, and three bugs on their side
+
+flux-router found root cause. Recorded here because it closes most of this
+document.
+
+**We were on an internal key.** `customer_class: internal`, `tier: scale`,
+`charges_cleared: null`, 105 rows — which is why we saw fifteen image arms to
+the crucible key's thirteen. Internal keys carry a *wider* allowlist, so the
+count that looked like under-provisioning was the opposite.
+
+Their three stacked faults, in their words:
+
+1. **The capability routes never pass the internal bypass.** Every chat path
+   derives `internal_bypass` and forwards it; `images_route.py:206` and
+   `audio_route.py:210` call `_capability_entitled` without it. A comment on
+   the image line claimed the bypass was "handled inside `_capability_entitled`
+   (Wave 0)". It is not — and that comment is why nobody looked.
+2. **`null` is not `0`.** `_premium_unlocked("scale", None)` passes the tier
+   check, then `int(None)` raises `TypeError`, is caught, and returns False.
+   Any key with a missing cleared count is locked out.
+3. **`entitlement` is a constant.** `_flux_key_metadata` is read once and
+   written nowhere, so it always returns `open` — which is the bug this
+   document reported from the outside.
+
+Three independent faults producing exactly the trace we saw: chat 200,
+image/audio 402, catalogue cheerfully saying open.
+
+### What the paid key does, verified here
+
+    GET  /v1/models                                    91 rows, 13 image, 3 audio
+    POST /v1/images/generations  flux-image-gpt2-low   200, 1024x1024 PNG, 367KB
+    POST /v1/audio/transcriptions flux-voice           200  " you"
+                                  flux-voice-fast      200  " Thank you."
+                                  flux-voice-accurate  200  " you"
+
+And through Murage's own route rather than against Flux directly — the first
+real transcript this code has ever produced:
+
+    POST /api/voice/transcribe  ->  200
+    {"text":"Thank you.","language":"English","duration":1,
+     "model":"flux-voice-fast","billedSeconds":10}
+
+**Phone dictation is now proven end to end.** It stops being "built, never
+seen a real transcript" in the capability table.
+
+### Their answers to our asks
+
+- **Ask 1, yes.** `entitlement` is meant to be per-key. It is broken, not
+  designed that way, and will reflect the calling key.
+- **Ask 2, no, and they are right.** Do not rename it — that would enshrine a
+  bug as a contract. They go further than we asked: when entitlement cannot be
+  resolved it will be **omitted, not asserted as `open`**. A field that cannot
+  be computed must not answer. We agree, and it is the better rule.
+- **Audio price: 1667 microcents per audio-second**, billed `max(seconds, 10)`,
+  shipping with an explicit `price_unit` (`"image"` vs `"audio_second"`) so a
+  per-second figure can never be read as a per-image one — a 10-60x error we
+  would have eaten silently.
+
+### What their pricing detail cost us, found by acting on it
+
+The `max(seconds, 10)` floor exposed a real bug in our metering, now fixed
+(`a67f1972`). `estimateBilledSeconds` returned `ceil(bytes/3000)`, and the
+duration fallback passed `transcript.duration` straight through — charging 3.2
+for a clip Flux bills at 10, unrounded. Push-to-talk produces short clips
+almost exclusively, so our budget under-counted real spend by up to 10x on
+precisely the traffic the route exists to serve. Verified live: a one-second
+clip returns `x-flux-billed-seconds: 10` and `x-flux-cost-usd: 0.016670`,
+exactly 10 x 1667.
+
+Their comment on `images_route.py:206` and our comment on `BUDGET_MAX_REQUESTS`
+failed the same way on the same day: both asserted a behaviour that had stopped
+being true, and both were believed because they were written down.
+
+### Process
+
+They can read this file directly. Send a commit hash and a path, not prose.
+
+---
+
 ## THE DISCRIMINATOR PROBE, run verbatim
 
 flux-router sent a probe to identify which key we run and settle whether we had
