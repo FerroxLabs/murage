@@ -1,6 +1,12 @@
 # Releasing
 
-One workflow builds everything: **Actions → Release → Run workflow**. It
+For a normal release, run **Actions → Prepare next release → Run workflow**
+and choose a patch, minor, or custom version. It opens a tiny version-bump PR;
+merging that PR automatically starts **Release** and assembles a draft from the
+exact merge commit. Review and publish the draft when it is ready.
+
+The **Actions → Release → Run workflow** button remains available for reruns
+and recovery, and is still the only way to publish immediately. It
 builds macOS (arm64 + x64, signed, notarized, stapled), Windows, and Ubuntu
 from a single pinned commit, verifies every artifact the way a user would
 receive it, assembles a complete draft on
@@ -9,9 +15,11 @@ generated notes, and — if you ticked **publish** — flips it live. Leave
 publish unticked to review the draft notes first, then publish from the
 GitHub UI.
 
-The workflow refuses to overwrite an already-published version, so the only
-prerequisite per release is that `package.json`'s version is bumped on the
-ref you run it against. A release is also rejected if any installer, stable
+The workflow refuses to overwrite an already-published version. A push-started
+run releases only when the merge actually changed `package.json`'s version, and
+refuses to start at all when it cannot read the previous version to compare
+against — it fails closed rather than assume. Manual Release runs still require
+that the version is bumped on the ref you select. A release is also rejected if any installer, stable
 download name, updater feed, blockmap, size, or digest is absent or
 inconsistent — the complete asset set is named in `release.yml`, and anything
 missing or extra fails the run rather than shipping a half release.
@@ -54,6 +62,11 @@ above it.
 ## One-time setup: four secrets
 
 Set these in **Murage → Settings → Secrets and variables → Actions**.
+
+**Prepare next release** also needs **Settings → Actions → General → Workflow
+permissions → Allow GitHub Actions to create and approve pull requests**
+enabled. That workflow only ever creates the version PR; it never approves it
+and never merges it.
 
 ### 1. `MAC_CERT_P12_BASE64` + `MAC_CERT_PASSWORD`
 

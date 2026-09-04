@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  # Branches created by GITHUB_TOKEN do not emit their own push event, so the
+  # release-prep workflow dispatches this one explicitly for the version PR.
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
