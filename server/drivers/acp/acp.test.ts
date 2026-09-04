@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ensureDirs } from "../../config.ts";
+import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
@@ -277,6 +277,41 @@ describe("ACP turns (fake CLI)", () => {
       .filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text")
       .map((e) => (e as { text: string }).text);
     expect(texts).toEqual(["before one", "before two", "after"]);
+  });
+
+  it("normalizes a structured ACP image block without treating it as text", async () => {
+    await create(GeminiAgentDriver, "image");
+    await instance.adapter.sendTurn({ threadId: "t-image", text: "draw it" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const image = recorder.events.find(
+      (e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image",
+    );
+    expect(image).toMatchObject({
+      type: "item.completed",
+      itemType: "assistant_image",
+      alt: "Generated image",
+    });
+    expect(image && "data" in image ? (image as { data: string }).data : "").toMatch(/^iVBOR/);
+    expect(
+      recorder.events.some(
+        (e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text",
+      ),
+    ).toBe(false);
+  });
+
+  // The native tee is a plain 0644-adjacent file people paste into bug
+  // reports, and an image block is megabytes of base64. The bytes must reach
+  // the normalizer and nothing else.
+  it("keeps the image bytes out of the provider-native log", async () => {
+    await create(GeminiAgentDriver, "image");
+    await instance.adapter.sendTurn({ threadId: "t-image-log", text: "draw it" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const log = readFileSync(join(NATIVE_DIR, "t-image-log.ndjson"), "utf8");
+    expect(log).toContain("agent_message_chunk");
+    expect(log).toContain("[image data: ");
+    expect(log).not.toContain("iVBOR");
   });
 
   it("reads token usage from the root of the prompt result", async () => {
