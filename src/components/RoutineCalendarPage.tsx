@@ -43,6 +43,7 @@ import { CalendarSidebar } from "@/components/routines/CalendarSidebar";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { WebhooksPanel } from "@/components/WebhooksPanel";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
+import { botRole } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
 import {
   imageAttachmentFromFile,
@@ -137,9 +138,19 @@ function roomCanRunGoal(group: Group): boolean {
 function preferredRoomLead(group: Group | undefined, bots: Bot[], preferredId?: string): Bot | undefined {
   const members = activeRoomMembers(group, bots);
   const explicitLeadId = group?.defaultResponder.kind === "member" ? group.defaultResponder.botId : undefined;
+  // `chiefOfStaff` is the raw org-chart field and covers BOTH roles that lead:
+  // a workspace-scope chief and a section-scope team lead (bot-role.ts:29).
+  // Reading it directly here is what role-leaks.test.ts exists to stop — the
+  // demotion bug it was written for came from exactly this shape — so the
+  // fallback asks botRole() the question instead. Same set of bots, one
+  // source of truth for what a role means.
+  const leads = (bot: Bot) => {
+    const role = botRole(bot);
+    return role === "chief" || role === "leader";
+  };
   return members.find((bot) => bot.id === preferredId)
     ?? members.find((bot) => bot.id === explicitLeadId)
-    ?? members.find((bot) => bot.chiefOfStaff)
+    ?? members.find(leads)
     ?? members[0];
 }
 
