@@ -147,6 +147,7 @@ export interface ClaudeConfig {
 export const STATIC_CLAUDE_MODELS: ModelCatalog = {
   default: "claude-sonnet-5",
   options: [
+    { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
     { id: "claude-fable-5", label: "Claude Fable 5" },
     { id: "claude-opus-5", label: "Claude Opus 5" },
     { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
