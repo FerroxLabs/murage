@@ -200,6 +200,11 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   // the door does not have to change the day the PWA files land, and harmless
   // until then because a miss is a 404 here rather than the SPA fallback.
   { method: "GET", path: /^\/manifest\.webmanifest$/ },
+  // The service worker. Without this entry the door 404s /sw.js, registration
+  // fails silently, Chrome never fires `beforeinstallprompt`, and the phone is
+  // simply never offered an install -- which looks like a working app that has
+  // decided not to be installable rather than a missing route.
+  { method: "GET", path: /^\/sw\.js$/ },
   { method: "GET", path: /^\/sw\.js$/ },
   // Enumerated, not `murage-[\w-]+`: this list's whole property is that
   // adding a path is a decision someone made. `maskable-` is a third

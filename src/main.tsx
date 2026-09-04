@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
+import { registerServiceWorker } from "./lib/register-sw";
 import { applySkin, readPreference, resolveSkin, watchSystemSkin } from "./lib/skins";
 import "./styles.css";
 
@@ -15,6 +16,11 @@ applySkin(resolveSkin(readPreference()));
 // whether or not Settings is mounted. The handler re-reads the preference, so
 // this listener can never override an explicit choice.
 watchSystemSkin(applySkin);
+
+// The browser door only. Without a registered worker Chrome never offers to
+// install Murage, so the phone gets a link it has to find again rather than an
+// app on its home screen. No-ops in Electron and in development.
+registerServiceWorker();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
