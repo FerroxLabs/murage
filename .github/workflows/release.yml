@@ -32,6 +32,15 @@ on:
         required: false
         type: boolean
         default: false
+  # Merging a version bump to main IS the release trigger. `publish` is a
+  # workflow_dispatch input only, so a push-started run leaves a DRAFT — a
+  # human still publishes it. The should_release guard below is what keeps
+  # an unrelated package.json edit from starting a signed build.
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
 
 permissions:
   contents: read
@@ -44,16 +53,42 @@ jobs:
     outputs:
       sha: ${{ steps.pin.outputs.sha }}
       version: ${{ steps.pin.outputs.version }}
+      should_release: ${{ steps.pin.outputs.should_release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          # github.sha, not github.ref: on a push the branch tip can already
+          # have moved, and a release must pin the exact commit that carried
+          # the version bump. fetch-depth 0 so the pre-push blob is readable.
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - id: pin
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          current=$(node -p "require('./package.json').version")
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+          should_release=true
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            # Fail closed. If the previous package.json cannot be read we
+            # cannot tell a version bump from a dependency edit, and guessing
+            # either way is wrong: guessing "release" ships an unintended
+            # signed build, guessing "skip" silently drops a real release.
+            git cat-file -e "$BEFORE:package.json" 2>/dev/null || {
+              echo "::error::cannot verify the version before this push; refusing to start a release"
+              exit 1
+            }
+            previous=$(git show "$BEFORE:package.json" | node -e 'let s=""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.parse(s).version))')
+            if [ "$previous" = "$current" ]; then
+              echo "package.json changed without a version bump; skipping the release"
+              should_release=false
+            fi
+          fi
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
       - name: Refuse to overwrite a published release
+        if: steps.pin.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
@@ -66,6 +101,7 @@ jobs:
   mac:
     name: macOS arm64 + x64 (sign, notarize, staple)
     needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: macos-14
     timeout-minutes: 90
     steps:
@@ -222,6 +258,7 @@ jobs:
   windows:
     name: Windows x64
     needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -334,6 +371,7 @@ jobs:
   linux:
     name: Ubuntu 24.04 x64
     needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -425,6 +463,7 @@ jobs:
   assemble:
     name: Assemble the draft and verify every feed
     needs: [prepare, mac, windows, linux]
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     # generate-notes is a POST and needs Contents: write. Granted here rather
     # than at the workflow level so the build jobs stay read-only.
