@@ -38,6 +38,15 @@ interface RoutineBody {
   schedule: { type: "once"; at: number };
 }
 
+/** Marker plus proof. Saying "desktop" is not being desktop — the harness
+ * believes the marker only when this launch's secret rides along, which is
+ * why the child above is given the same value. */
+const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
+const DESKTOP_HEADERS = {
+  "x-murage-surface": "desktop",
+  "x-murage-surface-secret": DESKTOP_SECRET,
+} as const;
+
 const api = async (
   method: string,
   path: string,
@@ -45,7 +54,10 @@ const api = async (
 ): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      ...DESKTOP_HEADERS,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: res.status === 204 ? null : await res.json() };
@@ -78,6 +90,10 @@ posixOnly("routine failure notification wiring", () => {
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
       MURAGE_WEBHOOK_PORT: String(WEBHOOK_PORT),
+      // Routine writes are desktop-only, so this suite has to speak as the
+      // desktop app. Same dev-secret handshake index.test.ts uses: the child
+      // is told the value, and `api()` below proves it on every call.
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;

@@ -108,6 +108,9 @@ function routineScheduleLabel(routine: Routine) {
       minute: "2-digit",
     });
   }
+  if (routine.schedule.type === "interval") {
+    return `Every ${routine.schedule.everyMinutes} min`;
+  }
   const days = routine.schedule.weekdays;
   const cadence =
     days.length === 7
