@@ -84,6 +84,7 @@ export function summarizeRuntime(e: RuntimeEvent): { summary: string; tone: Insp
       return { summary: `${e.itemType} updated${typeof e.tokens === "number" ? ` · ${e.tokens} tok` : ""}`, tone: "plain" };
     case "item.completed":
       if (e.itemType === "assistant_text") return { summary: `assistant: ${clip(oneLine(e.text))}`, tone: "plain" };
+      if (e.itemType === "assistant_image") return { summary: "assistant image generated", tone: "plain" };
       return { summary: `tool ${e.ok ? "ok" : "failed"}`, tone: e.ok ? "plain" : "error" };
     case "content.delta":
       return { summary: `${e.streamKind}: ${clip(oneLine(e.delta))}`, tone: "plain" };
