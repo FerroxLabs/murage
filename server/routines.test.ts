@@ -95,6 +95,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
     changed,
     failed,
     setNow: (value: number) => (now = value),
+    nowValue: () => now,
     setBot: (value: typeof bot) => (bot = value),
     setGoal: (value: typeof goal) => (goal = value),
   };
@@ -135,6 +136,49 @@ describe("nextOccurrence", () => {
 });
 
 describe("RoutineManager", () => {
+  it("still enforces the run limit while a dispatch is wedged", async () => {
+    // The run-limit scan used to sit inside `if (this.ticking) return`. One
+    // dispatch that never settles — a provider wedged mid-handshake — left
+    // that flag true forever, so every later tick returned immediately and the
+    // wall-clock kill switch never fired again for ANY routine. The mechanism
+    // whose whole job is stopping a runaway was disabled by exactly the stuck
+    // call it exists to survive. Found by an external audit, 2026-09-05.
+    const h = harness();
+
+    // 1. A limited routine starts normally and is RUNNING.
+    const limited = h.manager.create({
+      botId: "bot-b", name: "Limited", prompt: "work",
+      runOn: "ember", enabled: true, timeoutMinutes: 5,
+      schedule: { type: "once", at: h.nowValue() + 1_000 },
+    });
+    h.setNow(h.nowValue() + 2_000);
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.routineId === limited.id)?.status).toBe("running");
+
+    // 2. A second dispatch wedges and never settles.
+    let release: (() => void) | undefined;
+    h.options.startTurn = () => new Promise<void>((resolve) => { release = resolve; });
+    h.manager.create({
+      botId: "bot-a", name: "Wedger", prompt: "hang",
+      runOn: "ember", enabled: true,
+      schedule: { type: "once", at: h.nowValue() + 1_000 },
+    });
+    h.setNow(h.nowValue() + 2_000);
+    const stuck = h.manager.tick();
+    await Promise.resolve();
+    expect(release).toBeTypeOf("function");   // genuinely stuck inside startTurn
+
+    // 3. The limited run passes its deadline while that tick is still wedged.
+    h.setNow(h.nowValue() + 6 * 60_000);
+    await h.manager.tick();
+
+    expect(h.manager.listRuns().find((run) => run.routineId === limited.id)?.status).toBe("failed");
+    expect(h.interruptedTurns.some((entry) => entry.botId === "bot-b")).toBe(true);
+
+    release?.();
+    await stuck;
+  });
+
   it("accepts five-minute windows and preserves the manager's clamping semantics", () => {
     const h = harness();
     const create = (name: string, durationMinutes?: number) => h.manager.create({
