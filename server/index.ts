@@ -567,6 +567,20 @@ const generatedImagesByTurn = new Map<
 function generatedImageTurnKey(threadId: string, turnId?: string): string {
   return `${threadId}:${turnId ?? "active"}`;
 }
+/** Every staged image on a thread, whatever provider turn it belongs to.
+ * Deleting the thread's owner makes all of them unattachable at once, so
+ * they go together rather than waiting for a per-turn retirement that will
+ * now never arrive. */
+function purgeGeneratedImagesForThread(threadId: string): void {
+  for (const [key, attachments] of generatedImagesByTurn) {
+    if (!key.startsWith(`${threadId}:`)) continue;
+    generatedImagesByTurn.delete(key);
+    for (const attachment of attachments) {
+      try { unlinkSync(attachment.path); } catch { /* already gone */ }
+    }
+  }
+}
+
 const retiredProviderTurns = new RetiredTurnRegistry();
 const pendingCancelledProviderHandshakes = new PendingTurnCancellations();
 
@@ -9082,6 +9096,9 @@ const server = createServer(async (req, res) => {
         const directThreadId = directClaim?.threadId ?? bot.threadId;
         await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(directThreadId).catch(() => {});
         closeOpenApprovals(directThreadId);
+        // Deletion removes the thread before a late turn.completed can fold
+        // staged provider images into a message, so dispose them here.
+        purgeGeneratedImagesForThread(directThreadId);
         stopScreenPoller(bot.id);
         activeVpsThreads.delete(bot.id);
         routines!.disableForBot(bot.id);
