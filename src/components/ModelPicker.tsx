@@ -1,10 +1,11 @@
 // Compact model picker: providers live on a Cloud/Local rail. Ready engines
 // show a short suggested list with search and an explicit all-models view;
 // engines that need setup show one focused action instead of a disabled wall.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { useStore, type Bot, type InstanceInfo, type ModelSelection } from "@/state/store";
 import { filterCustomModels, partitionCustomModels, suggestedModels } from "@/lib/custom-models";
+import { singleFlight } from "@/lib/single-flight";
 import { isCustomOnly, splitEngineRail } from "@/lib/engine-rail";
 import { ProviderMark } from "./ProviderIcons";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
@@ -126,26 +127,19 @@ export function ModelPicker({
   const rootRef = useRef<HTMLDivElement>(null);
   // A ref, not the `refreshing` state: two opens in the same tick both read the
   // stale `false` off state and fire twice. The ref is written synchronously.
-  const refreshingRef = useRef(false);
 
   const selection = bot.modelSelection;
   const active = state.instances.find((instance) => instance.instanceId === selection.instanceId);
   const railInstance =
     state.instances.find((instance) => instance.instanceId === (railId ?? selection.instanceId)) ?? state.instances[0];
 
-  const refreshModels = useCallback(() => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setRefreshing(true);
-    void refreshInstances()
-      .catch(() => {
-        // Keep the last known catalog when the app is temporarily offline.
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        setRefreshing(false);
-      });
-  }, [refreshInstances]);
+  // The gate lives in src/lib/single-flight.ts so it can actually be tested —
+  // this file renders to static markup in tests, with no click to make, which
+  // is how the guard originally shipped with zero coverage.
+  const refreshModels = useMemo(
+    () => singleFlight(refreshInstances, setRefreshing),
+    [refreshInstances],
+  );
 
   useEffect(() => {
     if (open) refreshModels();
