@@ -116,4 +116,36 @@ describe("custom MCP probe", () => {
     });
     expect(JSON.stringify(result)).not.toContain("very-secret-value");
   });
+  it("answers instead of hanging when a server closes stdin mid-handshake", async () => {
+    // A server that replies to initialize and then closes its read end. The
+    // probe writes two more frames after that reply, so this is the shape
+    // where a write can meet a pipe with no reader.
+    //
+    // HONEST SCOPE: an unhandled stdin 'error' DOES kill a node process — I
+    // reproduced that standalone (uncaught EPIPE, exit 42) — but I could not
+    // reach it through probeMcpServer with any fixture I tried; the probe
+    // settles on `close` first. The listener in mcp-probe.ts is therefore
+    // cheap defensive hardening, NOT a fix for a demonstrated crash, and this
+    // test pins the behaviour that is actually observable: the probe answers.
+    const dir = mkdtempSync(join(tmpdir(), "murage-mcp-epipe-"));
+    const server = join(dir, "answers-then-closes.mjs");
+    writeFileSync(server, [
+      'process.stdin.once("data", () => {',
+      '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "x", version: "1" } } }) + "\\n");',
+      '  process.stdin.destroy();',
+      '  setTimeout(() => {}, 5000);',
+      '});',
+    ].join("\n"));
+
+    const result = await probeMcpServer({
+      command: process.execPath,
+      args: [server],
+      env: {},
+      enabled: true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(typeof result.error).toBe("string");
+    await removeTempDir(dir);
+  }, 30_000);
 });
