@@ -937,9 +937,24 @@ export class RoutineManager {
     this.timer = null;
   }
 
-  async tick(): Promise<void> {
-    if (this.ticking) return;
-    this.ticking = true;
+  /** Stop runs that have outrun their wall-clock limit.
+   *
+   * DELIBERATELY OUTSIDE the dispatch guard. This scan used to live at the
+   * top of `tick()`, inside `if (this.ticking) return`, which meant a single
+   * dispatch that never settled — a provider wedged mid-handshake — left
+   * `ticking` true forever, every later tick returned immediately, and the
+   * run limit was never enforced again for ANY routine. The one mechanism
+   * whose entire job is to stop a runaway was disabled by exactly the kind of
+   * stuck call it exists to survive.
+   *
+   * Its own reentrancy flag, because it awaits interrupt callbacks that can
+   * themselves be slow; a slow interrupt must not stack scans, but it also
+   * must not block dispatch. Found by an external audit, 2026-09-05. */
+  private enforcing = false;
+
+  async enforceRunLimits(): Promise<void> {
+    if (this.enforcing) return;
+    this.enforcing = true;
     try {
       const now = this.now();
       for (const run of this.runs) {
@@ -963,6 +978,18 @@ export class RoutineManager {
           await this.options.interruptTurn?.(run.botId, threadId, run.runOn ?? "ember").catch(() => {});
         }
       }
+    } finally {
+      this.enforcing = false;
+    }
+  }
+
+  async tick(): Promise<void> {
+    // Before the guard, on purpose — see enforceRunLimits.
+    await this.enforceRunLimits();
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      const now = this.now();
       let changed = false;
       const missedRuns: RoutineRun[] = [];
       for (const routine of this.routines) {
