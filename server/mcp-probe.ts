@@ -145,6 +145,21 @@ export function probeMcpServer(
     child.stderr.resume();
     child.once("error", () => finish({ ok: false, error: publicProbeError("spawn") }));
     child.once("close", () => finish({ ok: false, error: publicProbeError("closed") }));
+    // AN UNHANDLED STREAM 'error' TAKES DOWN THE PROCESS.
+    //
+    // `write()` below is wrapped in a synchronous try/catch, which does not
+    // help: node delivers this one asynchronously. The listeners above are on
+    // the ChildProcess, not on the stdin stream, so nothing was listening.
+    //
+    // Measured on node v22 — only one of the three shapes actually emits:
+    //   child exits          -> ERR_STREAM_DESTROYED to the write callback, no event
+    //   stdin destroyed      -> ERR_STREAM_DESTROYED to the write callback, no event
+    //   child CLOSES STDIN and keeps running -> 'error' EPIPE fires here
+    // The last one is a real MCP server shape (a wrapper that execs something
+    // which closes fd 0), and the probe writes three frames, so the window is
+    // wide. Without this listener that killed the whole harness from the
+    // Test button.
+    child.stdin.on("error", () => finish({ ok: false, error: publicProbeError("closed") }));
 
     if (signal?.aborted) {
       onAbort();

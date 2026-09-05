@@ -170,6 +170,8 @@ export interface RoutineRequestOptionCard {
   tool?: string;
   held?: string;
   routineRequest?: RoutineRequestCardData;
+  /** Mirrors OptionCardData.routineProposalDigest — see store.ts. */
+  routineProposalDigest?: string;
 }
 
 export interface RoutineRequestMessage {
@@ -628,6 +630,36 @@ export function routineRequestFingerprint(
   return createHash("sha256").update(JSON.stringify(canonicalValue(document))).digest("hex");
 }
 
+/** What the person actually read, hashed.
+ *
+ * `routineRequestFingerprint` above binds a COMMIT RECEIPT so a crash between
+ * apply and settle can be recovered. It is computed at confirmation time over
+ * whatever is stored then, and on a FIRST approval there is no receipt to
+ * compare it against — so by itself it attests to nothing about what was
+ * displayed. It also excludes the card's title and subtitle, which are the
+ * only parts a person reads.
+ *
+ * This digest closes that: it is taken once, when the card is written, over
+ * the operation AND the rendered copy. Confirmation recomputes it and refuses
+ * on a mismatch, so an operation cannot be swapped underneath copy the user
+ * already read. Found by an external audit, 2026-09-05. */
+export function routineProposalDigest(
+  payload: Pick<RoutineRequestCardData, "version" | "requestId" | "botId" | "threadId" | "operation">,
+  display: { title: string; subtitle: string },
+): string {
+  const document = parseJson(JSON.stringify({
+    digestVersion: 1,
+    cardVersion: payload.version,
+    requestId: payload.requestId,
+    botId: payload.botId,
+    threadId: payload.threadId,
+    operation: payload.operation,
+    title: display.title,
+    subtitle: display.subtitle,
+  }));
+  return createHash("sha256").update(JSON.stringify(canonicalValue(document))).digest("hex");
+}
+
 function verifyManageSnapshot(
   operation: Exclude<RoutineRequestOperation, { action: "create" }>,
   manager: RoutineManager,
@@ -738,6 +770,7 @@ export class RoutineRequestService {
         requestId,
         tool: copy.tool,
         routineRequest: payload,
+        routineProposalDigest: routineProposalDigest(payload, { title: copy.title, subtitle: copy.detail }),
       },
     };
     if (args.from) messageInput.from = args.from;
@@ -846,6 +879,24 @@ export class RoutineRequestService {
     }
 
     try {
+      // WHAT YOU SAW IS WHAT YOU APPROVE.
+      //
+      // The receipt fingerprint below is a COMMIT-RECOVERY check: on a first
+      // approval there is no receipt, so nothing there attests to the content
+      // the person read. This does. A card written before the digest existed
+      // has none and is allowed through rather than becoming unconfirmable.
+      if (card.routineProposalDigest) {
+        const shown = routineProposalDigest(payload, {
+          title: card.title,
+          subtitle: card.subtitle,
+        });
+        if (shown !== card.routineProposalDigest) {
+          throw new RoutineRequestError(
+            "This routine changed after it was shown to you. Ask the bot to propose it again.",
+            409,
+          );
+        }
+      }
       const fingerprint = routineRequestFingerprint(payload, message.id);
       const receipt = this.routines.routineRequestReceipt(payload.requestId);
       if (receipt) {

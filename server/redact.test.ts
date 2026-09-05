@@ -128,6 +128,54 @@ describe("redactSecrets", () => {
     let deep: Record<string, unknown> = { token: "deep-secret" };
     for (let i = 0; i < 20; i++) deep = { nested: deep };
     expect(() => redactSecrets(deep)).not.toThrow();
+    // This case nested a secret 20 deep and only asserted "does not throw",
+    // so it passed for as long as the depth budget handed the subtree back
+    // unscrubbed. Asserting the actual point now.
+    expect(JSON.stringify(redactSecrets(deep))).not.toContain("deep-secret");
+  });
+
+  // ── two fail-open holes, found by an external audit 2026-09-05 ──
+  //
+  // Both mattered for one reason: redactSecrets is the ONLY scrub between a
+  // provider payload and ~/.murage/events/*.ndjson, which the code itself
+  // calls "a file people paste into bug reports". A scrub that fails open on
+  // an unusual shape is worse than no scrub, because it is trusted.
+
+  it("scrubs every property of an array entry, not just its value", () => {
+    // The {name, value} shortcut exists for ACP env entries, but it fired on
+    // ANY array element with string name+value and spread the rest through
+    // untouched.
+    const json = JSON.stringify(redactSecrets([
+      {
+        name: "setting",
+        value: "enabled",
+        authorization: "Bearer 0123456789abcdef0123456789abcdef",
+        metadata: { password: "example-password-123" },
+      },
+    ]));
+
+    expect(json).not.toContain("0123456789abcdef0123456789abcdef");
+    expect(json).not.toContain("example-password-123");
+    expect(json).toContain("setting");
+    expect(json).toContain("enabled");
+  });
+
+  it("fails closed past the depth budget instead of returning the subtree", () => {
+    let payload: unknown = { token: "SECRET-0123456789abcdef" };
+    for (let i = 0; i < 13; i++) payload = { nested: payload };
+
+    expect(JSON.stringify(redactSecrets(payload))).not.toContain("SECRET-0123456789abcdef");
+  });
+
+  it("does not throw on a cycle past the depth budget", () => {
+    // The fail-closed path serialises the subtree, and JSON.stringify throws
+    // on a cycle. That is precisely where guessing is worst.
+    const cyclic: Record<string, unknown> = { name: "root" };
+    cyclic.self = cyclic;
+    let payload: unknown = cyclic;
+    for (let i = 0; i < 13; i++) payload = { nested: payload };
+
+    expect(() => redactSecrets(payload)).not.toThrow();
   });
 });
 

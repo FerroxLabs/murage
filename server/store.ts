@@ -63,6 +63,12 @@ export interface OptionCardData {
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: RoutineRequestCardData;
+  /** Hash of what this routine proposal SAID when it was rendered — the
+   * operation together with the title and subtitle the person actually read.
+   * Checked on confirmation so an approval cannot apply an operation other
+   * than the one displayed. Absent on cards proposed before this existed;
+   * those skip the check rather than becoming unconfirmable. */
+  routineProposalDigest?: string;
   /** A durable learned-skill proposal. The skill stays staged until the
    * user confirms this card — it never rides the prompt before that. */
   skillRequest?: SkillRequestCardData;
