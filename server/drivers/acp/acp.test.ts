@@ -219,6 +219,7 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODELS;
     delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
+    delete process.env.FAKE_ACP_LOAD_NULL;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -683,6 +684,26 @@ describe("ACP turns (fake CLI)", () => {
     // hook must fire on a resumed thread as well
     const started = await recorder.until((e) => e.type === "session.started");
     expect(started).toMatchObject({ sessionId: "resumed-thread-1", model: "m-two" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+  });
+
+  // A resumed thread whose session the agent has forgotten. session/load
+  // SUCCEEDS -- it just answers null -- so the catch below it never runs, and
+  // before the guard the driver kept the dead cursor, skipped session/new and
+  // prompted a session that no longer existed. The fresh id is the assertion:
+  // "gone-cursor" would come back as the sessionId if the guard were removed.
+  it("falls through to session/new when session/load answers null", async () => {
+    process.env.FAKE_ACP_LOAD_NULL = "1";
+    await create(GrokAgentDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-resume-null",
+      text: "go",
+      resumeCursor: "gone-cursor",
+    });
+
+    const started = await recorder.until((e) => e.type === "session.started");
+    expect(started).toMatchObject({ sessionId: "fake-acp-session" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });
