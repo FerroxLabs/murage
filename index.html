@@ -19,8 +19,17 @@
          Every file it names is on the browser door's static allowlist
          (companion/src/routes.ts), so a phone reaching Murage over the tailnet
          can fetch them; a path that is not on that list 404s rather than
-         falling through to the SPA. -->
-    <link rel="manifest" href="/manifest.webmanifest" />
+         falling through to the SPA.
+
+         `crossorigin="use-credentials"` is load-bearing, not decoration. A
+         manifest is fetched in "omit" credentials mode by default, so the
+         browser door — which requires the session cookie on every route —
+         answers 401, Chrome cannot read the manifest, and install is refused
+         with no error anywhere a person would look. Measured on the live
+         door: omit 401, same-origin 200, include 200. The service worker
+         alone is not enough; installability needs BOTH a worker with a fetch
+         handler and a manifest the browser could actually read. -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
 
     <!-- iOS reads none of the manifest's icons for the home screen. It reads
          this, applies its OWN corner radius, and composites on an opaque

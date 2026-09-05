@@ -1486,7 +1486,12 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
     },
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  // The status rides along, the way `composer-attachments.ts` already does it.
+  // Without it every failure looks alike to a caller, and the peripheral
+  // retry loop cannot tell "the harness hiccuped" from "this surface is never
+  // going to be allowed" — so it retried a deliberate 403 every 30 seconds
+  // for as long as the phone had the tab open.
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), { status: res.status });
   return body;
 }
 
@@ -1497,6 +1502,19 @@ export interface PeripheralSnapshotLoad<Key extends string = string> {
 
 function normalizeSnapshotFailure(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
+}
+
+/** Statuses that mean "not on this surface", as opposed to "not right now".
+ *
+ * 403 is the surface gate refusing a phone a desktop-only route; 404 is the
+ * same decision expressed by not mounting the route at all (see the
+ * `requestSurface(...) !== "desktop"` pattern in `server/index.ts`). Both are
+ * stable for the life of the session, so a retry is pure battery. */
+const PERMANENTLY_REFUSED = new Set([403, 404]);
+
+export function isPermanentlyRefused(error: unknown): boolean {
+  const status = (error as { status?: unknown } | undefined)?.status;
+  return typeof status === "number" && PERMANENTLY_REFUSED.has(status);
 }
 
 /** A refused SSE resume needs the chat transcript snapshot before its cursor
@@ -2062,6 +2080,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!alive) return;
       const refresh = refreshState(part.key);
       if (refresh.timer) return;
+      // A surface gate is a decision, not an outage. Routes the harness keeps
+      // for the desktop answer 403 (or 404, when the route is not mounted on
+      // this surface at all) and will answer the same way forever — retrying
+      // cannot change the reply, it just wakes a phone's radio every 30
+      // seconds until the tab closes. Give up on this panel and say so once.
+      //
+      // 401 is deliberately NOT in this set: a browser session can be renewed,
+      // so that one really is worth another attempt.
+      if (isPermanentlyRefused(error)) {
+        console.warn(`snapshot: ${part.key} is not available on this surface; not retrying`, error);
+        return;
+      }
       if (error !== undefined) {
         console.warn(`snapshot: ${part.key} refresh failed; retrying`, error);
       }
