@@ -148,10 +148,20 @@ export interface AcpSupport {
   }): Promise<void>;
 }
 
-const INIT_TIMEOUT = 20_000;
-const SESSION_CONFIG_TIMEOUT = 20_000; // configureSession's per-request default
-const NEW_SESSION_TIMEOUT = 30_000;
-const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+/** Handshake budgets, overridable per box. A cold `npx`-shaped agent, a slow
+ *  disk or a first run that downloads its own runtime blows the old 20s ceiling
+ *  and the turn dies before the agent ever speaks; these are generous enough to
+ *  cover that and still short enough that a genuinely wedged CLI surfaces as an
+ *  error instead of a hang. A non-numeric or non-positive override is ignored
+ *  rather than passed through as NaN, which would disarm the timeout entirely. */
+const envOr = (key: string, fallback: number): number => {
+  const n = Number(process.env[key]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
+const SESSION_CONFIG_TIMEOUT = envOr("MURAGE_ACP_SESSION_CONFIG_MS", 60_000); // configureSession's per-request default
+const NEW_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_NEW_MS", 90_000);
+const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // history replay on a long thread is slow
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -609,7 +619,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   { sessionId: cursor, cwd, mcpServers },
                   LOAD_SESSION_TIMEOUT,
                 );
-                sessionId = cursor;
+                // An agent is allowed to ANSWER session/load with null when the
+                // session is gone. Taking the cursor on that answer pinned
+                // sessionId to a dead id, skipped the session/new below, and
+                // prompted a session the agent had already forgotten.
+                if (sessionResult) sessionId = cursor;
               } catch {
                 /* session gone, load unsupported, or too slow — start fresh */
               }
