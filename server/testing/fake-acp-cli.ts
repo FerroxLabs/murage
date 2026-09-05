@@ -8,7 +8,7 @@
 //   FAKE_ACP_LOAD_NULL  answer session/load with null, the way a real agent
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
-//   FAKE_ACP_MODE   happy (default) | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
+//   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
 //                   | interleave (message → tool → message → tool → message)
 //                   | no-session-config (reject session/set_mode + set_model
 //                     with -32601, i.e. an agent predating those methods)
@@ -43,6 +43,7 @@ import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
+const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // opencode-shaped surface: the session carries its own model catalog and the
 // model is chosen with session/set_config_option, because `opencode acp` takes
 // no -m. Off unless FAKE_ACP_MODELS is set, so every existing mode is byte-
@@ -546,7 +547,18 @@ function handle(msg: any) {
           });
         return;
       }
-      if (mode === "interleave") playInterleaveTurn();
+      if (mode === "image") {
+        out({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "image", data: ONE_PIXEL_PNG, mimeType: "image/png" },
+            },
+          },
+        });
+      } else if (mode === "interleave") playInterleaveTurn();
       else if (mode !== "empty-reply") playTurn();
       if (mode === "permission") {
         // ask the client to approve a tool, then complete once answered
