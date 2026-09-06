@@ -223,17 +223,15 @@ test("Windows case and namespace aliases share one anchor", { skip: process.plat
   const f = fixture("MixedCase");
   assert.equal(dataDirLeasePaths(f.dataDir.toUpperCase()).leasePath, f.leasePath);
   const { toNamespacedPath } = await import("node:path");
-  const { realpathSync } = await import("node:fs");
   const namespaced = toNamespacedPath(f.dataDir);
-  const root = parse(namespaced).root;
-  const rootKind = root.startsWith("\\\\?\\UNC\\") ? "namespaced-unc"
-    : /^\\\\\?\\[a-z]:\\$/i.test(root) ? "namespaced-drive" : "other";
-  try { realpathSync.native(root); }
-  catch (error) {
-    const code = ["ENOENT", "EINVAL", "EACCES", "EPERM", "EBUSY", "ENOTDIR", "UNKNOWN"].includes(error?.code) ? error.code : "other";
-    assert.fail(`namespace root resolution failed (${rootKind}, ${code})`);
-  }
   assert.equal(dataDirLeasePaths(namespaced).leasePath, f.leasePath);
+  for (const suffix of ["child.", "child ", "..", "NUL", "COM1.txt"]) {
+    assert.throws(() => dataDirLeasePaths(`${namespaced}\\${suffix}`), errorCode("INVALID_DATA_DIR"));
+  }
+  const owner = acquireDataDirLease(f.dataDir);
+  try {
+    assert.throws(() => acquireDataDirLease(namespaced), errorCode("LEASE_BUSY"));
+  } finally { owner.release(); }
 });
 
 test("Darwin missing-leaf case aliases cannot acquire two owners", { skip: process.platform !== "darwin" }, () => {

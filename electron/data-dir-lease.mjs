@@ -53,6 +53,13 @@ const fail = (code) => new DataDirLeaseError(code);
 const absent = (error) => error?.code === "ENOENT";
 const localHost = () => hostname();
 
+function withoutWindowsNamespace(path) {
+  if (process.platform !== "win32") return path;
+  if (/^\\\\\?\\UNC\\/i.test(path)) return `\\\\${path.slice(8)}`;
+  if (/^\\\\\?\\[a-z]:\\/i.test(path)) return path.slice(4);
+  return path;
+}
+
 function normalizedCanonicalPath(path) {
   if (process.platform !== "win32") return path;
   // Collapse Win32 namespace aliases before case-folding. This deliberately
@@ -67,6 +74,18 @@ function normalizedCanonicalPath(path) {
 function canonicalDataDir(dataDir) {
   if (typeof dataDir !== "string" || !dataDir.trim() || /[\r\n\0]/.test(dataDir) || Buffer.byteLength(dataDir) > 32768) throw fail("INVALID_DATA_DIR");
   if (process.platform === "win32" && /^[a-z]:[^\\/]/i.test(dataDir)) throw fail("INVALID_DATA_DIR");
+  // Native root resolution can reject the extended drive spelling even when
+  // its ordinary spelling exists. Remove only recognized aliases, preserving
+  // case for the physical component walk below. Namespace-only names must
+  // not silently acquire the meaning of an ordinary Win32 path.
+  const ordinary = withoutWindowsNamespace(dataDir);
+  if (ordinary !== dataDir) {
+    const components = ordinary.slice(parse(ordinary).root.length).split(/[\\/]+/);
+    if (components.some(part => /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) {
+      throw fail("INVALID_DATA_DIR");
+    }
+  }
+  dataDir = ordinary;
   // Do not resolve '..' before a symlink: link/../data names the parent of
   // the link's physical target, not necessarily the link's lexical parent.
   const absolute = isAbsolute(dataDir) ? dataDir : `${process.cwd()}${sep}${dataDir}`;
