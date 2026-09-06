@@ -18,15 +18,17 @@ import { homedir } from "node:os";
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { classifyProviderError } from "../../../shared/provider-error.ts";
 
 /** Some ACP providers wrap actionable billing failures in "Internal error".
  * Classify only the observed shape; never copy nested provider data or URLs
  * into the transcript, where they may contain credentials or request text. */
 export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
-  const data = error.data && typeof error.data === "object" && !Array.isArray(error.data)
-    ? error.data as { http_status?: unknown; message?: unknown } : undefined;
-  if (data?.http_status === 402 && typeof data.message === "string"
-    && /credit balance is exhausted/i.test(data.message.slice(0, 4096))) {
+  const info = classifyProviderError(error);
+  if (info?.kind === "credits") {
+    if (info.provider === "flux-router") {
+      return "Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.";
+    }
     return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
   }
   return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
@@ -783,6 +785,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!state.settled) {
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
+              const providerError = classifyProviderError(e);
               // Authentication setup is a user action, not a retry. The
               // classifier is preferred; loginNote remains a compatibility
               // fallback for existing ACP supports.
@@ -792,6 +795,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "runtime.error",
                 message,
+                ...(providerError ? { providerError } : {}),
                 ...(needsAuth ? { setup: true } : {}),
               });
               settle(false, needsAuth ? "auth_required" : "rpc_error");
