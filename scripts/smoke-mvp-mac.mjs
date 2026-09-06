@@ -2,12 +2,13 @@
 import { _electron as electron } from "@playwright/test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir, homedir, userInfo } from "node:os";
 import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
 const executablePath = resolve(process.argv[2] ?? "");
 if (!executablePath.includes("/release-mvp-") || !executablePath.endsWith("/Murage.app/Contents/MacOS/Murage")) throw new Error("Explicit private MVP executable required");
 const scratch = mkdtempSync(join(tmpdir(), "murage-native-mvp-"));
+const loginIdentity = userInfo();
 const data = join(scratch, "data"), userData = join(scratch, "user-data");
 mkdirSync(data); mkdirSync(userData);
 writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: {}, profile: { name: "MVP isolated proof" } }));
@@ -18,7 +19,9 @@ try {
   app = await electron.launch({ executablePath, args: ["--user-data-dir=" + userData], timeout: 30000,
     // macOS Keychain depends on the real login home. Isolate application data,
     // not the OS identity; a fake HOME can provoke "Keychain Not Found".
-    env: { PATH: process.env.PATH, HOME: homedir(), MURAGE_DATA_DIR: data, MURAGE_NO_DEV_DESKTOP_SECRET: "1" } });
+    env: { PATH: process.env.PATH, HOME: homedir(), USER: loginIdentity.username,
+      LOGNAME: loginIdentity.username, SHELL: loginIdentity.shell,
+      MURAGE_DATA_DIR: data, MURAGE_NO_DEV_DESKTOP_SECRET: "1" } });
   nativeProcess = app.process();
   ownedPids = [nativeProcess.pid];
   const actual = await app.evaluate(({ app }) => ({ userData: app.getPath("userData"), home: app.getPath("home"), logs: app.getPath("logs"), version: app.getVersion() }));
