@@ -10,7 +10,7 @@ import { createServer, request, type Server } from "node:http";
 import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
-import { writeBotPackageArchive } from "./bot-package-archive.ts";
+import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -2203,6 +2203,62 @@ describe("harness HTTP API", () => {
     } finally {
       if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
       for (const bot of [selected, omitted]) await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("exports selected installed skill files as a reviewed ZIP through the actual API", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "ZIP Scout", modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const root = mkdtempSync(join(home, "zip-export-api-"));
+    const workspace = join(home, ".murage", "workspaces", bot.id);
+    const skillRoot = join(workspace, "skills", "research");
+    const markdown = "---\nname: research\ndescription: Review supplied notes.\nlicense: MIT\n---\nUse the supplied notes.\n";
+    try {
+      mkdirSync(join(skillRoot, "references"), { recursive: true });
+      writeFileSync(join(skillRoot, "SKILL.md"), markdown);
+      const supporting = join(skillRoot, "references", "guide.md");
+      writeFileSync(supporting, "Selected supporting instructions.");
+      writeFileSync(join(workspace, "MEMORY.md"), "UNSELECTED_PRIVATE_MEMORY");
+      const stateRoot = join(home, ".murage", "skill-state", bot.id);
+      mkdirSync(stateRoot, { recursive: true });
+      writeFileSync(join(stateRoot, "skills.json"), JSON.stringify({ research: {
+        description: "Review supplied notes.", enabled: false, source: "fixture", sha256: createHash("sha256").update(markdown).digest("hex"),
+        importedAt: new Date().toISOString(), license: "MIT", warnings: [], skippedFiles: [],
+      } }));
+      expect((await api("POST", "/api/packages/export", { action: "options" })).status).toBe(404);
+      const options = await desktopApi("POST", "/api/packages/export", { action: "options" });
+      expect(options.status).toBe(200);
+      expect(options.body.skills).toContainEqual(expect.objectContaining({ id: `${bot.id}:research`, botId: bot.id, dependencies: null }));
+      const request = { name: "ZIP fixture", selection: { botIds: [bot.id], playbookKeys: [], routineIds: [], skillIds: [`${bot.id}:research`] } };
+      const preview = await desktopApi("POST", "/api/packages/export", { ...request, action: "preview" });
+      expect(preview.status).toBe(200);
+      expect(preview.body.scan.blocked).toBe(false);
+      expect(preview.body.reviewWarnings.length).toBeGreaterThan(0);
+      expect(JSON.stringify(preview.body)).not.toContain("UNSELECTED_PRIVATE_MEMORY");
+      const download = { ...request, action: "download", previewHash: preview.body.previewHash };
+      expect((await desktopApi("POST", "/api/packages/export", download)).status).toBe(409);
+      const response = await fetch(`${BASE}/api/packages/export`, { method: "POST", headers: { ...DESKTOP_HEADERS, "Content-Type": "application/json" }, body: JSON.stringify({ ...download, acknowledgeWarnings: true }) });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("application/zip");
+      const archive = join(root, "download.zip");
+      writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
+      const intake = await readBotPackageArchive(archive);
+      expect([...intake.payloads.keys()].sort()).toEqual(["skills/research/SKILL.md", "skills/research/references/guide.md"]);
+      expect(intake.payloads.get("skills/research/references/guide.md")?.toString()).toBe("Selected supporting instructions.");
+      expect(intake.manifest.definition.package.agents[0].skills).toEqual(["research"]);
+      const importOptions = await desktopApi("POST", "/api/packages/import", { action: "options", archivePath: archive });
+      expect(importOptions.status).toBe(200);
+      expect(importOptions.body.scan.blocked).toBe(false);
+      writeFileSync(supporting, "Changed supporting instructions.");
+      expect((await desktopApi("POST", "/api/packages/export", { ...download, acknowledgeWarnings: true })).status).toBe(409);
+      writeFileSync(supporting, "Bearer fake_secret_canary_1234567890");
+      const blocked = await desktopApi("POST", "/api/packages/export", { ...request, action: "preview" });
+      expect(blocked.status).toBe(200);
+      expect(blocked.body.scan.blocked).toBe(true);
+      expect(JSON.stringify(blocked.body)).not.toContain("fake_secret_canary");
+      expect((await desktopApi("POST", "/api/packages/export", { ...download, previewHash: blocked.body.previewHash, acknowledgeWarnings: true })).status).toBe(422);
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

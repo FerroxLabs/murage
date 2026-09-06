@@ -51,6 +51,7 @@ import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { LEARN_SOURCE_PREFIX } from "./skill-learn.ts";
 import { parseSkillManifest as parseLibrarySkillManifest } from "./skill-library.ts";
+import { collectPackageExportSkills } from "./package-export-files.ts";
 import { workspaceDir } from "./workspace.ts";
 
 /** Spec rule: lowercase alphanumerics with single hyphens, 1-64 chars,
@@ -731,6 +732,44 @@ export function listSkills(botId: string): SkillListing[] {
   return Object.entries(manifest)
     .map(([name, entry]) => skillListing(botId, name, entry))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Read-only package export source. Unlike readManifest, this must never
+ * migrate legacy metadata merely because the user opened an export picker. */
+export function getSkillExportSource(botId: string, name: string): Readonly<{ directory: string; expectedSkillSha256: string }> | null {
+  if (!isSkillName(name)) return null;
+  const securePath = manifestPath(botId);
+  let manifest: SkillManifest | null;
+  if (existsSync(securePath)) {
+    const stat = lstatSync(securePath);
+    if (directoryEntryState(dirname(securePath)) !== "directory" || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return null;
+    manifest = manifestFromFile(securePath);
+  } else {
+    const root = existingSkillsRoot(botId);
+    if (!root) return null;
+    const legacyPath = join(root, "skills.json");
+    if (!existsSync(legacyPath)) return null;
+    const stat = lstatSync(legacyPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return null;
+    manifest = manifestFromFile(legacyPath);
+    if (manifest) manifest = Object.fromEntries(Object.entries(manifest).map(([key, entry]) => [key, { ...entry, storageRevision: undefined }]));
+  }
+  const entry = manifest?.[name];
+  if (!entry) return null;
+  const directory = skillDirectory(botId, name, entry);
+  return directory ? Object.freeze({ directory, expectedSkillSha256: entry.sha256 }) : null;
+}
+
+/** Selected installed skill bytes only; reviewed revisions never fall back
+ * to a stale workspace/skills/name copy. Dependencies require human review. */
+export function snapshotInstalledSkill(botId: string, name: string) {
+  try {
+    const source = getSkillExportSource(botId, name);
+    if (!source) throw new Error("unavailable");
+    const snapshot = collectPackageExportSkills(workspaceDir(botId), [name], new Map([[name, source]]));
+    const metadata = snapshot.skills[0];
+    return { key: name, name, license: metadata.license, dependencies: null, payloads: snapshot.payloads, warnings: snapshot.warnings };
+  } catch { throw new Error("Selected installed skill could not be exported safely"); }
 }
 
 export function readSkillFile(botId: string, name: string): string | null {

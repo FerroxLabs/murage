@@ -1,6 +1,29 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P09 export round trip ACCEPTED (confirmation round 2): deliver a
+reviewed downloadable ZIP using the existing bundle schema/importer, with explicit
+bot/playbook/routine/file-skill selection. Only selected owned skill trees enter
+the archive; no history, grants, credentials or arbitrary workspace traversal.
+Content changes invalidate confirmation; blocked scans cannot download; ambiguous
+findings require acknowledgement. Existing Markdown export remains compatible.
+Checks frozen: isolated file-selection/unsafe-source tests, bundle round-trip,
+actual export API hash/scan rejection, rendered selection/download tests, types.
+Stop: those pass and exact files locally integrated, or record a failed condition
+at the two-round limit. No public upload or live-app mutation. P10 update diffs
+remain separate planned work. p04 owns file collector; p03 investigates UI seam;
+root owns export assembly and route integration.
+Evidence: collector/accessor 10 tests PASS including actual protected revision
+versus stale direct directory; assembler 4 PASS with real archive round trip;
+browser 4 PASS (2 retained Markdown, 2 ZIP), mobile screenshot reviewed. Actual
+API 82743 PASS (1 selected / 214 skipped): binary archive, importer intake,
+desktop denial, warning acknowledgement, changed supporting-file hash refusal,
+secret block without returning secret text. Combined typecheck 45498 PASS.
+Round 1 API startup failed on a parameter property in the new collector; explicit
+field correction confirmed in round 2. No third audit. Unknown dependencies
+require explicit human review, not an invented empty dependency graph. Binary
+assets remain blocked by existing scan policy; not universal malware proof.
+Next: integrate exact export files locally, then P10 package update comparisons.
 Current checkpoint: P10 offline ZIP import increment ACCEPTED for local integration.
 Contract: explicit selection and hash-bound review; fresh inert identities, no
 payload execution/dependency fetch/role grants; preserve existing records;

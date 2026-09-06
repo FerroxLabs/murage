@@ -2,7 +2,8 @@
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
 import { isIP } from "node:net";
@@ -245,6 +246,7 @@ import {
   isSkillName,
   SKILL_LIBRARY_ROOT,
   listSkills,
+  snapshotInstalledSkill,
   type SkillListing,
   listStagedSkillWrites,
   readSkillFile,
@@ -304,7 +306,9 @@ import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
 import { previewBotPackageImport, importBotPackageArchive } from "./bot-package-import.ts";
-import { readBotPackageArchive } from "./bot-package-archive.ts";
+import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
+import { createBotPackageExportBundle } from "./package-export-bundle.ts";
+import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 import {
@@ -7964,6 +7968,52 @@ const server = createServer(async (req, res) => {
       }
       const group = store.createGroup(name, memberIds, false, section, setup);
       return json(res, 201, { group: { ...publicGroupState(group), messages: [] } });
+    }
+    if (method === "POST" && path === "/api/packages/export") {
+      const body = await readBody(req);
+      const input = { name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : "My Murage Team",
+        authorName: cfg.profile?.name?.trim(), bots: store.bots, groups: store.groups, routines: routines!.listRoutines() };
+      const candidates = getBotPackageExportSelectionCandidates(input);
+      if (body.action === "options") return json(res, 200, { ...candidates,
+        skills: candidates.bots.flatMap(bot => listSkills(bot.id).map(skill => ({
+          id: `${bot.id}:${skill.name}`, botId: bot.id, name: skill.name, license: skill.license ?? "Unspecified", dependencies: null,
+        }))),
+      });
+      if (!["preview", "download"].includes(body.action)) return json(res, 400, { error: "Preview and confirm selected content before exporting" });
+      const selection = body.selection;
+      if (!selection || !Array.isArray(selection.botIds) || !Array.isArray(selection.skillIds)
+        || selection.skillIds.length > 200
+        || selection.skillIds.some((id: unknown) => typeof id !== "string")
+        || new Set(selection.skillIds).size !== selection.skillIds.length) return json(res, 400, { error: "Explicit distinct export selection is required" });
+      const skills: Parameters<typeof createBotPackageExportBundle>[0]["skills"][number][] = [];
+      let selectedBytes = 0, selectedFiles = 1;
+      for (const id of selection.skillIds as string[]) {
+        const separator = id.indexOf(":");
+        const botId = id.slice(0, separator), name = id.slice(separator + 1);
+        if (separator < 1 || !selection.botIds.includes(botId) || !candidates.bots.some(bot => bot.id === botId)) return json(res, 400, { error: "Selected skill requires its bot to be selected" });
+        const skill = snapshotInstalledSkill(botId, name);
+        selectedFiles += skill.payloads.size;
+        for (const bytes of skill.payloads.values()) selectedBytes += bytes.length;
+        if (selectedFiles > MAX_BOT_PACKAGE_ENTRIES || selectedBytes > MAX_BOT_PACKAGE_EXPANDED_BYTES) return json(res, 400, { error: "Selected package exceeds file or byte limits" });
+        skills.push({ botId, key: skill.key, name: skill.name, license: skill.license, dependencies: skill.dependencies, payloads: skill.payloads });
+      }
+      const bundle = createBotPackageExportBundle({ exportInput: { ...input, selection }, skills });
+      const name = bundle.manifest.definition.package.name;
+      if (body.action === "preview") return json(res, 200, { name, members: bundle.summary.agents,
+        previewHash: bundle.previewHash, scan: bundle.scan, summary: bundle.summary, files: bundle.files, reviewWarnings: bundle.reviewWarnings });
+      if (bundle.scan.blocked) return json(res, 422, { error: "Remove blocked content before exporting", scan: bundle.scan });
+      if (body.previewHash !== bundle.previewHash) return json(res, 409, { error: "Export content changed; review a fresh preview" });
+      if ((bundle.scan.reviewRequired || bundle.reviewWarnings.length > 0) && body.acknowledgeWarnings !== true) return json(res, 409, { error: "Review the export warnings before downloading" });
+      const scratch = mkdtempSync(join(tmpdir(), "murage-selected-export-"));
+      try {
+        const archive = join(scratch, "package.zip");
+        await writeBotPackageArchive(archive, bundle);
+        const bytes = readFileSync(archive);
+        res.writeHead(200, { "Content-Type": "application/zip", "Content-Disposition": 'attachment; filename="murage-package.zip"',
+          "Cache-Control": "no-store", "Content-Length": bytes.length });
+        res.end(bytes);
+      } finally { rmSync(scratch, { recursive: true, force: true }); }
+      return;
     }
     if (method === "POST" && path === "/api/packages/import") {
       const body = await readBody(req);
