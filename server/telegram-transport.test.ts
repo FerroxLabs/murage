@@ -3,6 +3,14 @@ import { TelegramTransport } from "./telegram-transport.ts";
 const token = "123456:FAKE_TOKEN_CANARY_1234567890";
 const ok = (result: unknown) => Response.json({ ok: true, result });
 describe("bounded Telegram transport", () => {
+  it("delivers HTML and owner buttons and acknowledges callbacks", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok({ message_id: 7, chat: { id: 7 } })).mockResolvedValueOnce(ok(true));
+    const transport = new TelegramTransport({ token, fetch: fetcher });
+    await transport.sendMessage({ chatId: "7", text: "<b>Ready</b>", parseMode: "HTML", buttons: [{ text: "Allow once", data: "nonce:a" }] });
+    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toMatchObject({ parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "Allow once", callback_data: "nonce:a" }]] } });
+    await transport.answerCallbackQuery({ id: "callback", text: "Allowed once." });
+    expect(JSON.parse(fetcher.mock.calls[1][1]!.body as string)).toEqual({ callback_query_id: "callback", text: "Allowed once." });
+  });
   it("uses fixed HTTPS methods and preserves explicit offsets and ignored update IDs", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok({ id: 123456, is_bot: true, username: "FixtureBot" }))
       .mockResolvedValueOnce(ok([{ update_id: 10, message: { text: "fixture" } }, { update_id: 11, edited_message: {} }]))
@@ -13,7 +21,7 @@ describe("bounded Telegram transport", () => {
     await transport.getUpdates({ offset: 10 });
     expect(fetcher.mock.calls[0][0]).toBe(`https://api.telegram.org/bot${token}/getMe`);
     expect(fetcher.mock.calls[1][1]?.redirect).toBe("error");
-    expect(JSON.parse(fetcher.mock.calls[1][1]!.body as string)).toEqual({ offset: 10, limit: 5, timeout: 25, allowed_updates: ["message"] });
+    expect(JSON.parse(fetcher.mock.calls[1][1]!.body as string)).toEqual({ offset: 10, limit: 5, timeout: 25, allowed_updates: ["message", "callback_query"] });
     expect(JSON.parse(fetcher.mock.calls[2][1]!.body as string).offset).toBe(10);
     expect(JSON.stringify(transport)).not.toContain(token);
   });

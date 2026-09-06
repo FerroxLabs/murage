@@ -3820,6 +3820,10 @@ async function interruptRoutineGroupGoal(
 
 routines = new RoutineManager({
   emit: broadcast,
+  channelThread: botId => {
+    const bot = store.bot(botId);
+    return bot && !bot.hidden ? { threadId: bot.threadId } : null;
+  },
   botState: (botId) => {
     const bot = store.bot(botId);
     return !bot ? "missing" : bot.busy ? "busy" : "ready";
@@ -3930,6 +3934,28 @@ if (recoveryOwners.length > 0) {
 }
 routines.start();
 const telegram = new TelegramService({ dataDir: DATA_DIR,
+  approvals: targetBotId => {
+    const pending = () => {
+      const bot = store.bot(targetBotId);
+      if (!bot || bot.hidden) return [];
+      return store.messagesFor(bot.threadId).flatMap(message => {
+        const card = message.card;
+        if (!card?.requestId || !card.tool || card.answered || card.dismissed || card.routineRequest || card.skillRequest
+          || askMessageByRequest.get(`${bot.threadId}:${card.requestId}`) !== message.id) return [];
+        const summary = redactSecretsInText(`${bot.name} requests approval\nTool: ${card.tool}\n${card.subtitle ?? ""}${card.held ? `\n${card.held}` : ""}`);
+        if (summary.length > 3000) return []; // full review stays in-app
+        return [{ id: message.id, fingerprint: createHash("sha256").update(JSON.stringify([bot.id, bot.threadId, bot.modelSelection, message.id, card])).digest("hex"), summary }];
+      });
+    };
+    return { pending, resolve: async (approval, behavior) => {
+      const current = pending().find(item => item.id === approval.id && item.fingerprint === approval.fingerprint);
+      const bot = store.bot(targetBotId);
+      if (!current || !bot) return false;
+      const card = store.messagesFor(bot.threadId).find(message => message.id === approval.id)?.card;
+      if (!card?.requestId) return false;
+      return (await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name })) !== "unavailable";
+    } };
+  },
   enqueue: (connectionId, targetBotId, input) => {
     if (!store.bot(targetBotId) || dataWritersStopped) throw new Error("Telegram target is unavailable");
     const webhookId = "telegram:" + connectionId;

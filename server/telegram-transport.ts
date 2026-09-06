@@ -63,24 +63,33 @@ export class TelegramTransport {
     if (!object(result) || !integer(result.id, 1) || result.is_bot !== true || (result.username !== undefined && (typeof result.username !== "string" || result.username.length > 64))) throw new TelegramTransportError("invalid-response");
     return { id: String(result.id), ...(typeof result.username === "string" ? { username: result.username } : {}) };
   }
-  async getUpdates(input: { offset?: number; limit?: number; timeoutSeconds?: number; signal?: AbortSignal } = {}): Promise<Array<{ update_id: number; message?: unknown }>> {
+  async getUpdates(input: { offset?: number; limit?: number; timeoutSeconds?: number; signal?: AbortSignal } = {}): Promise<Array<{ update_id: number; message?: unknown; callback_query?: unknown }>> {
     const limit = input.limit ?? 100, timeout = input.timeoutSeconds ?? 0;
     if ((input.offset !== undefined && !integer(input.offset)) || !integer(limit, 1) || limit > 100 || !integer(timeout) || timeout > 25) throw new TelegramTransportError("invalid-request");
-    const result = await this.request("getUpdates", { ...(input.offset === undefined ? {} : { offset: input.offset }), limit, timeout, allowed_updates: ["message"] }, false, input.signal, timeout * 1000);
+    const result = await this.request("getUpdates", { ...(input.offset === undefined ? {} : { offset: input.offset }), limit, timeout, allowed_updates: ["message", "callback_query"] }, false, input.signal, timeout * 1000);
     if (!Array.isArray(result) || result.length > limit || result.some(update => !object(update) || !integer(update.update_id))) throw new TelegramTransportError("invalid-response");
-    return result.map(update => ({ update_id: update.update_id, ...(Object.hasOwn(update, "message") ? { message: update.message } : {}) }));
+    return result.map(update => ({ update_id: update.update_id, ...(Object.hasOwn(update, "message") ? { message: update.message } : {}), ...(Object.hasOwn(update, "callback_query") ? { callback_query: update.callback_query } : {}) }));
   }
-  async sendMessage(input: { chatId: string; text: string; topicId?: number; replyToMessageId?: number; signal?: AbortSignal }): Promise<{ chatId: string; messageId: number }> {
-    if (!chatId(input.chatId) || typeof input.text !== "string" || input.text.length < 1 || input.text.length > 4096
+  async sendMessage(input: { chatId: string; text: string; parseMode?: "HTML"; buttons?: Array<{ text: string; data: string }>; topicId?: number; replyToMessageId?: number; signal?: AbortSignal }): Promise<{ chatId: string; messageId: number }> {
+    if (!chatId(input.chatId) || typeof input.text !== "string" || input.text.length < 1 || input.text.length > (input.parseMode === "HTML" ? 32768 : 4096)
+      || (input.parseMode !== undefined && input.parseMode !== "HTML")
+      || (input.buttons !== undefined && (!Array.isArray(input.buttons) || input.buttons.length > 2 || input.buttons.some(button => typeof button.text !== "string" || !button.text || button.text.length > 64 || typeof button.data !== "string" || !button.data || Buffer.byteLength(button.data) > 64)))
       || (input.topicId !== undefined && !integer(input.topicId, 1)) || (input.replyToMessageId !== undefined && !integer(input.replyToMessageId, 1))) throw new TelegramTransportError("invalid-request");
     const result = await this.request("sendMessage", { chat_id: input.chatId, text: input.text,
+      ...(input.parseMode ? { parse_mode: input.parseMode } : {}),
+      ...(input.buttons ? { reply_markup: { inline_keyboard: [input.buttons.map(button => ({ text: button.text, callback_data: button.data }))] } } : {}),
       ...(input.topicId === undefined ? {} : { message_thread_id: input.topicId }),
       ...(input.replyToMessageId === undefined ? {} : { reply_parameters: { message_id: input.replyToMessageId } }),
     }, true, input.signal);
     if (!object(result) || !integer(result.message_id, 1) || !object(result.chat) || typeof result.chat.id !== "number" || !Number.isSafeInteger(result.chat.id) || String(result.chat.id) !== input.chatId) throw new TelegramTransportError("invalid-response", { uncertain: true });
     return { chatId: input.chatId, messageId: result.message_id };
   }
-  private async request(method: "getMe" | "getUpdates" | "sendMessage", body: Json, sending: boolean, signal?: AbortSignal, pollMs = 0): Promise<unknown> {
+  async answerCallbackQuery(input: { id: string; text: string; signal?: AbortSignal }): Promise<void> {
+    if (!input.id || input.id.length > 200 || !input.text || input.text.length > 200) throw new TelegramTransportError("invalid-request");
+    const result = await this.request("answerCallbackQuery", { callback_query_id: input.id, text: input.text }, false, input.signal);
+    if (result !== true) throw new TelegramTransportError("invalid-response");
+  }
+  private async request(method: "getMe" | "getUpdates" | "sendMessage" | "answerCallbackQuery", body: Json, sending: boolean, signal?: AbortSignal, pollMs = 0): Promise<unknown> {
     if (signal?.aborted) throw new TelegramTransportError("cancel");
     const controller = new AbortController(); let dispatched = false;
     const stop = () => controller.abort(new TelegramTransportError("cancel", { uncertain: sending && dispatched }));

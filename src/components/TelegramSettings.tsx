@@ -28,7 +28,7 @@ export function TelegramSettings() {
   const username = pair?.username && /^[A-Za-z0-9_]{5,32}$/.test(pair.username) ? pair.username : null;
   return <section aria-labelledby="telegram-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="telegram-settings-title" className="text-[15px] font-semibold text-ink">Telegram</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Pair your Telegram account with the current Chief of Staff. Keep Murage running; pair again after restarting. Approve requests inside Murage.</p>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Pair your Telegram account with the current Chief of Staff. Messages share the bot's current conversation. Keep Murage running; pair again after restarting. Use owner-only buttons to allow once or deny pending actions. Other reviews stay in Murage.</p>
     <p role="status" className="mt-3 text-[12px] text-ink-secondary">{!status ? "Checking Telegram…" : status.paired ? "Paired" : status.connecting ? "Connecting…" : status.enabled ? "Waiting for pairing" : status.configured ? "Token saved · not paired" : "No token saved"}</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token
       <input type="password" autoComplete="off" value={token} disabled={Boolean(busy) || Boolean(linked)} onChange={event => setToken(event.target.value)}
