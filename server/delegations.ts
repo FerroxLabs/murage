@@ -29,6 +29,9 @@ export interface DelegationItem {
    * an ask_bot request. If that peer became busy before dispatch, the
    * fallback handoff must not ask them to approve the same action twice. */
   approvalAlreadyGranted?: boolean;
+  /** Trusted originating event identity. Survives handoff/retry/restart so
+   * the harness can retain the event's budget and provenance boundary. */
+  eventId?: string;
   /** The source bot's comms depth (0 for a user-initiated turn). The
    * delegated-to bot runs at `depth + 1`, which equals MAX_COMMS_DEPTH
    * (= 1) for a user turn — so the peer has no agents integration, and
@@ -97,6 +100,8 @@ const MAX_RECEIPTS = 100;
 const RECEIPT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const RESULT_MAX_CHARS = 4_000;
 export const MAX_BUSY_ATTEMPTS = 3;
+const validEventId = (value: unknown): value is string =>
+  typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
 
 let receipts: DelegationReceipt[] = [];
 
@@ -187,6 +192,8 @@ export function _loadPending(): void {
           typeof item.message !== "string" ||
           !Number.isFinite(item.depth)
         ) return [];
+        // A malformed present marker must never become an unmarked turn.
+        if (Object.hasOwn(item, "eventId") && !validEventId(item.eventId)) return [];
         const loaded: PendingDelegationItem = {
           id: typeof item.id === "string" && item.id ? item.id : newId(),
           toBotId: item.toBotId,
@@ -195,6 +202,7 @@ export function _loadPending(): void {
           depth: Math.max(0, Math.trunc(item.depth!)),
           attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
           ...(typeof item.fromBotId === "string" && item.fromBotId ? { fromBotId: item.fromBotId } : {}),
+          ...(item.eventId !== undefined ? { eventId: item.eventId } : {}),
         };
         if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
         if (item.waitingOnBusy === true) loaded.waitingOnBusy = true;
@@ -267,6 +275,7 @@ export function queueDelegation(
   maxDepth: number,
   sourceThreadId = from.threadId,
 ): QueuedDelegation {
+  if (item.eventId !== undefined && !validEventId(item.eventId)) throw new Error("Invalid delegation event identity");
   if (item.toBotId === from.id) return { result: "self" };
   if (item.depth >= maxDepth) return { result: "too_deep" };
   const target = bus.store.bot(item.toBotId);
@@ -307,6 +316,7 @@ export function drainDelegations(
     channel: GroupRecord | undefined,
     taskId: string,
     fromBotId: string,
+    eventId?: string,
   ) => void | Promise<void>,
 ): void {
   if (drainingThreads.has(threadId)) {
@@ -460,6 +470,7 @@ async function processOne(
     channel: GroupRecord | undefined,
     taskId: string,
     fromBotId: string,
+    eventId?: string,
   ) => void | Promise<void>,
 ): Promise<"settled" | "requeued"> {
   let sender = from;
@@ -609,7 +620,7 @@ async function processOne(
   mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
   const prefixed = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
-  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id);
+  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.eventId);
   return "settled";
 }
 

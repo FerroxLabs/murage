@@ -70,6 +70,7 @@ export interface Routine {
 
 export interface RoutineRun {
   event?: RoutineEvent;
+  eventBudget?: EventActionBudget;
   id: string;
   routineId: string;
   routineName: string;
@@ -112,6 +113,20 @@ export interface RoutineRun {
   createdAt: number;
   seenAt?: number;
 }
+
+export interface EventActionBudget {
+  version: 1;
+  limits: { create: 4; handoff: 4 };
+  admissions: Array<{ id: string; kind: "create" | "handoff" }>;
+  closed: boolean;
+}
+const eventAdmissionId = z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
+const eventActionBudgetSchema = z.object({
+  version: z.literal(1), limits: z.object({ create: z.literal(4), handoff: z.literal(4) }).strict(),
+  admissions: z.array(z.object({ id: eventAdmissionId, kind: z.enum(["create", "handoff"]) }).strict()).max(8), closed: z.boolean(),
+}).strict().refine(value => new Set(value.admissions.map(item => item.id)).size === value.admissions.length
+  && value.admissions.filter(item => item.kind === "create").length <= 4 && value.admissions.filter(item => item.kind === "handoff").length <= 4);
+function newEventActionBudget(): EventActionBudget { return { version: 1, limits: { create: 4, handoff: 4 }, admissions: [], closed: false }; }
 
 export interface RoutineRequestReceipt {
   requestId: string;
@@ -186,6 +201,7 @@ export interface RoutineManagerOptions {
     runOn: RoutineRunOn,
     triggerSource: RoutineRunTrigger,
     onDispatchError: (message: string) => void,
+    eventId?: string,
   ) => Promise<void>;
   startGoal?: (
     groupId: string,
@@ -329,6 +345,7 @@ function cloneRun(run: RoutineRun): RoutineRun {
   return {
     ...run,
     ...(run.event ? { event: structuredClone(run.event) } : {}),
+    ...(run.eventBudget ? { eventBudget: structuredClone(run.eventBudget) } : {}),
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
   };
@@ -511,6 +528,8 @@ export class RoutineManager {
             };
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
             loaded.event = routineEventForRun(loaded);
+            const budget = eventActionBudgetSchema.safeParse(run.eventBudget);
+            loaded.eventBudget = budget.success ? budget.data : undefined;
             return loaded;
           })
         : [];
@@ -874,6 +893,7 @@ export class RoutineManager {
       createdAt: this.now(),
     };
     run.event = routineEventForRun(run);
+    run.eventBudget = newEventActionBudget();
     this.commitMutation(() => { this.runs.push(run); });
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
@@ -885,6 +905,32 @@ export class RoutineManager {
     const run = this.runs.find(candidate => candidate.triggerSource === "webhook"
       && candidate.webhookId === webhookId && candidate.deliveryId === deliveryId);
     return run ? cloneRun(run) : null;
+  }
+
+  getEventBudget(eventId: string): EventActionBudget | null {
+    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    return run?.eventBudget ? structuredClone(run.eventBudget) : null;
+  }
+
+  /** Charge before the caller performs external work. Uncertain work is not
+   * refunded. A missing/evicted/legacy ledger never resets its allocation. */
+  admitEventAction(eventId: string, admissionId: string, kind: "create" | "handoff"): boolean {
+    if (!eventAdmissionId.safeParse(admissionId).success || !["create", "handoff"].includes(kind)) return false;
+    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    const budget = run?.eventBudget;
+    if (!run || !budget || budget.closed) return false;
+    const prior = budget.admissions.find(item => item.id === admissionId);
+    if (prior) return prior.kind === kind;
+    if (budget.admissions.filter(item => item.kind === kind).length >= budget.limits[kind]) return false;
+    this.commitMutation(() => { budget.admissions.push({ id: admissionId, kind }); });
+    return true;
+  }
+
+  closeEventBudget(eventId: string): boolean {
+    const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
+    if (!run?.eventBudget) return false;
+    if (!run.eventBudget.closed) this.commitMutation(() => { run.eventBudget!.closed = true; });
+    return true;
   }
 
   activeWebhookRunCount(webhookId: string): number {
@@ -910,11 +956,13 @@ export class RoutineManager {
   async cancelRun(id: string): Promise<RoutineRun | null> {
     const run = this.runs.find((r) => r.id === id);
     if (!run || !["queued", "running", "waiting"].includes(run.status)) return null;
-    run.status = "cancelled";
-    if (run.target === "room-goal") run.goalStatus = "stopped";
-    run.attention = undefined;
-    run.finishedAt = this.now();
-    this.save();
+    this.commitMutation(() => {
+      run.status = "cancelled";
+      if (run.target === "room-goal") run.goalStatus = "stopped";
+      run.attention = undefined;
+      run.finishedAt = this.now();
+      if (run.eventBudget) run.eventBudget.closed = true;
+    });
     this.emitRun(run);
     if (run.threadId) {
       if (run.target === "room-goal" && run.groupId) {
@@ -1118,6 +1166,7 @@ export class RoutineManager {
               run.runOn ?? "ember",
               triggerSource,
               (message) => this.failThread(task.threadId, message),
+              run.event?.budgetId,
             );
           }
         } catch (error) {
@@ -1276,6 +1325,7 @@ export class RoutineManager {
       createdAt: this.now(),
     };
     run.event = routineEventForRun(run);
+    run.eventBudget = newEventActionBudget();
     this.runs.push(run);
     return run;
   }

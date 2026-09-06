@@ -438,11 +438,12 @@ const internalCapabilities = new InternalCapabilities();
 const projectTurnLeases = new ProjectTurnLeases();
 const internalTurnOwners = new Map<string, {
   botId: string; generation: string; depth: number; skillAuthoring: boolean;
+  eventId?: string;
   tokens: Partial<Record<InternalCapabilityKind, string>>;
 }>();
-function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean): void {
+function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string): void {
   internalCapabilities.begin(botId, threadId, generation);
-  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, tokens: {} });
+  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId, tokens: {} });
 }
 function internalToken(botId: string, threadId: string, generation: string, kind: InternalCapabilityKind): string {
   const owner = internalTurnOwners.get(threadId);
@@ -899,7 +900,7 @@ type AskBotOutcome = {
   stopReason?: string | null;
 };
 
-function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string): Promise<AskBotOutcome> {
+function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string, eventId?: string): Promise<AskBotOutcome> {
   const target = store.bot(targetBotId);
   if (!target) return Promise.resolve({ status: "error", text: "(no such bot)" });
   const threadId = target.threadId;
@@ -931,6 +932,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
     const timer = setTimeout(() => finish({ status: "timeout", text }), ASK_BOT_TIMEOUT_MS);
     startTurn(targetBotId, message, {
       commsDepth: depth + 1,
+      eventId,
       unattended: isUnattended(fromBotId),
       onDispatchError: (reason) => finish({ status: "error", text: `(couldn't start that bot: ${reason})` }),
     }).catch((err) =>
@@ -2752,7 +2754,7 @@ bus.subscribe((event: RuntimeEvent) => {
 /** How a drained delegation becomes a real turn on the target. Shared by
  * the settle-time drain and the boot-time drain of what a previous process
  * left queued. */
-const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId) => {
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId, eventId) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
@@ -2800,6 +2802,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     };
     return startTurn(toBotId, text, {
       commsDepth,
+      eventId,
       // The delegating bot is the one whose unattended state matters, and a
       // room thread has no owner to look it up from.
       unattended: isUnattended(fromBotId || store.botByThread(sourceThreadId)?.id),
@@ -3048,6 +3051,8 @@ async function startTurn(
     automationSource?: RoutineRunTrigger;
     /** the caller was already running unattended, so this turn is too */
     unattended?: boolean;
+    /** Server-owned durable allowance, never accepted from message payload. */
+    eventId?: string;
     /** Resume an agent after the user completed an inline connection or credential card.
      * The prompt is control-plane context: it reaches the provider without
      * masquerading as another message authored by the user. */
@@ -3075,6 +3080,14 @@ async function startTurn(
   else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(bot.id);
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
+  const eventId = opts?.eventId ?? (opts?.cardContinuation ? task.automationEventId : undefined);
+  if (eventId) {
+    const budget = routines?.getEventBudget(eventId);
+    if (!budget || budget.closed) throw Object.assign(new Error("This automation budget is unavailable or closed. Start a new run to authorize more work."), { status: 409 });
+    store.setTaskAutomationEvent(bot.id, threadId, eventId);
+  } else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) {
+    store.setTaskAutomationEvent(bot.id, threadId);
+  }
   const commsDepth = opts?.commsDepth ?? 0;
   // a task takes its name from the first thing you asked it to do
   if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
@@ -3193,7 +3206,7 @@ async function startTurn(
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
   const dispatchClaimId = randomUUID();
-  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring);
+  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId);
   directTurnGenerationByBot.set(bot.id, dispatchClaimId);
   directTurnDispatchClaims.set(bot.id, { id: dispatchClaimId, threadId, phase: "setup" });
   store.setActivity(bot.id, "working");
@@ -3829,8 +3842,8 @@ routines = new RoutineManager({
     return task;
   },
   createGoalTask: (groupId, title) => store.createGroupTask(groupId, title, false),
-  startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError) =>
-    startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError })
+  startTurn: (botId, threadId, prompt, runOn, triggerSource, onDispatchError, eventId) =>
+    startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError, eventId })
       .then(() => undefined),
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {
@@ -6664,6 +6677,15 @@ const server = createServer(async (req, res) => {
           throw Object.assign(new Error("internal turn capability is no longer active"), { status: 401 });
         }
       };
+      const internalOwner = internalTurnOwners.get(internalClaim.threadId);
+      if (!internalOwner || internalOwner.generation !== internalClaim.generation) return json(res, 401, { error: "internal turn owner is unavailable" });
+      const internalEventId = internalOwner.eventId;
+      const admitEventAction = (kind: "create" | "handoff", admissionId: string) => {
+        requireActiveInternal();
+        if (internalEventId && !routines?.admitEventAction(internalEventId, admissionId, kind)) {
+          throw Object.assign(new Error("This automation has reached its cumulative action limit or its budget is closed. Start a new run to authorize more work."), { status: 429 });
+        }
+      };
       const assertInternalIdentity = (body: Record<string, unknown>) => {
         for (const key of ["self", "fromBotId", "botId"]) {
           if (body[key] !== undefined && body[key] !== internalClaim.botId) {
@@ -6964,12 +6986,14 @@ const server = createServer(async (req, res) => {
         const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff");
         if (!handoffSlot) return json(res, 429, { error: "at most four peer handoffs are allowed per turn" });
         try {
+        const eventAdmissionId = randomUUID();
         const queueBusyFallback = (approvalAlreadyGranted = false) => {
           requireActiveInternal();
+          admitEventAction("handoff", eventAdmissionId);
           const queued = queueDelegation(
             commsBus,
             from,
-            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted },
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, eventId: internalEventId },
             MAX_COMMS_DEPTH,
             fromThreadId,
           );
@@ -7025,7 +7049,8 @@ const server = createServer(async (req, res) => {
         const channel = getOrCreateChannel(store, currentFrom, currentTarget);
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this Murage workspace. Reply to them.]\n\n${message}`;
-        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId);
+        admitEventAction("handoff", eventAdmissionId);
+        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId);
         if (store.bot(toBotId)?.busy) handoffSlot.commit();
         const outcome = await waiting;
         requireActiveInternal();
@@ -7149,10 +7174,11 @@ const server = createServer(async (req, res) => {
         const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff");
         if (!handoffSlot) return json(res, 429, { error: "at most four peer handoffs are allowed per turn" });
         try {
+        admitEventAction("handoff", randomUUID());
         const queued = queueDelegation(
           commsBus,
           from,
-          { toBotId, message, reason, depth },
+          { toBotId, message, reason, depth, eventId: internalEventId },
           MAX_COMMS_DEPTH,
           fromThreadId,
         );
@@ -7282,6 +7308,7 @@ const server = createServer(async (req, res) => {
         const createSlot = internalCapabilities.reserve(internalClaim, "create");
         if (!createSlot) return json(res, 429, { error: "at most four bots can be created per turn" });
         try {
+        admitEventAction("create", randomUUID());
         const created = store.createBot(
           {
             name,

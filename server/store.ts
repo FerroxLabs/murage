@@ -241,6 +241,8 @@ export interface GroupRecord {
  * session. Sharing resume cursors between tasks would resume the other
  * task's session and quietly undo the whole thing. */
 export interface TaskRecord {
+  /** Server-owned automation root; retained for reviewed card resumptions. */
+  automationEventId?: string;
   threadId: ThreadId;
   title: string;
   createdAt: number;
@@ -1753,6 +1755,21 @@ export class Store {
     if (!task || task.lastInstanceId === instanceId) return;
     task.lastInstanceId = instanceId;
     this.saveBots();
+  }
+
+  setTaskAutomationEvent(botId: string, threadId: string, eventId?: string): void {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) throw new Error("Automation task is unavailable");
+    if (task.automationEventId === eventId) return;
+    const previous = task.automationEventId;
+    if (eventId === undefined) delete task.automationEventId;
+    else task.automationEventId = eventId;
+    try { this.saveBots(); }
+    catch (error) {
+      if (previous === undefined) delete task.automationEventId;
+      else task.automationEventId = previous;
+      throw error;
+    }
   }
 
   /** Bank one settled turn onto its task. Called once per turn.completed;

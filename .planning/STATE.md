@@ -1,5 +1,15 @@
 # Murage takeover state
 
+MVP M2 saved budget path integrated 2026-09-07. Authorized fixture correction:
+finish the resumed fake CLI through its existing gate, rather than detached-thread
+interrupt. Paused-worktree API40391 PASS; current integration API65353 PASS2,
+52 budget/delegation tests15864 PASS, combined types79986 PASS. Cumulative four
+create/four handoff ledger, persisted delegation event IDs and task continuation
+association now included. Missing/closed budgets fail closed; ordinary human turn
+control passed. No counter reset or extra audit. Telegram-specific origin/routing
+integration still must prove these gates; advanced room-goal budgets deferred.
+Next MVP M3/M4 only: Wayland-style search fallback and owner-bound Telegram.
+
 MVP M1 startup ACCEPTED 2026-09-07: authorized targeted continuation complete.
 Bundler now supplies createRequire for CommonJS ZIP built-ins; recovery returns
 none for an absent first-use root, without creating state or accepting a dangling
