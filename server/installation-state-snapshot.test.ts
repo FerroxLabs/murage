@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { stageInstallationState } from "./installation-state-snapshot.ts";
+import { writeInstallationArchive } from "./installation-archive.ts";
 
 const roots: string[] = [];
 function fixture() {
@@ -110,4 +111,24 @@ it("omits headless companion bindings and restored connection profiles without r
   expect(result.manifest.omitted.map(item => item.path)).toEqual(expect.arrayContaining(["companion", "connection-profiles"]));
   expect(JSON.stringify(result.manifest)).not.toContain("private-connection-canary");
   expect(readFileSync(join(f.data, "companion", "private.json"), "utf8")).toBe("private-connection-canary");
+});
+
+it.each(["vm-home", "vm-homes"])("refuses backup with %s instead of silently omitting persistent data or restoring browser credentials", async component => {
+  const f = fixture();
+  const workspace = component === "vm-home" ? join(f.data, component) : join(f.data, component, "0123456789abcdef");
+  const profiles = join(workspace, ".browser-profiles", "chromium");
+  mkdirSync(profiles, { recursive: true });
+  const document = join(workspace, "user-document.txt"), cookies = join(profiles, "Cookies");
+  writeFileSync(document, "persistent user work");
+  writeFileSync(cookies, "fake-browser-credential-canary");
+  const config = readFileSync(join(f.data, "config.json"));
+  const archive = join(f.parent, "backup.zip");
+  await expect(writeInstallationArchive(f.data, archive)).rejects.toMatchObject({ code: "VM_WORKSPACE_BACKUP_UNSUPPORTED" });
+  expect(existsSync(archive)).toBe(false);
+  expect(readFileSync(document, "utf8")).toBe("persistent user work");
+  expect(readFileSync(cookies, "utf8")).toBe("fake-browser-credential-canary");
+  expect(readFileSync(join(f.data, "config.json"))).toEqual(config);
+  expect(readdirSync(f.parent).filter(name => name.startsWith(".murage-"))).toEqual([]);
+  const lease = acquireDataDirLease(f.data);
+  lease.release();
 });

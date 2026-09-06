@@ -215,6 +215,11 @@ export async function stageInstallationState(dataDir: string, outputParent: stri
       check();
       const names = readdirSync(root).sort();
       if (names.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
+      // These bind-mounted workspaces also hold native browser profiles. The
+      // installation lease does not quiesce their guests, and copying profiles
+      // back into place would bypass credential reauthentication. Refuse until
+      // a stopped-VM export and credential-safe restore policy are available.
+      if (names.some(name => name === "vm-home" || name === "vm-homes")) fail("VM_WORKSPACE_BACKUP_UNSUPPORTED");
       for (const name of names) {
         if (name === "messages.db" || name === "messages.db-wal" || name === "messages.db-shm") continue;
         if (!safePart(name)) fail("NONPORTABLE_SNAPSHOT_PATH");
