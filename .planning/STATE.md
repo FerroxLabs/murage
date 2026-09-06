@@ -1,6 +1,28 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P08 notification settings UI ACCEPTED (round 1): General settings
+desktop-only controls for three alert categories, private previews and explicit
+timezone quiet hours. Preserve per-bot off; explain that cards/tasks remain live
+when alerts are muted. Save explicitly with validation/pending/error/confirmation;
+permission request only on a deliberate click, not mount. No digest/replay feature.
+Checks frozen: isolated browser save/reload/error/quiet validation/privacy/
+permission behavior, light/dark phone screenshots, types/contrast. Two rounds.
+P03 owns UI/tests; existing DESIGN.md governs. No new visual-design interview.
+Native OS delivery/click and paused startup/budget corrections remain open.
+Evidence: 5 browser tests PASS, frontend types PASS, contrast37pairs/skin PASS;
+390px light/dark screenshots reviewed. Explicit saves preserve false values and
+stored timezone, new quiet window chooses device zone only after enabling,
+invalid/equal times refuse writes, errors preserve edits, permission onlyonclick.
+No native OS proof or digest support implied. New controls follow existing
+design contract rather than adding a separate settings/navigation system.
+Paused packaging banner patch moved without alteration to
+/Volumes/Mando/WaylandBots/murage-packaging-paused on branch
+codex/murage-packaging-paused (base 8b6ebd51). Exact diff matched before removal
+from integration checkout. Same startup blocker, same exhausted round 2; no
+correction/retest/release authorized by this isolation. Recover patch there.
+Existing generated dist-server belongs to the failed packaging confirmation,
+not a release-ready build of current HEAD; do not install or reuse it as proof.
 P08 notification policy/config ACCEPTED (round 1): preserve legacy defaults
 and per-bot off; add attention/completion/failure choices, explicit-timezone quiet
 hours, private lock-screen previews retaining exact click destination. Policy
