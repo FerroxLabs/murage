@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
+import { ensureManagedComposioCredentials } from "./managed-composio.mjs";
+import { createSecureCredentialState } from "./secure-credential-state.mjs";
 
 const rawSource = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 // Test-only negative controls execute the actual main function with exactly
@@ -209,7 +211,7 @@ test("actual canonical root resolver rejects empty override without acquiring or
   assert.equal(claims,0);
 });
 
-function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true}={}) {
+function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController()}={}) {
   const text=source.slice(source.indexOf('app.on("before-quit", (e) => {'));
   const messages=[];let quit=0;let trigger;
   const scope={
@@ -219,6 +221,7 @@ function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise
     slog:()=>{},dialog:{showErrorBox:(_title,body)=>messages.push(body)},
     awaitOwnedWork:(promise,label,timeout)=>awaitOwnedWork(promise,label,Math.min(timeout??25,25)),
     desktopStartup:startup,
+    managedComposioShutdown,
   };
   const state=new Function(...Object.keys(scope),"stop","writes","release",`
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";
@@ -236,6 +239,43 @@ test("actual before-quit waits for child exit AND pending credentials before rel
   child.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
   write.resolve();await f.state.cleanup;
   assert.equal(released,1);assert.equal(f.quit(),1);assert.equal(f.state.owned,false);
+});
+
+test("actual quit cancels stalled optional registration but drains its credential write", async () => {
+  const controller = new AbortController();
+  const requested = deferred(), persist = deferred();
+  let requestAborted = false, released = 0;
+  const credentials = createSecureCredentialState({}, () => persist.promise);
+  const writes = [];
+  const scope = {
+    app: { isPackaged: true }, composioBrokerUrl: () => "http://127.0.0.1:12345",
+    credentialStoreUnavailable: false, desktopShutdownStarted: false,
+    managedComposioShutdown: controller, slog() {}, syncManagedComposioCredentials() {},
+    updateSecureCredentialDocument: (derive) => {
+      const write = credentials.update(derive);
+      writes.push(write);
+      return write;
+    },
+    ensureManagedComposioCredentials: (options) => ensureManagedComposioCredentials({
+      ...options,
+      fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => { requestAborted = true; reject(signal.reason); }, { once: true });
+        requested.resolve();
+      }),
+    }),
+  };
+  new Function(...Object.keys(scope), between('  if (app.isPackaged && composioBrokerUrl() && !credentialStoreUnavailable) {', '  // in-app auto-update'))(...Object.values(scope));
+  await requested.promise;
+  const f = shutdownFixture({ writes, managedComposioShutdown: controller, release: () => { released++; } });
+  f.trigger();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requestAborted, true, "quit must cancel the pending HTTP request");
+  assert.equal(released, 0, "cancelling HTTP must not skip persistent write settlement");
+  persist.resolve();
+  await f.state.cleanup;
+  assert.equal(released, 1);
+  assert.equal(f.quit(), 1);
+  assert.deepEqual(f.messages, []);
 });
 
 test("actual before-quit retains ownership until admitted browser cleanup settles", async () => {

@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { freePortBlock } from "../server/testing/ports.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { verifyPinnedBinary } from "./prepare-fuigo.mjs";
-import { permittedProofPermission } from "./fuigo-proof-proxy.mjs";
+import { isProofPermissionCard, permittedProofPermission } from "./fuigo-proof-proxy.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { values } = parseArgs({ options: {
@@ -73,7 +73,7 @@ async function poll(check, timeout = 120_000) {
 async function botState(id) { return (await api("GET", "/api/bots?messages=100")).bots.find((bot) => bot.id === id); }
 const answeredPermissions = new Set();
 async function answerFixturePermission(state, phase) {
-  const cards = (state?.messages ?? []).filter(message => message.kind === "options" && message.card && !message.card.answered
+  const cards = (state?.messages ?? []).filter(message => isProofPermissionCard(message)
     && message.card.tool !== "ask_bot" && !answeredPermissions.has(message.card.requestId));
   if (!cards.length) return;
   if (cards.length !== 1 || answeredPermissions.size >= 8) throw new Error("Ambiguous or excessive fixture permission requests");

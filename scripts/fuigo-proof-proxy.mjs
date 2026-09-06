@@ -10,6 +10,11 @@ export const EXPECTED_TOOLS = [
   "propose_routine_action", "skills_list", "skill_manage",
 ];
 
+export function isProofPermissionCard(message) {
+  return message?.kind === "options" && typeof message.card?.requestId === "string"
+    && typeof message.card.tool === "string" && !message.card.answered;
+}
+
 // Pinned Fuigo1.0.4 stamps this canonical envelope from its registered
 // toolset. SearchTool only discovers this fixture's MCP definitions; UseTool
 // is allowed only for the exact harmless read or approval-bound fixture ask.

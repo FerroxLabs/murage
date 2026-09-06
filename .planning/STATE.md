@@ -1,6 +1,42 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+NEW AUTHORIZATION:Sean authorized anotherbounded3-blocker correctivepass and
+explicitly requested workahead on remaining CIchecks. ScopeUbuntu shutdown,
+WindowsbundledFuigosigning,liveFuigoproof plus deterministicremainingCI blockers;
+no enhancements/broaderaudit. Eachissue bounded, preserve passingevidence.
+Corrective results READY: UbuntuoptionalComposioHTTP cancellationonquit fixes
+15snetworkwait vs10sshutdown deadline; persistence stilldrains.24owner+5Composio
+tests passed. Windows single-fileextraResources bypasssigner identified; exact
+copiedfuigo.exe signed AFTERrawpinneddigestcheck viaexistingAzuremanager, no
+allowlistweakening;72focusedtests passed. Workaheadcaughtmissing.deb argument
+in Release installcommandsmoke; uniqueartifactargument nowpassed.
+Fuigo proof ACCEPTED_SCOPED: actualpinned1.0.4 exposedall12tools, real list_bots
+returnedcorrectroster/excludedhidden, syntheticglobal/projectcanaries inherited,
+sessionMCPwon same-namecollision, ask_bot actualapproval/cancel withnotarget
+dispatch, allownedprocessesexited. Receiptfuigo-authorized-proof.json. Rootcause
+priorfixturefailure: ordinarywelcomecard (no requestId/tool) misclassified as
+permission; fakebootstrapdiagnosticproveditbeforetools. Correct filter+4unit
+checks passed; no Fuigo engine/production inheritance changes. Receipt's old
+identity-warning text is superseded by acceptedidentityrecord, notnewfailure.
+Next:freezecombinedcorrectivecandidate andrun existingCI matrix +draftRelease
+once, including allnative gates; no publicpublishuntilnative/assemblyacceptance.
+FINAL CI RESULT run34009480073:COMPLETED failure. Macjob101422690596SUCCESS,
+WindowsFAIL(unsignedbundledfuigo.exe),UbuntuFAIL(windowshutdown); assemblejob
+101424612735SKIPPED. No draftassembled/publication. Macartifact9982215617
+mac-release1,760,489,612bytes, SHA256
+8da138a5d690ee45bf1066a48ec351416c1ee5bcf22afb3d4b3cbf051f743f09,
+expires2026-09-13T03:54:43Z. Metadata exportedrelease-0145-artifacts.json.
+All current CI/build/proof jobs terminal. Awaiting explicit additional bounded
+correction authority for Ubuntu shutdown,WindowsbundledFuigosigning,liveFuigo
+proof. No newfeatures/audit/retries under exhaustedapprovedpass.
+LATEST RELEASE OBSERVATION:0.1.45Macjob101422690596 passed signatures,both
+packagedserver/helper checks andnotarization ofallfourartifacts; nowstapling/
+feedgeneration (03:52:51Zstepstart). Snapshot release-0145-mac-job.json retained.
+Windowsinstaller/app signedVALID butbundledfuigo.exe NotSigned; Ubuntuwindow
+shutdownfailed; liveFuigoproofunresolved. These stillblockpublication. No retries
+or furtherfixes afterapprovedfinalpass withoutspecificdirection. Full5125-test
+candidatepass remains valid. No publicrelease/mainmerge.
 LATEST USER DECISION:Sean approved release-first prioritization and ONE FINAL
 bounded correction+confirmation pass for knownidentity,macsigning,first-release
 updater andFuigo blockers. Non-release enhancements explicitlypostponed but
@@ -27,6 +63,35 @@ retry withoutdirection; defaultengine proof remains publicationgate.
 Preparing0.1.45 as draft-only combinedcandidate. Finalfullsuite required, no
 publicpublication ormainmerge until gates/dispositions satisfied. Fullprogramme
 non-releaseenhancements remain explicitlypostponed, notcomplete.
+Candidate411e22743dbf6f4e7de78cd7c865540bc41a029c committed/pushedworkingbranch;
+version0.1.45. Isolated snapshot .planning/candidates/murage-candidate-h8Gobd/source,
+5994files, treeSHA256f6769132ceffd44fb9e276a052cba7e3c069b9f74b704b79aecc8842b5a1ca31.
+Fullpnpm test launched once on frozen snapshot; no source/dependency mutations
+in that copy. Draft-only Release workflow requested exactcommit publish=false;
+doesnotapprovepublicrelease orcloseFuigo gate. Existingnotarizationsecrets stay
+insideCI; no localcredentialexport. Needobserveactualjob/fulltestcompletion.
+Mac signing exception COMPLETED:oldstage80277exit0, botharm64/x64appsbothDMGs
+strictcodesignpass withFerroxLabsidentity/hardenedruntime/timestamps. No source
+fix/checkweakening. Localnotarizationunperformed(profileabsent). Final0.1.45
+CIjobmustindependentlybuild/sign/notarize currentcandidate; don'treuse0.1.44
+artifacts asfinalrelease. Combinedsnapshotfullsuitehandle5989 active.
+Fullcandidate5989 completedexit0:5125Vitestpasses/20skips/1todo,7brokerpasses,
+185Electronpasses/1skip,contrast andpackagedserver/proxy/MCP/offlinerecoverypass.
+Evidence candidate-h8Gobd/evidence/{full-suite.log,result.json}. No rerun.
+DraftRelease34009480073:Ubuntu101422690553 failed packaged lifecycle after
+renderer-ready andserverhealth:Electron did notexit afterwindowclosed. Package,
+bakedupdatertarget,DEBupgrade,sandboxchecks passed. Install-command/updater proof
+andartifactupload skipped. FinalapprovedUbuntu confirmationBLOCKED; no further
+correction/retry withoutdirection. Windows/Macjobs maystillrun; no publication.
+This is newobserved failure in plannednativecheck, notfullsuitefailure or a
+successful nativeupdate. Exactjoblog retained release-0145-linux-job.log.
+ReleaseWindows101422690550 terminalFAILURE atAuthentiCodegate: bundledfuigo.exe
+NotSigned. Actualinstaller/Murageexecutables signaturedetails retained in
+release-0145-windows-job.log. Earlierartifact-onlyworkflowdidnotperformthis
+recursivegate; do not promote itsgreen result to wholepayloadsignatureproof.
+No source/signaturepolicyfix orrerun authorized afterthis finalpass without
+direction. MacCI notarization stillobservedrunning; draftassembly/publication
+cannotproceed withWindows/Ubuntu failures. All passedfulltest evidence retained.
 2026-09-06 checkpoint:737e4ae137db7b3659b805f587f35316ee516fb6
 (chore:checkpoint Murage stabilization) committed and pushed to private origin
 codex/murage-reliability under Sean's new publish authorization. Main unchanged,
