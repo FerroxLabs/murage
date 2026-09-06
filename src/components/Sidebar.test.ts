@@ -19,7 +19,7 @@ vi.mock("@/lib/analytics", () => ({
 // asks the desktop shell what it is running on), and this suite runs in node.
 // A bare object is the honest answer: no shell, browser capabilities.
 (globalThis as unknown as { window?: unknown }).window ??= {};
-const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores } =
+const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible } =
   await import("./Sidebar");
 import type {
   ArchivedTeamBot,
@@ -27,6 +27,15 @@ import type {
   TeamImportSkillError,
 } from "./TeamLibraryPanel";
 import { botRole } from "@/lib/bot-role";
+
+describe("presentation-only sidebar hiding", () => {
+  it("restores visibility without admitting archived bots", () => {
+    expect(sidebarBotVisible({}, false)).toBe(true);
+    expect(sidebarBotVisible({ sidebarHidden: true }, false)).toBe(false);
+    expect(sidebarBotVisible({ sidebarHidden: true }, true)).toBe(true);
+    expect(sidebarBotVisible({ sidebarHidden: true, hidden: true }, true)).toBe(false);
+  });
+});
 
 /** The chair a bot lands in when the undo's PATCH is applied.
  *

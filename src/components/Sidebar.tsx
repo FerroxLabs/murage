@@ -12,6 +12,8 @@ import {
   ClipboardCopy,
   Copy,
   Crown,
+  Eye,
+  EyeOff,
   FolderMinus,
   FolderPlus,
   Library,
@@ -769,16 +771,22 @@ function SectionPicker({
   );
 }
 
-function BotContextMenu({
+export function sidebarBotVisible(bot: Pick<Bot, "hidden" | "sidebarHidden">, showHidden: boolean): boolean {
+  return !bot.hidden && (showHidden || !bot.sidebarHidden);
+}
+
+export function BotContextMenu({
   menu,
   onClose,
   onArchive,
+  onToggleHidden,
   onRequestDelete,
   onMoveToSection,
 }: {
   menu: MenuState;
   onClose: () => void;
   onArchive: (bot: Bot) => void;
+  onToggleHidden: (bot: Bot) => void;
   onRequestDelete: (bot: Bot) => void;
   onMoveToSection: (botId: string) => void;
 }) {
@@ -917,6 +925,8 @@ function BotContextMenu({
           void navigator.clipboard?.writeText(bot.threadId);
         }),
         divider("d3"),
+        item(bot.sidebarHidden ? <Eye size={16} /> : <EyeOff size={16} />,
+          bot.sidebarHidden ? "Restore to sidebar" : "Hide from sidebar", () => onToggleHidden(bot)),
         item(
           <Archive size={16} className="text-ink-secondary" />,
           "Archive",
@@ -1005,6 +1015,7 @@ function BotListItem({
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
             {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
+            {bot.sidebarHidden && <EyeOff size={12} className="shrink-0 text-ink-secondary" aria-label="Hidden from sidebar" />}
             <RenameTitle
               key={iconOnly ? "icons" : "expanded"}
               value={bot.name}
@@ -1295,6 +1306,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [newRoom, setNewRoom] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenChange = useRef(false);
   const [exportingTeam, setExportingTeam] = useState(false);
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
@@ -1457,6 +1470,22 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     }
   };
 
+  const toggleSidebarHidden = async (bot: Bot) => {
+    if (hiddenChange.current) return;
+    hiddenChange.current = true;
+    setMenu(null);
+    setTeamFeedback({ error: false, text: bot.sidebarHidden ? "Restoring to sidebar…" : "Hiding from sidebar…" });
+    try {
+      const response = await api(`/api/bots/${bot.id}`, {
+        method: "PATCH", body: JSON.stringify({ sidebarHidden: !bot.sidebarHidden }),
+      });
+      dispatch({ type: "botPatched", bot: response.bot });
+      setTeamFeedback({ error: false, text: bot.sidebarHidden ? `${bot.name} restored to sidebar` : `${bot.name} hidden from sidebar. Its work continues.` });
+    } catch (cause) {
+      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
+    } finally { hiddenChange.current = false; }
+  };
+
   const undoBotArchive = async (bot: { id: string; name: string }) => {
     setTeamFeedback(null);
     try {
@@ -1492,7 +1521,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   // section below the list (debounced, lands on the message).
 
   const matchingBots = state.bots
-    .filter((b) => !b.hidden)
+    .filter((b) => sidebarBotVisible(b, showHidden))
     .filter(
       (b) =>
         !q ||
@@ -1610,6 +1639,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   };
   const activeBotCount = state.bots.filter((bot) => !bot.hidden).length;
   const archivedBots = state.bots.filter((bot) => bot.hidden);
+  const sidebarHiddenCount = state.bots.filter((bot) => !bot.hidden && bot.sidebarHidden).length;
 
   return (
     <aside
@@ -1800,6 +1830,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       </div>
 
       {/* Bot list */}
+      {sidebarHiddenCount > 0 && <button type="button" aria-pressed={showHidden}
+        onClick={() => setShowHidden(value => !value)}
+        className="mx-3 mb-2 rounded-lg border border-hairline/40 px-2 py-2 text-[12px] text-ink-secondary hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        {showHidden ? "Hide hidden bots" : "Show hidden"} ({sidebarHiddenCount})
+      </button>}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
           {matchingBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
@@ -2074,6 +2109,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           menu={menu}
           onClose={() => setMenu(null)}
           onArchive={(bot) => void archiveBot(bot)}
+          onToggleHidden={(bot) => void toggleSidebarHidden(bot)}
           onRequestDelete={(bot) => setPendingDelete({ kind: "bot", id: bot.id, name: bot.name })}
           onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
         />

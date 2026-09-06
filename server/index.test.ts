@@ -3495,6 +3495,22 @@ describe("harness HTTP API", () => {
     expect(after.modelSelection.effort).toBeUndefined();
   });
 
+  it("P08 sidebar hiding preserves bot roles and routing eligibility", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Sidebar presentation fixture" })).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Sidebar fixture", chiefOfStaff: true, computer: "off", autoApprove: false })).status).toBe(200);
+      for (const sidebarHidden of [true, false]) {
+        const changed = await desktopApi("PATCH", `/api/bots/${bot.id}`, { sidebarHidden });
+        expect(changed.status).toBe(200);
+        expect(changed.body.bot).toMatchObject({ sidebarHidden, chiefOfStaff: true, computer: "off", autoApprove: false });
+        expect(changed.body.bot.hidden).not.toBe(true);
+        const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === bot.id);
+        expect(current).toMatchObject({ sidebarHidden, chiefOfStaff: true });
+      }
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { sidebarHidden: "yes" })).status).toBe(400);
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
   it("P07 computer destinations round trip through the API and clear persisted Auto", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
