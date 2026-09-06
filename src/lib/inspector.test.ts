@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { summarizeNative, summarizeRuntime, toRows, type InspectorEntry } from "./inspector";
+import { appendInspectorRuntime, inspectorCountLabel, summarizeNative, summarizeRuntime, toRows, type InspectorEntry, type InspectorPage } from "./inspector";
 
 const base = { eventId: "e", provider: "claudeAgent" as const, threadId: "t", createdAt: "2026-08-17T10:00:00.000Z" };
+
+describe("Inspector count completeness", () => {
+  it("keeps exact and legacy labels while explaining incomplete counts", () => {
+    expect(inspectorCountLabel(20, 100, true)).toBe("last 20 of 100");
+    expect(inspectorCountLabel(20, 20)).toBe("20 entries");
+    expect(inspectorCountLabel(20, 100, false)).toBe("20 recent records; total not fully counted");
+  });
+
+  it("preserves per-stream completeness while appending and deduplicating live frames", () => {
+    const page: InspectorPage = { entries: [], total: { runtime: 50, native: 10 }, totalComplete: { runtime: false, native: true } };
+    const event = { ...base, type: "turn.started" as const };
+    const appended = appendInspectorRuntime(page, event);
+    expect(appended.total).toEqual({ runtime: 51, native: 10 });
+    expect(appended.totalComplete).toEqual({ runtime: false, native: true });
+    expect(appendInspectorRuntime(appended, event)).toBe(appended);
+    expect(appendInspectorRuntime(null, event).totalComplete).toEqual({ runtime: false, native: false });
+  });
+});
 
 describe("summarizeRuntime", () => {
   it("labels turn boundaries and failures by tone", () => {

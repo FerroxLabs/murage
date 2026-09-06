@@ -19,6 +19,28 @@ No publication has occurred. Do not publish known failing or unverified required
 release outcomes merely to meet the requested date.
 ## Active package — internal-turn identity (Task26 row36)
 
+Independent Task19 Inspector-read bound: source countLines scans entirecoldfile
+or appendedgrowth synchronously before existing8MiBtail. Frozen outcome perfile
+perrequest<=8MiBcounting+8MiBtail, preserve exacttotals only when fullycounted,
+recentvalidrecords available, sourcebytesunchanged. Add optional totalComplete
+runtime/native booleans to InspectorPage with explicitbackendvalues; UI marks
+incompletecounts and preservesflags through liveupdates. Sourceeventhistory is
+not deleted; no storage/APIendpoint migration. Scope server/thread-events.ts/test
+(Astra worker), InspectorPanel.tsx,src/lib/inspector.ts/test and one existing
+desktop-capabilities browserfixture case(root). R1 notstarted. Frozen checks:
+pnpm exec vitest run server/thread-events.test.ts src/lib/inspector.test.ts;
+pnpm typecheck; pnpm exec playwright test --config .planning/isolated-browser.config.ts
+--grep 'Inspector marks bounded counts'; oldbackend byte-read negativecontrol.
+Measure cold/growth readSyncbytes,partiallines,rotation; rendered countlabel at
+390px with nooverflow. Max2rounds; no reopening anyclosedpackage.
+Inspector-count disposition:ACCEPTED round1.20 unit checks,typecheck and1
+renderedbrowsercheck passed;390px screenshot inspected, countnoticevisible/no
+horizontaloverflow. Exact oldbackend control measured21,037,150bytes against
+16,777,216perfile budget before asserting any newmetadata. Temporarycontrol
+source removed; logs inspector-count-round1-{unit,types,browser,control}.log.
+No eventhistory deleted; no secondround/audit. This is scoped Inspector read
+boundedness, not all Task19 resource/concurrency requirements.
+
 Independent Stage5/Task19 native-trace retention: implementation assigned to
 existing Astra worker, OWN server/drivers/native.ts/native.test.ts only. Outcome
 new writes retain bounded recent diagnostics:64KiB encoded record,4MiB current
