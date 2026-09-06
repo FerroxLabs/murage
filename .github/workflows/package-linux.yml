@@ -38,6 +38,8 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
       - run: pnpm install --frozen-lockfile
+      - name: Verify the package-owned install hook
+        run: pnpm exec vitest run scripts/linux-after-install.test.mjs
       - name: Clean generated output
         run: pnpm clean
       - name: Stage the pinned CUA runtime
