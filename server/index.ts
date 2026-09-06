@@ -85,6 +85,8 @@ import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from 
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
+import { browserEngineStatus, browserEngineEncryptionKey, browserSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { parseConnectorRequests, connectorRequestKey, connectorRequestStatus } from "./connector-requests.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
 import { openMurageStatusSystemPrompt } from "./murage-status-capsule.ts";
@@ -508,6 +510,8 @@ type ActiveBrowserCapability = {
 };
 
 const browserCapabilitiesByThread = new Map<string, ActiveBrowserCapability>();
+const headlessBrowsersByThread = new Map<string, { botId: string; ownerId: string; spec: AgentBrowserSpec }>();
+const closingHeadlessBrowsers = new Map<string, Promise<void>>();
 const pendingBrowserCapabilityRevocations = new Map<string, {
   active: ActiveBrowserCapability;
   attempt: number;
@@ -547,6 +551,20 @@ async function revokeReleasedBrowserCapability(active: ActiveBrowserCapability, 
 }
 
 async function releaseBrowserCapabilityForThread(threadId: string, expectedOwnerId?: string): Promise<void> {
+  const headless = headlessBrowsersByThread.get(threadId);
+  if (headless && (expectedOwnerId === undefined || headless.ownerId === expectedOwnerId)) {
+    headlessBrowsersByThread.delete(threadId);
+    const closing = closeAgentBrowserSession(headless.spec);
+    closingHeadlessBrowsers.set(threadId, closing);
+    try {
+      await closing;
+      if (closingHeadlessBrowsers.get(threadId) === closing) closingHeadlessBrowsers.delete(threadId);
+    } catch {
+      // Keep failed cleanup as an admission barrier; do not return its raw
+      // process details or let fire-and-forget turn events reject unhandled.
+      console.error("[browser] headless session cleanup failed; new browser work remains blocked");
+    }
+  }
   const active = browserCapabilitiesByThread.get(threadId);
   if (!active || (expectedOwnerId !== undefined && active.ownerId !== expectedOwnerId)) return;
   browserCapabilitiesByThread.delete(threadId);
@@ -555,6 +573,8 @@ async function releaseBrowserCapabilityForThread(threadId: string, expectedOwner
 
 async function releaseBrowserCapabilitiesForBot(botId: string): Promise<void> {
   revokeInternalBot(botId);
+  await Promise.all([...headlessBrowsersByThread].filter(([, entry]) => entry.botId === botId)
+    .map(([threadId]) => releaseBrowserCapabilityForThread(threadId)));
   const threads = [...browserCapabilitiesByThread]
     .filter(([, active]) => active.botId === botId)
     .map(([threadId]) => threadId);
@@ -563,6 +583,8 @@ async function releaseBrowserCapabilitiesForBot(botId: string): Promise<void> {
 
 async function releaseAllBrowserCapabilities(): Promise<void> {
   revokeAllInternalTurns();
+  await Promise.all([...headlessBrowsersByThread.keys()].map(threadId => releaseBrowserCapabilityForThread(threadId)));
+  await Promise.all(closingHeadlessBrowsers.values());
   const active = [...browserCapabilitiesByThread.values()];
   browserCapabilitiesByThread.clear();
   const connections = new Map<string, BrowserConnection>();
@@ -719,7 +741,33 @@ async function browserIntegration(
   ownerId = randomUUID(),
 ) {
   const connection = availableBrowserConnection();
-  if (!connection) return null;
+  if (!connection) {
+    // Keep Windows unavailable until native ACL/runtime support is proven.
+    if (process.platform === "win32") return null;
+    const engine = browserEngineStatus();
+    if (engine.kind !== "ready") return null;
+    const key = browserEngineEncryptionKey(DATA_DIR);
+    const realmId = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+    const partition = profile === "guest" ? "guest" : (profile ? browserProfilePartitionTarget(cfg, profile)?.partitionId ?? "" : "");
+    const spec = agentBrowserIntegration({ binaryPath: engine.binaryPath,
+      session: browserSessionId(botId, partition, realmId), encryptionKey: key, dataDir: DATA_DIR,
+      realmId, persistent: profile !== "guest" });
+    await verifyAgentBrowserBinary(engine.binaryPath, spec.env);
+    if (!stillValid()) return null;
+    await releaseBrowserCapabilityForThread(threadId);
+    const closing = closingHeadlessBrowsers.get(threadId);
+    if (closing) await closing;
+    if (!stillValid()) return null;
+    const control = controlIntegration(botId, threadId, ownerId);
+    headlessBrowsersByThread.set(threadId, { botId, ownerId, spec });
+    return { connection: null, capability: null, profile: partition, integration: {
+      command: process.execPath, args: [SPAWNED_PROXIES.headlessBrowser], env: {
+        ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
+        MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
+        MURAGE_HEADLESS_BROWSER_URL: `http://127.0.0.1:${PORT}/api/internal/headless-browser?botId=${encodeURIComponent(botId)}&threadId=${encodeURIComponent(threadId)}`,
+      },
+    } };
+  }
   const control = controlIntegration(botId, threadId, ownerId);
   // A profile that no longer exists falls back to the bot's own session.
   // Canonical ids belong to config/bot references; Electron must receive the
@@ -3534,9 +3582,10 @@ async function startTurn(
       // after its own turn.completed would never be torn down — it would
       // keep polling the box forever, carrying dead per-turn state. busy
       // is flipped false in the fold, so it is the honest "still running".
-      if (!previewCapture && browser) {
+      if (!previewCapture && browser?.connection && browser.capability) {
         const { connection } = browser;
-        previewCapture = () => browserScreenshot(connection, browser.capability, fetch);
+        const capability = browser.capability;
+        previewCapture = () => browserScreenshot(connection, capability, fetch);
       }
       if (previewCapture && store.bot(bot.id)?.busy) {
         startScreenPoller(bot.id, previewCapture, { screenIsTheWork: instance.driverKind === "boxAgent" });
@@ -6554,7 +6603,7 @@ const server = createServer(async (req, res) => {
         return json(res, 401, { error: "unauthorized" });
       }
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/connectors/")
-        ? "connectors" : path === "/api/internal/computer-control" ? "computer" : "agents";
+        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       const requireActiveInternal = () => {
         if (!internalCapabilities.isActive(internalClaim) || !store.bot(internalClaim.botId)
@@ -6579,6 +6628,21 @@ const server = createServer(async (req, res) => {
       };
       assertInternalIdentity(Object.fromEntries(url.searchParams));
       requireActiveInternal();
+      if (path === "/api/internal/headless-browser") {
+        if (method !== "GET" && method !== "DELETE") return json(res, 405, { error: "method not allowed" });
+        const entry = headlessBrowsersByThread.get(internalClaim.threadId);
+        if (method === "DELETE") {
+          if (entry && (entry.botId !== internalClaim.botId || entry.ownerId !== internalClaim.generation)) return json(res, 403, { error: "browser belongs to another turn" });
+          await releaseBrowserCapabilityForThread(internalClaim.threadId, internalClaim.generation);
+          const closing = closingHeadlessBrowsers.get(internalClaim.threadId);
+          if (closing) await closing;
+          return json(res, 200, { closed: true });
+        }
+        if (!entry || entry.botId !== internalClaim.botId || entry.ownerId !== internalClaim.generation || !builtInBrowserEnabled(cfg)
+          || store.bot(entry.botId)?.browser === false) return json(res, 403, { error: "no authorized headless browser session" });
+        res.setHeader("Cache-Control", "no-store");
+        return json(res, 200, { spec: entry.spec, held: computerControl.snapshot(entry.botId).held });
+      }
       // Legacy proxy fields remain assertions on the wire. Defaults below
       // come only from the authenticated server record.
       url.searchParams.set("self", internalClaim.botId);
