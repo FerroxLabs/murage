@@ -1,6 +1,22 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P16 starter import foundation ACCEPTED (round 1): allowlisted local three
+starter definitions become ordinary bundle manifests and use the exact same
+inspection/preparation/staging/atomic callback as ZIP imports. Add bounded
+in-memory content intake for shipped assets, not a public arbitrary-content route.
+No role grant, account assumption, remote fetch or enabled routine. Preserve ZIP
+byte-hash semantics; content intake has separately versioned deterministic hash.
+Checks frozen: original archive import regressions plus content hash/secret/
+integrity/inert callback tests, local starter selection/identity tests, types.
+Two rounds. P04 owns shared importer; root local starter reader/catalog. Guided
+selection, first-task UI and actual API application remain required next work;
+no claim of completed onboarding or resolution of fresh-start blocker.
+Evidence: common import + starter tests 11 PASS, combined types6762 PASS.
+Every official profile prepares through common importer with fresh unprivileged
+bots and paused routines, existing record inputs unchanged. Callback fixture is
+NOT actual workspace installation evidence; API/transaction and onboarding UI
+remain next requirements. Contents digest preserves original ZIP semantics.
 P08 notification settings UI ACCEPTED (round 1): General settings
 desktop-only controls for three alert categories, private previews and explicit
 timezone quiet hours. Preserve per-bot off; explain that cards/tasks remain live

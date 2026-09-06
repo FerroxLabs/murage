@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readBotPackageArchive } from "./bot-package-archive.ts";
-import { createBotPackageExportPreview, MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES, normalizeBotPackagePath, type BotPackageSelection } from "./bot-package-manifest.ts";
+import { createBotPackageExportPreview, MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES, normalizeBotPackagePath, parseBotPackageManifest, type BotPackageSelection } from "./bot-package-manifest.ts";
+import { scanBotPackageContents } from "./bot-package-scan.ts";
 import { packageAgentAsMember } from "./bot-package.ts";
 import { importedMemberProfile } from "./team-manifest.ts";
 import { isSkillName, parseSkillMd } from "./skills.ts";
@@ -18,7 +19,39 @@ export class BotPackageImportError extends Error {
 }
 function fail(code: string): never { throw new BotPackageImportError(code); }
 type Intake = Awaited<ReturnType<typeof readBotPackageArchive>>;
+export interface BotPackageContents { manifest: unknown; payloads: ReadonlyMap<string, Buffer> }
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return "{" + Object.keys(object).filter(key => object[key] !== undefined).sort().map(key => JSON.stringify(key) + ":" + canonical(object[key])).join(",") + "}";
+  }
+  return JSON.stringify(value) ?? "null";
+}
+function readContents(contents: BotPackageContents, signal?: AbortSignal): Intake {
+  if (signal?.aborted) fail("PACKAGE_IMPORT_CANCELLED");
+  const manifest = parseBotPackageManifest(contents.manifest);
+  if (contents.payloads.size + 1 > MAX_BOT_PACKAGE_ENTRIES || contents.payloads.size !== manifest.entries.length) fail("PACKAGE_CONTENT_ENTRY_MISMATCH");
+  const encoded = canonical(manifest);
+  let expanded = Buffer.byteLength(encoded);
+  if (expanded > MAX_BOT_PACKAGE_EXPANDED_BYTES) fail("PACKAGE_CONTENT_LIMIT");
+  const payloads = new Map<string, Buffer>();
+  const actualEntries: Array<{ path: string; bytes: number; sha256: string }> = [];
+  for (const entry of [...manifest.entries].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+    if (signal?.aborted) fail("PACKAGE_IMPORT_CANCELLED");
+    const bytes = contents.payloads.get(entry.path);
+    if (!Buffer.isBuffer(bytes) || bytes.length !== entry.bytes) fail("PACKAGE_CONTENT_ENTRY_MISMATCH");
+    expanded += bytes.length;
+    if (expanded > MAX_BOT_PACKAGE_EXPANDED_BYTES) fail("PACKAGE_CONTENT_LIMIT");
+    const digest = hash(bytes);
+    if (digest !== entry.sha256) fail("PACKAGE_CONTENT_HASH_MISMATCH");
+    actualEntries.push({ path: entry.path, bytes: bytes.length, sha256: digest });
+    payloads.set(entry.path, Buffer.from(bytes));
+  }
+  const scan = scanBotPackageContents([{ path: "manifest.json", content: encoded }, ...[...payloads].map(([path, content]) => ({ path, content }))]);
+  return { manifest, payloads, scan, sha256: hash(canonical({ format: "murage.package.contents-digest", version: 1, manifest, entries: actualEntries })) };
+}
 function selectionSnapshot(selection: BotPackageSelection): BotPackageSelection {
   if (!selection || typeof selection !== "object") fail("EXPLICIT_SELECTION_REQUIRED");
   const copied = {} as BotPackageSelection;
@@ -62,6 +95,13 @@ function inspect(intake: Intake, selection: BotPackageSelection, existingBots: r
 export async function previewBotPackageImport(archivePath: string, options: { selection: BotPackageSelection; existingBots?: readonly ImportHistoryBot[]; signal?: AbortSignal }) {
   const selection = selectionSnapshot(options.selection);
   const intake = await readBotPackageArchive(archivePath, { signal: options.signal });
+  const { selected: _selected, ...preview } = inspect(intake, selection, options.existingBots);
+  return preview;
+}
+
+export async function previewBotPackageContents(contents: BotPackageContents, options: { selection: BotPackageSelection; existingBots?: readonly ImportHistoryBot[]; signal?: AbortSignal }) {
+  const selection = selectionSnapshot(options.selection);
+  const intake = readContents(contents, options.signal);
   const { selected: _selected, ...preview } = inspect(intake, selection, options.existingBots);
   return preview;
 }
@@ -173,18 +213,19 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
 
 /** Recheck reviewed bytes; stage only inert files owned by fresh identities.
  * No dependency fetch, link synchronization, skill enablement or hook runs. */
-export async function importBotPackageArchive(options: {
-  archivePath: string; dataDir: string; selection: BotPackageSelection;
+interface ImportOptions {
+  dataDir: string; selection: BotPackageSelection;
   expectedArchiveSha256: string; expectedReviewHash: string; acknowledgeWarnings?: boolean;
   existingBots: readonly ImportHistoryBot[]; modelSelection: ModelSelection;
   atomicCommit: BotPackageAtomicCommit; signal?: AbortSignal;
-}) {
+}
+async function importIntake(options: ImportOptions, load: () => Promise<Intake>) {
   const selection = selectionSnapshot(options.selection);
   const existingBots = options.existingBots.map((bot) => ({ id: bot.id, threadId: bot.threadId, name: bot.name,
     createdAt: bot.createdAt, installedPackage: bot.installedPackage && structuredClone(bot.installedPackage),
     packageImportReceipt: bot.packageImportReceipt && structuredClone(bot.packageImportReceipt) }));
   const modelSelection = structuredClone(options.modelSelection);
-  const intake = await readBotPackageArchive(options.archivePath, { signal: options.signal });
+  const intake = await load();
   const inspected = inspect(intake, selection, existingBots);
   if (intake.sha256 !== options.expectedArchiveSha256 || inspected.reviewHash !== options.expectedReviewHash) fail("PACKAGE_REVIEW_CHANGED");
   if (inspected.scan.blocked) fail("PACKAGE_CONTENT_BLOCKED");
@@ -204,4 +245,12 @@ export async function importBotPackageArchive(options: {
     options.atomicCommit({ prepared, stagingDirectory });
     return { id: prepared.id, archiveSha256: prepared.archiveSha256, reviewHash: prepared.reviewHash, bots: prepared.bots, groups: prepared.groups, routines: prepared.routines };
   } finally { rmSync(stagingDirectory, { recursive: true, force: true }); }
+}
+
+export async function importBotPackageArchive(options: ImportOptions & { archivePath: string }) {
+  return importIntake(options, () => readBotPackageArchive(options.archivePath, { signal: options.signal }));
+}
+
+export async function importBotPackageContents(options: ImportOptions & { contents: BotPackageContents }) {
+  return importIntake(options, async () => readContents(options.contents, options.signal));
 }
