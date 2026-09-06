@@ -7,6 +7,16 @@ import {
 } from "./workspace-credentials.mjs";
 
 describe("workspace credential migration", () => {
+  it("migrates Telegram custody without changing the target or resurrecting cleared tokens", () => {
+    const migrated = migrateWorkspaceCredentials({ telegram: { botToken: "fake-bot-token", targetBotId: "chosen-bot" } }, {});
+    expect(migrated.config).toEqual({ telegram: { targetBotId: "chosen-bot" } });
+    expect(migrated.credentials).toEqual({ telegramBotToken: "fake-bot-token" });
+    const reboot = migrateWorkspaceCredentials({ telegram: { botToken: "", targetBotId: "chosen-bot" } }, migrated.credentials);
+    expect(workspaceCredentialEnv(reboot.credentials)).toEqual({ MURAGE_TELEGRAM_BOT_TOKEN: "fake-bot-token" });
+    const cleared = migrateWorkspaceCredentials({ telegram: { botToken: "", targetBotId: "chosen-bot" } }, {});
+    expect(workspaceCredentialEnv(cleared.credentials)).toEqual({});
+    expect(cleared.config.telegram.targetBotId).toBe("chosen-bot");
+  });
   it("moves search keys into the encrypted document and preserves provider choice across tombstone/reboot/clear", () => {
     const config = { webSearch: { provider: "exa", tavilyApiKey: "fake-tavily", exaApiKey: "fake-exa" } };
     const migrated = migrateWorkspaceCredentials(config, {});

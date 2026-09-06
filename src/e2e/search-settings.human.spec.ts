@@ -33,6 +33,18 @@ test.beforeAll(async () => {
   origin = "http://127.0.0.1:" + address.port;
 });
 test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test("free search selection discloses fallback without saving keys or searching", async ({ page }) => {
+  const writes: unknown[] = [];
+  await page.route("**/api/config", route => {
+    const body = route.request().postDataJSON(); writes.push(body);
+    return route.fulfill({ json: { webSearch: { provider: body.webSearch.provider, tavilyConfigured: false, exaConfigured: false } } });
+  });
+  await page.goto(origin + "/__search");
+  await page.getByLabel("Search provider", { exact: true }).selectOption("auto");
+  await expect(page.getByRole("status")).toHaveText("Search provider saved.");
+  await expect(page.getByText("No API key required.", { exact: false })).toContainText("DuckDuckGo");
+  expect(writes).toEqual([{ webSearch: { provider: "auto" } }]);
+});
 
 for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("translated search controls save keys with truthful status: " + locale, async ({ page }, info) => {
   const pack = JSON.parse(readFileSync(new URL("../locales/" + locale + ".json", import.meta.url), "utf8"));

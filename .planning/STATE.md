@@ -1,5 +1,45 @@
 # Murage takeover state
 
+MVP M3/M4 implementation ready for candidate integration (liveTelegram gate OPEN).
+Free Parallel->DDG5tests PASS, singlelivekeylessquery3results/2753ms PASS; explicit
+free UI24801 PASS, scoped search+Telegram API83157 PASS2, combinedtypes30904 PASS.
+Telegram custody111tests PASS; service/channel/origin10tests PASS; runtime real
+service/channel/scheduler/disk fixture PASS (round2 test-shape correction only).
+Runtime coverschannelorigin/budget propagation, approvalstaysinapp, duplicate,
+samechatreply andrevokecancellation. TelegramUI78555 PASS; mobileimage inspected.
+No liveTelegram account used. Asked user for secure dedicated token-file path and
+pairing participation; continue M5 builds without pretendingpilotpassed.
+Brave port deferred withinM3 optional clause: working existingTavily/Exa andlive
+keylesspath satisfy MVPsearch; no extra provider sidequest. No localizationwork.
+Next M5 one combined candidate check/build, then private native artifacts/M6 notes.
+
+MVP M4 runtime integration active: desktop-only Telegram pair/status/revoke;
+verified getMe identity before polling; encrypted token custody/private serverenv;
+defaultworkspaceChief or explicittarget; revokeclosesoriginbudgets/cancelsrootruns.
+No auto-reconnect: re-pair afterrestart explicit MVP behavior. Service/channel/
+origin10tests24717 PASS; scoped API83157 andtypes37758 pendingtoolresults.
+P06 TelegramSettings UI in progress. Searchauto/free branch included but final
+UI/integrationcommit pending. Actual ownedTelegramchat pilot still unverified.
+
+MVP M3/M4 integration in progress. Free search module5tests/types PASS and one
+live keyless Parallel query returned3citations in2753ms (no fallback needed).
+Root added explicit auto/free config option, provider disclosure and scoped API
+branch; existing engine selection stays unchanged. API78146/type51396 results
+are recorded in tool history; UI final check and integration commit remain.
+TelegramChannel module5tests/realfile +types PASS; not mounted or live-enabled.
+Next: root verified-getMe credential setup, owner pairing/status/revoke routes,
+controlled poll loop and scheduler result delivery; use same cumulative budget.
+No new scope, no public sends except explicit pilot with user-owned credentials.
+
+MVP M3/M4 active after M1/M2 closure. Two bounded workers only: p06 owns
+free-web-search.ts/test (Wayland Parallel -> DDG, one live non-sensitive pilot);
+p04 owns telegram-channel.ts/test (private-owner pairing, durable intake,
+same-chat replies, uncertain-send handling, revoke). Root owns shared routes and
+trusted channel provenance. Current channel schema/scheduler edits UNVERIFIED;
+no listener/poller or live sends enabled. Frozen checks are each module fixture
+suite plus actual scoped integration for pairing/routing/revocation and budget
+inheritance, types, then final candidate checks. No new adapters or localization.
+
 MVP M2 saved budget path integrated 2026-09-07. Authorized fixture correction:
 finish the resumed fake CLI through its existing gate, rather than detached-thread
 interrupt. Paused-worktree API40391 PASS; current integration API65353 PASS2,

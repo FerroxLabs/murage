@@ -13,6 +13,17 @@ function fixture() {
   return { options, manager: new RoutineManager(options) };
 }
 describe("normalized routine event provenance", () => {
+  it("keeps Telegram channel origin and cumulative budget across duplicate intake", () => {
+    const f = fixture();
+    const input = { webhookId: "telegram:123", telegramConnectionId: "123", webhookName: "Telegram",
+      prompt: "run it", botId: "bot", runOn: "ember" as const, deliveryId: "telegram:123:42", receivedAt: 900 };
+    const run = f.manager.enqueueWebhook(input);
+    expect(run.event).toMatchObject({ source: "channel", origin: { kind: "channel", channel: "telegram", connectionId: "123" }, budgetId: run.id });
+    for (let i = 0; i < 4; i++) expect(f.manager.admitEventAction(run.id, "handoff-" + i, "handoff")).toBe(true);
+    const restarted = new RoutineManager(f.options);
+    expect(restarted.enqueueWebhook(input).id).toBe(run.id);
+    expect(restarted.admitEventAction(run.id, "extra", "handoff")).toBe(false);
+  });
   it("persists manual and scheduled classes and stable allocation identifiers", async () => {
     const f = fixture();
     const manual = f.manager.create({ name: "Manual", botId: "bot", prompt: "Fixture", runOn: "ember", enabled: false, schedule: { type: "once", at: 1000 }, durationMinutes: 5 });

@@ -310,8 +310,10 @@ import { listStarterProfiles, starterProfileContents, STARTER_PROFILE_IDS } from
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { searchWeb, SearchError } from "./web-search.ts";
+import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
+import { TelegramService } from "./telegram-service.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
@@ -3075,7 +3077,7 @@ async function startTurn(
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
   // a webhook turn, or one inherited from a bot already running unattended
-  if (opts?.automationSource === "webhook" || opts?.unattended) markUnattended(bot.id);
+  if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(bot.id);
   // a person typing into this bot ends the unattended window immediately
   else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(bot.id);
   const task = store.taskByThread(bot.id, threadId);
@@ -3925,6 +3927,27 @@ if (recoveryOwners.length > 0) {
   );
 }
 routines.start();
+const telegram = new TelegramService({ dataDir: DATA_DIR,
+  enqueue: (connectionId, targetBotId, input) => {
+    if (!store.bot(targetBotId) || dataWritersStopped) throw new Error("Telegram target is unavailable");
+    const webhookId = "telegram:" + connectionId;
+    const duplicate = routines!.findWebhookDelivery(webhookId, input.deliveryId);
+    if (duplicate) return duplicate;
+    if (routines!.activeWebhookRunCount(webhookId) >= 3) throw new Error("Telegram has three unfinished tasks; review them in Murage.");
+    return routines!.enqueueWebhook({ webhookId, telegramConnectionId: connectionId, webhookName: "Telegram message",
+      botId: targetBotId, runOn: "ember", receivedAt: Date.now(), ...input });
+  },
+  runResult: id => {
+    const run = routines!.listRuns().find(run => run.id === id);
+    return run ? { status: run.status, output: run.output && redactSecretsInText(run.output), error: run.error } : null;
+  },
+  revokeRuns: async connectionId => {
+    for (const run of routines!.listRuns().filter(run => run.telegramConnectionId === connectionId)) {
+      routines!.closeEventBudget(run.id);
+      if (["queued", "running", "waiting"].includes(run.status)) await routines!.cancelRun(run.id);
+    }
+  },
+});
 
 // Chat tools can prepare routine changes, but the harness applies them only
 // after the user confirms a durable card. Keeping this beside the scheduler
@@ -5963,6 +5986,7 @@ function configStatus() {
     webSearch: { provider: cfg.webSearch?.provider ?? "engine",
       tavilyConfigured: Boolean(cfg.webSearch?.tavilyApiKey), exaConfigured: Boolean(cfg.webSearch?.exaApiKey) },
     notifications: resolveNotificationPreferences(cfg.notifications),
+    telegram: { configured: Boolean(cfg.telegram?.botToken), targetBotId: cfg.telegram?.targetBotId, ...telegram.status() },
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     // not a secret — the settings picker shows it; "" = follow the system
@@ -6716,12 +6740,16 @@ const server = createServer(async (req, res) => {
         res.once("close", disconnected);
         const revoked = setInterval(() => { if (!internalCapabilities.isActive(internalClaim)) controller.abort(); }, 100);
         try {
-          const result = await searchWeb({ provider,
+          const result = provider === "auto"
+            ? await searchFreeWeb({ query: body.query, maxResults: body.maxResults, signal: controller.signal })
+            : await searchWeb({ provider,
             apiKey: provider === "tavily" ? cfg.webSearch?.tavilyApiKey : cfg.webSearch?.exaApiKey,
             query: body.query, maxResults: body.maxResults, signal: controller.signal });
           requireActiveInternal();
           return json(res, 200, result);
         } catch (error) {
+          if (error instanceof FreeWebSearchError) return json(res, error.code === "invalid-request" ? 400 : error.code === "cancel" ? 409 : 502,
+            { error: error.message, code: error.code });
           if (error instanceof SearchError) return json(res, error.code === "invalid-request" ? 400 : ["cancel", "missing-config"].includes(error.code) ? 409 : 502,
             { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status });
           throw error;
@@ -8108,6 +8136,19 @@ const server = createServer(async (req, res) => {
       } finally { rmSync(scratch, { recursive: true, force: true }); }
       return;
     }
+    if (path === "/api/telegram/status" && method === "GET") return json(res, 200, {
+      configured: Boolean(cfg.telegram?.botToken), targetBotId: cfg.telegram?.targetBotId, ...telegram.status() });
+    if (path === "/api/telegram/pair" && method === "POST") {
+      const body = await readBody(req);
+      const target = body.targetBotId ? store.bot(String(body.targetBotId)) : store.bots.find(bot => bot.chiefOfStaff && bot.chiefScope === "workspace");
+      if (!target || target.hidden) return json(res, 409, { error: "Choose an available Chief or bot before pairing Telegram." });
+      if (!cfg.telegram?.botToken) return json(res, 409, { error: "Save your Telegram bot token first." });
+      const pairing = await telegram.pair(cfg.telegram.botToken, target.id);
+      try { saveConfig({ telegram: { targetBotId: target.id } }); cfg.telegram.targetBotId = target.id; }
+      catch (error) { await telegram.revoke(); throw error; }
+      return json(res, 200, pairing);
+    }
+    if (path === "/api/telegram/revoke" && method === "POST") { await telegram.revoke(); return json(res, 200, telegram.status()); }
     if (method === "POST" && (path === "/api/packages/import" || path === "/api/starter-profiles")) {
       const body = await readBody(req);
       const starter = path === "/api/starter-profiles";
@@ -10895,6 +10936,7 @@ const server = createServer(async (req, res) => {
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch = parseConfigPatch(body);
+      if (patch.telegram && (telegram.status().enabled || telegram.status().connecting)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
       const disablingBuiltInBrowser = patch.features?.browser === false && builtInBrowserEnabled(cfg);
@@ -11042,6 +11084,7 @@ const server = createServer(async (req, res) => {
           if (persisted.flux?.apiKey !== undefined) persisted.flux.apiKey = "";
           if (persisted.webSearch?.tavilyApiKey !== undefined) persisted.webSearch.tavilyApiKey = "";
           if (persisted.webSearch?.exaApiKey !== undefined) persisted.webSearch.exaApiKey = "";
+          if (persisted.telegram?.botToken !== undefined) persisted.telegram.botToken = "";
           saveConfig(persisted);
           configWriteCommitted = true;
           syncCredentialEnv(patch);
@@ -11096,6 +11139,7 @@ const server = createServer(async (req, res) => {
           key !== "imageGen" &&
           key !== "webSearch" &&
           key !== "notifications" &&
+          key !== "telegram" &&
           key !== "vps" &&
           key !== "rooms" &&
           key !== "localVm" &&
@@ -11512,6 +11556,7 @@ const gracefulShutdown = createGracefulShutdown({
     () => {
       revokeAllInternalTurns();
       server.close();
+      telegram.stop();
       for (const client of [...sseClients]) client.writer.close();
       for (const idle of localVmIdles.values()) idle.cancel();
       vps.closeAllVpsDesktopTunnels();

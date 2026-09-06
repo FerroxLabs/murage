@@ -370,7 +370,7 @@ export interface ConfigStatus {
   /** Flux Router key. Presence only — the key itself is never sent to the
    * renderer. Write it with PATCH /api/config `{ flux: { apiKey } }`. */
   flux?: { configured: boolean };
-  webSearch?: { provider: "engine" | "tavily" | "exa" | "off"; tavilyConfigured: boolean; exaConfigured: boolean };
+  webSearch?: { provider: "engine" | "auto" | "tavily" | "exa" | "off"; tavilyConfigured: boolean; exaConfigured: boolean };
   notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };

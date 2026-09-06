@@ -33,7 +33,7 @@ export interface RoutineContextAttachment {
 
 const persistedSourceThreadId = z.string().trim().min(1).optional().catch(undefined);
 
-export type RoutineRunTrigger = "schedule" | "manual" | "webhook";
+export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "channel";
 
 export type RoutineRunStatus =
   | "queued"
@@ -97,6 +97,7 @@ export interface RoutineRun {
   /** Why this receipt exists. Kept optional so version-1 files migrate in place. */
   triggerSource?: RoutineRunTrigger;
   webhookId?: string;
+  telegramConnectionId?: string;
   deliveryId?: string;
   /** Snapshot the routine's reporting destination. Execution remains on the
    * separate `threadId` so recurring work never contaminates chat context. */
@@ -869,6 +870,7 @@ export class RoutineManager {
     runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
+    telegramConnectionId?: string;
   }): RoutineRun {
     const existing = this.findWebhookDelivery(input.webhookId, input.deliveryId);
     if (existing) return existing;
@@ -886,7 +888,8 @@ export class RoutineManager {
       scheduledFor: input.receivedAt,
       status: "queued",
       manual: false,
-      triggerSource: "webhook",
+      triggerSource: input.telegramConnectionId ? "channel" : "webhook",
+      ...(input.telegramConnectionId ? { telegramConnectionId: input.telegramConnectionId } : {}),
       webhookId: input.webhookId,
       deliveryId: input.deliveryId,
       attachments: [],
@@ -902,7 +905,7 @@ export class RoutineManager {
 
   /** Retained receipts only: history eviction also ends this dedup window. */
   findWebhookDelivery(webhookId: string, deliveryId: string): RoutineRun | null {
-    const run = this.runs.find(candidate => candidate.triggerSource === "webhook"
+    const run = this.runs.find(candidate => (candidate.triggerSource === "webhook" || candidate.triggerSource === "channel")
       && candidate.webhookId === webhookId && candidate.deliveryId === deliveryId);
     return run ? cloneRun(run) : null;
   }

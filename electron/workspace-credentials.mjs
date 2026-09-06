@@ -8,6 +8,7 @@
 // credentials.bin field it lives in, and the env var the spawned server
 // prefers over the file (server/config.ts loadConfig).
 export const WORKSPACE_CREDENTIALS = [
+  { section: "telegram", field: "botToken", name: "telegramBotToken", env: "MURAGE_TELEGRAM_BOT_TOKEN" },
   { section: "xai", field: "key", name: "xaiApiKey", env: "XAI_API_KEY" },
   { section: "box", field: "token", name: "boxToken", env: "BOX_TOKEN" },
   { section: "tts", field: "key", name: "ttsKey", env: "MURAGE_TTS_KEY" },

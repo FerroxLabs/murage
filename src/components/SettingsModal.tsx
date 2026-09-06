@@ -22,6 +22,7 @@ import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { TelegramSettings } from "./TelegramSettings";
 import { StarterProfiles } from "./StarterProfiles";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -763,6 +764,7 @@ export function SettingsModal() {
                   <PasteKeys />
                   <TranscriptionSettings />
                   <SearchSettings />
+                  <TelegramSettings />
                   {/* Flux Router. Sits with the other optional keys because
                       that is what it is: nothing here is required for the app
                       to work, and every engine is authenticated on its own. */}
