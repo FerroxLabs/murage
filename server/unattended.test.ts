@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { openSse } from "./testing/sse.ts";
 
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -143,6 +144,50 @@ posixOnly("unattended turns keep asking", () => {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
+
+  it("keeps approval cards while applying private or disabled attention notifications", async () => {
+    const events = await openSse(`${base}/api/events`);
+    const bots: string[] = [], hooks: string[] = [];
+    try {
+      expect((await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: false } })).status).toBe(200);
+      const first = await makeBot("grok"); bots.push(first.id);
+      await desktopApi("PATCH", `/api/bots/${first.id}`, { name: "Private identity canary", notifications: true, autoApprove: false });
+      const trigger = async (botId: string) => {
+        const hook = await desktopApi("POST", "/api/webhooks", { name: "Notification fixture", prompt: "Request permission", botId });
+        expect(hook.status).toBe(201); hooks.push(hook.body.webhook.id);
+        const delivered = await fetch(hook.body.credential.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "notification-check" }) });
+        expect(delivered.status).toBe(202);
+        const result = await delivered.json() as { runId: string };
+        const threadId = await waitForRunThread(result.runId);
+        expect(threadId).toBeTruthy();
+        const card = await waitForCard(threadId!);
+        expect(card?.card?.answered).toBeUndefined();
+        expect(card?.card?.requestId).toBeTruthy();
+        return threadId;
+      };
+      const firstThread = await trigger(first.id);
+      const notice = await events.until(frame => frame.kind === "notify" && frame.notification.botId === first.id);
+      expect(notice.notification).toMatchObject({ title: "Murage", botName: "", privatePreview: true, threadId: firstThread });
+      expect(JSON.stringify(notice.notification)).not.toContain("Private identity canary");
+      expect(notice.notification.avatarUrl).toBeUndefined();
+      expect((await desktopApi("PATCH", "/api/config", { notifications: { attention: false } })).status).toBe(200);
+      const second = await makeBot("grok"); bots.push(second.id);
+      await desktopApi("PATCH", `/api/bots/${second.id}`, { notifications: true, autoApprove: false });
+      await trigger(second.id);
+      // A later frame on the same ordered SSE stream is a deterministic barrier
+      // for any notification emitted while the permission card was produced.
+      await desktopApi("PATCH", "/api/config", { profile: { name: "notification-delivery-barrier" } });
+      await events.until(frame => frame.kind === "config" && frame.profile?.name === "notification-delivery-barrier");
+      expect(events.frames.filter(frame => frame.kind === "notify" && frame.notification.botId === second.id)).toEqual([]);
+      expect((await api("GET", "/api/config")).body.notifications).toMatchObject({ attention: false, previewContent: false });
+    } finally {
+      events.close();
+      for (const id of bots) await api("POST", `/api/bots/${id}/interrupt`);
+      for (const id of hooks) await desktopApi("DELETE", `/api/webhooks/${id}`);
+      for (const id of bots) await desktopApi("DELETE", `/api/bots/${id}`);
+      await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: true }, profile: { name: "" } });
+    }
+  }, 60_000);
 
   it(
     "still asks a human when a webhook starts the turn, even with auto mode on",

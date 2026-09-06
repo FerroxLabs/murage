@@ -9,6 +9,7 @@ import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { RESTORED_CONNECTIONS_FILE } from "../electron/restored-connections.mjs";
 import { RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
+import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 
 type RecordValue = Record<string, unknown>;
 const object = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -57,10 +58,11 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
     const config = storedConfig === undefined ? {} : storedConfig;
     if (config !== undefined) {
       if (!object(config)) fail("INVALID_RESTORE_CONFIG");
+      if (config.notifications !== undefined && !notificationPreferencesSchema.safeParse(config.notifications).success) fail("INVALID_RESTORE_CONFIG");
       const safe: RecordValue = {};
       safe.engineDiscovery = "explicit";
       const instances: RecordValue = Object.fromEntries(Object.entries(DEFAULT_INSTANCES).map(([key, value]) => [key, { driver: value.driver, enabled: false }]));
-      for (const key of ["profile", "language", "rooms", "localVm", "browserProfiles"]) if (Object.hasOwn(config, key)) safe[key] = config[key];
+      for (const key of ["profile", "language", "rooms", "localVm", "browserProfiles", "notifications"]) if (Object.hasOwn(config, key)) safe[key] = config[key];
       safe.features = { browser: false, skillRecorder: false, showToolCalls: object(config.features) && config.features.showToolCalls === true };
       if (config.instances !== undefined) {
         if (!object(config.instances)) fail("INVALID_RESTORE_CONFIG");

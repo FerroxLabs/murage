@@ -1,6 +1,23 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P08 notification policy/config ACCEPTED (round 1): preserve legacy defaults
+and per-bot off; add attention/completion/failure choices, explicit-timezone quiet
+hours, private lock-screen previews retaining exact click destination. Policy
+filters notification delivery only, never pending approval/card state. Include
+non-secret preferences in safe backup/restore to avoid silently losing privacy.
+Checks frozen: policy categories/timezone/boundaries/overnight/privacy; config and
+snapshot/restore tests; renderer excludes private-avatar fallback; actual server
+preference/delivery proof and types. Native OS clicks remain separate. Two rounds;
+p06 sharedpolicy, p04 config/safe-restore seam, root hub/client/API. No digests or
+quiet-hour notification replay; these remain separate unimplemented scope.
+Evidence: shared policy 5 PASS; config/snapshot/inactive restore 114 PASS;
+existing notification+renderer tests 17 PASS incl private-avatar suppression and
+exact click target; actual server 28856 PASS (1 scoped / 3 skipped) proves private
+SSE and disabled attention notifications leave real provider approval cards
+waiting. Combined types 89470 PASS. Settings controls, digests and real native
+notification/click acceptance remain open. Packaging and budget corrections
+remain paused; no test cycle restarted and no live app altered.
 Independent Linux package/search proof ACCEPTED (round 1): Hetzner strict-host-key
 SSH reverified 2026-09-06, fresh root-owned scratch
 /var/tmp/murage-linux-proof-20260906-h1RECn. Transferred git archive of exact

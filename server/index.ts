@@ -309,6 +309,7 @@ import { previewBotPackageImport, importBotPackageArchive, packageImportSelectio
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { searchWeb, SearchError } from "./web-search.ts";
+import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
@@ -1782,7 +1783,8 @@ const lastReply = new Map<string, string>();
 function notify(notification: Notification | null) {
   // nested rather than spread — the frame's own `kind` names the frame,
   // exactly like {kind:"message", message} and {kind:"bot", bot}
-  if (notification) broadcast({ kind: "notify", notification });
+  const selected = notification && applyNotificationPreferences(notification, cfg.notifications, new Date());
+  if (selected) broadcast({ kind: "notify", notification: selected });
 }
 
 // Group threads: the fold needs to know WHO is talking — the turn engine
@@ -5914,6 +5916,7 @@ function configStatus() {
     flux: { configured: fluxConfigured() },
     webSearch: { provider: cfg.webSearch?.provider ?? "engine",
       tavilyConfigured: Boolean(cfg.webSearch?.tavilyApiKey), exaConfigured: Boolean(cfg.webSearch?.exaApiKey) },
+    notifications: resolveNotificationPreferences(cfg.notifications),
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     // not a secret — the settings picker shows it; "" = follow the system
@@ -11011,6 +11014,7 @@ const server = createServer(async (req, res) => {
           key !== "tts" &&
           key !== "imageGen" &&
           key !== "webSearch" &&
+          key !== "notifications" &&
           key !== "vps" &&
           key !== "rooms" &&
           key !== "localVm" &&

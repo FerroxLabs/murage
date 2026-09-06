@@ -14,6 +14,7 @@ import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schem
 import { dataDirLeasePaths } from "./data-dir-lease.ts";
 import { migrateLegacyDataDirectory } from "../electron/data-dir-migration.mjs";
 import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
+import { notificationPreferencesSchema, type NotificationPreferences } from "../shared/notification-preferences.ts";
 
 const optionalText = z.string().optional();
 const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -235,6 +236,7 @@ const instanceConfigSchema = z.object({
 });
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
 const appConfigSchema = z.object({
+  notifications: notificationPreferencesSchema.optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
    * upstream (e.g. "fireworks"). Both are non-secret and optional. */
@@ -289,10 +291,17 @@ const appConfigSchema = z.object({
 const storedAppConfigSchema = appConfigSchema.extend({
   browserProfiles: storedBrowserProfilesSchema.optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true });
+const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend({
+  attention: notificationPreferencesSchema.shape.attention.removeDefault().optional(),
+  completion: notificationPreferencesSchema.shape.completion.removeDefault().optional(),
+  failures: notificationPreferencesSchema.shape.failures.removeDefault().optional(),
+  previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
+});
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
+  notifications?: NotificationPreferences;
   engineDiscovery?: "automatic" | "explicit";
   mcpServers?: Record<string, unknown>;
   language?: string;
@@ -325,6 +334,7 @@ export type BrowserProfile = z.output<typeof browserProfileSchema> & {
   partitionId?: string;
 };
 export type ConfigPatch = z.output<typeof appConfigPatchSchema>;
+type ConfigWritePatch = Omit<Partial<AppConfig>, "notifications"> & { notifications?: Partial<NotificationPreferences> };
 
 /** Resolve a canonical profile record to its exact durable Electron
  * partition identity. Callers must never substitute the display/API id. */
@@ -531,7 +541,7 @@ export function loadConfig(): AppConfig {
  * user cleared the credential, so the var is dropped and the (now empty)
  * file value is authoritative again. Fields absent from the patch are
  * untouched. */
-export function syncCredentialEnv(patch: Partial<AppConfig>): void {
+export function syncCredentialEnv(patch: ConfigWritePatch): void {
   const secrets: Array<[value: string | undefined, name: string]> = [
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
@@ -665,7 +675,7 @@ export function stripRoutingEnv(env: Record<string, string | undefined>): void {
 
 /** Merge a partial config into ~/.murage/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
-export function saveConfig(patch: Partial<AppConfig>): void {
+export function saveConfig(patch: ConfigWritePatch): void {
   const p = join(DATA_DIR, "config.json");
   let disk: JsonObject = {};
   try {
@@ -674,13 +684,13 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  const checkedPatch = appConfigSchema.partial().parse(patch);
+  const checkedPatch = appConfigSchema.partial().extend({ notifications: notificationPreferencesPatchSchema.optional() }).parse(patch);
   // A write is the durable migration point. Preserve every other raw key in
   // config.json, but never write #567's mixed-case or duplicate profile ids
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "webSearch", "flux", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

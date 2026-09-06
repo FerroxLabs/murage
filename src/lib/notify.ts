@@ -49,7 +49,7 @@ export function showNotification(
   if (Notification.permission === "granted") {
     const options: NotificationOptions = {
       body: frame.body,
-      ...buildNotificationOptions({ id: frame.botId, avatarUrl }),
+      ...buildNotificationOptions({ id: frame.botId, avatarUrl: frame.privatePreview ? undefined : avatarUrl }),
     };
     new Notification(frame.title, options).onclick = open;
   }
