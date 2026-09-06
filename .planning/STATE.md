@@ -1,5 +1,25 @@
 # Murage takeover state
 
+M6 private handoff sealed in MVP-PRIVATE-HANDOFF.md: exact artifact/source/hash,
+scoped evidence, installation restrictions, deferred scope and required decisions.
+Previous turn made concrete progress (seven corrections,198confirmationpasses,
+refreshed artifact/resources smoke). Current native continuation awaits explicit
+decision at verification limit; Telegram awaits test credential/owner pairing.
+No live jobs remain; no automatic third cycle or deferred-feature activation.
+
+Current M5 candidate7ba8095c: frontend21486 PASS; privatepackage42595 PASS;
+actual Resources/server smoke19909 PASS health/11paths/MCPfinalframes without
+node_modules. Artifact release-mvp-7ba8095c/Murage-0.1.47-mvp.2-arm64.zip;
+SHA2564750940044211033caddab746fe66c22ea3e7a091035cb94baeeddfef0519366.
+Round2 all198affectedtests passed; reuse5479 unaffected round1 passes (counts
+overlap, do not add). M6 evidence/installlimits in MVP-PRIVATE-HANDOFF.md.
+Native previousartifact startup renderedfixture but cleanclose hung; TERM did
+not stop ownedprocess, exactownedPIDs forcecleaned; harness41836 thenexit0.
+No correspondingprocesses remain. Do not interpret harness exit0 as cleanshutdown.
+Next decision: native shutdown/finalGUI gate and realTelegrampilot missingtoken;
+no third verification cycle. Windows/Linux native installers still unverified.
+No push/publication or userapp/profile replacement.
+
 M5 round1 full Vitest15579 completed: 407files passed,7failed,1skipped;
 5479tests passed,7failed,20skipped,1todo. Corrected credential-redaction env
 parity, expected Docker stdin EPIPE handling, starter intake terms and stale
