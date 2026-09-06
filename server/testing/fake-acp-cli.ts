@@ -378,6 +378,13 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode === "credit-exhausted") {
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: {
+          http_status: 402,
+          message: "API error (status 402 Payment Required): Your credit balance is exhausted. https://billing.invalid/?token=fake-secret-canary",
+        } } });
+        return;
+      }
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
         setInterval(() => {}, 1_000);

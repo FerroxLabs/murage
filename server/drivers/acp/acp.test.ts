@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
@@ -681,6 +681,20 @@ describe("ACP turns (fake CLI)", () => {
 
     expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
     expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ setup: true });
+  });
+
+  it("explains nested credit exhaustion without exposing provider data", async () => {
+    await create(GrokAgentDriver, "credit-exhausted");
+    await instance.adapter.sendTurn({ threadId: "t-credit-exhausted", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine." });
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid/);
+  });
+
+  it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
+    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("ACP request failed");
+    expect(acpRpcErrorMessage({ message: "Authentication required", data: { token: "fake-secret-canary" } })).toBe("Authentication required");
   });
 
   it("selectModel confirms the requested model before prompting", async () => {
