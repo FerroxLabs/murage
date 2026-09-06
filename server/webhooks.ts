@@ -68,6 +68,8 @@ export interface WebhookManagerOptions {
   }) => { id: string };
   cancelQueued?: (webhookId: string, message: string) => void;
   pendingRuns?: (webhookId: string) => number;
+  /** Recover acceptance when the scheduler committed before this file did. */
+  findDelivery?: (webhookId: string, deliveryId: string) => { id: string } | null;
 }
 
 export type WebhookManagerEvent =
@@ -442,7 +444,15 @@ export class WebhookManager {
     const requestedDeliveryId = String(event.deliveryId ?? "").trim().slice(0, 200);
     if (requestedDeliveryId) {
       const key = `${trigger.endpointId}:${requestedDeliveryId}`;
-      const duplicate = this.deliveries.find((delivery) => delivery.key === key);
+      let duplicate = this.deliveries.find((delivery) => delivery.key === key);
+      if (!duplicate) {
+        const committed = this.options.findDelivery?.(trigger.id, requestedDeliveryId);
+        if (committed) {
+          duplicate = { key, runId: committed.id, at: now };
+          this.deliveries.push(duplicate);
+          if (this.deliveries.length > MAX_DELIVERIES) this.deliveries.splice(0, this.deliveries.length - MAX_DELIVERIES);
+        }
+      }
       if (duplicate) {
         this.appendAttempt(trigger, event, {
           outcome: "duplicate",

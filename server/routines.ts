@@ -847,6 +847,8 @@ export class RoutineManager {
     deliveryId: string;
     receivedAt: number;
   }): RoutineRun {
+    const existing = this.findWebhookDelivery(input.webhookId, input.deliveryId);
+    if (existing) return existing;
     if (this.options.botState(input.botId) === "missing") {
       throw Object.assign(new Error("The assigned EMBER no longer exists"), { status: 410 });
     }
@@ -867,11 +869,17 @@ export class RoutineManager {
       attachments: [],
       createdAt: this.now(),
     };
-    this.runs.push(run);
-    this.save();
+    this.commitMutation(() => { this.runs.push(run); });
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
+  }
+
+  /** Retained receipts only: history eviction also ends this dedup window. */
+  findWebhookDelivery(webhookId: string, deliveryId: string): RoutineRun | null {
+    const run = this.runs.find(candidate => candidate.triggerSource === "webhook"
+      && candidate.webhookId === webhookId && candidate.deliveryId === deliveryId);
+    return run ? cloneRun(run) : null;
   }
 
   activeWebhookRunCount(webhookId: string): number {

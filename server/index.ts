@@ -4063,6 +4063,7 @@ const webhooks = new WebhookManager({
   enqueue: (input) => routines!.enqueueWebhook(input),
   cancelQueued: (webhookId, message) => routines!.cancelQueuedWebhook(webhookId, message),
   pendingRuns: (webhookId) => routines!.activeWebhookRunCount(webhookId),
+  findDelivery: (webhookId, deliveryId) => routines!.findWebhookDelivery(webhookId, deliveryId),
 });
 
 let webhookIngress: WebhookIngress | null = null;

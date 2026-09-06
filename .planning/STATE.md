@@ -1,6 +1,24 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P11 admission increment ACCEPTED (round 1): existing webhooks
+already dispatch through RoutineManager. Close its cross-file receipt gap before
+adding event adapters: duplicate webhook+delivery identities reuse a durable run
+after restart, including when webhook bookkeeping failed after scheduler commit;
+failed scheduler writes leave no phantom runnable memory record. Preserve sender
+authentication, pending/rate limits for new work, existing schedule/manual paths.
+Checks: scheduler fault/restart tests and existing routines suite, integrated real
+WebhookManager+RoutineManager split-write recovery with full queue, types. Two
+rounds. Dedup scope remains retained receipt history, not indefinite exactly-once.
+Remaining P11: normalized origin/budget propagation, event-only definitions,
+conditions/multiple triggers, editor and adapter integration. Not declared done.
+Evidence: new scheduler admission + existing routines 57 tests PASS; webhook
+tests + real two-manager split-write/restart recovery 15 PASS. Duplicate retry
+reuses persisted run even with full queue; wrong secret denied, new delivery
+still rate/queue gated, original prompt retained. Failed scheduler rename leaves
+no emitted/runnable phantom. Combined typecheck 87713 PASS. Scope is manager
+integration with injected write failure, not live external sender/platform proof.
+Next: local commit, then normalized event origin and inherited budget contracts.
 P10 comparison increment ACCEPTED (round 1): show added/changed/
 not-included definitions, requirements and file hashes against the latest saved
 imported selection of the same package. Persist content-free comparison hashes
