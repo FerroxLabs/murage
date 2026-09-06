@@ -1,6 +1,119 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P08presentationhideCOMMITTEDd6c268a7:27unit+1browserlastChiefhide/show/restore
+PASS, selectedconversationretained/exactsidebarHidden-onlyPATCH; isolatedAPI
+1PASS/208filtered+typecheck28110exit0. BotRecordsidebarHidden optionaltypeplaced
+correctly(notTask/Group), runtimefieldpersisted; archive/routingflagsunchanged.
+Nextp04decision-logqueuefrozen1MiB/256pending64KiBrecord+explicitomissionmarker;
+p03P09pureportablemanifest/selectedpreview foundation active. Private/no pushes.
+P05SSEexistingboundsverifiedCOMMITTED8773be43:16testsPASSincl1/5/10clients,
+4MiBbudget/backpressure/reconnect existingimplementationunchanged. Notfullbot
+RSS/latencyproof. P08sidebarHiddenAPI1PASS/208filtered+types22365PASS,UIpending.
+VultrblockedpreciseUnauthorizedIP180.183.180.248; noVMcreated/noaccountchanges.
+Read-onlycatalogsgpvc2-2c-4gb2vCPU4GB80GB$20monthlycandidate, notprovisioned.
+Tailscaleexistingdevicesuntouched. Stopunchangedinfraqueries; continuenextlocal.
+Nextprivatewave:P08sidebarHiddennewpresentationfieldrootwiredbooleanonly,
+doesnotreusearchivalhidden/routing/Chiefsemantics; p06UItestsongoing. P05existing
+SseWriteralready4MiB+128frames/client+16clientcap/replaybounded; p04adds1/5/10
+clientproofONLYnotredundantimplementation. P03Vultrread-onlyaccountaccess401,
+publiccatalognotaccountproof; Tailscaleexistingdevicespreserved,noVMcreated.
+P04messagevalidationCOMMITTED426cfa5c104focusedPASS+types,8kindssparselegacy
+compatpreserved. P07sixcardUI+rootAPIconfirmationPASSED5unit/2lightdark390px/
+3isolatedAPI(205filtered)/queue9+localVMpreviouspasses/typecheck69328exit0.
+Autoexplicitnullwireclearsstate/disk,DarwinlocalAutoackrequired,browserselection
+excludesdesktopmount. Headlesschoice setup-gated pendingreadinessUI; no claim
+wholeP07/cloudstartnativejourneyclosed. Ready/committedscopedincrement privately.
+NativeMacbrowserproofattempt1ACCEPTED:realpinned0.36+Chrome152 navigate/read/click,
+human-heldrefusal, proxyEOFcentralcleanup;daemon+10observedChromedescendantsgone,
+tempdata/socket/profileabsent. Evidencebrowser-native/RESULT.md+attempt-1.json;
+Node25nativeproofnotNode24orLinux/Windows. No secondattemptneeded.
+P07UI5unit+2light/dark390browserPASS; rootnullAutooverlay/browserenumtypesfixed,
+queue/localVM22testsPASS. ActualAPIroundtrip/Autoacktestagentongoing. Recovery
+messagevalidation104PASS+typesready, notfullP04provenanceacceptance.
+Nextactive: nativebrowserproofp03handle55582 actualpinnedbinaryhash/versionPASS,
+isolatedChromeinstallrunning(no userprofile). P07p06owns6cardUI/browserfixtures;
+rootcomputerbrowserenum/nullclearwire addedUNVERIFIED, Autoack+optimisticoverlay
+stillneedintegrationbeforeacceptance. p04ownscompleteknownmessage-kindvalidation
+incrementpreserving sparselegacyreceipts/unknownmetadata. Private/no releases.
+Headlessintegration8f8c8f63 committedbeforefinaltypesclassification(rooterror):
+newtestfixtureargs/unknownJSONtypesfailed. Correctedtesttypes+Zodparse only;
+typecheck29548exit0 andaffectedactualharnesstest38261PASS1/204filtered.
+Preservedhelper10/policy3/proxy9 anddesktoppositivepasses. Scopeintegrated;
+NOTnativeChrome/navigation/daemon-descendantproof orwholeP03. No push/publication.
+Headlessserverbuild69645exit0: includesdist-server/drivers/headless-browser-proxy.js
+anddeclaredproxy path. Notfunctionalacceptance. p03proxyconfirmation correction
+allowsmacOS-addedlocaleonlywhilerejectingambientsecret/config; centralDELETE
+cleanup integrationauthorized. p06ownsactualindex.test mounting/authoritytest.
+No newaudit,repeatreleasednativebuild orpublicdistribution.
+Headlessstrictpolicy3focusedPASS; proxyondisk/p03testing. Rootcentralcleanup
+DELETEsameinternalendpoint requirescurrentcomputerclaim generation; closesonce,
+keepsfailedcleanupasadmissionbarrier. ProxyEOFwillrequestcentralcleanuprather
+thanraceownsessionclose. Rootcombinedtypecheck47938 started; no acceptedclaim
+beforeactualproxy/harnesschecks. BrowsernetworkpolicyHTTP(S)privatehostsallowed
+explicitly; stricttoolargsblockmutable session/namespace/extraArgs/eval/filepaths.
+HeadlessP03rootwiringINPROGRESS: desktoppreferred,POSIXfallbackthroughnewproxy;
+privateGETendpointrequirescomputerclaim+bot/thread/generationandreturnsno-store
+spec+held. WindowsheadlessdisabledpendingnativeACL. Rootproxy-path/buildentry
+added; p03agentownsproxy, p06stricttoolpolicy. Notverified/uncommitted yet;
+mustproveactualturnmount/revoke/cancelanddaemoncleanup beforeacceptance.
+P04.3damagedpreservationexportCOMMITTEDea7516af:44helper/archivePASS+1actual
+CLItestPASS+servertypes. Distinctformatpreservation-only-no-restore,completefalse,
+rawsecretwarning,owner-onlyPOSIXoutput,unsafe/existingdestinationsrefused,
+originalbytespreserved. WindowsACLproofandfullP04stillopen. Headlesshelpers
+10focusedPASS+types butunwired; p06agentownsstrictper-toolpolicywrapper now.
+Rootmustspawnchildwithspec.envonly(noambientprofile/CDP/restore) andliveauthority.
+P06.2 guidedsetupCOMMITTED343d43d6:3unit+1actualisolatedbrowserPASS mobile390px,
+terminalpending/false/reject/retry andprobeerror/signedout transitions truthful;
+combinedtypecheck43442exit0. No actualinstall/account-authproofclaimed. P04
+rootCLIexport-damaged wired,1actualCLItestPASS/5filtered, privatewarning/no
+normalinspectrestore/originalbytespreserved; helperagentchecks ongoing.
+HeadlessrawMCPexposesmutable session/namespace/extraArgs upstream; rootmust
+wrap/restrict beforeagentmount, nottreatenvironmentasauthorizationboundary.
+P04.2safeVMbackuprefusalCOMMITTED6035dcfc:47snapshot/archivePASS+servertypes,
+CLIsafeguidancesyntaxPASS. NotVMbackupfeaturecompletion; persistentVMworkspace
+quiescence/credentialquarantine stillopen. p04agentnowdamaged-export helper/API,
+privatepreservation-only distinctformat, rawsecretswarning/noautorestore.
+p03headlesshelpers andp06guidedsetupbrowserchecks ongoing. No publicwrites.
+Nextprivateincrementsinflight: p03_mcp ownsheadlessbrowserenginehelpers/pinned
+resolver ONLY(rootwiring); p06_alias owns guidedEngineSetup/EnginesSettings
+truthfulterminal-launch+readiness states; p04_inventory ownsVMhomebackuprefusal
+untilquiescence+credential-safeexportexists. VMhomescontain.browser-profiles;
+blanketinclusionviolatesreauth,no silentdataomission/fullbackuppromise. Root
+addedfixedCLIguidance fornewrefusal; testsrequired. ThisrefusalisnotfullP04fix.
+Headlessagent-browser doesnot support AGENT_BROWSER_HOME; ownedchildHOME under
+dataDir/authrealm required, plusdaemonclose onsessionrelease; noFuigoenvchange.
+Wave1firstthreeincrementsCOMMITTEDlocally: MCP8a76ddaa(20PASS+combinedtypes);
+connectoralias0ec36fd7(13helpers/proxyPASS+1actualisolatedHTTPworkflowPASS,
+203filtered; separateOAuthURLs/cards/exactaliascompletion+invalid/wrong/expired
+authorityzero-provider-callproof); recovery0ce45a53(32focusedPASS+servertypes,
+sectionbriefschema/UTF8/keyguards, validmetadata/sourcearchivebytespreserved).
+No liveOAuthproviderproofclaimed, no wholeP03/P04/P06completion. No push or
+publication. Nextalreadyplannedincrements perMURAGE-PLAN; no renewedfullaudit.
+P03.1 MCPincrement ACCEPTED/COMMITTED8a76ddaa:20focusedtestsPASStwo-round
+budget,combinedtypecheck47216exit0afterrootconcurrentunusedsymbolcleanup.
+Preservesgate/watchdog/EOF, localpingandwholeframe/backpressureproof. Notwhole
+P03/headlessnativeacceptance. No push/publication. Aliasworkflow andrecovery
+recordvalidation agentsstillactive; retaintheirhandles/ownedfiles.
+PRIVATE activeincrements: MCP20focusedPASSround2; onlyconcurrentunusedslugtype
+errorrootremovedafteraliasparserreplacement. Aliasproxy/helper13PASSround1;
+rootwiredindex/store/clientalias types andaccount-specificstatus, no inventory
+error swallowed. p06_alias ownsisolatedindex.test workflowproof next. Recovery
+section-contextvalidationimplementation ongoing. Combinedtypechecklaunchedonce;
+do not rerunMCPtestsjustforunrelatedtypecleanup. Userusagepriority:no sidequests.
+PROGRAMME2 EXECUTION STARTED PRIVATE: finalFable5.1/Gemini3.8round2flagsapplied
+toMURAGE-PLAN.md; conditionalpasslocalindependentwork, livegatesremainopen.
+No thirdreview. Prioragenttreeended; list_agentsconfirmedrootonly, so launched
+freshAstraMedium boundedowners /root/p03_mcp(mcp-bridge+tests), /root/p06_alias
+(connectorproxy+tests;rootroutes), /root/p04_inventory(recoverycoverageonly).
+Rootserializessharedindex/config/state. No publication,visibilitychanges or
+liveuserdatawrites; current03342b46baselinepreserved. Eachincrementmax2rounds.
+LATEST USER DISTRIBUTION DECISION: Sean is not ready for public downloads.
+FerroxLabs/murage-releases changed PUBLIC -> PRIVATE using repository API;
+private=true/visibility=private confirmed. Preserve release/assets/README.
+Prior public-publication authority is withdrawn until Sean explicitly reauthorizes.
+No public download/website/package distribution during Programme 2. Installed
+copies remain; unauthenticated GitHub downloads/updater access are unavailable.
 Releasecleanup: obsoleteownedUNPUBLISHED0.1.45draft383479572 deletedafter
 0.1.46publication+postproof. Local21assetexportrelease-export-06493fb6-TLbAt0
 retainedforrecovery/evidence. Published0.1.46andits21assetsuntouched. NoVultrVM,
