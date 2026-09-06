@@ -1,6 +1,16 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P23 search-settings localization ACCEPTED (round 1): catalog29visible
+strings/actions in existing8locales, keeping provider names, write-only custody,
+saved-not-tested distinction and separate-cost/no-fallback guidance. No settings
+behavior or API change. Frozen checks catalog/hash/placeholders, original5browser
+cases plus7translatedmobile save/status cases, types and German/Hindi screenshot
+review. Two rounds; native-speaker quality and other app localization remainopen.
+Evidence: i18n validator PASS8languages/61catalogkeys (not fullappcoverage);
+browser68577 PASS12 (7translatedsave/status +5Englishbehavior), combinedtypes
+77653 PASS. German/Hindi screenshots reviewed for mobilefit. Provider/key APIs
+unchanged, no paid searches. Notification/starter/recovery localization stillopen.
 P23 provider-error localization ACCEPTED (round 1): inspection found only
 six existing English source keys, so broader new-settings/starter localization
 remains open. This bounded critical-error slice catalogs all26 provider-error

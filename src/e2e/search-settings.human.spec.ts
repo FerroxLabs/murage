@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 let server: ViteDevServer, origin: string, cache: string;
@@ -19,7 +19,7 @@ test.beforeAll(async () => {
       load(id) {
         if (id === "\0search-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw new Error(data.error);return data;}export function useStore(){const [config,setConfig]=React.useState(window.fixtureConfig);return {state:{config},dispatch:action=>{window.fixtureConfig=action.config;setConfig(action.config)}}}";
         if (id !== "\0search-settings") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {SearchSettings} from '/src/components/SearchSettings.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin=q.get('skin')||'dark';window.fixtureConfig??={webSearch:{provider:q.get('provider')||'engine',tavilyConfigured:false,exaConfigured:false}};createRoot(document.getElementById('root')).render(React.createElement(SearchSettings));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {SearchSettings} from '/src/components/SearchSettings.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const q=new URLSearchParams(location.search);setLocale(q.get('lang')||'en');document.documentElement.dataset.skin=q.get('skin')||'dark';window.fixtureConfig??={webSearch:{provider:q.get('provider')||'engine',tavilyConfigured:false,exaConfigured:false}};createRoot(document.getElementById('root')).render(React.createElement(SearchSettings));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/__search?") && req.url !== "/__search") return next();
@@ -33,6 +33,28 @@ test.beforeAll(async () => {
   origin = "http://127.0.0.1:" + address.port;
 });
 test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+
+for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("translated search controls save keys with truthful status: " + locale, async ({ page }, info) => {
+  const pack = JSON.parse(readFileSync(new URL("../locales/" + locale + ".json", import.meta.url), "utf8"));
+  const config = { webSearch: { provider: "engine", tavilyConfigured: false, exaConfigured: false } };
+  await page.route("**/api/config", route => {
+    const patch = route.request().postDataJSON().webSearch;
+    if (patch.provider) config.webSearch.provider = patch.provider;
+    if (patch.tavilyApiKey !== undefined) config.webSearch.tavilyConfigured = Boolean(patch.tavilyApiKey);
+    return route.fulfill({ json: config });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(origin + "/__search?lang=" + locale);
+  await expect(page.getByRole("heading", { name: pack["searchSettings.title"] })).toBeVisible();
+  await page.getByLabel(pack["searchSettings.provider"], { exact: true }).selectOption("tavily");
+  await page.getByLabel(pack["searchSettings.apiKey"].replace("{provider}", "Tavily"), { exact: true }).fill("fake-key");
+  await page.getByRole("button", { name: pack["searchSettings.saveKey"].replace("{provider}", "Tavily"), exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText(pack["searchSettings.keySavedNotice"].replace("{provider}", "Tavily"));
+  expect(config.webSearch.provider).toBe("tavily");
+  await expect(page.getByLabel(pack["searchSettings.apiKey"].replace("{provider}", "Tavily"), { exact: true })).toHaveValue("");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  if (["de", "hi"].includes(locale)) await page.screenshot({ path: info.outputPath("search-settings-" + locale + ".png"), fullPage: true });
+});
 
 test("browser fallback saves provider separately and replaces or clears write-only keys with confirmed outcomes", async ({ page }) => {
   const config = { webSearch: { provider: "engine", tavilyConfigured: false, exaConfigured: false } };
