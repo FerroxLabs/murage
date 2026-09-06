@@ -15,6 +15,7 @@
 // Parsing, not grepping: an `if:` in the wrong place still greps fine.
 
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -159,6 +160,50 @@ describe("release mutation boundaries", () => {
     expect(commit.if).toBe("steps.branch.outputs.branch_exists != 'true'");
     expect(prepare.jobs.prepare.steps.find(step => step.id === "pr").env.EXISTING_PR)
       .toBe("${{ steps.branch.outputs.pr_url }}");
+  });
+});
+
+describe("published Linux artifact verification", () => {
+  const workflow = load("package-linux.yml");
+  const verify = workflow.jobs["verify-published"];
+  const guard = verify.steps.find(step => step.id === "source");
+  const javascript = guard.run.split("<<'EOF'\n")[1].split("\nEOF")[0];
+
+  it("keeps ordinary builds and explicit verification mutually exclusive", () => {
+    expect(workflow.jobs.package.if).toBe("inputs.source_run_id == '' && inputs.expected_version == ''");
+    expect(verify.if).toBe("inputs.source_run_id != '' || inputs.expected_version != ''");
+    expect(verify.permissions).toEqual({ contents: "read", actions: "read" });
+    const run = verify.steps.find(step => step.name === "Prove the published GitHub feed and installed path").run;
+    expect(run).toBe('pnpm smoke:linux-update --expected-version="$EXPECTED_VERSION"');
+    expect(run).not.toContain("--candidate-feed");
+    expect(verify.steps.some(step => /pnpm (?:package|build):/.test(step.run ?? ""))).toBe(false);
+  });
+
+  it.each([
+    [{ SOURCE_RUN_ID: "" }, "source_run_id is required"],
+    [{ SOURCE_RUN_ID: "123; echo unsafe" }, "source_run_id is required"],
+    [{ SOURCE_SHA: "main" }, "ref must be the full accepted source SHA"],
+    [{ EXPECTED_VERSION: "v0.1.45" }, "expected_version must be stable X.Y.Z"],
+  ])("rejects incomplete or malformed verification inputs before GitHub access: %j", (overrides, expected) => {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+      input: javascript, encoding: "utf8",
+      env: { SOURCE_RUN_ID: "123", SOURCE_SHA: "a".repeat(40), EXPECTED_VERSION: "0.1.45",
+        GITHUB_REPOSITORY: "FerroxLabs/murage", ...overrides },
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(expected);
+    expect(result.stderr).not.toContain("spawnSync gh");
+  });
+
+  it("requires exact successful Linux provenance before selecting the artifact", () => {
+    expect(javascript).toContain("assert.equal(run.head_sha, sha");
+    expect(javascript).toContain("assert.equal(matchingJobs[0].conclusion, 'success'");
+    expect(javascript).toContain("assert.equal(artifact.workflow_run?.id, Number(id))");
+    expect(javascript).toContain("assert.equal(artifact.workflow_run?.head_sha, sha)");
+    const download = verify.steps.find(step => String(step.uses).startsWith("actions/download-artifact"));
+    expect(download.with["artifact-ids"]).toBe("${{ steps.source.outputs.artifact_id }}");
+    const smoke = readFileSync(join(workflows, "../../scripts/smoke-linux-update.mjs"), "utf8");
+    expect(smoke).toContain('assert.equal(offered, expectedVersion, "live feed offered a different release")');
   });
 });
 

@@ -1,6 +1,26 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+06493fb6 confirmation progress: MacCI SUCCESS; UbuntuCI tests+Electronsyntax
+passed, browserinstall/humanspecsnext; UbuntuCI packageSUCCESS; UbuntuRelease
+SUCCESS. WindowsCI running,WindowsRelease packagedserverstep,Macnotarization.
+Postpublication tooling ready (separate from packagedcandidate): package-linux
+optionalverification-only source_run_id+expected_version/fullsourceSHA validates
+acceptedLinuxjob/artifactidentity andextracts actualAppImage, defaultliveGitHub
+updatercheck requiresofferedversionexactmatch.27workflowtests+syntaxPASS; pinned
+download action verifiedsingleartifactflatpath; actualartifactAPIfieldsconfirmed.
+AddedexistingElectronruntime libraries. Actualpostpublishproofstillpending.
+LATEST USER TRAVEL AUTHORIZATION: Sean will be unavailable riding to Bangkok
+for about two hours. Explicitly authorized cross-research after two unsuccessful
+verification attempts, then continue solving scoped blockers without waiting for
+approval. This supersedes the stop-for-direction rule for this execution period,
+not scope/security/production boundaries or required acceptance. Keep working;
+preserve passing evidence and do not publish a failing candidate.
+ACTIVE CONFIRMATION06493fb675a0d51c8528c7999f1ffe62e15bffb1 committed/pushed.
+CI34013067028 anddraftRelease34013068705 dispatchedonce publish=false.
+Monitor actualhandles; no duplicatejobs orsourcechanges. WindowsagentWindows,
+updaterUbuntu/assembly,rootMac. Userexplicitresume supersedesearlierblocked
+execution; fullgoalremainsincomplete. Publicationrequiresallagreedgates.
 AUTHORIZED PASS IMPLEMENTED: restore cwd canonicalization nowmatches canonical
 target (realWindowscase/alias defect); safealias regression andFuigo installed
 fixture usesfuigo.exe.41focusedtestsPASS. Indexroutine orphanbranch waitssettled;
