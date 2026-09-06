@@ -308,6 +308,7 @@ import { scanBotPackageContents } from "./bot-package-scan.ts";
 import { previewBotPackageImport, importBotPackageArchive, packageImportSelectionHash } from "./bot-package-import.ts";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
+import { searchWeb, SearchError } from "./web-search.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
@@ -6642,6 +6643,30 @@ const server = createServer(async (req, res) => {
       };
       assertInternalIdentity(Object.fromEntries(url.searchParams));
       requireActiveInternal();
+      if (method === "POST" && path === "/api/internal/web-search") {
+        const body = await readBody(req);
+        assertInternalIdentity(body);
+        requireActiveInternal();
+        const provider = cfg.webSearch?.provider ?? "engine";
+        if (provider === "engine" || provider === "off") return json(res, 409, { error: provider === "off"
+          ? "Native web search is disabled in Settings."
+          : "Use the existing engine or connected search tool, or select Tavily or Exa in Settings for native web search.", code: "missing-config" });
+        const controller = new AbortController();
+        const disconnected = () => controller.abort();
+        res.once("close", disconnected);
+        const revoked = setInterval(() => { if (!internalCapabilities.isActive(internalClaim)) controller.abort(); }, 100);
+        try {
+          const result = await searchWeb({ provider,
+            apiKey: provider === "tavily" ? cfg.webSearch?.tavilyApiKey : cfg.webSearch?.exaApiKey,
+            query: body.query, maxResults: body.maxResults, signal: controller.signal });
+          requireActiveInternal();
+          return json(res, 200, result);
+        } catch (error) {
+          if (error instanceof SearchError) return json(res, error.code === "invalid-request" ? 400 : ["cancel", "missing-config"].includes(error.code) ? 409 : 502,
+            { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status });
+          throw error;
+        } finally { clearInterval(revoked); res.off("close", disconnected); }
+      }
       if (path === "/api/internal/headless-browser") {
         if (method !== "GET" && method !== "DELETE") return json(res, 405, { error: "method not allowed" });
         const entry = headlessBrowsersByThread.get(internalClaim.threadId);

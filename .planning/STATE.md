@@ -1,6 +1,24 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P17 tool mount ACCEPTED (confirmation round 2): add web_search to existing
+agents MCP surface, scoped by current server capability and server-selected
+provider. No keys/provider override from model arguments. Off/engine selection
+returns immediate guidance; external queries bounded by accepted adapter. Abort
+on disconnected request or revoked capability; never return results to retired
+authority. Checks: actual stdio proxy route/shape/errors, actual isolated server
+with test-only fetch preload verifies selected provider/key custody/no-provider/
+cross-owner/revoked denial, adapter suite and types. No paid/live provider claim.
+P06 proxy; root route/fixture. Two rounds. Budget candidate remains paused.
+Evidence: actual stdio agents proxy 30 tests PASS; actual isolated server 68210
+PASS (1 scoped / 217 skipped) using test-only provider fetch preload, no paid
+calls. Disabled/unauthorized/wrong-owner/retired/oversized request refusal and
+configured citations/key custody passed. Root types initially caught test helper
+header inference requiring auth on its no-auth negative control; annotated the
+test helper Record<string,string>, combined types 7181 PASS. Runtime pass reused.
+Only agents-MCP-capable turns expose this tool; no claim for unsupported engines.
+Settings UI and real-provider pilot remain open. Stage only search route/fixture
+hunks; paused budget implementation not included.
 P17 encrypted search custody ACCEPTED (confirmation round 2): extend existing desktop
 credential:set/migration path for two search keys; key-only saves preserve provider
 choice. Use MURAGE_TAVILY_SEARCH_KEY/MURAGE_EXA_SEARCH_KEY server injection only,
