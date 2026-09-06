@@ -22,6 +22,7 @@ import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { StarterProfiles } from "./StarterProfiles";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
 import {
@@ -719,6 +720,7 @@ export function SettingsModal() {
                 <Card title="Profile" subtitle={desktop === true ? "Shown in the sidebar. Saved as you go." : "Shown in the sidebar."}>
                   <ProfileFields />
                 </Card>
+                {desktop === true && <StarterProfiles />}
                 <Card title="Appearance" subtitle="Applies instantly and is remembered on this machine.">
                   <SkinPicker />
                 </Card>
