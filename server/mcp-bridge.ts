@@ -1,15 +1,16 @@
 // The one transparent stdio bridge behind both MCP entry points
 // (container-mcp.ts for the Local VM, vps-container-mcp.ts for the BYO VPS).
-// It defines no tools and parses no MCP messages: bytes in, bytes out.
+// It defines no tools. MCP ping is answered locally because the bundled
+// driver does not implement it; ping notifications are consumed silently.
 //
-// The single exception to that transparency is the who-is-driving gate
+// The other exception to transparency is the who-is-driving gate
 // (opt-in via `gate`). While the person holds control of this computer in
 // the app, a `tools/call` from the agent is answered with a refusal HERE,
 // on the near side, and never forwarded — Cua Driver on the far side has
 // no concept of a person holding the wheel, so the refusal cannot come
 // from anywhere else. Everything that is not a tools/call still passes
 // through untouched, and with no gate configured the bridge remains the
-// byte-for-byte pipe described above.
+// frame-preserving pipe (apart from local ping replies).
 //
 // Two behaviors live here so neither entry point can drift:
 //   1. Exit without truncation. `process.exit()` in a close/error handler
@@ -22,6 +23,7 @@
 //      gives up — the harness sees a hung tool call, not an error.
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import type { Readable, Writable } from "node:stream";
 
 import { CONTROL_REFUSAL_PLAIN, createControlClient } from "./control-client.ts";
 import { augmentedPath } from "./env-path.ts";
@@ -33,6 +35,8 @@ import { augmentedPath } from "./env-path.ts";
 // stdin/stdout/stderr resets the window.
 export const BRIDGE_INACTIVITY_MS = 45_000;
 const PROBE_TIMEOUT_MS = 10_000;
+// Screenshots can be large; still cap an unterminated/malformed frame.
+export const MAX_BRIDGE_FRAME_BYTES = 32 * 1024 * 1024;
 
 export interface BridgeLiveness {
   command: string;
@@ -138,7 +142,7 @@ export interface BridgeOptions {
 /** Collect a byte stream into complete newline-terminated lines. MCP's
  * stdio transport is one JSON-RPC frame per line, so line boundaries are
  * the only safe place to inspect — or inject — anything. */
-export function createLineSplitter(onLine: (line: string) => void): {
+export function createLineSplitter(onLine: (line: string) => void, maxBytes = MAX_BRIDGE_FRAME_BYTES): {
   push: (chunk: Buffer | string) => void;
   flush: () => void;
 } {
@@ -150,9 +154,11 @@ export function createLineSplitter(onLine: (line: string) => void): {
       let newline: number;
       while ((newline = pending.indexOf("\n")) !== -1) {
         const line = pending.slice(0, newline);
+        if (Buffer.byteLength(line) > maxBytes) throw new Error("MCP frame exceeds bridge limit");
         pending = pending.slice(newline + 1);
         onLine(line);
       }
+      if (Buffer.byteLength(pending) > maxBytes) throw new Error("MCP frame exceeds bridge limit");
     },
     flush() {
       pending += decoder.end();
@@ -170,10 +176,10 @@ export function createLineSplitter(onLine: (line: string) => void): {
  * lines that are not JSON — passes through untouched. */
 export function createGateInterceptor(options: {
   isHeld: () => Promise<boolean>;
-  forward: (line: string) => void;
-  refuse: (line: string) => void;
+  forward: (line: string) => unknown;
+  refuse: (line: string) => unknown;
   refusalText?: string;
-}): (line: string) => void {
+}): (line: string) => Promise<void> {
   const refusalText = options.refusalText ?? CONTROL_REFUSAL_PLAIN;
   let queue: Promise<void> = Promise.resolve();
   return (line: string) => {
@@ -186,15 +192,15 @@ export function createGateInterceptor(options: {
         // agent and its driver on anything but a recognized tool call
       }
       if (!frame || frame.method !== "tools/call") {
-        options.forward(line);
+        await options.forward(line);
         return;
       }
       const held = await options.isHeld().catch(() => false);
       if (!held) {
-        options.forward(line);
+        await options.forward(line);
         return;
       }
-      options.refuse(
+      await options.refuse(
         JSON.stringify({
           jsonrpc: "2.0",
           id: frame.id ?? null,
@@ -202,7 +208,82 @@ export function createGateInterceptor(options: {
         }),
       );
     });
+    return queue;
   };
+}
+
+export function createMcpBridgeInterceptor(options: {
+  answer: (line: string) => unknown;
+  forward: (line: string) => unknown;
+  gate?: { isHeld: () => Promise<boolean>; refusalText?: string };
+}): (line: string) => Promise<void> {
+  const afterPing = options.gate
+    ? createGateInterceptor({ ...options.gate, forward: options.forward, refuse: options.answer })
+    : options.forward;
+  return async (line) => {
+    let frame: any;
+    try { frame = JSON.parse(line); } catch { /* Forward unrecognized input unchanged. */ }
+    if (frame?.method === "ping") {
+      if (frame.id !== undefined) {
+        await options.answer(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: {} }));
+      }
+      return;
+    }
+    await afterPing(line);
+  };
+}
+
+/** Pause the source while each chunk's complete frames drain. This bounds
+ * queued work to one readable chunk plus one incomplete frame, including
+ * when the gate or the output consumer is slow. EOF waits for queued work. */
+export function pipeMcpLines(source: Readable, handle: (line: string) => unknown,
+  end: () => void, fail: (error: Error) => void): () => void {
+  let lines: string[] = [];
+  const splitter = createLineSplitter((line) => { lines.push(line); });
+  let queue = Promise.resolve();
+  let stopped = false;
+  const drain = async () => {
+    const batch = lines;
+    lines = [];
+    for (const line of batch) {
+      if (stopped) return;
+      await handle(line);
+    }
+  };
+  const stop = () => {
+    stopped = true;
+    source.off("data", onData);
+    source.off("end", onEnd);
+    source.pause();
+  };
+  const failed = (error: Error) => { stop(); fail(error); };
+  const onData = (chunk: Buffer) => {
+    source.pause();
+    queue = queue.then(async () => {
+      splitter.push(chunk);
+      await drain();
+      if (!stopped) source.resume();
+    }).catch(failed);
+  };
+  const onEnd = () => {
+    queue = queue.then(async () => {
+      if (stopped) return;
+      splitter.flush();
+      await drain();
+      if (!stopped) end();
+    }).catch(failed);
+  };
+  source.on("data", onData);
+  source.on("end", onEnd);
+  return stop;
+}
+
+/** One write per complete frame prevents injected replies from splitting
+ * child output. Awaiting the callback also propagates output backpressure. */
+export function writeMcpLine(destination: Writable, line: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    destination.write(line + "\n", (error) => error ? reject(error) : resolve());
+  });
 }
 
 export function runMcpBridge(options: BridgeOptions): void {
@@ -216,40 +297,22 @@ export function runMcpBridge(options: BridgeOptions): void {
   child.stdin.on("error", () => {});
   child.stderr.pipe(process.stderr);
 
-  let detach: () => void;
-  if (options.gate) {
-    const client = createControlClient({ url: options.gate.url, token: options.gate.token });
-    const inbound = createLineSplitter(
-      createGateInterceptor({
-        isHeld: async () => (await client.state(true)).held,
-        forward: (line) => child.stdin.write(line + "\n"),
-        refuse: (line) => process.stdout.write(line + "\n"),
-      }),
-    );
-    const onStdin = (chunk: Buffer) => inbound.push(chunk);
-    process.stdin.on("data", onStdin);
-    process.stdin.on("end", () => {
-      inbound.flush();
-      child.stdin.end();
-    });
-    // Injected refusals must never land inside one of the child's
-    // half-written frames, so the child's stdout is re-emitted at line
-    // granularity as well.
-    const outbound = createLineSplitter((line) => process.stdout.write(line + "\n"));
-    child.stdout.on("data", (chunk) => outbound.push(chunk));
-    child.stdout.on("end", () => outbound.flush());
-    detach = () => {
-      process.stdin.off("data", onStdin);
-      process.stdin.pause();
-    };
-  } else {
-    process.stdin.pipe(child.stdin);
-    child.stdout.pipe(process.stdout);
-    detach = () => {
-      process.stdin.unpipe(child.stdin);
-      process.stdin.pause();
-    };
-  }
+  const client = options.gate
+    ? createControlClient({ url: options.gate.url, token: options.gate.token }) : null;
+  const answer = (line: string) => writeMcpLine(process.stdout, line);
+  const transportFailed = (error: Error) => {
+    process.stderr.write(`${options.label} bridge stream failed: ${error.message}\n`);
+    process.exitCode = 1;
+    watchdog?.stop();
+    detach();
+    child.kill("SIGKILL");
+  };
+  const detach = pipeMcpLines(process.stdin, createMcpBridgeInterceptor({
+    answer,
+    forward: (line) => writeMcpLine(child.stdin, line),
+    ...(client ? { gate: { isHeld: async () => (await client.state(true)).held } } : {}),
+  }), () => child.stdin.end(), transportFailed);
+  pipeMcpLines(child.stdout, answer, () => {}, transportFailed);
 
   let watchdog: WatchdogHandle | null = null;
   if (options.liveness) {
