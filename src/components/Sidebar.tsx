@@ -44,7 +44,7 @@ import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { nextRename } from "@/lib/rename";
-import { downloadAllBots } from "@/lib/team-files";
+import { TeamExportDialog } from "./TeamExportDialog";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import {
@@ -1308,7 +1308,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const hiddenChange = useRef(false);
-  const [exportingTeam, setExportingTeam] = useState(false);
+  const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
   const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
@@ -1379,23 +1379,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const timer = window.setTimeout(() => setTeamFeedback(null), 5000);
     return () => window.clearTimeout(timer);
   }, [teamFeedback]);
-
-  const exportAllBots = async () => {
-    setExportingTeam(true);
-    setTeamFeedback(null);
-    try {
-      const exported = await downloadAllBots();
-      track("team_exported", { members: exported.members, scope: "all_visible" });
-      setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
-    } catch (cause) {
-      setTeamFeedback({
-        error: true,
-        text: cause instanceof Error ? cause.message : String(cause),
-      });
-    } finally {
-      setExportingTeam(false);
-    }
-  };
 
   const undoTeamLoad = async (result: TeamImportResult) => {
     setTeamFeedback(null);
@@ -1777,13 +1760,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <button
                   onClick={() => {
                     setPlusOpen(false);
-                    void exportAllBots();
+                    setExportTeamOpen(true);
                   }}
-                  disabled={exportingTeam}
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
-                  {exportingTeam ? <Loader2 size={16} className="animate-spin text-ink-secondary" /> : <ArrowDownToLine size={16} className="text-ink-secondary" />}
-                  {exportingTeam ? "Exporting…" : "Export all bots"}
+                  <ArrowDownToLine size={16} className="text-ink-secondary" />
+                  Export selected contents
                 </button>
                 <button
                   onClick={() => {
@@ -2114,6 +2096,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
         />
       )}
+      {exportTeamOpen && <TeamExportDialog onClose={() => setExportTeamOpen(false)} onExported={exported => {
+        track("team_exported", { members: exported.members, scope: "selected" });
+        setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
+      }} />}
       {sectionPicker && (
         <SectionPicker
           current={state.bots.find((b) => b.id === sectionPicker.botId)?.section}

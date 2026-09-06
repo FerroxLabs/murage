@@ -25,11 +25,13 @@ function downloadPlaybook(playbook: ExportedPlaybook): { name: string; members: 
   return { name: playbook.name, members: playbook.members };
 }
 
-/** Export every active sidebar bot as one portable Chief-of-Staff Markdown. */
-export async function downloadAllBots(): Promise<{ name: string; members: number }> {
+export interface TeamExportSelection { botIds: string[]; playbookKeys: string[]; routineIds: string[] }
+
+/** Download only the exact selection whose preview the user reviewed. */
+export async function downloadSelectedBotPackage(selection: TeamExportSelection, previewHash: string, acknowledgeWarnings: boolean): Promise<{ name: string; members: number }> {
   const playbook = (await api("/api/teams/export", {
     method: "POST",
-    body: JSON.stringify({ format: "package" }),
+    body: JSON.stringify({ format: "package", action: "download", selection, previewHash, acknowledgeWarnings }),
   })) as ExportedPlaybook;
   return downloadPlaybook(playbook);
 }

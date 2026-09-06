@@ -301,7 +301,8 @@ import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
-import { createBotPackageExport } from "./package-export.ts";
+import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
+import { scanBotPackageContents } from "./bot-package-scan.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 import {
   PendingTurnCancellations,
@@ -7971,30 +7972,41 @@ const server = createServer(async (req, res) => {
       if (memberIds.length === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
         if (body.format === "package") {
-          const document = createBotPackageExport({
+          const input = {
             name,
             authorName: profileName,
             bots: store.bots,
             groups: store.groups,
             routines: routines!.listRoutines(),
-          });
+          };
+          if (body.action === "options") return json(res, 200, getBotPackageExportSelectionCandidates(input));
+          if (!["preview", "download"].includes(body.action)) return json(res, 400, { error: "Preview and confirm selected content before exporting" });
+          if (!body.selection) return json(res, 400, { error: "Explicit export selection is required" });
+          const document = createBotPackageExport({ ...input, selection: body.selection });
+          const markdown = renderBotPackageMarkdown(document);
+          const scan = scanBotPackageContents([{ path: "manifest.json", content: JSON.stringify(document) }, { path: "package.md", content: markdown }]);
+          const previewHash = createHash("sha256").update(JSON.stringify({ selection: body.selection, document, scan })).digest("hex");
+          const summary = { agents: document.package.agents.length, playbooks: document.package.playbooks?.length ?? 0, routines: document.package.routines?.length ?? 0 };
+          if (body.action === "preview") return json(res, 200, { name: document.package.name, members: summary.agents, previewHash, scan, summary, ...(!scan.blocked ? { markdown } : {}) });
+          if (scan.blocked) return json(res, 422, { error: "Remove blocked content before exporting", scan });
+          if (body.previewHash !== previewHash) return json(res, 409, { error: "Export content changed; review a fresh preview" });
+          if (scan.reviewRequired && body.acknowledgeWarnings !== true) return json(res, 409, { error: "Review the export warnings before downloading" });
           return json(res, 200, {
             name: document.package.name,
             members: document.package.agents.length,
-            markdown: renderBotPackageMarkdown(document),
+            markdown,
           });
         }
-        return json(
-          res,
-          200,
-          createTeamManifest(
+        const legacyManifest = createTeamManifest(
             {
               name,
               memberIds,
             },
             store.bots,
-          ),
-        );
+          );
+        const legacyScan = scanBotPackageContents([{ path: "manifest.json", content: JSON.stringify(legacyManifest) }]);
+        if (legacyScan.blocked || legacyScan.reviewRequired) return json(res, 422, { error: "Use the reviewed package export to resolve content warnings", scan: legacyScan });
+        return json(res, 200, legacyManifest);
       } catch (error) {
         return json(res, 400, { error: error instanceof Error ? error.message : "Team could not be exported" });
       }
