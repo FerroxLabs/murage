@@ -455,6 +455,7 @@ function createBrowserSurfaceManager({
   resolveHost,
   platform = process.platform,
   partitionFor: ownPartitionFor = browserPartition,
+  profilePartitionFor: ownProfilePartitionFor = browserProfilePartition,
   settleMs = SETTLE_MS,
   loadWaitMs = LOAD_WAIT_MS,
   maxViews = MAX_VIEWS,
@@ -485,14 +486,14 @@ function createBrowserSurfaceManager({
 
   const partitionForProfile = (botId, profile) => {
     if (profile === GUEST_PROFILE) return `murage-browser-guest-${botId}-${++guestCounter}`;
-    return profile ? browserProfilePartition(profile) : ownPartitionFor(botId);
+    return profile ? ownProfilePartitionFor(profile) : ownPartitionFor(botId);
   };
   const profileIdOf = (profile) => {
     const wanted = String(profile ?? "");
     if (!wanted || wanted === GUEST_PROFILE) return wanted;
     // Validation is intentionally delegated to the one function that owns
     // the durable partition mapping, so every surface boundary stays exact.
-    browserProfilePartition(wanted);
+    ownProfilePartitionFor(wanted);
     return wanted;
   };
   const layoutOwnerIdOf = (ownerId) =>
@@ -2375,7 +2376,7 @@ function createBrowserSurfaceManager({
     forgetProfile(profileId) {
       const wanted = profileIdOf(profileId);
       if (!wanted || wanted === GUEST_PROFILE) return 0;
-      const wantedPartition = browserProfilePartition(wanted);
+      const wantedPartition = ownProfilePartitionFor(wanted);
       for (const key of capabilityPins) if (key.endsWith(`\0${wanted}`)) capabilityPins.delete(key);
       let dropped = 0;
       for (const entry of entries.values()) {

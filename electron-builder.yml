@@ -53,6 +53,8 @@ extraResources:
     to: licenses/Murage-LICENSE.txt
   - from: NOTICE
     to: licenses/Murage-NOTICE.txt
+  - from: third_party/installation-archive
+    to: licenses/installation-archive
   # cloudflared is distributed under Apache-2.0 as a separate executable.
   # Murage itself uses the same full license text; ship another named
   # copy so the third-party executable's terms remain unambiguous.

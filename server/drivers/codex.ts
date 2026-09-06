@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 
 import { stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
+import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -227,6 +228,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           mountMcpServer(appServerArgs, env, "browser", turn.integrations.browser);
         }
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
+          if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
           mountMcpServer(appServerArgs, env, name, server, false);
         }
         if (turn.integrations?.phone) {

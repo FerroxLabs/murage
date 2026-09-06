@@ -78,6 +78,8 @@ export interface BrowserDeviceStore {
 export interface BrowserDoorOptions {
   /** Where the harness is listening on loopback. */
   harnessPort: number;
+  /** Private launch proof; only forwarded after authenticated join capability checks. */
+  companionToken?: string;
   /** Read per request, not captured: the tailnet address can change under a
    * running sidecar and the door re-binds rather than restarting. */
   identity: () => BoundIdentity;
@@ -1320,6 +1322,9 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         error: "cloud desktop access is off for this device — enable it in Murage → Settings → Phone",
       });
     }
+    if (isCloudDesktopJoin(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
+      return sendJson(res, 503, { error: "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start" });
+    }
 
     const forward = (body: Buffer | null): void => {
       const staticType = method === "GET" ? staticContentType(path) : null;
@@ -1329,7 +1334,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           port: options.harnessPort,
           path: forwardedPath(req.url),
           method,
-          headers: forwardedHeaders(req, body),
+          headers: {
+            ...forwardedHeaders(req, body),
+            ...(isCloudDesktopJoin(method, path) ? { "x-murage-companion-token": options.companionToken! } : {}),
+          },
         },
         (harness) => {
           clearTimeout(headersDeadline);

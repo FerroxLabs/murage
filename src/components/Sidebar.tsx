@@ -382,10 +382,12 @@ function GroupListItem({
   group,
   density,
   onMenu,
+  onNavigate,
 }: {
   group: Group;
   density: SidebarDensity;
   onMenu: (menu: { groupId: string; x: number; y: number }) => void;
+  onNavigate: () => void;
 }) {
   const { state, dispatch } = useStore();
   const selected = state.activeView === "chat" && state.selectedId === group.id;
@@ -395,7 +397,7 @@ function GroupListItem({
   const last = group.messages.at(-1);
   return (
     <button
-      onClick={() => dispatch({ type: "select", id: group.id })}
+      onClick={() => { dispatch({ type: "select", id: group.id }); onNavigate(); }}
       onContextMenu={(e) => {
         e.preventDefault();
         onMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
@@ -938,12 +940,14 @@ function BotListItem({
   onMenu,
   onArchive,
   archiveDisabled,
+  onNavigate,
 }: {
   bot: Bot;
   density: SidebarDensity;
   onMenu: (menu: MenuState) => void;
   onArchive: (bot: Bot) => void;
   archiveDisabled: boolean;
+  onNavigate: () => void;
 }) {
   const { state, dispatch } = useStore();
   const [renaming, setRenaming] = useState(false);
@@ -1068,27 +1072,21 @@ function BotListItem({
     onMenu({ botId: bot.id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
   };
 
-  // Keep the rename <input> out of role="button" — a button's descendants
-  // are presentational, which hides the field from assistive tech.
-  if (renaming) {
-    return (
-      <div className={rowClass} onContextMenu={onContextMenu}>
-        {body}
-      </div>
-    );
-  }
-
+  // Keep the same tree while editing so RenameTitle is not remounted and
+  // reset. Omit the row's button role while its accessible input is present.
   return (
     <div className="group relative" title={iconOnly ? bot.name : undefined}>
       <div
-        role="button"
-        tabIndex={0}
+        role={renaming ? undefined : "button"}
+        tabIndex={renaming ? undefined : 0}
         aria-label={iconOnly ? bot.name : undefined}
-        onClick={() => dispatch({ type: "select", id: bot.id })}
+        onClick={() => { if (!renaming) { dispatch({ type: "select", id: bot.id }); onNavigate(); } }}
         onKeyDown={(event) => {
+          if (renaming) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             dispatch({ type: "select", id: bot.id });
+            onNavigate();
             return;
           }
           onMenuKeyDown(event);
@@ -1276,6 +1274,9 @@ function ArchivedBotsPanel({
 }
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+  // Selection is an explicit navigation event even when its id is unchanged.
+  // Row menus and inline rename do not call this callback.
+  const onNavigate = () => { if (open) onClose(); };
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
   const { capabilities } = useDesktopCapabilities();
@@ -1808,6 +1809,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <div className="mb-1.5">
               <BotListItem
                 bot={unsectionedChief}
+                onNavigate={onNavigate}
                 density={density}
                 onMenu={setMenu}
                 onArchive={(bot) => void archiveBot(bot)}
@@ -1881,6 +1883,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     {sectionChiefItems.map((bot) => (
                       <BotListItem
                         key={bot.id}
+                        onNavigate={onNavigate}
                         bot={bot}
                         density={density}
                         onMenu={setMenu}
@@ -1891,6 +1894,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     {sectionGroupItems.map((group) => (
                       <GroupListItem
                         key={group.id}
+                        onNavigate={onNavigate}
                         group={group}
                         density={density}
                         onMenu={setRoomMenu}
@@ -1899,6 +1903,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     {sectionBotItems.map((bot) => (
                       <BotListItem
                         key={bot.id}
+                        onNavigate={onNavigate}
                         bot={bot}
                         density={density}
                         onMenu={setMenu}

@@ -1,0 +1,34 @@
+:root {
+  color-scheme: dark;
+  --color-app:#0a0a0a; --color-card:#1f1f1f; --color-ink:#f5f5f5;
+  --color-ink-secondary:#a8a8a8; --color-accent:#ff6b35; --color-accent-ink:#2a1207;
+  --color-focus:#ff8255; --color-danger:#f87171; --color-control:#2a2a2a;
+}
+[data-skin="light"] {
+  color-scheme: light;
+  --color-app:#f7f7f7; --color-card:#fff; --color-ink:#0d0d0d;
+  --color-ink-secondary:#555; --color-accent:#b8481f; --color-accent-ink:#fff;
+  --color-focus:#b8481f; --color-danger:#b3261e; --color-control:#d4d4d4;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--color-app); color:var(--color-ink); font:15px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; }
+main { max-width:760px; margin:auto; padding:32px; }
+.eyebrow { color:var(--color-ink-secondary); font-size:12px; letter-spacing:.08em; }
+h1 { font-size:28px; line-height:1.2; margin:8px 0 16px; }
+h2 { font-size:18px; margin:0 0 8px; } h3 { font-size:16px; overflow-wrap:anywhere; }
+p { margin:8px 0 16px; }
+section { padding:22px; margin:20px 0; border-radius:12px; background:var(--color-card); }
+section p,.privacy,.location { color:var(--color-ink-secondary); }
+code,#snapshot { font-size:12px; overflow-wrap:anywhere; }
+.location { margin:16px 0; }
+button { min-height:44px; padding:9px 14px; border:1px solid var(--color-ink-secondary); border-radius:8px; font:inherit; color:var(--color-ink); background:var(--color-control); cursor:pointer; }
+button.primary { background:var(--color-accent); color:var(--color-accent-ink); border-color:var(--color-accent); }
+button:disabled { cursor:wait; opacity:.65; }
+button:focus-visible,summary:focus-visible { outline:3px solid var(--color-focus); outline-offset:3px; }
+.actions { display:flex; flex-wrap:wrap; gap:10px; }
+#preview { margin-top:20px; padding-top:12px; border-top:1px solid var(--color-ink-secondary); }
+#error { padding:12px; border:1px solid var(--color-danger); border-radius:8px; color:var(--color-danger); overflow-wrap:anywhere; }
+#status { min-height:24px; overflow-wrap:anywhere; }
+.notice { border-left:3px solid var(--color-focus); padding-left:12px; }
+details { margin:12px 0; } summary { cursor:pointer; }
+@media(max-width:520px) { main { padding:20px; } section { padding:16px; } .actions button { width:100%; } }

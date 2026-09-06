@@ -53,6 +53,10 @@ import {
   type ComputerPanelView,
 } from "@/lib/computer-panel-view";
 
+export function ScreenStreamNotice({ message }: { message?: string }) {
+  return message ? <p role="status" className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">{message}</p> : null;
+}
+
 interface VpsComputerStatus {
   configured: boolean;
   imageMatches: boolean;
@@ -505,6 +509,7 @@ export function ComputerPanel({
   // idle bot — a drawer left open overnight must not keep shooting.
   const pageVisible = usePageVisible();
   const live = state.screens[bot.id];
+  const liveNotice = state.screenNotices?.[bot.id];
   const sseFlowing = Boolean(bot.busy && live);
   const inFlight = useRef(false);
   useEffect(() => {
@@ -939,6 +944,7 @@ export function ComputerPanel({
         </div>
       ) : (
       <div className="flex-1 overflow-y-auto px-5 pb-5">
+          <ScreenStreamNotice message={liveNotice} />
           {/* Screen preview */}
           <div className="mb-1.5 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
             <span>{bot.name}'s screen</span>

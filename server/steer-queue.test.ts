@@ -248,9 +248,20 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
   };
 
   const newBot = async (instanceId: string, name: string) => {
-    const bot = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${bot.id}`, { name, modelSelection: { instanceId, model: "fake-model" } });
-    return bot;
+    // Select the fixture at creation. An uncredentialed administrative PATCH
+    // is correctly refused; ignoring that response silently reused the first
+    // engine and made the stop test wait for a gate that could never exist.
+    const instance = (await api("GET", "/api/instances")).body.instances.find((entry: { instanceId: string }) => entry.instanceId === instanceId);
+    expect(instance?.snapshot.state).toBe("available");
+    const model = instance.models.default as string;
+    const created = await api("POST", "/api/bots", {
+      name,
+      modelSelection: { instanceId, model },
+      requireAvailableModel: true,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.bot.modelSelection).toEqual({ instanceId, model });
+    return created.body.bot;
   };
 
   beforeAll(async () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
-import { StoreProvider, useStore } from "@/state/store";
+import { api, StoreProvider, useStore } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
@@ -202,19 +202,21 @@ function Shell() {
     return window.muragebox?.desktopViewer?.onState((viewer) => {
       if (viewer.open || !viewer.contextId) return;
       const botId = viewer.contextId;
-      void fetch(`/api/bots/${botId}/computer/control`, {
+      void api(`/api/bots/${botId}/computer/control`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "release" }),
       })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((snap) => {
+        .then(async (snap) => {
           if (snap) dispatch({ type: "computerControl", botId, held: snap.held === true, helpReason: snap.helpReason ?? null });
+          // Closing a viewer is not itself permission to open Electron's
+          // browser gate. The authoritative server release must succeed first.
+          if (snap?.held === false) {
+            await window.muragebox?.browser?.setHumanControl?.(botId, false).catch(() => {});
+          }
         })
         .catch(() => {});
-      void fetch(`/api/bots/${botId}/computer/viewer-close`, {
+      void api(`/api/bots/${botId}/computer/viewer-close`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: "{}",
       }).catch(() => {});
     });

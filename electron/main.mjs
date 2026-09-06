@@ -1,6 +1,6 @@
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,7 +17,7 @@ import {
 } from "./skill-recorder.mjs";
 import { harnessResourceEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
-import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
+import { attachUpdaterWindow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import {
   buildDiagnosticsReport,
   diagnosticsFileName,
@@ -28,10 +28,18 @@ import {
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
+import { acquireDataDirLease, dataDirLeasePaths } from "./data-dir-lease.mjs";
+import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
+import { assertRestoreReviewed } from "./restore-review.mjs";
+import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
+import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
+import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
+import { createServerChildLifecycle, awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName, withSavableFile } from "./save-file.mjs";
+import { pasteMenuItem } from "./paste-menu-item.mjs";
 import {
   ensureManagedComposioCredentials,
   managedComposioAccess,
@@ -59,6 +67,7 @@ import capabilitiesModule from "./capabilities.cjs";
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
 const nativeActions = nativeDesktopActions(process.platform);
+const companionToken = randomBytes(32).toString("hex");
 const require = createRequire(import.meta.url);
 const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource } = require(
   "./screen-preview.cjs",
@@ -255,8 +264,46 @@ app.on("second-instance", (_event, commandLine) => {
 // our API shape, not just a 200).
 let serverProc = null;
 let serverReady = true;
+let desktopRecoveryMode = false;
+let recoveryWindow = null;
+let recoveryActivateRegistered = false;
 let secureCredentials = {};
 let secureCredentialState = null;
+let desktopDataDir = null;
+let desktopDataOwner = null;
+const ownedServerChildren = new Set();
+const credentialWrites = new Set();
+const companionStarts = new Set();
+
+function assertDesktopStartupActive() {
+  if (desktopShutdownStarted || desktopRecoveryMode) throw new Error("Desktop startup was cancelled");
+}
+
+function acquireDesktopDataOwner() {
+  assertDesktopStartupActive();
+  if (!app.isPackaged) return;
+  if (desktopDataOwner) return;
+  // An empty override is invalid, not permission to open a new default home.
+  const raw = process.env.MURAGE_DATA_DIR ?? path.join(app.getPath("home"), ".murage");
+  const canonical = dataDirLeasePaths(raw).canonicalDataDir;
+  const owner = acquireDataDirLease(canonical);
+  desktopDataDir = canonical;
+  desktopDataOwner = owner;
+}
+
+function ownedDesktopDataDir() {
+  if (!app.isPackaged || !desktopDataOwner || !desktopDataDir) {
+    throw new Error("The packaged desktop does not own this installation");
+  }
+  return desktopDataDir;
+}
+
+function trackOwnedServerChild(proc) {
+  const child = createServerChildLifecycle(proc);
+  ownedServerChildren.add(child);
+  void child.exit.then(() => ownedServerChildren.delete(child));
+  return child;
+}
 
 // The harness mints a fresh desktop secret every launch and pushes it here
 // over the private utility-process port, before it starts listening. It is
@@ -273,7 +320,15 @@ function receiveDesktopSurfaceSecret(message) {
   return true;
 }
 
-const CREDENTIALS_FILE = path.join(app.getPath("userData"), "credentials.bin");
+let CREDENTIALS_FILE = path.join(app.getPath("userData"), "credentials.bin");
+let restoredConnections = null;
+function configureRestoredDesktopConnections() {
+  if (!app.isPackaged) return;
+  restoredConnections = restoredConnectionProfile(ownedDesktopDataDir());
+  if (!restoredConnections) return;
+  CREDENTIALS_FILE = restoredConnections.credentialsFile;
+  configureCompanionStorage({ settingsDirectory: restoredConnections.companionSettings, stateDirectory: restoredConnections.companionState });
+}
 
 /** Set once per launch: true when the store could not be READ, which is not
  * the same as the user having saved nothing. Everything downstream — the
@@ -299,6 +354,7 @@ async function loadSecureCredentials() {
 }
 
 async function saveSecureCredentials(credentials) {
+  if (app.isPackaged) ownedDesktopDataDir();
   // A failed read means we do not know what the existing encrypted document
   // contains. Never derive a replacement from that incomplete view: boot
   // migrations must leave plaintext in place so a later launch can retry.
@@ -316,7 +372,7 @@ async function saveSecureCredentials(credentials) {
 }
 
 async function secureComposioConfig() {
-  const dataDir = process.env.MURAGE_DATA_DIR || path.join(app.getPath("home"), ".murage");
+  const dataDir = ownedDesktopDataDir();
   const configPath = path.join(dataDir, "config.json");
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -358,7 +414,7 @@ async function secureComposioConfig() {
 // migrates plaintext left by older versions or direct development clients.
 // See workspace-credentials.mjs for the exact rules.
 async function secureWorkspaceConfig() {
-  const dataDir = process.env.MURAGE_DATA_DIR || path.join(app.getPath("home"), ".murage");
+  const dataDir = ownedDesktopDataDir();
   const configPath = path.join(dataDir, "config.json");
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -396,6 +452,7 @@ let logStream = null;
 let desktopShutdownStarted = false;
 import {
   companionAdvertisedHostedUrl,
+  configureCompanionStorage,
   companionEnabledAtRest,
   companionOriginTarget,
   companionPairing,
@@ -403,6 +460,7 @@ import {
   companionRemoteAccessAtRest,
   companionRemoteAccessOrigin,
   rememberCompanionRemoteAccess,
+  reconcileCompanionHttps,
   BROWSER_LOOPBACK_TARGET,
   companionCloudDesktopAccess,
   companionRevoke,
@@ -530,10 +588,15 @@ let advertisementTransition = Promise.resolve();
  * token can never overwrite an API key saved at the same time (or vice
  * versa). */
 export async function updateSecureCredentialDocument(derive, afterPersist) {
+  assertDesktopStartupActive();
+  if (app.isPackaged) ownedDesktopDataDir();
   if (!secureCredentialState) throw new Error("Secure credentials are not ready");
+  const write = secureCredentialState.update(derive, afterPersist);
+  credentialWrites.add(write);
   try {
-    return await secureCredentialState.update(derive, afterPersist);
+    return await write;
   } finally {
+    credentialWrites.delete(write);
     secureCredentials = secureCredentialState.read();
   }
 }
@@ -581,13 +644,15 @@ let remoteAccessObserved = null;
 function publicRemoteAccessState() {
   const origin = companionRemoteAccessOrigin();
   const observed = remoteAccessObserved;
+  const active = Boolean(observed?.on && origin && origin === `https://${observed.host}`);
+  const listenerMismatch = Boolean(observed?.on && !active);
   return {
-    on: Boolean(origin) && Boolean(observed?.on),
+    on: active,
     desired: companionRemoteAccessAtRest(),
-    url: origin ?? null,
+    url: active ? origin : null,
     available: observed ? observed.available !== false : null,
-    reason: observed?.reason ?? null,
-    problem: observed?.message ?? null,
+    reason: observed?.reason ?? (listenerMismatch ? "listener" : null),
+    problem: observed?.message ?? (listenerMismatch ? "HTTPS is configured, but the browser door is not ready on its matching private listener." : null),
   };
 }
 
@@ -595,6 +660,7 @@ function publicRemoteAccessState() {
 async function refreshRemoteAccessObservation() {
   try {
     remoteAccessObserved = await serveState({ proxyTarget: BROWSER_LOOPBACK_TARGET });
+    reconcileCompanionHttps(remoteAccessObserved, slog);
   } catch {
     remoteAccessObserved = {
       available: false,
@@ -614,7 +680,7 @@ async function refreshRemoteAccessObservation() {
  * address and answers plain HTTP over WireGuard exactly as it does today. */
 function remoteAccessLaunch() {
   const observed = remoteAccessObserved;
-  if (!companionRemoteAccessAtRest() || !observed?.on || !observed.host) return null;
+  if (!observed?.on || !observed.host) return null;
   return { origin: `https://${observed.host}` };
 }
 
@@ -635,6 +701,7 @@ async function desktopCompanionState() {
 
 function companionLaunchOptions(hostedUrl = null) {
   return {
+    companionToken,
     resourcesPath: process.resourcesPath,
     harnessPort: SERVER_PORT,
     hostedUrl,
@@ -653,7 +720,7 @@ function ensureManagedCompanionConnector() {
     }),
     guardianEntry: resolveManagedCompanionGuardian({ appPath: app.getAppPath() }),
     runtimeExecutable: process.execPath,
-    runtimeRoot: path.join(app.getPath("userData"), "managed-companion-tunnel"),
+    runtimeRoot: restoredConnections?.tunnelRuntime ?? path.join(app.getPath("userData"), "managed-companion-tunnel"),
     onChange: (status) => {
       slog(`managed companion connection ${status.status}`);
       if (!companionDesiredThisLaunch) return;
@@ -692,6 +759,7 @@ function reconcileCompanionAdvertisement(
 }
 
 async function startManagedCompanionConnection({ waitForVerification = true } = {}) {
+  assertDesktopStartupActive();
   if (companionAccountCleanupPending(secureCredentials)) {
     return publicManagedCompanionState();
   }
@@ -710,23 +778,33 @@ async function startManagedCompanionConnection({ waitForVerification = true } = 
 }
 
 async function startDesktopCompanion({ waitForHosted = true, remember = true } = {}) {
-  companionDesiredThisLaunch = true;
-  companionLaunchGeneration += 1;
-  // Before the fork, not after: the fork's environment is where the door
-  // learns it is behind a proxy, and a sidecar started without that knowledge
-  // advertises its own socket. Only when remote access is actually wanted —
-  // the default costs no subprocess.
-  if (companionRemoteAccessAtRest()) await refreshRemoteAccessObservation();
-  // Direct LAN comes up first. The hosted endpoint is added in place only
-  // after the guardian has verified the public route to this exact sidecar.
-  const localState = await startCompanion(companionLaunchOptions());
-  if (!localState.enabled || localState.error) {
-    companionDesiredThisLaunch = false;
+  assertDesktopStartupActive();
+  const pending = Promise.withResolvers();
+  companionStarts.add(pending.promise);
+  try {
+    companionDesiredThisLaunch = true;
+    companionLaunchGeneration += 1;
+    // Before the fork, not after: the fork's environment is where the door
+    // learns it is behind a proxy, and a sidecar started without that knowledge
+    // advertises its own socket. Only when remote access is actually wanted —
+    // the default costs no subprocess.
+    await refreshRemoteAccessObservation();
+    assertDesktopStartupActive();
+    // Direct LAN comes up first. The hosted endpoint is added in place only
+    // after the guardian has verified the public route to this exact sidecar.
+    const localState = await startCompanion(companionLaunchOptions());
+    assertDesktopStartupActive();
+    if (!localState.enabled || localState.error) {
+      companionDesiredThisLaunch = false;
+      return desktopCompanionState();
+    }
+    if (remember) rememberCompanionEnabled(true);
+    await startManagedCompanionConnection({ waitForVerification: waitForHosted });
     return desktopCompanionState();
+  } finally {
+    companionStarts.delete(pending.promise);
+    pending.resolve();
   }
-  if (remember) rememberCompanionEnabled(true);
-  await startManagedCompanionConnection({ waitForVerification: waitForHosted });
-  return desktopCompanionState();
 }
 
 /** Re-probe Tailscale for the panel. Starting the sidecar when it is off is
@@ -948,17 +1026,19 @@ function receiveBrowserControlHold(rawMessage) {
 async function clearBrowserPartition(partition) {
   await clearBrowserPartitionSession(session.fromPartition(partition));
 }
+const desktopBrowserPartition = botId => restoredBrowserPartition(browserPartition(botId), restoredConnections);
+const desktopBrowserProfilePartition = profileId => restoredBrowserPartition(browserProfilePartition(profileId), restoredConnections);
 
 async function applyBrowserLifecycleCleanup(lifecycle) {
   if (lifecycle.type === "bot-deleted") {
     browserSurface?.close(lifecycle.botId);
     browserControlHolds.delete(lifecycle.botId);
     browserHost?.revokeCapabilitiesForBot(lifecycle.botId);
-    await clearBrowserPartition(browserPartition(lifecycle.botId));
+    await clearBrowserPartition(desktopBrowserPartition(lifecycle.botId));
   } else {
     browserSurface?.forgetProfile(lifecycle.partitionId);
     browserHost?.revokeCapabilitiesForProfile(lifecycle.partitionId);
-    await clearBrowserPartition(browserProfilePartition(lifecycle.partitionId));
+    await clearBrowserPartition(desktopBrowserProfilePartition(lifecycle.partitionId));
   }
   return true;
 }
@@ -980,6 +1060,7 @@ function rememberBrowserLifecycleCleanup(requestId) {
  * Chromium confirms its session data is gone. Duplicate retries join the
  * same promise; a retry whose success ACK was lost receives a cached ACK. */
 function receiveBrowserLifecycleCleanup(proc, rawMessage) {
+  if (desktopRecoveryMode || desktopShutdownStarted) return false;
   const message = rawMessage?.data ?? rawMessage;
   const lifecycle = decodeBrowserLifecycleMessage(message);
   if (!lifecycle) return false;
@@ -1020,13 +1101,18 @@ function receiveBrowserLifecycleCleanup(proc, rawMessage) {
 }
 
 async function startServerOn(port) {
+  assertDesktopStartupActive();
+  if (!desktopDataOwner || !desktopDataDir) throw new Error("The packaged desktop does not own this installation");
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
-    ...process.env,
+    ...restoredHarnessEnvironment(process.env, restoredConnections),
     // A packaged utility child must never fall back to a descriptor inherited
     // from the launching shell. It starts fail-closed until this exact main
     // process sends the private in-memory connection after spawn.
     MURAGE_DESKTOP_PARENT: "1",
+    MURAGE_COMPANION_TOKEN: companionToken,
+    MURAGE_DATA_DIR: desktopDataDir,
+    ...desktopDataOwner.utilityServerLeaseEnvironment(),
     // ui / skills / skills-library, all resolved out of Resources. Set here,
     // before the fork, because the child reads them at module load.
     ...harnessResourceEnvironment(process.resourcesPath),
@@ -1048,6 +1134,7 @@ async function startServerOn(port) {
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const lifecycle = trackOwnedServerChild(proc);
   proc.stdout?.on("data", (d) => slog(`[out] ${String(d).trimEnd()}`));
   proc.stderr?.on("data", (d) => slog(`[err] ${String(d).trimEnd()}`));
   proc.on("message", (message) => {
@@ -1087,16 +1174,22 @@ async function startServerOn(port) {
   // The probe itself is deadline-bounded (a hung health endpoint cannot wedge
   // us here forever) and reports WHY it gave up, so the error page can tell
   // port conflict apart from slow startup.
-  const identity = await pollServerIdentity({
+  let identity;
+  try {
+    identity = await Promise.race([pollServerIdentity({
     port,
     // Getter, not value: proc.pid stays undefined until the async `spawn`
     // event fires, and capturing it here would make the probe judge our own
     // child a "foreign owner" on its first health answer.
     pid: () => proc.pid,
     bootTimeoutMs: SERVER_BOOT_TIMEOUT_MS,
-    isExited: () => exited,
-  });
-  if (identity.outcome === "ready") return { proc };
+    isExited: () => exited || lifecycle.failed || desktopShutdownStarted,
+    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]);
+    if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc };
+  } catch (error) {
+    await lifecycle.stop();
+    throw error;
+  }
   if (identity.outcome === "exited") {
     slog(`child on port ${port} exited before answering /api/health`);
   } else {
@@ -1106,9 +1199,8 @@ async function startServerOn(port) {
         : `child on port ${port} did not answer /api/health within ${SERVER_BOOT_TIMEOUT_MS / 1000}s`,
     );
   }
-  try {
-    proc.kill();
-  } catch {}
+  await lifecycle.stop();
+  assertDesktopStartupActive();
   return { proc: null, reason: identity.outcome };
 }
 
@@ -1118,6 +1210,7 @@ async function startServerPackaged() {
   let everyPortForeignOwned = true;
   for (let attempt = 0; attempt < 2; attempt++) {
     for (const port of [8799, 18799, 28799]) {
+      assertDesktopStartupActive();
       const started = await startServerOn(port);
       if (started.proc) {
         serverProc = started.proc;
@@ -1438,6 +1531,8 @@ async function startBrowserSurface(owner) {
   try {
     surface = createBrowserSurfaceManager({
       owner,
+      partitionFor: desktopBrowserPartition,
+      profilePartitionFor: desktopBrowserProfilePartition,
       createView: (options) => new WebContentsView(options),
       notify: (state) => {
         if (!owner.isDestroyed() && !owner.webContents.isDestroyed()) owner.webContents.send("browser:state", state);
@@ -1541,7 +1636,7 @@ ipcMain.handle("browser:forget-profile", async (event, partitionId) => {
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(id) || id === "guest") throw new Error("That browser partition id is invalid");
   const dropped = surface.forgetProfile(id);
   browserHost?.revokeCapabilitiesForProfile(id);
-  await clearBrowserPartition(browserProfilePartition(id));
+  await clearBrowserPartition(desktopBrowserProfilePartition(id));
   return { dropped };
 });
 
@@ -1567,7 +1662,71 @@ ipcMain.on("desktop:unread-count", (event, value) => {
   applyUnreadBadge(sender);
 });
 
+function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
+  desktopRecoveryMode = true;
+  serverReady = false;
+  if (recoveryWindow && !recoveryWindow.isDestroyed()) { recoveryWindow.focus(); return recoveryWindow; }
+  const reason = reasonCode === "RESTORE_REVIEW_REQUIRED"
+    ? "This restored installation is paused for recovery review. Your previous installation remains retained."
+    : reasonCode === "PORT_CONFLICT"
+      ? "Another process answered on Murage's ports. Close that process before retrying startup; restoring data will not resolve a port conflict."
+      : "Murage could not finish startup. Keep the original installation while you inspect recovery options.";
+  const recovery = openInstallationRecoveryWindow({
+    BrowserWindow, ipcMain, dialog, baseDir: __dirname,
+    context: { reason, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
+    isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
+    run: runDesktopRecovery,
+    retry: async () => { app.relaunch(); app.quit(); },
+    openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
+    onClosed: () => { recoveryWindow = null; },
+  });
+  recoveryWindow = recovery.window;
+  void recovery.loaded.catch(() => {
+    dialog.showErrorBox("Murage recovery could not open", "Installation data was preserved. Check the local diagnostics, then reopen Murage.");
+    app.quit();
+  });
+  if (!recoveryActivateRegistered) {
+    recoveryActivateRegistered = true;
+    app.on("activate", () => {
+      if (desktopRecoveryMode && !desktopShutdownStarted && !recoveryWindow) showDesktopRecovery(reasonCode);
+    });
+  }
+  return recoveryWindow;
+}
+
+async function runDesktopRecovery(operation, parameters) {
+  if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !desktopDataDir) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
+  const args = operation === "plan-restore" ? ["plan-restore", "--archive", parameters.archive]
+    : operation === "review" ? ["review", "--data-dir", desktopDataDir]
+    : operation === "activate" ? ["activate", "--data-dir", desktopDataDir, "--review-hash", parameters.reviewHash]
+    : operation === "backup" ? ["backup", "--data-dir", desktopDataDir, "--output", parameters.output]
+    : operation === "restore" ? ["restore", "--data-dir", desktopDataDir, "--archive", parameters.archive, "--sha256", parameters.sha256]
+    : operation === "rollback" ? ["rollback", "--data-dir", desktopDataDir] : null;
+  if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
+  await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
+  await awaitOwnedWork(Promise.all([...ownedServerChildren].map(child => child.stop())), "Owned writers have not exited");
+  serverProc = null;
+  await awaitOwnedWork(Promise.allSettled([...credentialWrites]), "Credential writes have not settled");
+  await awaitOwnedWork(Promise.all([...companionStarts]), "Companion startup has not settled");
+  await awaitOwnedWork(stopDesktopCompanion({ remember: false }), "Companion has not stopped");
+  await awaitOwnedWork(Promise.all([...browserLifecycleCleanups.values()]), "Browser cleanup has not settled");
+  browserSurface?.closeAll();
+  await awaitOwnedWork(browserHost?.stop() ?? Promise.resolve(), "Browser host has not stopped");
+  await awaitOwnedWork(cuaReady, "Computer-use startup has not settled");
+  await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed");
+  if (desktopShutdownStarted || !desktopDataOwner) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
+  const env = {};
+  for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP", "TMP"]) if (process.env[key] !== undefined) env[key] = process.env[key];
+  if (operation !== "plan-restore") Object.assign(env, desktopDataOwner.utilityServerLeaseEnvironment());
+  return runInstallationRecoveryWorker({
+    fork: (entry, argv, options) => utilityProcess.fork(entry, argv, options),
+    entry: path.join(process.resourcesPath, "server", "installation-recovery-worker.js"),
+    args, env, track: trackOwnedServerChild,
+  });
+}
+
 function createWindow() {
+  if (app.isPackaged && desktopRecoveryMode) return showDesktopRecovery();
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
   const restored = resolveWindowState(readWindowState(), displays.map((display) => display.workArea));
@@ -1597,6 +1756,7 @@ function createWindow() {
     },
   });
   mainWindow = win;
+  attachUpdaterWindow(win);
   void startBrowserSurface(win);
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
@@ -1667,7 +1827,7 @@ function createWindow() {
       { type: "separator" },
       { label: "Cut", role: "cut", enabled: params.editFlags.canCut },
       { label: "Copy", role: "copy", enabled: params.editFlags.canCopy },
-      { label: "Paste", role: "paste", enabled: params.editFlags.canPaste },
+      pasteMenuItem(params, clipboard, win.webContents),
       { label: "Paste and Match Style", role: "pasteAndMatchStyle", enabled: params.editFlags.canPaste },
       { type: "separator" },
       { label: "Select All", role: "selectAll", enabled: params.editFlags.canSelectAll },
@@ -2160,13 +2320,31 @@ setCuaStateListener((connection) => {
   });
 });
 
-app.whenReady().then(async () => {
+const desktopStartup = app.whenReady().then(async () => {
+  assertDesktopStartupActive();
+  if (app.isPackaged) acquireDesktopDataOwner();
+  if (app.isPackaged) {
+    assertRestoreReviewed(ownedDesktopDataDir());
+    // The child receives a canonical explicit override, so only this parent
+    // can decide whether this was originally the default legacy installation.
+    // Both target ownership and source ownership precede the rename.
+    migrateLegacyDataDirectory({
+      dataDir: ownedDesktopDataDir(),
+      legacyDataDir: path.join(app.getPath("home"), ".opengrokbot"),
+      enabled: process.env.MURAGE_DATA_DIR === undefined,
+    });
+    assertRestoreReviewed(ownedDesktopDataDir());
+  }
   if (app.isPackaged) app.setAsDefaultProtocolClient("murage");
+  configureRestoredDesktopConnections();
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   secureCredentials = await loadSecureCredentials();
+  assertDesktopStartupActive();
   if (app.isPackaged) {
     await secureComposioConfig();
+    assertDesktopStartupActive();
     await secureWorkspaceConfig();
+    assertDesktopStartupActive();
   }
   // Boot migrations above are deliberately sequential. From this point on,
   // every account/API-key writer must use the shared serialized state.
@@ -2248,17 +2426,25 @@ app.whenReady().then(async () => {
     await ensureBrowserHost().catch((error) => {
       slog(`browser host unavailable before server start: ${error?.message ?? error}`);
     });
+    assertDesktopStartupActive();
     serverReady = await startServerPackaged();
   }
+  assertDesktopStartupActive();
   // The companion the user left on comes back without anyone finding the
   // toggle again — one attempt, after the harness port is settled, with the
   // exact options the IPC handler uses. A failure surfaces in companionState
   // (the panel shows the error) rather than retrying; and it never delays
   // the window.
-  if (serverReady && companionEnabledAtRest()) {
-    void startDesktopCompanion({ waitForHosted: false, remember: false });
+  if (app.isPackaged && !serverReady) {
+    showDesktopRecovery(serverStartConflictOnly ? "PORT_CONFLICT" : "STARTUP_FAILED");
+    return;
   }
-  const win = createWindow();
+  if (serverReady && companionEnabledAtRest()) {
+    void startDesktopCompanion({ waitForHosted: false, remember: false }).catch(() => {
+      if (!desktopShutdownStarted) slog("companion startup did not complete");
+    });
+  }
+  createWindow();
   // Reconcile incomplete setup and resume interrupted sign-out only after the
   // local app is usable. This background network work never gates LAN pairing
   // or the first window.
@@ -2283,14 +2469,35 @@ app.whenReady().then(async () => {
         log: slog,
       });
       return credentials;
-    }).finally(syncManagedComposioCredentials);
+    }).finally(syncManagedComposioCredentials).catch(() => {
+      if (!desktopShutdownStarted) slog("connected-apps registration did not complete");
+    });
   }
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"
-  startUpdater(win);
+  startUpdater();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!desktopShutdownStarted && BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+void desktopStartup.catch((error) => {
+  if (!desktopShutdownStarted) {
+    // Lease errors are sanitized by the lease module; arbitrary child/errors
+    // may carry credentials or paths and must not be echoed to diagnostics.
+    const recoveryError = error?.name === "DataDirLeaseError" || error?.name === "DataDirMigrationError";
+    const detail = recoveryError
+      ? `${error.message} Close the other Murage process or resolve the installation ownership problem, then reopen Murage. No new workspace was created.`
+      : "Murage could not finish desktop startup. Installation data was preserved. Check the local startup diagnostics, then reopen Murage.";
+    slog(`desktop startup refused (${recoveryError ? error.code : "STARTUP_FAILED"})`);
+    if (app.isPackaged) {
+      try {
+        showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED" : "STARTUP_FAILED");
+        return;
+      } catch { /* The native error box remains the last-resort fallback. */ }
+    }
+    dialog.showErrorBox("Murage could not open this installation", detail);
+    app.quit();
+  }
 });
 
 app.on("window-all-closed", () => {
@@ -2299,9 +2506,12 @@ app.on("window-all-closed", () => {
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
-// Cap the defer so a wedged daemon cannot keep the app alive forever.
+// Deadlines report incomplete cleanup; they never authorize releasing a live
+// installation writer. The person may retry Quit or force quit through the OS.
 const CUA_STOP_TIMEOUT_MS = 2500;
 let cuaCleanedUp = false;
+let desktopCleanup = null;
+let desktopCleanupStage = "owned harness";
 let signalQuitRequested = false;
 
 // Package managers, desktop watchdogs, and terminal launchers commonly stop
@@ -2322,9 +2532,7 @@ app.on("before-quit", (e) => {
   desktopShutdownStarted = true;
   if (cuaCleanedUp) return;
   e.preventDefault();
-  try {
-    serverProc?.kill();
-  } catch {}
+  if (desktopCleanup) return;
   // Release the sleep blocker synchronously; child shutdown is awaited below.
   syncCompanionKeepAwake(false, false);
   // a live dictation session runs its own helper child that holds the mic —
@@ -2334,19 +2542,37 @@ app.on("before-quit", (e) => {
   try {
     browserSurface?.closeAll();
   } catch {}
-  const cleanup = Promise.race([
-    Promise.all([
-      stopCua().catch(() => {}),
-      browserHost?.stop().catch(() => {}) ?? Promise.resolve(),
-      // Both listeners reachable from outside the app are owned children.
-      // Shut the connector down first, then the sidecar, without changing the
-      // remembered toggle the next launch will restore.
-      stopDesktopCompanion({ remember: false }).catch(() => {}),
-    ]),
-    new Promise((resolve) => setTimeout(resolve, CUA_STOP_TIMEOUT_MS).unref()),
-  ]);
-  cleanup.then(() => {
+  desktopCleanup = (async () => {
+    // Children are registered before their first await, including failed
+    // port attempts that never became serverProc. Stop those first so boot
+    // identity polling can settle, then drain any in-flight parent writers.
+    desktopCleanupStage = "owned harness";
+    await awaitOwnedWork(Promise.all([...ownedServerChildren].map((child) => child.stop())), "The owned harness has not exited");
+    desktopCleanupStage = "desktop startup";
+    await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
+    desktopCleanupStage = "credential writes";
+    await awaitOwnedWork(Promise.allSettled([...credentialWrites]), "Credential writes have not settled");
+    desktopCleanupStage = "companion startup";
+    await awaitOwnedWork(Promise.all([...companionStarts]), "Companion startup has not settled");
+    desktopCleanupStage = "owned companion";
+    await awaitOwnedWork(stopDesktopCompanion({ remember: false }), "The owned companion has not stopped");
+    desktopCleanupStage = "browser cleanup";
+    await awaitOwnedWork(Promise.all([...browserLifecycleCleanups.values()]), "Browser cleanup has not settled");
+    desktopCleanupStage = "browser host";
+    await awaitOwnedWork(browserHost?.stop() ?? Promise.resolve(), "The owned browser host has not stopped");
+    desktopCleanupStage = "computer-use startup/cleanup";
+    await awaitOwnedWork(cuaReady, "Computer-use startup has not settled", CUA_STOP_TIMEOUT_MS);
+    await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed", CUA_STOP_TIMEOUT_MS);
+    desktopCleanupStage = "installation lease release";
+    if (desktopDataOwner) {
+      desktopDataOwner.release();
+      desktopDataOwner = null;
+    }
     cuaCleanedUp = true;
     app.quit();
-  });
+  })();
+  void desktopCleanup.catch(() => {
+    slog(`desktop cleanup incomplete (${desktopCleanupStage}); installation ownership retained`);
+    dialog.showErrorBox("Murage is still closing", `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`);
+  }).finally(() => { desktopCleanup = null; });
 });

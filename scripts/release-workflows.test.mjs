@@ -73,8 +73,10 @@ describe("release.yml should_release guard", () => {
   });
 
   it("skips the release when the version did not actually move", () => {
-    expect(pin.run).toMatch(/if \[ "\$previous" = "\$current" \]/);
-    expect(pin.run).toMatch(/should_release=false/);
+    // The helper is executed against downgrade/equality/invalid-version
+    // fixtures in release-guard.test.mjs; this pins the workflow connection.
+    expect(pin.run).toContain('node scripts/release-guard.mjs should-release "$current" "$previous"');
+    expect(pin.run).toContain("node scripts/release-guard.mjs version");
   });
 
   it("only applies the guard to push events", () => {
@@ -109,8 +111,7 @@ describe("prepare-release.yml", () => {
   it("checks our own releases repo, with the secret release.yml already uses", () => {
     const refuse = prepare.jobs.prepare.steps.find((step) => String(step.name || "").startsWith("Refuse an existing"));
     expect(refuse.env.GH_TOKEN).toBe("${{ secrets.RELEASES_PAT }}");
-    expect(refuse.run).toContain("--repo FerroxLabs/murage-releases");
-    expect(refuse.run).toMatch(/exit 1/);
+    expect(refuse.run).toContain('node scripts/release-guard.mjs absent "$VERSION"');
   });
 
   it("names Murage in the PR it opens, and promises only a draft", () => {
@@ -133,6 +134,31 @@ describe("prepare-release.yml", () => {
     const start = prepare.jobs.prepare.steps.at(-1);
     expect(start.run).toContain("gh workflow run ci.yml");
     expect(Object.keys(triggers(load("ci.yml")))).toContain("workflow_dispatch");
+  });
+});
+
+describe("release mutation boundaries", () => {
+  const release = load("release.yml");
+  const assemble = release.jobs.assemble;
+  it("serializes assembly and publication by version", () => {
+    expect(assemble.concurrency.group).toBe("release-assemble-v${{ needs.prepare.outputs.version }}");
+    expect(assemble.concurrency["cancel-in-progress"]).toBe(false);
+  });
+  it("checks out the pinned guard and carries the exact draft ID through publication", () => {
+    const checkout = assemble.steps.find(step => String(step.uses).startsWith("actions/checkout"));
+    expect(checkout.with.ref).toBe("${{ needs.prepare.outputs.sha }}");
+    const upload = assemble.steps.find(step => step.id === "upload");
+    expect(upload.run).toContain("node scripts/release-guard.mjs upload");
+    const publish = assemble.steps.find(step => String(step.name).startsWith("Publish"));
+    expect(publish.env.RELEASE_ID).toBe("${{ steps.upload.outputs.release_id }}");
+    expect(publish.run).toContain('node scripts/release-guard.mjs publish "$VERSION" "$RELEASE_ID"');
+  });
+  it("only creates a release branch when the inspected branch is absent", () => {
+    const prepare = load("prepare-release.yml");
+    const commit = prepare.jobs.prepare.steps.find(step => step.name === "Commit the version bump");
+    expect(commit.if).toBe("steps.branch.outputs.branch_exists != 'true'");
+    expect(prepare.jobs.prepare.steps.find(step => step.id === "pr").env.EXISTING_PR)
+      .toBe("${{ steps.branch.outputs.pr_url }}");
   });
 });
 

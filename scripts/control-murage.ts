@@ -273,7 +273,7 @@ export async function launchVerificationServer(
   const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     instances: {
-      claude: {
+      verification: {
         driver: "claudeAgent",
         displayName: "Verification fixture",
         config: { cli: FAKE_CLI },
@@ -301,6 +301,7 @@ export async function launchVerificationServer(
     TMPDIR: fixtureTemp,
     HERMES_HOME: join(dataDir, ".hermes"),
     MURAGE_DATA_DIR: dataDir,
+    MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     MURAGE_PORT: String(port),
     MURAGE_WEBHOOK_PORT: String(port + 1),
     FAKE_CLAUDE_MODE: "happy",

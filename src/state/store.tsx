@@ -40,6 +40,7 @@ import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
+import { newSendId } from "@/lib/send-id";
 
 const MAX_ROUTINE_RUNS = 2_000;
 const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting"]);
@@ -80,6 +81,7 @@ export interface OptionCardData {
   approvalScope?: "local-computer";
   /** Persisted proposal used by the server when the user confirms it. */
   routineRequest?: RoutineRequestCardData;
+  routineProposalDigest?: string;
   /** Staged learned-skill change; applied only after the user confirms this card. */
   skillRequest?: SkillRequestCardData;
   /** Present when this card is a turn of the new-bot setup conversation.
@@ -419,6 +421,7 @@ export interface EngineInstall {
 
 /** One row of GET /api/instances — the model picker's data. */
 export interface InstanceInfo {
+  enabled?: boolean;
   instanceId: string;
   driverKind: string;
   displayName: string;
@@ -488,6 +491,8 @@ export interface AppState {
   appSettingsSection: AppSettingsSection;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
+  /** A bounded preview warning; the last good pixels remain available. */
+  screenNotices?: Record<string, string>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   /** who is driving each bot's computer: held = the person has the wheel
@@ -682,6 +687,7 @@ export type Action =
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
+  | { type: "screenUnavailable"; botId: string; message: string }
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "setModel"; botId: string; selection: ModelSelection }
@@ -1150,12 +1156,18 @@ export function reducer(state: AppState, action: Action): AppState {
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
       }));
     }
-    case "screenFrame":
+    case "screenUnavailable":
+      return { ...state, screenNotices: { ...state.screenNotices, [action.botId]: action.message } };
+    case "screenFrame": {
+      const notices = { ...state.screenNotices };
+      delete notices[action.botId];
       return {
         ...withMascotMotion(state, action.botId, "success"),
         screens: { ...state.screens, [action.botId]: { png: action.png, mime: action.mime } },
+        screenNotices: notices,
         provisioning: { ...state.provisioning, [action.botId]: false },
       };
+    }
     case "provisioning":
       return {
         ...(action.on ? withMascotMotion(state, action.botId, "launch") : state),
@@ -1713,7 +1725,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (quizBeforeSend) persistCard(action.botId, quizBeforeSend.id, { dismissed: true });
           const threadId =
             action.threadId ?? stateRef.current.bots.find((bot) => bot.id === action.botId)?.threadId;
-          const sendId = action.sendId ?? crypto.randomUUID();
+          const sendId = action.sendId ?? newSendId();
           void api(`/api/bots/${action.botId}/messages`, {
             method: "POST",
             body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId }),
@@ -1879,17 +1891,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api(`/api/bots/${action.botId}`, { method: "DELETE" }).catch(showError);
           break;
         case "markUnread":
-          api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify({ unread: true }) }).catch(
-            () => {},
-          );
+          api(`/api/bots/${action.botId}/read`, { method: "POST", body: JSON.stringify({ unread: true }) }).catch(showError);
           break;
         case "select": {
           const bot = stateRef.current.bots.find((b) => b.id === action.id);
           const group = stateRef.current.groups.find((g) => g.id === action.id);
           if (bot?.unread) {
-            api(`/api/bots/${action.id}`, { method: "PATCH", body: JSON.stringify({ unread: false }) }).catch(() => {});
+            api(`/api/bots/${action.id}/read`, { method: "POST" }).catch(() => {});
           } else if (group?.unread) {
-            api(`/api/groups/${action.id}`, { method: "PATCH", body: JSON.stringify({ unread: false }) }).catch(() => {});
+            api(`/api/groups/${action.id}/read`, { method: "POST" }).catch(() => {});
           }
           break;
         }
@@ -1907,7 +1917,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "sendGroup": {
           const threadId =
             action.threadId ?? stateRef.current.groups.find((group) => group.id === action.groupId)?.threadId;
-          const sendId = action.sendId ?? crypto.randomUUID();
+          const sendId = action.sendId ?? newSendId();
           api(`/api/groups/${action.groupId}/messages`, {
             method: "POST",
             body: JSON.stringify({
@@ -2248,11 +2258,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected chat clears its badge immediately
           if (bot.unread && bot.id === stateRef.current.selectedId) {
             bot.unread = false;
-            fetch(`/api/bots/${bot.id}`, {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ unread: false }),
-            }).catch(() => {});
+            void api(`/api/bots/${bot.id}/read`, { method: "POST" }).catch(() => {});
           }
           rawDispatch({
             type: "botPatched",
@@ -2265,11 +2271,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected room clears its badge immediately
           if (group.unread && group.id === stateRef.current.selectedId) {
             group.unread = false;
-            fetch(`/api/groups/${group.id}`, {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ unread: false }),
-            }).catch(() => {});
+            void api(`/api/groups/${group.id}/read`, { method: "POST" }).catch(() => {});
           }
           rawDispatch({ type: "groupPatched", group });
           break;
@@ -2336,6 +2338,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "screen":
           rawDispatch({ type: "screenFrame", botId: frame.botId, png: frame.png, mime: frame.mime ?? "image/png" });
+          break;
+        case "screen.unavailable":
+          if (typeof frame.botId === "string" && typeof frame.message === "string") {
+            rawDispatch({ type: "screenUnavailable", botId: frame.botId, message: frame.message.slice(0, 512) });
+          }
           break;
         case "computer":
           rawDispatch({ type: "provisioning", botId: frame.botId, on: frame.state === "provisioning" });

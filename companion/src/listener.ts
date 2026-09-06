@@ -9,9 +9,9 @@
 // for a phone back when the companion lived inside it. Moving out made it a
 // class with no callers, and a second implementation of a socket lifecycle
 // nobody runs is a thing that rots. index.ts owns the listeners now.
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import { homedir, networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, win32 } from "node:path";
 
 /** Interfaces that exist to tunnel, bridge or mesh traffic — utun (Tailscale
  * and every other VPN), vmnet/bridge (VMs, containers, internet sharing),
@@ -91,6 +91,7 @@ export function tailscaleAddress(addresses: string[] = lanAddresses()): string |
 let cachedTailnetName: string | null = null;
 let cachedTailnetSelfAddress: string | null = null;
 let activeTailnetRefresh: Promise<void> | null = null;
+let cachedTailscaleCli: string | null = null;
 
 /** The cached MagicDNS name, or null until `refreshTailnetName` finds one. */
 export function tailnetName(): string | null {
@@ -129,19 +130,24 @@ export function tailscaleCandidates(home = homedir()): string[] {
     "/usr/local/bin/tailscale",
     "/usr/bin/tailscale",
     "/run/current-system/sw/bin/tailscale",
+    // Windows GUI launches may omit Tailscale from PATH. Use the OS install
+    // roots when supplied (including custom drives), with standard defaults.
+    // execFile takes these space-containing paths as one unquoted argument.
+    win32.join(process.env.ProgramFiles || "C:\\Program Files", "Tailscale", "tailscale.exe"),
+    win32.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Tailscale", "tailscale.exe"),
     "tailscale",
   ];
 }
 
 /** How long the whole CLI hunt may take, across every candidate path. */
-const TAILSCALE_BUDGET_MS = 5000;
+export const TAILSCALE_BUDGET_MS = 5000;
 
 /** PATH with the usual package-manager locations added back, for the bare
  * `tailscale` attempt. Costs nothing when PATH was already complete. */
 const searchPath = (): string =>
   [process.env.PATH ?? "", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
     .filter(Boolean)
-    .join(":");
+    .join(delimiter);
 
 /** Ask the Tailscale CLI where it thinks we are.
  *
@@ -226,6 +232,7 @@ async function refreshTailnetNameOnce(
       );
     });
     if (name) {
+      cachedTailscaleCli = cli;
       cachedTailnetName = name;
       return;
     }
@@ -251,4 +258,83 @@ export function refreshTailnetName(
   });
   activeTailnetRefresh = refresh;
   return refresh;
+}
+
+export interface BrowserServeObservation {
+  owner: "none" | "ours" | "other" | "unknown";
+  origin: string | null;
+  problem: string | null;
+}
+
+const record = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** Read-only ownership check for the browser listener. Match the whole 443
+ * arrangement, not the first matching route. No configuration is ever changed. */
+export function inspectBrowserServe(raw: string, port: number): BrowserServeObservation {
+  const refused = (owner: "other" | "unknown", problem: string): BrowserServeObservation => ({owner,origin:null,problem});
+  let config: unknown;
+  try { config = raw.trim() ? JSON.parse(raw) : {}; }
+  catch { return refused("unknown","Tailscale Serve output is not valid JSON; HTTPS was not adopted."); }
+  if (!record(config) || (config.Web !== undefined && !record(config.Web))) {
+    return refused("unknown","Tailscale Serve configuration has an unknown shape; HTTPS was not adopted.");
+  }
+  const web = record(config.Web) ? config.Web : {};
+  const entries = Object.entries(web).filter(([key])=>key.endsWith(":443"));
+  if (!entries.length) {
+    if (record(config.TCP) && config.TCP["443"] !== undefined) {
+      return refused("other","Tailscale port 443 has an unowned listener; it was left unchanged.");
+    }
+    return {owner:"none",origin:null,problem:null};
+  }
+  if (entries.length !== 1) return refused("other","Tailscale port 443 has mixed routes; all were left unchanged.");
+  const [key, value] = entries[0]!;
+  const publicExposure = config[["Allow", "Fun", "nel"].join("")];
+  if (record(publicExposure) && publicExposure[key]) {
+    return refused("other","A public Tailscale route occupies 443; it was not adopted or changed.");
+  }
+  const handlers = record(value) && record(value.Handlers) ? value.Handlers : null;
+  const root = handlers?.["/"];
+  if (!handlers || Object.keys(handlers).length !== 1 || !record(root) || typeof root.Proxy !== "string") {
+    return refused("other","Tailscale port 443 has unowned handlers; they were left unchanged.");
+  }
+  let target: URL;
+  let front: URL;
+  const host = key.slice(0,-4);
+  try {
+    target = new URL(root.Proxy.includes("://") ? root.Proxy : `http://${root.Proxy}`);
+    front = new URL(`https://${host}`);
+  } catch { return refused("unknown","Tailscale Serve contains an invalid target or host; HTTPS was not adopted."); }
+  if (target.protocol !== "http:" || !["localhost","127.0.0.1"].includes(target.hostname) ||
+      Number(target.port || 80) !== port || target.pathname !== "/" || target.search || target.hash || target.username || target.password) {
+    return refused("other",`Tailscale 443 proxies to ${root.Proxy}, not this door; it was left unchanged.`);
+  }
+  if (front.hostname !== host.toLowerCase() || front.port || front.username || front.password || front.pathname !== "/" || front.search || front.hash) {
+    return refused("unknown","Tailscale Serve has an invalid HTTPS host; it was not adopted.");
+  }
+  return {owner:"ours",origin:front.origin,problem:null};
+}
+
+/** Bounded Serve observation, independent of the remembered desktop toggle. */
+export async function refreshBrowserServe(port: number, options: {
+  run?: typeof execFile;
+  candidates?: string[];
+  deadline?: number;
+} = {}): Promise<BrowserServeObservation> {
+  const deadline = options.deadline ?? Date.now() + TAILSCALE_BUDGET_MS;
+  const candidates = options.candidates ?? [...new Set([cachedTailscaleCli,...tailscaleCandidates()].filter((value): value is string=>Boolean(value)))];
+  const run = options.run ?? execFile;
+  for (const cli of candidates) {
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    const result = await new Promise<{error: ExecFileException | null; output: string}>(resolve=>{
+      run(cli,["serve","status","--json"],{
+        timeout:Math.max(1,left),killSignal:"SIGKILL",maxBuffer:1024*1024,
+        env:{...process.env,PATH:searchPath()},
+      },(error,stdout)=>resolve({error,output:String(stdout ?? "")}));
+    });
+    if (!result.error) return inspectBrowserServe(result.output,port);
+    if (result.error.code !== "ENOENT") break;
+  }
+  return {owner:"unknown",origin:null,problem:"Tailscale Serve could not be verified; HTTPS is not advertised."};
 }

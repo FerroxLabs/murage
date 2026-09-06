@@ -1,12 +1,13 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import type { RoutineRunOn } from "./routines.ts";
-import { parseJson, schemaIssue, type JsonValue } from "./schema.ts";
+import { schemaIssue, type JsonValue } from "./schema.ts";
+import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
 
 export type WebhookTriggerInput = z.input<typeof triggerInputSchema>;
 export type WebhookVerificationSample = z.output<typeof verificationSampleSchema>;
@@ -283,16 +284,13 @@ export class WebhookManager {
     this.options = options;
     this.file = options.file ?? join(DATA_DIR, "webhooks.json");
     this.now = options.now ?? Date.now;
-    try {
-      const parsed = webhookFileSchema.safeParse(parseJson(readFileSync(this.file, "utf8")));
-      if (!parsed.success) throw parsed.error;
+    const saved = readPersistedJson(this.file);
+    if (saved !== undefined) {
+      const parsed = webhookFileSchema.safeParse(saved);
+      if (!parsed.success) throw new PersistedStateRecoveryError(this.file, "invalid-shape");
       this.webhooks = parsed.data.webhooks;
       this.deliveries = parsed.data.deliveries.slice(-MAX_DELIVERIES);
       this.attempts = (parsed.data.attempts ?? []).slice(-MAX_ATTEMPTS);
-    } catch {
-      this.webhooks = [];
-      this.deliveries = [];
-      this.attempts = [];
     }
   }
 

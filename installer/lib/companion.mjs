@@ -159,6 +159,7 @@ export function companionEnv(opts) {
  * @param {number} [opts.attempts]
  * @param {number} [opts.sleepMs]
  * @param {(ms: number) => Promise<void>} [opts.wait]
+ * @param {AbortSignal} [opts.signal]
  * @returns {Promise<{ up: boolean, reason?: string }>}
  */
 export async function waitForDoor(opts) {
@@ -167,8 +168,10 @@ export async function waitForDoor(opts) {
   const wait = opts.wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   let reason = "the browser door never answered";
   for (let i = 0; i < attempts; i += 1) {
+    if (opts.signal?.aborted) return { up: false, reason: "door startup cancelled" };
     if (opts.alive && !opts.alive()) return { up: false, reason: "the sidecar exited before its door came up" };
     const r = await opts.probe();
+    if (opts.signal?.aborted) return { up: false, reason: "door startup cancelled" };
     if (r.answered) return { up: true };
     reason = r.reason ?? reason;
     if (i < attempts - 1) await wait(sleepMs);
@@ -195,34 +198,75 @@ export function spawnCompanion(opts) {
     env: opts.env,
     stdio: opts.stdio ?? "inherit",
   });
-  let exited = false;
-  child.on("exit", () => {
-    exited = true;
-  });
-  const stop = () =>
-    new Promise((resolve) => {
-      if (exited) return resolve();
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
+  return ownChild(child);
+}
+
+/** Own a child immediately, including failed spawns. Stop is idempotent and
+ * resolves on observed exit, never merely because a signal was sent. */
+export function ownChild(child, { graceMs = 5_000, killWaitMs = 1_000 } = {}) {
+  let exited = child.exitCode !== null || child.signalCode !== null;
+  child.on("exit", () => { exited = true; });
+  // A failed spawn emits error instead of exit. Install this listener before
+  // returning so it cannot become an uncaught launcher error.
+  child.on("error", () => { if (!child.pid) exited = true; });
+  let stopping;
+  const stop = (signal = "SIGTERM") => {
+    if (stopping) return stopping;
+    if (exited) return Promise.resolve();
+    stopping = new Promise((resolve, reject) => {
+      let escalation;
+      let deadline;
+      const finish = (error) => {
+        clearTimeout(escalation); clearTimeout(deadline);
+        child.off("exit", onExit); child.off("error", onError);
+        if (error) reject(error); else resolve();
       };
-      child.once("exit", finish);
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        finish();
-      }
-      const timer = setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          /* already gone */
-        }
-        finish();
-      }, 5_000);
-      timer.unref?.();
+      const onExit = () => finish();
+      const onError = error => finish(child.pid ? error : undefined);
+      child.once("exit", onExit); child.once("error", onError);
+      escalation = setTimeout(() => {
+        try { child.kill("SIGKILL"); } catch (error) { finish(error); return; }
+        deadline = setTimeout(() => finish(new Error(`child ${child.pid} did not exit after SIGKILL`)), killWaitMs);
+      }, graceMs);
+      try { child.kill(signal); } catch (error) { finish(error); }
     });
+    return stopping;
+  };
   return { child, alive: () => !exited, stop };
+}
+
+/** A bounded, abortable read-only startup command. No shell and no inherited
+ * output pipes: a slow Tailscale status must not block signal processing. */
+export async function startupProbe(command, args, { env, signal, timeoutMs = 3_000 } = {}) {
+  if (signal?.aborted) return null;
+  const owned = ownChild(spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] }), { graceMs: 250 });
+  const { child } = owned;
+  return new Promise((resolve, reject) => {
+    let output = "";
+    let cancelled = false;
+    let finished = false;
+    let timer;
+    const finish = (value, error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
+      if (error) reject(error); else resolve(value);
+    };
+    const cancel = () => {
+      cancelled = true;
+      void owned.stop().then(() => finish(null), error => finish(null, error));
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", chunk => {
+      output += chunk;
+      if (Buffer.byteLength(output) > 512 * 1024) { child.stdout.pause(); cancel(); }
+    });
+    child.stderr.resume();
+    child.once("error", () => finish(null));
+    child.once("close", code => finish(!cancelled && code === 0 ? output : null));
+    timer = setTimeout(cancel, timeoutMs);
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+  });
 }

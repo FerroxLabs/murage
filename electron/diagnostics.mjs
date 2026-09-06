@@ -12,6 +12,9 @@ import fs from "node:fs";
 // Duplicated because the desktop shell cannot import TypeScript; a test
 // asserts the two lists never drift apart.
 export const CREDENTIAL_ENV_NAMES = [
+  "MURAGE_DEV_DESKTOP_SECRET",
+  "MURAGE_COMPANION_TOKEN",
+  "MURAGE_INTERNAL_DATA_DIR_LEASE",
   "XAI_API_KEY",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",

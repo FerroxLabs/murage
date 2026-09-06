@@ -27,6 +27,8 @@ const CONTROL_PORT = Number(process.env.MURAGE_CONTROL_PORT_OVERRIDE) || 8811;
  * server whose pid does not match the child it forked, so both sides of this
  * test have to agree on one. */
 const FAKE_PID = 424242;
+const PRIVATE_TOKEN = "d".repeat(64);
+const forkEnvironments = [];
 
 const child = Object.assign(new EventEmitter(), {
   pid: FAKE_PID,
@@ -44,7 +46,7 @@ vi.mock("electron", () => ({
     getPath: () => mkdtempSync(path.join(tmpdir(), "murage-companion-")),
     getAppPath: () => process.cwd(),
   },
-  utilityProcess: { fork: () => child },
+  utilityProcess: { fork: (_entry, _args, options) => { forkEnvironments.push(options.env); return child; } },
 }));
 
 vi.mock("./companion-entry.mjs", () => ({
@@ -98,8 +100,18 @@ beforeAll(async () => {
     control.listen(CONTROL_PORT, "127.0.0.1", resolve);
   });
 
-  const started = await startCompanion({ resourcesPath: "/fake/resources", harnessPort: 8799 });
+  const inheritedToken = process.env.MURAGE_COMPANION_TOKEN;
+  process.env.MURAGE_COMPANION_TOKEN = "untrusted-inherited-token";
+  let started;
+  try {
+    started = await startCompanion({ resourcesPath: "/fake/resources", harnessPort: 8799, companionToken: PRIVATE_TOKEN });
+  } finally {
+    if (inheritedToken === undefined) delete process.env.MURAGE_COMPANION_TOKEN;
+    else process.env.MURAGE_COMPANION_TOKEN = inheritedToken;
+  }
   expect(started.enabled).toBe(true);
+  expect(forkEnvironments.at(-1).MURAGE_COMPANION_TOKEN).toBe(PRIVATE_TOKEN);
+  expect(JSON.stringify(started)).not.toContain(PRIVATE_TOKEN);
 });
 
 afterAll(async () => {

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction 
 import { ArrowUp, BookOpen, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
 import {
   draftRevision,
@@ -12,6 +13,7 @@ import {
   rememberFailedComposerSend,
   restoredSendId,
   useComposerDraft,
+  useComposerChannelMode,
   useFailedComposerSends,
   type ComposerSendSnapshot,
   type FailedComposerSend,
@@ -29,10 +31,11 @@ import {
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
   appendPastedText,
+  clipboardHasImages,
+  clipboardImageFiles,
   composeMessage,
   imageAttachmentFromFile,
   intakeFiles,
-  isImageFile,
   isLongPaste,
   pasteAttachment,
   type Attachment,
@@ -230,7 +233,7 @@ export function Composer({
   const failedSends = useFailedComposerSends(draftId);
   // Goal mode is opt-in and one-shot so the next ordinary channel message
   // cannot accidentally start another multi-turn team run.
-  const [channelMode, setChannelMode] = useState<"chat" | "goal">("chat");
+  const [channelMode, setChannelMode] = useComposerChannelMode(draftId);
   const editText = useCallback(
     (next: string) => {
       markDraftEdited(draftId);
@@ -250,7 +253,6 @@ export function Composer({
       // Shared recovery reaches a newly mounted view after navigation and
       // falls back to a separate retry item when a newer draft already exists.
       if (recoverFailedComposerSend(sent) === "restored") {
-        setChannelMode(sent.channelMode ?? "chat");
         if (sent.reply) onRestoreReply?.(sent.reply, sent.threadId);
       }
     },
@@ -494,7 +496,7 @@ export function Composer({
     const sentDraft: ComposerDraftSnapshot = {
       draftId,
       revision: draftRevision(draftId),
-      sendId: restoredSendId(draftId) ?? crypto.randomUUID(),
+      sendId: restoredSendId(draftId) ?? newSendId(),
       text,
       requestText: t,
       attachments: [...attachments],
@@ -791,9 +793,18 @@ export function Composer({
             // an image from the clipboard becomes an uploaded attachment —
             // but only for engines that can open one; a grok bot politely
             // refuses instead of receiving a path it cannot read
-            const imageFiles = Array.from(e.clipboardData.files).filter(isImageFile);
-            if (imageFiles.length && engineSupportsImages) {
+            const imageFiles = clipboardImageFiles(e.clipboardData);
+            if (imageFiles.length || clipboardHasImages(e.clipboardData)) {
               e.preventDefault();
+              if (!engineSupportsImages || !imageFiles.length) {
+                dispatch({
+                  type: "error",
+                  message: !engineSupportsImages
+                    ? "The selected responder cannot receive images. Choose an image-capable responder."
+                    : "Clipboard image could not be read or uses an unsupported format. Attach PNG, JPEG, GIF or WebP instead.",
+                });
+                return;
+              }
               void (async () => {
                 for (const file of imageFiles) {
                   try {

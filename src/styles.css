@@ -253,6 +253,9 @@ body,
    state is self-healing `100%`. */
 #root {
   height: 100%;
+  /* Focus and scrollIntoView belong to the panel/transcript scrollers.
+     Unlike hidden, clip cannot scroll the whole shell past its header. */
+  overflow: clip;
 }
 
 html[data-keyboard="open"] #root {

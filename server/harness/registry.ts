@@ -22,6 +22,7 @@ export interface ShadowInstance {
   cli: string | undefined;
   shadow: true;
   reason: string;
+  disabled?: boolean;
 }
 
 export type RegistryEntry =
@@ -61,6 +62,19 @@ export class ProviderRegistry {
   async load(configs: InstanceConfigMap) {
     for (const [instanceId, entry] of Object.entries(configs)) {
       const driver = this.driversByKind.get(entry.driver);
+      // Disabled is an admission barrier, not merely metadata on an already
+      // constructed adapter. Factory/catalog discovery can spawn native CLIs.
+      if (entry.enabled === false) {
+        this.byId.set(instanceId, {
+          instanceId,
+          shadow: {
+            instanceId, driverKind: entry.driver, displayName: entry.displayName,
+            cli: cliOfRaw(entry.config), shadow: true, disabled: true,
+            reason: "This engine is disabled. Enable it before starting new work.",
+          },
+        });
+        continue;
+      }
       if (!driver) {
         this.byId.set(instanceId, {
           instanceId,
@@ -140,6 +154,7 @@ export class ProviderRegistry {
             instanceId: entry.instanceId,
             driverKind: entry.shadow.driverKind,
             displayName: entry.shadow.displayName ?? entry.shadow.driverKind,
+            enabled: entry.shadow.disabled !== true,
             snapshot: { state: "unavailable", reason: entry.shadow.reason } satisfies ProviderSnapshot,
             models: { default: "", options: [] },
             capabilities: { computerMcp: false, agentsMcp: false, localComputerMcp: false },
@@ -147,10 +162,10 @@ export class ProviderRegistry {
             access: driver?.metadata.access ?? "subscription",
             install: driver?.install,
             cli: entry.shadow.cli,
-            cliDefault: cliDefaultOf(driver),
+            cliDefault: entry.shadow.disabled ? undefined : cliDefaultOf(driver),
             // a shadow is exactly the "your CLI is broken, pick another"
             // case where the detected-path dropdown matters most
-            cliCandidates: candidatesFor(driver),
+            cliCandidates: entry.shadow.disabled ? [] : candidatesFor(driver),
           };
         }
         const inst = entry.live;
@@ -165,6 +180,7 @@ export class ProviderRegistry {
           instanceId: inst.instanceId,
           driverKind: inst.driverKind,
           displayName: inst.displayName ?? inst.driverKind,
+          enabled: inst.enabled,
           snapshot,
           // Backstop for the per-engine Flux gate: describe() is the one choke
           // point every catalog crosses on its way to the UI, so a driver that

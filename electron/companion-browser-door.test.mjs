@@ -135,14 +135,19 @@ describe("the desktop names the browser door", () => {
 
   it("lets an operator's own environment win over the fork's default", async () => {
     const previous = process.env.MURAGE_BROWSER_BIND;
+    const previousLease = process.env.MURAGE_INTERNAL_DATA_DIR_LEASE;
     process.env.MURAGE_BROWSER_BIND = "loopback";
+    process.env.MURAGE_INTERNAL_DATA_DIR_LEASE = "ambient-private-lease-fixture";
     try {
       await stopCompanion();
       await startCompanion({ resourcesPath: "/fake/resources", harnessPort: 8799 });
       expect(forkEnvironments.at(-1).MURAGE_BROWSER_BIND).toBe("loopback");
+      expect(forkEnvironments.at(-1).MURAGE_INTERNAL_DATA_DIR_LEASE).toBeUndefined();
     } finally {
       if (previous === undefined) delete process.env.MURAGE_BROWSER_BIND;
       else process.env.MURAGE_BROWSER_BIND = previous;
+      if (previousLease === undefined) delete process.env.MURAGE_INTERNAL_DATA_DIR_LEASE;
+      else process.env.MURAGE_INTERNAL_DATA_DIR_LEASE = previousLease;
     }
   });
 

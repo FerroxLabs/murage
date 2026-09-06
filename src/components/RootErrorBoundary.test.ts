@@ -52,7 +52,15 @@ describe("the shell's height", () => {
   it("never pins #root to --vvh unconditionally", () => {
     // `#root { height: var(--vvh, 100%) }` with no guard is the bug: one
     // missed rAF and the shell is stuck short forever.
-    expect(css).toMatch(/#root\s*\{\s*height:\s*100%;\s*\}/);
+    // Allow unrelated containment declarations (for example overflow:clip)
+    // without allowing ANY unconditional root rule to use a pixel variable.
+    // Read declarations, not the exact punctuation of a one-property block.
+    const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+    const heights = rules
+      .filter(([, selectors]) => selectors.split(",").some((selector) => selector.trim() === "#root"))
+      .flatMap(([, , declarations]) => [...declarations.matchAll(/\bheight\s*:\s*([^;]+);/g)].map((match) => match[1].trim()));
+    expect(heights.length).toBeGreaterThan(0);
+    expect(new Set(heights)).toEqual(new Set(["100%"]));
     expect(css).toMatch(/html\[data-keyboard="open"\]\s*#root\s*\{\s*height:\s*var\(--vvh,\s*100%\);\s*\}/);
   });
 

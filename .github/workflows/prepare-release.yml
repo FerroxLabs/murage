@@ -4,7 +4,8 @@
 #   - the next version is computed, not typed, and must be strictly newer
 #   - a version already sitting on murage-releases (draft OR published) is
 #     refused before a branch exists
-#   - an existing release/vX.Y.Z branch means an open PR — reuse it
+#   - inspect an existing release branch and reuse its open PR, or create
+#     the missing PR after confirming the branch carries the intended version
 #
 # This workflow only ever creates a branch and a PR. It never approves and
 # never merges: a human still clicks merge, and that click is the release.
@@ -57,28 +58,8 @@ jobs:
           BUMP: ${{ inputs.bump }}
           CUSTOM_VERSION: ${{ inputs.version }}
         run: |
-          current=$(node -p "require('./package.json').version")
-          next=$(node --input-type=module - "$current" "$BUMP" "$CUSTOM_VERSION" <<'EOF'
-          const [current, bump, requested] = process.argv.slice(2);
-          const parse = (value) => {
-            const match = value.replace(/^v/, "").match(/^(\d+)\.(\d+)\.(\d+)$/);
-            if (!match) throw new Error(`expected a stable X.Y.Z version, got: ${value || "(empty)"}`);
-            return match.slice(1).map(Number);
-          };
-          const before = parse(current);
-          let after;
-          if (bump === "patch") after = [before[0], before[1], before[2] + 1];
-          else if (bump === "minor") after = [before[0], before[1] + 1, 0];
-          else if (bump === "custom") after = parse(requested);
-          else throw new Error(`unknown bump: ${bump}`);
-          if (after[0] < before[0]
-            || (after[0] === before[0] && after[1] < before[1])
-            || (after[0] === before[0] && after[1] === before[1] && after[2] <= before[2])) {
-            throw new Error(`${after.join(".")} must be newer than ${current}`);
-          }
-          console.log(after.join("."));
-          EOF
-          )
+          current=$(node scripts/release-guard.mjs version)
+          next=$(node scripts/release-guard.mjs next-version "$current" "$BUMP" "$CUSTOM_VERSION")
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
 
@@ -86,21 +67,22 @@ jobs:
       # existence check crosses repositories and needs RELEASES_PAT — the same
       # secret release.yml uses. A DRAFT counts: assembly has already run for
       # that version and rerunning it would overwrite assets under review.
-      - name: Refuse an existing release or release branch
+      - name: Refuse an existing release
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ steps.version.outputs.next }}
         run: |
-          if gh release view "v$VERSION" --repo FerroxLabs/murage-releases > /dev/null 2>&1; then
-            echo "::error::v$VERSION already exists on FerroxLabs/murage-releases"
-            exit 1
-          fi
-          if git ls-remote --exit-code --heads origin "release/v$VERSION" > /dev/null 2>&1; then
-            echo "::error::release/v$VERSION already exists — use its existing PR"
-            exit 1
-          fi
+          node scripts/release-guard.mjs absent "$VERSION"
+
+      - name: Inspect the release branch and open PR
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.next }}
+        run: node scripts/release-guard.mjs branch "$VERSION"
 
       - name: Commit the version bump
+        if: steps.branch.outputs.branch_exists != 'true'
         env:
           VERSION: ${{ steps.version.outputs.next }}
         run: |
@@ -119,12 +101,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.next }}
+          EXISTING_PR: ${{ steps.branch.outputs.pr_url }}
         run: |
-          url=$(gh pr create \
-            --base main \
-            --head "release/v$VERSION" \
-            --title "chore(release): bump version to $VERSION" \
-            --body "Bumps Murage to \`$VERSION\`. Merging this PR automatically starts the Release workflow, which assembles a DRAFT release on FerroxLabs/murage-releases from the exact merge commit. Nothing goes live until a human publishes that draft.")
+          url="$EXISTING_PR"
+          if [ -z "$url" ]; then
+            url=$(gh pr create \
+              --base main \
+              --head "release/v$VERSION" \
+              --title "chore(release): bump version to $VERSION" \
+              --body "Bumps Murage to \`$VERSION\`. Merging this PR automatically starts the Release workflow, which assembles a DRAFT release on FerroxLabs/murage-releases from the exact merge commit. Nothing goes live until a human publishes that draft.")
+          fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "### Release PR" >> "$GITHUB_STEP_SUMMARY"
           echo "$url" >> "$GITHUB_STEP_SUMMARY"

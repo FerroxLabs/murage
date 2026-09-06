@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Card, CommandLine } from "./SettingsPrimitives";
 import { cn } from "@/lib/cn";
+import { api } from "@/state/store";
 
 type Action = "pull" | "run" | "start" | "stop" | "remove" | "recreate";
 
@@ -109,9 +110,7 @@ export function LocalComputerSection() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch("/api/local-computer", { signal });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error ?? `Status request failed (${response.status})`);
+    const body = await api("/api/local-computer", { signal });
     setStatus(body as Status);
     setError(null);
   }, []);
@@ -145,13 +144,10 @@ export function LocalComputerSection() {
   }, [refresh, refreshKey]);
 
   const post = async (action: Exclude<Action, "recreate">) => {
-    const response = await fetch(`/api/local-computer/${action}`, {
+    const body = await api(`/api/local-computer/${action}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
       body: "{}",
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error ?? `${action} failed`);
     setStatus(body as Status);
   };
 
@@ -187,13 +183,10 @@ export function LocalComputerSection() {
     setPolicyPending(true);
     setError(null);
     try {
-      const response = await fetch("/api/config", {
+      await api("/api/config", {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({ localVm: { mode, maxInstances } }),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? "Could not save the Local VM isolation policy");
       setStatus((current) => current ? { ...current, mode, max_instances: maxInstances } : current);
       await refresh();
     } catch (e) {

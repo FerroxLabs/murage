@@ -78,8 +78,14 @@ export function registerUpdaterIpc() {
   ipcMain.handle("update:install", () => updaterCoordinator?.install());
 }
 
-export function startUpdater(mainWindow) {
+// Windows come and go while the process-owned updater remains alive.
+// Reattach broadcasts without re-registering listeners or polling timers.
+export function attachUpdaterWindow(mainWindow) {
   win = mainWindow;
+}
+
+export function startUpdater() {
+  if (updaterCoordinator) return;
   // dev / unsigned builds can't auto-update — leave the banner dormant
   if (!app.isPackaged) {
     updaterCoordinator = null;

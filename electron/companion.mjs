@@ -14,6 +14,7 @@ import { app, utilityProcess } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveCompanionEntry } from "./companion-entry.mjs";
+import { createServerChildLifecycle } from "./server-child-lifecycle.mjs";
 import {
   cleanupCompanionOriginEndpoint,
   companionOriginHealth,
@@ -70,6 +71,7 @@ export const BROWSER_LOOPBACK_TARGET = `http://127.0.0.1:${BROWSER_PORT}`;
 const BROWSER_DOOR_OFF = null;
 
 let proc = null;
+let procLifecycle = null;
 let lastError = null;
 let advertisedHostedUrl = null;
 /** The proxy origin the running sidecar was forked with, or null. This is
@@ -107,7 +109,14 @@ const entryPoint = (resourcesPath) =>
 // sidecar's ~/.murage-companion, which is the child process's directory,
 // and not in the harness's config.json, which is somebody else's data layout.
 
-const settingsFile = () => path.join(app.getPath("userData"), "companion-settings.json");
+let connectionStorage = null;
+let connectionTransitions = 0;
+export function configureCompanionStorage(storage) {
+  if (proc || connectionTransitions) throw new Error("Stop the companion before changing its connection storage");
+  if (storage && (!path.isAbsolute(storage.settingsDirectory) || !path.isAbsolute(storage.stateDirectory))) throw new Error("Companion connection storage requires absolute paths");
+  connectionStorage = storage ? { ...storage } : null;
+}
+const settingsFile = () => path.join(connectionStorage?.settingsDirectory ?? app.getPath("userData"), "companion-settings.json");
 
 function companionSettings() {
   try {
@@ -175,6 +184,18 @@ export function rememberCompanionRemoteAccess(remoteAccess) {
   rememberCompanionSettings({ remoteAccess });
 }
 
+/** Adopt only an already-verified, exclusively owned Serve arrangement. This
+ * never creates, replaces, or removes a Tailscale route. */
+export function reconcileCompanionHttps(observed, log = () => {}) {
+  if (!observed?.on || observed.reason || !observed.host) return;
+  if (!companionRemoteAccessAtRest()) {
+    rememberCompanionRemoteAccess(true);
+    log(companionRemoteAccessAtRest()
+      ? "adopted the existing owned HTTPS proxy; its remembered off state was stale"
+      : "owned HTTPS proxy will be used, but its setting could not be remembered");
+  }
+}
+
 /** Ask the sidecar's own control server, which is the same API the standalone
  * page uses. Short timeout: this is loopback, and a spinner in Settings that
  * never resolves is worse than an error. The budget is a parameter because
@@ -237,7 +258,9 @@ let transition = Promise.resolve();
 
 /** Queue a lifecycle transition behind whatever is already in flight. */
 const serialize = (work) => {
+  connectionTransitions++;
   const next = transition.then(work, work);
+  void next.then(() => { connectionTransitions--; }, () => { connectionTransitions--; });
   // The chain itself must never carry a rejection forward, or one failed
   // transition would poison every transition after it.
   transition = next.then(
@@ -259,7 +282,7 @@ export function stopCompanion() {
 }
 
 /** startCompanion's body, run inside the transition queue. */
-async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAccess = null, log }) {
+async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = null, remoteAccess = null, log }) {
   if (proc) return companionState();
   lastError = null;
   const resolved = entryPoint(resourcesPath);
@@ -293,8 +316,13 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAcces
   // an inherited value would bypass that gate and make Settings claim a dead
   // or attacker-selected route is ready.
   const childEnvironment = { ...process.env };
+  if (connectionStorage) childEnvironment.MURAGE_COMPANION_DIR = connectionStorage.stateDirectory;
   delete childEnvironment.MURAGE_COMPANION_HOSTED_URL;
   delete childEnvironment.MURAGE_COMPANION_INTERNAL_ORIGIN;
+  delete childEnvironment.MURAGE_COMPANION_TOKEN;
+  // Only the owned harness receives the parent's persistent-state lease.
+  delete childEnvironment.MURAGE_INTERNAL_DATA_DIR_LEASE;
+  if (companionToken) childEnvironment.MURAGE_COMPANION_TOKEN = companionToken;
   // Same reasoning: the door's public origin is decided here, per start, from
   // what `tailscale serve` was actually observed to be doing. An inherited
   // one would survive turning remote access off.
@@ -334,6 +362,12 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAcces
     lastError = "the companion process could not be started";
     return companionState();
   }
+  // Own the process before probing: failed and not-yet-ready children write
+  // state too, and must not disappear from the shutdown/restart barrier.
+  proc = child;
+  const lifecycle = createServerChildLifecycle(child, { timeoutMs: 5_000 });
+  procLifecycle = lifecycle;
+  lastError = "the companion is starting";
   child.stdout?.on("data", (d) => log?.(`[companion] ${String(d).trimEnd()}`));
   child.stderr?.on("data", (d) => log?.(`[companion err] ${String(d).trimEnd()}`));
 
@@ -345,6 +379,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAcces
     // message says which one and why.
     if (proc === child) {
       proc = null;
+      procLifecycle = null;
       advertisedHostedUrl = null;
       remoteAccessOrigin = null;
       originTarget = null;
@@ -362,7 +397,8 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAcces
   // this the toggle would flip to "on" and the panel would then fail every
   // request, which reads as a broken app rather than a failed start.
   for (let i = 0; i < 40; i++) {
-    if (exited) {
+    if (exited || lifecycle.failed) {
+      await stop().catch(() => {});
       lastError = "the companion could not start — check the log";
       return companionState();
     }
@@ -374,11 +410,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAcces
       // would be adopted as ours — after which the toggle drives a process
       // it does not own and stopping it does nothing visible. Match the pid.
       if (state?.pid !== undefined && child.pid !== undefined && state.pid !== child.pid) {
-        try {
-          child.kill();
-        } catch {
-          /* already gone */
-        }
+        await stop().catch(() => {});
         lastError = `port ${CONTROL_PORT} is already serving another companion — stop it and try again`;
         return companionState();
       }
@@ -387,7 +419,9 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAcces
       }
       const target = { pid: child.pid, socketPath: allocatedOrigin.socketPath };
       if (!(await companionOriginHealth(target))) throw new Error("private origin not ready");
+      if (lifecycle.exited || lifecycle.failed) throw new Error("owned companion exited");
       proc = child;
+      lastError = null;
       advertisedHostedUrl = hostedUrl;
       remoteAccessOrigin = remoteAccess?.origin ?? null;
       originTarget = Object.freeze(target);
@@ -396,11 +430,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, remoteAcces
       await new Promise((r) => setTimeout(r, 150));
     }
   }
-  try {
-    child.kill();
-  } catch {
-    /* already gone */
-  }
+  await stop().catch(() => {});
   lastError = "the companion did not come up in time";
   return companionState();
 }
@@ -442,32 +472,17 @@ export function browserDoorEnvironment(inherited = {}, remoteAccess = null) {
 /** stopCompanion's body, run inside the transition queue. */
 async function stop() {
   const child = proc;
-  proc = null;
-  advertisedHostedUrl = null;
-  remoteAccessOrigin = null;
-  originTarget = null;
-  lastError = null;
   if (!child) return companionState();
   expectedStops.add(child);
   try {
-    child.kill();
+    await procLifecycle.stop();
   } catch {
-    /* already gone */
+    lastError = "the owned companion has not exited; wait and retry Stop before starting another";
+    throw new Error(lastError);
   }
-  // kill() asks. Returning before the process is actually gone means the
-  // next start races a sidecar still holding the port, and the user sees the
-  // toggle fail for a reason that has already stopped being true. Wait for
-  // the exit, bounded — a wedged child must not leave Settings stuck either.
-  await new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      resolve();
-    };
-    child.once("exit", finish);
-    setTimeout(finish, 5_000).unref?.();
-  });
+  // The exit observer owns clearing proc and removing its private origin.
+  // No timeout, kill return value or control-port response can stand in for it.
+  lastError = null;
   return companionState();
 }
 
@@ -500,10 +515,19 @@ export async function companionState() {
     if (lastError) state.error = lastError;
     return state;
   }
+  if (lastError) {
+    return { enabled: true, keepAwake, port: COMPANION_PORT, devices: [],
+      connectedDeviceIds: [], pairing: null, browser: BROWSER_DOOR_OFF, error: lastError };
+  }
   try {
     const state = await control("GET", "/state");
+    // Refreshes can move the listener without a process restart. Report what
+    // that owned process now serves, rather than its original launch options.
+    remoteAccessOrigin = state.browser?.scheme === "https" && state.browser?.port === 443
+      ? `https://${state.browser.host}` : null;
     return { enabled: true, keepAwake, ...state };
   } catch {
+    remoteAccessOrigin = null;
     // running but unreachable: report it rather than claiming health
     return {
       enabled: true,

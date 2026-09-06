@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -11,14 +11,32 @@ import { probeMcpServer } from "./mcp-probe.ts";
 // answers the handshake, which is what the timeout and cancel cases need.
 const FAKE_SERVER = `
 import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_MCP_MODE ?? "healthy";
+if (process.env.FAKE_MCP_PID_FILE) writeFileSync(process.env.FAKE_MCP_PID_FILE, String(process.pid));
 if (mode === "silent") setInterval(() => {}, 60_000);
 else {
   const lines = createInterface({ input: process.stdin });
+  let initialized = false;
   lines.on("line", (line) => {
     const frame = JSON.parse(line);
+    if (frame.method === "notifications/initialized") initialized = true;
     if (frame.method === "initialize") {
+      if (mode === "tools-before-initialize") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { tools: [] } }) + "\\n");
+        return;
+      }
+      if (mode === "initialize-error") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, error: {
+          code: -32603, message: "Untrusted native details: " + process.env.SECRET_TOKEN,
+        } }) + "\\n");
+        return;
+      }
+      if (mode === "malformed-initialize") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: true }) + "\\n");
+        return;
+      }
       process.stdout.write(JSON.stringify({
         jsonrpc: "2.0",
         id: frame.id,
@@ -30,6 +48,12 @@ else {
       }) + "\\n");
     }
     if (frame.method === "tools/list") {
+      if (!initialized || mode === "tools-error") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, error: {
+          code: -32603, message: "Untrusted tools error: " + process.env.SECRET_TOKEN,
+        } }) + "\\n");
+        return;
+      }
       process.stdout.write(JSON.stringify({
         jsonrpc: "2.0",
         id: frame.id,
@@ -76,6 +100,43 @@ describe("custom MCP probe", () => {
       env: { FAKE_MCP_MODE: "silent" },
       enabled: false,
     }, 100)).resolves.toEqual({ ok: false, error: "The server did not answer in time." });
+  });
+
+  it.each(["tools-before-initialize", "initialize-error", "malformed-initialize"])(
+    "rejects %s promptly, sanitizes the failure, and stops the child",
+    async (mode) => {
+      const pidFile = join(dir, `${mode}.pid`);
+      const result = await probeMcpServer({
+        command: process.execPath,
+        args: [fakeServer],
+        env: { FAKE_MCP_MODE: mode, FAKE_MCP_PID_FILE: pidFile, SECRET_TOKEN: "never-render-this" },
+        enabled: false,
+      }, 2_000);
+      // The fake child stays alive and never follows this response with a
+      // valid initialize result. A timeout/close is not an acceptable stand-in
+      // for recognizing and reporting the initialization failure.
+      expect(result).toEqual({ ok: false, error: "The server did not complete MCP initialization." });
+      expect(JSON.stringify(result)).not.toMatch(/never-render-this|Untrusted|SECRET_TOKEN/);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(pid).toBeGreaterThan(0);
+      await expect.poll(() => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code === "ESRCH";
+        }
+      }, { timeout: 2_000 }).toBe(true);
+    },
+  );
+
+  it("sanitizes tools-list errors after a successful initialization", async () => {
+    await expect(probeMcpServer({
+      command: process.execPath,
+      args: [fakeServer],
+      env: { FAKE_MCP_MODE: "tools-error", SECRET_TOKEN: "never-render-this" },
+      enabled: false,
+    }, 2_000)).resolves.toEqual({ ok: false, error: "The command did not return a valid MCP tools list." });
   });
 
   it("stops a probe when its caller disconnects", async () => {

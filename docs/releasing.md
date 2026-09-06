@@ -15,14 +15,42 @@ generated notes, and — if you ticked **publish** — flips it live. Leave
 publish unticked to review the draft notes first, then publish from the
 GitHub UI.
 
-The workflow refuses to overwrite an already-published version. A push-started
-run releases only when the merge actually changed `package.json`'s version, and
-refuses to start at all when it cannot read the previous version to compare
-against — it fails closed rather than assume. Manual Release runs still require
+The workflow refuses a version that is already published. A push-started run
+releases only when `package.json` moves to a strictly newer canonical stable
+`X.Y.Z` version. Equality skips the build; downgrades and invalid or missing
+versions fail. It also refuses to start when the previous version cannot be
+read. Manual Release runs still require
 that the version is bumped on the ref you select. A release is also rejected if any installer, stable
 download name, updater feed, blockmap, size, or digest is absent or
 inconsistent — the complete asset set is named in `release.yml`, and anything
 missing or extra fails the run rather than shipping a half release.
+
+GitHub lookup failures (including authentication, rate limits, and outages)
+stop the workflow. A missing published tag is checked against authenticated
+draft listings too. Prepare next release inspects an existing version branch:
+its package version must match, and its open PR is reused if present. If the
+branch exists without an open PR, the workflow creates the missing PR without
+rewriting or pushing that branch.
+
+## Draft assembly and publication boundaries
+
+Assembly and publication are serialized per version. After the builds finish,
+the upload helper binds the candidate to one numeric release ID and checks that
+it is still a draft immediately before and after every upload. Uploads never
+delete or overwrite an existing asset. An existing asset is reused only when
+its uploaded state, size, and SHA-256 digest match the staged bytes. A different
+or unverified asset stops the run; use a new version, or explicitly repair the
+draft while its workflow is stopped and then rerun. Signed rebuilds may produce
+different bytes, so a rebuild is not guaranteed to reuse an existing draft.
+
+These checks are not an atomic GitHub transaction. Someone publishing through
+the UI or another API client between a draft check and its upload can still
+race the workflow: it detects publication afterward, but cannot undo an asset
+already added. Do not publish a draft while assembly is running. For protection
+enforced by GitHub at the write itself, enable
+[immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
+on `FerroxLabs/murage-releases`; publication then locks its assets and tag.
+This repository change does not enable or verify that remote setting.
 
 ## Release notes are generated
 
@@ -31,8 +59,8 @@ release. `murage-releases` holds only assets, so the notes are generated
 against **this** repository and handed over as a file; `.github/release.yml`
 here decides the section each pull request lands in (label a PR `enhancement`,
 `bug`, `documentation`, or `ignore-for-release`). Only a *new* draft takes the
-generated notes — rerunning the workflow re-uploads assets without touching
-edits you made while reviewing.
+generated notes — rerunning the workflow verifies existing identical assets
+and uploads missing ones without touching edits you made while reviewing.
 
 The docs changelog reads the published releases straight from
 `FerroxLabs/murage-releases` and caches them for five minutes, so a published
@@ -74,8 +102,9 @@ The Developer ID Application certificate, exported from the Mac that
 currently signs releases:
 
 ```sh
-# Keychain Access → My Certificates → "Developer ID Application: Milind Soni
-# (993D98NH4J)" → right-click → Export… → .p12 with a strong password, then:
+# Keychain Access → My Certificates → your Ferrox Developer ID Application
+# certificate (verify the legal name and Apple Team ID) → right-click →
+# Export… → .p12 with a strong password, then:
 base64 -i DeveloperID.p12 | pbcopy   # → MAC_CERT_P12_BASE64
 # the export password             → MAC_CERT_PASSWORD
 ```

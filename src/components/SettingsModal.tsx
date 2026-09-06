@@ -36,7 +36,7 @@ const SECTIONS: Array<{
   keywords: string[];
 }> = [
   { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls"] },
-  { id: "experimental", label: "Experimental", icon: FlaskConical, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
+  { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and
   // execution surface of the app: API keys for xAI, Box, Composio and the
   // OpenCode gateway, the VPS connection, the engine CLI installers, and the
@@ -75,6 +75,10 @@ export function sectionsForSurface(
 /** Name + email, persisted to /api/config {profile} on blur. */
 function ProfileFields() {
   const { state, dispatch } = useStore();
+  const desktop = useDesktopSurface();
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState("");
+  const saving = useRef(false);
   const [name, setName] = useState(state.config?.profile?.name ?? "");
   const [email, setEmail] = useState(state.config?.profile?.email ?? "");
   useEffect(() => {
@@ -82,30 +86,47 @@ function ProfileFields() {
     setEmail(state.config?.profile?.email ?? "");
   }, [state.config?.profile?.name, state.config?.profile?.email]);
 
-  const save = () => {
-    void fetch("/api/config", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
-    })
-      .then((r) => r.json())
-      .then((config) => dispatch({ type: "configStatus", config }))
-      .catch(() => {});
+  const save = async () => {
+    if (desktop !== true || saving.current) return;
+    const profile = { name: name.trim(), email: email.trim().toLowerCase() };
+    if (profile.name === state.config?.profile?.name && profile.email === state.config?.profile?.email) return;
+    saving.current = true;
+    setStatus("saving");
+    setError("");
+    try {
+      const config: ConfigStatus = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
+      if (!config.profile || typeof config.profile.name !== "string" || typeof config.profile.email !== "string") {
+        throw new Error("The profile save could not be confirmed. Please retry.");
+      }
+      dispatch({ type: "configStatus", config });
+      setStatus("saved");
+    } catch (cause) {
+      setStatus("error");
+      setError(cause instanceof Error ? cause.message : "Could not save your profile. Please retry.");
+    } finally {
+      saving.current = false;
+    }
   };
 
   const inputClass =
     "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
   return (
     <div className="flex flex-col gap-3">
-      <input value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder="Your name" className={inputClass} />
+      <input aria-label="Your name" value={name} readOnly={desktop !== true} disabled={status === "saving"} onChange={(e) => { setName(e.target.value); setStatus("idle"); }} onBlur={() => void save()} placeholder="Your name" className={inputClass} />
       <input
         type="email"
         value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        onBlur={save}
+        aria-label="Your email"
+        readOnly={desktop !== true}
+        disabled={status === "saving"}
+        onChange={(e) => { setEmail(e.target.value); setStatus("idle"); }}
+        onBlur={() => void save()}
         placeholder="you@example.com"
         className={inputClass}
       />
+      {desktop !== true && <p className="text-[12px] text-ink-secondary">Change your profile in the desktop app.</p>}
+      {(status === "saving" || status === "saved") && <p role="status" className="text-[12px] text-ink-secondary">{status === "saving" ? "Saving…" : "Saved"}</p>}
+      {status === "error" && <div role="alert" className="text-[12px] text-danger">{error} <button type="button" onClick={() => void save()} className="rounded px-1 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Retry save</button></div>}
     </div>
   );
 }
@@ -693,24 +714,25 @@ export function SettingsModal() {
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5">
             {section === "general" && (
               <>
-                <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
+                <Card title="Profile" subtitle={desktop === true ? "Shown in the sidebar. Saved as you go." : "Shown in the sidebar."}>
                   <ProfileFields />
                 </Card>
                 <Card title="Appearance" subtitle="Applies instantly and is remembered on this machine.">
                   <SkinPicker />
                 </Card>
-                <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
+                {desktop === true && <><Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
                 <LanguageRow />
-          <ToolCallsRow />
+                <ToolCallsRow /></>}
+                {desktop !== true && <p className="text-[12px] text-ink-secondary">Language, tool-call display and channel settings are managed in the desktop app.</p>}
                 <UpdatesRow />
                 <DiagnosticsRow />
                 <AnalyticsRow />
               </>
             )}
 
-            {section === "experimental" && (
+            {desktop === true && section === "experimental" && (
               <>
                 <ExperimentalFeaturesRow />
                 <BrowserProfilesRow />

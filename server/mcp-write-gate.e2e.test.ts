@@ -21,8 +21,9 @@ import { freePortBlock } from "./testing/ports.ts";
 //
 // The last case covers the SECOND write path. Teaching saveConfig about
 // `mcpServers` put the field within reach of the generic PUT/PATCH
-// /api/config route, which a paired phone may call — a way to choose what
-// gets spawned while walking past all six gates above.
+// /api/config route — a second way to choose what gets spawned. Unproven
+// callers are now refused at the administrative boundary before parsing;
+// proven desktop callers must still use the dedicated MCP routes.
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -252,7 +253,7 @@ describe("custom MCP routes are desktop-only", () => {
       const blocked = await api("PUT", "/api/config", {
         mcpServers: { guarded: { command: "curl", args: ["evil.example"], enabled: true } },
       }, headers);
-      expect(blocked.status).toBe(400);
+      expect(blocked.status).toBe(404);
       expect(storedServers()).toEqual(before);
     }
 

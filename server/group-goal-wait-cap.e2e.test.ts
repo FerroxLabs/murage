@@ -142,6 +142,91 @@ const holdBusy = async (botId: string, text: string) => {
 };
 
 describe("goal wait cap and transient retry", () => {
+  it.each(["Infinity", "2147483648"])("does not collapse configured wait %s into a 1 ms timeout", async (configuredWait) => {
+    const fixtureHome = mkdtempSync(join(tmpdir(), "murage-goal-wait-overflow-"));
+    const fixtureData = join(fixtureHome, ".murage");
+    mkdirSync(fixtureData, { recursive: true });
+    writeFileSync(join(fixtureData, "config.json"), JSON.stringify({
+      instances: { waiting: fixture("Waiting lead", { FAKE_CLAUDE_MODE: "hang" }) },
+    }));
+    const fixturePort = await freePortBlock([0, 1]);
+    const fixtureBase = `http://127.0.0.1:${fixturePort}`;
+    const fixtureChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      cwd: ROOT,
+      env: {
+        PATH: dirname(process.execPath),
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        HOME: fixtureHome,
+        USERPROFILE: fixtureHome,
+        MURAGE_DATA_DIR: fixtureData,
+        MURAGE_PORT: String(fixturePort),
+        MURAGE_WEBHOOK_PORT: String(fixturePort + 1),
+        MURAGE_GOAL_WAIT_MAX_MS: configuredWait,
+        VITEST: "true",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let fixtureStderr = "";
+    fixtureChild.stderr!.on("data", (chunk) => (fixtureStderr += chunk));
+    const fixtureApi: typeof api = async (method, path, body) => {
+      const response = await fetch(`${fixtureBase}${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    try {
+      await expect.poll(async () => {
+        try {
+          return (await fixtureApi("GET", "/api/health")).status;
+        } catch {
+          return 0;
+        }
+      }, { timeout: 20_000 }).toBe(200);
+      const created = await fixtureApi("POST", "/api/bots", {
+        name: "Overflow waiting lead",
+        modelSelection: { instanceId: "waiting", model: "claude-sonnet-5" },
+        requireAvailableModel: true,
+      });
+      expect(created.status).toBe(201);
+      const lead = created.body.bot;
+      const grouped = await fixtureApi("POST", "/api/groups", {
+        name: "Overflow wait fixture",
+        memberIds: [lead.id],
+        setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+      });
+      expect(grouped.status).toBe(201);
+      const room = grouped.body.group;
+      expect((await fixtureApi("POST", `/api/bots/${lead.id}/messages`, { text: "Stay busy in this unrelated turn" })).status).toBe(202);
+      expect((await fixtureApi("POST", `/api/groups/${room.id}/messages`, { text: "Wait for the lead", mode: "goal" })).status).toBe(202);
+      const goalState = async () => {
+        const { body } = await fixtureApi("GET", "/api/bots?messages=40");
+        const group = body.groups.find((candidate: { id: string }) => candidate.id === room.id);
+        return {
+          card: group?.messages.find((message: { kind: string }) => message.kind === "goal.run")?.goalRun,
+          leadBusy: body.bots.find((candidate: { id: string }) => candidate.id === lead.id)?.busy,
+        };
+      };
+      await expect.poll(async () => Boolean((await goalState()).card)).toBe(true);
+      // Exercise the production setTimeout, not just parsing: overflowing
+      // Node delays fire in 1 ms and have already blocked the goal by now.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(await goalState()).toMatchObject({
+        card: { status: "working", detail: expect.stringMatching(/is finishing another conversation/) },
+        leadBusy: true,
+      });
+      expect(fixtureStderr).not.toContain("TimeoutOverflowWarning");
+      expect((await fixtureApi("POST", `/api/groups/${room.id}/interrupt`)).status).toBe(200);
+      await expect.poll(async () => (await goalState()).card?.status).toBe("stopped");
+      expect((await goalState()).leadBusy).toBe(true);
+      expect((await fixtureApi("POST", `/api/bots/${lead.id}/interrupt`)).status).toBe(200);
+    } finally {
+      await waitForExit(fixtureChild, { signal: "SIGTERM" });
+      await removeTempDir(fixtureHome);
+    }
+  }, 30_000);
+
   it("reassigns through the lead when a worker stays busy past the cap, and still completes", async () => {
     const lead = await createBot("Lead", "reassignLead");
     const hang = await createBot("Hang", "hang");

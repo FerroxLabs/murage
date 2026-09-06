@@ -19,6 +19,9 @@ delete process.env.MURAGE_DATA_DIR;
 // the suite: a test that accidentally holds the real value proves nothing
 // about a request that does not.
 delete process.env.MURAGE_DEV_DESKTOP_SECRET;
+// A disposable test launcher explicitly opts in; production Node processes
+// must never offer the desktop credential simply because Electron is absent.
+process.env.MURAGE_ALLOW_DEV_DESKTOP_SECRET = "1";
 // Do not let a developer's Hermes global config path leak into per-test homes.
 delete process.env.HERMES_HOME;
 // A developer with FLUX_API_KEY exported would otherwise get the Flux Router

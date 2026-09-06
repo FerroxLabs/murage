@@ -11,9 +11,13 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   let downloadedFiles = null;
   let downloadOperation = null;
   let installOperation = null;
+  // Staged files, installation instructions and failed user actions remain
+  // actionable until the user explicitly asks for a fresh check.
+  let actionOwnsState = false;
   const routedErrors = new WeakSet();
 
   const routeError = (manual, error) => {
+    actionOwnsState = manual;
     if (error instanceof Error) routedErrors.add(error);
     if (downloadOperation) downloadOperation.failed = true;
     if (checkOperation) checkOperation.failed = true;
@@ -35,7 +39,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   function checkOwnsState() {
-    return !downloadOperation && !checkOperation?.supersededByDownload;
+    return !actionOwnsState && !installOperation && !downloadOperation && !checkOperation?.supersededByDownload;
   }
 
   updater.on("checking-for-update", () => {
@@ -54,6 +58,14 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   // this listener a Squirrel.Mac failure leaves the renderer on "Restarting"
   // forever because quitAndInstall itself returns void.
   updater.on("error", (error) => {
+    // Shared events have no operation ID. During overlapping check/download
+    // work, their promises attribute failures; native installation errors
+    // remain event-driven and must still escape the restarting spinner.
+    if (checkOperation?.supersededByDownload && !installOperation) return;
+    // A late old-check event can arrive after its promise's finally cleared
+    // checkOperation. Do not let that unattributed event erase a completed
+    // action. Errors during a fresh user operation are still reported below.
+    if (actionOwnsState && !checkOperation && !downloadOperation && !installOperation) return;
     const manual = Boolean(installOperation || downloadOperation || checkOperation?.manual);
     routeError(manual, error);
   });
@@ -68,16 +80,19 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       downloadOperation.downloadedInfo = info;
       return;
     }
+    actionOwnsState = true;
     setState({ status: "downloaded", version: info?.version });
   });
 
   function check(manual = false) {
+    if (installOperation || (!manual && actionOwnsState)) return Promise.resolve();
     if (checkOperation) {
       // A manual caller upgrades the shared operation; a timer never downgrades it.
       if (manual) checkOperation.manual = true;
       return checkOperation.promise;
     }
 
+    if (manual) actionOwnsState = false;
     const operation = { manual, supersededByDownload: Boolean(downloadOperation), failed: false, promise: null };
     checkOperation = operation;
     try {
@@ -114,6 +129,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
             downloadedFiles = Array.isArray(result) ? result.filter((file) => typeof file === "string") : null;
           }
           if (!operation.failed && operation.downloadedInfo) {
+            actionOwnsState = true;
             setState({ status: "downloaded", version: operation.downloadedInfo?.version });
           }
           return result;
@@ -132,6 +148,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
 
   function install() {
     if (installOperation) return;
+    actionOwnsState = true;
     if (handOffInstall) {
       handOff();
       return;

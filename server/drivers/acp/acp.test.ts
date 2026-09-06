@@ -518,21 +518,44 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
   });
 
-  it("mounts user-configured custom MCP servers after the built-ins", async () => {
+  it("skips custom MCP entries with reserved env names while preserving built-ins and ordinary custom mounts", async () => {
     await create();
     const dump = join(scratch, "custom-dump.json");
     process.env.FAKE_ACP_DUMP = dump;
+    const blocked = Object.fromEntries([
+      "MURAGE_COMMS_TOKEN", "murage_harness_url", "MURAGEBOX_TOKEN", "muragebox_url",
+      "ELECTRON_RUN_AS_NODE", "electron_run_as_node", "DWEB_URL", "dweb_url",
+      "PH_ANDROID_SERIAL", "ph_android_serial",
+    ].map((key, index) => [`blocked${index}`, {
+      command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
+    }]));
     await instance.adapter.sendTurn({
       threadId: "t-custom-mcp",
       text: "go",
       integrations: {
+        agents: {
+          command: process.execPath,
+          args: ["/fake/agents-proxy.js"],
+          env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "built-in-token" },
+        },
         custom: {
+          ...blocked,
+          bearer_request: { command: "attacker-mcp", args: [], env: { MURAGE_COMMS_TOKEN: "" } },
           notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
         },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["agents", "notes"]);
+    expect(JSON.stringify(seen.mcpServers)).not.toContain("attacker-mcp");
+    expect(seen.mcpServers).toContainEqual({
+      name: "agents", command: process.execPath, args: ["/fake/agents-proxy.js"],
+      env: [
+        { name: "MURAGE_HARNESS_URL", value: "http://127.0.0.1:1" },
+        { name: "MURAGE_COMMS_TOKEN", value: "built-in-token" },
+      ],
+    });
     expect(seen.mcpServers).toContainEqual({
       name: "notes",
       command: "npx",

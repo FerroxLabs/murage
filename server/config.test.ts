@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { customMcpServers,
   DATA_DIR,
@@ -32,6 +33,130 @@ import { customMcpServers,
   ROUTING_ENV,
   type AppConfig,
 } from "./config.ts";
+
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return { ...fs, readFileSync: vi.fn(fs.readFileSync) };
+});
+
+describe("saved configuration recovery", () => {
+  const file = join(DATA_DIR, "config.json");
+  let loadConfig: typeof import("./config.ts").loadConfig;
+  beforeEach(async () => {
+    // setup.ts imports config before this file's fs mock. Reload the reader
+    // so injected read errors hit the production read, not the assertion's
+    // later inspection of unchanged bytes.
+    vi.mocked(readFileSync).mockReset();
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(readFileSync).mockImplementation(realFs.readFileSync);
+    vi.resetModules();
+    loadConfig = (await import("./config.ts")).loadConfig;
+    mkdirSync(DATA_DIR, { recursive: true });
+    rmSync(file, { recursive: true, force: true });
+  });
+  afterEach(async () => {
+    vi.mocked(readFileSync).mockReset();
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(readFileSync).mockImplementation(realFs.readFileSync);
+    vi.unstubAllEnvs();
+    rmSync(file, { recursive: true, force: true });
+  });
+
+  it("allows a truly missing file and valid empty config without requiring modern fields", () => {
+    vi.stubEnv("XAI_API_KEY", "fixture-env-key");
+    expect(loadConfig().xai?.key).toBe("fixture-env-key");
+    expect(existsSync(file)).toBe(false);
+    writeFileSync(file, "{}");
+    expect(loadConfig().xai?.key).toBe("fixture-env-key");
+    expect(readFileSync(file, "utf8")).toBe("{}");
+  });
+
+  it.each([
+    ["", "invalid-json"], ["{", "invalid-json"], ['{"private":"never-echo-this",', "invalid-json"],
+    ["null", "invalid-shape"], ["[]", "invalid-shape"], ['"private-root"', "invalid-shape"],
+    ['{"instances":{"bad":{"driver":42}}}', "invalid-shape"], ['{"profile":[]}', "invalid-shape"],
+  ])("preserves damaged bytes and reports a sanitized recovery error for %j", (raw, reason) => {
+    writeFileSync(file, raw);
+    let failure: unknown;
+    try { loadConfig(); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: file, reason });
+    expect(String(failure)).not.toMatch(/never-echo-this|private-root|Unexpected token/);
+    expect((failure as Error).cause).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+
+  it.each(["EACCES", "EPERM", "EIO", "ENOENT"])("does not discard an existing config after read error %s", (code) => {
+    const raw = '{"profile":{"name":"Fixture owner"}}';
+    writeFileSync(file, raw);
+    vi.mocked(readFileSync).mockImplementationOnce(() => { throw Object.assign(new Error("fixture read failed"), { code }); });
+    expect(() => loadConfig()).toThrowError(expect.objectContaining({
+      code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: file, reason: "unreadable", readErrorCode: code,
+    }));
+    expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+
+  it.skipIf(process.platform === "win32")("does not mistake a dangling config link for a first run", () => {
+    const target = join(DATA_DIR, "absent-config-target");
+    symlinkSync(target, file);
+    expect(() => loadConfig()).toThrowError(expect.objectContaining({ reason: "unreadable" }));
+    expect(lstatSync(file).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
+  });
+});
+
+describe("legacy directory migration scope", () => {
+  let fixtureHome: string;
+  beforeEach(() => {
+    fixtureHome = mkdtempSync(join(tmpdir(), "murage-config-migration-"));
+    vi.stubEnv("HOME", fixtureHome);
+    vi.stubEnv("USERPROFILE", fixtureHome);
+    vi.stubEnv("MURAGE_DATA_DIR", undefined);
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    rmSync(fixtureHome, { recursive: true, force: true });
+  });
+  const seedLegacy = () => {
+    const legacy = join(fixtureHome, ".opengrokbot");
+    mkdirSync(legacy);
+    writeFileSync(join(legacy, "config.json"), '{"profile":{"name":"Legacy fixture"}}');
+    return legacy;
+  };
+
+  it("migrates the intended default directory and keeps valid legacy settings", async () => {
+    const legacy = seedLegacy();
+    const config = await import("./config.ts");
+    config.ensureDirs();
+    expect(existsSync(legacy)).toBe(false);
+    expect(config.loadConfig().profile?.name).toBe("Legacy fixture");
+    expect(existsSync(join(config.DATA_DIR, "events"))).toBe(true);
+  });
+
+  it.each(["custom", ".murage"])("an explicit %s override never adopts the default legacy directory", async (directory) => {
+    const legacy = seedLegacy();
+    const target = join(fixtureHome, directory);
+    vi.stubEnv("MURAGE_DATA_DIR", target);
+    const config = await import("./config.ts");
+    config.ensureDirs();
+    expect(readFileSync(join(legacy, "config.json"), "utf8")).toBe('{"profile":{"name":"Legacy fixture"}}');
+    expect(existsSync(join(config.DATA_DIR, "config.json"))).toBe(false);
+    expect(existsSync(join(config.DATA_DIR, "events"))).toBe(true);
+  });
+
+  it("does not migrate a legacy directory owned by another lease holder", async () => {
+    const legacy = seedLegacy();
+    const { acquireDataDirLease } = await import("../electron/data-dir-lease.mjs");
+    const held = acquireDataDirLease(legacy);
+    try {
+      const config = await import("./config.ts");
+      expect(() => config.ensureDirs()).toThrowError(expect.objectContaining({ code: "PERSISTED_STATE_RECOVERY_REQUIRED" }));
+      expect(readFileSync(join(legacy, "config.json"), "utf8")).toContain("Legacy fixture");
+      expect(existsSync(config.DATA_DIR)).toBe(false);
+    } finally { held.release(); }
+  });
+});
 
 describe("configuration boundaries", () => {
   it("keeps supported stored settings and drops unrelated top-level data", () => {
@@ -824,6 +949,22 @@ describe("customMcpServers", () => {
       }),
     );
     expect(Object.keys(out)).toEqual(["good_name"]);
+  });
+
+  it("skips saved entries with reserved environment names, preserving valid siblings and the config", () => {
+    const config = cfg({
+      ...Object.fromEntries([
+        "MURAGE_COMMS_TOKEN", "murage_harness_url", "MURAGEBOX_TOKEN", "muragebox_url",
+        "ELECTRON_RUN_AS_NODE", "electron_run_as_node", "DWEB_URL", "dweb_url",
+        "PH_ANDROID_SERIAL", "ph_android_serial",
+      ].map((key, index) => [`blocked${index}`, { command: "blocked", env: { [key]: "private-value" } }])),
+      notes: { command: "notes", env: { NOTES_TOKEN: "notes-token" } },
+    });
+    const before = JSON.stringify(config);
+    expect(customMcpServers(config)).toEqual({
+      notes: { command: "notes", args: [], env: { NOTES_TOKEN: "notes-token" } },
+    });
+    expect(JSON.stringify(config)).toBe(before);
   });
 
   it("skips url transports with a teaching message, not a crash", () => {

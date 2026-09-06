@@ -8,6 +8,7 @@ import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 import { McpServersPanel } from "./McpServersPanel";
+import { useDesktopSurface } from "@/lib/use-surface";
 
 interface ToolkitCard {
   slug: string;
@@ -92,13 +93,14 @@ export type ConnectorInventoryPhase = "loading" | "ready" | "error";
 
 export function connectorActionLabel(
   phase: ConnectorInventoryPhase,
-  state: { busy: boolean; included: boolean; canContinue: boolean; hasAccounts: boolean; failed: boolean },
+  state: { busy: boolean; included: boolean; canContinue: boolean; pending?: boolean; hasAccounts: boolean; failed: boolean },
 ) {
   if (state.busy) return null;
   if (state.included) return "Included";
   if (phase === "loading") return "Checking…";
   if (phase === "error") return "Unavailable";
   if (state.canContinue) return "Continue";
+  if (state.pending) return "Check status";
   if (state.hasAccounts) return "Add account";
   if (state.failed) return "Retry";
   return "Connect";
@@ -193,6 +195,7 @@ function ServiceIcon({ card }: { card: ToolkitCard }) {
 
 export function PluginsPanel() {
   const { dispatch } = useStore();
+  const desktop = useDesktopSurface();
   const dialogRef = useRef<HTMLDivElement>(null);
   // Which half of the dialog is showing: the Composio marketplace, or the
   // person's own MCP commands. Two different things behind one door.
@@ -237,6 +240,11 @@ export function PluginsPanel() {
     }));
     return api(`/api/connectors?services=${slugs.join(",")}`)
       .then((r) => {
+        if (r.credentialStore === "unavailable") {
+          setStale(true);
+          setInventoryPhase("error");
+          throw new Error("Connection status could not be checked because the credential store is unavailable. Showing the previous account status.");
+        }
         const services = onlyLatestConnectorResponses(
           r.services ?? {},
           latestStatusRequests.current,
@@ -262,7 +270,10 @@ export function PluginsPanel() {
         }
         return services;
       })
-      .catch(() => ({}));
+      .catch((cause) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return {};
+      });
   }, []);
 
   const refreshConnectedStatus = useCallback((force = false): Promise<Record<string, ConnectorStatus>> => {
@@ -271,6 +282,7 @@ export function PluginsPanel() {
     return preloadConnectedApps(force)
       .then(({ services, authoritative }) => {
         setStale(!authoritative);
+        setInventoryPhase(authoritative ? "ready" : "error");
         setStatus((current) => mergeCompleteConnectorStatus(
           current,
           services,
@@ -297,10 +309,6 @@ export function PluginsPanel() {
     if (!hadCachedInventory) setInventoryPhase("loading");
     setError(null);
     return refreshConnectedStatus(force)
-      .then((services) => {
-        setInventoryPhase("ready");
-        return services;
-      })
       .catch((cause) => {
         if (!hadCachedInventory) setInventoryPhase("error");
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -415,6 +423,7 @@ export function PluginsPanel() {
   };
 
   const connect = async (slug: string, alias?: string) => {
+    if (desktop !== true) return;
     statusGenerations.current.set(slug, (statusGenerations.current.get(slug) ?? 0) + 1);
     setBusySlug(slug);
     setError(null);
@@ -454,6 +463,7 @@ export function PluginsPanel() {
   };
 
   const disconnectAccount = (slug: string, accountId: string) => {
+    if (desktop !== true) return;
     setBusySlug(slug);
     api(`/api/connectors/${slug}/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" })
       .then(() => refreshStatus([slug]))
@@ -487,7 +497,7 @@ export function PluginsPanel() {
         <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div>
             <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Plugins</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">Connect apps and your own MCP tools.</p>
+            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? "Connect apps and your own MCP tools." : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
           </div>
           <div className="flex items-center gap-1">
             {surface === "apps" && (
@@ -512,7 +522,7 @@ export function PluginsPanel() {
 
         <div className="border-b border-hairline/40 px-6 sm:px-8">
           <div className="flex gap-6" role="tablist" aria-label="Plugin type">
-            {(["apps", "mcp"] as const).map((item) => (
+            {(desktop === true ? ["apps", "mcp"] as const : ["apps"] as const).map((item) => (
               <button
                 key={item}
                 type="button"
@@ -530,7 +540,7 @@ export function PluginsPanel() {
           </div>
         </div>
 
-        {surface === "mcp" ? <McpServersPanel /> : <>
+        {desktop === true && surface === "mcp" ? <McpServersPanel /> : <>
 
         {stale && (
           // Say which of the two things is true. Silence here is what makes a
@@ -538,8 +548,8 @@ export function PluginsPanel() {
           <div className="mx-6 mb-1 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning sm:mx-8">
             <TriangleAlert size={14} className="mt-px shrink-0" />
             <span>
-              Showing what was connected last time — this Mac's credential store could not be opened just now, so these
-              could not be re-checked. Your apps are still connected; restarting Murage usually clears this.
+              Showing the previous account inventory — connection status could not be checked just now.
+              Refresh connection status before adding another account.
             </span>
           </div>
         )}
@@ -659,7 +669,7 @@ export function PluginsPanel() {
               // pointless authorize. It ships included.
               const included = card.noAuth === true
                 || (serviceStatus?.connected === true && !accounts.length && !pending && !failed);
-              const addingAccount = aliasSlug === card.slug;
+              const addingAccount = aliasSlug === card.slug && !pending;
               const busy = busySlug === card.slug;
               return (
                 <div
@@ -670,17 +680,32 @@ export function PluginsPanel() {
                     <ServiceIcon card={card} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[14px] font-medium text-ink">{card.label}</div>
-                      <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">
-                        {pending ? "Finish setup in your browser" : failed && !accounts.length ? "Authorization expired — try again" : card.blurb}
+                      <div className={cn("mt-0.5 text-[12.5px] text-ink-secondary", !(pending && !pendingUrls[card.slug]) && "truncate")}>
+                        {pending
+                          ? pendingUrls[card.slug]
+                            ? "Finish setup in your browser"
+                            : "Finish setup in your browser, or disconnect the pending account below to start again"
+                          : failed && !accounts.length
+                            ? /^failed$/i.test(serviceStatus?.status ?? "")
+                              ? "Authorization failed — try again"
+                              : "Authorization expired — try again"
+                            : card.blurb}
                       </div>
                     </div>
                     <button
                       type="button"
-                      disabled={!configured || inventoryPhase !== "ready" || busy || included}
+                      disabled={desktop !== true || !configured || inventoryPhase !== "ready" || busy || included}
+                      title={desktop !== true ? "Manage connections in the desktop app" : undefined}
                       onClick={() => {
-                        if (pending && pendingUrls[card.slug]) {
+                        if (pending) {
+                          setAliasSlug(null);
                           setError(null);
-                          void openConnectUrl(pendingUrls[card.slug]).catch((e) => setError(e.message));
+                          if (pendingUrls[card.slug]) {
+                            void openConnectUrl(pendingUrls[card.slug]).catch((e) => setError(e.message));
+                          } else {
+                            void refreshStatus([card.slug]);
+                            startPolling(card.slug);
+                          }
                         } else if (accounts.length) {
                           setAliasSlug((current) => current === card.slug ? null : card.slug);
                           setAliasDraft("");
@@ -695,6 +720,7 @@ export function PluginsPanel() {
                           busy,
                           included,
                           canContinue: Boolean(pending && pendingUrls[card.slug]),
+                          pending,
                           hasAccounts: accounts.length > 0,
                           failed: Boolean(failed),
                         })
@@ -718,7 +744,7 @@ export function PluginsPanel() {
                             </div>
                             <button
                               type="button"
-                              disabled={busy}
+                              disabled={desktop !== true || busy}
                               onClick={() => {
                                 if (!window.confirm(disconnectAccountConfirmation(card.label, account))) return;
                                 disconnectAccount(card.slug, account.id);
@@ -733,7 +759,7 @@ export function PluginsPanel() {
                       })}
                     </div>
                   )}
-                  {addingAccount && (
+                  {desktop === true && addingAccount && (
                     <form
                       className="ml-14 mt-3 flex items-center gap-2"
                       onSubmit={(event) => {
