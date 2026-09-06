@@ -5,8 +5,9 @@ import { inspectInstallationArchive, writeInstallationArchive } from "./installa
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { restoreInstallation, rollbackInstallationRestore } from "./installation-restore.ts";
 import { reviewInstallation, activateInstallation } from "./installation-activation.ts";
+import { writeInstallationDamagedExport } from "./installation-damaged-export.ts";
 
-export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation>";
+export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation>";
 
 export async function installationRecoveryCommand(args: string[]): Promise<Record<string, unknown>> {
   const command = args[0];
@@ -19,6 +20,14 @@ export async function installationRecoveryCommand(args: string[]): Promise<Recor
   if (command === "backup" && options.size === 2 && options.has("--data-dir") && options.has("--output")) {
     const result = await writeInstallationArchive(options.get("--data-dir")!, options.get("--output")!);
     return { ok: true, operation: "backup", path: result.path, sha256: result.sha256, snapshotId: result.manifest.snapshotId, files: result.manifest.files.length, omitted: result.manifest.omitted, missing: result.manifest.missing, restorePolicy: result.manifest.restorePolicy };
+  }
+  if (command === "export-damaged" && options.size === 2 && options.has("--data-dir") && options.has("--output")) {
+    const result = await writeInstallationDamagedExport(options.get("--data-dir")!, options.get("--output")!);
+    return { ok: true, operation: "export-damaged", path: result.path, sha256: result.sha256,
+      snapshotId: result.manifest.snapshotId, files: result.manifest.files.length,
+      omitted: result.manifest.omitted, missing: result.manifest.missing,
+      restorePolicy: result.manifest.restorePolicy, complete: false, activationAvailable: false,
+      warning: "Private preservation only: raw files may contain credentials and personal data. Do not share this archive. It is not a complete backup and cannot be restored automatically." };
   }
   if (command === "inspect" && options.size === 1 && options.has("--archive")) {
     const scratch = mkdtempSync(join(tmpdir(), "murage-backup-inspect-command-"));

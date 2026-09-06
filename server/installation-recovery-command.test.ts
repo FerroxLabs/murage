@@ -35,6 +35,18 @@ it("backs up and inspects an explicit offline installation through the real CLI"
   expect(readFileSync(join(f.data, "config.json"))).toEqual(original);
 });
 
+it("exports damaged bytes privately without claiming a restorable backup", async () => {
+  const f = fixture();
+  const damaged = '{"secret":"damaged-private-canary",';
+  writeFileSync(join(f.data, "config.json"), damaged);
+  const result = await run(["export-damaged", "--data-dir", f.data, "--output", f.target]);
+  expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, operation: "export-damaged", complete: false,
+    activationAvailable: false, restorePolicy: "preservation-only-no-restore", warning: expect.stringContaining("Do not share") });
+  expect(result.stdout + result.stderr).not.toContain("damaged-private-canary");
+  expect(readFileSync(join(f.data, "config.json"), "utf8")).toBe(damaged);
+  await expect(run(["inspect", "--archive", f.target])).rejects.toMatchObject({ code: 1 });
+});
+
 it("fails clearly for active ownership, duplicate options or a restore without target and inspected hash", async () => {
   const f = fixture();
   const owner = acquireDataDirLease(f.data);
