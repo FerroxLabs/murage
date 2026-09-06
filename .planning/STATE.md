@@ -1,5 +1,31 @@
 # Murage takeover state
 
+Live ownerpilot roundtrip works with authenticatedClaude, but harmless repeat-text
+request refused because UNTRUSTED wrapper lacked paired-owner task semantics.
+Bounded acceptance correction: channel-only trusted system instruction explicitly
+permits ordinary requests while preserving unattended origin/approvals/budgets and
+no text-based authentication/security authority. Do not remove untrusted boundary
+or markchannel as desktop. Check channel regression/type/build and live harmless
+request once; no broad audit. Owner screenshot is failure evidence, not MVPpass.
+
+Telegram received realowner task and delivered Claude login error (not successful
+model task). Rootcause proven: automation launcher lacked USER/LOGNAME/SHELL;
+sameabsolute Claude binary authstatus false underpreviewenv, true when restoring
+OS userInfo identity. Corrected livepreview launch; actualparentenv authstatus
+nowtrue/claude.ai/exit0. No Claude login/account/provider code change needed.
+Live revoke HTTP200 verified enabledfalse/pairedfalse/pending0; preview cleanquit0.
+Restarted private0.1.47-mvp.3 with normalidentity, saved encrypted token retained;
+new owner pairing needed. Smoke launcher updated to preserve sameidentity.
+In-app engine sign-in explicitly deferred in MURAGE-PLAN.md per Sean.
+
+Live Telegram setup progressed: fixae69caf7 actual credential IPC3tests PASS,
+private Mac0.1.47-mvp.3 package90931 exit0. Running newpreview on existingprofile,
+encrypted credential save SUCCEEDED through desktopIPC; statusconfigured true.
+Real getMe/pair succeeded for SableCOS_Bot identity8863860677, defaultworkspace
+Chief Sable. Waiting user owner /pair command; challenge intentionally notstored
+in plan. No fake owner binding or synthetic Telegram message. Token retained
+encrypted per explicit user direction; installedapp unchanged, nothingpublished.
+
 Telegram live pilot authorized on existing profile/Sable (workspaceChief).
 User explicitly authorized retaining supplied token; no rotation prerequisite.
 Credential:set failed404 and rolledback; no channel started. Confirmed APIstatus

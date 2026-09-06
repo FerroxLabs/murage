@@ -39,6 +39,18 @@ additional broad audits or rebuild already passing features.
 
 ## Deferred from this MVP
 
+- Telegram conversation continuity: current intake creates one routine task per
+  message, so follow-up messages lack the previous task's conversation. User
+  screenshot demonstrated this; keep as explicit limitation, not a delivery
+  failure or a claim that Sable lacks identity. Persistent owner-chat threading
+  needs a separately scoped design retaining budgets and revocation semantics.
+
+- In-app engine authentication: Sean observed Claude's `/login` cannot be
+  completed from Murage/Telegram. Add a supported engine sign-in/reconnect flow
+  and actionable channel error guidance; never imply sending `/login` to a bot
+  authenticates its desktop CLI. Explicitly deferred by Sean; current investigation
+  remains the discrepancy between working terminal auth and Sable's failed turn.
+
 - Slack, Discord and WhatsApp: coming soon, non-interactive labels only where a
   Channels screen exists. No adapter/pairing/approval implementation tonight.
 - Marketplace, hosted/private/unlisted sharing, accounts service, moderation,
