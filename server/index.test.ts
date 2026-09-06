@@ -3495,6 +3495,65 @@ describe("harness HTTP API", () => {
     expect(after.modelSelection.effort).toBeUndefined();
   });
 
+  it("P07 computer destinations round trip through the API and clear persisted Auto", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: false })).status).toBe(200);
+      for (const computer of ["off", "cloud", "vm", "local", "browser", null]) {
+        const patched = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer });
+        expect(patched.status).toBe(200);
+        const expected = computer ?? undefined;
+        expect(patched.body.bot.computer).toBe(expected);
+        const reread = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
+        expect(reread.computer).toBe(expected);
+        const stored = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")).find((entry: { id: string }) => entry.id === bot.id);
+        if (computer === null) expect(stored).not.toHaveProperty("computer");
+        else expect(stored.computer).toBe(computer);
+      }
+      for (const computer of ["auto", "unknown", 7, {}, []]) {
+        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer })).status).toBe(400);
+      }
+      const stored = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")).find((entry: { id: string }) => entry.id === bot.id);
+      expect(stored).not.toHaveProperty("computer");
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
+  it("P07 explicit browser suppresses desktop mounts despite stale VPS autostart preference", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "browser", browser: false, cloudBackend: "vps", autoStartVps: true })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      expect(turn.dump.mcpConfig.mcpServers.agents).toBeTruthy();
+      expect(turn.dump.mcpConfig.mcpServers).not.toHaveProperty("computer");
+      // Browser engine enablement is a separate preference; this assertion
+      // proves destination isolation, not a real desktop/browser session.
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("P07 Auto reset requires acknowledgement when unattended host control is possible", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "browser", autoApprove: true })).status).toBe(200);
+      const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null });
+      expect(blind.status).toBe(process.platform === "darwin" ? 400 : 200);
+      if (process.platform === "darwin") {
+        expect(blind.body.error).toContain("acknowledgeLocalAuto");
+        const unchanged = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
+        expect(unchanged.computer).toBe("browser");
+      }
+      const approved = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null, acknowledgeLocalAuto: true });
+      expect(approved.status).toBe(200);
+      expect(approved.body.bot.computer).toBeUndefined();
+      expect(approved.body.bot.autoApprove).toBe(true);
+      const stored = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")).find((entry: { id: string }) => entry.id === bot.id);
+      expect(stored).not.toHaveProperty("computer");
+      expect(stored).not.toHaveProperty("acknowledgeLocalAuto");
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
   it("grants Auto on this computer only through the warning acknowledgement", async () => {
     const created = await api("POST", "/api/bots");
     const bot = created.body.bot;

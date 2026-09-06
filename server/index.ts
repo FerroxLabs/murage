@@ -9091,11 +9091,12 @@ const server = createServer(async (req, res) => {
         } else return json(res, 400, { error: "browserProfile must name an existing browser profile" });
       }
       if (
-        body.computer !== undefined &&
-        (typeof body.computer !== "string" || !["cloud", "vm", "local", "off"].includes(body.computer))
+        body.computer !== undefined && body.computer !== null &&
+        (typeof body.computer !== "string" || !["cloud", "vm", "local", "browser", "off"].includes(body.computer))
       ) {
-        return json(res, 400, { error: "computer must be cloud, vm, local, or off" });
+        return json(res, 400, { error: "computer must be cloud, vm, local, browser, off, or null for Auto" });
       }
+      if (body.computer === null) patch.computer = undefined;
       if (body.cloudBackend !== undefined && (typeof body.cloudBackend !== "string" || !["box", "vps"].includes(body.cloudBackend))) {
         return json(res, 400, { error: "cloudBackend must be box or vps" });
       }
@@ -9173,7 +9174,9 @@ const server = createServer(async (req, res) => {
       const wantsComputer = body.computer !== undefined ? body.computer : existingBot?.computer;
       const wantsAuto = body.autoApprove !== undefined ? body.autoApprove : existingBot?.autoApprove === true;
       const alreadyGranted = existingBot?.computer === "local" && existingBot?.autoApprove === true;
-      if (wantsComputer === "local" && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
+      const autoMayUseLocal = body.computer === null && shouldMountLocalComputer({ requested: undefined,
+        hostPlatform: process.platform, providerSupportsLocal: true });
+      if ((wantsComputer === "local" || autoMayUseLocal) && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
         return json(res, 400, {
           error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)",
         });
