@@ -41,7 +41,7 @@ vi.mock("node:fs", async (original) => {
 
 describe("explicit web search configuration", () => {
   const file = join(DATA_DIR, "config.json");
-  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_TAVILY_SEARCH_KEY", undefined); vi.stubEnv("MURAGE_EXA_SEARCH_KEY", undefined); });
   afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
 
   it("persists and reloads selected search keys while provider-only updates preserve them", () => {
@@ -56,6 +56,32 @@ describe("explicit web search configuration", () => {
     saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" } });
     saveConfig({ webSearch: { provider: "off", tavilyApiKey: "" } });
     expect(loadConfig().webSearch).toEqual({ provider: "off", tavilyApiKey: "", exaApiKey: "fake-exa-key" });
+  });
+
+  it("supports key-only encrypted credential updates without changing the selected provider", () => {
+    saveConfig({ webSearch: { provider: "exa", tavilyApiKey: "file-tavily", exaApiKey: "file-exa" } });
+    const patch = parseConfigPatch({ webSearch: { tavilyApiKey: "new-tavily" } });
+    saveConfig(patch);
+    expect(loadConfig().webSearch).toEqual({ provider: "exa", tavilyApiKey: "new-tavily", exaApiKey: "file-exa" });
+    expect(parseStoredConfig({ webSearch: { tavilyApiKey: "fixture" } }).webSearch?.provider).toBeUndefined();
+  });
+
+  it("hydrates and synchronizes only Murage-specific search keys and strips them from children", () => {
+    saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "", exaApiKey: "" } });
+    vi.stubEnv("TAVILY_API_KEY", "existing-engine-key");
+    vi.stubEnv("EXA_API_KEY", "existing-mcp-key");
+    vi.stubEnv("MURAGE_TAVILY_SEARCH_KEY", "encrypted-tavily");
+    vi.stubEnv("MURAGE_EXA_SEARCH_KEY", "encrypted-exa");
+    expect(loadConfig().webSearch).toEqual({ provider: "tavily", tavilyApiKey: "encrypted-tavily", exaApiKey: "encrypted-exa" });
+    syncCredentialEnv({ webSearch: { tavilyApiKey: "rotated-tavily" } });
+    expect(loadConfig().webSearch?.tavilyApiKey).toBe("rotated-tavily");
+    syncCredentialEnv({ webSearch: { tavilyApiKey: "" } });
+    expect(process.env.MURAGE_TAVILY_SEARCH_KEY).toBeUndefined();
+    expect(loadConfig().webSearch?.tavilyApiKey).toBe("");
+    expect(loadConfig().webSearch?.exaApiKey).toBe("encrypted-exa");
+    const env = { MURAGE_TAVILY_SEARCH_KEY: "private-tavily", MURAGE_EXA_SEARCH_KEY: "private-exa", TAVILY_API_KEY: process.env.TAVILY_API_KEY, EXA_API_KEY: process.env.EXA_API_KEY };
+    stripWorkspaceCredentialEnv(env);
+    expect(env).toEqual({ TAVILY_API_KEY: "existing-engine-key", EXA_API_KEY: "existing-mcp-key" });
   });
 
   it("validates the strict provider schema and leaves legacy engine search unchanged", () => {

@@ -1315,7 +1315,11 @@ describe("harness HTTP API", () => {
     let activeBotId: string | undefined;
     try {
       expect((await api("PATCH", "/api/config", { webSearch: { provider: "tavily", tavilyApiKey: secret } })).status).toBe(404);
-      expect((await desktopApi("PATCH", "/api/config?secretStorage=external", { webSearch: { provider: "tavily", tavilyApiKey: secret } })).status).toBe(409);
+      const external = await desktopApi("PATCH", "/api/config?secretStorage=external", { webSearch: { provider: "tavily", tavilyApiKey: secret } });
+      expect(external.status).toBe(200);
+      expect(JSON.stringify(external.body)).not.toContain(secret);
+      expect(JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8")).webSearch).toEqual({ provider: "tavily", tavilyApiKey: "" });
+      expect((await api("GET", "/api/config")).body.webSearch.tavilyConfigured).toBe(true);
       const saved = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "tavily", tavilyApiKey: secret, exaApiKey: secret + "-exa" } });
       expect(saved.status).toBe(200);
       expect(JSON.stringify(saved.body)).not.toContain(secret);

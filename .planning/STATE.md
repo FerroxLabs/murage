@@ -1,6 +1,22 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P17 encrypted search custody ACCEPTED (confirmation round 2): extend existing desktop
+credential:set/migration path for two search keys; key-only saves preserve provider
+choice. Use MURAGE_TAVILY_SEARCH_KEY/MURAGE_EXA_SEARCH_KEY server injection only,
+strip those private vars from engine children, retain ambient Tavily/Exa vars.
+External-secret config persists empty tombstones, not raw keys. Checks: existing
+credential migration/state tests, config hydrate/sync/strip/clear, actual isolated
+external-secret API tombstones/redacted status, mapping proof and combined types.
+Two rounds; fake credentials only. Real OS store availability/native relaunch
+proof remains separate; do not touch live Keychain or installed app.
+Evidence: config/migration 104 tests PASS; credential state/storage 17 PASS;
+actual main credential-mapping Node check PASS, now named .node-test.mjs for
+the existing Node runner. Initial invocation incorrectly used Node for two
+Vitest files; corrected runner passed without product changes. Actual API/SSE
+27037 PASS (1 scoped / 216 skipped) external-secret disk tombstone/runtime
+configured/no public secret and active-engine compatibility. Combined types
+94298 PASS. Stage only search custody files/hunks, not paused budget changes.
 P17 search configuration ACCEPTED (confirmation round 2): explicit engine/tavily/exa/
 off selection with config-only write-only keys; provider-only patch preserves
 keys and explicit empty clears. Absent selection keeps existing engine/tool
