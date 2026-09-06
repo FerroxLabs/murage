@@ -117,22 +117,28 @@ const dumpState: Record<string, unknown> = { argv, env: dumpEnv };
 if (process.env.FAKE_ACP_DUMP) {
   writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: dumpEnv }, null, 2));
 }
-if (argv.includes("--version")) {
-  console.log("fake-acp 1.0.0");
+async function printProbeAndExit(text: string): Promise<never> {
+  // Forced exit can discard pending pipe output. Probe callers must receive
+  // the complete response before this short-lived fixture terminates.
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(`${text}\n`, error => error ? reject(error) : resolve());
+  });
   process.exit(0);
+}
+if (argv.includes("--version")) {
+  await printProbeAndExit("fake-acp 1.0.0");
 }
 // Cursor's driver probes `agent status` / `agent models` on the same binary
 // it later spawns for ACP. Answer those without entering the JSON-RPC loop
 // so catalog/auth tests do not hang on stdin.
 if (argv[0] === "status" || argv[0] === "whoami") {
   const authenticated = process.env.FAKE_ACP_AUTH !== "0";
-  console.log(JSON.stringify({ isAuthenticated: authenticated }));
-  process.exit(0);
+  await printProbeAndExit(JSON.stringify({ isAuthenticated: authenticated }));
 }
 if (argv[0] === "models" || argv.includes("--list-models")) {
   if (models.length) {
     const verbose = argv.includes("--verbose");
-    console.log(
+    await printProbeAndExit(
       models.flatMap((slug) => verbose
         ? [
             slug,
@@ -146,9 +152,8 @@ if (argv[0] === "models" || argv.includes("--list-models")) {
           ]
         : [slug]).join("\n"),
     );
-    process.exit(0);
   }
-  console.log(
+  await printProbeAndExit(
     [
       "Available models",
       "",
@@ -158,7 +163,6 @@ if (argv[0] === "models" || argv.includes("--list-models")) {
       "cursor-live - Cursor Live",
     ].join("\n"),
   );
-  process.exit(0);
 }
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
