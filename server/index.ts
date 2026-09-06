@@ -9031,6 +9031,10 @@ const server = createServer(async (req, res) => {
       }
       const patch: Record<string, unknown> = {};
       Object.assign(patch, profile.patch);
+      if (body.sidebarHidden !== undefined) {
+        if (typeof body.sidebarHidden !== "boolean") return json(res, 400, { error: "sidebarHidden must be true or false" });
+        patch.sidebarHidden = body.sidebarHidden;
+      }
       let section: string | undefined | null;
       if (body.section !== undefined) {
         if (body.section === null) section = null;

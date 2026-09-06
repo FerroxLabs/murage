@@ -289,6 +289,7 @@ export interface Bot {
   voice?: string;
   pinned?: boolean;
   hidden?: boolean;
+  sidebarHidden?: boolean;
   /** Sidebar section this bot renders under; absent = unsectioned. */
   section?: string;
   /** the one message pinned to the top of this bot's active thread */

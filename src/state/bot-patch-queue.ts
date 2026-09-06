@@ -19,6 +19,7 @@ export type BotUpdatePatch = Partial<
     | "voice"
     | "pinned"
     | "hidden"
+    | "sidebarHidden"
     | "section"
     | "pinnedMessageId"
     | "chiefOfStaff"
