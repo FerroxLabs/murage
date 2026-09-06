@@ -1,6 +1,25 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P17 settings UI ACCEPTED (round 1): extend Connections with existing
+design tokens, explicit engine/Tavily/Exa/native-off choices, write-only password
+fields, encrypted desktop save/clear and browser config fallback. Saving a key
+does not claim successful provider authentication. Explain separate charges/query
+transfer and that native Off does not disable independently configured engine
+tools. No search on save. Checks frozen: isolated browser choice/save/clear/error/
+IPC flows, phone/light/dark visual checks, types/contrast. Two rounds; p03 owns
+component/SettingsModal/browser tests. Root integration; native and live-provider
+pilot remain open, budgetcandidate stays paused. Existing DESIGN.md governs;
+no rebrand, style-selection interview or broad visual audit.
+Evidence: 5 browser tests PASS, frontend types PASS, contrast 37 pairs per skin
+PASS; light/dark 390px screenshots reviewed. No paid search on save, secure IPC
+and key-only browser fallback, failure/clear/provider preservation verified.
+P11 paused budget relocated (not corrected or retested) to
+/Volumes/Mando/WaylandBots/murage-event-budget-paused, branch
+codex/murage-event-budget-paused at base 110bd8fa. Six tracked-file diffs copied
+exactly and new test cmp-verified before removing only those own edits from the
+integration checkout. Budget still BLOCKED at round 2; previous decision request
+stands. Main checkout server diff is clean; no budget code included in search UI.
 P17 tool mount ACCEPTED (confirmation round 2): add web_search to existing
 agents MCP surface, scoped by current server capability and server-selected
 provider. No keys/provider override from model arguments. Off/engine selection
