@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NotificationPreferences } from "../../shared/notification-preferences";
@@ -20,12 +20,12 @@ test.beforeAll(async () => {
       load(id) {
         if (id === "\0notification-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,init);const value=await r.json();if(!r.ok)throw new Error(value.error);return value;}export function useStore(){const [config,setConfig]=React.useState(window.fixtureConfig);return {state:{config},dispatch:action=>setConfig(action.config)}}";
         if (id !== "\0notification-settings") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {NotificationSettings} from '/src/components/NotificationSettings.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';window.fixtureConfig=await (await fetch('/api/config')).json();createRoot(document.getElementById('root')).render(React.createElement(NotificationSettings));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {NotificationSettings} from '/src/components/NotificationSettings.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const query=new URLSearchParams(location.search);setLocale(query.get('lang')||'en');document.documentElement.dataset.skin=query.get('skin')||'dark';window.fixtureConfig=await (await fetch('/api/config')).json();createRoot(document.getElementById('root')).render(React.createElement(NotificationSettings));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/__notifications?") && req.url !== "/__notifications") return next();
         res.setHeader("content-type", "text/html");
-        res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app)"><main id="root" style="padding:16px;max-width:620px;margin:16px auto"></main><script type="module" src="/__notifications.js"></script>');
+        res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app)"><main id="root" style="padding:16px;max-width:620px;margin:0 auto;height:100dvh;overflow-y:auto;box-sizing:border-box"></main><script type="module" src="/__notifications.js"></script>');
       }); },
     }],
   });
@@ -35,6 +35,31 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
 const base: NotificationPreferences = { attention: true, completion: true, failures: true, previewContent: true };
+for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("translated quiet-hour validation and save: " + locale, async ({ page }, info) => {
+  await notificationAPI(page);
+  const pack = JSON.parse(readFileSync(new URL("../locales/" + locale + ".json", import.meta.url), "utf8"));
+  let notifications: NotificationPreferences = { ...base, attention: false, previewContent: false };
+  let writes = 0;
+  await page.route("**/api/config", route => {
+    if (route.request().method() === "PUT") { writes++; notifications = route.request().postDataJSON().notifications; }
+    return route.fulfill({ json: { notifications } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(origin + "/__notifications?lang=" + locale);
+  await expect(page.getByRole("heading", { name: pack["notificationSettings.title"] })).toBeVisible();
+  await page.getByRole("checkbox", { name: pack["notificationSettings.quietLabel"], exact: true }).check();
+  await page.getByLabel(pack["notificationSettings.timeZoneAccessible"], { exact: true }).fill("Invalid/Zone");
+  await page.getByRole("button", { name: pack["notificationSettings.save"], exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText(pack["notificationSettings.errorZone"]);
+  expect(writes).toBe(0);
+  await page.getByLabel(pack["notificationSettings.timeZoneAccessible"], { exact: true }).fill("Europe/London");
+  await page.getByRole("button", { name: pack["notificationSettings.save"], exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText(pack["notificationSettings.saved"]);
+  expect(notifications).toMatchObject({ attention: false, previewContent: false, quietHours: { enabled: true, timeZone: "Europe/London" } });
+  expect(await page.evaluate(() => (window as any).permissionCalls)).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  if (["fr", "ja"].includes(locale)) await page.screenshot({ path: info.outputPath("notifications-" + locale + ".png"), fullPage: true });
+});
 async function notificationAPI(page: Page) {
   await page.addInitScript(() => {
     (window as any).permissionCalls = 0;
