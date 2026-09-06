@@ -265,7 +265,7 @@ describe("the vendored tree", () => {
     const catalog = loadLocalCatalog()!;
     const slugs = new Set(catalog.teams.map((team) => team.slug));
     const vendored = readdirSync(join(repoRoot, "library", "packages"));
-    expect(vendored).toHaveLength(65);
+    expect(vendored).toHaveLength(68);
     for (const file of vendored) {
       const slug = file.replace(/\.(json|md)$/, "");
       expect(slugs.has(slug), file).toBe(true);

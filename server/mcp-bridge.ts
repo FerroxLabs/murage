@@ -309,7 +309,16 @@ export function runMcpBridge(options: BridgeOptions): void {
   };
   const detach = pipeMcpLines(process.stdin, createMcpBridgeInterceptor({
     answer,
-    forward: (line) => writeMcpLine(child.stdin, line),
+    forward: async (line) => {
+      try {
+        await writeMcpLine(child.stdin, line);
+      } catch (error) {
+        // Docker may close stdin before consuming a request. Stop feeding it,
+        // but let its close event report the actual transport exit status.
+        if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error;
+        detach();
+      }
+    },
     ...(client ? { gate: { isHeld: async () => (await client.state(true)).held } } : {}),
   }), () => child.stdin.end(), transportFailed);
   pipeMcpLines(child.stdout, answer, () => {}, transportFailed);
