@@ -1,9 +1,9 @@
 // A focused setup card shared by onboarding, the model picker, and runtime
 // errors. The command has one inline copy action and one primary next step;
 // unusable model lists stay out of the way until the engine is ready.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Check, Copy, Download, ExternalLink, LogIn, TerminalSquare } from "lucide-react";
-import type { EngineInstall, InstanceInfo } from "@/state/store";
+import { api, useStore, type EngineInstall, type InstanceInfo } from "@/state/store";
 import { cn } from "@/lib/cn";
 
 type Platform = "darwin" | "win32" | "linux";
@@ -35,26 +35,40 @@ export function needsCli(instance: InstanceInfo | undefined): boolean {
 }
 
 function CommandRow({ command, actionLabel }: { command: string; actionLabel: string }) {
-  const [status, setStatus] = useState<"copied" | "opened" | null>(null);
+  const [status, setStatus] = useState<"copied" | "opening" | "opened" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const opening = useRef(false);
   const canOpen = Boolean(window.muragebox?.openInstallTerminal);
 
   const settle = (next: "copied" | "opened") => {
     setStatus(next);
-    window.setTimeout(() => setStatus(null), 2200);
   };
 
   const copy = async () => {
+    setError(null);
     try {
       await navigator.clipboard.writeText(command);
       settle("copied");
     } catch {
-      // The command remains selectable when clipboard access is blocked.
+      setError("Could not copy the command. Select it above and copy it manually.");
     }
   };
 
   const openTerminal = async () => {
-    const opened = await window.muragebox!.openInstallTerminal!(command);
-    settle(opened ? "opened" : "copied");
+    if (opening.current) return;
+    opening.current = true;
+    setStatus("opening");
+    setError(null);
+    try {
+      const opened = await window.muragebox!.openInstallTerminal!(command);
+      if (!opened) throw new Error("Terminal did not open");
+      settle("opened");
+    } catch {
+      setStatus(null);
+      setError("Could not open Terminal. Copy the command and run it in your terminal, or try again.");
+    } finally {
+      opening.current = false;
+    }
   };
 
   return (
@@ -67,6 +81,7 @@ function CommandRow({ command, actionLabel }: { command: string; actionLabel: st
           <button
             type="button"
             onClick={() => void copy()}
+            disabled={status === "opening"}
             aria-label="Copy command"
             title="Copy command"
             className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] font-medium text-ink-secondary hover:bg-control hover:text-ink"
@@ -82,13 +97,14 @@ function CommandRow({ command, actionLabel }: { command: string; actionLabel: st
           <button
             type="button"
             onClick={() => void openTerminal()}
-            className="mt-2 flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110"
+            disabled={status === "opening"}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
           >
             {status === "opened" ? <Check size={14} /> : <TerminalSquare size={14} />}
-            {status === "opened" ? "Terminal opened" : actionLabel}
+            {status === "opening" ? "Opening Terminal…" : status === "opened" ? "Terminal opened" : actionLabel}
           </button>
           <p aria-live="polite" className="mt-1.5 text-center text-[11px] text-ink-secondary/70">
-            {status === "opened" ? "Paste the command and press Enter." : "The command is copied when Terminal opens."}
+            {status === "opened" ? "Paste the command and press Enter. Finish or cancel in Terminal, then check again below." : "Opening Terminal does not install or sign in for you."}
           </p>
         </>
       ) : (
@@ -101,6 +117,7 @@ function CommandRow({ command, actionLabel }: { command: string; actionLabel: st
           {status === "copied" ? "Command copied" : "Copy command"}
         </button>
       )}
+      {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
     </div>
   );
 }
@@ -115,6 +132,29 @@ export function EngineSetup({
   /** `inject` installs the CLI but deliberately skips cloud sign-in. */
   intent?: "cloud" | "inject";
 }) {
+  const { dispatch } = useStore();
+  const [checking, setChecking] = useState(false);
+  const [checkMessage, setCheckMessage] = useState<string | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const checkGate = useRef(false);
+  const checkAgain = async () => {
+    if (checkGate.current) return;
+    checkGate.current = true;
+    setChecking(true); setCheckError(null); setCheckMessage(null);
+    try {
+      const { instances }: { instances: InstanceInfo[] } = await api("/api/instances");
+      const current = instances.find((item) => item.instanceId === instance.instanceId);
+      if (!current) throw new Error("This engine was not returned. Refresh Settings and try again.");
+      dispatch({ type: "instances", instances });
+      setCheckMessage(current.snapshot.state !== "available"
+        ? current.snapshot.reason ?? "The engine is not detected yet. Finish setup and check again."
+        : needsSignIn(current) && intent === "cloud"
+          ? "Engine detected. Finish sign-in, then check again."
+          : "Engine detected. Select a model to test it with a task.");
+    } catch (error) {
+      setCheckError(error instanceof Error ? error.message : "Could not check this engine. Try again.");
+    } finally { checkGate.current = false; setChecking(false); }
+  };
   const install = instance.install;
   const installCommand = installCommandFor(install);
   const signInCommand = install?.signInCommand;
@@ -122,7 +162,7 @@ export function EngineSetup({
   const command = signInOnly ? signInCommand : installCommand;
   const title = signInOnly ? `Sign in to ${instance.displayName}` : `Install ${instance.displayName}`;
   const description = signInOnly
-    ? "Finish the account sign-in in Terminal. Reopen this menu afterward and we’ll check again."
+    ? "Finish the account sign-in in Terminal, then check again below."
     : intent === "inject"
       ? "Install the agent once, then you can run it with local models—no cloud sign-in required."
       : `Install the command-line app once. Models will appear here as soon as it’s ready${signInCommand ? "; sign-in may follow" : ""}.`;
@@ -153,12 +193,19 @@ export function EngineSetup({
       </div>
 
       {command ? (
-        <CommandRow command={command} actionLabel={signInOnly ? "Open sign-in in Terminal" : "Open install in Terminal"} />
+        <CommandRow key={command} command={command} actionLabel={signInOnly ? "Open sign-in in Terminal" : "Open install in Terminal"} />
       ) : (
         <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
           There isn’t a one-line installer for this platform. Use the setup guide below.
         </p>
       )}
+
+      <button type="button" disabled={checking} onClick={() => void checkAgain()}
+        className="mt-3 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] font-medium text-ink hover:bg-raised-hover disabled:opacity-50">
+        {checking ? "Checking engine…" : "Check again"}
+      </button>
+      {checkMessage && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{checkMessage}</p>}
+      {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
 
       {!signInOnly && install.needsNode && (
         <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary/70">
