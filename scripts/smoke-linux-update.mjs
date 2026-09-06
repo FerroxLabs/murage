@@ -45,6 +45,10 @@ const releaseDir = path.join(root, "release");
 // published feed is always an upgrade regardless of what is packaged here.
 const PRETEND_VERSION = "0.0.1";
 const candidateFeed = process.argv.includes("--candidate-feed");
+const expectedVersion = process.argv.find((argument) => argument.startsWith("--expected-version="))?.slice("--expected-version=".length);
+if (expectedVersion !== undefined && !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(expectedVersion)) {
+  throw new Error("expected-version must be stable X.Y.Z");
+}
 
 function fail(message) {
   console.error(`[smoke-linux-update] ${message}`);
@@ -178,6 +182,7 @@ async function main() {
     );
   }
   const offered = result.updateInfo.version;
+  if (expectedVersion !== undefined) assert.equal(offered, expectedVersion, "live feed offered a different release");
   console.log(`[smoke-linux-update] feed offers ${offered}`);
 
   const expected = result.updateInfo.files?.find((file) => file.url.endsWith(".AppImage"));
