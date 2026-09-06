@@ -19,6 +19,26 @@ No publication has occurred. Do not publish known failing or unverified required
 release outcomes merely to meet the requested date.
 ## Active package — internal-turn identity (Task26 row36)
 
+Independent Stage5/Task19 native-trace retention: implementation assigned to
+existing Astra worker, OWN server/drivers/native.ts/native.test.ts only. Outcome
+new writes retain bounded recent diagnostics:64KiB encoded record,4MiB current
+and one4MiB previous file perthread. These are chosen implementation defaults,
+not previously proved global policy. Visible omission/retention markers, valid
+NDJSON, redaction,0600creation, existingoversizedfile handling, and nonthrowing
+write/rotationfailure required. Excludes canonicalevents,DB/transcript retention,
+SSE,globalquotas and bounded inputserializationmemory. Frozen checks:pnpm exec
+vitest run server/drivers/native.test.ts server/redact.test.ts; pnpm typecheck;
+prechange writer control must show excess diskbytes, not compilationfailure.
+Use fixture tempdata and interleavedthread/multibyte/imageheavy cases. R1 not
+started; max2rounds; no reopened identity/recovery/clipboard/nativeMac cycles.
+Task19 scoped disposition:ACCEPTED round1.23 native/redaction tests passed;
+typecheck passed. Original append-only control reached3behavioral failures:
+75,092-byte record vs65,536limit, absent rotation after repeated writes, and
+4,195,473-byte legacy segment vs4,194,304limit. No compile/fixture failure
+counted as red control. Temporary original writer removed; evidence retained
+native-retention-round1.log/control.log/types.log. No second audit required.
+This accepts per-thread native diagnostic disk retention only, not all Task19.
+
 Independent Task17 packaging increment2026-09-06: build staged macOS arm64+x64
 artifacts from frozen copied source in .planning/native-mac-KBGGUp/source,
 using existing package:mac pipeline with --publish never. Preserve original
@@ -59,6 +79,24 @@ Correct only hook APP_ROOT and mismatched test-root variable; retain symlink,
 owner/mode and sandbox checks. Existing hook test is Linux-only and was skipped
 on Mac; add package-name regression and run that focused suite in native workflow.
 Ubuntu R2 will run same full artifact/package/upgrade smoke after correction.
+Linux-only correction committed/pushed bb19a25f9b126039edabc04607618536472ae3f9;
+Ubuntu confirmation run34004136148 started exact commit. Local hook source
+regression1passed/6Linux-only skips; native workflow runs all hook cases before
+rebuilding and repeating existing native acceptance. No further Ubuntu rounds
+if confirmation finds a blocker. Windows export90845 still live(gh PID81833),
+not yet available locally; GitHub successful artifact retained14days.
+Windows export90845 terminal exit1 after established download read timeout;
+no local installer export claimed. Job results exported windows-737e4ae1-job.json;
+successful GitHub artifact and its digest remain available. No blind download
+restart or concurrent duplicate transfer.
+Ubuntu confirmation34004136148 terminal FAILURE at AppImage update check:
+"No published versions on GitHub". Hook tests, package contents, real DEB
+upgrade and handed-over install command passed. Later packaged app lifecycle
+steps skipped. Cycle CLOSED/BLOCKED: first-release update test requires an
+existing published feed; do not publish an unaccepted build just to satisfy it.
+Need explicit disposition of first-release updater proof (controlled candidate
+feed before publication + real feed check afterward), not a silent skip/thirdrun.
+Logs ubuntu-bb19a25f-failed.log and job.json retained.
 No diagnostics artifact existed from failed run; exported failed step log retained.
 
 LATEST DISPOSITION:BLOCKED after round2, cycle CLOSED. Confirmation sessions
