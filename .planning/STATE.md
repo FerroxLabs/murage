@@ -1,6 +1,19 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P16 actual starter workspace API ACCEPTED (round 1): desktop-only local
+catalog/preview/import uses same handler and atomic callback as ZIP imports,
+with allowlisted starter IDs and explicit selection/hash/warning confirmation.
+No arbitrary posted manifests, special Chief grants or auto-enabled routines.
+Checks: actual isolated API installs all three additively, preview nonmutation,
+authority/stale hash/replay refusal, existing ZIP API regression, callback fatal
+guard and types. Two rounds. UI/first-task and fresh-start fix still not covered.
+Evidence: actual API2867 PASS2 (starterallthree +existingZIP;216 skipped),
+fatalguard77576 PASS1, combinedtypes45578 PASS. Preview leavesbotsfileunchanged;
+imports preserveeverypreexistingrecord, generatefreshunprivilegedbots, pauseall
+suggestedroutines, andrejectrepeat/stale/unauthorized/invalidprofile requests.
+No route accepts arbitrary posted packagecontents. Next guidedprofileUI and
+first-task handoff; no wholeP16/onboarding/startup completion claim.
 P16 starter import foundation ACCEPTED (round 1): allowlisted local three
 starter definitions become ordinary bundle manifests and use the exact same
 inspection/preparation/staging/atomic callback as ZIP imports. Add bounded

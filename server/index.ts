@@ -305,7 +305,8 @@ import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
-import { previewBotPackageImport, importBotPackageArchive, packageImportSelectionHash } from "./bot-package-import.ts";
+import { previewBotPackageImport, importBotPackageArchive, previewBotPackageContents, importBotPackageContents, packageImportSelectionHash } from "./bot-package-import.ts";
+import { listStarterProfiles, starterProfileContents, STARTER_PROFILE_IDS } from "./starter-profiles.ts";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { searchWeb, SearchError } from "./web-search.ts";
@@ -8046,10 +8047,14 @@ const server = createServer(async (req, res) => {
       } finally { rmSync(scratch, { recursive: true, force: true }); }
       return;
     }
-    if (method === "POST" && path === "/api/packages/import") {
+    if (method === "POST" && (path === "/api/packages/import" || path === "/api/starter-profiles")) {
       const body = await readBody(req);
-      if (typeof body.archivePath !== "string" || !body.archivePath) return json(res, 400, { error: "Archive path is required" });
-      if (body.action === "options") {
+      const starter = path === "/api/starter-profiles";
+      if (starter && body.action === "catalog") return json(res, 200, { profiles: listStarterProfiles() });
+      if (starter && !STARTER_PROFILE_IDS.includes(body.profileId)) return json(res, 400, { error: "Choose an available starter profile" });
+      const contents = starter ? starterProfileContents(body.profileId) : null;
+      if (!starter && (typeof body.archivePath !== "string" || !body.archivePath)) return json(res, 400, { error: "Archive path is required" });
+      if (!starter && body.action === "options") {
         const intake = await readBotPackageArchive(body.archivePath);
         if (intake.scan.blocked) return json(res, 200, { archiveSha256: intake.sha256, scan: intake.scan });
         const definition = intake.manifest.definition.package;
@@ -8061,7 +8066,9 @@ const server = createServer(async (req, res) => {
         });
       }
       if (!body.selection) return json(res, 400, { error: "Explicit selection is required" });
-      if (body.action === "preview") return json(res, 200, await previewBotPackageImport(body.archivePath, { selection: body.selection, existingBots: store.bots }));
+      if (body.action === "preview") return json(res, 200, contents
+        ? await previewBotPackageContents(contents, { selection: body.selection, existingBots: store.bots })
+        : await previewBotPackageImport(body.archivePath, { selection: body.selection, existingBots: store.bots }));
       if (body.action !== "import" || typeof body.archiveSha256 !== "string" || typeof body.reviewHash !== "string") return json(res, 400, { error: "Reviewed archive hash is required" });
       const selectionHash = packageImportSelectionHash(body.selection);
       const refuseRepeatedImport = () => {
@@ -8071,7 +8078,10 @@ const server = createServer(async (req, res) => {
         }
       };
       refuseRepeatedImport();
-      const result = await importBotPackageArchive({ archivePath: body.archivePath, dataDir: DATA_DIR,
+      const importSelected = (options: Omit<Parameters<typeof importBotPackageArchive>[0], "archivePath">) => contents
+        ? importBotPackageContents({ ...options, contents })
+        : importBotPackageArchive({ ...options, archivePath: body.archivePath });
+      const result = await importSelected({ dataDir: DATA_DIR,
         selection: body.selection, expectedArchiveSha256: body.archiveSha256, expectedReviewHash: body.reviewHash,
         acknowledgeWarnings: body.acknowledgeWarnings === true, existingBots: store.bots, modelSelection: await defaultSelection(),
         atomicCommit: ({ prepared }) => {
