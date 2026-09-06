@@ -410,7 +410,7 @@ test("confirmed desktop retains persistent approvals, MCP and routine editing", 
   await page.getByRole("tab", { name: "MCP servers" }).click();
   await expect(page.getByRole("tab", { name: "MCP servers" })).toHaveAttribute("aria-selected", "true");
   await mount(page, "calendar", true);
-  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Create(?: event)?$/ })).toBeVisible();
   await page.locator("[data-event-card]").first().click();
   const details = page.getByRole("dialog", { name: "Calendar event details" });
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toBeVisible();

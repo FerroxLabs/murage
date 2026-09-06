@@ -2,6 +2,7 @@
 // staged file per BUILD TARGET rather than per build host, and a staged file
 // name that cannot drift from the electron-builder `to:` basename.
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
@@ -196,7 +197,7 @@ describe("pinned fuigo packaging", () => {
 
   it("stages each target where electron-builder's per-platform `from:` looks", () => {
     for (const target of Object.keys(PINNED_ASSETS)) {
-      expect(stagedDirectory("/repo", target)).toBe(`/repo/dist-native/fuigo/${target}`);
+      expect(stagedDirectory("/repo", target)).toBe(join("/repo", "dist-native", "fuigo", target));
     }
   });
 

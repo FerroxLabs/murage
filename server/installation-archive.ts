@@ -219,7 +219,7 @@ export async function writeInstallationArchive(dataDir: string, destination: str
     await completed;
     const inspection = await inspectInstallationArchive(file, scratch, options);
     rmSync(inspection.directory, { recursive: true, force: true });
-    const fd = openSync(file, "r");
+    const fd = openSync(file, "r+"); // Flush the owned scratch file with write access on Windows.
     try { fsyncSync(fd); } finally { closeSync(fd); }
     linkSync(file, target);
     return { path: target, sha256: inspection.sha256, manifest };

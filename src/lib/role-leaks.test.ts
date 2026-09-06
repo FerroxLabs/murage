@@ -59,7 +59,7 @@ describe("the org chart has one reader", () => {
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^[ \t]*\/\/.*$/gm, "");
       if (!/\bchiefOfStaff\b|\bchiefScope\b/.test(source)) continue;
-      const name = relative(root, file);
+      const name = relative(root, file).replace(/\\/g, "/");
       if (!(name in ALLOWED)) offenders.push(name);
     }
     expect(offenders, "these read the org chart's raw fields with no recorded reason").toEqual([]);
@@ -76,7 +76,7 @@ describe("the org chart has one reader", () => {
   it("names a team leader a team leader, everywhere the sidebar says a role", () => {
     // The three defects reported against this file, pinned as text so they
     // cannot come back by someone re-reading the raw flag for convenience.
-    const sidebar = readFileSync(join(root, "components/Sidebar.tsx"), "utf8");
+    const sidebar = readFileSync(join(root, "components/Sidebar.tsx"), "utf8").replace(/\r\n/g, "\n");
 
     // The accent row belongs to the Chief alone.
     expect(sidebar).toContain('botRole(bot) === "chief"\n      ? selected');
@@ -96,7 +96,7 @@ describe("the org chart has one reader", () => {
     // machine-generated rows above the entire org chart and pushed a whole
     // team below the fold — which read as the team having been disconnected.
     // The members were rendered the whole time, just out of view.
-    const sidebar = readFileSync(join(root, "components/Sidebar.tsx"), "utf8");
+    const sidebar = readFileSync(join(root, "components/Sidebar.tsx"), "utf8").replace(/\r\n/g, "\n");
     const natural = sidebar.slice(
       sidebar.indexOf("const naturalSectionIds = ["),
       sidebar.indexOf("];", sidebar.indexOf("const naturalSectionIds = [")),

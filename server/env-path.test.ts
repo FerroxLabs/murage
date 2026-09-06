@@ -372,8 +372,8 @@ describe("resolveFuigoCli", () => {
   }
 
   it("points at the executable inside the packaged resource directory", () => {
-    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "darwin")).toBe("/R/fuigo/fuigo");
-    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "win32")).toBe("/R/fuigo/fuigo.exe");
+    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "darwin")).toBe(join("/R/fuigo", "fuigo"));
+    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "win32")).toBe(join("/R/fuigo", "fuigo.exe"));
     // Not "empty" — simply undeclared, which resolveFuigoCli turns into an error.
     expect(bundledFuigoPath({}, "darwin")).toBeNull();
     expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "  " }, "darwin")).toBeNull();

@@ -260,14 +260,14 @@ describe("token drift", () => {
         .replace(/^[ \t]*\/\/.*$/gm, "");
       const hits = source.match(/#[0-9a-fA-F]{3,8}\b/g);
       if (!hits) continue;
-      const name = relative(root, file);
+      const name = relative(root, file).replace(/\\/g, "/");
       if (!(name in ALLOWED)) offenders.push(`${name} (${hits.length}: ${hits[0]})`);
     }
     expect(offenders).toEqual([]);
     // The allowlist must not rot into a list of files that no longer exist.
     for (const name of Object.keys(ALLOWED)) {
       expect(`${name} exists`).toBe(
-        files.some((file) => relative(root, file) === name) ? `${name} exists` : `${name} missing`,
+        files.some((file) => relative(root, file).replace(/\\/g, "/") === name) ? `${name} exists` : `${name} missing`,
       );
     }
   });
