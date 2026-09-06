@@ -103,6 +103,8 @@ export interface RoutineRun {
    * separate `threadId` so recurring work never contaminates chat context. */
   sourceThreadId?: string;
   threadId?: string;
+  /** Provider identity for a Telegram turn in a reused conversation. */
+  channelTurnId?: string;
   startedAt?: number;
   finishedAt?: number;
   output?: string;
@@ -194,6 +196,8 @@ export interface RoutineManagerOptions {
   botState: (botId: string) => "ready" | "busy" | "missing";
   goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing";
   createTask: (botId: string, title: string, activate?: boolean) => { threadId: string } | null;
+  /** Telegram messages continue the bot's current conversation. */
+  channelThread?: (botId: string) => { threadId: string } | null;
   createGoalTask?: (groupId: string, title: string) => { threadId: string } | null;
   startTurn: (
     botId: string,
@@ -1100,6 +1104,12 @@ export class RoutineManager {
 
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
+        const sharedChannel = run.triggerSource === "channel" && run.target === "bot" && !!this.options.channelThread;
+        // Channel messages share history: dispatch the oldest queued message
+        // first, even though detached routine jobs retain their existing order.
+        if (sharedChannel && this.runs.slice(0, this.runs.indexOf(run)).some(
+          (prior) => prior.botId === run.botId && prior.triggerSource === "channel" && prior.status === "queued",
+        )) continue;
         // A queued interval represents the latest useful check, not a backlog
         // item. If the bot stayed busy across later occurrences, align this
         // scheduled receipt to the newest due point immediately before it can
@@ -1129,22 +1139,34 @@ export class RoutineManager {
           ? run.groupId
             ? this.options.createGoalTask?.(run.groupId, run.routineName) ?? null
             : null
-          : this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
+          : sharedChannel
+            ? this.options.channelThread!(run.botId)
+            : this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
         if (!task) {
           this.failRun(run, run.target === "room-goal"
             ? "Could not create a room task for this goal"
-            : "Could not create a task for this run");
+            : sharedChannel ? "Could not find the conversation for this channel" : "Could not create a task for this run");
           continue;
         }
+        if (sharedChannel && this.runs.some((active) => active.threadId === task.threadId &&
+          ["running", "waiting"].includes(active.status))) continue;
         run.threadId = task.threadId;
         run.startedAt = this.now();
         run.status = "running";
         this.save();
         this.emitRun(run);
+        const failDispatch = (message: string) => {
+          if (!sharedChannel) return this.failThread(task.threadId, message);
+          // A delayed callback from an earlier message cannot fail the next
+          // message merely because both used this conversation.
+          if (!["running", "waiting"].includes(run.status)) return;
+          this.failRun(run, message);
+          queueMicrotask(() => void this.tick());
+        };
         try {
           const prompt = run.prompt ?? this.routines.find((r) => r.id === run.routineId)?.prompt;
           if (!prompt) {
-            this.failThread(task.threadId, "The routine was deleted before it could start");
+            failDispatch("The routine was deleted before it could start");
             continue;
           }
           const triggerSource = run.triggerSource ?? (run.manual ? "manual" : "schedule");
@@ -1168,12 +1190,12 @@ export class RoutineManager {
               composeExecutionPrompt(prompt, run.attachments),
               run.runOn ?? "ember",
               triggerSource,
-              (message) => this.failThread(task.threadId, message),
+              failDispatch,
               run.event?.budgetId,
             );
           }
         } catch (error) {
-          this.failThread(task.threadId, error instanceof Error ? error.message : String(error));
+          failDispatch(error instanceof Error ? error.message : String(error));
         }
       }
     } finally {
@@ -1184,6 +1206,18 @@ export class RoutineManager {
   handleRuntimeEvent(event: RuntimeEvent): RoutineRun | null {
     const run = this.runs.find((r) => r.threadId === event.threadId && ["running", "waiting"].includes(r.status));
     if (!run) return null;
+    if (run.triggerSource === "channel" && this.options.channelThread) {
+      // A reused conversation also receives late events from its previous
+      // turn. Only the first fresh start can bind this delivery's identity.
+      if (!event.turnId) return null;
+      if (!run.channelTurnId) {
+        if (event.type !== "turn.started" || this.runs.some((prior) => prior.id !== run.id &&
+          prior.threadId === event.threadId && prior.channelTurnId === event.turnId)) return null;
+        run.channelTurnId = event.turnId;
+        this.save();
+      }
+      if (event.turnId !== run.channelTurnId) return null;
+    }
     // A room goal contains several provider turns. Its orchestrator owns the
     // terminal decision and reports it through finishGoalRun; one member's
     // completion and private coordinator envelope are only intermediate

@@ -1,5 +1,21 @@
 # Murage takeover state
 
+Telegram original MVP live test PASSED (user screenshot exact requested phrase,
+follow-up reply). New explicitly approved package: shared primary conversation,
+single-use owner approval buttons and HTML formatting; frozencontract at top of
+MURAGE-PLAN.md. Active implementation with two AstraMedium workers; no broad
+audit or unrelated changes. Live running772876a3 remains oldbehavior until new
+candidate verified. In-app sign-in remains deferred. Round1 focused worker tests
+formatter8PASS/history58PASS; combined root gates pending.
+
+Paired-owner instruction fix772876a3 packaged0.1.47-mvp.4 job29348 exit0;
+serverbuild7020 PASS. Focusedchannelset14passed+1testharnessselectorfailure;
+selector corrected (matched earlier unattended branch), confirmation2runtime
+tests PASS, unaffected13modulepasses reused. Live oldpreview revoke disabled
+binding, closeexit0; newpreview running with correctOS identity, encrypted token
+retained, realgetMe/pair succeeded. Waiting user command and harmless request
+for final behavioral confirmation; don't count fixture/source as model compliance.
+
 Live ownerpilot roundtrip works with authenticatedClaude, but harmless repeat-text
 request refused because UNTRUSTED wrapper lacked paired-owner task semantics.
 Bounded acceptance correction: channel-only trusted system instruction explicitly

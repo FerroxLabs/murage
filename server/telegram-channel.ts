@@ -5,13 +5,16 @@ import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
 import { normalizeTelegramUpdate } from "./telegram-update.ts";
 import { TelegramTransportError, type TelegramTransport } from "./telegram-transport.ts";
+import { formatTelegramHtml } from "./telegram-format.ts";
+import { TelegramApprovals, type TelegramApprovalActions } from "./telegram-approvals.ts";
 
 const identity = z.string().regex(/^[1-9]\d{0,15}$/).refine(value => Number.isSafeInteger(Number(value)));
 const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1), deliveryId: z.string(), prompt: z.string().max(5000), runId: z.string().max(200).optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "cancelled"]), response: z.string().max(4096).optional() }).strict();
 const schema = z.object({ version: z.literal(1), botIdentityId: identity, enabled: z.boolean(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), binding: z.object({ senderId: identity, chatId: identity }).strict().nullable(), pairing: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite() }).strict().nullable(), records: z.array(recordSchema).max(200) }).strict();
 type State = z.infer<typeof schema>;
 interface Options {
-  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage">; botIdentityId: string;
+  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery">>; botIdentityId: string;
+  approvals?: TelegramApprovalActions;
   enqueue: (input: { deliveryId: string; prompt: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
   now?: () => number;
@@ -27,9 +30,14 @@ export class TelegramChannel {
   private controller?: AbortController;
   private polling?: Promise<void>;
   private error: string | null = null;
+  private approvals?: TelegramApprovals;
   constructor(options: Options) {
     if (!identity.safeParse(options.botIdentityId).success) fail();
     this.options = options;
+    if (options.approvals && options.transport.answerCallbackQuery) this.approvals = new TelegramApprovals(options.approvals, {
+      sendMessage: input => options.transport.sendMessage(input),
+      answerCallbackQuery: input => options.transport.answerCallbackQuery!(input),
+    }, options.now);
     this.state = { version: 1, botIdentityId: options.botIdentityId, enabled: false, offset: 0, binding: null, pairing: null, records: [] };
     try {
       const stat = lstatSync(options.file);
@@ -66,10 +74,11 @@ export class TelegramChannel {
       uncertain: this.state.records.filter(record => record.state === "uncertain").length, error: this.error };
   }
   revoke() {
+    this.approvals?.clear();
     this.generation++; this.controller?.abort();
     this.mutate(state => { state.enabled = false; state.binding = null; state.pairing = null; for (const record of state.records) record.state = record.state === "sending" ? "uncertain" : ["accepted", "queued"].includes(record.state) ? "cancelled" : record.state; });
   }
-  stop() { this.stopped = true; this.generation++; this.controller?.abort(); }
+  stop() { this.approvals?.clear(); this.stopped = true; this.generation++; this.controller?.abort(); }
   pollOnce(): Promise<void> {
     if (this.polling) return this.polling;
     if (this.stopped || !this.state.enabled) return Promise.resolve();
@@ -91,6 +100,12 @@ export class TelegramChannel {
       const update = normalizeTelegramUpdate(raw);
       if (update.updateId < this.state.offset) continue;
       if (update.updateId >= Number.MAX_SAFE_INTEGER) fail();
+      if (update.kind === "callback") {
+        if (this.state.binding) await this.approvals?.answer(update, this.state.binding, active, signal);
+        if (!active()) return;
+        this.mutate(state => { state.offset = update.updateId + 1; });
+        continue;
+      }
       const message = update.kind === "message" && update.chatType === "private" && !update.forwarded ? update : null;
       if (message && !this.state.binding && this.state.pairing && (this.options.now?.() ?? Date.now()) < this.state.pairing.expiresAt && /^\/pair [a-f0-9]{64}$/.test(message.text) && digest(message.text.slice(6)) === this.state.pairing.hash) {
         this.mutate(state => { state.binding = { senderId: message.senderId, chatId: message.chatId }; state.pairing = null; state.offset = update.updateId + 1; });
@@ -105,6 +120,7 @@ export class TelegramChannel {
       this.mutate(state => { state.offset = update.updateId + 1; });
     }
     await this.drain(active, signal);
+    if (active() && this.state.binding) await this.approvals?.publish(this.state.binding, active, signal);
   }
   private async drain(active: () => boolean, signal: AbortSignal) {
     for (const original of [...this.state.records]) {
@@ -128,7 +144,7 @@ export class TelegramChannel {
       const chatId = this.state.binding.chatId;
       this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.state = "sending"; });
       try {
-        await this.options.transport.sendMessage({ chatId, text: record.response, signal });
+        await this.options.transport.sendMessage({ chatId, text: formatTelegramHtml(record.response), parseMode: "HTML", signal });
         if (!active()) return;
         this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.state = "sent"; });
       } catch (error) {

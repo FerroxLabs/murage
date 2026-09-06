@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { TelegramChannel } from "./telegram-channel.ts";
 import { TelegramTransport } from "./telegram-transport.ts";
+import type { TelegramApprovalActions } from "./telegram-approvals.ts";
 
 /** Owns polling lifetime, not credentials or execution authority. */
 interface TelegramServiceOptions {
@@ -9,6 +10,7 @@ interface TelegramServiceOptions {
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
   revokeRuns: (connectionId: string) => Promise<void>;
   transport?: (token: string) => TelegramTransport;
+  approvals?: (targetBotId: string) => TelegramApprovalActions;
 }
 export class TelegramService {
   private channel?: TelegramChannel;
@@ -30,6 +32,7 @@ export class TelegramService {
       this.identity = bot.id;
       this.channel = new TelegramChannel({ file: join(this.options.dataDir, "telegram", bot.id + ".json"),
         botIdentityId: bot.id, transport,
+        approvals: this.options.approvals?.(targetBotId),
         enqueue: input => this.options.enqueue(bot.id, targetBotId, input), runResult: this.options.runResult });
       // Explicit pairing never resumes an old binding under a different target.
       if (this.channel.status().paired) this.channel.revoke();

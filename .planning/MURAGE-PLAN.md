@@ -1,5 +1,28 @@
 # Murage private MVP — active execution contract
 
+## Authorized Telegram follow-up — shared history, approvals, formatting
+
+Sean approved this bounded package after the live request/reply pilot passed.
+Outcome: Telegram messages and replies use Sable's current conversation, with
+sequential context; paired owner can allow once/deny exact live permission cards
+through expiring single-use Telegram buttons; common Markdown renders safely.
+Scope: Telegram transport/intake/service, scheduler thread selection, existing
+permission resolver, formatter. No new channels, auth UI, public release or
+permanent permission grants. Skill/package/routine proposals requiring richer
+review remain in-app; text commands never establish approval authority.
+Acceptance: visible same-thread messages and preserved follow-ups; FIFO/no overlap;
+owner+chat+sent-card binding, exact pending-card fingerprint, expiry, replay and
+revoke rejection; no arbitrary callback payload routed to engine; safe HTML with
+bounded output. Keep existing approval and budget checks.
+Verification: focused history/scheduler, callback/transport/normalization, formatting
+and pending-action tests; server types/build; private app live history/formatting
+and harmless permission allow/deny pilot with Sean. One round plus targeted
+confirmation. Existing passing unrelated checks are reused. Stop on passing
+contract or precise remaining blocked gate; no recursive audit.
+Owners: root shared integration/approvals; Astra Medium workers formatter and
+routine history. Preserve current profile; use fixtures for destructive/security
+tests. Existing installed application and public distribution remain untouched.
+
 Updated 2026-09-07 by Sean's explicit MVP rescope. This section supersedes the
 broader programme below for current execution. Historical requirements remain
 backlog, not automatic work. Deadline target: overnight Bangkok time; do not
