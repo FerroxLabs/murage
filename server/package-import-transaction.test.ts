@@ -9,6 +9,23 @@ import { commitPackageImportFiles, recoverPackageImportTransaction } from "./pac
 const cleanup: Array<() => void> = [];
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close(); });
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+it("permits absent first-use state without replacing unsafe existing roots", () => {
+  const parent = mkdtempSync(join(tmpdir(), "murage-first-use-"));
+  cleanup.push(() => rmSync(parent, { recursive: true, force: true }));
+  const missing = join(parent, "missing");
+  const options = { assertOwned() {} };
+  expect(recoverPackageImportTransaction(missing, options)).toEqual({ status: "none" });
+  expect(existsSync(missing)).toBe(false);
+  const file = join(parent, "file");
+  writeFileSync(file, "preserve");
+  expect(() => recoverPackageImportTransaction(file, options)).toThrow();
+  expect(readFileSync(file, "utf8")).toBe("preserve");
+  if (process.platform !== "win32") {
+    const dangling = join(parent, "dangling");
+    symlinkSync(missing, dangling);
+    expect(() => recoverPackageImportTransaction(dangling, options)).toThrow();
+  }
+});
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-package-transaction-"));
   cleanup.push(() => rmSync(root, { recursive: true, force: true }));

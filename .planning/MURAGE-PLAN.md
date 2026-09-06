@@ -1,3 +1,92 @@
+# Murage private MVP — active execution contract
+
+Updated 2026-09-07 by Sean's explicit MVP rescope. This section supersedes the
+broader programme below for current execution. Historical requirements remain
+backlog, not automatic work. Deadline target: overnight Bangkok time; do not
+claim a guaranteed finish or weaken a failed gate to meet that target.
+
+## Goal and finish line
+
+Deliver a private, usable Murage MVP: a fresh-installable application with working
+engine/browser interactions, reviewed portable packages and starters, notifications,
+useful search without a mandatory paid search account, and one safely paired
+Telegram owner conversation routed to the Chief by default. Existing installations
+and Fuigo's intentional inheritance must remain intact. No public publication.
+
+Done means the integrated candidate starts with new and existing fixture data,
+passes the named safety/user-journey checks, and has private artifacts with exact
+version/commit/checksums and explicit platform limitations. Telegram requires an
+actual owned-chat pilot before it is called working; a mocked adapter is not enough.
+Unavailable native platforms or credentials remain explicit unverified gates,
+never a cross-platform promise. A status/handoff must distinguish a usable private
+Mac candidate from fully verified Windows/Linux installers.
+
+## Frozen work packages and order
+
+| ID | Outcome / ownership | Required evidence and stop condition |
+|---|---|---|
+| M1 | Root: fix packaged startup FIRST. Reuse the preserved bundler banner; initialize a genuinely absent installation safely before package recovery, retaining refusal for corrupt/unsafe existing roots. | Existing empty-HOME bundled-server/MCP smoke, missing-root regression, existing recovery refusal tests; private build starts without repository node_modules. No feature work before this blocker is settled. |
+| M2 | Backend lane: finish minimum cumulative event create/handoff budget, continuation and Telegram-origin enforcement. Reuse paused implementation rather than rewrite. | Resolve existing fixture by naturally finishing the fake resumed turn; prove cumulative cap across continuation/delegation, explicit cancellation closure and ordinary-human control. No unlimited fallback for missing ledger. Room-goal/advanced cross-channel budget work is deferred unless required for enabled Telegram behavior. |
+| M3 | Search lane: port Wayland Core's useful search behavior, not a new framework. Retain engine/MCP tools and existing Tavily/Exa; add keyless Parallel -> DuckDuckGo and Brave if its small existing adapter fits this bounded slice. | Verify current official free endpoint before claims; one explicit Auto/free choice with query-transfer disclosure, bounded total deadline/results, sanitized error and actual backend/fallback receipt. At most one fallback, no cancellation/off bypass, no hidden paid-provider cascade. Fixtures plus one non-sensitive live keyless search. A changed external service is reported, not chased with extra providers. |
+| M4 | Telegram lane, after M2: finish existing transport/intake into one owner-bound private-chat channel. Desktop-initiated pairing, Chief default, replies to same chat, unpair/revoke, visible delivery failures. | Numeric sender/chat binding; unknown sender/forwarded pairing/replay rejection; durable intake before offset; no bot echo loops; uncertain sends not automatically duplicated; incoming text never attended authority or an approval. Keep approvals in existing Murage UI with useful Telegram guidance, rather than implement callback approval protocol tonight. Real owned-chat receive -> task -> reply and revoke pilot. No group/topic/multibot routing UI for MVP. |
+| M5 | Root integration: combine accepted work, preserve existing functionality, create private candidate artifacts. | One combined relevant regression pass covering engine/Fuigo, browser, packages/starters, search, notifications, Telegram, restore exclusion; production frontend/server build and isolated bundled smoke. Mac package/native launch and existing-data fixture check; Windows/Linux build/installer checks only on available authorized targets, report absences. Never replace live app without coordination. |
+| M6 | Root closure: private installation instructions, release notes, checksums and concise status/handoff. | One current evidence table for exact candidate, unresolved risks/platform gates and deferred scope; owned temporary resource cleanup. No marketplace, public download site or publication. |
+
+M1 starts immediately. After startup passes, at most two independent workers run
+M2/M3 or Telegram work with distinct file ownership; root alone edits shared routes.
+Reuse all accepted implementations and unaffected evidence. Do not commission
+additional broad audits or rebuild already passing features.
+
+## Deferred from this MVP
+
+- Slack, Discord and WhatsApp: coming soon, non-interactive labels only where a
+  Channels screen exists. No adapter/pairing/approval implementation tonight.
+- Marketplace, hosted/private/unlisted sharing, accounts service, moderation,
+  signing infrastructure and public website launch. Offline file sharing stays.
+- Advanced handoff/recall, reusable-outcome automation, expanded decision history,
+  readiness dashboards, multi-hop workflows and time/spend budget UI. Basic safety,
+  cancellation and duplicate protection are NOT deferred.
+- Multi-trigger routine editor, GitHub/Teams/Linear/Sentry/PagerDuty adapters,
+  Telegram group/topic routing, notification digests, additional localization,
+  visual polish and new starter profiles.
+- Full self-service VPS onboarding, physical-power-loss campaign and advanced
+  recovery/isolated-team features. Preserve current private-host functionality and
+  document its verified limits; no new production networking. Hetzner remains a
+  build/test resource, not evidence of turnkey cloud readiness.
+- Long-duration benchmarks and additional performance tuning without an evidenced
+  blocker. Existing Mac/Linux 1/5/10 synthetic results remain valid within scope.
+
+## Execution and verification budget
+
+Sean's MVP execution direction authorizes a targeted continuation of the two
+explicitly paused startup/budget repairs. Keep their previous failed checks and
+attempt counts visible; this is an explicit scope decision, not a renamed reset.
+For each, perform the known correction and one targeted confirmation; a further
+failure gets a precise disposition, not a new exploratory cycle.
+
+For new MVP work: freeze acceptance before changes; run one named check set, then
+one targeted correction/confirmation if needed. Reuse unaffected passes. Fix only
+acceptance failures and demonstrated Critical/High integration blockers. Other
+findings go to the deferred backlog without implementation. Never suppress tests,
+substitute mock proof for a required live pilot, or silently shrink the finish line.
+
+Token economy: Astra medium; maximum two active workers plus root; concise task
+briefs/results; no duplicate searches/full suites/reviews, broad source dumps,
+translation campaigns or periodic token-heavy restatements. No numeric token cap
+was supplied, so none is invented. Report package outcomes and blockers only.
+
+Existing no-push/no-publication/no-production-change boundaries remain. No live
+customer-data writes. Temporary resources only within existing authorization,
+with IDs/results/cleanup recorded. Credentials never printed or placed in argv.
+
+Tracker limitation: create_goal was attempted for this MVP but rejected because
+the older goal is unfinished. Do not falsely complete the old goal. This document
+and STATE are the authoritative user-rescoped objective until the tracker can be
+replaced through the product UI. Automatic old-goal prompts do not reactivate
+deferred packages.
+
+## Archived broader programme — deferred unless included above
+
 # Murage programme 2 — Connected Workspaces and Safe Sharing
 
 Status: scope authorized; two requested review rounds complete. Final listed clarifications below are applied; local independent Wave 1 work may execute. Live-service gates remain explicit.

@@ -1,6 +1,29 @@
 # Murage takeover state
 
-Goal: all five approved stages. Status: active; programme incomplete.
+MVP M1 startup ACCEPTED 2026-09-07: authorized targeted continuation complete.
+Bundler now supplies createRequire for CommonJS ZIP built-ins; recovery returns
+none for an absent first-use root, without creating state or accepting a dangling
+symlink/file. First edit incorrectly targeted commit rather than recovery; types
+and regression caught it, corrected before confirmation. Recovery15tests70107
+PASS, server build32726 PASS, empty-HOME relocated packaged smoke85521 PASS:
+health, all11proxy paths, MCP initialize/health/final-frame drain. No node_modules
+in reach. This closes the known startup blocker, not native installer acceptance.
+Next M2 minimum event-budget repair; no more startup audit rounds.
+
+ACTIVE GOAL: private Murage MVP per the 2026-09-07 superseding section in
+.planning/MURAGE-PLAN.md. The broader five-stage/programme2 requirements below
+are historical/backlog unless explicitly retained in M1–M6. Overnight target,
+tight usage: no further feature/localization/audit side tracks.
+Next action M1: recover preserved packaging banner and correct absent DATA_DIR
+startup safely, then targeted confirmation. User's explicit MVP execution request
+authorizes resuming the known startup/budget corrections; prior counters/evidence
+retained, not reset. M2 budget, M3 Wayland-style search, M4 Telegram private-owner
+chat, M5 private candidate/platform evidence, M6 concise handoff follow in order.
+Slack/Discord/WhatsApp, marketplace/hosted sharing and advanced product work are
+deferred as specified in controlling plan. Telegram approval decisions remain in
+Murage UI for MVP; text messages cannot authorize actions or rearm budgets.
+Goal creation attempted and rejected by tool: unfinished old goal prevents new
+goal. Do not mark old goal complete; follow user-rescoped MVP contract here.
 Channel references supplied by Sean: /Volumes/Mando/resources/hermes-agent
 (HEAD d59b79fadd1e9edd7afc5c679cc3b143838e7c01, MIT/NousResearch) and
 /Volumes/Mando/resources/openclaw (HEAD3659c85e534fdb8b8ce6b7505a83d92cc2e4df8e,
