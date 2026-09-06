@@ -557,6 +557,59 @@ afterAll(async () => {
 });
 
 describe("harness HTTP API", () => {
+  it("persists structured provider 402 credit guidance from the real ACP error fold without raw secrets", async () => {
+    const isolatedHome = mkdtempSync(join(tmpdir(), "murage-provider402-api-"));
+    const data = join(isolatedHome, ".murage");
+    const staticRoot = join(isolatedHome, "static");
+    const port = await freePortBlock([0, 1]);
+    mkdirSync(data);
+    mkdirSync(join(staticRoot, "assets"), { recursive: true });
+    writeFileSync(join(staticRoot, "index.html"), "<!doctype html><title>Provider error fixture</title>");
+    writeFileSync(join(staticRoot, "assets", "smoke.css"), "body{}");
+    mkdirSync(join(isolatedHome, ".grok"));
+    writeFileSync(join(isolatedHome, ".grok", "auth.json"), "{}");
+    writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: {
+      fixture402: { driver: "grokAgent", displayName: "Fixture 402", config: { cli: join(SERVER_DIR, "testing", "fake-acp-cli.ts") } },
+    } }));
+    const env: NodeJS.ProcessEnv = { HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", PATH: process.env.PATH };
+    if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
+    const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], { cwd: ROOT, env, stdio: ["ignore", "ignore", "pipe"] });
+    let isolatedStderr = "";
+    isolatedChild.stderr!.on("data", chunk => { isolatedStderr += chunk; });
+    const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { ...DESKTOP_HEADERS, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+      return { status: response.status, body: await response.json() };
+    };
+    try {
+      await waitForIsolatedServer(isolatedChild, port, () => isolatedStderr);
+      const created = await request("POST", "/api/bots", { modelSelection: { instanceId: "fixture402", model: "grok-4.6" } });
+      expect(created.status).toBe(201);
+      const bot = created.body.bot;
+      expect((await request("PATCH", `/api/bots/${bot.id}`, { computer: "off", autoApprove: false })).status).toBe(200);
+      expect((await request("POST", `/api/bots/${bot.id}/messages`, { text: "Trigger the fake credit-exhausted response only." })).status).toBe(202);
+      let errorMessage: any;
+      await expect.poll(async () => {
+        const state = (await request("GET", "/api/bots?messages=50")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
+        errorMessage = state?.messages.find((message: any) => message.tool?.providerError?.kind === "credits");
+        return Boolean(errorMessage) && state.busy === false;
+      }, { timeout: 10000 }).toBe(true);
+      expect(errorMessage).toMatchObject({ role: "bot", kind: "activity", tool: { ok: false, providerError: { kind: "credits", httpStatus: 402 } } });
+      expect(errorMessage.tool.name).toContain("credit balance is exhausted");
+      expect(errorMessage.tool.name.length).toBeLessThanOrEqual(167);
+      expect(JSON.stringify(errorMessage)).not.toMatch(/fake-secret-canary|billing\.invalid|Internal error/);
+      const db = new DatabaseSync(join(data, "messages.db"), { readOnly: true });
+      try {
+        const persisted = JSON.parse(String(db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(bot.threadId, errorMessage.id)?.json));
+        expect(persisted.tool.providerError).toEqual(errorMessage.tool.providerError);
+        expect(JSON.stringify(persisted)).not.toMatch(/fake-secret-canary|billing\.invalid/);
+      } finally { db.close(); }
+    } finally {
+      await waitForExit(isolatedChild, { signal: "SIGTERM" });
+      await removeTempDir(isolatedHome);
+    }
+    expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
+  }, 20000);
+
   it("rejects non-loopback authorities while accepting IPv4 and IPv6 loopback forms", async () => {
     expect(await statusWithHeaders({ host: "example.com" })).toBe(403);
     expect(await statusWithHeaders({ origin: "https://example.com" })).toBe(403);

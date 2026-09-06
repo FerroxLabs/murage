@@ -38,6 +38,8 @@ import {
   type Message,
 } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
+import { ProviderErrorCard } from "./ProviderErrorCard";
+import type { ProviderErrorInfo } from "../../shared/provider-error";
 import { BotAvatar, EmberAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
@@ -311,11 +313,16 @@ function ErrorRow({
   message,
   onRetry,
   setupInstance,
+  providerError,
+  onOpenProviderSettings,
 }: {
   message: string;
   onRetry?: () => void;
   setupInstance?: InstanceInfo;
+  providerError?: ProviderErrorInfo;
+  onOpenProviderSettings: () => void;
 }) {
+  if (providerError) return <ProviderErrorCard info={providerError} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
   return (
     <div className="flex justify-start">
       <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
@@ -1000,6 +1007,8 @@ const MessagesList = memo(function MessagesList({
                     message={m.tool.name.slice(6).trim()}
                     onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
                     setupInstance={m.tool.setup ? engine : undefined}
+                    providerError={m.tool.providerError}
+                    onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}
                   />
                 );
               }

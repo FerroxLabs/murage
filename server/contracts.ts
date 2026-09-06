@@ -5,6 +5,8 @@
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
 
+import type { ProviderErrorInfo } from "../shared/provider-error.ts";
+
 export type DriverKind = string;
 export type InstanceId = string;
 export type ThreadId = string;
@@ -136,7 +138,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; setup?: boolean }
+    | { type: "runtime.error"; message: string; setup?: boolean; providerError?: ProviderErrorInfo }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
