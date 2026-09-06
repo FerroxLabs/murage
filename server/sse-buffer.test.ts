@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
-import { oversizedScreenNotice, SseReplay, SseWriter } from "./sse-buffer.ts";
+import { oversizedScreenNotice, SSE_MAX_PENDING_BYTES, SseReplay, SseWriter } from "./sse-buffer.ts";
 
 class Sink extends EventEmitter {
   writableLength = 0;
@@ -17,6 +17,38 @@ class Sink extends EventEmitter {
 }
 
 describe("SSE writer", () => {
+  it.each([1, 5, 10])("keeps the default 4 MiB budget independent across %i delayed consumers", count => {
+    const clients = Array.from({ length: count }, () => {
+      const sink = new Sink(); sink.accepting = false;
+      const reasons: string[] = [];
+      return { sink, reasons, writer: new SseWriter(sink, reason => reasons.push(reason)) };
+    });
+    const frame = "x".repeat(1024 * 1024);
+    for (let n = 0; n < 3; n++) for (const client of clients) expect(client.writer.send(frame)).toBe(true);
+    expect(clients.reduce((total, client) => total + client.writer.pendingBytes, 0)).toBeLessThanOrEqual(count * SSE_MAX_PENDING_BYTES);
+    // One delayed consumer catches up. Overflowing its peers must not close it
+    // or duplicate its write(false)-accepted frame when drain arrives later.
+    clients[0].sink.drain();
+    expect(clients[0].sink.writes).toHaveLength(3);
+    for (const client of clients) expect(client.writer.send(frame)).toBe(client === clients[0]);
+    for (const [index, client] of clients.entries()) {
+      expect(client.writer.peakPendingBytes).toBeLessThanOrEqual(SSE_MAX_PENDING_BYTES);
+      if (index === 0) {
+        expect(client.reasons).toEqual([]);
+        expect(client.sink.writes).toHaveLength(4);
+      } else {
+        expect(client.reasons).toEqual(["backpressure"]);
+        expect(client.writer.closed).toBe(true);
+        expect(client.writer.pendingBytes).toBe(0);
+        client.sink.drain();
+        expect(client.sink.writes).toHaveLength(1);
+      }
+      client.writer.close();
+      expect(client.writer.queuedFrames).toBe(0);
+      for (const event of ["drain", "close", "error"]) expect(client.sink.listenerCount(event)).toBe(0);
+    }
+  });
+
   it("queues after backpressure and drains in order without duplicating the accepted frame", () => {
     const sink = new Sink();
     sink.accepting = false;
