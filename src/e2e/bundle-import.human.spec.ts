@@ -116,3 +116,51 @@ test("blocked options cannot expose candidate content or proceed; browser-only f
   await expect(page.getByRole("alert")).toContainText("Murage desktop app");
   await expect(page.getByRole("dialog", { name: "Import selected package contents" })).toHaveCount(0);
 });
+
+test("version comparison describes the prior selection and omitted content without offering an in-place upgrade", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/api/packages/import", route => route.fulfill({ json: route.request().postDataJSON().action === "options" ? options : {
+    ...preview, comparison: { status: "compared", previousRelease: "1.0.0", incomingRelease: "1.1.0", changes: [
+      { category: "agents", key: "scout", change: "changed" },
+      { category: "skills", key: "citations", change: "added" },
+      { category: "routines", key: "daily", change: "omitted" },
+    ] },
+  } }));
+  await page.goto(origin + "/__bundle?direct=1");
+  await page.getByRole("checkbox", { name: /^Researcher Required skills/ }).check();
+  await page.getByRole("button", { name: "Preview selection" }).click();
+  const comparison = page.getByRole("region", { name: "Package version comparison" });
+  await expect(comparison).toContainText("Last imported selection: 1.0.0");
+  await expect(comparison).toContainText("Selected package: 1.1.0");
+  await expect(comparison).toContainText("not your current local edits");
+  await expect(comparison).toContainText("Changed · agents: scout");
+  await expect(comparison).toContainText("Added · skills: citations");
+  await expect(comparison).toContainText("Not included · routines: daily");
+  await expect(comparison).toContainText("Imports a separate copy; existing bots and permissions stay unchanged.");
+  await expect(page.getByRole("button", { name: /upgrade|replace/i })).toHaveCount(0);
+  await comparison.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath("bundle-version-comparison-mobile.png") });
+});
+
+test("unavailable comparison stays explicit and blocked previews suppress all version details", async ({ page }) => {
+  let blocked = false;
+  await page.route("**/api/packages/import", route => route.fulfill({ json: route.request().postDataJSON().action === "options" ? options : {
+    ...preview, scan: { ...scan, blocked },
+    comparison: blocked
+      ? { status: "compared", previousRelease: "PRIVATE_PREVIOUS_RELEASE", incomingRelease: "PRIVATE_INCOMING_RELEASE", changes: [{ category: "skills", key: "PRIVATE_COMPARISON_KEY", change: "changed" }] }
+      : { status: "unavailable", incomingRelease: "1.1.0", changes: [] },
+  } }));
+  await page.goto(origin + "/__bundle?direct=1");
+  await page.getByRole("checkbox", { name: /^Researcher Required skills/ }).check();
+  await page.getByRole("button", { name: "Preview selection" }).click();
+  const comparison = page.getByRole("region", { name: "Package version comparison" });
+  await expect(comparison).toContainText("prior version lacks saved comparison data");
+  await expect(comparison).not.toContainText("No differences");
+  await expect(comparison).toContainText("Imports a separate copy");
+  blocked = true;
+  await page.getByRole("button", { name: "Preview selection" }).click();
+  await expect(page.getByRole("alert")).toContainText("Import blocked");
+  await expect(comparison).toHaveCount(0);
+  await expect(page.getByText(/PRIVATE_(PREVIOUS|INCOMING|COMPARISON)/)).toHaveCount(0);
+});

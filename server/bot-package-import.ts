@@ -10,6 +10,7 @@ import { isSkillName, parseSkillMd } from "./skills.ts";
 import type { ModelSelection } from "./contracts.ts";
 import type { BotRecord, GroupRecord } from "./store.ts";
 import type { Routine } from "./routines.ts";
+import { comparePackageImport, createPackageImportBaseline } from "./package-import-comparison.ts";
 
 export class BotPackageImportError extends Error {
   readonly code: string;
@@ -29,7 +30,11 @@ function selectionSnapshot(selection: BotPackageSelection): BotPackageSelection 
   if (Object.keys(selection).some((field) => !Object.hasOwn(copied, field))) fail("INVALID_SELECTION");
   return copied;
 }
-function inspect(intake: Intake, selection: BotPackageSelection) {
+export function packageImportSelectionHash(selection: BotPackageSelection): string {
+  return hash(JSON.stringify(selectionSnapshot(selection)));
+}
+type ImportHistoryBot = Pick<BotRecord, "id" | "threadId" | "name"> & Partial<Pick<BotRecord, "installedPackage" | "packageImportReceipt" | "createdAt">>;
+function inspect(intake: Intake, selection: BotPackageSelection, existingBots: readonly ImportHistoryBot[] = []) {
   const chosen = createBotPackageExportPreview({ manifest: intake.manifest, payloads: intake.payloads, selection });
   const selected = chosen.manifest;
   const summary = selected ? {
@@ -39,21 +44,33 @@ function inspect(intake: Intake, selection: BotPackageSelection) {
     suggestedChief: intake.scan.blocked ? null : selected.definition.package.chiefOfStaff ?? null,
     importedChiefRole: false as const, skillsInitiallyEnabled: false as const,
   } : null;
-  const reviewHash = hash(JSON.stringify({ version: 1, archiveSha256: intake.sha256, selection, scan: intake.scan, summary, missingDependencies: chosen.missingDependencies }));
-  return { archiveSha256: intake.sha256, reviewHash, scan: intake.scan, summary, missingDependencies: chosen.missingDependencies, selected };
+  const previous = existingBots.filter(bot => bot.installedPackage?.id === selected?.definition.package.id)
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || a.id.localeCompare(b.id));
+  const latest = previous[0];
+  // A receipt group has one baseline owner to avoid duplicating its hashes
+  // for every bot. Deleted/legacy owners produce an explicit unavailable result.
+  const baselineOwner = latest?.packageImportReceipt
+    ? previous.find(bot => bot.packageImportReceipt?.importId === latest.packageImportReceipt?.importId && bot.packageImportReceipt?.baseline)
+    : undefined;
+  const comparison = selected && !intake.scan.blocked
+    ? comparePackageImport(selected, baselineOwner?.packageImportReceipt?.baseline, previous.length > 0) : undefined;
+  const reviewHash = hash(JSON.stringify({ version: 2, archiveSha256: intake.sha256, selection, scan: intake.scan, summary, missingDependencies: chosen.missingDependencies, comparison }));
+  return { archiveSha256: intake.sha256, reviewHash, selectionHash: packageImportSelectionHash(selection), scan: intake.scan, summary, missingDependencies: chosen.missingDependencies, comparison, selected };
 }
 
 /** No payload text in preview; review binds archive bytes and selection. */
-export async function previewBotPackageImport(archivePath: string, options: { selection: BotPackageSelection; signal?: AbortSignal }) {
+export async function previewBotPackageImport(archivePath: string, options: { selection: BotPackageSelection; existingBots?: readonly ImportHistoryBot[]; signal?: AbortSignal }) {
   const selection = selectionSnapshot(options.selection);
   const intake = await readBotPackageArchive(archivePath, { signal: options.signal });
-  const { selected: _selected, ...preview } = inspect(intake, selection);
+  const { selected: _selected, ...preview } = inspect(intake, selection, options.existingBots);
   return preview;
 }
 export interface PreparedBotPackageImport {
   id: string; archiveSha256: string; reviewHash: string;
+  selectionHash: string;
   bots: BotRecord[]; groups: GroupRecord[]; routines: Routine[];
   files: Array<{ path: string; content: Buffer }>;
+  baseline: ReturnType<typeof createPackageImportBaseline>;
 }
 export interface BotPackageAtomicCommitInput { prepared: PreparedBotPackageImport; stagingDirectory: string }
 /** Not an existing Store API. Caller validates fresh IDs, atomically promotes
@@ -69,7 +86,9 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
   const takenNames = new Set(options.existingBots.map((bot) => bot.name.trim().toLowerCase()));
   const takenIds = new Set(options.existingBots.flatMap((bot) => [bot.id, bot.threadId]));
   const freshId = () => { let id: string; do { id = randomUUID(); } while (takenIds.has(id)); takenIds.add(id); return id; };
-  const result: PreparedBotPackageImport = { id: randomUUID(), archiveSha256: intake.sha256, reviewHash: inspected.reviewHash, bots: [], groups: [], routines: [], files: [] };
+  const result: PreparedBotPackageImport = { id: randomUUID(), archiveSha256: intake.sha256, reviewHash: inspected.reviewHash,
+    selectionHash: inspected.selectionHash,
+    bots: [], groups: [], routines: [], files: [], baseline: createPackageImportBaseline(manifest) };
   const ids = new Map<string, string>();
   const pkg = manifest.definition.package;
   const skillsByKey = new Map(manifest.skills.map((skill) => [skill.key, skill]));
@@ -157,14 +176,16 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
 export async function importBotPackageArchive(options: {
   archivePath: string; dataDir: string; selection: BotPackageSelection;
   expectedArchiveSha256: string; expectedReviewHash: string; acknowledgeWarnings?: boolean;
-  existingBots: readonly Pick<BotRecord, "id" | "threadId" | "name">[]; modelSelection: ModelSelection;
+  existingBots: readonly ImportHistoryBot[]; modelSelection: ModelSelection;
   atomicCommit: BotPackageAtomicCommit; signal?: AbortSignal;
 }) {
   const selection = selectionSnapshot(options.selection);
-  const existingBots = options.existingBots.map((bot) => ({ id: bot.id, threadId: bot.threadId, name: bot.name }));
+  const existingBots = options.existingBots.map((bot) => ({ id: bot.id, threadId: bot.threadId, name: bot.name,
+    createdAt: bot.createdAt, installedPackage: bot.installedPackage && structuredClone(bot.installedPackage),
+    packageImportReceipt: bot.packageImportReceipt && structuredClone(bot.packageImportReceipt) }));
   const modelSelection = structuredClone(options.modelSelection);
   const intake = await readBotPackageArchive(options.archivePath, { signal: options.signal });
-  const inspected = inspect(intake, selection);
+  const inspected = inspect(intake, selection, existingBots);
   if (intake.sha256 !== options.expectedArchiveSha256 || inspected.reviewHash !== options.expectedReviewHash) fail("PACKAGE_REVIEW_CHANGED");
   if (inspected.scan.blocked) fail("PACKAGE_CONTENT_BLOCKED");
   if (inspected.scan.reviewRequired && options.acknowledgeWarnings !== true) fail("PACKAGE_REVIEW_REQUIRED");

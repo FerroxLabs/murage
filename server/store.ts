@@ -450,7 +450,8 @@ export interface BotRecord {
   /** Presentation only; never excludes the bot from authority or routing. */
   sidebarHidden?: boolean;
   /** Durable replay refusal for the exact reviewed package import. */
-  packageImportReceipt?: { reviewHash: string; archiveSha256: string; importId: string };
+  packageImportReceipt?: { reviewHash: string; archiveSha256: string; importId: string; selectionHash?: string;
+    baseline?: ReturnType<typeof import("./package-import-comparison.ts").createPackageImportBaseline> };
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
   computer?: "cloud" | "vm" | "local" | "browser" | "off";

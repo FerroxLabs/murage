@@ -1,6 +1,24 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P10 comparison increment ACCEPTED (round 1): show added/changed/
+not-included definitions, requirements and file hashes against the latest saved
+imported selection of the same package. Persist content-free comparison hashes
+atomically with the first imported bot, not full private payload copies. Older
+imports without a baseline display unavailable; never invent an unchanged result.
+Import remains additive, not an in-place upgrade; existing bots/grants untouched.
+Acceptance/checks: pure comparison cases, isolated import/API persistence and
+changed-version preview, rendered compared/unavailable/blocked cases, types.
+Two rounds maximum; no native/public rollout. This does not implement marketplace
+update installation or redefine it as done. Root integration, p06 helper, p03 UI.
+Evidence: comparison+import service 9 tests PASS; actual API 88863 PASS (1 scoped,
+214 skipped) proves atomic baseline persistence, changed instruction file in
+version 2, fresh inert copy with previous bot unchanged, and duplicate rejection
+after re-preview. Added stable selectionHash prevents comparison-relative review
+hashes bypassing replay checks. Browser 5 PASS; mobile screenshot reviewed; full
+combined types 67006 PASS. Baselines missing after deleting their owner remain
+explicitly unavailable. No in-place upgrade, signature trust or native claim.
+Next authorized action: local integration, then P11 event/routine core.
 P09 export round trip ACCEPTED (confirmation round 2): deliver a
 reviewed downloadable ZIP using the existing bundle schema/importer, with explicit
 bot/playbook/routine/file-skill selection. Only selected owned skill trees enter

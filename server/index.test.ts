@@ -7050,6 +7050,7 @@ describe("internal capability authority", () => {
       expect(preview.status).toBe(200);
       expect(preview.body.scan.blocked).toBe(false);
       expect(readFileSync(botsFile)).toEqual(before);
+      expect(preview.body.comparison.status).toBe("new");
       const reviewed = { ...request, action: "import", archiveSha256: preview.body.archiveSha256, reviewHash: preview.body.reviewHash, acknowledgeWarnings: true };
       const stale = await desktopApi("POST", "/api/packages/import", { ...reviewed, reviewHash: "0".repeat(64) });
       expect(stale.status).toBeGreaterThanOrEqual(400);
@@ -7069,6 +7070,30 @@ describe("internal capability authority", () => {
       const again = await desktopApi("POST", "/api/packages/import", reviewed);
       expect(again.status).toBe(409);
       expect(JSON.parse(readFileSync(botsFile, "utf8"))).toHaveLength(after.length);
+      expect(JSON.parse(readFileSync(botsFile, "utf8")).find((candidate: { id: string }) => candidate.id === bot.id)).toEqual(bot);
+      expect(bot.packageImportReceipt.baseline.release).toBe("1.0.0");
+      expect(JSON.stringify(bot.packageImportReceipt.baseline)).not.toContain("Use the notes provided");
+      const samePreview = await desktopApi("POST", "/api/packages/import", { ...request, action: "preview" });
+      expect(samePreview.body.comparison).toMatchObject({ status: "compared", previousRelease: "1.0.0", incomingRelease: "1.0.0", changes: [] });
+      expect((await desktopApi("POST", "/api/packages/import", { ...reviewed, reviewHash: samePreview.body.reviewHash })).status).toBe(409);
+      const nextPath = join(root, "next-version.zip");
+      const nextPayloads = new Map(payloads);
+      nextPayloads.set("bots/scout/SOUL.md", "New version: summarize supplied notes and list uncertainties.");
+      await writeBotPackageArchive(nextPath, { manifest: { ...manifest,
+        definition: { ...manifest.definition, package: { ...manifest.definition.package, release: "2.0.0" } },
+        entries: [...nextPayloads].map(([path, content]) => createBotPackageEntry(path, content)),
+      }, payloads: nextPayloads });
+      const nextPreview = await desktopApi("POST", "/api/packages/import", { archivePath: nextPath, selection, action: "preview" });
+      expect(nextPreview.status).toBe(200);
+      expect(nextPreview.body.comparison).toMatchObject({ status: "compared", previousRelease: "1.0.0", incomingRelease: "2.0.0" });
+      expect(nextPreview.body.comparison.changes).toContainEqual({ category: "file", key: "bots/scout/SOUL.md", change: "changed" });
+      const nextResult = await desktopApi("POST", "/api/packages/import", { archivePath: nextPath, selection, action: "import",
+        archiveSha256: nextPreview.body.archiveSha256, reviewHash: nextPreview.body.reviewHash, acknowledgeWarnings: true });
+      expect(nextResult.status).toBe(201);
+      importedIds.push(...nextResult.body.bots.map((item: { id: string }) => item.id));
+      routineIds.push(...nextResult.body.routines.map((item: { id: string }) => item.id));
+      expect(nextResult.body.bots[0].id).not.toBe(bot.id);
+      expect(nextResult.body.bots[0]).toMatchObject({ chiefOfStaff: false, computer: "off", autoApprove: false });
       expect(JSON.parse(readFileSync(botsFile, "utf8")).find((candidate: { id: string }) => candidate.id === bot.id)).toEqual(bot);
       // Construct hostile intake directly: the normal archive writer correctly refuses it.
       const secretPath = join(root, "hostile.zip");
