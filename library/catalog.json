@@ -3601,6 +3601,51 @@
       }
     },
     {
+      "slug": "starter-business-team",
+      "name": "Business / Team",
+      "summary": "Three complementary roles for a small team starting from user-provided project notes. Team Coordinator is a suggested primary contact, not a grant of authority or an instruction to replace an existing Chief.",
+      "category": "Starter",
+      "outcome": "A project brief with owners and open decisions",
+      "setupMinutes": 3,
+      "manifest": "teams/starter-business-team/starter-business-team.emberteam.json",
+      "readme": "teams/starter-business-team/README.md",
+      "members": 3,
+      "skills": [],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
+      "slug": "starter-personal-home",
+      "name": "Personal / Home",
+      "summary": "A small starting setup for household tasks, appointments and personal projects. Start with pasted notes; connected apps are optional. Home Planner is a suggested coordinator, never permission to replace an existing Chief or act on your behalf.",
+      "category": "Starter",
+      "outcome": "A prioritized plan from your notes",
+      "setupMinutes": 2,
+      "manifest": "teams/starter-personal-home/starter-personal-home.emberteam.json",
+      "readme": "teams/starter-personal-home/README.md",
+      "members": 1,
+      "skills": [],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
+      "slug": "starter-solo-business",
+      "name": "Solo Business",
+      "summary": "A two-role starting setup for a solo operator: decide the next deliverable and draft it. Business Planner is a suggested coordinator; importing does not authorize a Chief replacement, outreach or spending.",
+      "category": "Starter",
+      "outcome": "One concrete priority with a finish condition",
+      "setupMinutes": 3,
+      "manifest": "teams/starter-solo-business/starter-solo-business.emberteam.json",
+      "readme": "teams/starter-solo-business/README.md",
+      "members": 2,
+      "skills": [],
+      "requires": {
+        "apps": []
+      }
+    },
+    {
       "slug": "student-support-desk",
       "name": "Student Support Desk",
       "summary": "Team launcher - pick me to auto-assemble a student-support crew (Support + Research + Ops + Coach) and ship clustered replies, macros, and help docs.",
