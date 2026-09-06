@@ -40,7 +40,9 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { isAbsolute } from "node:path";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -172,6 +174,52 @@ const recordMethod = (method: string) => {
   rpcMethods.push(method);
   if (process.env.FAKE_ACP_RPC_DUMP) writeFileSync(process.env.FAKE_ACP_RPC_DUMP, JSON.stringify(rpcMethods));
 };
+
+/** Test-only resource fixture. Existing modes retain their exact output.
+ * The gate and PNG are explicit task-owned paths; nothing is fetched. */
+async function loadProof(id: unknown, sessionId: unknown) {
+  const write = async (frame: unknown) => {
+    if (!process.stdout.write(JSON.stringify(frame) + "\n")) await once(process.stdout, "drain");
+  };
+  const update = (content: object) => write({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content } } });
+  try {
+    const gate = process.env.FAKE_LOAD_GATE, image = process.env.FAKE_LOAD_IMAGE;
+    if (!gate || !image || !isAbsolute(gate) || !isAbsolute(image)) throw new Error("INVALID_INPUT");
+    const timeout = Math.min(30000, Math.max(1, Number(process.env.FAKE_LOAD_TIMEOUT_MS) || 30000));
+    await update({ type: "text", text: "LOAD_PROOF_READY" });
+    const deadline = performance.now() + timeout;
+    while (!existsSync(gate)) {
+      if (performance.now() >= deadline) throw new Error("GATE_TIMEOUT");
+      await new Promise(resolve => setTimeout(resolve, Math.min(20, Math.max(1, deadline - performance.now()))));
+    }
+    const before = lstatSync(image);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 1024 * 1024) throw new Error("IMAGE_LIMIT");
+    const fd = openSync(image, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+    let bytes: Buffer;
+    try {
+      const opened = fstatSync(fd);
+      if (opened.ino !== before.ino || opened.dev !== before.dev || opened.size !== before.size) throw new Error("IMAGE_CHANGED");
+      bytes = Buffer.alloc(before.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const count = readSync(fd, bytes, offset, bytes.length - offset, null);
+        if (!count) throw new Error("IMAGE_CHANGED");
+        offset += count;
+      }
+      const after = fstatSync(fd);
+      if (readSync(fd, Buffer.alloc(1), 0, 1, null) || after.size !== before.size || after.mtimeMs !== before.mtimeMs) throw new Error("IMAGE_CHANGED");
+    } finally { closeSync(fd); }
+    const text = "L".repeat(1024);
+    for (let n = 0; n < 64; n++) await update({ type: "text", text });
+    const data = bytes.toString("base64");
+    for (let n = 0; n < 3; n++) await update({ type: "image", data, mimeType: "image/png" });
+    recordMethod("session/prompt.result");
+    await write({ jsonrpc: "2.0", id, result: { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 16384 } } });
+  } catch (error) {
+    const code = error instanceof Error && ["INVALID_INPUT", "GATE_TIMEOUT", "IMAGE_LIMIT", "IMAGE_CHANGED"].includes(error.message) ? error.message : "IO_FAILED";
+    await write({ jsonrpc: "2.0", id, error: { code: -32000, message: `fake acp load-proof failed (${code})` } });
+  }
+}
 
 // session/set_mode + session/set_model calls seen this run
 const configCalls: Array<{ method: string; params: unknown }> = [];
@@ -378,6 +426,10 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode === "load-proof") {
+        void loadProof(msg.id, msg.params?.sessionId).catch(() => { process.exitCode = 1; });
+        return;
+      }
       if (mode === "credit-exhausted") {
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: {
           http_status: 402,
