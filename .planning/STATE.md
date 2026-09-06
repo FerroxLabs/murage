@@ -1,5 +1,52 @@
 # Murage takeover state
 
+Mac native gate ACCEPTED after user granted Keychain permission. First postgrant
+38237: app.close returned and native exitCode0; immediate child-reaping assertion
+was premature. Bounded3s OS reaping wait added to test only (does not kill before
+assertion). Confirmation55378 PASS: final7ba8095c/0.1.47-mvp.2 window rendered
+isolated fixture, realhome/userData assertions passed, nativeQuit true/exitCode0,
+all captured owned processes gone. Fixture removed. No product code change,
+installedapp replacement or Keychain reset; no artifact rebuild needed.
+Remaining MVP gate: live Telegram owner pilot requires rotated token via secure
+file and owner pairing. Native Windows/Linux limits remain recorded separately.
+Previous native-blocker entries below are historical, superseded by this pass.
+
+Native HOME correction74017: actual home and isolated userData assertions PASS;
+final0.1.47-mvp.2 window/fixture rendered PASS; quit exceeded20s, current log
+22:23:48.615Z still waits on credential writes. HOME hypothesis insufficient.
+Read-only security default-keychain/list-keychains both name login.keychain-db;
+this proves configuration, NOT unlocked/usable encryption. No Keychain reset or
+secret access. Production code unchanged; don't claim clean shutdown or another
+unverified fix. Next discriminating evidence must identify which credential
+derive/persist operation waits, not repeat unchanged launch. Owned fixture killed
+and removed by bounded harness. Telegram exposed token never used or persisted.
+
+User supplied Keychain Not Found screenshot then authorized correcting native
+fixture environment. Specific hypothesis: fake HOME disrupted macOS Keychain,
+blocking credential persistence/quit. Preserve OS home, isolate MURAGE_DATA_DIR
+and Electron userData, explicit empty engine config. One final open/quit check;
+no production changes or Keychain reset. Previous timeouts are not established
+normal-installation defects. Token in chat remains unused pending rotation.
+
+Authorized Mac investigation outcome: final7ba8095c artifact renders isolated
+fixture profile/version0.1.47-mvp.2. Diagnostic98583 quit exceeded20s; diagnostic
+27327 close returned but harness then accessed disposed Playwright process handle
+(harness bug corrected by retaining nativeProcess beforeclose). Confirmation66660
+again exceeded20s; current log22:17:33.843Z identifies credential writes as waiting
+stage. Intermittent quit, NOT tray behavior; not proven which credential operation
+waits. Production shutdown safety retained unchanged. No cleanquit acceptance.
+Bounded test owns/kills its captured process tree and removes isolated fixture;
+no app replacement. Native correction requires next explicit bounded decision,
+not another unannounced verification cycle. Telegram replacement still needed.
+
+User explicitly authorized bounded Mac investigation after blocked handoff.
+Contract: distinguish harness close from product shutdown; prove final private
+7ba8095c artifact opens with isolated fixture and quits with owned children gone.
+Inspect shutdown path, one diagnostic launch, supported correction if necessary,
+one confirmation. No full suite/re-audit, liveapp/data changes or publication.
+Telegram token supplied in chat is exposed: requested BotFather revocation and
+replacement via secure file. Do not persist/repeat/use supplied token.
+
 M6 private handoff sealed in MVP-PRIVATE-HANDOFF.md: exact artifact/source/hash,
 scoped evidence, installation restrictions, deferred scope and required decisions.
 Previous turn made concrete progress (seven corrections,198confirmationpasses,
