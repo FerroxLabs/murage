@@ -122,3 +122,23 @@ it("refuses hash-valid external section records before preparing a restore and p
   expect(readFileSync(archive)).toEqual(before);
   expect(readdirSync(root)).toEqual(["external.zip"]);
 });
+
+it("refuses invalid notification quiet hours in a hash-valid external archive", async () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-notification-external-")); roots.push(root);
+  const archive = join(root, "external.zip");
+  const bytes = Buffer.from(JSON.stringify({ notifications: { previewContent: false, quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "Invalid/Zone" } } }));
+  const manifest = {
+    format: "murage.installation", version: 1, snapshotId: randomUUID(), createdAt: new Date().toISOString(), restorePolicy: "paused-review-required",
+    files: [{ path: "config.json", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }],
+    omitted: [], missing: [], database: { status: "absent" },
+  };
+  const zip = new ZipFile();
+  const output = pipeline(zip.outputStream as Readable, createWriteStream(archive));
+  zip.addBuffer(Buffer.from(JSON.stringify(manifest)), "manifest.json", { compress: false });
+  zip.addBuffer(bytes, "state/config.json", { compress: false, mode: 0o100600 });
+  zip.end(); await output;
+  const before = readFileSync(archive);
+  await expect(prepareInstallationRestore(archive, root)).rejects.toMatchObject({ code: "INVALID_RESTORE_CONFIG" });
+  expect(readFileSync(archive)).toEqual(before);
+  expect(readdirSync(root)).toEqual(["external.zip"]);
+});

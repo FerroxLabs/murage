@@ -6,6 +6,7 @@ import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { stageInstallationState } from "./installation-state-snapshot.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
+import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 
 const roots: string[] = [];
 function fixture() {
@@ -111,6 +112,29 @@ it("omits headless companion bindings and restored connection profiles without r
   expect(result.manifest.omitted.map(item => item.path)).toEqual(expect.arrayContaining(["companion", "connection-profiles"]));
   expect(JSON.stringify(result.manifest)).not.toContain("private-connection-canary");
   expect(readFileSync(join(f.data, "companion", "private.json"), "utf8")).toBe("private-connection-canary");
+});
+
+it("round trips notification privacy and quiet hours through an inactive restore", async () => {
+  const f = fixture();
+  const notifications = { attention: true, completion: false, failures: true, previewContent: false, quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "Asia/Bangkok" } };
+  const file = join(f.data, "config.json");
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), notifications }));
+  const before = readFileSync(file);
+  const archive = join(f.parent, "notifications.zip");
+  await writeInstallationArchive(f.data, archive);
+  const restored = await prepareInstallationRestore(archive, f.parent);
+  const config = JSON.parse(readFileSync(join(restored.stateDirectory, "config.json"), "utf8"));
+  expect(config.notifications).toEqual(notifications);
+  expect(restored.activationAvailable).toBe(false);
+  expect(readFileSync(file)).toEqual(before);
+});
+
+it("refuses malformed notification preferences rather than silently defaulting during snapshot", async () => {
+  const f = fixture(), file = join(f.data, "config.json");
+  const bytes = JSON.stringify({ notifications: { quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "Invalid/Zone" } } });
+  writeFileSync(file, bytes);
+  await expect(stageInstallationState(f.data, f.parent)).rejects.toMatchObject({ code: "INVALID_CONFIG_COMPONENT" });
+  expect(readFileSync(file, "utf8")).toBe(bytes);
 });
 
 it.each(["vm-home", "vm-homes"])("refuses backup with %s instead of silently omitting persistent data or restoring browser credentials", async component => {

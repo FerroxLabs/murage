@@ -27,6 +27,8 @@ export interface Notification {
   /** The bot's stored profile image, when it has one; clients show it as
    * the OS notification's icon so every banner carries its bot's face. */
   avatarUrl?: string;
+  /** Content and identifying artwork were removed by the privacy policy. */
+  privatePreview?: true;
 }
 
 /** One line, short enough for a lock screen, with the newlines and code

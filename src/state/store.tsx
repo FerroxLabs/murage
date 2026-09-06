@@ -371,6 +371,7 @@ export interface ConfigStatus {
    * renderer. Write it with PATCH /api/config `{ flux: { apiKey } }`. */
   flux?: { configured: boolean };
   webSearch?: { provider: "engine" | "tavily" | "exa" | "off"; tavilyConfigured: boolean; exaConfigured: boolean };
+  notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
   /** UI language override; "" (or absent) follows the system language. */
@@ -391,7 +392,7 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "webSearch" | "profile" | "language" | "features" | "browserProfiles"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "webSearch" | "notifications" | "profile" | "language" | "features" | "browserProfiles"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -407,6 +408,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     imageGen: frame.imageGen,
     flux: frame.flux,
     webSearch: frame.webSearch,
+    notifications: frame.notifications,
     profile: frame.profile,
     language: frame.language,
     features: frame.features,

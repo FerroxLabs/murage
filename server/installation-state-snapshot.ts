@@ -6,10 +6,11 @@ import { dirname, join, sep } from "node:path";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
+import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 
 const JSON_COMPONENTS = new Set(["config.json", "bots.json", "groups.json", "routines.json", "calendar-calls.json", "webhooks.json", "delegations.json", "delegation-receipts.json", "section-contexts.json", "browser-cleanups.json"]);
 const DIRECTORY_COMPONENTS = new Set(["attachments", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
-const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles"] as const;
+const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
@@ -56,6 +57,10 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
   if (value.language !== undefined) {
     if (typeof value.language !== "string") fail("INVALID_CONFIG_COMPONENT");
     projected.language = value.language;
+  }
+  if (value.notifications !== undefined) {
+    if (!notificationPreferencesSchema.safeParse(value.notifications).success) fail("INVALID_CONFIG_COMPONENT");
+    projected.notifications = value.notifications;
   }
   if (value.browserProfiles !== undefined) {
     if (!Array.isArray(value.browserProfiles)) fail("INVALID_CONFIG_COMPONENT");

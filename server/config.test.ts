@@ -99,6 +99,32 @@ describe("explicit web search configuration", () => {
   });
 });
 
+describe("notification preference configuration", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+  it("persists privacy and quiet hours while partial changes preserve false preferences", () => {
+    const quietHours = { enabled: true, start: "22:00", end: "07:00", timeZone: "Asia/Bangkok" };
+    saveConfig({ notifications: { attention: true, completion: false, failures: false, previewContent: false, quietHours } });
+    const patch = parseConfigPatch({ notifications: { attention: false } });
+    expect(patch.notifications).toEqual({ attention: false });
+    saveConfig(patch);
+    expect(loadConfig().notifications).toEqual({ attention: false, completion: false, failures: false, previewContent: false, quietHours });
+    expect(JSON.parse(readFileSync(file, "utf8")).notifications).toEqual(loadConfig().notifications);
+    expect(parseStoredConfig({}).notifications).toBeUndefined();
+  });
+  it.each([
+    { enabled: true, start: "25:00", end: "07:00", timeZone: "UTC" },
+    { enabled: true, start: "22:00", end: "07:00", timeZone: "Not/A_Zone" },
+    { enabled: true, start: "22:00", end: "22:00", timeZone: "UTC" },
+  ])("refuses invalid quiet-hours configuration without changing stored bytes: %j", quietHours => {
+    writeFileSync(file, "{}");
+    expect(() => saveConfig({ notifications: { quietHours } })).toThrow();
+    expect(() => parseConfigPatch({ notifications: { quietHours } })).toThrow();
+    expect(readFileSync(file, "utf8")).toBe("{}");
+  });
+});
+
 describe("saved configuration recovery", () => {
   const file = join(DATA_DIR, "config.json");
   let loadConfig: typeof import("./config.ts").loadConfig;
