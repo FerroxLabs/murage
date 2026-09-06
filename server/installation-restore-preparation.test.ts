@@ -1,7 +1,11 @@
 import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import type { Readable } from "node:stream";
+import { ZipFile } from "yazl";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,4 +100,25 @@ it("a malformed review marker still blocks startup instead of opting into execut
   const root = mkdtempSync(join(tmpdir(), "murage-restore-marker-")); roots.push(root);
   writeFileSync(join(root, RESTORE_REVIEW_FILE), "not-json");
   expect(() => assertRestoreReviewed(root)).toThrowError(expect.objectContaining({ code: "RESTORE_REVIEW_REQUIRED" }));
+});
+
+it("refuses hash-valid external section records before preparing a restore and preserves the archive", async () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-section-external-")); roots.push(root);
+  const archive = join(root, "external.zip");
+  const bytes = Buffer.from('{"version":2,"contexts":{}}');
+  const manifest = {
+    format: "murage.installation", version: 1, snapshotId: randomUUID(), createdAt: new Date().toISOString(), restorePolicy: "paused-review-required",
+    files: [{ path: "section-contexts.json", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }],
+    omitted: [], missing: [], database: { status: "absent" },
+  };
+  const zip = new ZipFile();
+  const output = pipeline(zip.outputStream as Readable, createWriteStream(archive));
+  zip.addBuffer(Buffer.from(JSON.stringify(manifest)), "manifest.json", { compress: false });
+  zip.addBuffer(bytes, "state/section-contexts.json", { compress: false, mode: 0o100600 });
+  zip.end();
+  await output;
+  const before = readFileSync(archive);
+  await expect(prepareInstallationRestore(archive, root)).rejects.toMatchObject({ code: "INVALID_INSTALLATION_RECORDS", component: "section-contexts.json" });
+  expect(readFileSync(archive)).toEqual(before);
+  expect(readdirSync(root)).toEqual(["external.zip"]);
 });

@@ -25,6 +25,11 @@ it("preserves valid terminal evidence even when live definitions no longer exist
 });
 
 const invalid: Array<[string, string, unknown]> = [
+  ["future section context version", "section-contexts.json", { version: 2, contexts: {} }],
+  ["malformed section context", "section-contexts.json", { version: 1, contexts: { General: { text: 1, updatedAt: 1 } } }],
+  ["nonfinite section timestamp", "section-contexts.json", { version: 1, contexts: { General: { text: "brief", updatedAt: Infinity } } }],
+  ["oversized UTF-8 section context", "section-contexts.json", { version: 1, contexts: { General: { text: "界".repeat(8001), updatedAt: 1 } } }],
+  ["section keys that normalize to one identity", "section-contexts.json", { version: 1, contexts: { Team: { text: "one", updatedAt: 1 }, " Team ": { text: "two", updatedAt: 2 } } }],
   ["confirmation without fingerprint", "routines.json", { ...routines, routineRequestReceipts: [{ ...receipt, fingerprint: undefined }] }],
   ["unknown fingerprint version", "routines.json", { ...routines, routineRequestReceipts: [{ ...receipt, fingerprintVersion: 2 }] }],
   ["duplicate request identity", "routines.json", { ...routines, routineRequestReceipts: [receipt, { ...receipt, resultId: "conflicting-result" }] }],
@@ -50,6 +55,32 @@ it("the archive writer refuses malformed receipt data without publishing a backu
   await expect(writeInstallationArchive(data, target)).rejects.toMatchObject({ code: "INVALID_INSTALLATION_RECORDS" });
   expect(readFileSync(file, "utf8")).toBe(bytes);
   expect(existsSync(target)).toBe(false);
+});
+
+it("round trips section briefs including General and unknown metadata without loss", async () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-section-recovery-")); roots.push(root);
+  const data = join(root, "source"), archive = join(root, "backup.zip"); mkdirSync(data);
+  const value = { version: 1, provenance: { author: "user" }, contexts: {
+    "": { text: "General brief", updatedAt: 1, revision: "keep" },
+    Team: { text: "界".repeat(8000), updatedAt: -1 },
+  } };
+  const file = join(data, "section-contexts.json"), bytes = JSON.stringify(value, null, 2);
+  writeFileSync(file, bytes);
+  await writeInstallationArchive(data, archive);
+  const restored = await prepareInstallationRestore(archive, root);
+  expect(JSON.parse(readFileSync(join(restored.stateDirectory, "section-contexts.json"), "utf8"))).toEqual(value);
+  expect(readFileSync(file, "utf8")).toBe(bytes);
+  expect(restored.activationAvailable).toBe(false);
+});
+
+it("refuses invalid section briefs before backup publication and preserves damaged bytes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-section-refusal-")); roots.push(root);
+  const data = join(root, "source"), archive = join(root, "backup.zip"); mkdirSync(data);
+  const file = join(data, "section-contexts.json"), bytes = '{ "version": 2, "contexts": {} }';
+  writeFileSync(file, bytes);
+  await expect(writeInstallationArchive(data, archive)).rejects.toMatchObject({ code: "INVALID_INSTALLATION_RECORDS", component: "section-contexts.json" });
+  expect(readFileSync(file, "utf8")).toBe(bytes);
+  expect(existsSync(archive)).toBe(false);
 });
 
 it("round trips actual manager-produced schedules and acknowledgements with no provider dispatch", async () => {

@@ -20,6 +20,15 @@ const routineFile = z.object({ version: z.literal(1), routines: z.array(routine)
 const calendarFile = z.object({ version: z.literal(1), calls: z.array(z.object({ id, name: text, description: text, botIds: z.array(id).min(1).max(100), schedule: z.union([once, daily]), durationMinutes: z.number().int().min(5).max(240), attachments: z.array(attachment).max(50), roomId: id.optional(), nextRunAt: time.nullable().optional(), createdAt: time, updatedAt: time }).passthrough()) }).passthrough();
 const webhookFile = z.object({ version: z.literal(1), webhooks: z.array(z.object({ id, endpointId: id, name: text, prompt: text, botId: id, runOn, enabled: z.boolean(), createdAt: time, updatedAt: time, deliveryCount: z.number().int().nonnegative(), secretHash: text.regex(/^[a-f0-9]{64}$/).optional(), verificationPending: z.boolean().optional() }).passthrough()), deliveries: z.array(z.object({ key: text.min(1), runId: id, at: time }).passthrough()), attempts: z.array(z.object({ id, webhookId: id, receivedAt: time, outcome: z.enum(["accepted", "captured", "duplicate", "ignored", "rejected"]), statusCode: z.number().int().min(100).max(599), runId: id.optional() }).passthrough()).optional() }).passthrough();
 const delegationReceipts = z.array(z.object({ id, sourceThreadId: id, toBotId: id, toBotName: text, status: z.enum(["done", "failed", "denied", "busy_gave_up", "dropped", "error"]), result: text.optional(), finishedAt: time }).passthrough());
+// Match section-context.ts without importing its runtime configuration. Refuse
+// records its loader would discard or merge rather than silently losing briefs.
+const sectionContexts = z.object({
+  version: z.literal(1),
+  contexts: z.record(z.string().refine(key => key === key.trim()), z.object({
+    text: z.string().refine(value => Buffer.byteLength(value, "utf8") <= 24_000),
+    updatedAt: z.number().finite(),
+  }).passthrough()),
+}).passthrough();
 
 function fail(): never { throw new InstallationSnapshotError("INVALID_INSTALLATION_RECORDS"); }
 function unique(records: Array<Record<string, unknown>> | undefined, field: string) {
@@ -47,6 +56,8 @@ function validateRecords(path: string, value: unknown): void {
   } else if (path === "delegation-receipts.json") {
     const parsed = delegationReceipts.safeParse(value); if (!parsed.success) fail();
     unique(parsed.data, "id");
+  } else if (path === "section-contexts.json") {
+    if (!sectionContexts.safeParse(value).success) fail();
   }
 }
 
