@@ -2281,9 +2281,14 @@ ipcMain.handle("credential:set", async (_event, name, value) => {
     // cannot receive credentials from Electron at boot. Keep its established
     // local config path there; production always uses the encrypted store.
     const secretStorage = app.isPackaged ? "?secretStorage=external" : "";
+    if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Wait and retry saving the credential.");
     const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config${secretStorage}`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-murage-surface": "desktop",
+        "x-murage-surface-secret": desktopSurfaceSecret,
+      },
       body: JSON.stringify(patchFor(secret)),
     });
     const body = await response.json().catch(() => null);

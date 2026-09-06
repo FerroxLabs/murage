@@ -1,5 +1,14 @@
 # Murage takeover state
 
+Telegram live pilot authorized on existing profile/Sable (workspaceChief).
+User explicitly authorized retaining supplied token; no rotation prerequisite.
+Credential:set failed404 and rolledback; no channel started. Confirmed APIstatus
+200 with BOTH desktopmarker/proof; main credential:set omitted both headers.
+Bounded fix: supply existing perlaunch desktop authority, refuse absentproof;
+no gate weakening. Frozen checks actualhandler fixture+oldshape denial control,
+private rebuilt app real encrypted save/status/pair, ownerchat task/reply/revoke.
+Sable target10e51686-90bd-40af-97bd-1fe2f502a559. Installed0.1.46 untouched.
+
 Mac native gate ACCEPTED after user granted Keychain permission. First postgrant
 38237: app.close returned and native exitCode0; immediate child-reaping assertion
 was premature. Bounded3s OS reaping wait added to test only (does not kill before
