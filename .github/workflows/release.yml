@@ -428,11 +428,9 @@ jobs:
         # and resolves dependencies, which dpkg -i did not.
         run: pnpm smoke:deb-command
       - name: Prove an AppImage update lands on the launched path
-        # Reads the live release feed, so it cannot pass until a first release
-        # exists. Reports instead of blocking — the assertion it makes is
-        # already covered by unit tests; this is the end-to-end confirmation.
-        continue-on-error: true
-        run: pnpm smoke:linux-update
+        # Mandatory prepublication proof against an isolated candidate feed.
+        # After publication, rerun without --candidate-feed for live GitHub proof.
+        run: pnpm smoke:linux-update --candidate-feed
       - name: Remove the installed upgrade fixture
         if: always()
         run: sudo dpkg --purge murage || true

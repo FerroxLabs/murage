@@ -75,10 +75,9 @@ jobs:
           test "${#deb[@]}" -eq 1
           pnpm smoke:deb-command "${deb[0]}"
       - name: Prove an AppImage update lands on the launched path
-        # Installs the current published release over a copy named after a
-        # version, which is the shape that used to orphan the launcher. Runs
-        # against the real feed, so it also covers the differential download.
-        run: pnpm smoke:linux-update
+        # Mandatory prepublication proof against an isolated candidate feed.
+        # After publication, rerun without --candidate-feed for live GitHub proof.
+        run: pnpm smoke:linux-update --candidate-feed
       - name: Configure Chromium sandbox for the unpacked app
         run: |
           sudo chown root:root release/linux-unpacked/chrome-sandbox
