@@ -1,3 +1,5 @@
+import { validInstallationMessagePayload } from "./installation-message-validation.ts";
+
 /** Bounded, iterative validation. Explicit parents may reference later rows:
  * inserting a message into an existing branch legitimately does that. Missing
  * parent fields retain the runtime's legacy chain-in-row-order semantics. */
@@ -12,7 +14,7 @@ export class InstallationTranscriptGraph {
     if (!value || typeof value !== "object" || Array.isArray(value)) this.fail("INVALID_RESTORE_MESSAGE");
     const message = value as Record<string, unknown>;
     const validId = (id: unknown): id is string => typeof id === "string" && /^[\w-]{1,160}$/.test(id);
-    if (!validId(message.id) || this.parents.has(message.id) || !Number.isFinite(message.at) || !["bot", "user"].includes(String(message.role)) || typeof message.kind !== "string") this.fail("INVALID_RESTORE_MESSAGE");
+    if (!validId(message.id) || this.parents.has(message.id) || !Number.isFinite(message.at) || !["bot", "user"].includes(String(message.role)) || !validInstallationMessagePayload(message)) this.fail("INVALID_RESTORE_MESSAGE");
     const parent = message.parentId === undefined ? this.previous : message.parentId;
     if (parent !== null && !validId(parent)) this.fail("INVALID_MESSAGE_PARENT");
     this.identityBytes += Buffer.byteLength(message.id) + (parent === null ? 0 : Buffer.byteLength(parent as string));
