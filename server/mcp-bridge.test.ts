@@ -3,11 +3,16 @@
 // the constant but the decision table — silence alone never kills, only
 // silence PLUS a failed liveness probe does, and traffic always vetoes.
 import { describe, expect, it, vi } from "vitest";
+import { spawn } from "node:child_process";
+import { PassThrough, Writable } from "node:stream";
 
 import {
   createGateInterceptor,
   createInactivityWatchdog,
   createLineSplitter,
+  createMcpBridgeInterceptor,
+  pipeMcpLines,
+  writeMcpLine,
   runLivenessProbe,
 } from "./mcp-bridge.ts";
 
@@ -104,6 +109,121 @@ describe("createInactivityWatchdog", () => {
       expect(onDead).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("near-side MCP ping", () => {
+  it.each([0, 17, "ping-🐭", null])("preserves request ID %j without consulting the gate", async (id) => {
+    const answer = vi.fn();
+    const forward = vi.fn();
+    const isHeld = vi.fn(async () => true);
+    await createMcpBridgeInterceptor({ answer, forward, gate: { isHeld } })(
+      JSON.stringify({ jsonrpc: "2.0", method: "ping", id }),
+    );
+    expect(JSON.parse(answer.mock.calls[0]![0])).toEqual({ jsonrpc: "2.0", id, result: {} });
+    expect(forward).not.toHaveBeenCalled();
+    expect(isHeld).not.toHaveBeenCalled();
+  });
+
+  it("consumes notifications and retains gate forwarding/refusal", async () => {
+    const answer = vi.fn();
+    const forward = vi.fn();
+    const isHeld = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+    const intercept = createMcpBridgeInterceptor({ answer, forward, gate: { isHeld } });
+    await intercept('{"jsonrpc":"2.0","method":"ping"}');
+    expect(answer).not.toHaveBeenCalled();
+    expect(forward).not.toHaveBeenCalled();
+    const call = '{"jsonrpc":"2.0","id":4,"method":"tools/call"}';
+    await intercept(call);
+    expect(JSON.parse(answer.mock.calls[0]![0]).result.isError).toBe(true);
+    await intercept(call);
+    await intercept("not json");
+    expect(forward.mock.calls.map(([line]) => line)).toEqual([call, "not json"]);
+  });
+
+  it("negative control: the old gate-only path sends ping to the unsupported driver", async () => {
+    const forward = vi.fn();
+    const ping = '{"jsonrpc":"2.0","id":0,"method":"ping"}';
+    await createGateInterceptor({ isHeld: async () => false, forward, refuse: vi.fn() })(ping);
+    expect(forward).toHaveBeenCalledWith(ping);
+    forward.mockClear();
+    await createMcpBridgeInterceptor({ answer: vi.fn(), forward })(ping);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it("bounds incomplete frames", () => {
+    const splitter = createLineSplitter(() => {}, 8);
+    splitter.push("12345678");
+    expect(() => splitter.push("9")).toThrow("MCP frame exceeds bridge limit");
+  });
+
+  it("keeps injected output whole, waits for slow writes and flushes final fragments", async () => {
+    const childOutput = new PassThrough();
+    const writes: string[] = [];
+    const callbacks: Array<() => void> = [];
+    const destination = new Writable({
+      highWaterMark: 1,
+      write(chunk, _encoding, callback) {
+        writes.push(chunk.toString());
+        callbacks.push(callback);
+      },
+    });
+    const done = new Promise<void>((resolve, reject) => {
+      pipeMcpLines(childOutput, (line) => writeMcpLine(destination, line), resolve, reject);
+    });
+    childOutput.write('{"id":1,"res');
+    await new Promise((resolve) => setImmediate(resolve));
+    const reply = writeMcpLine(destination, '{"id":0,"result":{}}');
+    childOutput.end('ult":{}}\n{"id":2,"result":{}}');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(writes).toEqual(['{"id":0,"result":{}}\n']);
+    expect(childOutput.isPaused()).toBe(true);
+    callbacks.shift()!();
+    await reply;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(writes).toHaveLength(2);
+    callbacks.shift()!();
+    await new Promise((resolve) => setImmediate(resolve));
+    callbacks.shift()!();
+    await done;
+    expect(writes.map((line) => JSON.parse(line).id)).toEqual([0, 1, 2]);
+  });
+
+  it("runs the real bridge against an isolated child, including stdin EOF", async () => {
+    // This fake driver rejects forwarded ping; it echoes all other frames
+    // as a deliberately fragmented result without a final newline.
+    const driver = `let input = ''; process.stdin.on('data', c => input += c);
+      process.stdin.on('end', () => {
+        const frames = input.trim().split('\\n').filter(Boolean).map(JSON.parse);
+        const output = JSON.stringify({jsonrpc:'2.0', id:9, result:{methods:frames.map(f=>f.method)}});
+        process.stdout.write(output.slice(0, 12));
+        setTimeout(() => process.stdout.write(output.slice(12)), 10);
+      });`;
+    const script = `import {runMcpBridge} from './server/mcp-bridge.ts';
+      runMcpBridge({command:process.execPath,args:['-e',${JSON.stringify(driver)}],label:'fixture'});`;
+    const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
+      { stdio: ["pipe", "pipe", "pipe"] });
+    let output = "";
+    let errors = "";
+    bridge.stdout.on("data", (chunk) => { output += chunk; });
+    bridge.stderr.on("data", (chunk) => { errors += chunk; });
+    const timer = setTimeout(() => bridge.kill("SIGKILL"), 5000);
+    try {
+      const closed = new Promise<number | null>((resolve, reject) => {
+        bridge.on("error", reject);
+        bridge.on("close", resolve);
+      });
+      bridge.stdin.end('{"jsonrpc":"2.0","id":0,"method":"ping"}\n' +
+        '{"jsonrpc":"2.0","method":"ping"}\n{"jsonrpc":"2.0","id":9,"method":"tools/list"}');
+      expect(await closed, errors).toBe(0);
+      expect(output.trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+        { jsonrpc: "2.0", id: 0, result: {} },
+        { jsonrpc: "2.0", id: 9, result: { methods: ["tools/list"] } },
+      ]);
+    } finally {
+      clearTimeout(timer);
+      if (bridge.exitCode === null && bridge.signalCode === null) bridge.kill("SIGKILL");
     }
   });
 });
