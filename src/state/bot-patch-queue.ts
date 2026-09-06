@@ -8,7 +8,6 @@ export type BotUpdatePatch = Partial<
     | "title"
     | "description"
     | "notifications"
-    | "computer"
     | "cloudBackend"
     | "autoStartVps"
     | "color"
@@ -31,6 +30,7 @@ export type BotUpdatePatch = Partial<
     | "modelSelection"
   >
 > & {
+  computer?: Bot["computer"] | null;
   /** Rides the PATCH body only, as `chiefScope`: which tier a Chief
    * occupies. Named apart from the bot field it becomes because its values
    * are not the field's — "section" and null both mean "drop the workspace
@@ -44,6 +44,8 @@ export type BotUpdatePatch = Partial<
    * state — the queue strips it from every overlay it hands back. */
   acknowledgeLocalAuto?: boolean;
 };
+
+export type BotStateOverlay = Omit<BotUpdatePatch, "computer" | "acknowledgeLocalAuto" | "chiefTier"> & { computer?: Bot["computer"] };
 
 interface BotPatchQueueEntry {
   botId: string;
@@ -65,14 +67,14 @@ export interface BotPatchQueueOptions {
     signal: AbortSignal,
   ) => Promise<BotAnnouncement>;
   reconcile: (botId: string, signal: AbortSignal) => Promise<BotAnnouncement | null>;
-  onAuthoritative: (bot: BotAnnouncement, optimisticOverlay: BotUpdatePatch) => void;
+  onAuthoritative: (bot: BotAnnouncement, optimisticOverlay: BotStateOverlay) => void;
   onError: (error: Error) => void;
 }
 
 export interface BotPatchQueue {
   enqueue: (botId: string, patch: BotUpdatePatch, fallback: BotAnnouncement) => void;
   flush: (botId: string) => Promise<void>;
-  overlayFor: (botId: string) => BotUpdatePatch;
+  overlayFor: (botId: string) => BotStateOverlay;
   cancel: (botId: string) => void;
   /** Undo a dispose. Exists for React StrictMode, whose dev-mode mount probe
    * runs the effect cleanup once against the SAME memoized queue — without
@@ -86,9 +88,10 @@ const hasFields = (patch: BotUpdatePatch): boolean => Object.keys(patch).length 
 /** What may fold back into renderer bot state: everything except the two
  * wire-only fields — the consent flag and the Chief's tier. One strip point
  * covers both overlay paths. */
-const stateOverlay = (patch: BotUpdatePatch): BotUpdatePatch => {
+const stateOverlay = (patch: BotUpdatePatch): BotStateOverlay => {
   const { acknowledgeLocalAuto: _ack, chiefTier: _tier, ...fields } = patch;
-  return fields;
+  const { computer, ...rest } = fields;
+  return { ...rest, ...(Object.hasOwn(fields, "computer") ? { computer: computer ?? undefined } : {}) };
 };
 
 /**

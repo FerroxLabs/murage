@@ -270,7 +270,7 @@ export interface Bot {
   activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
-  computer?: "cloud" | "vm" | "local" | "off";
+  computer?: "cloud" | "vm" | "local" | "browser" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
   cloudBackend?: CloudBackend;
   /** Allow Auto to prepare/start the managed VPS container. Off by default. */
@@ -1298,6 +1298,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return updateBot(scoped, action.botId, (b) => ({
         ...b,
         ...botPatch,
+        computer: Object.hasOwn(botPatch, "computer") ? botPatch.computer ?? undefined : b.computer,
         // Absent, never false — one shape for "no", the same as on disk.
         ...(botPatch.individual === false ? { individual: undefined } : {}),
       }));

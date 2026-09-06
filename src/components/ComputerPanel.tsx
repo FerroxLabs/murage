@@ -9,6 +9,9 @@ import { z } from "zod";
 import {
   CalendarClock,
   CalendarDays,
+  Check,
+  Cloud,
+  Box,
   Columns2,
   Globe,
   Hand,
@@ -20,6 +23,7 @@ import {
   Power,
   Settings,
   Smartphone,
+  Sparkles,
   X,
 } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
@@ -55,6 +59,34 @@ import {
 
 export function ScreenStreamNotice({ message }: { message?: string }) {
   return message ? <p role="status" className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">{message}</p> : null;
+}
+
+type ComputerChoice = "auto" | "cloud" | "vm" | "local" | "browser" | "off";
+export function ComputerDestinationGrid({ value, unavailable, onSelect }: {
+  value: ComputerChoice;
+  unavailable: Partial<Record<ComputerChoice, string>>;
+  onSelect: (choice: ComputerChoice) => void;
+}) {
+  return <div role="group" aria-label="Computer destination" className="mt-3 grid auto-rows-fr grid-cols-2 gap-2">
+    {([
+      ["auto", "Auto", "Use an existing computer", Sparkles],
+      ["cloud", "Cloud", "Hosted desktop", Cloud],
+      ["vm", "Local VM", "Separate local desktop", Box],
+      ["local", "This computer", "Your screen and apps", Monitor],
+      ["browser", "Browser", "Web pages only", Globe],
+      ["off", "Off", "No desktop access", Power],
+    ] as const).map(([choice, label, description, Icon]) => <button key={choice} type="button"
+      aria-label={label} aria-pressed={value === choice} disabled={Boolean(unavailable[choice])}
+      title={unavailable[choice]} onClick={() => onSelect(choice)}
+      className={cn("min-w-0 rounded-lg border px-2.5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+        value === choice ? "border-accent/60 bg-accent/10 text-ink" : "border-hairline/50 bg-panel/30 text-ink-secondary",
+        unavailable[choice] ? "cursor-not-allowed" : "hover:border-accent/40 hover:bg-control/60")}>
+      <span className="flex items-center gap-2 text-[12px] font-medium leading-4">
+        {value === choice ? <Check size={14} className="shrink-0 text-accent" /> : <Icon size={14} className="shrink-0" />}{label}
+      </span>
+      <span className="mt-1.5 block text-[11px] leading-4 text-ink-secondary">{unavailable[choice] ?? description}</span>
+    </button>)}
+  </div>;
 }
 
 interface VpsComputerStatus {
@@ -193,6 +225,7 @@ export function ComputerPanel({
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState(false);
+  const [localAutoWarningChoice, setLocalAutoWarningChoice] = useState<"local" | "auto">("local");
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const [phase, setPhase] = useState<Phase>("checking");
   const [boxState, setBoxState] = useState<string | null>(null);
@@ -292,7 +325,7 @@ export function ComputerPanel({
         ? "the Local VM"
       : bot.computer === "local"
         ? "this computer"
-        : bot.computer === "off"
+        : bot.computer === "off" || bot.computer === "browser"
           ? null
           : phase === "ready"
             ? cloudBackend === "vps" ? "the self-hosted VPS selected by Auto" : "the cloud box selected by Auto"
@@ -313,7 +346,7 @@ export function ComputerPanel({
     setVpsStatus(null);
     setLocalFrame(null);
     setError(null);
-    if (bot.computer === "off") {
+    if (bot.computer === "off" || bot.computer === "browser") {
       setPhase("off");
       return;
     }
@@ -1250,53 +1283,23 @@ export function ComputerPanel({
               in a container on this machine — free and separate from your own desktop. Set it up in App
               Settings → Local VM.
           </div>
-          <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
-            {(
-              [
-                ["cloud", "Cloud"],
-                ["vm", "Local VM"],
-                ["local", "This computer"],
-                ["off", "Off"],
-              ] as const
-            ).map(([mode, label], i) => (
-              (() => {
-                const disabled =
-                  (mode === "cloud" && !cloudSupported) ||
-                  (mode === "vm" && !vmSupported) ||
-                  (mode === "local" && !localSelectable);
-                const unavailableTitle =
-                  mode === "vm" && !vmSupported
-                    ? "This model engine cannot use the Local VM"
-                    : mode === "cloud" && !cloudSupported
-                      ? "This model engine cannot use cloud computer tools"
-                      : mode === "local" && !localSelectable
-                        ? localDisabledReason ?? "Local computer control isn't ready"
-                          : undefined;
-                return (
-              <button
-                key={mode}
-                disabled={disabled}
-                title={unavailableTitle}
-                onClick={() => {
-                  if (mode === bot.computer) return;
-                  if (mode === "local" && bot.autoApprove) setLocalAutoWarning(true);
-                  else dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } });
-                }}
-                className={cn(
-                  "flex-1 py-1.5 text-[13px]",
-                  i > 0 && "border-l border-hairline/40",
-                  disabled && "cursor-not-allowed opacity-40",
-                  bot.computer === mode
-                    ? "bg-control text-ink"
-                    : "text-ink-secondary hover:bg-control/60 hover:text-ink",
-                )}
-              >
-                {label}
-              </button>
-                );
-              })()
-            ))}
-          </div>
+          <ComputerDestinationGrid value={bot.computer ?? "auto"} unavailable={{
+            ...(!cloudSupported ? { cloud: "This engine cannot use cloud computer tools" } : {}),
+            ...(!vmSupported ? { vm: "This engine cannot use the Local VM" } : {}),
+            ...(!localSelectable ? { local: localDisabledReason ?? "Local control is not ready" } : {}),
+            ...(!builtInBrowserEnabled(state.config) || !window.muragebox?.browser
+              ? { browser: !builtInBrowserEnabled(state.config) ? "Enable Browser in Settings" : "Browser setup required on this host" } : {}),
+          }} onSelect={(mode) => {
+            if (mode === (bot.computer ?? "auto")) return;
+            if (bot.autoApprove && (mode === "local" || (mode === "auto" && !isLinux && localSelectable))) {
+              setLocalAutoWarningChoice(mode); setLocalAutoWarning(true); return;
+            }
+            dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode === "auto" ? null : mode,
+              ...(mode === "browser" ? { browser: true } : {}) } });
+          }} />
+          {bot.computer === "browser" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">
+            Browser tools can work with web pages without desktop access. {browserEnabled ? "Open the Browser tab above to view it." : "An interactive browser preview is unavailable here."}
+          </p>}
           {(!bot.computer || bot.computer === "cloud") && (
             <>
               <CloudBackendPicker
@@ -1413,7 +1416,7 @@ export function ComputerPanel({
       open={localAutoWarning}
       onCancel={() => setLocalAutoWarning(false)}
       onConfirm={() => {
-        dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "local", acknowledgeLocalAuto: true } });
+        dispatch({ type: "updateBot", botId: bot.id, patch: { computer: localAutoWarningChoice === "auto" ? null : "local", acknowledgeLocalAuto: true } });
         setLocalAutoWarning(false);
       }}
     />

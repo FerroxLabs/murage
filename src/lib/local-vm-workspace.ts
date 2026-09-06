@@ -3,7 +3,7 @@ import type { JsonValue } from "../../server/schema.ts";
 
 export interface LocalVmWorkspaceBot {
   id: string;
-  computer?: "cloud" | "vm" | "local" | "off";
+  computer?: "cloud" | "vm" | "local" | "browser" | "off";
   hidden?: boolean;
 }
 
