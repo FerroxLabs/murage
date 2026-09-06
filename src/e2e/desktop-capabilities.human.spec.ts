@@ -68,6 +68,9 @@ test.beforeAll(async () => {
           } else if (which === 'plugins') {
             const { PluginsPanel } = await import('/src/components/PluginsPanel.tsx');
             element = React.createElement(PluginsPanel);
+          } else if (which === 'inspector') {
+            const { InspectorPanel } = await import('/src/components/InspectorPanel.tsx');
+            element = React.createElement(InspectorPanel,{bot});
           } else if (which === 'approval' || which.startsWith('routine-')) {
             const { PendingApprovalActions, PendingApprovalPanel } = await import('/src/components/PendingApproval.tsx');
             const card = {title:'Review command',subtitle:'git status',tool:'Bash',requestId:'request-a',options:['Allow','Deny']};
@@ -158,6 +161,43 @@ async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
   await expect(page.getByRole("dialog", { name: "Plugins", exact: true })).toBeVisible();
   return fixture;
 }
+
+test("Inspector marks bounded counts as incomplete without hiding recent records", async ({ page }, testInfo) => {
+  let fullyCounted = false;
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.route("**/api/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/desktop-secret") return route.fulfill({ json: { secret: "fixture-proof" } });
+    if (path === "/api/config") return route.fulfill({ json: { surface: "desktop" } });
+    if (path === "/api/events") return route.fulfill({ status: 204, body: "" });
+    if (path === "/api/threads/thread-a/events") return route.fulfill({ json: {
+      entries: [
+        { kind: "runtime", at: "2026-09-06T00:00:00Z", data: {
+          eventId: "fixture-event", provider: "claudeAgent", threadId: "thread-a",
+          createdAt: "2026-09-06T00:00:00Z", type: "turn.started", turnId: "fixture-turn",
+        } },
+        { kind: "native", at: "2026-09-06T00:00:00Z", data: {
+          at: "2026-09-06T00:00:00Z", dir: "out", source: "fixture", msg: { method: "initialize" },
+        } },
+      ],
+      total: { runtime: 999, native: 1 }, totalComplete: { runtime: fullyCounted, native: true },
+    } });
+    return route.fulfill({ json: {} });
+  });
+  await page.goto(`${origin}/__capabilities?component=inspector`);
+  const notice = page.getByText("1 recent records; total not fully counted", { exact: true });
+  await expect(notice).toBeVisible();
+  await expect(page.getByText("turn started · fixture-", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("inspector-incomplete-count.png") });
+  await page.getByRole("button", { name: "raw", exact: true }).click();
+  await expect(page.getByText("1 entries", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "events", exact: true }).click();
+  await expect(notice).toBeVisible();
+  fullyCounted = true;
+  await page.getByTitle("Reload from disk").click();
+  await expect(page.getByText("last 1 of 999", { exact: true })).toBeVisible();
+});
 
 const pendingOAuthAccounts: ConnectorStatus = {
   connected: true, pending: true, status: "INITIATED",

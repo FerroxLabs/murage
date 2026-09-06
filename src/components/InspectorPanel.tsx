@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bug, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { formatTime, toRows, type InspectorEntry, type InspectorPage, type InspectorRow } from "@/lib/inspector";
+import { appendInspectorRuntime, formatTime, inspectorCountLabel, toRows, type InspectorPage, type InspectorRow } from "@/lib/inspector";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import type { RuntimeEvent } from "../../server/contracts.ts";
 
@@ -84,20 +84,7 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
     const pendingRuntime: RuntimeEvent[] = [];
 
     const appendRuntime = (runtime: RuntimeEvent) => {
-      setPage((prev) => {
-        // A disk refresh and replay can overlap. eventId is canonical, so a
-        // replayed entry already present in the snapshot is an exact no-op.
-        if (
-          prev?.entries.some(
-            (entry) => entry.kind === "runtime" && entry.data.eventId === runtime.eventId,
-          )
-        ) {
-          return prev;
-        }
-        const entry: InspectorEntry = { kind: "runtime", at: runtime.createdAt, data: runtime };
-        if (!prev) return { entries: [entry], total: { runtime: 1, native: 0 } };
-        return { entries: [...prev.entries, entry], total: { ...prev.total, runtime: prev.total.runtime + 1 } };
-      });
+      setPage((prev) => appendInspectorRuntime(prev, runtime));
     };
 
     const flushPendingRuntime = () => {
@@ -188,6 +175,7 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
 
   const shown = entries.length;
   const total = lens === "raw" ? (page?.total.native ?? 0) : (page?.total.runtime ?? 0);
+  const countComplete = page?.totalComplete?.[lens === "raw" ? "native" : "runtime"] ?? true;
 
   return (
     <aside
@@ -217,7 +205,7 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
       </div>
 
       <div className="flex items-center gap-2 border-b border-hairline/40 px-4 pb-3">
-        <div className="flex rounded-lg bg-inset p-0.5">
+        <div className="flex shrink-0 rounded-lg bg-inset p-0.5">
           {(["events", "raw"] as const).map((l) => (
             <button
               key={l}
@@ -231,8 +219,8 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-[11px] text-ink-secondary">
-          {page ? (shown < total ? `last ${shown} of ${total}` : `${shown} entries`) : "loading…"}
+        <span className="ml-auto text-right text-[11px] text-ink-secondary">
+          {page ? inspectorCountLabel(shown, total, countComplete) : "loading…"}
         </span>
         <button onClick={() => managedRefresh.current()} className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink" title="Reload from disk">
           <RefreshCw size={14} />

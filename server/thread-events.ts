@@ -29,28 +29,33 @@ export type InspectorEntry =
 
 export interface InspectorPage {
   entries: InspectorEntry[];
-  /** line counts before the cap, so the UI can say "showing 200 of 1,687" */
+  /** Non-empty line counts; exact only when the corresponding totalComplete
+   * flag is true (or absent in a legacy response). */
   total: { runtime: number; native: number };
+  /** False means the bounded count has not scanned the complete file. */
+  totalComplete?: { runtime: boolean; native: boolean };
 }
 
 const DEFAULT_LIMIT = 300;
 const MAX_LIMIT = 2000;
 const READ_CHUNK = 64 * 1024;
 const MAX_TAIL_BYTES = 8 * 1024 * 1024;
+const MAX_COUNT_BYTES = 8 * 1024 * 1024;
 
 interface LineCount {
   dev: number;
   ino: number;
   size: number;
+  scanned: number;
   mtimeMs: number;
   complete: number;
   trailing: boolean;
 }
 type FileStat = Pick<Stats, "dev" | "ino" | "size" | "mtimeMs">;
 
-// Counts are incremental per append-only log. The first request scans bytes
-// once (without decoding or parsing every JSON record); later requests inspect
-// only bytes appended since the cached size. Keep this bounded across threads.
+// Counts advance by at most MAX_COUNT_BYTES per request, without decoding
+// records. Later requests resume the counted prefix, including partial lines.
+// Keep the cache bounded across threads and reset it for replaced/truncated logs.
 const lineCounts = new Map<string, LineCount>();
 const LINE_COUNT_CACHE_MAX = 256;
 
@@ -60,7 +65,7 @@ function assertThreadId(threadId: string) {
   if (!/^[\w-]+$/.test(threadId)) throw new Error("invalid thread id");
 }
 
-function countLines(fd: number, file: string, stat: FileStat): number {
+function countLines(fd: number, file: string, stat: FileStat): { total: number; complete: boolean } {
   const previous = lineCounts.get(file);
   const appended =
     previous &&
@@ -68,15 +73,20 @@ function countLines(fd: number, file: string, stat: FileStat): number {
     previous.ino === stat.ino &&
     stat.size >= previous.size &&
     (stat.size > previous.size || stat.mtimeMs === previous.mtimeMs);
-  if (appended && stat.size === previous.size) return previous.complete + Number(previous.trailing);
+  if (appended && stat.size === previous.scanned) {
+    return { total: previous.complete + Number(previous.trailing), complete: true };
+  }
 
-  let offset = appended ? previous.size : 0;
+  let offset = appended ? previous.scanned : 0;
   let complete = appended ? previous.complete : 0;
   let trailing = appended ? previous.trailing : false;
-  while (offset < stat.size) {
-    const length = Math.min(READ_CHUNK, stat.size - offset);
+  const end = Math.min(stat.size, offset + MAX_COUNT_BYTES);
+  while (offset < end) {
+    const length = Math.min(READ_CHUNK, end - offset);
     const chunk = Buffer.allocUnsafe(length);
-    const read = readSync(fd, chunk, 0, length, offset);
+    let read: number;
+    try { read = readSync(fd, chunk, 0, length, offset); }
+    catch { break; }
     if (read <= 0) break;
     for (let i = 0; i < read; i++) {
       if (chunk[i] === 0x0a) {
@@ -88,11 +98,13 @@ function countLines(fd: number, file: string, stat: FileStat): number {
     }
     offset += read;
   }
-  const next = { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, complete, trailing };
+  const next = { dev: stat.dev, ino: stat.ino, size: stat.size, scanned: offset, mtimeMs: stat.mtimeMs, complete, trailing };
   lineCounts.delete(file);
   lineCounts.set(file, next);
   while (lineCounts.size > LINE_COUNT_CACHE_MAX) lineCounts.delete(lineCounts.keys().next().value!);
-  return complete + Number(trailing);
+  // A partial prefix is a lower bound; only a real EOF makes its trailing
+  // fragment a counted line. Resume that fragment on the next request.
+  return { total: complete + Number(offset === stat.size && trailing), complete: offset === stat.size };
 }
 
 type RecordGuard<T> = (value: unknown) => value is T;
@@ -114,16 +126,16 @@ function parseRecent<T>(text: string, includeFirst: boolean, limit: number, vali
   return out.slice(-limit);
 }
 
-function readRecentLines<T>(file: string, limit: number, valid: RecordGuard<T>): { lines: T[]; total: number } {
+function readRecentLines<T>(file: string, limit: number, valid: RecordGuard<T>): { lines: T[]; total: number; complete: boolean } {
   let fd: number;
   try {
     fd = openSync(file, "r");
-  } catch {
-    return { lines: [], total: 0 };
+  } catch (error) {
+    return { lines: [], total: 0, complete: (error as NodeJS.ErrnoException).code === "ENOENT" };
   }
   try {
     const stat = fstatSync(fd);
-    const total = countLines(fd, file, stat);
+    const counted = countLines(fd, file, stat);
     let position = stat.size;
     let bytes = Buffer.alloc(0);
     let lines: T[] = [];
@@ -148,7 +160,9 @@ function readRecentLines<T>(file: string, limit: number, valid: RecordGuard<T>):
     if (lines.length === 0 && bytes.length > 0) {
       lines = parseRecent(bytes.toString("utf8"), position === 0, limit, valid);
     }
-    return { lines, total };
+    return { lines, total: counted.total, complete: counted.complete };
+  } catch {
+    return { lines: [], total: 0, complete: false };
   } finally {
     closeSync(fd);
   }
@@ -270,5 +284,6 @@ export function readThreadEvents(input: {
   return {
     entries: merged,
     total: { runtime: runtime.total, native: native.total },
+    totalComplete: { runtime: runtime.complete, native: native.complete },
   };
 }
