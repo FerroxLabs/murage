@@ -1,6 +1,36 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+Independent Linux package/search proof ACCEPTED (round 1): Hetzner strict-host-key
+SSH reverified 2026-09-06, fresh root-owned scratch
+/var/tmp/murage-linux-proof-20260906-h1RECn. Transferred git archive of exact
+395d790b82aebd9f7b536e0c3406dde78070f31c (no uncommitted packaging/budget edits).
+System Node22/pnpm11 do not match project; reuse existing task-owned Node24.20.0
+runtime and corepack project-pinned pnpm10.33. Frozen package/file/recovery-helper
+and search fixture checks only; no fresh-start smoke retry, native UI claim or
+existing service/network mutation. Export results then delete only this scratch.
+Result 72992 exit0: 76 tests / 10 files PASS on Node24.20.0/pnpm10.33.0.
+Evidence exported to .planning/next-programme/linux-package-search-proof.md;
+three local/remote source hashes matched. Cleanup 42335 exit0 verifies only the
+new scratch was removed; source/dependencies recoverable from pinned commit and
+lockfile. Existing runtime, caches, services and prior scratch left untouched.
+P17 accepted-candidate build integration BLOCKED (round 2): source 395d790b, paused budget
+excluded. Frozen checks pnpm build, pnpm build:server, then existing
+scripts/smoke-packaged-server.mjs in isolated temporary home/copy. Prove frontend
+production compilation and relocated bundled server/MCP startup without repository
+dependencies. Not a signed desktop build, installation, live search or full suite.
+No source changes planned; failures get bounded disposition under two-round rule.
+Evidence: frontend production build 54779 PASS; server bundle 5847 PASS but
+isolated smoke failed startup: CommonJS ZIP dependency dynamic require("fs") in
+ESM. Added existing recovery-style createRequire banner to main harness bundle;
+rebuild 75280 PASS. Confirmation smoke then reached package recovery and failed
+UNSAFE_PACKAGE_IMPORT_ROOT on a fresh temporary HOME. rootPaths requires an
+existing DATA_DIR, but startup invokes recovery immediately after lease acquisition
+before first-use directory creation. This is a real fresh-start blocker, not a
+passing packaged gate. No third correction authorized. Banner remains uncommitted
+in scripts/bundle-server.mjs; request targeted follow-up for missing-root startup.
+Non-blocking build warnings retained for P05/P23: generated env() and orders CSS
+warnings plus large chunks. Do not chase them in this blocked startup cycle.
 P17 settings UI ACCEPTED (round 1): extend Connections with existing
 design tokens, explicit engine/Tavily/Exa/native-off choices, write-only password
 fields, encrypted desktop save/clear and browser config fallback. Saving a key
