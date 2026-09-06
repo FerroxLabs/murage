@@ -1,6 +1,20 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P05 Linux concurrency observation ACCEPTED: same committed benchmark d312f35c,
+Node24.20.0 on strict-host-key Hetzner Linuxx64. Fresh shallow local transfer
+/tmp/murage-linux-concurrency-transfer-VTRfaP/source and remote checkout
+/var/tmp/murage-linux-concurrency-20260906-BDUzzL; exact Git identity retained.
+Frozen check same1/5/10x2 gatedworkload and cleanup proof, no codechanges planned,
+no fresh-start/packaged gate retry. Export metrics, deleteonlytaskownedcopies.
+Mac measurement remains valid; no realprovider/nativeUI or stabilityclaim.
+Result37845 exit0, clean source, all6cycles/32turns completed5.713s with
+cleanupVerified/fixtureRemoved. Linux96logicalCPUs/MemTotal263609704KiB;
+10bots ready256–257ms, peakserver354000KiB,totalowned1101360KiB. Source and
+instrumentationhashes recorded in .planning/next-programme/concurrency-linux-20260906.json.
+Only transferownership metadata required correction; no globalGittrust changes.
+Remote checkout and local transfer copy removed after report export; reproducible
+from pinnedcommit/lockfile. Existing host services/runtime/caches untouched.
 P05 concurrency fixture ACCEPTED (confirmation round 2): existing observation benchmark
 does not measure concurrent bots. Add test-only gated ACP load mode and one
 isolated actual-harness benchmark for1/5/10provider-ready simultaneousbots, two
