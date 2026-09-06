@@ -7517,6 +7517,60 @@ describe("internal capability authority", () => {
     }
   });
 
+  it("keeps an event create budget across credential resumption while ordinary human turns retain their allowance", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const createdIds: string[] = [];
+    let routineId = "", runId = "";
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { section: "Event budget test", chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+      routineId = (await desktopApi("POST", "/api/routines", { name: "Budget event", prompt: "__fixture_hold_authority__",
+        botId: bot.id, enabled: false, schedule: { type: "daily", time: "10:00", weekdays: [1] } })).body.routine.id;
+      rmSync(fakeClaudeDump, { force: true });
+      const queued = await api("POST", `/api/routines/${routineId}/run`);
+      expect(queued.status).toBe(201); runId = queued.body.run.id;
+      const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      const env = first.mcpConfig.mcpServers.agents.env;
+      const threadId = env.MURAGE_THREAD_ID;
+      expect(threadId).toBeTruthy();
+      const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
+      const create = async (requestHeaders: Record<string, string>, sourceThread: string, index: number) => {
+        const response = await fetch(`${BASE}/api/internal/create-bot`, { method: "POST", headers: requestHeaders,
+          body: JSON.stringify({ fromBotId: bot.id, fromThreadId: sourceThread, name: `Event operator ${index}`, role: "Research", instructions: "Review notes.", eventId: "forged-new-event" }) });
+        const body = await response.json() as { id?: string; error?: string };
+        if (body.id) createdIds.push(body.id);
+        return { status: response.status, body };
+      };
+      for (let index = 0; index < 4; index++) expect((await create(headers, threadId, index)).status).toBe(201);
+      const card = await fetch(`${BASE}/api/internal/request-credential`, { method: "POST", headers,
+        body: JSON.stringify({ fromBotId: bot.id, fromThreadId: threadId, credentialId: "openaiImageApiKey", reason: "Test continuation ownership" }) });
+      expect(card.status).toBe(201);
+      const { messageId } = await card.json() as { messageId: string };
+      writeFileSync(join(home, "finish-fake", String(first.pid)), "finish");
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === bot.id)?.busy).toBe(false);
+      rmSync(fakeClaudeDump, { force: true });
+      const resumed = await api("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, { threadId });
+      expect(resumed.status).toBe(200);
+      const second = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      const nextToken = second.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
+      expect(nextToken).not.toBe(env.MURAGE_COMMS_TOKEN);
+      const denied = await create({ ...headers, authorization: `Bearer ${nextToken}` }, threadId, 4);
+      expect(denied.status).toBe(429);
+      expect(denied.body.error).toMatch(/cumulative action limit/);
+      const stored = JSON.parse(readFileSync(join(home, ".murage", "routines.json"), "utf8")).runs.find((item: { id: string }) => item.id === runId);
+      expect(stored.eventBudget.admissions.filter((item: { kind: string }) => item.kind === "create")).toHaveLength(4);
+      writeFileSync(join(home, "finish-fake", String(second.pid)), "finish");
+      const human = await startInternalFixtureTurn(bot.id);
+      expect((await create(human.headers, human.env.MURAGE_THREAD_ID, 5)).status).toBe(201);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      if (runId) await api("POST", `/api/routine-runs/${runId}/cancel`);
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      for (const id of createdIds) await desktopApi("DELETE", `/api/bots/${id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("bounds concurrent creates by the server-owned generation budget", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const created: string[] = [];

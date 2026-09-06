@@ -4,7 +4,7 @@
 // assert what would have been dispatched to the harness. The harness itself
 // stays out of these — the integration happens in comms.test.ts (the full
 // e2e through the agents proxy + fake ACP CLI).
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -634,6 +634,51 @@ describe("busy retries and receipts", () => {
 
   const chipCount = (needle: string) =>
     store.messagesFor(from.threadId).filter((m) => m.kind === "activity" && m.tool?.name?.includes(needle)).length;
+
+  it("persists the originating event through reload and a busy retry before dispatch", async () => {
+    const eventId = "event:trusted-generation_42";
+    store.patchBot(target.id, { busy: true });
+    const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "event follow-up", depth: 0, eventId }, 1);
+    expect(queued.result).toBe("ok");
+    const saved = () => JSON.parse(readFileSync(join(DATA_DIR, "delegations.json"), "utf8"));
+    expect(saved()[from.threadId][0].eventId).toBe(eventId);
+    _resetPending();
+    _loadPending();
+    const runTarget = vi.fn();
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chipCount("retry 1/") === 1);
+    expect(runTarget).not.toHaveBeenCalled();
+    expect(saved()[from.threadId][0]).toMatchObject({ eventId, waitingOnBusy: true });
+    // Reload the parked item too, then release this exact busy period.
+    _resetPending();
+    _loadPending();
+    store.patchBot(target.id, { busy: false });
+    expect(releaseDelegationsWaitingOn(target.id)).toEqual([from.threadId]);
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(runTarget.mock.calls[0]![6]).toBe(from.id);
+    expect(runTarget.mock.calls[0]![7]).toBe(eventId);
+  });
+
+  it("rejects malformed persisted event markers instead of dispatching them as ordinary turns", async () => {
+    const invalid = [null, "", " ", 42, {}, ["event"], "event with spaces", "x".repeat(129), "event\ninjection"];
+    const items = invalid.map((eventId, index) => ({ id: "invalid-" + index, fromBotId: from.id, toBotId: target.id, message: "must not run", depth: 0, attempts: 0, eventId }));
+    const legacy = { id: "legacy", fromBotId: from.id, toBotId: target.id, message: "legacy allowed", depth: 0, attempts: 0 };
+    writeFileSync(join(DATA_DIR, "delegations.json"), JSON.stringify({ [from.threadId]: [...items, legacy] }));
+    _resetPending();
+    _loadPending();
+    expect(_pendingCount(from.threadId)).toBe(1);
+    const runTarget = vi.fn();
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(runTarget.mock.calls[0]![1]).toContain("legacy allowed");
+    expect(runTarget.mock.calls[0]![7]).toBeUndefined();
+  });
+
+  it("rejects an invalid supplied event identity before queueing", () => {
+    expect(() => queueDelegation(commsBus, from, { toBotId: target.id, message: "no", depth: 0, eventId: " " }, 1)).toThrow("Invalid delegation event identity");
+    expect(_pendingCount(from.threadId)).toBe(0);
+  });
 
   it("keeps a handoff queued while the target is busy and dispatches on the retry drain", async () => {
     store.patchBot(target.id, { busy: true });
