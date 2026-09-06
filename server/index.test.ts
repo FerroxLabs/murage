@@ -7098,6 +7098,46 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("applies all three starters through the reviewed transaction without changing existing roles", async () => {
+    const botIds: string[] = [], routineIds: string[] = [];
+    const botsFile = join(home, ".murage", "bots.json");
+    try {
+      expect((await api("POST", "/api/starter-profiles", { action: "catalog" })).status).toBe(404);
+      expect((await desktopApi("POST", "/api/starter-profiles", { action: "preview", profileId: "../private", selection: {} })).status).toBe(400);
+      const catalog = await desktopApi("POST", "/api/starter-profiles", { action: "catalog" });
+      expect(catalog.status).toBe(200);
+      expect(catalog.body.profiles.map((profile: { members: number }) => profile.members)).toEqual([1, 2, 3]);
+      for (const profile of catalog.body.profiles) {
+        const selection = { agents: profile.agents.map((agent: { key: string }) => agent.key), skills: [],
+          routines: profile.routines.map((routine: { key: string }) => routine.key), instructions: [] };
+        const request = { profileId: profile.id, selection };
+        const before = readFileSync(botsFile);
+        const preview = await desktopApi("POST", "/api/starter-profiles", { ...request, action: "preview" });
+        expect(preview.status).toBe(200);
+        expect(preview.body.scan.blocked).toBe(false);
+        expect(readFileSync(botsFile)).toEqual(before);
+        const reviewed = { ...request, action: "import", archiveSha256: preview.body.archiveSha256, reviewHash: preview.body.reviewHash, acknowledgeWarnings: true };
+        expect((await desktopApi("POST", "/api/starter-profiles", { ...reviewed, reviewHash: "0".repeat(64) })).status).toBeGreaterThanOrEqual(400);
+        expect(readFileSync(botsFile)).toEqual(before);
+        const result = await desktopApi("POST", "/api/starter-profiles", reviewed);
+        expect(result.status).toBe(201);
+        expect(result.body.bots).toHaveLength(profile.members);
+        const newIds = result.body.bots.map((bot: { id: string }) => bot.id);
+        botIds.push(...newIds);
+        routineIds.push(...result.body.routines.map((routine: { id: string }) => routine.id));
+        for (const bot of result.body.bots) expect(bot).toMatchObject({ chiefOfStaff: false, autoApprove: false, browser: false, composio: false, computer: "off" });
+        for (const routine of result.body.routines) expect(routine).toMatchObject({ enabled: false, nextRunAt: null });
+        const after = JSON.parse(readFileSync(botsFile, "utf8"));
+        expect(after.filter((bot: { id: string }) => !newIds.includes(bot.id))).toEqual(JSON.parse(before.toString()));
+        expect((await desktopApi("POST", "/api/starter-profiles", reviewed)).status).toBe(409);
+        expect(JSON.parse(readFileSync(botsFile, "utf8"))).toHaveLength(after.length);
+      }
+    } finally {
+      for (const id of routineIds) await desktopApi("DELETE", `/api/routines/${id}`);
+      for (const id of botIds) await desktopApi("DELETE", `/api/bots/${id}`);
+    }
+  });
+
   it("previews and imports reviewed packages additively with inert defaults through the actual API", async () => {
     const root = mkdtempSync(join(home, "package-api-"));
     const archivePath = join(root, "reviewed.zip");
