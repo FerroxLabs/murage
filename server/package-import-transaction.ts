@@ -164,6 +164,8 @@ export function commitPackageImportFiles(dataDir: string, replacements: Readonly
 
 export function recoverPackageImportTransaction(dataDir: string, options: RecoveryOptions): { status: "none" | "rolled-back" | "committed"; id?: string } {
   options.assertOwned();
+  // No journal exists on first use. Preserve unsafe existing roots for refusal.
+  if (!entry(dataDir)) return { status: "none" };
   const { root, tx, identity } = rootPaths(dataDir);
   const stat = entry(tx);
   if (!stat) return { status: "none" };

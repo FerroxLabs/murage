@@ -68,6 +68,8 @@ await build({
   format: "esm",
   outbase: server,
   outdir: join(root, "dist-server"),
+  // Bundled CommonJS ZIP dependencies still require Node built-ins.
+  banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
   // Written after tsc, replacing its output for these entry points.
   allowOverwrite: true,
   logLevel: "info",
