@@ -1,6 +1,21 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P16 guided picker/first-task UI ACCEPTED (round 1): three local profiles,
+explicit review/import, optional routines default unselected; imported Chief is
+ordinary and existing roles remain. Separate Open first task prepares a notes-
+first prompt in normal composer only if text and attachments are empty, then
+requires user Send. Never autosend/claim connected account access. Desktop General
+entry preserves existing workspace/flows. Checks frozen: picker/import/409/failure/
+draft-preservation/no-send browser cases, pure prompt tests, light/dark phone
+visuals, types/contrast. Two rounds. P03 UI, root draft helper; native first-use
+and real model outcome remain separate gates, not resolved startup/budget cycles.
+Evidence: first-task helper2PASS; browserpicker5PASS; frontendtypesPASS;
+contrast37pairs/skinPASS and390pxlight/darkvisualreview. Explicitreview/import,
+stale409 recovery, inert recordsdispatch, noautomaticSend, text/whitespace/
+attachmentdraftpreservation and storagefailureguidance all covered. Actual API
+proof remains d33249f3, no redundant rerun. New-user packaged launch and useful
+live-model first task remain unverified; not wholeP16 completion.
 P16 actual starter workspace API ACCEPTED (round 1): desktop-only local
 catalog/preview/import uses same handler and atomic callback as ZIP imports,
 with allowlisted starter IDs and explicit selection/hash/warning confirmation.
