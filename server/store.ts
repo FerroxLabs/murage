@@ -84,6 +84,7 @@ export interface OptionCardData {
 export interface ConnectorCardData {
   /** Composio toolkit slug. It is validated server-side before every action. */
   slug: string;
+  alias?: string;
   label: string;
   description: string;
   status: "required" | "authorizing" | "connected" | "failed";

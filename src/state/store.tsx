@@ -94,6 +94,7 @@ export interface OptionCardData {
 
 export interface ConnectorCardData {
   slug: string;
+  alias?: string;
   label: string;
   description: string;
   status: "required" | "authorizing" | "connected" | "failed";

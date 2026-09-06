@@ -84,6 +84,7 @@ let child: ChildProcess;
 /** stands in for the box provider so config saving never touches the network */
 let boxStub: Server;
 let boxStubPort = 0;
+let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number } | undefined;
 let home: string;
 let staticDir: string;
 let fakeClaudeDump: string;
@@ -426,6 +427,21 @@ beforeAll(async () => {
   );
 
   boxStub = createServer(async (req, res) => {
+    if (connectorAliasFixture && req.url?.startsWith("/api/v3.1/")) {
+      connectorAliasFixture.calls += 1;
+      if (req.url.startsWith("/api/v3.1/connected_accounts")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ items: connectorAliasFixture.accounts }));
+      }
+      if (req.url.endsWith("/link")) {
+        let raw = "";
+        for await (const chunk of req) raw += chunk;
+        const body = JSON.parse(raw);
+        connectorAliasFixture.links.push(body);
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ redirect_url: `https://connect.composio.dev/link/${encodeURIComponent(body.alias)}` }));
+      }
+    }
     if (req.url?.includes("/toolkits") || req.url?.startsWith("/api/v3.1/connected_accounts")) {
       res.writeHead(req.headers["x-api-key"] === "ak_good" ? 200 : 401, { "content-type": "application/json" });
       return res.end(JSON.stringify({ items: [] }));
@@ -6717,6 +6733,59 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("keeps chat account aliases distinct through cards, OAuth, status and capability expiry", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await desktopApi("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { composio: true })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      const token = turn.dump.mcpConfig.mcpServers.composio?.env.MURAGE_CONNECTORS_TOKEN;
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+      connectorAliasFixture = { accounts: [], links: [], calls: 0 };
+      const request = (items: unknown[], bearer = token) => fetch(`${BASE}/api/internal/connectors/request`, {
+        method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+        body: JSON.stringify({ botId: bot.id, threadId: turn.env.MURAGE_THREAD_ID, resumeKey: "alias-fixture-resume", items }),
+      });
+      const items = [{ slug: "gmail", alias: "Personal" }, { slug: " GMAIL ", alias: " Work " }];
+      const response = await request(items);
+      expect(response.status).toBe(200);
+      const { messageIds } = z.object({ messageIds: z.array(z.string()).length(2) }).parse(await response.json());
+      expect(new Set(messageIds).size).toBe(2);
+      const repeated = await request([{ slug: "gmail", alias: "personal" }, { slug: "gmail", alias: "WORK" }, items[1]]);
+      expect(repeated.status).toBe(200);
+      expect(await repeated.json()).toEqual({ messageIds });
+      const route = (id: string, operation: string) => `/api/bots/${bot.id}/connector-cards/${id}/${operation}`;
+      const threadId = turn.env.MURAGE_THREAD_ID;
+      const first = await desktopApi("POST", route(messageIds[0], "authorize"), { threadId });
+      const second = await desktopApi("POST", route(messageIds[1], "authorize"), { threadId });
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(first.body.url).not.toBe(second.body.url);
+      expect(connectorAliasFixture.links).toEqual([{ toolkit: "gmail", alias: "Personal" }, { toolkit: "gmail", alias: "Work" }]);
+      connectorAliasFixture.accounts = [{ id: "ca_personal", alias: "Personal", status: "ACTIVE", toolkit: { slug: "gmail" } }];
+      const personal = await api("GET", `${route(messageIds[0], "status")}?threadId=${threadId}`);
+      const work = await api("GET", `${route(messageIds[1], "status")}?threadId=${threadId}`);
+      expect(personal.status).toBe(200);
+      expect(personal.body.connected).toBe(true);
+      expect(work.status).toBe(200);
+      expect(work.body.connected).toBe(false);
+      const current = (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id);
+      expect(current.messages.find((message: { id: string }) => message.id === messageIds[1]).connector).toMatchObject({ alias: "Work", status: "authorizing" });
+      const calls = connectorAliasFixture.calls;
+      expect((await request([{ slug: "gmail", alias: 5 }])).status).toBe(400);
+      expect((await request(items, turn.env.MURAGE_COMMS_TOKEN)).status).toBe(403);
+      expect(connectorAliasFixture.calls).toBe(calls);
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      expect((await request(items)).status).toBe(401);
+      expect(connectorAliasFixture.calls).toBe(calls);
+    } finally {
+      connectorAliasFixture = undefined;
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("PUT", "/api/config", { composio: { apiKey: "" } });
+    }
+  });
+
   it("accepts actual harness connector and computer calls from their exact live mounts", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const descriptorFile = join(home, "browser-test-connection.json");
