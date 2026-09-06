@@ -219,10 +219,21 @@ test("parent traversal is resolved after existing symlinks, never across a missi
   assert.throws(() => acquireDataDirLease(`${f.root}/missing/../data`), errorCode("INVALID_DATA_DIR"));
 });
 
-test("Windows case and namespace aliases share one anchor", { skip: process.platform !== "win32" }, () => {
+test("Windows case and namespace aliases share one anchor", { skip: process.platform !== "win32" }, async () => {
   const f = fixture("MixedCase");
   assert.equal(dataDirLeasePaths(f.dataDir.toUpperCase()).leasePath, f.leasePath);
-  assert.equal(dataDirLeasePaths(`\\\\?\\${f.dataDir}`).leasePath, f.leasePath);
+  const { toNamespacedPath } = await import("node:path");
+  const { realpathSync } = await import("node:fs");
+  const namespaced = toNamespacedPath(f.dataDir);
+  const root = parse(namespaced).root;
+  const rootKind = root.startsWith("\\\\?\\UNC\\") ? "namespaced-unc"
+    : /^\\\\\?\\[a-z]:\\$/i.test(root) ? "namespaced-drive" : "other";
+  try { realpathSync.native(root); }
+  catch (error) {
+    const code = ["ENOENT", "EINVAL", "EACCES", "EPERM", "EBUSY", "ENOTDIR", "UNKNOWN"].includes(error?.code) ? error.code : "other";
+    assert.fail(`namespace root resolution failed (${rootKind}, ${code})`);
+  }
+  assert.equal(dataDirLeasePaths(namespaced).leasePath, f.leasePath);
 });
 
 test("Darwin missing-leaf case aliases cannot acquire two owners", { skip: process.platform !== "darwin" }, () => {
@@ -440,9 +451,15 @@ test("invalid, unreadable, symlink and special lease records remain untouched", 
     rmSync(f.leasePath);
   }
   writeRecord(f.leasePath, record(process.pid));
-  chmodSync(f.leasePath, 0o200);
-  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_UNREADABLE"));
-  chmodSync(f.leasePath, 0o600);
+  if (process.platform === "win32") {
+    // chmod's POSIX read bits cannot make a Windows file unreadable; the
+    // current owner's readable record must still exclude another claimant.
+    assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  } else {
+    chmodSync(f.leasePath, 0o200);
+    assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_UNREADABLE"));
+    chmodSync(f.leasePath, 0o600);
+  }
   rmSync(f.leasePath);
   const target = join(f.root, "external-record");
   writeRecord(target, record(process.pid));

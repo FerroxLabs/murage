@@ -87,7 +87,7 @@ for(const override of [undefined,"/explicit/installation"]) test(`actual package
     loadSecureCredentials:async()=>{events.push("read");return{};},secureComposioConfig:async()=>events.push("composio"),secureWorkspaceConfig:async()=>events.push("workspace"),
   };
   await new AsyncFunction(...Object.keys(scope),`let secureCredentials;${body}`)(...Object.values(scope));
-  assert.deepEqual(events,["lease",{dataDir:"/canonical/owned",legacyDataDir:"/fixture/home/.opengrokbot",enabled:override===undefined},"read","composio","workspace"]);
+  assert.deepEqual(events,["lease",{dataDir:"/canonical/owned",legacyDataDir:path.join("/fixture/home", ".opengrokbot"),enabled:override===undefined},"read","composio","workspace"]);
 });
 
 test("actual packaged migration failure never reaches credential/config reads",async()=>{
@@ -130,7 +130,7 @@ test("both actual boot migrations read only the owner's canonical root",async()=
     ${composio}${workspace};await secureComposioConfig();await secureWorkspaceConfig();
   `.replace("const secureCredentials={}","let secureCredentials={}"));
   await run(path,{readFileSync:file=>{reads.push(file);return "{}";}});
-  assert.deepEqual(reads,["/fixture/canonical/config.json","/fixture/canonical/config.json"]);
+  assert.deepEqual(reads,[path.join("/fixture/canonical", "config.json"),path.join("/fixture/canonical", "config.json")]);
 });
 
 test("actual bootstrap selects fresh connection storage after ownership and before credential reads", async () => {

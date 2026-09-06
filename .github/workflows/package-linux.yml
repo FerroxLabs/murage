@@ -217,6 +217,64 @@ jobs:
           path: artifact-input
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - run: pnpm install --frozen-lockfile
+      - name: Download back and verify all public feed assets
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { parse } from 'yaml';
+          const version = process.env.EXPECTED_VERSION;
+          assert.match(version ?? '', /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+          const base = `https://github.com/FerroxLabs/murage-releases/releases/download/v${version}/`;
+          const feeds = new Map([
+            ['latest-mac.yml', [`Murage-${version}-x64.zip`, `Murage-${version}-arm64.zip`, `Murage-${version}-x64.dmg`, `Murage-${version}-arm64.dmg`]],
+            ['latest.yml', [`Murage-${version}-setup.exe`]],
+            ['latest-linux.yml', [`Murage-${version}-x86_64.AppImage`, `Murage-${version}-amd64.deb`]],
+          ]);
+          // Public downloads deliberately carry no GitHub authorization header.
+          const download = async (name) => {
+            const response = await fetch(base + name, { signal: AbortSignal.timeout(180_000) });
+            assert.ok(response.ok, `public download failed: ${name} (${response.status})`);
+            return response;
+          };
+          const assets = [];
+          for (const [feed, names] of feeds) {
+            const response = await download(feed);
+            const chunks = [];
+            let length = 0;
+            for await (const chunk of response.body) {
+              length += chunk.length;
+              assert.ok(length <= 64 * 1024, 'public feed exceeds metadata limit');
+              chunks.push(chunk);
+            }
+            const metadata = parse(Buffer.concat(chunks).toString('utf8'));
+            assert.equal(metadata.version, version, `${feed} has the wrong version`);
+            assert.ok(Array.isArray(metadata.files), `${feed} has no file list`);
+            assert.deepEqual(metadata.files.map(file => file.url).sort(), [...names].sort(), `${feed} has unexpected asset URLs`);
+            for (const file of metadata.files) {
+              assert.ok(Number.isSafeInteger(file.size) && file.size > 0, `${feed} has an invalid asset size`);
+              assert.match(file.sha512 ?? '', /^[A-Za-z0-9+/]{86}==$/, `${feed} has an invalid SHA512`);
+              assets.push(file);
+            }
+          }
+          assert.equal(assets.length, 7);
+          for (const asset of assets) {
+            const response = await download(asset.url);
+            const hash = createHash('sha512');
+            let bytes = 0;
+            for await (const chunk of response.body) {
+              bytes += chunk.length;
+              assert.ok(bytes <= asset.size, `${asset.url} exceeded its published size`);
+              hash.update(chunk);
+            }
+            assert.equal(bytes, asset.size, `${asset.url} has the wrong downloaded size`);
+            assert.equal(hash.digest('base64'), asset.sha512, `${asset.url} has the wrong downloaded SHA512`);
+            console.log(`Public bytes verified: ${asset.url} (${bytes})`);
+          }
+          console.log('All seven public assets match the three published feeds.');
+          EOF
       - name: Prepare the existing package for live-feed proof
         env:
           EXPECTED_VERSION: ${{ inputs.expected_version }}

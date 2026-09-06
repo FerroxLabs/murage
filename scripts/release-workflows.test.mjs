@@ -16,6 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -256,6 +257,65 @@ describe("scoped Windows CI confirmation", () => {
     expect(workflow.jobs.test.name).toContain("Scoped Windows confirmation");
     expect(steps.some(step => step.run === "pnpm typecheck")).toBe(true);
     expect(steps.some(step => step.run === "pnpm check:electron")).toBe(true);
+  });
+});
+
+describe("public release download-back verification", () => {
+  const steps = load("package-linux.yml").jobs["verify-published"].steps;
+  const step = steps.find(item => item.name === "Download back and verify all public feed assets");
+  const javascript = step.run.split("<<'EOF'\n")[1].split("\nEOF")[0];
+  const version = "0.1.45";
+  const names = {
+    "latest-mac.yml": ["Murage-0.1.45-x64.zip", "Murage-0.1.45-arm64.zip", "Murage-0.1.45-x64.dmg", "Murage-0.1.45-arm64.dmg"],
+    "latest.yml": ["Murage-0.1.45-setup.exe"],
+    "latest-linux.yml": ["Murage-0.1.45-x86_64.AppImage", "Murage-0.1.45-amd64.deb"],
+  };
+  function verify(mutate = () => {}) {
+    const downloads = {}, feeds = {};
+    for (const [feed, assets] of Object.entries(names)) {
+      feeds[feed] = { version, files: assets.map(url => {
+        const body = `fixture bytes: ${url}: π`;
+        downloads[url] = body;
+        return { url, size: Buffer.byteLength(body), sha512: createHash("sha512").update(body).digest("base64") };
+      }) };
+    }
+    mutate(feeds, downloads);
+    for (const [feed, metadata] of Object.entries(feeds)) downloads[feed] = JSON.stringify(metadata);
+    const fakeFetch = `
+      const downloads = ${JSON.stringify(downloads)};
+      globalThis.fetch = async (url, options) => {
+        if (options.headers) throw new Error('Public download received headers');
+        const base = 'https://github.com/FerroxLabs/murage-releases/releases/download/v0.1.45/';
+        if (!url.startsWith(base)) throw new Error('Unexpected download origin');
+        const value = downloads[url.slice(base.length)];
+        return new Response(value ?? '', {status: value === undefined ? 404 : 200});
+      };
+    `;
+    return spawnSync(process.execPath, ["--input-type=module", "-"], {
+      input: fakeFetch + javascript, encoding: "utf8", cwd: join(workflows, "../.."),
+      env: { EXPECTED_VERSION: version },
+    });
+  }
+
+  it("streams and verifies exactly seven downloaded assets without credentials", () => {
+    const result = verify();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.match(/Public bytes verified:/g)).toHaveLength(7);
+    expect(step.env).toEqual({ EXPECTED_VERSION: "${{ inputs.expected_version }}" });
+    expect(steps.indexOf(step)).toBeLessThan(steps.findIndex(item => item.name === "Prove the published GitHub feed and installed path"));
+  });
+
+  it.each(["version", "url", "hash", "size", "missing"])("rejects a public %s mismatch", (kind) => {
+    const result = verify((feeds, downloads) => {
+      const feed = feeds["latest-mac.yml"], asset = feed.files[0];
+      if (kind === "version") feed.version = "0.1.44";
+      if (kind === "url") asset.url = "https://example.invalid/untrusted.zip";
+      if (kind === "hash") asset.sha512 = "A".repeat(86) + "==";
+      if (kind === "size") asset.size++;
+      if (kind === "missing") delete downloads[asset.url];
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/wrong version|unexpected asset URLs|wrong downloaded SHA512|wrong downloaded size|public download failed/);
   });
 });
 
