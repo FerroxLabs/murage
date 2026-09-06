@@ -449,6 +449,8 @@ export interface BotRecord {
   resumeCursors: Record<string, unknown>;
   /** Presentation only; never excludes the bot from authority or routing. */
   sidebarHidden?: boolean;
+  /** Durable replay refusal for the exact reviewed package import. */
+  packageImportReceipt?: { reviewHash: string; archiveSha256: string; importId: string };
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
@@ -924,6 +926,38 @@ export class Store {
 
   private saveBots(bots: BotRecord[] = this.bots) {
     writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2));
+  }
+
+  /** Prepare an additive import without changing memory or emitting events.
+   * The caller durably commits all returned files before calling publish. */
+  preparePackageAddition(bots: BotRecord[], groups: GroupRecord[]) {
+    const ids = new Set(this.bots.map(bot => bot.id));
+    const threads = new Set(this.bots.flatMap(bot => [bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]));
+    for (const bot of bots) {
+      if (ids.has(bot.id) || threads.has(bot.threadId) || bot.chiefOfStaff || bot.chiefScope || bot.autoApprove
+        || bot.alwaysAllow?.length || Object.keys(bot.resumeCursors).length || bot.tasks?.some(task => task.threadId !== bot.threadId || Object.keys(task.resumeCursors).length)
+        || bot.composio !== false || bot.browser !== false || bot.computer !== "off") throw new Error("Unsafe package bot addition");
+      ids.add(bot.id); threads.add(bot.threadId);
+    }
+    const groupIds = new Set(this.groups.map(group => group.id));
+    const newBotIds = new Set(bots.map(bot => bot.id));
+    for (const group of groups) {
+      if (groupIds.has(group.id) || threads.has(group.threadId) || group.memberIds.some(id => !newBotIds.has(id))) throw new Error("Unsafe package group addition");
+      groupIds.add(group.id); threads.add(group.threadId);
+    }
+    const nextBots = [...this.bots, ...bots];
+    const nextGroups = [...this.groups, ...groups];
+    return {
+      files: new Map([
+        ["bots.json", Buffer.from(JSON.stringify(nextBots, null, 2))],
+        ["groups.json", Buffer.from(JSON.stringify(nextGroups.map(({ busyBotId: _busy, ...group }) => group), null, 2))],
+      ]),
+      publish: () => {
+        this.bots = nextBots; this.groups = nextGroups;
+        for (const bot of bots) this.emit({ type: "bot", botId: bot.id });
+        for (const group of groups) this.emit({ type: "group", groupId: group.id });
+      },
+    };
   }
 
   private saveGroups() {

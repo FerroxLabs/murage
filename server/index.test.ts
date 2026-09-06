@@ -7,7 +7,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { ZipFile } from "yazl";
+import { writeBotPackageArchive } from "./bot-package-archive.ts";
+import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6957,6 +6961,86 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("previews and imports reviewed packages additively with inert defaults through the actual API", async () => {
+    const root = mkdtempSync(join(home, "package-api-"));
+    const archivePath = join(root, "reviewed.zip");
+    const payloads = new Map([
+      ["bots/scout/SOUL.md", "Use the notes provided by the user and report uncertainty."],
+      ["skills/research/SKILL.md", "---\nname: research\ndescription: Review user notes.\nlicense: MIT\n---\nReview supplied notes.\n"],
+    ]);
+    const manifest = { format: "murage.package.bundle", version: 1,
+      definition: { format: "murage.package", version: 1, package: {
+        id: "fixture-import", release: "1.0.0", name: "Fixture import", tagline: "An inert package", summary: "Supplied notes only", category: "Starter", author: { name: "Fixture" }, license: "MIT", outcomes: ["A useful draft"], setupMinutes: 2,
+        requirements: { apps: [], capabilities: [] }, chiefOfStaff: "scout",
+        agents: [{ key: "scout", name: "Imported Scout", appearance: { color: "green" }, skills: ["research"] }],
+        routines: [{ key: "daily", name: "Imported daily", agent: "scout", prompt: "Review supplied notes", runOn: "ember", schedule: { type: "daily", time: "09:00", weekdays: [1] }, durationMinutes: 15, enabledAfterInstall: false }],
+      } }, skills: [{ key: "research", name: "Research", license: "MIT", dependencies: [], files: ["skills/research/SKILL.md"] }],
+      instructions: [{ agent: "scout", path: "bots/scout/SOUL.md" }], entries: [...payloads].map(([path, content]) => createBotPackageEntry(path, content)),
+    };
+    const selection = { agents: ["scout"], skills: ["research"], routines: ["daily"], instructions: ["scout"] };
+    const importedIds: string[] = [];
+    const routineIds: string[] = [];
+    try {
+      await writeBotPackageArchive(archivePath, { manifest, payloads });
+      const botsFile = join(home, ".murage", "bots.json");
+      const before = readFileSync(botsFile);
+      const request = { archivePath, selection };
+      const options = await desktopApi("POST", "/api/packages/import", { archivePath, action: "options" });
+      expect(options.status).toBe(200);
+      expect(options.body.agents).toEqual([{ key: "scout", name: "Imported Scout", skills: ["research"] }]);
+      expect(options.body.skills).toEqual([{ key: "research", name: "Research", dependencies: [], license: "MIT" }]);
+      expect((await api("POST", "/api/packages/import", { ...request, action: "preview" })).status).toBe(404);
+      const preview = await desktopApi("POST", "/api/packages/import", { ...request, action: "preview" });
+      expect(preview.status).toBe(200);
+      expect(preview.body.scan.blocked).toBe(false);
+      expect(readFileSync(botsFile)).toEqual(before);
+      const reviewed = { ...request, action: "import", archiveSha256: preview.body.archiveSha256, reviewHash: preview.body.reviewHash, acknowledgeWarnings: true };
+      const stale = await desktopApi("POST", "/api/packages/import", { ...reviewed, reviewHash: "0".repeat(64) });
+      expect(stale.status).toBeGreaterThanOrEqual(400);
+      expect(readFileSync(botsFile)).toEqual(before);
+      const result = await desktopApi("POST", "/api/packages/import", reviewed);
+      expect(result.status).toBe(201);
+      const bot = result.body.bots[0]; importedIds.push(bot.id);
+      routineIds.push(...result.body.routines.map((routine: { id: string }) => routine.id));
+      expect(bot).toMatchObject({ chiefOfStaff: false, autoApprove: false, browser: false, composio: false, computer: "off" });
+      expect(result.body.routines[0]).toMatchObject({ enabled: false, nextRunAt: null, botId: bot.id });
+      expect(readFileSync(join(home, ".murage", "workspaces", bot.id, "SOUL.md"), "utf8")).toBe(payloads.get("bots/scout/SOUL.md"));
+      expect(readFileSync(join(home, ".murage", "workspaces", bot.id, "skills", "research", "SKILL.md"), "utf8")).toBe(payloads.get("skills/research/SKILL.md"));
+      expect(JSON.parse(readFileSync(join(home, ".murage", "skill-state", bot.id, "skills.json"), "utf8")).research.enabled).toBe(false);
+      const after = JSON.parse(readFileSync(botsFile, "utf8"));
+      expect(after.filter((candidate: { id: string }) => candidate.id !== bot.id)).toEqual(JSON.parse(before.toString()));
+      // The durable import receipt prevents replaying this exact review.
+      const again = await desktopApi("POST", "/api/packages/import", reviewed);
+      expect(again.status).toBe(409);
+      expect(JSON.parse(readFileSync(botsFile, "utf8"))).toHaveLength(after.length);
+      expect(JSON.parse(readFileSync(botsFile, "utf8")).find((candidate: { id: string }) => candidate.id === bot.id)).toEqual(bot);
+      // Construct hostile intake directly: the normal archive writer correctly refuses it.
+      const secretPath = join(root, "hostile.zip");
+      const secretPayloads = new Map(payloads); secretPayloads.set("bots/scout/SOUL.md", "Bearer fake_secret_canary_1234567890");
+      const zip = new ZipFile(); const writing = pipeline(zip.outputStream, createWriteStream(secretPath));
+      zip.addBuffer(Buffer.from(JSON.stringify({ ...manifest, entries: [...secretPayloads].map(([path, content]) => createBotPackageEntry(path, content)) })), "manifest.json", { compress: false });
+      for (const [path, content] of secretPayloads) zip.addBuffer(Buffer.from(content), path, { compress: false });
+      zip.end(); await writing;
+      const blockedOptions = await desktopApi("POST", "/api/packages/import", { archivePath: secretPath, action: "options" });
+      expect(blockedOptions.status).toBe(200);
+      expect(blockedOptions.body.scan.blocked).toBe(true);
+      expect(blockedOptions.body).not.toHaveProperty("agents");
+      expect(blockedOptions.body).not.toHaveProperty("skills");
+      expect(JSON.stringify(blockedOptions.body)).not.toMatch(/fake_secret_canary|Imported Scout/);
+      const blocked = await desktopApi("POST", "/api/packages/import", { archivePath: secretPath, selection, action: "preview" });
+      expect(blocked.status).toBe(200); expect(blocked.body.scan.blocked).toBe(true);
+      expect(JSON.stringify(blocked.body)).not.toContain("fake_secret_canary");
+      const beforeBlocked = readFileSync(botsFile);
+      const refused = await desktopApi("POST", "/api/packages/import", { archivePath: secretPath, selection, action: "import", archiveSha256: blocked.body.archiveSha256, reviewHash: blocked.body.reviewHash, acknowledgeWarnings: true });
+      expect(refused.status).toBeGreaterThanOrEqual(400);
+      expect(readFileSync(botsFile)).toEqual(beforeBlocked);
+    } finally {
+      for (const id of routineIds) await desktopApi("DELETE", `/api/routines/${id}`);
+      for (const id of importedIds) await desktopApi("DELETE", `/api/bots/${id}`);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("binds a headless browser mount and exact-session cleanup to its live computer claim", async () => {
     const binary = join(home, "fake-agent-browser");
     const closeLog = join(home, "fake-agent-browser-close.jsonl");

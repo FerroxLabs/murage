@@ -10,7 +10,8 @@ import { MAX_BOT_PACKAGE_COMPRESSION_RATIO, MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PAC
 import { scanBotPackageContents } from "./bot-package-scan.ts";
 
 export class BotPackageArchiveError extends Error {
-  constructor(readonly code: string) { super(`Package archive refused (${code}).`); }
+  readonly code: string;
+  constructor(code: string) { super(`Package archive refused (${code}).`); this.code = code; }
 }
 function fail(code: string): never { throw new BotPackageArchiveError(code); }
 const check = (signal?: AbortSignal) => { if (signal?.aborted) fail("PACKAGE_ARCHIVE_CANCELLED"); };

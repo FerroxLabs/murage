@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { BundleImportDialog, type BundleImportResult } from "./BundleImportDialog";
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
 
@@ -471,6 +472,7 @@ export function TeamLibraryPanel({
   const [catalogError, setCatalogError] = useState("");
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingTeamImport | null>(null);
+  const [bundleFile, setBundleFile] = useState<{ path: string; name: string } | null>(null);
   const [source, setSource] = useState<ImportSource>("file");
   const [githubUrl, setGithubUrl] = useState("");
   const [githubLoading, setGithubLoading] = useState(false);
@@ -620,6 +622,7 @@ export function TeamLibraryPanel({
   }, [returnFocusRef]);
 
   useEffect(() => {
+    if (bundleFile) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !importing) {
         event.preventDefault();
@@ -648,7 +651,7 @@ export function TeamLibraryPanel({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [importing, onClose, pending]);
+  }, [importing, onClose, pending, bundleFile]);
 
   const previewManifest = (preview: PendingTeamImport, nextSource: ImportSource) => {
     setPending(preview);
@@ -657,6 +660,12 @@ export function TeamLibraryPanel({
   };
 
   const readFile = async (file: File) => {
+    if (file.name.toLowerCase().endsWith(".zip")) {
+      if (file.size > 52 * 1024 * 1024) throw new Error("That package archive is too large.");
+      const path = window.muragebox?.getPathForFile?.(file) ?? "";
+      if (!path) throw new Error("ZIP package import needs a local file in the Murage desktop app. Open this package there.");
+      setError(""); setBundleFile({ path, name: file.name }); return;
+    }
     if (file.size > MAX_TEAM_FILE_BYTES) throw new Error("That team file is too large.");
     const raw = await file.text();
     let manifest: unknown = raw;
@@ -669,6 +678,17 @@ export function TeamLibraryPanel({
       }
     }
     previewManifest(teamImportPreview(manifest), "file");
+  };
+
+  const finishBundleImport = (result: BundleImportResult) => {
+    for (const bot of result.bots) dispatch({ type: "botAdded", bot });
+    for (const group of result.groups) dispatch({ type: "groupPatched", group });
+    for (const routine of result.routines) dispatch({ type: "routinePatched", routine });
+    if (result.bots[0]) dispatch({ type: "select", id: result.bots[0].id });
+    setBundleFile(null);
+    onImported({ name: result.name, members: result.bots.length,
+      importedBotIds: result.bots.map(bot => bot.id), importedGroupIds: result.groups.map(group => group.id),
+      importedRoutineIds: result.routines.map(routine => routine.id), archived: [], skillErrors: [] });
   };
 
   const loadLibraryTeam = async (entry: TeamCatalogEntry) => {
@@ -892,7 +912,7 @@ export function TeamLibraryPanel({
   return createPortal(
     <div
       className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
-      onMouseDown={(event) => event.target === event.currentTarget && !importing && onClose()}
+      onMouseDown={(event) => event.target === event.currentTarget && !importing && !bundleFile && onClose()}
     >
       <div
         ref={dialogRef}
@@ -1308,7 +1328,7 @@ export function TeamLibraryPanel({
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".md,.json,.emberteam.json,text/markdown,application/json"
+                    accept=".zip,.md,.json,.emberteam.json,application/zip,text/markdown,application/json"
                     className="hidden"
                     onChange={(event) => {
                       const file = event.currentTarget.files?.[0];
@@ -1340,7 +1360,7 @@ export function TeamLibraryPanel({
                     >
                       <UploadCloud size={27} className="text-accent" />
                       <span className="mt-3 text-[14px] font-medium text-ink">Choose a team file</span>
-                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a BotMRR .md / legacy .emberteam.json here</span>
+                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a package .zip, BotMRR .md or legacy .emberteam.json here</span>
                     </button>
 
                     <div className="flex min-h-56 flex-col justify-center rounded-2xl bg-raised/25 px-6">
@@ -1516,6 +1536,8 @@ export function TeamLibraryPanel({
           </>
         )}
       </div>
+      {bundleFile && <BundleImportDialog archivePath={bundleFile.path} fileName={bundleFile.name}
+        onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />}
     </div>,
     document.body,
   );

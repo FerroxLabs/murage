@@ -13,6 +13,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["PATCH", "DELETE"], path: /^\/api\/groups\/[\w-]+$/, purpose: "room configuration and deletion" },
   { methods: ["PATCH"], path: /^\/api\/groups\/[\w-]+\/setup$/, purpose: "room working folder and execution setup" },
   { methods: ["POST"], path: /^\/api\/teams\/(import|export)$/, purpose: "team configuration and filesystem import/export" },
+  { methods: ["POST"], path: /^\/api\/packages\/import$/, purpose: "review and commit a local package archive" },
   { methods: ["POST"], path: /^\/api\/team-library\/github$/, purpose: "download team packages to disk" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/(assistant-profile|skills(?:\/library)?)$/, purpose: "install executable instructions" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+\/skills\/[^/]+$/, purpose: "enable, change or delete installed skills" },
