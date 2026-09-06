@@ -20,6 +20,7 @@ import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
+import { SearchSettings } from "./SearchSettings";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
 import {
@@ -47,7 +48,7 @@ const SECTIONS: Array<{
   //
   // Phone is here for a different reason: on a phone it is an offer to do the
   // thing you have already done.
-  { id: "connections", label: "Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "flux", "flux router", "models", "router", "paste", "env"] },
+  { id: "connections", label: "Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "flux", "flux router", "models", "router", "paste", "env", "search", "tavily", "exa"] },
   { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli"] },
   { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
   { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
@@ -757,6 +758,7 @@ export function SettingsModal() {
                       is never React state so it cannot reach a render tree. */}
                   <PasteKeys />
                   <TranscriptionSettings />
+                  <SearchSettings />
                   {/* Flux Router. Sits with the other optional keys because
                       that is what it is: nothing here is required for the app
                       to work, and every engine is authenticated on its own. */}
