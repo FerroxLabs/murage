@@ -1,6 +1,13 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+2026-09-06 checkpoint:737e4ae137db7b3659b805f587f35316ee516fb6
+(chore:checkpoint Murage stabilization) committed and pushed to private origin
+codex/murage-reliability under Sean's new publish authorization. Main unchanged,
+no release published. This is explicitly unaccepted/WIP, not integration approval.
+Unrelated AGENTS.md,DESIGN.md,.ijfw/.codex state and bulky evidence snapshots
+were excluded from commit and preserved. Automatic post-commit critique omitted
+because it conflicts with the frozen two-round policy.
 Sean explicitly confirmed this primary conversation is Astra medium. Execute
 inline and reuse existing Astra worker; old CLI/new-worker blockers do not block
 implementation. Root owns connector transport+integration tests; existing Astra
@@ -23,6 +30,37 @@ staged source; codesign --verify --deep --strict on produced app bundles;
 inspect architecture and shipped updater/resources. Max2 rounds. This does not
 reopen identity/recovery/clipboard cycles or satisfy their failed acceptance.
 
+Packaging live work:Windows artifact-only run34003230425 (observed running),
+Ubuntu artifact-only run34003300086, both explicit FerroxLabs/murage and exact
+737e4ae137db7b3659b805f587f35316ee516fb6. No release workflow dispatched.
+Initial unqualified gh Windows dispatch failed during GET against inferred
+upstream; no run created there. Corrected repository explicitly before dispatch.
+Mac build49586 exited1 at Intel Fuigo archive fetch (Node connection timeout);
+UI/server/companion/updater/Android/cloudflared stages passed and are reused.
+IPv4 registry HEAD succeeded; first curl artifact fetch hit DNS timeout; second
+bounded attempt with explicit known registry IP succeeded, pinned SHA256 checked.
+Resume only remaining package steps with MURAGE_FUIGO_ARCHIVE_DIR cache; retain
+tarball+binary digest gates. No repeated earlier builds or weakening validation.
+Mac confirmation43085 exited1:codesign failed on Electron Framework locale.pak
+with "A timestamp was expected but was not found." Build reached arm64 app
+assembly/signing; neither complete signed distribution nor notarization proven.
+Mac packaging cycle CLOSED/BLOCKED after2 rounds. Do not disable timestamps,
+skip signing, or retry via another environment to reset the counter. Windows
+and Ubuntu remain separate live planned native checks; no Mac reattempt pending.
+Windows run34003230425 completed SUCCESS on737e4ae1, including Azure signing,
+packaged resources/updater checks and real packaged server health. Artifact
+windows-installer180491947bytes, archive digest
+sha256:1f76b36401588057fb265185434b1baa8c9b8f36c8cccb5e47fcdc5d2cb06035.
+Local export in progress90845 to .planning/windows-737e4ae1. Not Windows11 GUI,
+installer-elevation/update proof or final whole-release acceptance.
+Ubuntu R1 run34003300086 failed actual DEB installation:postinstall hook used
+/opt/OpenMausBot, but package installs /opt/Murage. Logubuntu-737e4ae1-failed.log.
+Correct only hook APP_ROOT and mismatched test-root variable; retain symlink,
+owner/mode and sandbox checks. Existing hook test is Linux-only and was skipped
+on Mac; add package-name regression and run that focused suite in native workflow.
+Ubuntu R2 will run same full artifact/package/upgrade smoke after correction.
+No diagnostics artifact existed from failed run; exported failed step log retained.
+
 LATEST DISPOSITION:BLOCKED after round2, cycle CLOSED. Confirmation sessions
 63489/99280/73795 terminal:338passed,2failed,1skip; typecheck passed. Chief
 group-task creation returned409 after group stop (expected201); model change
@@ -35,7 +73,7 @@ Negative controls did reach wrongbot,wrongthread,kind,forgeddepth,post-stop,
 delayed-body,approval-time,create-budget,roomstop and reload authority failures.
 No third audit or renamed verification cycle. Request a bounded user decision
 for the two failed scenarios and missing positive calls; independent approved
-programme work can advance. No push/publication has occurred. Release repo
+programme work can advance. No publication has occurred. Release repo
 currently has no releases; CI/Release/Windows/Ubuntu workflows are active.
 
 ### Verification history for this package
