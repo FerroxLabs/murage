@@ -1,6 +1,21 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P23 provider-error localization ACCEPTED (round 1): inspection found only
+six existing English source keys, so broader new-settings/starter localization
+remains open. This bounded critical-error slice catalogs all26 provider-error
+texts/actions across existing8locales. Preserve billing URLs, error categories,
+safe rendering and placeholders; no backend raw-error translation or APIchange.
+Checks frozen: catalog/key/placeholder/source-hash validator, existing English
+error UI plus7translated mobile action tests, types and German/Japanese visual
+review. Two rounds. P03 de/es/fr, P04 pt-br/hi, P06 ja/zh; root English/card/tests.
+Translations are AI-authored; no native-speaker linguistic approval is claimed.
+Evidence: existing generator --accept records current source hashes without model
+calls; i18n:check PASS8languages/32catalogkeys (NOT full-app translation coverage).
+Browser71846 PASS11 including7translated mobileactions +4existingEnglish cases;
+combinedtypes26406 PASS. German/Japanese screenshots reviewed; billing URL and
+manualsettings/retry actions unchanged. Broader settings/starter/recovery/channel
+localization and native-speaker quality review remain open, no wholeP23 claim.
 P16 guided picker/first-task UI ACCEPTED (round 1): three local profiles,
 explicit review/import, optional routines default unselected; imported Chief is
 ordinary and existing roles remain. Separate Open first task prepares a notes-

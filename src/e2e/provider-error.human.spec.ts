@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 let server: ViteDevServer, origin: string, cache: string;
@@ -17,7 +17,7 @@ test.beforeAll(async () => {
       resolveId(id) { if (id === "/__provider.js") return "\0provider-error-fixture"; },
       load(id) {
         if (id !== "\0provider-error-fixture") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {ProviderErrorCard} from '/src/components/ProviderErrorCard.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin=q.get('skin')||'dark';window.retryCalls=0;window.settingsCalls=0;createRoot(document.getElementById('root')).render(React.createElement(ProviderErrorCard,{info:{kind:q.get('kind')||'credits',httpStatus:Number(q.get('status')||402),...(q.get('provider')==='flux-router'?{provider:'flux-router'}:{})},onRetry:q.has('noRetry')?undefined:()=>window.retryCalls++,onOpenProviderSettings:()=>window.settingsCalls++}));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {ProviderErrorCard} from '/src/components/ProviderErrorCard.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const q=new URLSearchParams(location.search);setLocale(q.get('lang')||'en');document.documentElement.dataset.skin=q.get('skin')||'dark';window.retryCalls=0;window.settingsCalls=0;createRoot(document.getElementById('root')).render(React.createElement(ProviderErrorCard,{info:{kind:q.get('kind')||'credits',httpStatus:Number(q.get('status')||402),...(q.get('provider')==='flux-router'?{provider:'flux-router'}:{})},onRetry:q.has('noRetry')?undefined:()=>window.retryCalls++,onOpenProviderSettings:()=>window.settingsCalls++}));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/__provider?") && req.url !== "/__provider") return next();
@@ -31,6 +31,20 @@ test.beforeAll(async () => {
   origin = "http://127.0.0.1:" + address.port;
 });
 test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+
+for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("provider recovery renders translated actions on mobile: " + locale, async ({ page }, info) => {
+  const pack = JSON.parse(readFileSync(new URL("../locales/" + locale + ".json", import.meta.url), "utf8"));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(origin + "/__provider?provider=flux-router&kind=credits&status=402&lang=" + locale);
+  await expect(page.getByRole("heading", { name: pack["providerError.credits.title"].replace("{provider}", "Flux Router") })).toBeVisible();
+  await expect(page.getByRole("button", { name: pack["providerError.settings"], exact: true })).toBeVisible();
+  await page.getByRole("button", { name: pack["providerError.retry"], exact: true }).click();
+  expect(await page.evaluate(() => (window as any).retryCalls)).toBe(1);
+  await page.getByText(pack["providerError.details"], { exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(pack["providerError.status"].replace("{status}", "402"));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  if (["de", "ja"].includes(locale)) await page.screenshot({ path: info.outputPath("provider-error-" + locale + ".png"), fullPage: true });
+});
 
 test("Flux credits render a billing action, useful recovery details and keyboard-only manual actions", async ({ page }, info) => {
   await page.setViewportSize({ width: 980, height: 780 });
