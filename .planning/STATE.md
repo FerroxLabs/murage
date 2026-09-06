@@ -1,6 +1,31 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+Channel references supplied by Sean: /Volumes/Mando/resources/hermes-agent
+(HEAD d59b79fadd1e9edd7afc5c679cc3b143838e7c01, MIT/NousResearch) and
+/Volumes/Mando/resources/openclaw (HEAD3659c85e534fdb8b8ce6b7505a83d92cc2e4df8e,
+MIT/OpenClawFoundation). Read-only. CurrentTelegram reference pass: Hermes
+plugins/platforms/telegram networking preserveslogicalTLS hostname; no DNSfallback
+copied without evidence/authorization. OpenClawextensions/telegram/src/
+telegram-ingress-spool.ts:106 commits ingress beforeoffsetack. Preserve that
+boundary in laterpoller, and uncertain-send handling from Hermesadapter.
+No referencecode copied in this transport increment. Reuse usefulpatterns/tests
+for laterSlack/Discord/officialWhatsApp, preserving license notices for any ports.
+P12 Telegram transport foundation ACCEPTED (round 1): official Bot API
+HTTPS JSON getMe/getUpdates/sendMessage, bounded bodies/deadlines/cancellation,
+safe errors and explicit uncertain-send result; no implicit retries or cursor
+advance. Normalize plain messages with stable IDs and fixed untrusted channel
+origin; bot/unsupported/unknown-sender updates remain ignored with IDs retained.
+No account/config/poller/routing activation until identity and P11budget gates.
+Frozenchecks mocked API schemas/status/redaction/size/abort/uncertainty, normalized
+identity/spoof/ignored-ID tests and types; two rounds. Officialsource reviewed:
+https://core.telegram.org/bots/api (getUpdates/sendMessage/making-requests).
+Real owned-chat pilot, pairing/revocation/approvals and routing remain open.
+Evidence: transport12 + normalization3 =15tests PASS; servertypes87182 PASS.
+No network/APIcalls to realTelegram, cursorpersistor/channelrouting notmounted.
+Plainownertext remainsuntrustedchannelcontent; unknownsender/bot/unsupported
+updates retainIDs withoutdispatch. Senduncertainty never converted into retry.
+Reference review recorded above; P11budget gate stillblocks enabling routing.
 P20 shared-folder exclusion ACCEPTED (confirmation round 2): reproduce idlebot restore
 while another Murage turn uses sameproject; existingguard is perbotonly. Required
 outcome: restore excludes overlapping ownedwriters/restores acrossbot/room paths,
