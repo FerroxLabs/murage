@@ -27,6 +27,7 @@ import {
 } from "../shared/intake-turn.ts";
 import { connectorSystemPrompt, requiredAppsSystemPrompt } from "./composio.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { parseBotPackage } from "./bot-package.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -2016,7 +2017,17 @@ describe("harness HTTP API", () => {
     ]));
     expect(exported.body.team).not.toHaveProperty("room");
     expect(JSON.stringify(exported.body)).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
-    const markdownExport = await desktopApi("POST", "/api/teams/export", { name: "Field Team", format: "package" });
+    const options = await desktopApi("POST", "/api/teams/export", { name: "Field Team", format: "package", action: "options" });
+    expect(options.status).toBe(200);
+    const selection = {
+      botIds: options.body.bots.map((bot: { id: string }) => bot.id),
+      playbookKeys: options.body.playbooks.map((playbook: { key: string }) => playbook.key),
+      routineIds: options.body.routines.filter((routine: { supported: boolean }) => routine.supported).map((routine: { id: string }) => routine.id),
+    };
+    const preview = await desktopApi("POST", "/api/teams/export", { name: "Field Team", format: "package", action: "preview", selection });
+    expect(preview.status).toBe(200);
+    expect(preview.body.scan.blocked).toBe(false);
+    const markdownExport = await desktopApi("POST", "/api/teams/export", { name: "Field Team", format: "package", action: "download", selection, previewHash: preview.body.previewHash, acknowledgeWarnings: true });
     expect(markdownExport.status).toBe(200);
     expect(markdownExport.body).toMatchObject({ name: "Field Team", members: visibleNames.length });
     expect(markdownExport.body.markdown).toContain("## Activation");
@@ -2100,6 +2111,89 @@ describe("harness HTTP API", () => {
     } finally {
       stream.close();
     }
+  });
+
+  it("selective package export includes only chosen bots and paused routines and rejects stale previews", async () => {
+    const selected = (await api("POST", "/api/bots", { name: "Portable Scout", modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const omitted = (await api("POST", "/api/bots", { name: "Unselected Writer", modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    let routineId: string | undefined;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${selected.id}`, { description: "Selected research instructions." })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${omitted.id}`, { description: "UNSELECTED-INSTRUCTION-MARKER" })).status).toBe(200);
+      const routine = await desktopApi("POST", "/api/routines", { name: "Portable future check", prompt: "Check the selected work.", target: "bot", botId: selected.id, runOn: "ember", enabled: true, schedule: { type: "once", at: Date.now() + 86_400_000 } });
+      expect(routine.status).toBe(201);
+      routineId = routine.body.routine.id;
+      const options = await desktopApi("POST", "/api/teams/export", { format: "package", action: "options" });
+      expect(options.status).toBe(200);
+      expect(options.body.routines).toEqual(expect.arrayContaining([expect.objectContaining({ id: routineId, supported: true })]));
+      const selection = { botIds: [selected.id], playbookKeys: [], routineIds: [routineId] };
+      const request = { format: "package", name: "Selected package", selection };
+      const preview = await desktopApi("POST", "/api/teams/export", { ...request, action: "preview" });
+      expect(preview.status).toBe(200);
+      expect(preview.body.summary).toEqual({ agents: 1, playbooks: 0, routines: 1 });
+      expect(preview.body.markdown).not.toContain("UNSELECTED-INSTRUCTION-MARKER");
+      const parsed = parseBotPackage(preview.body.markdown);
+      expect(parsed.package.agents.map((bot) => bot.name)).toEqual(["Portable Scout"]);
+      expect(parsed.package.routines).toHaveLength(1);
+      expect(parsed.package.routines![0]!.enabledAfterInstall).toBe(false);
+      expect((await desktopApi("POST", "/api/teams/export", { ...request, action: "download", previewHash: preview.body.previewHash })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${selected.id}`, { description: "Changed selected instructions." })).status).toBe(200);
+      const stale = await desktopApi("POST", "/api/teams/export", { ...request, action: "download", previewHash: preview.body.previewHash });
+      expect(stale.status).toBe(409);
+      expect(stale.body.markdown).toBeUndefined();
+      const fresh = await desktopApi("POST", "/api/teams/export", { ...request, action: "preview" });
+      expect(fresh.body.previewHash).not.toBe(preview.body.previewHash);
+    } finally {
+      if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      for (const bot of [selected, omitted]) await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("selective package export blocks embedded credentials without returning preview markdown", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Credential scanner fixture", modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const fakeToken = "sk-" + "FixtureOnlyNotARealCredential".repeat(2);
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { description: `Do not share this fake token: ${fakeToken}` })).status).toBe(200);
+      const request = { format: "package", name: "Scanner fixture", selection: { botIds: [bot.id], playbookKeys: [], routineIds: [] } };
+      const preview = await desktopApi("POST", "/api/teams/export", { ...request, action: "preview" });
+      expect(preview.status).toBe(200);
+      expect(preview.body.scan.blocked).toBe(true);
+      expect(preview.body.markdown).toBeUndefined();
+      expect(JSON.stringify(preview.body)).not.toContain(fakeToken);
+      const download = await desktopApi("POST", "/api/teams/export", { ...request, action: "download", previewHash: preview.body.previewHash, acknowledgeWarnings: true });
+      expect(download.status).toBe(422);
+      expect(download.body.markdown).toBeUndefined();
+      expect(JSON.stringify(download.body)).not.toContain(fakeToken);
+      const legacy = await desktopApi("POST", "/api/teams/export", { name: "Legacy credential fixture" });
+      expect(legacy.status).toBe(422);
+      expect(legacy.body.team).toBeUndefined();
+      expect(JSON.stringify(legacy.body)).not.toContain(fakeToken);
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
+  it("selective package export requires desktop authority and explicit acknowledgement of ambiguous warnings", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Warning scanner fixture", modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { description: "Example source location: /Users/fixture/private-source" })).status).toBe(200);
+      const request = { format: "package", name: "Warning fixture", selection: { botIds: [bot.id], playbookKeys: [], routineIds: [] } };
+      for (const action of ["options", "preview", "download"]) {
+        const denied = await api("POST", "/api/teams/export", { ...request, action });
+        expect(denied.status).toBe(404);
+        expect(denied.body.markdown).toBeUndefined();
+      }
+      expect((await desktopApi("POST", "/api/teams/export", { format: "package" })).status).toBe(400);
+      const preview = await desktopApi("POST", "/api/teams/export", { ...request, action: "preview" });
+      expect(preview.status).toBe(200);
+      expect(preview.body.scan).toMatchObject({ blocked: false, reviewRequired: true });
+      const download = { ...request, action: "download", previewHash: preview.body.previewHash };
+      expect((await desktopApi("POST", "/api/teams/export", download)).status).toBe(409);
+      const acknowledged = await desktopApi("POST", "/api/teams/export", { ...download, acknowledgeWarnings: true });
+      expect(acknowledged.status).toBe(200);
+      expect(acknowledged.body.markdown).toContain("/Users/fixture/private-source");
+      const legacy = await desktopApi("POST", "/api/teams/export", { name: "Legacy warning fixture" });
+      expect(legacy.status).toBe(422);
+      expect(legacy.body.team).toBeUndefined();
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
   });
 
   it("imports a team as a project: one room, on a folder", async () => {

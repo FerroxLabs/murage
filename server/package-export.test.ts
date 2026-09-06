@@ -1,9 +1,68 @@
 import { describe, expect, it } from "vitest";
 
-import { createBotPackageExport } from "./package-export.ts";
+import { createBotPackageExport, getBotPackageExportSelectionCandidates, type BotPackageExportInput } from "./package-export.ts";
 import type { BotRecord } from "./store.ts";
 
 describe("package export", () => {
+  function selectionFixture(): BotPackageExportInput {
+    const bots = ["one", "two"].map((id, index): BotRecord => ({
+      id, threadId: `private-thread-${id}`, name: "Lead", title: "Research", description: "Help", color: "green", notifications: true, unread: false,
+      modelSelection: { instanceId: "private-engine", model: "private-model" }, resumeCursors: { engine: "private-session" }, createdAt: 1,
+      autoApprove: true, alwaysAllow: ["private-grant"], cwd: "/private/path",
+      playbooks: [{ key: "check", name: "Check", summary: "Review", triggers: ["check"], instructions: `Review item ${index}` }],
+    }));
+    return { name: "Selected crew", bots, groups: [{ id: "room", threadId: "private-room", name: "Room", memberIds: ["one", "two"], defaultResponder: { kind: "member", botId: "one" }, bulletin: "Review", unread: false, createdAt: 1 }],
+      routines: ["one", "two"].map(id => ({ id: `routine-${id}`, botId: id, target: "bot", name: "Check", prompt: "Check task", runOn: "ember", enabled: true, schedule: { type: "once", at: 1 }, durationMinutes: 30, nextRunAt: 1, createdAt: 1, updatedAt: 1 })),
+    };
+  }
+
+  it("selects bots, portable playbooks and routine IDs without changing collision keys or copying runtime state", () => {
+    const input = selectionFixture();
+    const candidates = getBotPackageExportSelectionCandidates(input);
+    expect(candidates.bots.map(bot => bot.key)).toEqual(["lead", "lead-2"]);
+    expect(candidates.playbooks.map(playbook => playbook.key)).toEqual(["check", "lead-2-check"]);
+    expect(candidates.routines.map(routine => routine.key)).toEqual(["check", "check-2"]);
+    const exported = createBotPackageExport({ ...input, selection: { botIds: ["two"], playbookKeys: ["lead-2-check"], routineIds: ["routine-two"] } });
+    expect(exported.package.agents.map(bot => bot.key)).toEqual(["lead-2"]);
+    expect(exported.package.agents[0].playbooks).toEqual(["lead-2-check"]);
+    expect(exported.package.playbooks?.map(playbook => playbook.key)).toEqual(["lead-2-check"]);
+    expect(exported.package.routines?.map(routine => routine.key)).toEqual(["check-2"]);
+    expect(exported.package.routines?.[0]).toMatchObject({ agent: "lead-2", enabledAfterInstall: false });
+    expect(exported.package.rooms?.[0]).toMatchObject({ members: ["lead-2"], defaultResponder: { kind: "mentions" } });
+    expect(JSON.stringify(exported)).not.toMatch(/private-thread|private-engine|private-model|private-session|private-grant|private\/path|autoApprove|alwaysAllow|nextRunAt/);
+  });
+
+  it("treats explicit empty playbook/routine selections as none and refuses empty bots", () => {
+    const input = selectionFixture();
+    const exported = createBotPackageExport({ ...input, selection: { botIds: ["one"], playbookKeys: [], routineIds: [] } });
+    expect(exported.package.playbooks).toBeUndefined();
+    expect(exported.package.agents[0].playbooks).toBeUndefined();
+    expect(exported.package.routines).toBeUndefined();
+    expect(() => createBotPackageExport({ ...input, selection: { botIds: [], playbookKeys: [], routineIds: [] } })).toThrow("Select at least one bot");
+    expect(createBotPackageExport(input).package.agents).toHaveLength(2);
+    expect(createBotPackageExport(input).package.playbooks).toHaveLength(2);
+    expect(createBotPackageExport(input).package.routines).toHaveLength(2);
+  });
+
+  it.each([
+    { botIds: ["absent"], playbookKeys: [], routineIds: [] },
+    { botIds: ["one", "one"], playbookKeys: [], routineIds: [] },
+    { botIds: ["one"], playbookKeys: ["absent"], routineIds: [] },
+    { botIds: ["one"], playbookKeys: ["lead-2-check"], routineIds: [] },
+    { botIds: ["one"], playbookKeys: [], routineIds: ["routine-two"] },
+    { botIds: ["one"], playbookKeys: [], routineIds: ["missing"] },
+  ])("refuses unavailable, duplicate or unowned selections: %j", selection => {
+    expect(() => createBotPackageExport({ ...selectionFixture(), selection })).toThrow();
+  });
+
+  it("reports unsupported room-goal candidates and refuses their explicit selection", () => {
+    const input = selectionFixture();
+    input.routines.push({ ...input.routines[0], id: "room-routine", target: "room-goal", groupId: "room" });
+    expect(getBotPackageExportSelectionCandidates(input).routines.at(-1)).toMatchObject({ id: "room-routine", key: null, supported: false });
+    expect(() => createBotPackageExport({ ...input, selection: { botIds: ["one"], playbookKeys: [], routineIds: ["room-routine"] } })).toThrow("Room-goal routines are not supported");
+    expect(createBotPackageExport(input).package.routines).toHaveLength(2);
+  });
+
   it("keeps collaboration structure while excluding runtime authority and state", () => {
     const exported = createBotPackageExport({
       name: "Launch Crew",
