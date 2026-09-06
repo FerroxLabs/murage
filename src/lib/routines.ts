@@ -23,7 +23,7 @@ export interface RoutineContextAttachment {
   size: number;
 }
 
-export type RoutineRunTrigger = "schedule" | "manual" | "webhook";
+export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "channel";
 
 export type RoutineRunStatus =
   | "queued"

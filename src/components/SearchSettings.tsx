@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { t } from "@/lib/i18n";
 
-type SearchProvider = "engine" | "tavily" | "exa" | "off";
+type SearchProvider = "engine" | "auto" | "tavily" | "exa" | "off";
 type KeyProvider = "tavily" | "exa";
 const labels = { tavily: "Tavily", exa: "Exa" } as const;
 
@@ -55,12 +55,15 @@ export function SearchSettings() {
       onChange={event => void choose(event.target.value as SearchProvider)}
       className={"mt-1 min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50 " + focus}>
       <option value="engine">{t("searchSettings.engineOption")}</option>
+      <option value="auto">Free search — Parallel, then DuckDuckGo</option>
       <option value="tavily">Tavily</option>
       <option value="exa">Exa</option>
       <option value="off">{t("searchSettings.offOption")}</option>
     </select>
     <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{search?.provider === "off"
       ? t("searchSettings.offHelp")
+      : search?.provider === "auto"
+        ? "No API key required. Queries go to Parallel and, if it fails, DuckDuckGo. Free-service availability may change."
       : search?.provider === "engine"
         ? t("searchSettings.engineHelp")
         : t("searchSettings.externalHelp")}</p>

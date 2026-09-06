@@ -1344,6 +1344,28 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("gates Telegram pairing and token changes behind desktop authority and explicit revocation", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await api("GET", "/api/telegram/status")).status).toBe(404);
+      expect((await desktopApi("PATCH", "/api/config", { telegram: { botToken: "123:abcdefghijklmnopqrstuvwxyz123456" } })).status).toBe(200);
+      const pair = await desktopApi("POST", "/api/telegram/pair", { targetBotId: bot.id });
+      expect(pair.status).toBe(200);
+      expect(pair.body.code).toMatch(/^[a-f0-9]{64}$/);
+      const status = await desktopApi("GET", "/api/telegram/status");
+      expect(status.body).toMatchObject({ configured: true, enabled: true, paired: false, targetBotId: bot.id });
+      expect(JSON.stringify(status.body)).not.toContain(pair.body.code);
+      expect((await desktopApi("PATCH", "/api/config", { telegram: { botToken: "" } })).status).toBe(409);
+      expect((await desktopApi("POST", "/api/telegram/revoke")).status).toBe(200);
+      expect((await desktopApi("GET", "/api/telegram/status")).body.enabled).toBe(false);
+      expect((await desktopApi("PATCH", "/api/config", { telegram: { botToken: "" } })).status).toBe(200);
+    } finally {
+      await desktopApi("POST", "/api/telegram/revoke");
+      await desktopApi("PATCH", "/api/config", { telegram: { botToken: "", targetBotId: "" } });
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("routes scoped native search without exposing credentials or allowing retired turns", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const requestFile = join(home, "search-fixture-calls.json");
@@ -1367,6 +1389,11 @@ describe("harness HTTP API", () => {
       expect(sent).toMatchObject({ calls: 1, bearerPresent: true, redirect: "error", body: { query: "fixture search", max_results: 2 } });
       expect((await search(turn.headers, { ...body, fromBotId: "other-bot" })).status).toBe(403);
       expect((await search(turn.headers, { ...body, maxResults: 1000 })).status).toBe(400);
+      expect((await desktopApi("PATCH", "/api/config", { webSearch: { provider: "auto" } })).status).toBe(200);
+      const free = await search();
+      expect(free.status).toBe(200);
+      expect(await free.json()).toMatchObject({ provider: "parallel", fallbackUsed: false, untrusted: true,
+        results: [{ title: "Free fixture source", url: "https://example.com/free" }] });
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       expect((await search()).status).toBe(401);
       expect(JSON.parse(readFileSync(requestFile, "utf8")).calls).toBe(1);

@@ -125,6 +125,31 @@ describe("notification preference configuration", () => {
   });
 });
 
+describe("Telegram credential configuration", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_TELEGRAM_BOT_TOKEN", undefined); });
+  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
+  it("preserves target choice on key saves, hydrates private boot credentials and clears explicitly", () => {
+    saveConfig({ telegram: { targetBotId: "fixture-bot", botToken: "old-fixture-token" } });
+    saveConfig(parseConfigPatch({ telegram: { botToken: "new-fixture-token" } }));
+    expect(loadConfig().telegram).toEqual({ targetBotId: "fixture-bot", botToken: "new-fixture-token" });
+    vi.stubEnv("MURAGE_TELEGRAM_BOT_TOKEN", "encrypted-fixture-token");
+    expect(loadConfig().telegram?.botToken).toBe("encrypted-fixture-token");
+    saveConfig({ telegram: { botToken: "" } }); syncCredentialEnv({ telegram: { botToken: "" } });
+    expect(loadConfig().telegram).toEqual({ targetBotId: "fixture-bot", botToken: "" });
+    syncCredentialEnv({ telegram: { botToken: "rotated-fixture-token" } });
+    expect(loadConfig().telegram?.botToken).toBe("rotated-fixture-token");
+    const childEnv = { MURAGE_TELEGRAM_BOT_TOKEN: "private", TELEGRAM_BOT_TOKEN: "independent-tool" };
+    stripWorkspaceCredentialEnv(childEnv);
+    expect(childEnv).toEqual({ TELEGRAM_BOT_TOKEN: "independent-tool" });
+  });
+  it("rejects malformed and oversized fields without adding polling defaults", () => {
+    expect(parseStoredConfig({}).telegram).toBeUndefined();
+    const invalid: Array<Record<string, string | number | boolean>> = [{ botToken: 1 }, { botToken: "x".repeat(257) }, { targetBotId: "x".repeat(161) }, { polling: true }];
+    for (const telegram of invalid) expect(() => parseConfigPatch({ telegram })).toThrow();
+  });
+});
+
 describe("saved configuration recovery", () => {
   const file = join(DATA_DIR, "config.json");
   let loadConfig: typeof import("./config.ts").loadConfig;

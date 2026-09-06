@@ -236,6 +236,7 @@ const instanceConfigSchema = z.object({
 });
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
 const appConfigSchema = z.object({
+  telegram: z.object({ botToken: z.string().max(256).optional(), targetBotId: z.string().max(160).optional() }).strict().optional(),
   notifications: notificationPreferencesSchema.optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
@@ -259,7 +260,7 @@ const appConfigSchema = z.object({
   /** Optional external search credentials are write-only workspace state.
    * Absent keeps engine search. Only desktop Murage-specific key variables
    * are imported; ambient engine/MCP provider credentials remain separate. */
-  webSearch: z.object({ provider: z.enum(["engine", "tavily", "exa", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText }).strict().optional(),
+  webSearch: z.object({ provider: z.enum(["engine", "auto", "tavily", "exa", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
@@ -301,6 +302,7 @@ const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers:
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
+  telegram?: { botToken?: string; targetBotId?: string };
   notifications?: NotificationPreferences;
   engineDiscovery?: "automatic" | "explicit";
   mcpServers?: Record<string, unknown>;
@@ -314,7 +316,7 @@ export interface AppConfig {
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
   imageGen?: { key?: string };
-  webSearch?: { provider?: "engine" | "tavily" | "exa" | "off"; tavilyApiKey?: string; exaApiKey?: string };
+  webSearch?: { provider?: "engine" | "auto" | "tavily" | "exa" | "off"; tavilyApiKey?: string; exaApiKey?: string };
   flux?: { apiKey?: string };
   sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
   profile?: { name?: string; email?: string };
@@ -524,6 +526,7 @@ export function loadConfig(): AppConfig {
   if (process.env.MURAGE_TTS_KEY !== undefined) cfg.tts.key = process.env.MURAGE_TTS_KEY;
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.MURAGE_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.MURAGE_OPENAI_IMAGE_KEY;
+  if (process.env.MURAGE_TELEGRAM_BOT_TOKEN !== undefined) cfg.telegram = { ...cfg.telegram, botToken: process.env.MURAGE_TELEGRAM_BOT_TOKEN };
   if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined || process.env.MURAGE_EXA_SEARCH_KEY !== undefined) {
     cfg.webSearch = { ...cfg.webSearch };
     if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined) cfg.webSearch.tavilyApiKey = process.env.MURAGE_TAVILY_SEARCH_KEY;
@@ -550,6 +553,7 @@ export function syncCredentialEnv(patch: ConfigWritePatch): void {
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "MURAGE_TTS_KEY"],
     [patch.imageGen?.key, "MURAGE_OPENAI_IMAGE_KEY"],
+    [patch.telegram?.botToken, "MURAGE_TELEGRAM_BOT_TOKEN"],
     [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
     [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
     [patch.flux?.apiKey, "FLUX_API_KEY"],
@@ -591,6 +595,7 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENCODE_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
+  "MURAGE_TELEGRAM_BOT_TOKEN",
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
   // Flux Router. The whole point of listing it: the raw workspace key must
@@ -690,7 +695,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
