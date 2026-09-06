@@ -1,6 +1,25 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P20 shared-folder exclusion ACCEPTED (confirmation round 2): reproduce idlebot restore
+while another Murage turn uses sameproject; existingguard is perbotonly. Required
+outcome: restore excludes overlapping ownedwriters/restores acrossbot/room paths,
+canonical aliases/ancestors covered, releaseonlymatchinggeneration. No arbitrary
+external-process filesystem sandbox claim. Testtemporaryprojects only; preserve
+userrepositories and existing checkpoint/exclude behavior. P04actualAPIregression,
+p06canonicalleasehelper, p03lifecyclemapping, rootintegrationafterbaseline.
+Frozenchecks helpercanonical/alias/overlap/replacement/ownership cases, actualAPI
+busyrestore +restoreinflightadmission, existingcheckpointtests/types;2rounds.
+Interrupted file restoration/undo/native proof remain broaderP20 requirements.
+Baseline25390 proved actualrestore200 +fileoverwrite whilepeeractive throughalias.
+Canonicalfolder/generationhelpers andexistingcheckpointtests22PASS; forwardAPI
+7789 PASS1/218skipped afterphysicalcwdpin; deterministicreversefixture51060 PASS1
+holdsactualGitrestore andprovescompetingturnneverreachesfakeengine, thenrestore
+succeeds. Combinedtypes99609PASS. RestorechecksnamespacebeforedestructiveGit
+steps. Dispatchedleases survivecaprevocation untilmatchedterminal/confirmedfleet
+disposal; ambiguous setup cleanup failsclosed. This is logicalowned-turn exclusion,
+not OSfilesystemlocking or proof of arbitrarybackgroundprocessquiescence. Those
+native/interruption concerns remainP03/P20; no broad driveraudit folded in here.
 P23 notification-settings localization ACCEPTED (confirmation round 2): translate all
 visible controls, quiet-hour validation and privacy/OS-permission explanations
 in this screen across existing8locales. Preserve delivery behavior, explicitsave,
