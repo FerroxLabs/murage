@@ -19,6 +19,7 @@
 //                      bounded multi-turn orchestration deterministic.
 //   FAKE_CLAUDE_REPLY_STATE Optional counter file shared by fresh CLI
 //                      processes so scripted replies keep their order.
+//   FAKE_CLAUDE_REPLY_GATE Optional file whose creation releases slow replies.
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
 //
@@ -263,11 +264,19 @@ const playTurn = (prompt: JsonValue) => {
     // a gap a test can steer into; the closing reply carries anything that
     // was folded in, the way the real CLI includes a mid-turn message in
     // the same turn's next model call
-    setTimeout(() => {
+    const finishSlow = () => {
       const tail = steered.length ? ` + steered: ${steered.join(" | ")}` : "";
       out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}${tail}` }] } });
       finish();
-    }, 800);
+    };
+    const gate = process.env.FAKE_CLAUDE_REPLY_GATE;
+    if (gate) {
+      const timer = setInterval(() => {
+        if (!existsSync(gate)) return;
+        clearInterval(timer);
+        finishSlow();
+      }, 10);
+    } else setTimeout(finishSlow, 800);
   } else {
     finish();
   }

@@ -207,6 +207,17 @@ describe("published Linux artifact verification", () => {
   });
 });
 
+describe("scoped Windows confirmation", () => {
+  it("keeps default CI complete and retains the full test command", () => {
+    const ci = load("ci.yml");
+    expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
+    expect(ci.jobs.test.strategy.matrix.os).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
+    expect(ci.jobs.test.steps.find(step => step.name === "Run tests").run).toBe("pnpm test");
+    expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only }}');
+    expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only }}');
+  });
+});
+
 describe("no upstream identity ships in .github/", () => {
   it.each(["release.yml", "prepare-release.yml", "ci.yml"])("%s is clean", (name) => {
     expect(read(name)).not.toMatch(/openmausbot|milind-soni|openmaus|omb_|ogb_/i);

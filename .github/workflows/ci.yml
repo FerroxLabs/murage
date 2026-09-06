@@ -4,6 +4,11 @@ on:
   # Branches created by GITHUB_TOKEN do not emit their own push event, so the
   # release-prep workflow dispatches this one explicitly for the version PR.
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: "Confirm Windows-only fixture changes; reuse unaffected platform evidence"
+        type: boolean
+        default: false
   push:
     branches: [main]
   pull_request:
@@ -24,7 +29,7 @@ jobs:
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -86,6 +91,7 @@ jobs:
         run: pnpm exec vite build
 
   control-plane:
+    if: ${{ !inputs.windows_only }}
     name: control-plane check + workerd tests + dry run
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -104,6 +110,7 @@ jobs:
       - run: pnpm control-plane:dry-run
 
   package-linux:
+    if: ${{ !inputs.windows_only }}
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
