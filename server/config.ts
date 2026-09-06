@@ -254,6 +254,9 @@ const appConfigSchema = z.object({
   tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["elevenlabs", "system"]).optional() }).optional(),
   /** OpenAI key used only by the in-process avatar image generator. */
   imageGen: z.object({ key: optionalText }).optional(),
+  /** Optional external search credentials are write-only workspace state.
+   * Absent keeps existing engine-provided search; no environment auto-import. */
+  webSearch: z.object({ provider: z.enum(["engine", "tavily", "exa", "off"]), tavilyApiKey: optionalText, exaApiKey: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
@@ -301,6 +304,7 @@ export interface AppConfig {
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
   imageGen?: { key?: string };
+  webSearch?: { provider: "engine" | "tavily" | "exa" | "off"; tavilyApiKey?: string; exaApiKey?: string };
   flux?: { apiKey?: string };
   sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
   profile?: { name?: string; email?: string };
@@ -666,7 +670,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "flux", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "webSearch", "flux", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

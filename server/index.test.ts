@@ -1309,6 +1309,45 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("keeps native search keys write-only while preserving explicit provider choice", async () => {
+    const secret = "search-api-private-fixture-canary";
+    const events = await openSse(`${BASE}/api/events`);
+    let activeBotId: string | undefined;
+    try {
+      expect((await api("PATCH", "/api/config", { webSearch: { provider: "tavily", tavilyApiKey: secret } })).status).toBe(404);
+      expect((await desktopApi("PATCH", "/api/config?secretStorage=external", { webSearch: { provider: "tavily", tavilyApiKey: secret } })).status).toBe(409);
+      const saved = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "tavily", tavilyApiKey: secret, exaApiKey: secret + "-exa" } });
+      expect(saved.status).toBe(200);
+      expect(JSON.stringify(saved.body)).not.toContain(secret);
+      activeBotId = (await api("POST", "/api/bots")).body.bot.id;
+      const activeTurn = await startInternalFixtureTurn(activeBotId!);
+      const switched = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "exa" } });
+      expect(switched.status).toBe(200);
+      expect((await fetch(`${BASE}/api/internal/agents?self=${activeBotId}`, { headers: activeTurn.headers })).status).toBe(200);
+      const frame = await events.until(frame => frame.kind === "config" && frame.webSearch?.provider === "exa");
+      expect(frame.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true });
+      expect(JSON.stringify(frame)).not.toContain(secret);
+      for (const get of [api, desktopApi]) {
+        const visible = await get("GET", "/api/config");
+        expect(visible.body.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true });
+        expect(JSON.stringify(visible.body)).not.toContain(secret);
+      }
+      const persisted = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
+      expect(persisted.webSearch).toEqual({ provider: "exa", tavilyApiKey: secret, exaApiKey: secret + "-exa" });
+      expect((await desktopApi("PATCH", "/api/config", { webSearch: { provider: "automatic-paid-fallback" } })).status).toBe(400);
+      const cleared = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "off", tavilyApiKey: "", exaApiKey: "" } });
+      expect(cleared.status).toBe(200);
+      expect((await api("GET", "/api/config")).body.webSearch).toEqual({ provider: "off", tavilyConfigured: false, exaConfigured: false });
+    } finally {
+      events.close();
+      if (activeBotId) {
+        await api("POST", `/api/bots/${activeBotId}/interrupt`);
+        await desktopApi("DELETE", `/api/bots/${activeBotId}`);
+      }
+      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "engine", tavilyApiKey: "", exaApiKey: "" } });
+    }
+  });
+
   it("describes the configured fleet, shadows included", async () => {
     const { status, body } = await api("GET", "/api/instances");
     expect(status).toBe(200);

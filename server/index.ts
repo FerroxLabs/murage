@@ -5911,6 +5911,8 @@ function configStatus() {
     // ?.apiKey)` was already true for an env-only key. This is a
     // one-reader-for-one-fact change, not a bug fix.
     flux: { configured: fluxConfigured() },
+    webSearch: { provider: cfg.webSearch?.provider ?? "engine",
+      tavilyConfigured: Boolean(cfg.webSearch?.tavilyApiKey), exaConfigured: Boolean(cfg.webSearch?.exaApiKey) },
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     // not a secret — the settings picker shows it; "" = follow the system
@@ -10914,6 +10916,10 @@ const server = createServer(async (req, res) => {
       }
       let configWriteCommitted = false;
       const externalSecretStorage = url.searchParams.get("secretStorage") === "external";
+      if (externalSecretStorage && (patch.webSearch?.tavilyApiKey !== undefined || patch.webSearch?.exaApiKey !== undefined)) {
+        for (const request of browserCleanupRequests) browserCleanup.abort(request);
+        return json(res, 409, { error: "Encrypted desktop storage for native search keys is not connected yet. Search credentials were not saved." });
+      }
       try {
         if (externalSecretStorage) {
           // The packaged Electron caller commits supplied credentials to the
@@ -10981,6 +10987,7 @@ const server = createServer(async (req, res) => {
           key !== "language" &&
           key !== "tts" &&
           key !== "imageGen" &&
+          key !== "webSearch" &&
           key !== "vps" &&
           key !== "rooms" &&
           key !== "localVm" &&
