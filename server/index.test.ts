@@ -511,6 +511,8 @@ beforeAll(async () => {
       MURAGE_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       MURAGE_COMPOSIO_TOOLKITS_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       MURAGE_STATIC_DIR: staticDir,
+      // Exists only during the headless authority fixture below.
+      MURAGE_AGENT_BROWSER_PATH: join(home, "fake-agent-browser"),
       // Created only by the browser integration test. Keeping an explicit
       // path prevents that test from ever discovering a developer app's live
       // descriptor on the host running the suite.
@@ -6733,6 +6735,56 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("binds a headless browser mount and exact-session cleanup to its live computer claim", async () => {
+    const binary = join(home, "fake-agent-browser");
+    const closeLog = join(home, "fake-agent-browser-close.jsonl");
+    writeFileSync(binary, `#!${process.execPath}\nconst fs=require('node:fs');\nconst args=process.argv.slice(2);\nif(args[0]==='--version'){console.log('agent-browser 0.36.0');process.exit(0);}\nif(args[2]==='close'){fs.appendFileSync(${JSON.stringify(closeLog)},JSON.stringify({args,session:process.env.AGENT_BROWSER_SESSION})+'\\n');process.exit(0);}\nprocess.exit(1);\n`, { mode: 0o700 });
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect((await desktopApi("PATCH", "/api/config", { features: { browser: true } })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { browser: true })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      const mounted = turn.dump.mcpConfig.mcpServers.browser;
+      expect(mounted.args[0]).toMatch(/headless-browser-proxy/);
+      const token = mounted.env.MURAGE_CONTROL_TOKEN;
+      const endpoint = mounted.env.MURAGE_HEADLESS_BROWSER_URL;
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+      const headers = { authorization: `Bearer ${token}` };
+      const response = await fetch(endpoint, { headers });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const result = await response.json();
+      expect(result.held).toBe(false);
+      expect(result.spec.command).toBe(binary);
+      expect(result.spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
+      expect(result.spec.env.AGENT_BROWSER_SESSION).toMatch(/^[A-Za-z0-9_-]{1,80}$/);
+      expect(result.spec.env.HOME).toContain(join(home, ".murage", "browser-engine"));
+      expect(mounted.env).not.toHaveProperty("AGENT_BROWSER_ENCRYPTION_KEY");
+      expect((await fetch(endpoint, { headers: turn.headers })).status).toBe(403);
+      for (const key of ["botId", "threadId"]) {
+        const mismatch = new URL(endpoint); mismatch.searchParams.set(key, "different-owner");
+        expect((await fetch(mismatch, { headers })).status).toBe(403);
+      }
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/computer/control`, { action: "take" })).status).toBe(200);
+      expect((await (await fetch(endpoint, { headers })).json()).held).toBe(true);
+      const closed = await fetch(endpoint, { method: "DELETE", headers });
+      expect(closed.status).toBe(200);
+      expect(await closed.json()).toEqual({ closed: true });
+      expect(readFileSync(closeLog, "utf8").trim().split("\n").map(line => JSON.parse(line))).toEqual([
+        { args: ["--session", result.spec.env.AGENT_BROWSER_SESSION, "close"], session: result.spec.env.AGENT_BROWSER_SESSION },
+      ]);
+      expect((await fetch(endpoint, { headers })).status).toBe(403);
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      expect((await fetch(endpoint, { headers })).status).toBe(401);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("PATCH", "/api/config", { features: { browser: false } });
+      rmSync(binary, { force: true });
+      rmSync(closeLog, { force: true });
+    }
+  });
+
   it("keeps chat account aliases distinct through cards, OAuth, status and capability expiry", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
