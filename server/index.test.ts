@@ -244,7 +244,7 @@ const startInternalFixtureTurn = async (botId: string, groupId?: string, text = 
   }
   const dump = await readJsonFileWhenReady<{
     pid: number;
-    mcpConfig: { mcpServers: Record<string, { env: Record<string, string> }> };
+    mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> };
   }>(fakeClaudeDump);
   const env = dump.mcpConfig.mcpServers.agents!.env;
   expect(env.MURAGE_BOT_ID).toBe(botId);
@@ -6753,7 +6753,7 @@ describe("internal capability authority", () => {
       const response = await fetch(endpoint, { headers });
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      const result = await response.json();
+      const result = z.object({ held: z.boolean(), spec: z.object({ command: z.string(), args: z.array(z.string()), env: z.record(z.string(), z.string()) }) }).parse(await response.json());
       expect(result.held).toBe(false);
       expect(result.spec.command).toBe(binary);
       expect(result.spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
@@ -6766,7 +6766,7 @@ describe("internal capability authority", () => {
         expect((await fetch(mismatch, { headers })).status).toBe(403);
       }
       expect((await desktopApi("POST", `/api/bots/${bot.id}/computer/control`, { action: "take" })).status).toBe(200);
-      expect((await (await fetch(endpoint, { headers })).json()).held).toBe(true);
+      expect(z.object({ held: z.boolean() }).parse(await (await fetch(endpoint, { headers })).json()).held).toBe(true);
       const closed = await fetch(endpoint, { method: "DELETE", headers });
       expect(closed.status).toBe(200);
       expect(await closed.json()).toEqual({ closed: true });
