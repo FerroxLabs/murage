@@ -9,6 +9,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
+import { routineEventForRun, type RoutineEvent } from "../shared/routine-event.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -68,6 +69,7 @@ export interface Routine {
 }
 
 export interface RoutineRun {
+  event?: RoutineEvent;
   id: string;
   routineId: string;
   routineName: string;
@@ -326,6 +328,7 @@ function cloneRoutine(routine: Routine): Routine {
 function cloneRun(run: RoutineRun): RoutineRun {
   return {
     ...run,
+    ...(run.event ? { event: structuredClone(run.event) } : {}),
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
   };
@@ -507,6 +510,7 @@ export class RoutineManager {
               sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
             };
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
+            loaded.event = routineEventForRun(loaded);
             return loaded;
           })
         : [];
@@ -869,6 +873,7 @@ export class RoutineManager {
       attachments: [],
       createdAt: this.now(),
     };
+    run.event = routineEventForRun(run);
     this.commitMutation(() => { this.runs.push(run); });
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
@@ -1270,6 +1275,7 @@ export class RoutineManager {
       sourceThreadId: routine.sourceThreadId,
       createdAt: this.now(),
     };
+    run.event = routineEventForRun(run);
     this.runs.push(run);
     return run;
   }
