@@ -256,7 +256,7 @@ describe("agents-proxy MCP surface", () => {
     const tool = list.result.tools.find((item: { name: string }) => item.name === "web_search");
     expect(tool.inputSchema.additionalProperties).toBe(false);
     expect(tool.annotations.readOnlyHint).toBe(true);
-    expect(tool.description).toMatch(/separate API charges/);
+    expect(tool.description).toMatch(/Paid API providers may charge separately/);
     const result = await callTool("web_search", { query: "fixture research", max_results: 3 });
     expect(result.result.isError).toBe(false);
     expect(searchRequests).toEqual([{ fromBotId: "bot-asker", fromThreadId: "thread-asker-routine", query: "fixture research", maxResults: 3 }]);

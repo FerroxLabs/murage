@@ -137,10 +137,33 @@ describe("a shipped Wayland team package resolves to generated assistant package
   it("resolves every member of every shipped Wayland team package", () => {
     const files = readdirSync(TEAM_LIBRARY).filter((f) => f.endsWith(".json"));
     expect(files.length).toBeGreaterThan(50);
+    // Starter packages author their roles inline. The importer creates bots
+    // from these definitions and their linked playbooks, without consulting
+    // the standalone assistant library. Keep that exception explicit so a
+    // missing generated assistant in any existing team still fails.
+    const embeddedRosters: Record<string, string[]> = {
+      "starter-personal-home": ["home-planner"],
+      "starter-solo-business": ["business-planner", "draft-partner"],
+      "starter-business-team": ["team-coordinator", "delivery-partner", "review-partner"],
+    };
+    for (const id of Object.keys(embeddedRosters)) expect(files).toContain(`${id}.json`);
     const unresolved: string[] = [];
     for (const file of files) {
       const document = parseBotPackage(JSON.parse(readFileSync(join(TEAM_LIBRARY, file), "utf8")));
+      const embeddedRoster = embeddedRosters[document.package.id];
+      if (embeddedRoster) {
+        expect(document.package.agents.map((member) => member.key)).toEqual(embeddedRoster);
+      }
       for (const member of document.package.agents) {
+        if (embeddedRoster) {
+          expect(member.description?.trim().length, `${file} → ${member.key} description`).toBeGreaterThan(0);
+          expect(member.playbooks?.length, `${file} → ${member.key} playbooks`).toBeGreaterThan(0);
+          for (const key of member.playbooks ?? []) {
+            const playbook = document.package.playbooks?.find((entry) => entry.key === key);
+            expect(playbook?.instructions.trim().length, `${file} → ${member.key} → ${key}`).toBeGreaterThan(0);
+          }
+          continue;
+        }
         const found =
           existsSync(join(ASSISTANT_LIBRARY, `${member.key}.json`)) ||
           existsSync(join(BUILTIN_LIBRARY, `${member.key}.json`));

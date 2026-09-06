@@ -1,5 +1,35 @@
 # Murage takeover state
 
+M5 round1 full Vitest15579 completed: 407files passed,7failed,1skipped;
+5479tests passed,7failed,20skipped,1todo. Corrected credential-redaction env
+parity, expected Docker stdin EPIPE handling, starter intake terms and stale
+catalogue/embedded-role/search-copy/CSS-token assertions. Round2 targeted4688
+PASS all198tests/8files; serverbuild73583 PASS. Unaffected fullsuite passes reused.
+No third audit. Frontend21486 running because intake source changed.
+Private original artifact Resources smoke36114 PASS. Native isolated window
+41836 rendered fixture profile/version0.1.47-mvp.1; harness import and macOS
+canonical-path assertions corrected. app.close remained live; task-owned PID89057
+sent TERM for cleanup (no user app touched). Native shutdown NOT yet proven.
+Artifact2cfdca52 predates confirmation fixes; refresh before handoff.
+Telegram real owner pilot remains blocked on dedicated token/pairing; Windows
+native proof unavailable. No public release, push or live app replacement.
+
+M5 private Macarm64 artifact produced: packagejob29750 exit0; path
+release-mvp-2cfdca52/Murage-0.1.47-mvp.1-arm64.zip, ad-hoc signed, NOTnotarized.
+Fuigo1.0.4 darwinarm64 packagingresource verified byafterPack. Never published or
+installed over liveapp. FullVitest15579 stilllive/quiet atlastpoll; do notrestart.
+ActualappResources/server isolatedsmoke started afterZIP; observe toolhandle.
+Candidate not accepted until regression/native/pilot dispositions are explicit.
+
+MVP M5 combined candidate 2cfdca52 active. One full Vitest run15579 live; do not
+restart on quiet output. Frontendbuild39670 PASS, serverbuild4802 PASS, isolated
+bundledsmoke23850 PASS health/all11proxy paths/MCPdrain. Speech/recorder/CUA,
+cloudflaredcurrent/companion/Android/updater resources prepared. Macarm64 ZIP
+preview build started output release-mvp-2cfdca52, metadata0.1.47-mvp.1,
+ad-hoc signing requested (-), --publish never. Not notarized/publicrelease or
+installedapp proof. Track actualprocess handle fromtool output; no sourcewrites.
+User test-bot token/path and pairing needed for realTelegrampilot; stillopen.
+
 MVP M3/M4 implementation ready for candidate integration (liveTelegram gate OPEN).
 Free Parallel->DDG5tests PASS, singlelivekeylessquery3results/2753ms PASS; explicit
 free UI24801 PASS, scoped search+Telegram API83157 PASS2, combinedtypes30904 PASS.

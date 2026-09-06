@@ -179,6 +179,8 @@ describe("token drift", () => {
       // SVG presentation attributes in raw markup strings (EmberAvatar): these
       // are `stroke-linecap` / `stroke-width` / `fill-rule`, not utilities.
       "linecap", "linejoin", "width", "rule", "opacity",
+      // CSS box-sizing: border-box is not a border colour utility.
+      "box",
     ]);
     // Tailwind's built-in palette. TeamLibraryPanel paints four categorical bot
     // glyphs from it on purpose — they are identity colours like the mascot's,
