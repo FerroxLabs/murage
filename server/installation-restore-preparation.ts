@@ -50,7 +50,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
   try {
     // No future archive may place its own marker/quarantine over ours.
     if ([...files].some(path => RESERVED_RESTORE_FILES.has(path.toLowerCase()) || ["recovery-quarantine/", "connection-profiles/", "companion/"].some(prefix => path.toLowerCase().startsWith(prefix)))) fail("RESERVED_RESTORE_COMPONENT");
-    for (const path of ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json"]) {
+    for (const path of ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json", "section-contexts.json"]) {
       if (files.has(path)) assertInstallationRecords(path, read(path));
     }
     const storedConfig = read("config.json");
