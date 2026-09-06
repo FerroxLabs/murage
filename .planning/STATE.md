@@ -1,6 +1,32 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+LATEST USER DECISION:Sean approved release-first prioritization and ONE FINAL
+bounded correction+confirmation pass for knownidentity,macsigning,first-release
+updater andFuigo blockers. Non-release enhancements explicitlypostponed but
+remain in fullprogramme; do not claimwholeprogramme complete atpublication.
+No newaudit/findingscope. FourAstra-medium lanes: existingAstraidentity;
+release_mac(signing),release_updater(localcandidatefeed proof),rootFuigo.
+Identity scope2stopscenarios+2valid-kindsuccesschecks; Mac timestamp/signing
+andnotarization readiness; updaterpreservesactualreplacementproof before first
+publishedfeed andrealfeedpostpublishgate; Fuigoexactpermissionhandling only.
+Each lane gets this one final approvedpass, not an openendedcounterreset.
+Release-first results:identity ACCEPTED afterexplicitexception13targetedpasses
+(190filtered/skipped) +typecheck andpreservedpriorcorpus/controls. Onlyfixtures
+changed, validactualconnector/computer200/cardreceipt proved. Evidence
+identity-exception-final-{tests,types}.log. Bootstrapupdaterimplemented with
+mandatorylocalcandidatefeed, bakedGitHubdestinationpreserved, realpackaged
+replacement/failurepreservation;8vendorupdaterchecks andsyntaxpassed. Native
+confirmation remains required. Macoldstagearm64strictcodesignpassed, x64signing
+continues; localAC_PASSWORDnotaryprofileabsent, CIsecret-backednotarizationnext.
+Fuigo finalapprovedpass33393 exited1, cleanuptrue: no catalog/call observed;
+permissioncouldnotmatchknowncanonicalnative metadata. Failclosed,no arbitrary
+approval; stillBLOCKED, not evidenceMurage toolregression. Receipt
+fuigo-tools-final.json;3fixtureprivacy/permission tests passed. No furtherFuigo
+retry withoutdirection; defaultengine proof remains publicationgate.
+Preparing0.1.45 as draft-only combinedcandidate. Finalfullsuite required, no
+publicpublication ormainmerge until gates/dispositions satisfied. Fullprogramme
+non-releaseenhancements remain explicitlypostponed, notcomplete.
 2026-09-06 checkpoint:737e4ae137db7b3659b805f587f35316ee516fb6
 (chore:checkpoint Murage stabilization) committed and pushed to private origin
 codex/murage-reliability under Sean's new publish authorization. Main unchanged,
@@ -18,6 +44,41 @@ boundary for Murage only; unrelated production/networking/data protections stand
 No publication has occurred. Do not publish known failing or unverified required
 release outcomes merely to meet the requested date.
 ## Active package — internal-turn identity (Task26 row36)
+
+Independent Task13 real-Fuigo proof implementation: pinnedshipped1.0.4 binary,
+Astra medium, isolatedMurage harness+representativeHOME/FUIGO_HOME/project.
+Production inheritance unchanged; no Sean home/hooks/authfiles copied. Pinned
+v1.0.4 source establishes FUIGO_HOME/AGENTS.md +projectAGENTS.md, globalconfig,
+agent-profile tools:[use_tool],agentsMd:true,discoverSkills:false,
+injectDefaultTools:false; subagents.enabled=false. Top-level --tools flags do
+not apply agentstdio; use supported profile. FLUX_API_KEY present(booleanonly
+checked), passinmemory through normaladapter narrowing; no valuesprinted/stored.
+Scope scripts/prove-fuigo-tools.mjs(Astraworker),scripts/fuigo-proof-proxy.mjs
+(root). Copied compiledserver's agents proxy is transparentlyteed; original
+route/proxy untouched. Record only12knowncatalog names,allowlisted call names,
+fixturepeerIDs/outcomes; neverenv/auth/arguments/rawtext. Phasefile restricts
+calls tolist_bots, thenask_bot forapproval/cancel. Two120sboundedturns, no model
+fallback. Require canaryinheritance,actualtools/list+toolcallresponse,rosterfilter,
+approvalcard/cancel+ownedcleanup. This is representative inheritance, not Sean's
+exactliveconfig or executionofall12workflows. Collisionfixture syntax/priority
+resolved against pinnedsource before adding. R1 notstarted; max2rounds; any
+identitydependencyfailures do not reopen its closedcycle or authorizepublishing.
+Task13 frozen verification:pnpm exec vitest run scripts/fuigo-proof-proxy.test.mjs;
+node --check scripts/prove-fuigo-tools.mjs; pnpm build:server; then
+node scripts/prove-fuigo-tools.mjs --allow-provider --output
+.planning/fuigo-tools-round1.json. Run via Node24/rtk proxy. No provider run
+before shim evidence/privacy checks pass. Source/shim/compiled/binary hashes in
+receipt; exact shippedbinary hash gate retained. Two120s maximum turns, no
+fallbackmodel. R1 starts now; preserve existing closedcycle budgets.
+Task13 R1 provider result:BLOCKED beforetoolcall atpermission, allownedchildren
+exited. Receiptfuigo-tools-round1.json, no tool catalog observed. Fixture had
+treatedeverypermission asunexpected; no evidenceofMurageregression. Pinned
+v1.0.4 metadata fuigo/tool version1/name plus rawInput discriminant allows exact
+search_tool discovery in ownedfixture and use_tool targets agents__list_bots
+orapproval-phaseagents__ask_bot with exacttarget/message. No shell/othertools,
+no fullAuto. Added purepredicate tests; match nativepermissiontoonependingcard,
+allow once only, record operationlabels not rawpayload. Final approvedFuigo
+confirmation consumes nextpass; no furtherretry ifblocked.
 
 Independent Task19 Inspector-read bound: source countLines scans entirecoldfile
 or appendedgrowth synchronously before existing8MiBtail. Frozen outcome perfile

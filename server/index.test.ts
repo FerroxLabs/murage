@@ -409,6 +409,10 @@ beforeAll(async () => {
   );
 
   boxStub = createServer(async (req, res) => {
+    if (req.url?.includes("/toolkits") || req.url?.startsWith("/api/v3.1/connected_accounts")) {
+      res.writeHead(req.headers["x-api-key"] === "ak_good" ? 200 : 401, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ items: [] }));
+    }
     if (req.url?.startsWith("/v1/capabilities/")) {
       let raw = "";
       for await (const chunk of req) raw += chunk;
@@ -472,6 +476,7 @@ beforeAll(async () => {
       MURAGE_WEBHOOK_PORT: String(WEBHOOK_PORT),
       MURAGE_BOX_API: `http://127.0.0.1:${boxStubPort}`,
       MURAGE_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
+      MURAGE_COMPOSIO_TOOLKITS_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       MURAGE_STATIC_DIR: staticDir,
       // Created only by the browser integration test. Keeping an explicit
       // path prevents that test from ever discovering a developer app's live
@@ -1086,6 +1091,12 @@ describe("harness HTTP API", () => {
       const rootTask = await createOperator(rootThreadId, "Channel Root Operator");
       expect(rootTask.status).toBe(201);
       expect((await api("POST", `/api/groups/${channel.id}/interrupt`, { threadId: rootThreadId })).status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        const group = state.groups.find((item: { id: string }) => item.id === channel.id);
+        return { working: group?.working, busyBotId: group?.busyBotId,
+          botBusy: state.bots.find((item: { id: string }) => item.id === chief.id)?.busy };
+      }, { timeout: 5_000 }).toEqual({ working: false, busyBotId: null, botBusy: false });
       const channelTask = await api("POST", `/api/groups/${channel.id}/tasks`, { title: "Research task" });
       expect(channelTask.status).toBe(201);
       internalHeaders = (await startInternalFixtureTurn(chief.id, channel.id)).headers;
@@ -6679,6 +6690,47 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("accepts actual harness connector and computer calls from their exact live mounts", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const descriptorFile = join(home, "browser-test-connection.json");
+    writeFileSync(descriptorFile, JSON.stringify({ version: 1,
+      url: `http://127.0.0.1:${boxStubPort}`, token: "c".repeat(64), pid: process.pid }));
+    try {
+      expect((await desktopApi("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
+      expect((await desktopApi("PATCH", "/api/config", { features: { browser: true } })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { composio: true, browser: true })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      const connectorToken = turn.dump.mcpConfig.mcpServers.composio?.env.MURAGE_CONNECTORS_TOKEN;
+      const computerToken = turn.dump.mcpConfig.mcpServers.browser?.env.MURAGE_CONTROL_TOKEN;
+      expect(connectorToken).toMatch(/^[a-f0-9]{48}$/);
+      expect(computerToken).toMatch(/^[a-f0-9]{48}$/);
+      expect(new Set([connectorToken, computerToken, turn.env.MURAGE_COMMS_TOKEN]).size).toBe(3);
+      const control = await fetch(`${BASE}/api/internal/computer-control?botId=${bot.id}`, {
+        headers: { authorization: `Bearer ${computerToken}` },
+      });
+      expect(control.status).toBe(200);
+      expect(await control.json()).toMatchObject({ held: false, helpOpen: false });
+      const connected = await fetch(`${BASE}/api/internal/connectors/request`, {
+        method: "POST", headers: { authorization: `Bearer ${connectorToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ botId: bot.id, threadId: turn.env.MURAGE_THREAD_ID, slugs: ["gmail"], resumeKey: "positive-fixture-connector" }),
+      });
+      expect(connected.status).toBe(200);
+      const body = z.object({ messageIds: z.array(z.string()).length(1) }).parse(await connected.json());
+      const current = (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id);
+      expect(current.messages.find((message: { id: string }) => message.id === body.messageIds[0])).toMatchObject({
+        kind: "connector", connector: { slug: "gmail", resumeKey: "positive-fixture-connector", status: "required" },
+      });
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+        .find((item: { id: string }) => item.id === bot.id)?.busy, { timeout: 5_000 }).toBe(false);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("PATCH", "/api/config", { features: { browser: false } });
+      await desktopApi("PUT", "/api/config", { composio: { apiKey: "" } });
+      rmSync(descriptorFile, { force: true });
+    }
+  });
+
   it("binds agents calls to their actual bot, thread and route family", async () => {
     const source = (await api("POST", "/api/bots")).body.bot;
     const other = (await api("POST", "/api/bots")).body.bot;
@@ -6901,6 +6953,9 @@ describe("internal capability authority", () => {
         expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { modelSelection: STATE_ONLY_SELECTION })).status).toBe(409);
         expect((await fetch(`${BASE}/api/internal/agents?self=${bot.id}`, { headers: turn.headers })).status).toBe(200);
         expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+        await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
+        { timeout: 5_000 }).toBe(false);
       }
       const response = action === "delete"
         ? await desktopApi("DELETE", `/api/bots/${bot.id}`)
