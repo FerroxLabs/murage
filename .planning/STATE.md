@@ -1,6 +1,56 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+Independent P17 adapter foundation ACCEPTED (round 1); P11 budget
+remains paused/uncommitted at its limit, no automatic follow-up authorization.
+Contract: fixed-endpoint Tavily/Exa search adapters, explicit selection/no fallback,
+bounded cited results treated as untrusted data, body-read deadline/cancellation,
+safe actionable status errors, missing provider fails immediately without network.
+Tests: fake transport request/response schemas, auth/quota/rate/offline/malformed/
+oversize/abort/deadline and secret canaries; focused suite plus types, two rounds.
+No actual paid search, account setup, SDK install or credential discovery. Engine/
+MCP reuse, settings, mounted tool and real configured pilot remain P17 requirements.
+Official references read 2026-09-06:
+https://docs.tavily.com/documentation/api-reference/endpoint/search
+https://docs.tavily.com/documentation/api-credits
+https://exa.ai/docs/reference/search-api-guide-for-coding-agents
+https://exa.ai/pricing?tab=api
+Use Tavily explicit basic/auto_parameters:false and bounded Exa auto highlights;
+no generated answer, summary or deep-search escalation. Notices disclose third-
+party query transfer and separate charges; prices are not an enforced spend cap.
+Evidence: 15 fake-provider tests PASS and server types 52532 PASS. Root reviewed
+adapter and test boundary. Commit only web-search.ts/.test.ts plus this record;
+paused budget implementation remains unstaged. Search is NOT yet a mounted user
+capability or live-service proof. Next independent work: credential/config and
+explicit provider selection integration, preserving existing engine/MCP search.
+P11 cumulative create/handoff budget BLOCKED at confirmation round 2: new bot
+routine events share four create and four handoff admissions across provider
+generations, queued delegation and bot-task card resumptions. Charge durably
+before writes; uncertain failed attempts are not refunded. Keep ordinary human
+turn limits unchanged. Closed/missing ledgers fail closed; legacy events without
+ledger require a new run rather than resetting allowance. No spend/turn cap claim.
+Scope: RoutineManager ledger + server generation binding + persisted delegation
+event ID + bot task continuation association. Room-goal member dispatch remains a
+separate required integration, not silently counted as protected by this slice.
+Checks frozen: ledger save/restart/idempotence/closure tests and scheduler suite;
+delegation persistence/busy retry suite; real server generation/continuation
+budget denial and ordinary-human control; combined types. Maximum two rounds.
+P06 owns ledger, p03 delegation seam, root binding/tests. Not accepted until the
+real server gate is proven. No publication or live-app testing.
+Current evidence: ledger/scheduler/event tests passed (65 plus focused 6 for
+completed-root descendant contract); delegation persistence 46 PASS; combined
+types 35736 PASS. Real API proves four creates, credential resumption with new
+generation, fifth denied by cumulative budget, four durable charges. The final
+ordinary-human control did NOT finish: round 1 fixture waited while resumed fake
+provider still running; round 2 explicit detached-thread interrupt returned 409.
+Source index.ts interrupt gate only recognizes active routine, room or setup
+claim; the completed routine's detached card resumption has none of those and is
+not bot.threadId. This is not evidence of a budget admission failure. No third
+correction/run authorized under current limit; candidate UNCOMMITTED, not accepted.
+Decision requested: targeted fixture correction using existing finish-fake gate
+to settle resumed provider naturally, then confirm human control. Record detached
+continuation interrupt routing separately; do not absorb its fix into this cycle.
+Full handoff end-to-end and room-goal budget propagation remain unverified/open.
 P11 origin foundation ACCEPTED (round 1): persist a normalized
 event envelope with stable run/event and budget-root IDs for schedule/manual/
 webhook receipts. Provenance comes from manager-owned dispatch fields, never
