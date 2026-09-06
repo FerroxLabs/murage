@@ -171,6 +171,30 @@ The four production `flux-pool-r2-*` droplets are never touched.
 
 # ADDENDUM — 2026-09-04 overnight
 
+## Local reconciliation patch — 2026-09-05
+
+Fix A is implemented in the working candidate. Desktop startup reads existing
+Serve state even when the remembered HTTPS flag is off. An exclusively owned
+443 root proxy to the browser door is adopted, its stale setting is remembered
+as on, and the sidecar independently observes Serve before startup/rebinding.
+An owned front forces the HTTP backend onto loopback and supplies the portless
+HTTPS origin. A failed rebind does not advertise a front it cannot serve.
+
+Mixed 443 entries, extra mounts, different proxy paths, public routes, and
+unreadable configurations are not adopted. Existing listeners are preserved
+when ownership is uncertain, and the conflict is reported. No reconciliation
+path creates, replaces, or removes a Tailscale route. Unexplained CLI failures
+also no longer permit the explicit HTTPS-enable path to assume an empty config.
+
+Local verification uses fake Tailscale command replies and isolated listener
+fixtures, including negative controls for the original tailnet/loopback drift
+and ownership parser failures. It does not establish live TLS or remote pairing.
+
+Still outstanding for the whole plan: Fix C's HTTPS-by-default onboarding when
+443 is free, the related product naming/onboarding decisions, and acceptance 5's
+actual second-device HTTPS pairing/send proof. This adoption patch must not be
+reported as completion of all task 10/whole-plan requirements.
+
 ## Shipped on this branch already
 
 | commit | what | controls |

@@ -4,7 +4,7 @@
 // unreachable from outside. It is not: a browser on the victim's machine is
 // inside that boundary, and any page on the internet can aim a form at it.
 // These tests pin the rule that keeps that from mattering.
-import { type Server } from "node:http";
+import { request, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createControlServer, hostCandidates, originIsLoopback } from "../src/control.ts";
@@ -65,6 +65,26 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => control.close(() => resolve()));
+});
+
+it("contains malformed request targets and continues serving state", async () => {
+  for (const target of ["http://[", "http://127.0.0.1:bad/", "//["]) {
+    const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request({ hostname: "127.0.0.1", port, path: target, agent: false }, (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => { body += chunk; });
+        res.on("end", () => resolve({ status: res.statusCode!, body }));
+        res.on("error", reject);
+      });
+      req.setTimeout(3_000, () => req.destroy(new Error("request timed out")));
+      req.on("error", reject);
+      req.end();
+    });
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({ error: "Invalid request target" });
+    expect((await ask("GET", "/state")).status).toBe(200);
+  }
 });
 
 describe("origins the control server will change state for", () => {

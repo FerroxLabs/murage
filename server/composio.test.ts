@@ -383,7 +383,7 @@ describe.sequential("Composio Sessions", () => {
         MURAGE_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
         MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer secret" }),
         MURAGE_HARNESS_URL: "http://127.0.0.1:8799",
-        MURAGE_COMMS_TOKEN: "secret",
+        MURAGE_CONNECTORS_TOKEN: "secret",
         MURAGE_BOT_ID: "bot-1",
         MURAGE_THREAD_ID: "thread-1",
       },

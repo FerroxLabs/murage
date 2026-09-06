@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, AlertTriangle, Loader2, Mic } from "lucide-react";
 import { useActiveSkin } from "../lib/use-active-skin";
 import { EmberAvatar } from "./Avatar";
@@ -8,7 +8,7 @@ import { EngineSetup } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
 import { PhoneSetupFlow } from "./PhoneSetupFlow";
 import { useDesktopSurface } from "@/lib/use-surface";
-import type { InstanceInfo } from "@/state/store";
+import { api, type InstanceInfo } from "@/state/store";
 
 // First-run onboarding: who you are (email), what's installed (live engine
 // checks from the harness), what the app may use (TCC), then an optional
@@ -116,27 +116,35 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const profileSaveActive = useRef(false);
   const [instances, setInstances] = useState<InstanceRow[] | null>(null);
   const [perms, setPerms] = useState<{ mic: string } | null>(null);
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 
-  const saveProfile = () => {
-    identifyEmail(email.trim().toLowerCase());
-    // Our own list. Deliberately not awaited: Sendlane being slow or down must
-    // never hold someone at the welcome screen.
-    void fetch("/api/subscribe", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), name: name.trim() }),
-    }).catch(() => {});
-    // persisted server-side (~/.murage/config.json) — the sidebar
-    // footer reads it back through /api/config
-    void fetch("/api/config", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
-    }).catch(() => {});
-    setStep(1);
+  const saveProfile = async () => {
+    if (!valid || profileSaveActive.current) return;
+    profileSaveActive.current = true;
+    setProfileSaving(true);
+    setProfileError("");
+    const profile = { name: name.trim(), email: email.trim().toLowerCase() };
+    try {
+      const saved = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
+      if (saved?.profile?.name !== profile.name || saved?.profile?.email !== profile.email) {
+        throw new Error("Your profile save could not be confirmed. Please retry, or choose Maybe later.");
+      }
+      identifyEmail(profile.email);
+      // A subscription outage must not hold a successfully saved profile at
+      // the welcome screen. A failed local save must not subscribe repeatedly.
+      void api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
+      setStep(1);
+    } catch (cause) {
+      setProfileError(cause instanceof Error ? cause.message : "Could not save your profile. Please retry.");
+    } finally {
+      profileSaveActive.current = false;
+      setProfileSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -242,6 +250,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               autoFocus
               type="text"
               value={name}
+              disabled={profileSaving}
               onChange={(e) => setName(e.target.value)}
               placeholder="Your name"
               className="mt-5 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
@@ -249,19 +258,23 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <input
               type="email"
               value={email}
+              disabled={profileSaving}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && valid && saveProfile()}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveProfile(); } }}
               placeholder="you@example.com"
               className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
             />
             <button
-              onClick={saveProfile}
-              disabled={!valid}
+              onClick={() => void saveProfile()}
+              disabled={!valid || profileSaving}
+              aria-busy={profileSaving}
               className="mt-3 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white disabled:opacity-40"
             >
-              Continue
+              {profileSaving ? "Saving…" : "Continue"}
             </button>
+            {profileError && <p role="alert" className="mt-2 text-[12px] text-danger">{profileError}</p>}
             <button
+              disabled={profileSaving}
               onClick={() => {
                 track("email_skipped");
                 setStep(1);

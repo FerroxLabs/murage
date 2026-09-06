@@ -11,14 +11,14 @@
 //      from being installed.
 //   3. THAT THE CARD LEAVES WHEN IT SHOULD, AND COMES BACK WHEN IT SHOULD —
 //      the second without a reload.
-import { DESKTOP_HEADERS, FIXTURES, HARNESS_URL } from "./rig";
+import { desktopHeaders, FIXTURES, HARNESS_URL } from "./rig";
 import { expect, openSidebar, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 
 const api = async (method: string, path: string, body?: unknown) => {
   const res = await fetch(`${HARNESS_URL}${path}`, {
     method,
-    headers: { ...DESKTOP_HEADERS, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: { ...(await desktopHeaders()), ...(body === undefined ? {} : { "content-type": "application/json" }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -29,12 +29,26 @@ const api = async (method: string, path: string, body?: unknown) => {
 const QUESTION = "What do you mostly want help with?";
 
 const openBot = async (page: Page, name: string) => {
+  // Wait for hydration to establish a selected conversation before opening
+  // the drawer; its normal selection effect closes the drawer on hydration.
+  await expect(page.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
   const sidebar = await openSidebar(page);
   await sidebar.getByText(name, { exact: true }).click();
-  await expect(page.getByRole("heading", { name, exact: true }).or(page.getByText(name).first())).toBeVisible();
+  await expect(page.getByRole("button", { name: `Open ${name}'s profile` }).last()).toBeVisible();
+  const menu = page.getByRole("button", { name: "Open bot list" });
+  if (await menu.isVisible()) await expect(menu).toHaveAttribute("aria-expanded", "false");
 };
 
 const card = (page: Page) => page.getByTestId("bot-intake-card");
+
+/** Setup is deliberately opened from the profile, never inserted as a second
+ * input in the chat composer. These tests exercise that approved entry point. */
+const openSetup = async (page: Page, name: string) => {
+  await openBot(page, name);
+  await page.getByRole("button", { name: `Open ${name}'s profile` }).first().click();
+  await page.getByRole("button", { name: "Set up", exact: true }).click();
+  await expect(card(page)).toBeVisible();
+};
 
 /** Type an answer and wait for the suggestion to settle. */
 const ask = async (page: Page, answer: string) => {
@@ -46,6 +60,7 @@ const ask = async (page: Page, answer: string) => {
 
 /** THE C2 ASSERTION, in the only place it can honestly be made. */
 const fitsTheViewport = async (page: Page) => {
+  await card(page).scrollIntoViewIfNeeded();
   const viewport = page.viewportSize()!;
   const box = await card(page).boundingBox();
   expect(box, "the card is not on screen at all").not.toBeNull();
@@ -55,15 +70,15 @@ const fitsTheViewport = async (page: Page) => {
   // The question and the way out are both still reachable, whatever came back.
   await expect(card(page).getByText(QUESTION)).toBeVisible();
   await expect(page.getByRole("button", { name: "Hide this question" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Collapse agent profile" })).toBeInViewport();
 };
 
-test.describe("a brand new bot", () => {
+test.describe("a brand new bot's deliberate profile setup", () => {
   test.beforeEach(async ({ app }) => {
-    await openBot(app, FIXTURES.blank.name);
-    await expect(card(app)).toBeVisible();
+    await openSetup(app, FIXTURES.blank.name);
   });
 
-  test('"hi" is answered with nothing, honestly, inside the viewport', async ({ app }) => {
+  test('"hi" is answered with nothing, honestly, inside the viewport', async ({ app }, testInfo) => {
     await ask(app, "hi");
     await fitsTheViewport(app);
     // THE HEADLINE BUG: eight pre-ticked skills. Now: none, of either kind.
@@ -71,6 +86,10 @@ test.describe("a brand new bot", () => {
     await expect(card(app).getByText(/Nothing in the library clearly matches/)).toBeVisible();
     // One action, and it is not a dead end.
     await expect(card(app).getByRole("button", { name: "Browse the library" })).toBeVisible();
+    const invite = app.getByRole("complementary", { name: "Let your bots pick the right model" });
+    if (await invite.isVisible()) await invite.getByRole("button", { name: "Not now", exact: true }).last().click();
+    await fitsTheViewport(app);
+    await app.screenshot({ path: testInfo.outputPath("intake-profile-fit.png") });
   });
 
   test("filler and a typo get the same honest answer", async ({ app }) => {
@@ -133,6 +152,82 @@ test.describe("a bot a person has already configured", () => {
 });
 
 test.describe("setup is somewhere you go and ask for it", () => {
+  test("reselecting the current bot closes the mobile drawer while row actions remain usable", async ({ app }, testInfo) => {
+    test.skip(testInfo.project.name !== "mobile", "the mobile drawer does not cover the desktop");
+    await openBot(app, FIXTURES.blank.name);
+    let sidebar = await openSidebar(app);
+    const menu = app.getByRole("button", { name: "Open bot list" });
+    await sidebar.getByText(FIXTURES.blank.name, { exact: true }).click();
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+    sidebar = await openSidebar(app);
+    await sidebar.getByRole("button", { name: `Rename ${FIXTURES.blank.name}`, exact: true }).press("Enter");
+    await expect(sidebar.getByRole("textbox", { name: "Rename", exact: true })).toBeVisible();
+    await expect(menu).toHaveAttribute("aria-expanded", "true");
+    await sidebar.getByRole("textbox", { name: "Rename", exact: true }).press("Enter");
+    await sidebar.getByRole("button", { name: `More actions for ${FIXTURES.blank.name}`, exact: true }).click();
+    await expect(menu).toHaveAttribute("aria-expanded", "true");
+    await app.keyboard.press("Escape");
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+    await app.getByRole("button", { name: `Open ${FIXTURES.blank.name}'s profile` }).first().click();
+    await expect(app.getByRole("button", { name: "Set up", exact: true })).toBeVisible();
+  });
+
+  test("profile setup stays inside a shrinking visual viewport", async ({ app }) => {
+    await openSetup(app, FIXTURES.blank.name);
+    await ask(app, "trading");
+    await app.evaluate(() => {
+      Object.defineProperty(window.visualViewport, "height", { configurable: true, get: () => 500 });
+      window.visualViewport!.dispatchEvent(new Event("resize"));
+    });
+    await expect.poll(() => app.locator("#root").evaluate((element) => element.getBoundingClientRect().height)).toBe(500);
+    await fitsTheViewport(app);
+    const box = await card(app).boundingBox();
+    // Match the existing normal-viewport bottom-edge allowance for fractional
+    // CSS-pixel scroll rounding; root scrolling is independently forbidden.
+    expect(box!.y + box!.height).toBeLessThanOrEqual(500 + 1);
+    expect(await app.locator("#root").evaluate((element) => element.scrollTop)).toBe(0);
+  });
+  test("waits for the skill inventory before offering fresh setup", async ({ app }) => {
+    const created = await api("POST", "/api/bots", { name: "E2E Loading Setup" });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    await app.route(`**/api/bots/${created.bot.id}/skills`, async (route) => {
+      await waiting;
+      await route.fulfill({ json: { skills: [] } });
+    });
+    try {
+      await openBot(app, "E2E Loading Setup");
+      await app.getByRole("button", { name: "Open E2E Loading Setup's profile" }).first().click();
+      await expect(app.getByRole("button", { name: "Checking setup…", exact: true })).toBeDisabled();
+      await expect(app.getByText("E2E Loading Setup is already set up", { exact: true })).toHaveCount(0);
+      release();
+      await app.getByRole("button", { name: "Set up", exact: true }).click();
+      await expect(card(app)).toBeVisible();
+    } finally {
+      release();
+      await api("DELETE", `/api/bots/${created.bot.id}`).catch(() => {});
+    }
+  });
+
+  test("an unavailable skill inventory offers a real retry without claiming the bot is configured", async ({ app }) => {
+    const created = await api("POST", "/api/bots", { name: "E2E Retry Setup" });
+    let fail = true;
+    await app.route(`**/api/bots/${created.bot.id}/skills`, (route) => route.fulfill(
+      fail ? { status: 503, json: { error: "Fixture inventory unavailable" } } : { json: { skills: [] } },
+    ));
+    try {
+      await openBot(app, "E2E Retry Setup");
+      await app.getByRole("button", { name: "Open E2E Retry Setup's profile" }).first().click();
+      await expect(app.getByRole("button", { name: "Retry skill check" })).toBeVisible();
+      await expect(app.getByText("E2E Retry Setup is already set up", { exact: true })).toHaveCount(0);
+      fail = false;
+      await app.getByRole("button", { name: "Retry skill check" }).click();
+      await app.getByRole("button", { name: "Set up", exact: true }).click();
+      await expect(card(app)).toBeVisible();
+    } finally {
+      await api("DELETE", `/api/bots/${created.bot.id}`).catch(() => {});
+    }
+  });
   test("the profile offers it on every bot, and warns before it touches one", async ({ app }) => {
     // The composer entry is gone for a configured bot, so THIS is the way in.
     // If it were not here, removing the chip would have rebuilt the one-way
@@ -155,29 +250,14 @@ test.describe("setup is somewhere you go and ask for it", () => {
     await expect(app.getByRole("textbox", { name: QUESTION })).toBeVisible();
   });
 
-  // FIXME — blocked on a defect OUTSIDE this behaviour, reported rather than
-  // worked around. Driven by hand and by this spec, the "Remove <skill>"
-  // control inside the profile panel issues NO `DELETE /api/bots/:id/skills/:name`
-  // at all on a freshly opened panel (a network log over the whole click shows
-  // only the `GET .../skills` re-reads). The same route removes every skill
-  // instantly when called directly, so the route is fine and the row's own
-  // handler is not. Everything this test needs on the intake side is in place —
-  // `invalidateSkillCount(botId)` now fires on removal (M1), which is what lets
-  // the composer card return with no reload — and this test is the thing that
-  // will prove it the moment the row is fixed.
-  test.fixme("the card comes back when the last skill is removed, WITHOUT A RELOAD", async ({ app }) => {
-    // Its own fixture, so the seeded ones stay intact. Deliberately a BLANK
-    // bot given one loose skill rather than a whole profile: applying a
-    // profile also writes a title and a description, and a bot with those is
-    // configured — the composer correctly stays quiet for it forever, and
-    // setup moves to its profile panel. The only agent whose card can come
-    // back is one whose ONLY configuration was the skill.
+  test("profile setup stays available after the last skill is removed, WITHOUT A RELOAD", async ({ app }) => {
+    // A separate blank bot with one skill makes the before/after inventory
+    // visible without changing the configured profile fixtures.
     const created = await api("POST", "/api/bots", { name: "E2E Intake Returns" });
     const botId: string = created.bot.id;
     try {
       const added = await api("POST", `/api/bots/${botId}/skills/library`, { ids: ["chart-analysis"] });
       expect(added.installed.length).toBe(1);
-      await app.reload();
       await openBot(app, "E2E Intake Returns");
       // One skill: nothing to ask.
       await expect(card(app)).toHaveCount(0);
@@ -186,14 +266,18 @@ test.describe("setup is somewhere you go and ask for it", () => {
       // invalidate the renderer's cached count (M1); doing it over HTTP would
       // leave the cache untouched and prove nothing.
       await app.getByRole("button", { name: "Open E2E Intake Returns's profile" }).first().click();
+      await app.getByRole("button", { name: "Set up", exact: true }).click();
+      await expect(app.getByText(/1 skill it already has/)).toBeVisible();
+      await app.getByRole("button", { name: "Cancel", exact: true }).click();
       const remove = app.getByRole("button", { name: "Remove chart-analysis" });
       await expect(remove).toBeVisible({ timeout: 15_000 });
       await remove.click();
       await expect(remove).toHaveCount(0, { timeout: 15_000 });
 
-      // Back to the conversation. No reload since the skill was installed.
-      await app.keyboard.press("Escape");
-      await expect(card(app)).toBeVisible({ timeout: 20_000 });
+      // The profile entry reflects the new count without leaving the page.
+      await app.getByRole("button", { name: "Set up", exact: true }).click();
+      await expect(card(app)).toBeVisible();
+      await expect(app.getByText("E2E Intake Returns is already set up", { exact: true })).toHaveCount(0);
       await expect(app.getByRole("textbox", { name: QUESTION })).toBeVisible();
     } finally {
       await api("DELETE", `/api/bots/${botId}`).catch(() => {});
@@ -219,11 +303,16 @@ test.describe("the phone", () => {
     });
     await app.reload();
 
-    await openBot(app, FIXTURES.blank.name);
-    await expect(card(app)).toBeVisible();
+    const deniedWrites: string[] = [];
+    app.on("request", (request) => {
+      if (request.method() !== "GET" && /\/api\/bots\/[^/]+\/(assistant-profile|skills)/.test(request.url())) deniedWrites.push(request.url());
+    });
+
+    await openSetup(app, FIXTURES.blank.name);
     await ask(app, "trading");
     await fitsTheViewport(app);
     await expect(card(app).getByText("Add this on your desktop")).toBeVisible();
     await expect(card(app).getByRole("button", { name: /^Set up .* as / })).toHaveCount(0);
+    expect(deniedWrites).toEqual([]);
   });
 });

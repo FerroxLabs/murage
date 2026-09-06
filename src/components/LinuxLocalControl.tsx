@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { api } from "@/state/store";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 const LINUX_GUIDE_URL =
@@ -34,8 +35,7 @@ export function LinuxLocalControl() {
     setError(null);
     try {
       if (action === "disable" || action === "retry") {
-        const response = await fetch("/api/local-computer/interrupt", { method: "POST" });
-        if (!response.ok) throw new Error("Could not stop active local computer turns.");
+        await api("/api/local-computer/interrupt", { method: "POST" });
       }
       await window.muragebox.localControl[action]();
     } catch (reason) {

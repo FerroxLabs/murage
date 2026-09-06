@@ -38,6 +38,7 @@ let BASE = "";
 /** Marker plus proof. `?${DESKTOP_QUERY}` alone is a remote request now. */
 const DESKTOP_SECRET = "fedcba9876543210".repeat(4);
 const DESKTOP_QUERY = `surface=desktop&surfaceSecret=${DESKTOP_SECRET}`;
+const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET };
 
 const api = async (
   method: string,
@@ -53,7 +54,8 @@ const api = async (
   return { status: res.status, body: res.status === 204 ? null : await res.json() };
 };
 
-const model = { instanceId: "grok", model: "fake-model" };
+const desktopApi = (method: string, path: string, body?: unknown) => api(method, path, body, DESKTOP_HEADERS);
+const model = { instanceId: "scopeFixture", model: "fake-model" };
 
 posixOnly("the events stream is scoped per client", () => {
   beforeAll(async () => {
@@ -63,7 +65,9 @@ posixOnly("the events stream is scoped per client", () => {
     writeFileSync(
       join(home, ".murage", "config.json"),
       JSON.stringify({
-        instances: { grok: { driver: "grokAgent", config: { cli: FAKE_CLI, fullAuto: false } } },
+        // A product-keyed `grok` entry auto-adds unrelated engines. This test
+        // needs exactly the local fake, regardless of installed user CLIs.
+        instances: { scopeFixture: { driver: "grokAgent", config: { cli: FAKE_CLI, fullAuto: false } } },
       }),
     );
 
@@ -114,10 +118,10 @@ posixOnly("the events stream is scoped per client", () => {
     const created = await api("POST", "/api/bots", { name: "Reactor" });
     expect(created.status, stderr).toBe(201);
     const bot = created.body.bot;
-    expect((await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: model })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { modelSelection: model })).status).toBe(200);
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "react to me" })).status).toBe(202);
 
-    const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET };
+    const desktop = DESKTOP_HEADERS;
     const phone = { "x-murage-companion": "1" };
     let messageId = "";
     for (let attempt = 0; attempt < 100 && !messageId; attempt++) {
@@ -131,7 +135,7 @@ posixOnly("the events stream is scoped per client", () => {
     expect((await api("POST", `/api/threads/${bot.threadId}/messages/${messageId}/reactions`,
       { emoji: "👍" }, phone)).status).toBe(200);
 
-    expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: true })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { hidden: true })).status).toBe(200);
 
     const refused = await api("POST", `/api/threads/${bot.threadId}/messages/${messageId}/reactions`,
       { emoji: "🔥" }, phone);
@@ -151,12 +155,12 @@ posixOnly("the events stream is scoped per client", () => {
       const listed = await api("GET", "/api/bots");
       const secret = listed.body.bots[0];
       expect(secret, stderr).toBeTruthy();
-      expect((await api("PATCH", `/api/bots/${secret.id}`, { modelSelection: model, hidden: true })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${secret.id}`, { modelSelection: model, hidden: true })).status).toBe(200);
 
       const created = await api("POST", "/api/bots", { name: "Ordinary" });
       expect(created.status).toBe(201);
       const ordinary = created.body.bot;
-      expect((await api("PATCH", `/api/bots/${ordinary.id}`, { modelSelection: model })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${ordinary.id}`, { modelSelection: model })).status).toBe(200);
 
       let desktop: SseRecorder | undefined;
       let phone: SseRecorder | undefined;

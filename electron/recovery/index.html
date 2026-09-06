@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" data-skin="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Murage recovery</title>
+  <link rel="stylesheet" href="recovery.css">
+  <script src="renderer.js" defer></script>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">MURAGE / RECOVERY</p>
+    <h1>Recover this installation</h1>
+    <p id="reason">Checking installation ownership...</p>
+    <p class="location"><span>Installation</span><br><code id="location">Checking...</code></p>
+    <div id="error" role="alert" hidden></div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <section aria-labelledby="backup-heading">
+      <h2 id="backup-heading">Restore a private backup</h2>
+      <p>Inspect a backup before making changes. Your current installation is retained, and restored agents stay paused.</p>
+      <button data-action="choose-backup" class="primary">Choose backup</button>
+      <div id="preview" hidden>
+        <h3 id="backup-name"></h3>
+        <p id="backup-summary"></p>
+        <details><summary>Snapshot identity</summary><p id="snapshot"></p><code id="hash"></code></details>
+        <p class="notice">After restoring, review this installation before opening it. Engines and schedules stay off until you enable them.</p>
+        <button data-action="restore" id="restore">Restore and keep paused</button>
+      </div>
+    </section>
+    <section aria-labelledby="activation-heading">
+      <h2 id="activation-heading">Open restored data safely</h2>
+      <p>Validate the installed data and fresh connection profile. Approval applies only to the exact reviewed state.</p>
+      <button data-action="review-installation">Review restored installation</button>
+      <div id="activation-review" hidden>
+        <p id="activation-summary"></p>
+        <button data-action="activate" class="primary">Approve and open installation</button>
+      </div>
+    </section>
+    <section aria-labelledby="other-heading">
+      <h2 id="other-heading">Other recovery options</h2>
+      <p>A new backup requires readable installation data. If data is damaged, keep the original files and inspect diagnostics.</p>
+      <div class="actions">
+        <button data-action="backup">Save a new backup</button>
+        <button data-action="rollback">Undo a restore</button>
+        <button data-action="retry">Retry startup</button>
+        <button data-action="diagnostics">Open diagnostics folder</button>
+      </div>
+    </section>
+    <p class="privacy">Backups contain private conversations and files. Keep them private; do not attach them to public bug reports.</p>
+  </main>
+</body>
+</html>

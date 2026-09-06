@@ -66,12 +66,24 @@ describe("WebhookManager", () => {
     expect(h.manager.list()).toHaveLength(1);
   });
 
-  it("does not trust malformed webhook records loaded from disk", () => {
+  it("preserves malformed webhook records and requires recovery instead of an empty store", () => {
     const h = harness();
-    writeFileSync(h.file, JSON.stringify({ version: 1, webhooks: [{ id: "unsafe" }], deliveries: [] }));
-    const reloaded = new WebhookManager(h.options);
-    expect(reloaded.list()).toEqual([]);
-    expect(reloaded.listAttempts()).toEqual([]);
+    const raw = JSON.stringify({ version: 1, webhooks: [{ id: "unsafe" }], deliveries: [] });
+    writeFileSync(h.file, raw);
+    expect(() => new WebhookManager(h.options)).toThrowError(expect.objectContaining({ code: "PERSISTED_STATE_RECOVERY_REQUIRED", reason: "invalid-shape" }));
+    expect(readFileSync(h.file, "utf8")).toBe(raw);
+    expect(h.queued).toEqual([]);
+  });
+
+  it.each(["", '{"private":"webhook-preservation-canary",', "null", "[]"])("does not reset corrupt webhook state: %s", raw => {
+    const h = harness();
+    writeFileSync(h.file, raw);
+    let failure: unknown;
+    try { new WebhookManager(h.options); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: h.file });
+    expect(String(failure)).not.toContain("webhook-preservation-canary");
+    expect(readFileSync(h.file, "utf8")).toBe(raw);
+    expect(h.queued).toEqual([]);
   });
 
   it("stores only a secret digest and exposes the secret once", () => {

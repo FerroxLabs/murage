@@ -56,8 +56,8 @@ export function devServerEnvironment(
   // Base last for MURAGE_STATIC_DIR specifically, so an explicit override is
   // never clobbered; base first for everything else it carries.
   return baseEnvironment.MURAGE_STATIC_DIR
-    ? { ...baseEnvironment, ...derived, MURAGE_STATIC_DIR: baseEnvironment.MURAGE_STATIC_DIR }
-    : { ...baseEnvironment, ...derived };
+    ? { ...baseEnvironment, ...derived, MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_STATIC_DIR: baseEnvironment.MURAGE_STATIC_DIR }
+    : { ...baseEnvironment, ...derived, MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1" };
 }
 
 /** Start the harness with that environment and mirror its exit. */

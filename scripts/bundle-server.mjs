@@ -88,6 +88,20 @@ await build({
   logLevel: "info",
 });
 
+// Offline installation backup/inspection must remain usable when the harness
+// cannot boot. ZIP libraries are CommonJS and use built-in Node requires.
+await build({
+  entryPoints: [join(root, "scripts", "installation-recovery.ts"), join(root, "scripts", "installation-recovery-worker.ts")],
+  bundle: true,
+  platform: "node",
+  target: "node24",
+  format: "esm",
+  outdir: join(root, "dist-server"),
+  banner: { js: 'import { createRequire as __recoveryRequire } from "node:module"; const require = __recoveryRequire(import.meta.url);' },
+  allowOverwrite: true,
+  logLevel: "info",
+});
+
 // pi-mcp-extension.ts is NOT an Murage entry point: it is loaded by the
 // external `pi` process (pi's own jiti), which resolves its
 // @earendil-works/pi-coding-agent and typebox imports from pi's install. Ship

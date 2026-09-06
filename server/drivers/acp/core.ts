@@ -43,6 +43,7 @@ import type {
 import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
+import { isHarnessOwnedMcpEnvName } from "../../mcp-registry.ts";
 
 // Resolved from the server root, never relative to this file: bundling inlines
 // this module two directories up, so the `".."` pair here would climb past the
@@ -327,6 +328,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // config boundary; this is defense in depth).
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
           if (servers.some((existing) => existing.name === name)) continue;
+          if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
           servers.push({ name, command: server.command, args: server.args, env: acpEnv(server.env) });
         }
         return servers;

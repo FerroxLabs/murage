@@ -30,6 +30,21 @@ function memoryStore() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("composer drafts", () => {
+  it("reports denied attachment persistence and retains the supplied local fallback", () => {
+    const attachment = pasteAttachment("Keep this attachment");
+    const denied = {
+      getItem: () => { throw new Error("storage denied"); },
+      setItem: () => { throw new Error("storage denied"); },
+    };
+    expect(setDraftAttachments(denied, "bot:denied", [attachment])).toBe(false);
+    expect(getDraftAttachments(denied, "bot:denied", [attachment])).toEqual([attachment]);
+    expect(setDraftAttachments(undefined, "bot:denied", [attachment])).toBe(false);
+    expect(getDraftAttachments(undefined, "bot:denied", [attachment])).toEqual([attachment]);
+    const store = memoryStore();
+    expect(setDraftAttachments(store, "bot:working", [attachment])).toBe(true);
+    expect(getDraftAttachments(store, "bot:working")).toEqual([attachment]);
+  });
+
   it("keeps text and attachments isolated per bot or room", () => {
     const store = memoryStore();
     const paste = pasteAttachment("bot paste");

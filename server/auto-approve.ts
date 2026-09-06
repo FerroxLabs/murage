@@ -52,21 +52,82 @@ export function looksDestructive(text: string): boolean {
  * A bare tool name is far too coarse for a command runner: remembering
  * "Bash" would hand the bot a permanent unattended shell, which is the
  * opposite of what someone pressing "always allow" on `git status`
- * intends. Command tools are therefore keyed by their program —
- * `Bash:git`, `Bash:npm` — so the grant is as narrow as the thing you
- * actually looked at. Computed once, server-side, and echoed back by the
- * client so the two sides can never disagree about what was granted. */
-const COMMAND_TOOLS = new Set(["bash", "shell", "execute", "run_command", "computer_exec", "terminal"]);
+ * intends. Simple literal commands are keyed by their program —
+ * `Bash:git`, `Bash:npm`. Complex shell syntax has no remembered key;
+ * undefined also hides the client's "Always allow" action. Computed once,
+ * server-side, so the display and the grant cannot disagree.
+ *
+ * This narrows remembered permission, not execution: program arguments,
+ * config, PATH and env can still change what a program does. Containment
+ * remains the sandbox's job, and explicit Auto mode is unchanged. */
+const COMMAND_TOOLS = new Set(["bash", "shell", "execute", "exec_command", "run_command", "computer_exec", "terminal"]);
 
-export function approvalKey(tool: string, summary: string, scope?: "local-computer"): string {
-  const bare = tool.replace(/^mcp__[^_]+__/, "").toLowerCase();
-  if (!COMMAND_TOOLS.has(bare)) return scope ? `${scope}:${tool}` : tool;
-  // first bare word of the command, skipping env assignments and sudo
-  const words = summary.trim().split(/\s+/);
+// A grant to one of these is effectively a grant to a command interpreter
+// or another dispatcher. Do not infer the wrapped program from its arguments.
+const COMMAND_DISPATCHERS = /^(?:sh|bash|zsh|fish|dash|ksh|csh|tcsh|ash|pwsh|powershell|cmd|python(?:\d+(?:\.\d+)*)?|node|nodejs|perl|ruby|php|lua(?:\d+(?:\.\d+)*)?|deno|bun|osascript|eval|exec|source|\.|env|command|builtin|xargs|time|timeout|nohup|nice|doas|su|if|then|else|elif|fi|for|while|until|do|done|case|esac|function|select|coproc)$/i;
+
+/** Recognize only a literal simple-command subset of POSIX shell syntax.
+ * Quotes may contain literal operators, but expansion, escaping, redirects,
+ * comments and control syntax fail closed. This is deliberately not a shell
+ * parser: unsupported forms must ask instead of sharing a first-word grant. */
+function simpleProgram(summary: string): string | undefined {
+  if (/[\x00-\x08\x0a-\x1f\x7f]/.test(summary)) return undefined;
+  // Generic shell tools do not identify their dialect. Windows expands %
+  // and ! and uses ^ for escaping, including forms POSIX quotes would hide.
+  // Unsupported syntax asks even when those characters might be literal.
+  if (/[%^!]/.test(summary)) return undefined;
+  const words: { value: string; assignment: boolean }[] = [];
   let i = 0;
-  while (i < words.length && (/^[A-Z_][A-Z0-9_]*=/.test(words[i]) || words[i] === "sudo")) i += 1;
-  const program = (words[i] ?? "").split("/").pop()?.replace(/[^\w.-]/g, "") ?? "";
-  const key = program ? `${tool}:${program}` : tool;
+  while (i < summary.length) {
+    if (summary[i] === " " || summary[i] === "\t") {
+      i += 1;
+      continue;
+    }
+    const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/.test(summary.slice(i));
+    let value = "";
+    let quote: "'" | '"' | undefined;
+    while (i < summary.length) {
+      const ch = summary[i];
+      if (quote) {
+        if (ch === quote) quote = undefined;
+        else {
+          if (quote === '"' && /[$`\\]/.test(ch)) return undefined;
+          value += ch;
+        }
+      } else if (ch === " " || ch === "\t") {
+        break;
+      } else if (ch === "'" || ch === '"') {
+        quote = ch;
+      } else {
+        if (/[;&|<>()[\]{}$`\\*?~#!]/.test(ch)) return undefined;
+        value += ch;
+      }
+      i += 1;
+    }
+    if (quote) return undefined;
+    words.push({ value, assignment });
+  }
+  let next = 0;
+  // Preserve existing literal assignment / bare sudo grants, but sudo
+  // options (which take arguments) are unsupported rather than guessed at.
+  while (next < words.length && (words[next].assignment || words[next].value === "sudo")) next += 1;
+  const executable = words[next]?.value;
+  if (!executable || !/^[A-Za-z0-9_./][A-Za-z0-9_./-]*$/.test(executable)) return undefined;
+  const program = executable.split("/").pop();
+  if (!program) return undefined;
+  // Windows executable/script suffixes must not turn a known dispatcher
+  // into a per-program grant. Keep ordinary keys (e.g. git.exe) unchanged.
+  const dispatcher = program.replace(/\.(?:exe|com|cmd|bat)$/i, "");
+  if (COMMAND_DISPATCHERS.test(dispatcher) || dispatcher.toLowerCase() === "sudo") return undefined;
+  return program;
+}
+
+export function approvalKey(tool: string, summary: string, scope?: "local-computer"): string | undefined {
+  const bare = tool.toLowerCase().replace(/^mcp__.+__/, "").split(".").pop()!;
+  if (!COMMAND_TOOLS.has(bare)) return scope ? `${scope}:${tool}` : tool;
+  const program = simpleProgram(summary);
+  if (!program) return undefined;
+  const key = `${tool}:${program}`;
   return scope ? `${scope}:${key}` : key;
 }
 
@@ -126,7 +187,7 @@ export function autoVerdict(
   const grant =
     destructive || sensitive
       ? null
-      : bot.alwaysAllow?.includes(key)
+      : key !== undefined && bot.alwaysAllow?.includes(key)
         ? { approve: `auto-approved ${key} (always allowed)`, source: "always-allow" as const, rule: key }
         : bot.autoApprove
           ? { approve: `auto-approved ${tool}`, source: "auto-mode" as const, rule: undefined }

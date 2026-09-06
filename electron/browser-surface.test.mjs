@@ -1576,6 +1576,21 @@ describe("browser surface manager", () => {
     expect(manager.forgetProfile("")).toBe(0);
   });
 
+  it("restored partition callbacks apply to unnamed, shared and forgotten views", () => {
+    const { manager, views } = harness({
+      partitionFor: id => "persist:fresh-bot-" + id,
+      profilePartitionFor: id => { if (!/^[a-z]+$/.test(id)) throw new Error("invalid profile"); return "persist:fresh-profile-" + id; },
+    });
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    manager.layout("bot-b", BOUNDS, "work", "compact");
+    manager.layout("bot-c", BOUNDS, "work", "compact");
+    expect(views.map(view => view.partition)).toEqual(["persist:fresh-bot-bot-a", "persist:fresh-profile-work", "persist:fresh-profile-work"]);
+    expect(manager.forgetProfile("work")).toBe(2);
+    expect(manager.size()).toBe(1);
+    expect(views[0].calls.some(([name]) => name === "close")).toBe(false);
+    expect(() => manager.layout("bot-d", BOUNDS, "../work", "compact")).toThrow();
+  });
+
   it("accepts exact migrated partitions but refuses lossy aliases", () => {
     const { manager, views } = harness();
     manager.layout("bot-a", BOUNDS, "work", "compact");

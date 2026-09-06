@@ -387,7 +387,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
     <>
     <aside
       className={cn(
-        "animate-panel-in relative z-20 flex h-full flex-col border-l border-hairline/40 bg-panel",
+        // Clip without creating a second scroll container. overflow:hidden
+        // still lets focus/scrollIntoView scroll this aside past its header.
+        "animate-panel-in relative z-20 flex h-full min-h-0 flex-col overflow-clip border-l border-hairline/40 bg-panel",
         "md:w-[400px] md:shrink-0",
         // Same collapse as InspectorPanel: a fixed 400px column beside the chat
         // takes main to 0px wide below ~800px. Below md the profile covers the
@@ -397,7 +399,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
       )}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between px-4 py-3">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
           aria-label="Collapse agent profile"
@@ -417,7 +419,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 pb-5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
         <div className="flex flex-col gap-4 pt-4">
           {/* Below md this panel covers the chat, and the chat is where the
               app's error banner renders — a refused role change would land

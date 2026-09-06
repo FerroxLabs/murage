@@ -224,6 +224,8 @@ export interface ProposeRoutineRequestArgs {
   proposal: unknown;
   /** Room cards retain the member attribution used by every other bot message. */
   from?: { botId: string; name: string; color: string };
+  /** Exact initiating turn must still own authority after async readiness. */
+  canCommit?: () => void;
 }
 
 export interface RoutineProposalResult {
@@ -781,6 +783,7 @@ export class RoutineRequestService {
     if (persistence && !persistence.ok) {
       throw new RoutineRequestError(persistence.error, persistence.status);
     }
+    args.canCommit?.();
     const message = this.store.appendMessage(threadId, messageInput);
     return {
       requestId,
@@ -836,6 +839,14 @@ export class RoutineRequestService {
         status: 400,
       };
     }
+    // Cancellation needs the same conversation owner as confirmation, even
+    // when an operation no longer parses. A durable receipt can independently
+    // establish ownership when the old payload itself was damaged.
+    if (rawPayload.botId !== args.botId || rawPayload.threadId !== args.threadId) {
+      const recovered = this.settleCommittedReceipt(args, message.id, card);
+      if (recovered) return recovered;
+      return { claimed: true, state: "invalid", error: "This routine request belongs to another conversation", status: 403 };
+    }
     const parsedPayload = routineRequestCardDataSchema.safeParse(rawPayload);
     if (!parsedPayload.success) {
       if (card.answered) return { claimed: true, state: "already_settled", behavior: card.answered };
@@ -864,39 +875,15 @@ export class RoutineRequestService {
       }
       return { claimed: true, state: "invalid", error: "This routine request id does not match its confirmation card", status: 400 };
     }
-    if (payload.botId !== args.botId || payload.threadId !== args.threadId) {
-      const recovered = this.settleCommittedReceipt(args, message.id, card);
-      if (recovered) return recovered;
-      if (args.behavior === "deny") {
-        this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
-        return { claimed: true, state: "denied" };
-      }
-      return { claimed: true, state: "invalid", error: "This routine request belongs to another conversation", status: 403 };
-    }
     if (card.answered) {
       this.forgetSettledReceipt(payload, message.id);
       return { claimed: true, state: "already_settled", behavior: card.answered };
     }
 
     try {
-      // WHAT YOU SAW IS WHAT YOU APPROVE.
-      //
-      // The receipt fingerprint below is a COMMIT-RECOVERY check: on a first
-      // approval there is no receipt, so nothing there attests to the content
-      // the person read. This does. A card written before the digest existed
-      // has none and is allowed through rather than becoming unconfirmable.
-      if (card.routineProposalDigest) {
-        const shown = routineProposalDigest(payload, {
-          title: card.title,
-          subtitle: card.subtitle,
-        });
-        if (shown !== card.routineProposalDigest) {
-          throw new RoutineRequestError(
-            "This routine changed after it was shown to you. Ask the bot to propose it again.",
-            409,
-          );
-        }
-      }
+      // Recovery precedes approval validation: the action already committed,
+      // so settling its matching receipt must not execute it again or depend
+      // on whether a legacy card had a proposal-time digest.
       const fingerprint = routineRequestFingerprint(payload, message.id);
       const receipt = this.routines.routineRequestReceipt(payload.requestId);
       if (receipt) {
@@ -908,6 +895,10 @@ export class RoutineRequestService {
           receipt.fingerprintVersion !== ROUTINE_REQUEST_FINGERPRINT_VERSION ||
           receipt.fingerprint !== fingerprint
         ) {
+          if (args.behavior === "deny") {
+            const recovered = this.settleCommittedReceipt(args, message.id, card);
+            if (recovered) return recovered;
+          }
           throw new RoutineRequestError("This routine request does not match its durable commit receipt", 409);
         }
         return this.settleApplied(
@@ -922,6 +913,22 @@ export class RoutineRequestService {
       if (args.behavior === "deny") {
         this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
         return { claimed: true, state: "denied" };
+      }
+      // An unapplied legacy card has no evidence of what was originally
+      // reviewed. Never manufacture that evidence from its current payload.
+      // Keep Cancel available and require a newly proposed, bound review.
+      if (!card.routineProposalDigest) {
+        throw new RoutineRequestError(
+          "This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.",
+          409,
+        );
+      }
+      const shown = routineProposalDigest(payload, { title: card.title, subtitle: card.subtitle });
+      if (shown !== card.routineProposalDigest) {
+        throw new RoutineRequestError(
+          "This routine changed after it was shown to you. Ask the bot to propose it again.",
+          409,
+        );
       }
       revalidateOperation(payload.operation, this.routines, payload.botId, this.now());
       if (payload.operation.action === "create" && payload.operation.forBot && this.validateTarget) {

@@ -8,6 +8,21 @@ import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { ProviderRegistry } from "./registry.ts";
 
 describe("ProviderRegistry", () => {
+  it("disabled instances never reach driver configuration, creation or discovery", async () => {
+    const fake = makeFakeDriver();
+    let defaults = 0, decoded = 0, created = 0;
+    fake.driver.defaultConfig = () => { defaults++; return {}; };
+    fake.driver.decodeConfig = () => { decoded++; return {}; };
+    fake.driver.create = async () => { created++; throw new Error("disabled provider ran"); };
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ disabled: { driver: "fake", enabled: false, config: { cli: "/must-not-run" } } });
+    const [description] = await registry.describe();
+    expect({ defaults, decoded, created }).toEqual({ defaults: 0, decoded: 0, created: 0 });
+    expect(registry.get("disabled")).toBeNull();
+    expect(registry.instances()).toEqual([]);
+    expect(description.snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("disabled") });
+    expect(description.cliCandidates).toEqual([]);
+  });
   it("creates live instances for known drivers", async () => {
     const fake = makeFakeDriver();
     const registry = new ProviderRegistry([fake.driver]);

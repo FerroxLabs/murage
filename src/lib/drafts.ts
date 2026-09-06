@@ -1,12 +1,13 @@
 // Unsent composer input, kept per task. Switching tasks unmounts the Composer
 // and its local state. Drafts live in localStorage, so coming back to a task — in this
 // session or after a restart — finds what you were typing still there.
-import { useCallback, useEffect, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState, type SetStateAction } from "react";
 import { isAttachment, type Attachment } from "./composer-attachments.js";
 
 const KEY = "murage-drafts";
 const ATTACHMENTS_KEY = "murage-draft-attachments";
 const SEND_IDS_KEY = "murage-draft-send-ids";
+const CHANNEL_MODES_KEY = "murage-draft-channel-modes";
 // A task can be unmounted and mounted again while its POST is still in
 // flight. Keep the edit generation outside React so a late failure from the
 // old component cannot overwrite a newer draft created by the new one.
@@ -15,7 +16,8 @@ const draftRevisions = new Map<string, number>();
 // so task navigation and a rejected send can resolve the original message
 // without duplicating message contents in storage.
 const replyDrafts = new Map<string, string>();
-type DraftRestore = { text: string; attachments: Attachment[] };
+type ChannelMode = "chat" | "goal";
+type DraftRestore = { text: string; attachments: Attachment[]; channelMode?: ChannelMode };
 type DraftRestoreListener = (draft: DraftRestore) => void;
 const restoreListeners = new Map<string, Set<DraftRestoreListener>>();
 export interface FailedComposerSend {
@@ -41,6 +43,34 @@ let failedSendSequence = 0;
 
 type Values = Record<string, unknown>;
 type Store = Pick<Storage, "getItem" | "setItem"> | undefined;
+const fallbackChannelModes = new Map<string, ChannelMode>();
+const channelModesByStore = new WeakMap<object, Map<string, ChannelMode>>();
+
+function channelModeMemory(store: Store): Map<string, ChannelMode> {
+  if (!store) return fallbackChannelModes;
+  let modes = channelModesByStore.get(store);
+  if (!modes) { modes = new Map(); channelModesByStore.set(store, modes); }
+  return modes;
+}
+
+/** Adapted from upstream cb1747d1. Goal intent belongs to the task draft;
+ * memory retains it during navigation even when browser storage is denied. */
+export function getDraftChannelMode(store: Store, id: string): ChannelMode {
+  const memory = channelModeMemory(store);
+  if (memory.has(id)) return memory.get(id)!;
+  const mode = read(store, CHANNEL_MODES_KEY)[id] === "goal" ? "goal" : "chat";
+  memory.set(id, mode);
+  return mode;
+}
+
+export function setDraftChannelMode(store: Store, id: string, mode: ChannelMode): void {
+  channelModeMemory(store).set(id, mode);
+  const modes = read(store, CHANNEL_MODES_KEY);
+  if (mode === "goal") modes[id] = mode;
+  else delete modes[id];
+  try { store?.setItem(CHANNEL_MODES_KEY, JSON.stringify(modes)); }
+  catch { /* navigation still uses the in-memory mode */ }
+}
 
 // Storage is best-effort: a full quota, a locked-down origin, or a garbled
 // value must never cost a keystroke — every failure reads as "no drafts".
@@ -71,19 +101,30 @@ export function setDraft(store: Store, id: string, text: string): void {
   }
 }
 
-export function getDraftAttachments(store: Store, id: string): Attachment[] {
-  const attachments = read(store, ATTACHMENTS_KEY)[id];
-  return Array.isArray(attachments) ? attachments.filter(isAttachment) : [];
+export function getDraftAttachments(store: Store, id: string, fallback: Attachment[] = []): Attachment[] {
+  if (!store) return fallback;
+  try {
+    const raw = store.getItem(ATTACHMENTS_KEY);
+    const drafts = raw ? JSON.parse(raw) : {};
+    if (!drafts || typeof drafts !== "object" || Array.isArray(drafts)) return fallback;
+    const attachments = drafts[id];
+    return Array.isArray(attachments) ? attachments.filter(isAttachment) : [];
+  } catch {
+    return fallback;
+  }
 }
 
-export function setDraftAttachments(store: Store, id: string, attachments: Attachment[]): void {
+export function setDraftAttachments(store: Store, id: string, attachments: Attachment[]): boolean {
   const drafts = read(store, ATTACHMENTS_KEY);
   if (attachments.length) drafts[id] = attachments;
   else delete drafts[id];
   try {
-    store?.setItem(ATTACHMENTS_KEY, JSON.stringify(drafts));
+    if (!store) return false;
+    store.setItem(ATTACHMENTS_KEY, JSON.stringify(drafts));
+    return true;
   } catch {
     /* quota / private mode — attachments remain in component state */
+    return false;
   }
 }
 
@@ -206,6 +247,7 @@ export function restoreComposerDraft(id: string, draft: DraftRestore): void {
   const store = getStore();
   setDraft(store, id, draft.text);
   setDraftAttachments(store, id, draft.attachments);
+  setDraftChannelMode(store, id, draft.channelMode ?? "chat");
   for (const listener of restoreListeners.get(id) ?? []) listener(draft);
 }
 
@@ -255,6 +297,7 @@ export function recoverFailedComposerSend(sent: ComposerSendSnapshot): "restored
   restoreComposerDraft(sent.draftId, {
     text: sent.text,
     attachments: sent.attachments,
+    channelMode: sent.channelMode,
   });
   // If the response vanished after server acceptance, the next Send must
   // reuse this identity instead of starting a duplicate turn.
@@ -293,6 +336,26 @@ function getStore(): Store {
   } catch {
     return undefined;
   }
+}
+
+export function useComposerChannelMode(id: string): [ChannelMode, (next: SetStateAction<ChannelMode>) => void] {
+  const store = getStore();
+  const [state, setState] = useState(() => ({ id, store, mode: getDraftChannelMode(store, id) }));
+  // A caller need not remount on task change. Never render another task's
+  // goal mode for the interval before the synchronization effect runs.
+  const mode = state.id === id && state.store === store ? state.mode : getDraftChannelMode(store, id);
+  useEffect(() => {
+    const sync = () => setState({ id, store, mode: getDraftChannelMode(store, id) });
+    const unsubscribe = subscribeToDraftRestores(id, sync);
+    sync();
+    return unsubscribe;
+  }, [id, store]);
+  const set = useCallback((next: SetStateAction<ChannelMode>) => {
+    const value = typeof next === "function" ? next(getDraftChannelMode(store, id)) : next;
+    setDraftChannelMode(store, id, value);
+    setState({ id, store, mode: value });
+  }, [id, store]);
+  return [mode, set];
 }
 
 /** useState for the composer text, persisted under `id` (a bot or room). */
@@ -346,28 +409,35 @@ export function useComposerDraft(
     setDraftAttachments(store, legacyId, []);
     return legacy;
   });
+  const attachmentMemory = useMemo(
+    () => ({ value: getDraftAttachments(store, id), persisted: true }),
+    [store, id],
+  );
   useEffect(() => {
-    const unsubscribe = subscribeToDraftRestores(id, (draft) => setAttachmentState(draft.attachments));
-    setAttachmentState(getDraftAttachments(store, id));
+    const unsubscribe = subscribeToDraftRestores(id, (draft) => {
+      attachmentMemory.value = draft.attachments;
+      attachmentMemory.persisted = false;
+      setAttachmentState(draft.attachments);
+    });
+    attachmentMemory.value = getDraftAttachments(store, id, attachmentMemory.value);
+    setAttachmentState(attachmentMemory.value);
     return unsubscribe;
-  }, [id, store]);
+  }, [id, store, attachmentMemory]);
   const setAttachments = useCallback(
     (next: SetStateAction<Attachment[]>) => {
-      if (typeof next !== "function") {
-        // Persist literal restores before asking React to render. A failed
-        // request may complete after its task was switched away and this
-        // component unmounted; the draft must still be there on return.
-        setDraftAttachments(store, id, next);
-        setAttachmentState(next);
-        return;
-      }
-      setAttachmentState((previous) => {
-        const value = next(previous);
-        setDraftAttachments(store, id, value);
-        return value;
-      });
+      // Uploads can finish after this composer unmounts. Persist against
+      // the captured draft before asking React to render; its updater may
+      // never run on an unmounted component. Read current stored attachments
+      // so successive completions cannot replace one another.
+      const previous = attachmentMemory.persisted
+        ? getDraftAttachments(store, id, attachmentMemory.value)
+        : attachmentMemory.value;
+      const value = typeof next === "function" ? next(previous) : next;
+      attachmentMemory.value = value;
+      attachmentMemory.persisted = setDraftAttachments(store, id, value);
+      setAttachmentState(value);
     },
-    [store, id],
+    [store, id, attachmentMemory],
   );
   return [text, setText, attachments, setAttachments];
 }

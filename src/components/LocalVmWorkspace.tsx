@@ -16,6 +16,7 @@ import {
 } from "react";
 import { api, useStore, type Action, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { desktopSurfaceHeaders } from "@/lib/live-events";
 import { transitionComputerControlLease } from "@/lib/computer-control";
 import {
   initialLocalVmWorkspaceSlots,
@@ -77,7 +78,9 @@ async function readComputerControl(botId: string): Promise<LocalVmWorkspaceContr
 function bestEffortRelease(botId: string, controlLeaseId: string) {
   void fetch(`/api/bots/${botId}/computer/control`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    // Control acquisition already cached the proof. Start the keepalive now;
+    // asynchronous discovery during teardown could lose the release entirely.
+    headers: { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders() },
     body: JSON.stringify({ action: "release", controlLeaseId }),
     keepalive: true,
   }).then(async (response) => {

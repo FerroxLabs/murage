@@ -41,6 +41,7 @@ import { BotAvatar } from "@/components/Avatar";
 import { pathForFile } from "@/components/ComposerAttachments";
 import { CalendarSidebar } from "@/components/routines/CalendarSidebar";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { WebhooksPanel } from "@/components/WebhooksPanel";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
 import { botRole } from "@/lib/bot-role";
@@ -913,6 +914,7 @@ function CalendarEventCard({
   onOpen: () => void;
   onResize: (minutes: number) => void;
 }) {
+  const canEdit = useDesktopSurface() === true;
   const isCall = item.kind === "call";
   const routine = item.kind === "routine" ? item.routine : null;
   const run = item.kind === "routine" ? item.run : null;
@@ -929,7 +931,7 @@ function CalendarEventCard({
   useEffect(() => setPreviewDuration(item.durationMinutes), [item.durationMinutes]);
   const status = run?.status;
   const statusLabel = run?.goalStatus ? goalStatusLabel(run.goalStatus) : status?.replace("waiting", "needs you");
-  const canMove = isCall || Boolean(routine && !run);
+  const canMove = canEdit && (isCall || Boolean(routine && !run));
   const schedule = isCall ? item.call.schedule : routine?.schedule;
   const recurring = Boolean(schedule && schedule.type !== "once");
   const intervalCadence = schedule?.type === "interval" ? intervalLabel(schedule.everyMinutes) : null;
@@ -987,7 +989,7 @@ function CalendarEventCard({
         </div>
         {previewDuration >= 30 && ownerBots.length > 1 && <span className="rounded bg-black/20 px-1 py-0.5 text-[8px]">+{ownerBots.length - 1}</span>}
       </div>
-      {isCall && <div onPointerDown={beginResize} className="absolute inset-x-1 bottom-0 h-1.5 cursor-ns-resize rounded-full opacity-0 transition group-hover:opacity-100" aria-label="Resize event"><div className="mx-auto mt-0.5 h-0.5 w-5 rounded-full bg-white/55" /></div>}
+      {canEdit && isCall && <div onPointerDown={beginResize} className="absolute inset-x-1 bottom-0 h-1.5 cursor-ns-resize rounded-full opacity-0 transition group-hover:opacity-100" aria-label="Resize event"><div className="mx-auto mt-0.5 h-0.5 w-5 rounded-full bg-white/55" /></div>}
     </button>
   );
 }
@@ -1013,6 +1015,7 @@ function CalendarGrid({
   onMove: (item: { kind: EventKind; id: string; at: number }, nextAt: number) => void;
   onResize: (item: CalendarEventItem, duration: number) => void;
 }) {
+  const canEdit = useDesktopSurface() === true;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<{ day: number; start: number; end: number } | null>(null);
   const [dragPreview, setDragPreview] = useState<{ day: number; at: number } | null>(null);
@@ -1031,6 +1034,7 @@ function CalendarGrid({
   }, [days]);
 
   const beginSelection = (event: ReactPointerEvent<HTMLDivElement>, day: number) => {
+    if (!canEdit) return;
     if (event.button !== 0 || (event.target as HTMLElement).closest("[data-event-card]")) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const start = slotAt(day, event.clientY, rect.top, HOUR_HEIGHT);
@@ -1052,6 +1056,7 @@ function CalendarGrid({
   };
 
   const drop = (event: ReactDragEvent<HTMLDivElement>, day: number) => {
+    if (!canEdit) return;
     event.preventDefault();
     setDragPreview(null);
     const rect = event.currentTarget.getBoundingClientRect();
@@ -1069,6 +1074,7 @@ function CalendarGrid({
   };
 
   const previewDrop = (event: ReactDragEvent<HTMLDivElement>, day: number) => {
+    if (!canEdit) return;
     if (!event.dataTransfer.types.includes(BOT_DRAG_TYPE) && !event.dataTransfer.types.includes(EVENT_DRAG_TYPE)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = event.dataTransfer.types.includes(EVENT_DRAG_TYPE) ? "move" : "copy";
@@ -1129,6 +1135,7 @@ function EventDetails({
   onOpenRoom: (id: string) => void;
 }) {
   const { state, dispatch } = useStore();
+  const canEdit = useDesktopSurface() === true;
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const isCall = item.kind === "call";
@@ -1160,11 +1167,12 @@ function EventDetails({
     onClose();
   };
 
-  const invoke = async (path: string, method = "POST") => {
+  const invoke = async (path: string, method = "POST", body?: unknown) => {
+    if (working || (method === "PATCH" && !canEdit)) return;
     setWorking(true);
     setError("");
     try {
-      const response = await api(path, { method });
+      const response = await api(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       if (response.routine) dispatch({ type: "routinePatched", routine: response.routine });
       if (response.run) dispatch({ type: "routineRunPatched", run: response.run });
     } catch (cause) {
@@ -1190,14 +1198,23 @@ function EventDetails({
   };
 
   const deleteEvent = async () => {
-    if (!window.confirm(`Delete “${title}”?`)) return;
-    if (call) {
-      await api(`/api/calendar-calls/${call.id}`, { method: "DELETE" });
-      onCallChanged(call.id);
-    } else if (routine) {
-      dispatch({ type: "deleteRoutine", routineId: routine.id });
+    if (!canEdit || working || !window.confirm(`Delete “${title}”?`)) return;
+    setWorking(true);
+    setError("");
+    try {
+      if (call) {
+        await api(`/api/calendar-calls/${call.id}`, { method: "DELETE" });
+        onCallChanged(call.id);
+      } else if (routine) {
+        await api(`/api/routines/${routine.id}`, { method: "DELETE" });
+        dispatch({ type: "routineDeleted", routineId: routine.id });
+      }
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(false);
     }
-    onClose();
   };
 
   return (
@@ -1240,7 +1257,7 @@ function EventDetails({
           {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{run.goalStatus ? goalStatusLabel(run.goalStatus) : run.status.replace("waiting", "needs you")}</div>{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}</div>}
           {run?.attention && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0"><div className="text-[11.5px] font-semibold">Needs your attention</div><div className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed">{run.attention}</div></div></div>}
           {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">{isRoomGoal ? "This team goal needs your answer. Open its room task to continue the run." : "This bot needs your answer. Open its task to continue the run."}</div>}
-          {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
+          {error && <div role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-hairline/40 px-4 py-3">
@@ -1250,12 +1267,12 @@ function EventDetails({
           {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Play size={13} />Run now</button>}
           {executionThreadId && (isRoomGoal ? goalGroup : primary) && <button onClick={openRunTask} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />{isRoomGoal ? "Open room task" : "Open task"}</button>}
           {run && ["queued", "running", "waiting"].includes(run.status) && <button onClick={() => void invoke(`/api/routine-runs/${run.id}/cancel`)} disabled={working} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"><X size={13} />Cancel run</button>}
-          {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}`, "PATCH")} className="hidden" aria-hidden />}
-          <div className="ml-auto flex items-center gap-1">
+          {!canEdit && (routine || call) && <p className="w-full text-[12px] text-ink-secondary">Create or change schedules in the desktop app. You can also ask the bot to propose a routine for your review here.</p>}
+          {canEdit && <div className="ml-auto flex items-center gap-1">
             {(routine || call) && <button onClick={onEdit} className="rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink">Edit</button>}
-            {routine && <button onClick={async () => { const response = await api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !routine.enabled }) }); dispatch({ type: "routinePatched", routine: response.routine }); }} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink" title={routine.enabled ? "Pause routine" : "Resume routine"}>{routine.enabled ? <Pause size={15} /> : <Play size={15} />}</button>}
-            {(routine || call) && <button onClick={() => void deleteEvent()} className="rounded-lg p-2 text-ink-secondary hover:bg-danger/10 hover:text-danger" title="Delete"><Trash2 size={15} /></button>}
-          </div>
+            {routine && <button disabled={working} onClick={() => void invoke(`/api/routines/${routine.id}`, "PATCH", { enabled: !routine.enabled })} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40" title={routine.enabled ? "Pause routine" : "Resume routine"}>{routine.enabled ? <Pause size={15} /> : <Play size={15} />}</button>}
+            {(routine || call) && <button disabled={working} onClick={() => void deleteEvent()} className="rounded-lg p-2 text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40" title="Delete"><Trash2 size={15} /></button>}
+          </div>}
         </div>
       </div>
     </div>
@@ -1278,11 +1295,28 @@ function PausedList({
   onOpenRoom: (id: string) => void;
 }) {
   const { dispatch } = useStore();
+  const canEdit = useDesktopSurface() === true;
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const resume = async (routine: Routine) => {
+    if (!canEdit || working) return;
+    setWorking(routine.id);
+    setError("");
+    try {
+      const response = await api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled: true }) });
+      dispatch({ type: "routinePatched", routine: response.routine });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(null);
+    }
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div role="dialog" aria-modal="true" aria-label="Paused routines" className="w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="flex items-center justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button></div>
         <div className="max-h-[55vh] space-y-1 overflow-y-auto p-3">
+          {error && <p role="alert" className="px-3 py-2 text-[12px] text-danger">{error}</p>}
           {routines.map((routine) => {
             const bot = bots.find((candidate) => candidate.id === routine.botId);
             const room = routine.target === "room-goal"
@@ -1296,8 +1330,8 @@ function PausedList({
                   <div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">{room ? `Team goal · ${room.name} · ` : ""}{scheduleLabel(routine.schedule)}</div>
                 </div>
                 {room && <button onClick={() => { onOpenRoom(room.id); onClose(); }} className="rounded-lg px-2 py-1.5 text-[11px] text-ink-secondary hover:bg-inset">Room</button>}
-                <button onClick={() => dispatch({ type: "updateRoutine", routineId: routine.id, patch: { enabled: true } })} className="rounded-lg bg-accent/15 px-2.5 py-1.5 text-[11px] font-medium text-accent">Resume</button>
-                <button onClick={() => onEdit(routine)} className="rounded-lg px-2 py-1.5 text-[11px] text-ink-secondary hover:bg-inset">Edit</button>
+                {canEdit && <><button disabled={working !== null} onClick={() => void resume(routine)} className="rounded-lg bg-accent/15 px-2.5 py-1.5 text-[11px] font-medium text-accent disabled:opacity-40">{working === routine.id ? "Resuming…" : "Resume"}</button>
+                <button onClick={() => onEdit(routine)} className="rounded-lg px-2 py-1.5 text-[11px] text-ink-secondary hover:bg-inset">Edit</button></>}
               </div>
             );
           })}
@@ -1320,6 +1354,15 @@ export function RoutineEditor({
   defaultRunOn?: RoutineRunOn;
   onClose: () => void;
 }) {
+  const canEdit = useDesktopSurface() === true;
+  if (!canEdit) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div role="dialog" aria-modal="true" aria-label="Routine editing" className="max-w-md rounded-xl border border-hairline bg-panel p-5 text-ink">
+        <p>Create or change schedules in the desktop app, or ask the bot to propose a routine for your review here.</p>
+        <button autoFocus onClick={onClose} className="mt-4 rounded-lg bg-accent px-4 py-2 text-white">Close</button>
+      </div>
+    </div>
+  );
   const at = routine?.schedule.type === "once"
     ? routine.schedule.at
     : routine?.schedule.type === "daily"
@@ -1332,6 +1375,7 @@ export function RoutineEditor({
 
 export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom: (id: string) => void }) {
   const { state, dispatch } = useStore();
+  const canEdit = useDesktopSurface() === true;
   const { capabilities } = useDesktopCapabilities();
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const [section, setSection] = useState<"calendar" | "webhooks">("calendar");
@@ -1393,9 +1437,10 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
   };
   const goToday = useCallback(() => setAnchor(startOfDay(Date.now())), []);
   const openCreate = useCallback((seed?: Partial<EventSeed>) => {
+    if (!canEdit) return;
     setSelected(null);
     setQuick({ kind: "routine", at: nextHour(), durationMinutes: 30, botIds: [], ...seed });
-  }, []);
+  }, [canEdit]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1415,6 +1460,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
 
   const upsertCall = (call: CalendarCall) => setCalls((current) => current.some((candidate) => candidate.id === call.id) ? current.map((candidate) => candidate.id === call.id ? call : candidate) : [call, ...current]);
   const moveEvent = async (dragged: { kind: EventKind; id: string; at: number }, nextAt: number) => {
+    if (!canEdit) return;
     if (nextAt === dragged.at) return;
     try {
       if (dragged.kind === "routine") {
@@ -1435,6 +1481,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
     }
   };
   const resizeEvent = async (item: CalendarEventItem, durationMinutes: number) => {
+    if (!canEdit) return;
     try {
       if (item.kind === "routine" && item.routine) {
         const response = await api(`/api/routines/${item.routine.id}`, { method: "PATCH", body: JSON.stringify({ durationMinutes }) });
@@ -1483,21 +1530,21 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
         </div>
         <div className="mt-2 flex items-center gap-1" style={windowNoDragStyle}>
           <button onClick={() => setSection("calendar")} className={cn("rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "calendar" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Routines &amp; calls</button>
-          <button onClick={() => setSection("webhooks")} className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "webhooks" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}><Webhook size={12} />Webhooks{state.webhooks.length > 0 && <span className="rounded-full bg-accent/15 px-1.5 text-[9px]">{state.webhooks.length}</span>}</button>
+          {canEdit && <button onClick={() => setSection("webhooks")} className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "webhooks" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}><Webhook size={12} />Webhooks{state.webhooks.length > 0 && <span className="rounded-full bg-accent/15 px-1.5 text-[9px]">{state.webhooks.length}</span>}</button>}
           {error && <button onClick={() => setError("")} className="ml-auto flex items-center gap-1.5 rounded-lg bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger"><CircleAlert size={11} />{error}<X size={11} /></button>}
         </div>
       </header>
 
-      {section === "webhooks" ? <WebhooksPanel bots={visibleBots} /> : (
+      {canEdit && section === "webhooks" ? <WebhooksPanel bots={visibleBots} /> : (
         <div className="flex min-h-0 flex-1">
-          <div className="hidden shrink-0 lg:block"><CalendarSidebar bots={visibleBots} anchor={anchor} onSelectDate={(at) => setAnchor(startOfDay(at))} onCreate={() => openCreate()} /></div>
+          <div className="hidden shrink-0 lg:block"><CalendarSidebar bots={visibleBots} anchor={anchor} onSelectDate={(at) => setAnchor(startOfDay(at))} onCreate={() => openCreate()} canCreate={canEdit} /></div>
           <CalendarGrid anchor={rangeStart} days={viewDays} items={items} bots={state.bots} groups={state.groups} onOpen={(item) => { setSelected(item); if (item.kind === "routine" && item.run && ["failed", "missed"].includes(item.run.status) && !item.run.seenAt) dispatch({ type: "markRoutineRunSeen", runId: item.run.id }); }} onCreate={openCreate} onMove={(item, at) => void moveEvent(item, at)} onResize={(item, duration) => void resizeEvent(item, duration)} />
-          <button onClick={() => openCreate()} disabled={!visibleBots.length} className="fixed bottom-5 right-5 z-30 flex size-12 items-center justify-center rounded-2xl bg-accent text-white shadow-xl shadow-black/30 hover:brightness-110 disabled:opacity-40 lg:hidden" aria-label="Create event"><Plus size={20} /></button>
+          {canEdit && <button onClick={() => openCreate()} disabled={!visibleBots.length} className="fixed bottom-5 right-5 z-30 flex size-12 items-center justify-center rounded-2xl bg-accent text-white shadow-xl shadow-black/30 hover:brightness-110 disabled:opacity-40 lg:hidden" aria-label="Create event"><Plus size={20} /></button>}
         </div>
       )}
 
-      {quick && <><div className="fixed inset-0 z-40 bg-black/25" onMouseDown={() => setQuick(null)} /><QuickComposer seed={quick} bots={visibleBots} onClose={() => setQuick(null)} onMore={(seed) => { setQuick(null); setEditor(seed); }} onSavedRoutine={(routine) => dispatch({ type: "routinePatched", routine })} onSavedCall={upsertCall} /></>}
-      {editor && <EventEditor seed={editor} bots={visibleBots} onClose={() => setEditor(null)} onSavedCall={upsertCall} />}
+      {canEdit && quick && <><div className="fixed inset-0 z-40 bg-black/25" onMouseDown={() => setQuick(null)} /><QuickComposer seed={quick} bots={visibleBots} onClose={() => setQuick(null)} onMore={(seed) => { setQuick(null); setEditor(seed); }} onSavedRoutine={(routine) => dispatch({ type: "routinePatched", routine })} onSavedCall={upsertCall} /></>}
+      {canEdit && editor && <EventEditor seed={editor} bots={visibleBots} onClose={() => setEditor(null)} onSavedCall={upsertCall} />}
       {liveSelected && <EventDetails item={liveSelected} bots={state.bots} onClose={() => setSelected(null)} onEdit={() => { const seed: EventSeed = liveSelected.kind === "call" ? { kind: "call", at: liveSelected.at, durationMinutes: liveSelected.call.durationMinutes, botIds: liveSelected.call.botIds, call: liveSelected.call } : { kind: "routine", at: liveSelected.at, durationMinutes: liveSelected.routine?.durationMinutes ?? liveSelected.run?.durationMinutes ?? 30, botIds: [liveSelected.routine?.botId ?? liveSelected.run?.botId ?? ""].filter(Boolean), routine: liveSelected.routine ?? undefined }; setSelected(null); setEditor(seed); }} onCallChanged={(id) => { if (id) setCalls((current) => current.filter((call) => call.id !== id)); else void loadCalls(); }} onOpenRoom={onOpenRoom} />}
       {pausedOpen && <PausedList routines={paused} bots={state.bots} groups={state.groups} onClose={() => setPausedOpen(false)} onEdit={(routine) => { setPausedOpen(false); const at = routine.schedule.type === "once" ? routine.schedule.at : routine.schedule.type === "interval" ? routine.schedule.anchorAt : atLocalTime(Date.now(), routine.schedule.time); setEditor({ kind: "routine", at, durationMinutes: routine.durationMinutes, botIds: [routine.botId], routine }); }} onOpenRoom={onOpenRoom} />}
     </main>

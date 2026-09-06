@@ -18,7 +18,9 @@ pnpm control:murage models --url http://127.0.0.1:PORT
 ```
 
 `doctor.ok` is true only when the endpoint is Murage and at least one
-engine is available. The isolated fixture should expose `claude`.
+engine is available. The isolated fixture exposes exactly `verification`,
+using the fake Claude driver. Its custom instance name deliberately avoids
+the product fleet's automatic real-engine additions.
 
 ## Gotchas
 

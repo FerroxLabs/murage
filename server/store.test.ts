@@ -2,7 +2,7 @@
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -676,13 +676,103 @@ describe("Store", () => {
   });
 
 
-  it("tolerates a corrupt bots.json by starting empty", () => {
-    const store = new Store(selection);
-    store.createBot();
-    writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
+  describe("persisted-state recovery boundary", () => {
+    it.each(["bots.json", "groups.json"])("preserves corrupt %s and prevents creating over it", (file) => {
+      const original = '{"privateData":"must survive",';
+      mkdirSync(DATA_DIR, { recursive: true });
+      writeFileSync(join(DATA_DIR, file), original);
+      expect(() => {
+        const reloaded = new Store(selection);
+        if (file === "bots.json") reloaded.createBot();
+        else reloaded.createGroup("Replacement", []);
+      }).toThrowError(expect.objectContaining({
+        name: "PersistedStateRecoveryError",
+        code: "PERSISTED_STATE_RECOVERY_REQUIRED",
+        filePath: join(DATA_DIR, file),
+        reason: "invalid-json",
+      }));
+      expect(readFileSync(join(DATA_DIR, file), "utf8")).toBe(original);
+    });
 
-    const reloaded = new Store(selection);
-    expect(reloaded.bots).toEqual([]);
+    it.each(["bots.json", "groups.json"])("refuses invalid shapes in %s without modifying bytes", (file) => {
+      mkdirSync(DATA_DIR, { recursive: true });
+      for (const original of ["null", "{}", "42", '"text"', "[null]", "[[]]", '[{"id":"missing-thread"}]']) {
+        writeFileSync(join(DATA_DIR, file), original);
+        expect(() => new Store(selection)).toThrowError(expect.objectContaining({
+          name: "PersistedStateRecoveryError", reason: "invalid-shape", filePath: join(DATA_DIR, file),
+        }));
+        expect(readFileSync(join(DATA_DIR, file), "utf8")).toBe(original);
+      }
+    });
+
+    it.each(["bots.json", "groups.json"])("refuses an unreadable %s instead of treating it as absent", (file) => {
+      // A directory fails readFileSync deterministically, including when the
+      // test user can bypass chmod restrictions. Do not touch real user data.
+      const target = join(DATA_DIR, file);
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, "preserve-me"), "original");
+      expect(() => new Store(selection)).toThrowError(expect.objectContaining({
+        name: "PersistedStateRecoveryError", reason: "unreadable", filePath: target,
+      }));
+      expect(readFileSync(join(target, "preserve-me"), "utf8")).toBe("original");
+    });
+
+    it("validates both files before a migration can rewrite either one", () => {
+      const store = new Store(selection);
+      const bot = store.createBot({}, { seedMessages: false });
+      store.patchBot(bot.id, { busy: true });
+      const botsFile = join(DATA_DIR, "bots.json");
+      const originalBots = readFileSync(botsFile, "utf8");
+      writeFileSync(join(DATA_DIR, "groups.json"), "broken");
+      expect(() => new Store(selection)).toThrowError(expect.objectContaining({ reason: "invalid-json" }));
+      expect(readFileSync(botsFile, "utf8")).toBe(originalBots);
+      expect(readFileSync(join(DATA_DIR, "groups.json"), "utf8")).toBe("broken");
+    });
+
+    it("still allows missing files on a fresh install", () => {
+      const store = new Store(selection);
+      expect(store.bots).toEqual([]);
+      expect(store.groups).toEqual([]);
+      const bot = store.createBot({}, { seedMessages: false });
+      const group = store.createGroup("First room", [bot.id]);
+      const reloaded = new Store(selection);
+      expect(reloaded.bot(bot.id)?.threadId).toBe(bot.threadId);
+      expect(reloaded.group(group.id)?.threadId).toBe(group.threadId);
+    });
+
+    it("keeps pre-task bot and room migrations compatible", () => {
+      const store = new Store(selection);
+      const bot = store.createBot({}, { seedMessages: false });
+      const group = store.createGroup("Legacy room", [bot.id]);
+      store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Legacy conversation" });
+      const botsFile = join(DATA_DIR, "bots.json");
+      const groupsFile = join(DATA_DIR, "groups.json");
+      const bots = JSON.parse(readFileSync(botsFile, "utf8"));
+      const groups = JSON.parse(readFileSync(groupsFile, "utf8"));
+      delete bots[0].tasks;
+      bots[0].resumeCursors = { claude: "legacy-session" };
+      delete groups[0].tasks;
+      delete groups[0].defaultResponder;
+      writeFileSync(botsFile, JSON.stringify(bots));
+      writeFileSync(groupsFile, JSON.stringify(groups));
+      const reloaded = new Store(selection);
+      expect(reloaded.bot(bot.id)?.tasks).toMatchObject([
+        { threadId: bot.threadId, resumeCursors: { claude: "legacy-session" } },
+      ]);
+      expect(reloaded.group(group.id)?.tasks).toMatchObject([{ threadId: group.threadId }]);
+      expect(reloaded.group(group.id)?.defaultResponder).toEqual({ kind: "member", botId: bot.id });
+      expect(reloaded.messagesFor(bot.threadId)[0].text).toBe("Legacy conversation");
+    });
+
+    it.skipIf(process.platform === "win32")("does not treat dangling state symlinks as fresh installation", () => {
+      mkdirSync(DATA_DIR, { recursive: true });
+      const target = join(DATA_DIR, "bots.json");
+      symlinkSync("missing-saved-state.json", target);
+      expect(() => new Store(selection)).toThrowError(expect.objectContaining({
+        reason: "unreadable", readErrorCode: "ENOENT", filePath: target,
+      }));
+      expect(readlinkSync(target)).toBe("missing-saved-state.json");
+    });
   });
 
   it("busy is wiped even when bots.json says otherwise", () => {

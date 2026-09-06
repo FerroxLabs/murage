@@ -23,7 +23,8 @@
 //                      inherited-api-key — what `auth status` reports
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
 const scriptedReplies = (() => {
@@ -204,10 +205,19 @@ const playTurn = (prompt: JsonValue) => {
   // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model });
 
-  if (mode === "hang") {
+  if (mode === "hang" || promptText(prompt).includes("__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
-    setInterval(() => {}, 1_000);
+    const gateDir = process.env.FAKE_CLAUDE_FINISH_GATE_DIR;
+    const gate = gateDir ? join(gateDir, String(process.pid)) : undefined;
+    const timer = setInterval(() => {
+      if (!gate || !existsSync(gate)) return;
+      unlinkSync(gate);
+      clearInterval(timer);
+      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 0 } });
+      turnRunning = false;
+      finishIfDone();
+    }, gate ? 10 : 1_000);
     return;
   }
 

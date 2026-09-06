@@ -16,6 +16,7 @@ import { join, dirname } from "node:path";
 
 import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
+import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
@@ -804,6 +805,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // skip any residual collision instead of clobbering a built-in.
       for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
         if (name in mcpServers) continue;
+        if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
         mcpServers[name] = { ...server };
       }
       // permission broker: anything acceptEdits would silently deny becomes

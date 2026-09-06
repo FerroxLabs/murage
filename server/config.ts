@@ -1,15 +1,19 @@
 // Config + data dirs. One file, ~/.murage/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
-import { readFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
 import { parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
+import { dataDirLeasePaths } from "./data-dir-lease.ts";
+import { migrateLegacyDataDirectory } from "../electron/data-dir-migration.mjs";
+import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
 
 const optionalText = z.string().optional();
 const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -270,6 +274,8 @@ const appConfigSchema = z.object({
   features: featureConfigSchema.optional(),
   browserProfiles: browserProfilesSchema.optional(),
   instances: instanceConfigMapSchema.optional(),
+  /** Restored installations require deliberate engine enablement. */
+  engineDiscovery: z.enum(["automatic", "explicit"]).optional(),
   /** User-configured MCP servers, mounted into every capable engine. Kept
    * loosely typed HERE on purpose: parseStoredConfig throws away the whole
    * file on a schema error, and one bad server entry must degrade to a
@@ -283,6 +289,7 @@ const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers:
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
+  engineDiscovery?: "automatic" | "explicit";
   mcpServers?: Record<string, unknown>;
   language?: string;
   xai?: { key?: string; url?: string };
@@ -456,7 +463,9 @@ export function builtInBrowserEnabled(cfg: AppConfig): boolean {
 }
 
 // MURAGE_DATA_DIR isolates test/soak rigs from the user's real fleet.
-export const DATA_DIR = process.env.MURAGE_DATA_DIR ?? join(homedir(), ".murage");
+// Resolve physical aliases before deriving any child path. Otherwise a
+// symlink followed by '..' can lock one directory and write into another.
+export const DATA_DIR = dataDirLeasePaths(process.env.MURAGE_DATA_DIR ?? join(homedir(), ".murage")).canonicalDataDir;
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
@@ -464,22 +473,17 @@ export const NATIVE_DIR = join(DATA_DIR, "native");
 export function ensureDirs() {
   // one-time migration from the pre-rename data dir — bots, transcripts,
   // config and keys all carry over
-  if (!existsSync(DATA_DIR) && existsSync(LEGACY_DATA_DIR)) {
-    try {
-      renameSync(LEGACY_DATA_DIR, DATA_DIR);
-    } catch {
-      /* cross-device or busy — fall through to a fresh dir */
-    }
-  }
+  migrateLegacyDataDirectory({ dataDir: DATA_DIR, legacyDataDir: LEGACY_DATA_DIR, enabled: process.env.MURAGE_DATA_DIR === undefined });
   for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
 }
 
 export function loadConfig(): AppConfig {
   let cfg: AppConfig = {};
-  try {
-    cfg = parseStoredConfig(parseJson(readFileSync(join(DATA_DIR, "config.json"), "utf8")));
-  } catch {
-    /* first run — env fallbacks below */
+  const file = join(DATA_DIR, "config.json");
+  const saved = readPersistedJson(file, path => readFileSync(path, "utf8"));
+  if (saved !== undefined) {
+    try { cfg = parseStoredConfig(saved as JsonValue); }
+    catch { throw new PersistedStateRecoveryError(file, "invalid-shape"); }
   }
   // Env wins over the file for every credential. The desktop shell keeps
   // these secrets OS-encrypted and hands them to this process as env at
@@ -553,6 +557,11 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
  * secret receives it through instanceConfigs() narrowing, and to every other
  * child these are someone else's keys riding along in `...process.env`. */
 export const WORKSPACE_CREDENTIAL_ENV = [
+  // An explicitly pinned developer proof is still operator authority, not an
+  // engine credential. Never pass it into tool/agent child environments.
+  "MURAGE_DEV_DESKTOP_SECRET",
+  "MURAGE_COMPANION_TOKEN",
+  "MURAGE_INTERNAL_DATA_DIR_LEASE",
   "XAI_API_KEY",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
@@ -725,7 +734,7 @@ export function withInstanceCli(
   cli: string,
 ): InstanceCliUpdate {
   const next: AppConfig = structuredClone(cfg);
-  const map = instanceConfigs(next);
+  const map = persistableInstanceConfigs(next);
   // hasOwn, not truthiness: map is a plain object literal, so
   // map["__proto__"] resolves to Object.prototype — truthy — and the
   // assignment below would poison EVERY object in the process (instanceId
@@ -743,6 +752,12 @@ export function withInstanceCli(
     delete rest.cli;
     entry.config = Object.keys(rest).length ? rest : undefined;
   }
+  next.instances = map;
+  return { ok: true, config: next };
+}
+
+function persistableInstanceConfigs(next: AppConfig): InstanceConfigMap {
+  const map = instanceConfigs(next);
   for (const e of Object.values(map)) {
     if (!e.environment) continue;
     const injected = injectedEnvironment(next, e.driver);
@@ -751,6 +766,14 @@ export function withInstanceCli(
     }
     if (!Object.keys(e.environment).length) delete e.environment;
   }
+  return map;
+}
+
+export function withInstanceEnabled(cfg: AppConfig, instanceId: string, enabled: boolean): InstanceCliUpdate {
+  const next = structuredClone(cfg);
+  const map = persistableInstanceConfigs(next);
+  if (!Object.hasOwn(map, instanceId) || typeof enabled !== "boolean") return { ok: false, config: cfg };
+  map[instanceId].enabled = enabled;
   next.instances = map;
   return { ok: true, config: next };
 }
@@ -798,27 +821,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   // CLI"), so a default `gemini` instance could only ever show unavailable.
   // The driver stays registered for enterprise licences, which keep Gemini
   // CLI — `{"instances": {"gemini": {"driver": "geminiAgent"}}}` restores it.
-  const DEFAULT_FLEET: InstanceConfigMap = {
-    // Fuigo leads: Murage SHIPS its binary, so it is the only engine that can
-    // be available on a machine with no CLIs installed. Registering the driver
-    // in BUILT_IN_DRIVERS only populates driversByKind — instanceConfigs() is
-    // the ONLY source of instances, so without a row here the engine has no
-    // instance, never appears in describe(), and remains unreachable.
-    fuigo: { driver: "fuigoAgent" },
-    grok: { driver: "grokAgent" },
-    kimi: { driver: "kimiAgent" },
-    droid: { driver: "droidAgent" },
-    cursor: { driver: "cursorAgent" },
-    claude: { driver: "claudeAgent" },
-    codex: { driver: "codex" },
-    antigravity: { driver: "antigravityAgent" },
-    opencodeGo: { driver: "opencodeGo" },
-    computer: { driver: "boxAgent" },
-    openaiCompat: { driver: "openai-compat" },
-    qwen: { driver: "qwenAgent" },
-    hermes: { driver: "hermesAgent" },
-    pi: { driver: "piAgent" },
-  };
+  const DEFAULT_FLEET = DEFAULT_INSTANCES;
   const CUSTOM_ONLY = {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
@@ -836,12 +839,12 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     openaiCompat: { driver: "openai-compat" },
     ...CUSTOM_ONLY,
   } as const;
-  const configured = cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;
+  const configured = cfg.engineDiscovery === "explicit" ? cfg.instances ?? {} : cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;
   const map: InstanceConfigMap = configured ? { ...configured } : { ...DEFAULT_FLEET };
   // Product fleets pick up newly shipped engines. A one-off test/shadow map
   // (no claude/grok/codex) is left exactly as written.
   if (
-    configured &&
+    cfg.engineDiscovery !== "explicit" && configured &&
     (Object.hasOwn(configured, "claude") || Object.hasOwn(configured, "grok") || Object.hasOwn(configured, "codex"))
   ) {
     for (const [id, entry] of Object.entries(PRODUCT_FLEET_ADDITIONS)) {

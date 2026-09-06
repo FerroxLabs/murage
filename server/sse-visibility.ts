@@ -60,9 +60,12 @@ const DEV_SECRET_ENV = "MURAGE_DEV_DESKTOP_SECRET";
 /** For a harness that runs outside Electron and is NOT a developer's box —
  * the cloud install, where the only humans on loopback are agents. */
 const DEV_SECRET_OFF_ENV = "MURAGE_NO_DEV_DESKTOP_SECRET";
+/** Only explicit development/fixture launchers may offer the handshake. */
+const DEV_SECRET_ALLOW_ENV = "MURAGE_ALLOW_DEV_DESKTOP_SECRET";
 
 const devSecretAllowed =
-  !embeddedInDesktopApp && process.env[DEV_SECRET_OFF_ENV] !== "1";
+  !embeddedInDesktopApp && process.env[DEV_SECRET_OFF_ENV] !== "1" &&
+  (process.env[DEV_SECRET_ALLOW_ENV] === "1" || Boolean(process.env[DEV_SECRET_ENV]?.trim()));
 
 /** One secret, minted once per launch, never written to disk and never
  * logged. `randomBytes(32)` because this is the whole proof now: a caller
@@ -85,10 +88,10 @@ export function desktopSurfaceSecret(): string {
 /** Whether this harness may hand the secret to a loopback caller that asks.
  *
  * False inside the packaged app, always — see `embeddedInDesktopApp`. True
- * for `pnpm dev:server`, the Playwright rig and the test harness, where the
- * renderer is served by Vite on another port and has no bridge to ask
- * through. A cloud install sets `MURAGE_NO_DEV_DESKTOP_SECRET=1`, because
- * there the loopback neighbours are agents rather than a person. */
+ * for explicitly opted-in `pnpm dev:server` and fixture launchers, where the
+ * renderer has no bridge to ask through. A plain Node or production launch
+ * is closed by default. A cloud install additionally forces
+ * `MURAGE_NO_DEV_DESKTOP_SECRET=1`, overriding any inherited dev opt-in. */
 export function devDesktopSecretOffered(): boolean {
   return devSecretAllowed;
 }

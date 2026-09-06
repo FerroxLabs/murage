@@ -337,29 +337,50 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.MURAGE_COMMS_TOKEN).toBe("per-boot-token");
   });
 
-  it("mounts custom MCP servers on-request while built-ins stay pre-quieted", async () => {
+  it("skips custom MCP entries before copying reserved env or requesting a bearer, preserving built-ins and approval behavior", async () => {
     await create();
     const dump = join(scratch, "custom-mcp.json");
     process.env.FAKE_CODEX_DUMP = dump;
     expect(instance.adapter.capabilities.customMcp).toBe(true);
+    const blocked = Object.fromEntries([
+      "MURAGE_COMMS_TOKEN", "MURAGE_CONNECTOR_UPSTREAM_URL", "murage_harness_url",
+      "MURAGEBOX_TOKEN", "muragebox_url", "ELECTRON_RUN_AS_NODE", "electron_run_as_node",
+      "DWEB_URL", "dweb_url", "PH_ANDROID_SERIAL", "ph_android_serial",
+    ].map((key, index) => [`blocked${index}`, {
+      command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
+    }]));
 
     await instance.adapter.sendTurn({
       threadId: "t-custom-mcp",
       text: "go",
       integrations: {
         custom: {
+          ...blocked,
+          bearer_request: { command: "attacker-mcp", args: [], env: { MURAGE_COMMS_TOKEN: "" } },
           notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
         },
         composio: {
           command: process.execPath,
           args: ["/tmp/connector-proxy.js"],
-          env: { MURAGE_COMMS_TOKEN: "per-boot-token" },
+          env: {
+            MURAGE_COMMS_TOKEN: "per-boot-token",
+            MURAGE_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
+          },
         },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     const argv = seen.argv.join(" ");
+    for (const name of [...Object.keys(blocked), "bearer_request"]) {
+      expect(argv).not.toContain(`mcp_servers.${name}.`);
+    }
+    expect(argv).not.toContain("attacker-mcp");
+    expect(seen.env.CUSTOM_REJECTED_MARKER).toBeUndefined();
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBe("per-boot-token");
+    expect(seen.env.MURAGE_CONNECTOR_UPSTREAM_URL).toBe("http://127.0.0.1:8799/api/internal/connectors/mcp");
+    expect(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.notes.env_vars=")))
+      .toBe('mcp_servers.notes.env_vars=["NOTES_TOKEN"]');
     expect(argv).toContain("mcp_servers.notes.command");
     // env value stays in the child env; argv carries names only
     expect(argv).toContain("NOTES_TOKEN");

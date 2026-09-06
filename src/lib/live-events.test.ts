@@ -7,6 +7,7 @@ import {
   LIVE_EVENTS_STALE_MS,
   desktopSurfaceHeaders,
   desktopSurfaceSecret,
+  desktopSurfaceSecretNeedsRetry,
   ensureDesktopSurfaceSecret,
   isLivePing,
   liveEventsUrl,
@@ -417,6 +418,102 @@ describe("live events supervisor", () => {
     expect(test.windowTarget.count("online")).toBe(0);
     expect(test.windowTarget.count("focus")).toBe(0);
     expect(test.documentTarget.count("visibilitychange")).toBe(0);
+  });
+});
+
+describe("desktop proof recovery", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setDesktopSurfaceSecretForTest("");
+  });
+
+  it("distinguishes a temporary secret failure from an explicit refusal", async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", request);
+    expect(await ensureDesktopSurfaceSecret()).toBe("");
+    expect(desktopSurfaceSecretNeedsRetry()).toBe(true);
+    expect(await ensureDesktopSurfaceSecret()).toBe("");
+    expect(desktopSurfaceSecretNeedsRetry()).toBe(false);
+  });
+
+  it("renews a previous launch's proof before reconnecting the stream", async () => {
+    setDesktopSurfaceSecretForTest("old-launch");
+    const request = vi.fn().mockResolvedValue(Response.json({ secret: "new-launch" }));
+    vi.stubGlobal("fetch", request);
+    const test = harness();
+    const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, test.platform);
+    expect(test.sources[0].url).toContain("surfaceSecret=old-launch");
+    test.sources[0].error();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(request).toHaveBeenCalledExactlyOnceWith(DEV_SECRET_PATH);
+    expect(test.sources).toHaveLength(2);
+    expect(test.sources[1].url).toContain("surfaceSecret=new-launch");
+    expect(desktopSurfaceHeaders()).toEqual({ "x-murage-surface-secret": "new-launch" });
+    stop();
+  });
+
+  it("does not probe a forbidden secret endpoint on remote reconnects", async () => {
+    const request = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", request);
+    await ensureDesktopSurfaceSecret();
+    const test = harness();
+    const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, test.platform);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      test.sources.at(-1)!.error();
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+    expect(test.sources).toHaveLength(4);
+    expect(request).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("retries a temporarily unavailable proof before opening a replacement stream", async () => {
+    setDesktopSurfaceSecretForTest("old-launch");
+    const request = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ secret: "new-launch" }));
+    vi.stubGlobal("fetch", request);
+    const test = harness();
+    const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, test.platform);
+    test.sources[0].error();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(test.sources).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(test.sources).toHaveLength(2);
+    expect(test.sources[1].url).toContain("surfaceSecret=new-launch");
+    expect(request).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it("does not reopen after stopping during a pending proof refresh", async () => {
+    setDesktopSurfaceSecretForTest("old-launch");
+    let release!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { release = resolve; })));
+    const test = harness();
+    const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, test.platform);
+    test.sources[0].error();
+    await vi.advanceTimersByTimeAsync(500);
+    stop();
+    release(Response.json({ secret: "new-launch" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.sources).toHaveLength(1);
+    expect(test.windowTarget.count("focus")).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("shares proof refresh with callers that would otherwise reuse a stale secret", async () => {
+    setDesktopSurfaceSecretForTest("old-launch");
+    let release!: (response: Response) => void;
+    const request = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", request);
+    const first = ensureDesktopSurfaceSecret(true);
+    expect(ensureDesktopSurfaceSecret()).toBe(first);
+    expect(ensureDesktopSurfaceSecret(true)).toBe(first);
+    release(Response.json({ secret: "new-launch" }));
+    expect(await first).toBe("new-launch");
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });
 

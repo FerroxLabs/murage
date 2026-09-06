@@ -26,6 +26,24 @@ const MAX_ENV = 64;
 const MCP_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** Routing and capability names owned by built-in MCP integrations. Codex
+ * shares their child environment, so custom mounts must not copy or request
+ * these names. Match case-insensitively for case-insensitive environments. */
+export function isHarnessOwnedMcpEnvName(name: string): boolean {
+  const normalized = name.toUpperCase();
+  return normalized.startsWith("MURAGE_")
+    || normalized.startsWith("MURAGEBOX_")
+    || normalized === "ELECTRON_RUN_AS_NODE"
+    || normalized === "DWEB_URL"
+    || normalized === "PH_ANDROID_SERIAL";
+}
+
+function environmentNameError(name: string): string | null {
+  if (!ENV_NAME.test(name)) return `Environment variable “${name}” is not valid.`;
+  if (isHarnessOwnedMcpEnvName(name)) return `Environment variable “${name}” is reserved by Murage.`;
+  return null;
+}
+
 /** Server keys the harness mounts itself — a custom entry must never
  * shadow or clobber one of these across any driver's namespace. */
 const RESERVED_MCP_NAMES = new Set([
@@ -70,8 +88,8 @@ export function parseStoredMcpServer(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid MCP server." };
   }
   const env = parsed.data.env ?? {};
-  const invalidEnv = Object.keys(env).find((key) => !ENV_NAME.test(key));
-  if (invalidEnv) return { ok: false, error: `Environment variable “${invalidEnv}” is not valid.` };
+  const invalidEnv = Object.keys(env).map(environmentNameError).find((error) => error !== null);
+  if (invalidEnv) return { ok: false, error: invalidEnv };
   if (Object.keys(env).length > MAX_ENV) {
     return { ok: false, error: `Use at most ${MAX_ENV} environment variables.` };
   }
@@ -101,8 +119,8 @@ export function parseMcpServerMutation(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid MCP server." };
   }
   const incomingEnv = parsed.data.env ?? {};
-  const invalidEnv = Object.keys(incomingEnv).find((key) => !ENV_NAME.test(key));
-  if (invalidEnv) return { ok: false, error: `Environment variable “${invalidEnv}” is not valid.` };
+  const invalidEnv = Object.keys(incomingEnv).map(environmentNameError).find((error) => error !== null);
+  if (invalidEnv) return { ok: false, error: invalidEnv };
   if (Object.keys(incomingEnv).length > MAX_ENV) {
     return { ok: false, error: `Use at most ${MAX_ENV} environment variables.` };
   }

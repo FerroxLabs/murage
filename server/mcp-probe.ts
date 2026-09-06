@@ -28,12 +28,17 @@ function probeEnvironment(server: StoredMcpServer): NodeJS.ProcessEnv {
   return env;
 }
 
-function publicProbeError(kind: "spawn" | "timeout" | "protocol" | "closed" | "cancelled"): string {
+function publicProbeError(kind: "spawn" | "timeout" | "initialize" | "protocol" | "closed" | "cancelled"): string {
   if (kind === "spawn") return "Could not start this command. Check that it is installed and executable.";
   if (kind === "timeout") return "The server did not answer in time.";
   if (kind === "closed") return "The server stopped before the MCP handshake finished.";
   if (kind === "cancelled") return "Connection test was cancelled.";
+  if (kind === "initialize") return "The server did not complete MCP initialization.";
   return "The command did not return a valid MCP tools list.";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function redactConfiguredValues(value: string, env: Record<string, string>): string {
@@ -85,6 +90,7 @@ export function probeMcpServer(
       resolve(result);
     };
     const write = (frame: unknown) => {
+      if (settled) return;
       try {
         child.stdin.write(`${JSON.stringify(frame)}\n`);
       } catch {
@@ -99,17 +105,34 @@ export function probeMcpServer(
       } catch {
         return;
       }
-      if (!frame || typeof frame !== "object") return;
-      const value = frame as Record<string, unknown>;
-      if (value.id === 1 && value.result && !initialized) {
+      if (!isRecord(frame)) return;
+      const value = frame;
+      if (value.id === 1 && !initialized) {
+        const result = value.result;
+        // An error response is terminal, and its server-authored text must
+        // never reach the renderer. Only a well-formed initialize success
+        // permits the notification and tools/list request that follow it.
+        if (
+          value.jsonrpc !== "2.0" || "error" in value || !isRecord(result) ||
+          typeof result.protocolVersion !== "string" || !result.protocolVersion ||
+          !isRecord(result.capabilities) || !isRecord(result.serverInfo) ||
+          typeof result.serverInfo.name !== "string" || typeof result.serverInfo.version !== "string"
+        ) {
+          finish({ ok: false, error: publicProbeError("initialize") });
+          return;
+        }
         initialized = true;
         write({ jsonrpc: "2.0", method: "notifications/initialized" });
         write({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
         return;
       }
       if (value.id !== 2) return;
+      if (!initialized) {
+        finish({ ok: false, error: publicProbeError("initialize") });
+        return;
+      }
       const result = value.result as { tools?: unknown } | undefined;
-      if (!Array.isArray(result?.tools)) {
+      if (value.jsonrpc !== "2.0" || "error" in value || !Array.isArray(result?.tools)) {
         finish({ ok: false, error: publicProbeError("protocol") });
         return;
       }
@@ -145,20 +168,9 @@ export function probeMcpServer(
     child.stderr.resume();
     child.once("error", () => finish({ ok: false, error: publicProbeError("spawn") }));
     child.once("close", () => finish({ ok: false, error: publicProbeError("closed") }));
-    // AN UNHANDLED STREAM 'error' TAKES DOWN THE PROCESS.
-    //
-    // `write()` below is wrapped in a synchronous try/catch, which does not
-    // help: node delivers this one asynchronously. The listeners above are on
-    // the ChildProcess, not on the stdin stream, so nothing was listening.
-    //
-    // Measured on node v22 — only one of the three shapes actually emits:
-    //   child exits          -> ERR_STREAM_DESTROYED to the write callback, no event
-    //   stdin destroyed      -> ERR_STREAM_DESTROYED to the write callback, no event
-    //   child CLOSES STDIN and keeps running -> 'error' EPIPE fires here
-    // The last one is a real MCP server shape (a wrapper that execs something
-    // which closes fd 0), and the probe writes three frames, so the window is
-    // wide. Without this listener that killed the whole harness from the
-    // Test button.
+    // Defensive hardening: asynchronous stdin errors are not caught by
+    // write's try/catch. Settle the probe if one arrives. The fixture proves
+    // a closed-stdin probe answers; it does not prove a reachable EPIPE crash.
     child.stdin.on("error", () => finish({ ok: false, error: publicProbeError("closed") }));
 
     if (signal?.aborted) {

@@ -1,4 +1,4 @@
-import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
+import { desktopSurfaceHeaders, desktopSurfaceSecretNeedsRetry, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 
 /** Which door this renderer came through.
  *
@@ -47,14 +47,19 @@ export function surface(): Promise<SurfaceAnswer> {
   pending ??= ensureDesktopSurfaceSecret()
     .then(() => fetch("/api/config", { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } }))
     .then((response) => (response.ok ? response.json() : null))
-    .then((body: { surface?: string } | null) => {
-      const answer: SurfaceAnswer = body?.surface === "desktop" ? "desktop" : "remote";
-      known = answer;
-      return answer;
-    })
-    .catch(() => {
-      pending = null;
+    .then((body: unknown) => {
+      if (body && typeof body === "object" && !Array.isArray(body) && "surface" in body) {
+        const answer = body.surface;
+        if (answer === "desktop" || answer === "remote") {
+          if (answer === "desktop" || !desktopSurfaceSecretNeedsRetry()) known = answer;
+          return answer;
+        }
+      }
       return "remote" as const;
+    })
+    .catch(() => "remote" as const)
+    .finally(() => {
+      pending = null;
     });
   return pending;
 }

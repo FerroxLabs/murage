@@ -615,16 +615,25 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(allowed).toContain("mcp__agents");
   });
 
-  it("mounts custom MCP servers without pre-allowing their tools", async () => {
+  it("skips custom MCP entries with reserved env names while preserving built-ins and ordinary approval behavior", async () => {
     await create();
     const dump = join(scratch, "custom-mcp.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
+    const blocked = Object.fromEntries([
+      "MURAGE_COMMS_TOKEN", "murage_harness_url", "MURAGEBOX_TOKEN", "muragebox_url",
+      "ELECTRON_RUN_AS_NODE", "electron_run_as_node", "DWEB_URL", "dweb_url",
+      "PH_ANDROID_SERIAL", "ph_android_serial",
+    ].map((key, index) => [`blocked${index}`, {
+      command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
+    }]));
 
     await instance.adapter.sendTurn({
       threadId: "t-custom-mcp",
       text: "hi",
       integrations: {
         custom: {
+          ...blocked,
+          bearer_request: { command: "attacker-mcp", args: [], env: { MURAGE_COMMS_TOKEN: "" } },
           notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
         },
         agents: {
@@ -637,6 +646,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
+    for (const name of [...Object.keys(blocked), "bearer_request"]) {
+      expect(seen.mcpConfig.mcpServers).not.toHaveProperty(name);
+    }
+    expect(JSON.stringify(seen.mcpConfig)).not.toContain("attacker-mcp");
+    expect(seen.mcpConfig.mcpServers.agents.env).toMatchObject({
+      MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "tok",
+    });
     // the server reaches the CLI through the private mcp-config file…
     expect(seen.mcpConfig.mcpServers.notes).toMatchObject({
       command: "npx",
@@ -881,6 +897,28 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       instance.adapter.respondToRequest("t-retained-late", "ask-between", { behavior: "allow" }),
     ).resolves.toBe("unavailable");
     conn.end();
+  });
+
+  it("rotates internal capabilities while resuming the same conversation", async () => {
+    await create();
+    const dumpPath = join(scratch, "rotated-capability.json");
+    process.env.FAKE_CLAUDE_DUMP = dumpPath;
+    const agents = (token: string) => ({
+      command: process.execPath, args: ["fixture-agents-proxy"],
+      env: { MURAGE_BOT_ID: "fixture-bot", MURAGE_THREAD_ID: "t-rotate", MURAGE_COMMS_TOKEN: token },
+    });
+    const first = await instance.adapter.sendTurn({ threadId: "t-rotate", text: "one", integrations: { agents: agents("first-capability") } });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
+    const firstDump = JSON.parse(readFileSync(dumpPath, "utf8"));
+    const session = (recorder.events.find((event) => event.type === "session.started") as { sessionId: string }).sessionId;
+    rmSync(dumpPath);
+    const second = await instance.adapter.sendTurn({ threadId: "t-rotate", text: "two", resumeCursor: session, integrations: { agents: agents("second-capability") } });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
+    const secondDump = JSON.parse(readFileSync(dumpPath, "utf8"));
+    expect(secondDump.pid).not.toBe(firstDump.pid);
+    expect(secondDump.argv[secondDump.argv.indexOf("--resume") + 1]).toBe(session);
+    expect(secondDump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN).toBe("second-capability");
+    expect(JSON.stringify(secondDump.mcpConfig)).not.toContain("first-capability");
   });
 
   it("replaces and resumes a live process when its spawn contract changes", async () => {

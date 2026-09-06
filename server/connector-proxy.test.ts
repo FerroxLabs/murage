@@ -56,7 +56,8 @@ describe("connector MCP bridge", () => {
     });
     const lines = start({
       MURAGE_HARNESS_URL: harness,
-      MURAGE_COMMS_TOKEN: "bridge-secret",
+      MURAGE_COMMS_TOKEN: "different-agents-capability",
+      MURAGE_CONNECTORS_TOKEN: "bridge-secret",
       MURAGE_BOT_ID: "bot-1",
       MURAGE_THREAD_ID: "thread-1",
     });

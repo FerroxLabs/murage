@@ -243,7 +243,12 @@ export function companionState(options: ControlOptions) {
  * and it refuses anything suggesting it was reached from anywhere else. */
 export function createControlServer(options: ControlOptions): Server {
   return createServer((req, res) => {
-    const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    let requestUrl: URL;
+    try {
+      requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    } catch {
+      return json(res, 400, { error: "Invalid request target" });
+    }
     const path = requestUrl.pathname;
     const method = req.method ?? "GET";
 
