@@ -1,6 +1,20 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P23 notification-settings localization ACCEPTED (confirmation round 2): translate all
+visible controls, quiet-hour validation and privacy/OS-permission explanations
+in this screen across existing8locales. Preserve delivery behavior, explicitsave,
+stored timezone and no implicit permissionrequest. Frozenchecks catalog/hash/
+placeholder validation, original5browsercases plus7localizedquiet-save/status
+cases, types and representative mobilevisualreview. Two rounds; p03sourceUI/en/
+de/es/fr, p04pt-br/hi, p06ja/zh, roottests/hashes. Other app translation remainsopen.
+Evidence: catalog8languages/94keys PASS, combinedtypes21850 PASS. Browserround1
+92998 passed10; German/French Save clicks blocked by non-scrolling fixturebody.
+Trace showedbodyinterceptingclicks; fixture now uses actualSettings-style scrolling
+container (SettingsModal:717), no product CSS/wording weakened. Confirmation3842
+passedbothfailedcases; unaffected10behavior passes retained. French mobile saved
+state visuallyreviewed. All33notificationstrings translated; no native-speaker
+approval or full-app/native-notification coverage claimed.
 P05 Linux concurrency observation ACCEPTED: same committed benchmark d312f35c,
 Node24.20.0 on strict-host-key Hetzner Linuxx64. Fresh shallow local transfer
 /tmp/murage-linux-concurrency-transfer-VTRfaP/source and remote checkout
