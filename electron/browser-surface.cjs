@@ -2298,6 +2298,17 @@ function createBrowserSurfaceManager({
             // a frame that overlapped the user's typing.
             assertAgentLease(entry, lease);
             shot = null;
+          } finally {
+            // Page.captureScreenshot temporarily overrides Chromium's device
+            // metrics and clears WebContents emulation when it restores them.
+            // Its returned pixels are fixed-size, but the live page would
+            // otherwise collapse to native panel bounds while pointer mapping
+            // kept using the stale presentation scale. Restore even when the
+            // capture fails, before fallback pixels or further input run.
+            if (entry.mode && !entry.view.webContents.isDestroyed()) {
+              entry.emulationKey = null;
+              applyMode(entry, entry.mode);
+            }
           }
         }
         if (shot?.data) {
