@@ -3,7 +3,7 @@
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
 import { isIP } from "node:net";
@@ -311,6 +311,7 @@ import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-arc
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { searchWeb, SearchError } from "./web-search.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
+import { ProjectTurnLeases } from "./project-turn-leases.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
@@ -434,6 +435,7 @@ bus.attach(registry.instances());
 // ── peer-agent comms wiring ────────────────────────────────────────────
 import { InternalCapabilities, type InternalCapabilityKind } from "./internal-capabilities.ts";
 const internalCapabilities = new InternalCapabilities();
+const projectTurnLeases = new ProjectTurnLeases();
 const internalTurnOwners = new Map<string, {
   botId: string; generation: string; depth: number; skillAuthoring: boolean;
   tokens: Partial<Record<InternalCapabilityKind, string>>;
@@ -456,18 +458,23 @@ function internalToken(botId: string, threadId: string, generation: string, kind
   return token;
 }
 function revokeInternalGeneration(threadId: string, generation: string): void {
+  projectTurnLeases.abandon(generation);
   internalCapabilities.revokeGeneration(threadId, generation);
   if (internalTurnOwners.get(threadId)?.generation === generation) internalTurnOwners.delete(threadId);
 }
 function revokeInternalThread(threadId: string): void {
+  const owner = internalTurnOwners.get(threadId);
+  if (owner) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeThread(threadId);
   internalTurnOwners.delete(threadId);
 }
 function revokeInternalBot(botId: string): void {
+  for (const owner of internalTurnOwners.values()) if (owner.botId === botId) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeBot(botId);
   for (const [threadId, owner] of internalTurnOwners) if (owner.botId === botId) internalTurnOwners.delete(threadId);
 }
 function revokeAllInternalTurns(): void {
+  for (const owner of internalTurnOwners.values()) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeAll();
   internalTurnOwners.clear();
 }
@@ -1958,6 +1965,7 @@ async function reviewPermissionCard(args: {
 
 bus.subscribe((event: RuntimeEvent) => {
   if ((event.type === "turn.completed" || event.type === "session.exited") && event.turnId) {
+    projectTurnLeases.complete(event.threadId, event.turnId);
     internalCapabilities.completeProviderTurn(event.threadId, event.turnId);
     const owner = internalTurnOwners.get(event.threadId);
     if (owner && !Object.values(owner.tokens).some((token) => internalCapabilities.resolve(`Bearer ${token}`))) {
@@ -3244,12 +3252,16 @@ async function startTurn(
         privateWorkspace && opts?.runOn !== "cloud"
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace)
           : null;
-      const cwd = pinnedCwd ?? undefined;
+      let cwd = pinnedCwd ?? undefined;
+      if (privateWorkspace && opts?.runOn !== "cloud") {
+        if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
+        cwd = projectTurnLeases.acquire(threadId, dispatchClaimId, cwd ?? homedir()).canonicalPath;
+      }
       // Checkpoint explicit project folders, where a bot can overwrite the
       // user's work. Its private Murage workspace is app-owned and changes
       // on nearly every ordinary chat; snapshotting it would add hidden disk
       // and process overhead without a user project to restore.
-      const checkpointCwd = cwd && cwd !== privateWorkspace ? cwd : undefined;
+      const checkpointCwd = pinnedCwd && pinnedCwd !== privateWorkspace ? cwd : undefined;
       // dweb is opt-in: without an explicit daemon URL, do not advertise
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
@@ -3507,6 +3519,7 @@ async function startTurn(
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
       }
       watchdog.watch(threadId, bot.id);
+      projectTurnLeases.markDispatched(dispatchClaimId);
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
         threadId,
         text: turnText,
@@ -3579,6 +3592,7 @@ async function startTurn(
       if (!internalCapabilities.bindProviderTurn(threadId, dispatchClaimId, dispatch.value.turnId)) {
         revokeInternalGeneration(threadId, dispatchClaimId);
       }
+      projectTurnLeases.bind(threadId, dispatchClaimId, dispatch.value.turnId);
       if (dispatch.cancelled) {
         retireProviderTurn(dispatch.value.turnId);
         throw new DirectTurnSetupCancelled("turn stopped during provider setup");
@@ -4387,7 +4401,7 @@ async function runGroupMemberTurn(
   // has its folder moved underneath it. Off-host members skip the folder
   // but must not decide the pin: the room's desk is a property of the
   // room, not of whichever member happened to speak first.
-  const cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
+  let cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
   const roomSystem =
     system +
     // The same connector paragraph the 1:1 turn gets, from the same builder.
@@ -4443,6 +4457,22 @@ async function runGroupMemberTurn(
     return false;
   }
   let replyText = "";
+  if (workspace) {
+    try {
+      if (internalTurnOwners.get(threadId)?.generation !== internalGeneration) return false;
+      cwd = projectTurnLeases.acquire(threadId, internalGeneration, cwd ?? homedir()).canonicalPath;
+    } catch {
+      const message = "This project's files are being restored. Wait for the restore to finish before running this task.";
+      store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: `error: ${message}`, ok: false } });
+      if (store.group(group.id)?.busyBotId === bot.id) {
+        groupSpeakers.delete(threadId);
+        store.patchGroup(group.id, { busyBotId: null, unread: true });
+      }
+      store.setActivity(bot.id, "idle");
+      onDispatchError?.(message);
+      return true;
+    }
+  }
   let providerTurnId: string | undefined;
   let abandoned = false;
   const retirementOwner = `room-abandoned:${randomUUID()}`;
@@ -4505,6 +4535,7 @@ async function runGroupMemberTurn(
     });
     watchdog.watch(threadId, bot.id);
     onProviderHandshakeStarted?.();
+    projectTurnLeases.markDispatched(internalGeneration);
     guardTurnDispatch(instance.adapter.sendTurn({
         threadId,
         text,
@@ -4524,6 +4555,7 @@ async function runGroupMemberTurn(
           revokeInternalGeneration(threadId, internalGeneration);
         }
         providerTurnId = dispatch.value.turnId;
+        projectTurnLeases.bind(threadId, internalGeneration, dispatch.value.turnId);
         orchestration?.onTurnStarted?.(dispatch.value.turnId);
         if (abandoned) {
           retireProviderTurn(dispatch.value.turnId);
@@ -5956,10 +5988,12 @@ function persistMcpServers(next: Record<string, unknown>): void {
 /** Rebuild the provider fleet after a config change so new keys take
  * effect without a server restart (kills any in-flight turns). */
 async function reloadProviders() {
+  const retiringProjects = projectTurnLeases.generations();
   revokeAllInternalTurns();
   await releaseAllBrowserCapabilities();
   bus.detachAll();
   await registry.disposeAll();
+  projectTurnLeases.disposed(retiringProjects);
   await registry.load(instanceConfigs(cfg));
   bus.attach(registry.instances());
   // A killed turn's terminal events can die with the old fleet (dispose is
@@ -9853,6 +9887,8 @@ const server = createServer(async (req, res) => {
       if (!parsed.success) {
         return json(res, 400, { error: "cwd (absolute path) and hash (full 40-character checkpoint hash) required" });
       }
+      const folderRefusal = checkpoints.refusalReason(parsed.data.cwd);
+      if (folderRefusal) return json(res, 400, { error: folderRefusal });
       // Claim synchronously with the busy check. startTurn checks the same
       // lease before reserving the bot, so no turn can enter during the
       // awaited Git operation.
@@ -9861,10 +9897,18 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "this bot's project files are already being restored" });
       }
       checkpointRestoreLeases.add(bot.id);
+      const restoreOwner = "restore:" + randomUUID();
       let result: checkpoints.RestoreResult;
       try {
-        result = await checkpoints.restore(bot.id, parsed.data.cwd, parsed.data.hash);
+        let lease;
+        try { lease = projectTurnLeases.folders.acquireRestore(restoreOwner, parsed.data.cwd); }
+        catch { return json(res, 409, { error: "Another turn or restore is using this project folder, or its path is unavailable. Stop that work before restoring files." }); }
+        projectTurnLeases.folders.assertCurrent(restoreOwner);
+        result = await checkpoints.restore(bot.id, lease.canonicalPath, parsed.data.hash, {
+          assertCurrent: () => { projectTurnLeases.folders.assertCurrent(restoreOwner); },
+        });
       } finally {
+        projectTurnLeases.folders.release(restoreOwner);
         checkpointRestoreLeases.delete(bot.id);
       }
       if (!result.ok) return json(res, 400, { error: result.error });
@@ -11451,7 +11495,9 @@ const gracefulShutdown = createGracefulShutdown({
     },
     () => releaseAllBrowserCapabilities(),
     async () => {
+      const retiringProjects = projectTurnLeases.generations();
       await registry.disposeAll();
+      projectTurnLeases.disposed(retiringProjects);
       await flushDecisionLog(DATA_DIR);
       closeMessageDb();
       dataWritersStopped = true;

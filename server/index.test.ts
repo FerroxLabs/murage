@@ -7,7 +7,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
@@ -561,6 +561,41 @@ afterAll(async () => {
 });
 
 describe("harness HTTP API", () => {
+  it("P20 refuses checkpoint restoration while another bot owns the same canonical project folder", async () => {
+    const project = mkdtempSync(join(home, "shared-restore-project-"));
+    const alias = join(home, `shared-restore-alias-${Date.now()}`);
+    const file = join(project, "work.txt");
+    writeFileSync(file, "checkpoint contents");
+    if (process.platform !== "win32") symlinkSync(project, alias);
+    const restorer = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const worker = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${restorer.id}`, { cwd: project, computer: "off" })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${worker.id}`, { cwd: process.platform === "win32" ? project : alias, computer: "off" })).status).toBe(200);
+      await startInternalFixtureTurn(restorer.id);
+      const checkpointResponse = await desktopApi("GET", `/api/bots/${restorer.id}/checkpoints?cwd=${encodeURIComponent(project)}`);
+      expect(checkpointResponse.status).toBe(200);
+      expect(checkpointResponse.body.checkpoints.length).toBeGreaterThan(0);
+      const checkpoint = checkpointResponse.body.checkpoints[0].hash;
+      expect(checkpoint).toMatch(/^[a-f0-9]{40}$/);
+      await api("POST", `/api/bots/${restorer.id}/interrupt`);
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === restorer.id)?.busy).toBe(false);
+      writeFileSync(file, "newer work that must remain while another bot is active");
+      await startInternalFixtureTurn(worker.id);
+      const before = readFileSync(file, "utf8");
+      const restored = await desktopApi("POST", `/api/bots/${restorer.id}/checkpoints/restore`, { cwd: project, hash: checkpoint });
+      expect(restored.status, JSON.stringify({ response: restored.body, fileAfter: readFileSync(file, "utf8") })).toBe(409);
+      expect(readFileSync(file, "utf8")).toBe(before);
+    } finally {
+      for (const bot of [restorer, worker]) {
+        await api("POST", `/api/bots/${bot.id}/interrupt`).catch(() => undefined);
+        await desktopApi("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
+      }
+      if (process.platform !== "win32") rmSync(alias, { force: true });
+      rmSync(project, { recursive: true, force: true });
+    }
+  }, 20000);
+
   it("persists structured provider 402 credit guidance from the real ACP error fold without raw secrets", async () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "murage-provider402-api-"));
     const data = join(isolatedHome, ".murage");
