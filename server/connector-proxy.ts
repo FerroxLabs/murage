@@ -146,25 +146,36 @@ async function relay(message: Json, timeoutMs = RELAY_TIMEOUT_MS): Promise<Json 
   return parseUpstream(await readBounded(response), message.id);
 }
 
-function connectorAdds(args: unknown): string[] {
+interface ConnectorRequest { slug: string; alias?: string }
+
+function connectorAdds(args: unknown): ConnectorRequest[] {
   if (!args || typeof args !== "object" || Array.isArray(args)) return [];
   const toolkits = (args as { toolkits?: unknown }).toolkits;
   if (!Array.isArray(toolkits)) return [];
-  return [...new Set(toolkits.flatMap((item) => {
-    if (typeof item === "string") return [item.toLowerCase()];
+  const seen = new Set<string>();
+  return toolkits.flatMap((item): ConnectorRequest[] => {
+    if (typeof item === "string") item = { toolkit: item };
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-    const row = item as { name?: unknown; toolkit?: unknown; action?: unknown };
+    const row = item as { name?: unknown; toolkit?: unknown; action?: unknown; alias?: unknown; account?: unknown };
     const slug = typeof row.toolkit === "string" ? row.toolkit : row.name;
     const action = String(row.action ?? "add").toLowerCase();
-    return typeof slug === "string" && ["add", "connect", "initiate"].includes(action) ? [slug.toLowerCase()] : [];
-  }))];
+    if (typeof slug !== "string" || !["add", "connect", "initiate"].includes(action)) return [];
+    const requestedAlias = row.alias ?? row.account;
+    if (requestedAlias !== undefined && typeof requestedAlias !== "string") throw new Error("Account alias must be text");
+    const alias = requestedAlias?.trim() || requestedAlias;
+    const normalizedSlug = slug.trim().toLowerCase();
+    const key = JSON.stringify([normalizedSlug, alias?.toLowerCase() ?? ""]);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ slug: normalizedSlug, ...(alias ? { alias } : {}) }];
+  });
 }
 
-async function showConnectorCards(slugs: string[]): Promise<void> {
+async function showConnectorCards(items: ConnectorRequest[]): Promise<void> {
   const response = await fetch(`${HARNESS}/api/internal/connectors/request`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
-    body: JSON.stringify({ botId: BOT_ID, threadId: THREAD_ID, slugs, resumeKey: randomUUID() }),
+    body: JSON.stringify({ botId: BOT_ID, threadId: THREAD_ID, items, slugs: [...new Set(items.map((item) => item.slug))], resumeKey: randomUUID() }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) {
@@ -206,12 +217,13 @@ async function handle(message: Json): Promise<void> {
   if (method === "tools/call") {
     const params = (message.params ?? {}) as Json;
     const name = String(params.name ?? "");
-    const slugs = /MANAGE_CONNECTIONS$/i.test(name) ? connectorAdds(params.arguments) : [];
-    if (slugs.length) {
-      await showConnectorCards(slugs);
+    const requests = /MANAGE_CONNECTIONS$/i.test(name) ? connectorAdds(params.arguments) : [];
+    if (requests.length) {
+      await showConnectorCards(requests);
+      const labels = requests.map((item) => item.alias ? `${item.slug} (${item.alias})` : item.slug).join(", ");
       send(textResult(
         id,
-        `Murage showed the user a secure connection card for ${slugs.join(", ")}. End this turn now. The app will continue the task automatically after the connection finishes.`,
+        `Murage showed the user a secure connection card for ${labels}. End this turn now. The app will continue the task automatically after the connection finishes.`,
       ));
       return;
     }

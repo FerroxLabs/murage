@@ -85,6 +85,7 @@ import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from 
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
+import { parseConnectorRequests, connectorRequestKey, connectorRequestStatus } from "./connector-requests.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
 import { openMurageStatusSystemPrompt } from "./murage-status-capsule.ts";
 import {
@@ -5181,7 +5182,6 @@ function resolveReplyTarget(threadId: string, value: unknown): Message | undefin
   return target;
 }
 
-const CONNECTOR_SLUG = /^[a-z0-9][a-z0-9_-]{0,80}$/;
 const pendingConnectorResumes = new Map<
   string,
   { botId: string; threadId: string; resumeKey: string; labels: string[] }
@@ -7260,22 +7260,22 @@ const server = createServer(async (req, res) => {
         const botId = String(body.botId ?? "");
         const threadId = String(body.threadId ?? "");
         const resumeKey = String(body.resumeKey ?? "");
-        const slugs: string[] = Array.isArray(body.slugs)
-          ? [...new Set<string>(body.slugs.map((slug: unknown) => String(slug).toLowerCase()).filter((slug: string) => CONNECTOR_SLUG.test(slug)))]
-          : [];
+        const items = parseConnectorRequests(body);
+        const slugs = [...new Set(items.map(item => item.slug))];
         const owner = connectorThread(botId, threadId);
         if (!owner) return json(res, 403, { error: "conversation does not belong to this bot" });
         if (!/^[\w-]{8,100}$/.test(resumeKey)) return json(res, 400, { error: "invalid resume key" });
-        if (!slugs.length || slugs.length > 12) return json(res, 400, { error: "one to twelve valid apps are required" });
+        if (!items.length || items.length > 12) return json(res, 400, { error: "one to twelve valid app accounts are required" });
         if (!composio.configured(cfg) || owner.bot.composio === false) {
           return json(res, 409, { error: "connected apps are not enabled for this bot" });
         }
-        const connectionState: Record<string, { connected?: boolean }> = await composio.connectionStatus(cfg, slugs).catch(() => ({}));
+        const connectionState = await composio.connectionStatus(cfg, slugs);
         requireActiveInternal();
         const messageIds: string[] = [];
-        for (const slug of slugs) {
+        for (const item of items) {
+          const { slug, alias } = item;
           const existing = store.messagesFor(threadId).find(
-            (message) => message.connector?.resumeKey === resumeKey && message.connector.slug === slug,
+            (message) => message.connector?.resumeKey === resumeKey && connectorRequestKey(message.connector) === connectorRequestKey(item),
           );
           if (existing) {
             messageIds.push(existing.id);
@@ -7283,14 +7283,15 @@ const server = createServer(async (req, res) => {
           }
           const toolkit = await composio.toolkitCard(cfg, slug);
           requireActiveInternal();
-          const connected = connectionState[slug]?.connected === true;
+          const connected = !alias && connectorRequestStatus(connectionState[slug]).connected;
           const message = store.appendMessage(threadId, {
             role: "bot",
             kind: "connector",
             ...(owner.group ? { from: { botId: owner.bot.id, name: owner.bot.name, color: owner.bot.color } } : {}),
             connector: {
               slug,
-              label: toolkit.label,
+              ...(alias ? { alias } : {}),
+              label: alias ? `${toolkit.label} (${alias})` : toolkit.label,
               description: toolkit.blurb || `Connect ${toolkit.label} so the bot can continue`,
               status: connected ? "connected" : "required",
               resumeKey,
@@ -10966,7 +10967,7 @@ const server = createServer(async (req, res) => {
           connector: { ...connector, status: "authorizing", error: undefined, dismissed: false },
         });
         try {
-          return json(res, 200, await composio.authorizeService(cfg, connector.slug));
+          return json(res, 200, await composio.authorizeService(cfg, connector.slug, connector.alias));
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           store.patchMessage(threadId, message.id, {
@@ -10976,7 +10977,7 @@ const server = createServer(async (req, res) => {
         }
       }
       if (m[3] === "status" && method === "GET") {
-        const state = (await composio.connectionStatus(cfg, [connector.slug]))[connector.slug];
+        const state = connectorRequestStatus((await composio.connectionStatus(cfg, [connector.slug]))[connector.slug], connector.alias);
         const failed = /failed|expired|revoked|error/i.test(state?.status ?? "");
         const next = {
           ...connector,
