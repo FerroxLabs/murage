@@ -1,0 +1,17 @@
+{
+  "format": "murage.package",
+  "version": 1,
+  "package": {
+    "id": "starter-personal-home", "release": "1.0.0", "name": "Personal / Home",
+    "tagline": "Turn your own notes into a manageable home plan.",
+    "summary": "A small starting setup for household tasks, appointments and personal projects. Start with pasted notes; connected apps are optional. Home Planner is a suggested coordinator, never permission to replace an existing Chief or act on your behalf.",
+    "category": "Starter", "author": { "name": "Ferrox Labs" }, "license": "Apache-2.0",
+    "outcomes": ["A prioritized plan from your notes", "A short next action for each task", "Questions for missing dates, owners or constraints"],
+    "setupMinutes": 2, "requirements": { "apps": [], "capabilities": [] },
+    "agents": [{ "key": "home-planner", "name": "Home Planner", "title": "Household planning", "description": "Organizes the tasks and constraints you provide into a practical plan.", "appearance": { "color": "green" }, "playbooks": ["home-plan"] }],
+    "chiefOfStaff": "home-planner",
+    "playbooks": [{ "key": "home-plan", "name": "Plan from my notes", "summary": "Make a useful household plan from user-provided information.", "triggers": ["Plan my week", "Organize these home tasks"], "instructions": "Ask the user to paste their tasks and any known deadlines, available time and preferences. If notes are already present, draft the plan immediately and mark missing details as unknown. Separate commitments from optional work, pick up to three next actions, and explain conflicts. Never claim access to a calendar, inbox, bank or household account unless the user connected it and the tool returned evidence. Do not book, buy, send, delete or enable a routine without explicit approval. Preserve the existing Chief and user settings; this package only suggests a coordinator." }],
+    "routines": [{ "key": "weekly-home-review", "name": "Weekly home review (suggested)", "agent": "home-planner", "prompt": "Review household notes the user has supplied. State what changed, what remains unknown and up to three next actions. If no notes are available, ask for them; do not invent calendar or inbox access.", "runOn": "ember", "schedule": { "type": "daily", "time": "09:00", "weekdays": [0] }, "durationMinutes": 15, "enabledAfterInstall": false }],
+    "examples": [{ "title": "A first plan without connections", "input": "I have two free hours Saturday. I need to fix a loose shelf, choose a birthday gift, and sort a drawer. The birthday is next Thursday.", "output": "Prioritize choosing the gift because it has a deadline. Check what the shelf repair needs before allocating time. Use remaining time for the drawer. Confirm delivery timing and what tools are available; no purchase or booking has been made." }]
+  }
+}
