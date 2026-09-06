@@ -503,7 +503,7 @@ beforeAll(async () => {
 
   // The isolated negative control selects a preserved pre-change harness;
   // production never gains an authorization bypass or test mint endpoint.
-  child = spawn(process.execPath, [process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", join(SERVER_DIR, "testing", "search-fetch-preload.mjs"), process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -1306,6 +1306,40 @@ describe("harness HTTP API", () => {
     } finally {
       await desktopApi("DELETE", `/api/groups/${room.id}`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("routes scoped native search without exposing credentials or allowing retired turns", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const requestFile = join(home, "search-fixture-calls.json");
+    try {
+      const turn = await startInternalFixtureTurn(bot.id);
+      const body = { fromBotId: bot.id, fromThreadId: turn.env.MURAGE_THREAD_ID, query: "fixture search", maxResults: 2 };
+      const search = (headers: Record<string, string> = turn.headers, requestBody = body) => fetch(`${BASE}/api/internal/web-search`, {
+        method: "POST", headers, body: JSON.stringify(requestBody),
+      });
+      expect((await search({ "content-type": "application/json" })).status).toBe(401);
+      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "off" } });
+      expect((await search()).status).toBe(409);
+      expect(existsSync(requestFile)).toBe(false);
+      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "tavily", tavilyApiKey: "native-search-fixture-key" } });
+      const result = await search();
+      expect(result.status).toBe(200);
+      const payload = await result.json();
+      expect(payload).toMatchObject({ provider: "tavily", untrusted: true, results: [{ title: "Fixture source", url: "https://example.com/source", snippet: "Untrusted source excerpt." }] });
+      expect(JSON.stringify(payload)).not.toContain("native-search-fixture-key");
+      const sent = JSON.parse(readFileSync(requestFile, "utf8"));
+      expect(sent).toMatchObject({ calls: 1, bearerPresent: true, redirect: "error", body: { query: "fixture search", max_results: 2 } });
+      expect((await search(turn.headers, { ...body, fromBotId: "other-bot" })).status).toBe(403);
+      expect((await search(turn.headers, { ...body, maxResults: 1000 })).status).toBe(400);
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      expect((await search()).status).toBe(401);
+      expect(JSON.parse(readFileSync(requestFile, "utf8")).calls).toBe(1);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "engine", tavilyApiKey: "" } });
+      rmSync(requestFile, { force: true });
     }
   });
 
