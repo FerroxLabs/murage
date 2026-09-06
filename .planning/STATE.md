@@ -1,6 +1,25 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P05 concurrency fixture ACCEPTED (confirmation round 2): existing observation benchmark
+does not measure concurrent bots. Add test-only gated ACP load mode and one
+isolated actual-harness benchmark for1/5/10provider-ready simultaneousbots, two
+cycles each, fixedtext+PNGoutput. Record source/OS/toolchain, latencies, server
+and owned-process RSS, idle observations. No arbitrary threshold or tuning to
+make results green. Prepared temporary installation is NOT fresh-start proof.
+Checks frozen: realstdio loadfixture protocol/gate/content, benchmarkscript runs
+alllevels andsettles/cancels/cleans ownedprocesses, types. Two rounds. P04fixture,
+P06benchmark, rootrun/evidence. Large-history stress, long-duration stability and
+nativeplatform/fullP05 closure remain separate. No live app/network changes.
+Evidence: realstdio fixture2tests +types PASS. Firstbenchmark73034 timed out
+because readiness waited for persisted chat text, which flushes only after the
+gate. Readiness corrected to actual receivedACPmarker plusbusy state; confirmation
+78536 PASSall1/5/10levels x2cycles,32turns,5.111s, cleanupVerified/fixtureRemoved.
+Directscript types passed after correction. Mac17,2 AppleM5/24GiB, Node25.8.1.
+At10bots peakserver325664KiB,totalowned1137392KiB; ready320–464ms. IdleRSSrose
+with retained bots/history; this does NOT establish long-term stable memory.
+ExactJSON/source+instrumentationhashes exported to
+.planning/next-programme/concurrency-macos-20260906.json. No paidmodels used.
 P23 search-settings localization ACCEPTED (round 1): catalog29visible
 strings/actions in existing8locales, keeping provider names, write-only custody,
 saved-not-tested distinction and separate-cost/no-fallback guidance. No settings

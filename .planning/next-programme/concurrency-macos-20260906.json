@@ -1,0 +1,362 @@
+{
+  "fixture": "existing-install isolated HOME, explicit fake ACP engine only",
+  "sourceCommit": "ce698687d627d6354050dc485e2720988e52b856",
+  "sourceDirty": true,
+  "instrumentationSha256": {
+    "scripts/bench-concurrency.ts": "11b7f7fff89a722204da4d082c92305c71a0a5de37afb6dba571cadb8ffa3ac3",
+    "server/testing/fake-acp-cli.ts": "6537af770f44870fe99ffcb6b83fb9f51f9c350bff678eeb345d4b0dec2b324d"
+  },
+  "os": {
+    "platform": "darwin",
+    "release": "25.3.0",
+    "arch": "arm64"
+  },
+  "node": "v25.8.1",
+  "expectedPerTurn": {
+    "payloadTextBytes": 65536,
+    "readyMarkerBytes": 16,
+    "emittedImages": 3,
+    "imageBytes": 25915
+  },
+  "levels": [
+    {
+      "concurrency": 1,
+      "cycle": 1,
+      "simultaneousReady": 1,
+      "admissionToReadyMs": 186,
+      "gateToSettledMs": 43,
+      "totalMs": 518,
+      "peakRss": {
+        "serverKiB": 278560,
+        "descendantsKiB": 82432,
+        "totalKiB": 360992,
+        "processes": 2
+      },
+      "idleRss": {
+        "serverKiB": 279568,
+        "descendantsKiB": 0,
+        "totalKiB": 279568,
+        "processes": 1
+      },
+      "workload": [
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        }
+      ]
+    },
+    {
+      "concurrency": 1,
+      "cycle": 2,
+      "simultaneousReady": 1,
+      "admissionToReadyMs": 146,
+      "gateToSettledMs": 29,
+      "totalMs": 454,
+      "peakRss": {
+        "serverKiB": 280064,
+        "descendantsKiB": 81024,
+        "totalKiB": 361088,
+        "processes": 2
+      },
+      "idleRss": {
+        "serverKiB": 281040,
+        "descendantsKiB": 0,
+        "totalKiB": 281040,
+        "processes": 1
+      },
+      "workload": [
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        }
+      ]
+    },
+    {
+      "concurrency": 5,
+      "cycle": 1,
+      "simultaneousReady": 5,
+      "admissionToReadyMs": 289,
+      "gateToSettledMs": 164,
+      "totalMs": 732,
+      "peakRss": {
+        "serverKiB": 283280,
+        "descendantsKiB": 407568,
+        "totalKiB": 690848,
+        "processes": 6
+      },
+      "idleRss": {
+        "serverKiB": 295744,
+        "descendantsKiB": 0,
+        "totalKiB": 295744,
+        "processes": 1
+      },
+      "workload": [
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        }
+      ]
+    },
+    {
+      "concurrency": 5,
+      "cycle": 2,
+      "simultaneousReady": 5,
+      "admissionToReadyMs": 218,
+      "gateToSettledMs": 178,
+      "totalMs": 681,
+      "peakRss": {
+        "serverKiB": 300080,
+        "descendantsKiB": 410704,
+        "totalKiB": 710784,
+        "processes": 6
+      },
+      "idleRss": {
+        "serverKiB": 307712,
+        "descendantsKiB": 0,
+        "totalKiB": 307712,
+        "processes": 1
+      },
+      "workload": [
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        }
+      ]
+    },
+    {
+      "concurrency": 10,
+      "cycle": 1,
+      "simultaneousReady": 10,
+      "admissionToReadyMs": 464,
+      "gateToSettledMs": 261,
+      "totalMs": 1010,
+      "peakRss": {
+        "serverKiB": 313696,
+        "descendantsKiB": 817232,
+        "totalKiB": 1130928,
+        "processes": 11
+      },
+      "idleRss": {
+        "serverKiB": 316880,
+        "descendantsKiB": 0,
+        "totalKiB": 316880,
+        "processes": 1
+      },
+      "workload": [
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        }
+      ]
+    },
+    {
+      "concurrency": 10,
+      "cycle": 2,
+      "simultaneousReady": 10,
+      "admissionToReadyMs": 320,
+      "gateToSettledMs": 300,
+      "totalMs": 910,
+      "peakRss": {
+        "serverKiB": 325664,
+        "descendantsKiB": 811728,
+        "totalKiB": 1137392,
+        "processes": 11
+      },
+      "idleRss": {
+        "serverKiB": 329632,
+        "descendantsKiB": 0,
+        "totalKiB": 329632,
+        "processes": 1
+      },
+      "workload": [
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        },
+        {
+          "textBytes": 65552,
+          "emittedImages": 3,
+          "storedImageMessages": 1,
+          "newMessages": 2
+        }
+      ]
+    }
+  ],
+  "cleanupVerified": true,
+  "limitations": [
+    "Source-checkout fixture, not installed package or fresh-start proof",
+    "RSS is sampled process metadata, not an allocation/leak profile",
+    "Images can deduplicate downstream",
+    "No RSS acceptance threshold or real-provider capacity claim"
+  ],
+  "completed": true,
+  "fixtureRemoved": true,
+  "elapsedMs": 5111,
+  "hardwareObservation": [
+    "Mac17,2",
+    "25769803776",
+    "Apple M5"
+  ]
+}
