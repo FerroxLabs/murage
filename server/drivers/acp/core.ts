@@ -19,6 +19,19 @@ import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } fr
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 
+/** Some ACP providers wrap actionable billing failures in "Internal error".
+ * Classify only the observed shape; never copy nested provider data or URLs
+ * into the transcript, where they may contain credentials or request text. */
+export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
+  const data = error.data && typeof error.data === "object" && !Array.isArray(error.data)
+    ? error.data as { http_status?: unknown; message?: unknown } : undefined;
+  if (data?.http_status === 402 && typeof data.message === "string"
+    && /credit balance is exhausted/i.test(data.message.slice(0, 4096))) {
+    return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
+  }
+  return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
+}
+
 /**
  * A `host::model` pick talks to a loopback server with its own key.
  * Subscription ACP login (grok.com cached_token) must not fail that turn.
@@ -578,7 +591,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 rpcPending.delete(msg.id);
                 if (pend.timer) clearTimeout(pend.timer);
                 if (msg.error) {
-                  const error = new Error(msg.error.message ?? JSON.stringify(msg.error));
+                  const error = new Error(acpRpcErrorMessage(msg.error));
                   Object.assign(error, { code: msg.error.code, data: msg.error.data });
                   pend.reject(error);
                 } else {
