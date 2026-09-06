@@ -9,6 +9,7 @@ import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
 import { api, useStore, type InstanceInfo } from "@/state/store";
 import { EngineGroupLabel } from "./EngineGroupLabel";
+import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
 import { splitEngineRail } from "@/lib/engine-rail";
 import { cn } from "@/lib/cn";
@@ -297,6 +298,15 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       </div>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
       {saved && <div role="status" className="mt-1 text-[12px] text-success">{saved}</div>}
+      <p className="mt-1 text-[12px] text-ink-secondary">
+        {instance.enabled === false ? "Disabled" : needsCli(instance)
+          ? instance.snapshot.reason ?? "Not detected"
+          : needsSignIn(instance) ? "Detected · sign-in required"
+            : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
+      </p>
+      {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
+        <EngineSetup instance={instance} className="mt-2" />
+      )}
       {confirmationOpen && (
         <div className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
           <p>Changing engine availability reloads providers and interrupts running turns. Enabling an engine may probe its CLI and inherited configuration; it does not resume restored work.</p>
