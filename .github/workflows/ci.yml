@@ -9,6 +9,10 @@ on:
         description: "Confirm Windows-only fixture changes; reuse unaffected platform evidence"
         type: boolean
         default: false
+      vitest_file:
+        description: "Windows-only scoped confirmation: existing test files/directories, one per line; other Vitest evidence reused"
+        required: false
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -23,7 +27,7 @@ concurrency:
 
 jobs:
   test:
-    name: typecheck + test (${{ matrix.os }})
+    name: ${{ inputs.vitest_file && 'Scoped Windows confirmation' || 'typecheck + test' }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +38,34 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate scoped Windows confirmation input
+        shell: bash
+        env:
+          VITEST_FILE: ${{ inputs.vitest_file }}
+          WINDOWS_ONLY: ${{ inputs.windows_only }}
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { lstatSync, realpathSync } from 'node:fs';
+          import { isAbsolute, relative, sep } from 'node:path';
+          const selection = process.env.VITEST_FILE ?? '';
+          if (selection) {
+            assert.equal(process.env.GITHUB_EVENT_NAME, 'workflow_dispatch', 'scoped tests require manual dispatch');
+            assert.equal(process.env.WINDOWS_ONLY, 'true', 'vitest_file requires windows_only=true');
+            const paths = selection.split('\n');
+            assert.ok(paths.length <= 16, 'at most sixteen scoped paths are allowed');
+            for (const file of paths) {
+              const testFile = /^(server|electron|src|shared|companion|scripts)\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.test\.(ts|mjs)$/.test(file);
+              const testDirectory = /^(server|electron|src|shared|companion|scripts)(?:\/[A-Za-z0-9_-]+)+$/.test(file);
+              assert.ok(testFile || testDirectory, 'vitest_file must contain repository-relative test files or directories');
+              const stat = lstatSync(file);
+              assert.ok((testFile && stat.isFile()) || (testDirectory && stat.isDirectory()), 'scoped path must be an existing test file or directory');
+              const inside = relative(realpathSync('.'), realpathSync(file));
+              assert.ok(inside && !isAbsolute(inside) && inside !== '..' && !inside.startsWith(`..${sep}`), 'vitest_file escapes the checkout');
+            }
+            console.log(`Scoped Windows confirmation: ${paths.join(', ')}; unaffected Vitest results are reused, not rerun.`);
+          }
+          EOF
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -50,6 +82,7 @@ jobs:
         run: node --input-type=commonjs -e "require('electron')"
       - run: pnpm typecheck
       - name: Run tests
+        if: inputs.vitest_file == ''
         run: pnpm test
         env:
           # Electron 43 currently exits with EXCEPTION_BREAKPOINT before ready
@@ -57,6 +90,20 @@ jobs:
           # ACL is present. Production fails closed there through the tested
           # browser-platform gate; keep probing the upstream regression below.
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+      - name: Scoped Vitest confirmation and required downstream suites
+        if: inputs.vitest_file != ''
+        shell: bash
+        env:
+          VITEST_FILE: ${{ inputs.vitest_file }}
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: "1"
+        run: |
+          echo "Scoped Vitest confirmation only: $VITEST_FILE"
+          mapfile -t test_paths <<< "$VITEST_FILE"
+          pnpm check:contrast
+          pnpm exec vitest run "${test_paths[@]}"
+          pnpm broker:test
+          pnpm test:electron
+          pnpm test:packaged-server
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
         continue-on-error: true

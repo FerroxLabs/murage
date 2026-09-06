@@ -1,6 +1,38 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+All3acceptedartifact downloads COMPLETE. Existingreleaseworkflow completeness
+andfeedhashchecks rerunlocallyPASS21assets/7entries. Guardedlocalupload session
+75166 active usingauthorizedhostghidentity; no publishbeforegates. Exportroot
+.planning/release-export-06493fb6-TLbAt0/assets; notes siblingrelease-notes.md.
+Cursorfailure corrected sharedtestCLI stdoutflushbeforeexit; delayedstdout
+negativecontrol reproducedemptyversion.27focusedPASS/typecheckPASS. ScopedCI
+selector validates max16repo-contained paths, retainsallpostVitestcommands;
+39workflowtestsPASS. Next affectedsharedfixtureWindowsconfirmation; sourceapp
+still06493fb6, no rebuild. No additionalroundstop underexplicittravelauthority.
+Windows8cebcb83 CI34013910494 terminalFAIL:5025pass/1fail/135skip/1todo.
+Busygoal gatefixed/passed. Onlycursor.test.ts183 expectedloggedoutfalse gotunknown;
+WindowsagentisolatesfakeCLIversionoutputlostbeforeauthprobe (not8stimeout).
+Travelallowscrossresearchcontinue. Preserve5025passes; preparingexplicitfocused
+VitestfileCI followedbyALLremainingbroker/Electron/packagedserverchecks(default
+fullCIunchanged), notanotherwholecorpusroulette. Macdownload98267stilllive;
+Windows/Linuxexportcomplete. Publicrelease remainsgated.
+Localfallbackexport progress: Windows74316 andLinux79993 exit0; Mac98267 still
+live. Exportrootrelease-export-06493fb6-TLbAt0. Release notespreparedwithknown
+Windowsbrowser/deferredscope limitations; no draft/publicuploadyet. Windows-only
+CI34013910494 stilltestsactive. Preserveallowneddownloadhandles, norestarts.
+ASSEMBLY CAUSE CONFIRMED:06493fb6 job101434177070 fails ghreleasecreate HTTP403
+resource-access-denied. WorkflowRELEASES_PAT insufficientforactualPOST; account
+repo.permissions.push isnot tokenwriteproof. All21assets/feedvalidationsPASS.
+Perexistingpublication+travelauthority useguardedlocalghidentityfallback, NEVER
+broaden/replaceworkflowsecret. Exportacceptedrun34013068705 to
+.planning/release-export-06493fb6-TLbAt0: macdownloadsession98267 artifact9983289245;
+Windows74316 artifact9983170638;Linux79993 artifact9983162113. Alllive, donotrestart.
+Nextreuseexistingworkflowasset/feedchecks locallythenexistingreleaseguardupload;
+publicpublishstillrequiresWindowsCI34013910494+allotheracceptedgates.
+Windows-onlyfullCI34013910494 dispatchedonce on8cebcb83(test/tooling-only since
+application06493fb6). No productionartifactinvalidations; allnativebuildspassed.
+Assembly34013068705/101434177070 remainslive; waitsacceptedartifactdownload.
 06493fb6 UbuntuCI fullySUCCESS inclhumanspecs;MacCI/controlplane/Linuxpackage
 SUCCESS. AllthreeRelease nativejobsSUCCESS; assembly101434177070 downloading.
 OnlyWindowsCI newfailure fixedtest-only: slowfakeprovider previouslyfinished

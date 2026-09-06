@@ -207,6 +207,58 @@ describe("published Linux artifact verification", () => {
   });
 });
 
+describe("scoped Windows CI confirmation", () => {
+  const workflow = load("ci.yml");
+  const steps = workflow.jobs.test.steps;
+  const guard = steps.find(step => step.name === "Validate scoped Windows confirmation input");
+  const javascript = guard.run.split("<<'EOF'\n")[1].split("\nEOF")[0];
+  const validate = (env) => spawnSync(process.execPath, ["--input-type=module", "-"], {
+    input: javascript, encoding: "utf8", cwd: join(workflows, "../.."),
+    env: { GITHUB_EVENT_NAME: "workflow_dispatch", WINDOWS_ONLY: "true",
+      VITEST_FILE: "scripts/release-workflows.test.mjs", ...env },
+  });
+
+  it("accepts one real file only for an explicit Windows dispatch", () => {
+    const valid = validate({});
+    expect(valid.status).toBe(0);
+    expect(valid.stdout).toContain("unaffected Vitest results are reused, not rerun");
+    expect(validate({ VITEST_FILE: "server/drivers/acp\nscripts/release-workflows.test.mjs" }).status).toBe(0);
+    expect(validate({ VITEST_FILE: "", WINDOWS_ONLY: "false", GITHUB_EVENT_NAME: "push" }).status).toBe(0);
+  });
+
+  it.each([
+    [{ WINDOWS_ONLY: "false" }, "windows_only=true"],
+    [{ GITHUB_EVENT_NAME: "pull_request" }, "manual dispatch"],
+    [{ VITEST_FILE: "server/../index.test.ts" }, "repository-relative test file"],
+    [{ VITEST_FILE: "server/*.test.ts" }, "repository-relative test file"],
+    [{ VITEST_FILE: "server/index.test.ts; echo unsafe" }, "repository-relative test file"],
+    [{ VITEST_FILE: "/tmp/example.test.ts" }, "repository-relative test file"],
+    [{ VITEST_FILE: "server/drivers/acp\n../outside" }, "repository-relative test file"],
+    [{ VITEST_FILE: "server/drivers/acp\n" }, "repository-relative test file"],
+    [{ VITEST_FILE: "server/nonexistent-scoped-confirmation.test.ts" }, "ENOENT"],
+  ])("rejects unsafe or unsupported scoped input %j", (env, expected) => {
+    const result = validate(env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(expected);
+  });
+
+  it("preserves the default test chain and every downstream gate during scoped confirmation", () => {
+    const full = steps.find(step => step.name === "Run tests");
+    expect(full.if).toBe("inputs.vitest_file == ''");
+    expect(full.run).toBe("pnpm test");
+    const scoped = steps.find(step => step.name === "Scoped Vitest confirmation and required downstream suites");
+    expect(scoped.if).toBe("inputs.vitest_file != ''");
+    expect(scoped.env.VITEST_FILE).toBe("${{ inputs.vitest_file }}");
+    expect(scoped.run.trim().split("\n").slice(1)).toEqual([
+      'mapfile -t test_paths <<< "$VITEST_FILE"', "pnpm check:contrast", 'pnpm exec vitest run "${test_paths[@]}"', "pnpm broker:test",
+      "pnpm test:electron", "pnpm test:packaged-server",
+    ]);
+    expect(workflow.jobs.test.name).toContain("Scoped Windows confirmation");
+    expect(steps.some(step => step.run === "pnpm typecheck")).toBe(true);
+    expect(steps.some(step => step.run === "pnpm check:electron")).toBe(true);
+  });
+});
+
 describe("scoped Windows confirmation", () => {
   it("keeps default CI complete and retains the full test command", () => {
     const ci = load("ci.yml");
