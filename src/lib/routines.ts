@@ -54,6 +54,7 @@ export interface Routine {
 }
 
 export interface RoutineRun {
+  event?: import("../../shared/routine-event").RoutineEvent;
   id: string;
   routineId: string;
   routineName: string;

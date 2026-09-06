@@ -1,6 +1,28 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P11 origin foundation ACCEPTED (round 1): persist a normalized
+event envelope with stable run/event and budget-root IDs for schedule/manual/
+webhook receipts. Provenance comes from manager-owned dispatch fields, never
+incoming payload. Legacy receipts derive compatible origin; malformed envelope
+cannot relabel external work as local. Budget root is an identifier, NOT proof
+of enforced limits. Acceptance: source/identity consistency, reload and duplicate
+stability, clone isolation, real scheduler suite + focused origin tests + types.
+P04 maps durable budget inheritance for the next integration; no ad-hoc new
+budget reset rules. P06 owns shared envelope/routines; root client receipt type.
+Next budget integration decision (source-mapped): RoutineManager owns persisted
+event limits/counters/admission IDs; InternalCapabilities remains a separate
+ephemeral authorization gate. Pass server-owned event references through routine
+dispatch, ask/delegate queues and credential/connector continuations. Never take
+IDs/counters from model payload. Charge durably before cross-file consequential
+work; ambiguous interrupted charges are retained, not automatically refunded.
+Retain root ledgers while descendants/continuations exist. Ordinary human turns
+keep current per-turn limits. Budget enforcement and lifecycle tests remain open.
+Evidence: event/admission/existing scheduler 60 tests PASS; actual webhook API
+60126 PASS (1 scoped / 214 skipped) asserts hostile payload origin/budget fields
+do not change persisted server-assigned event identity; duplicate/rotation flow
+retained. Combined typecheck 49289 PASS. No visual surface changed. Next: local
+commit, then durable cumulative admission ledger and propagation integration.
 P11 admission increment ACCEPTED (round 1): existing webhooks
 already dispatch through RoutineManager. Close its cross-file receipt gap before
 adding event adapters: duplicate webhook+delivery identities reuse a durable run

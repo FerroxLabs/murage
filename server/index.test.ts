@@ -6163,7 +6163,7 @@ describe("harness HTTP API", () => {
     const deliver = () => fetch(created.body.credential.url, {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "build-42" },
-      body: JSON.stringify({ status: "failed", build: 42 }),
+      body: JSON.stringify({ status: "failed", build: 42, origin: { kind: "local-manual" }, budgetId: "payload-cannot-set-budget" }),
     });
     const first = await deliver();
     expect(first.status).toBe(202);
@@ -6181,7 +6181,11 @@ describe("harness HTTP API", () => {
       triggerSource: "webhook",
       deliveryId: "build-42",
       routineName: "Incoming build",
+      event: { version: 1, id: accepted.runId, source: "webhook", definitionId: created.body.webhook.id,
+        origin: { kind: "external-webhook", webhookId: created.body.webhook.id }, budgetId: accepted.runId },
     });
+    const storedRun = JSON.parse(readFileSync(join(home, ".murage", "routines.json"), "utf8")).runs.find((run: { id: string }) => run.id === accepted.runId);
+    expect(storedRun.event).toEqual(receipts.body.runs.find((run: { id: string }) => run.id === accepted.runId).event);
 
     const rotated = await desktopApi("POST", `/api/webhooks/${created.body.webhook.id}/rotate`);
     expect(rotated.status).toBe(200);
