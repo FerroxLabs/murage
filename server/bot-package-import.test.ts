@@ -6,7 +6,7 @@ import type { Readable } from "node:stream";
 import { ZipFile } from "yazl";
 import { afterEach, expect, it, vi } from "vitest";
 import { createBotPackageEntry } from "./bot-package-manifest.ts";
-import { importBotPackageArchive, previewBotPackageImport, type BotPackageAtomicCommitInput } from "./bot-package-import.ts";
+import { importBotPackageArchive, importBotPackageContents, previewBotPackageContents, previewBotPackageImport, type BotPackageAtomicCommitInput } from "./bot-package-import.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -43,8 +43,57 @@ async function fixture(instructions = "Use evidence and report uncertainty.") {
     existingBots: [{ id: "existing-chief", threadId: "existing-thread", name: "Scout" }],
     modelSelection: { instanceId: "fixture", model: "fixture" },
   };
-  return { root, payloads, preview, options };
+  return { root, manifest, payloads, preview, options };
 }
+
+it("routes in-memory contents through the same inert preparation, staging and atomic callback", async () => {
+  const f = await fixture();
+  const contents = { manifest: f.manifest, payloads: new Map([...f.payloads].map(([path, content]) => [path, Buffer.from(content)])) };
+  const preview = await previewBotPackageContents(contents, { selection: f.options.selection, existingBots: f.options.existingBots });
+  const reordered = await previewBotPackageContents({ manifest: Object.fromEntries(Object.entries(f.manifest).reverse()), payloads: new Map([...contents.payloads].reverse()) }, { selection: f.options.selection, existingBots: f.options.existingBots });
+  expect(preview).toEqual(reordered);
+  expect(preview.archiveSha256).not.toBe(f.preview.archiveSha256);
+  expect(preview.selectionHash).toBe(f.preview.selectionHash);
+  let preparedImport: BotPackageAtomicCommitInput["prepared"] | undefined;
+  const atomicCommit = vi.fn(({ prepared, stagingDirectory }: BotPackageAtomicCommitInput) => {
+    preparedImport = prepared;
+    expect(prepared.bots[0]).toMatchObject({ name: "Scout 2", chiefOfStaff: false, computer: "off", autoApprove: false, browser: false });
+    expect(prepared.routines[0]).toMatchObject({ enabled: false, nextRunAt: null });
+    expect(JSON.parse(readFileSync(join(stagingDirectory, "skill-state", prepared.bots[0].id, "skills.json"), "utf8")).research.enabled).toBe(false);
+    expect(prepared.baseline).toBeTruthy();
+  });
+  const imported = await importBotPackageContents({ ...f.options, contents, expectedArchiveSha256: preview.archiveSha256, expectedReviewHash: preview.reviewHash, atomicCommit });
+  expect(atomicCommit).toHaveBeenCalledTimes(1);
+  expect(imported.bots).toEqual(preparedImport!.bots);
+  expect(readdirSync(f.root)).toEqual(["bundle.zip"]);
+});
+
+it("refuses malformed contents, unknown payloads, changed bytes and stale review hashes before commit", async () => {
+  const f = await fixture();
+  const contents = { manifest: f.manifest, payloads: new Map([...f.payloads].map(([path, content]) => [path, Buffer.from(content)])) };
+  const preview = await previewBotPackageContents(contents, { selection: f.options.selection });
+  const atomicCommit = vi.fn();
+  const options = { ...f.options, contents, expectedArchiveSha256: preview.archiveSha256, expectedReviewHash: preview.reviewHash, atomicCommit };
+  await expect(importBotPackageContents({ ...options, contents: { ...contents, manifest: { ...f.manifest, version: 99 } } })).rejects.toThrow();
+  await expect(importBotPackageContents({ ...options, contents: { ...contents, payloads: new Map([...contents.payloads, ["unknown", Buffer.from("x")]]) } })).rejects.toMatchObject({ code: "PACKAGE_CONTENT_ENTRY_MISMATCH" });
+  const changed = new Map(contents.payloads); changed.set("bots/scout/SOUL.md", Buffer.alloc(changed.get("bots/scout/SOUL.md")!.length, 120));
+  await expect(importBotPackageContents({ ...options, contents: { ...contents, payloads: changed } })).rejects.toMatchObject({ code: "PACKAGE_CONTENT_HASH_MISMATCH" });
+  await expect(importBotPackageContents({ ...options, expectedReviewHash: "0".repeat(64) })).rejects.toMatchObject({ code: "PACKAGE_REVIEW_CHANGED" });
+  expect(atomicCommit).not.toHaveBeenCalled();
+  expect(readdirSync(f.root)).toEqual(["bundle.zip"]);
+});
+
+it("does not grant in-memory starter contents any content-scan exemption", async () => {
+  const token = "sk-" + "FixtureNotARealCredential".repeat(2);
+  const f = await fixture("Private credential " + token);
+  const contents = { manifest: f.manifest, payloads: new Map([...f.payloads].map(([path, content]) => [path, Buffer.from(content)])) };
+  const preview = await previewBotPackageContents(contents, { selection: f.options.selection });
+  expect(preview.scan.blocked).toBe(true);
+  expect(JSON.stringify(preview)).not.toContain(token);
+  const atomicCommit = vi.fn();
+  await expect(importBotPackageContents({ ...f.options, contents, expectedArchiveSha256: preview.archiveSha256, expectedReviewHash: preview.reviewHash, acknowledgeWarnings: true, atomicCommit })).rejects.toMatchObject({ code: "PACKAGE_CONTENT_BLOCKED" });
+  expect(atomicCommit).not.toHaveBeenCalled();
+});
 
 it("stages fresh inert identities, disabled skills and paused routines for the real atomic callback", async () => {
   const f = await fixture();
