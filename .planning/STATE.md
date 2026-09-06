@@ -1,6 +1,123 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+Current checkpoint: P10 offline ZIP import increment ACCEPTED for local integration.
+Contract: explicit selection and hash-bound review; fresh inert identities, no
+payload execution/dependency fetch/role grants; preserve existing records;
+durable commit or recovery before publishing memory. Desktop-authorized only.
+Evidence: service 5, batch 3, transaction 14, actual isolated API 1, browser UI 3
+passed; final fatal-path test passed using actual callback source + real recovery
+in a child process (not whole-HTTP fatal proof). Final combined typecheck 78208
+and diff whitespace check passed. Mobile screenshot reviewed. Passing earlier
+evidence retained; no third audit. Fatal failure exits before queued writers and
+retains journal/original bytes. Existing app and private distribution untouched.
+Remaining P09/P10 scope: complete selected file-export workflow and update diffs;
+do not count this import increment as the entire package or native power-loss proof.
+Next authorized action: local commit of exact import files, then remaining P09/P10
+workflow work. User AGENTS.md and .ijfw changes excluded.
+LiveissuesfixesCOMMITTED: f5c004e1browsercaptureemulationrestore85focusedPASS;
+6d3a2c23+efcf3276safeactionableprovidererrorcard,actual402persistence+rendered
+billing/settings/retry/categoriesPASS,types/contrastPASS. Fluxcreditsfundedby
+Sean; no paidretryperformed. Installedappstill0.1.46unchanged. ResumeP10local:
+3browserUItests/types alreadyfinishedwhilepaused, screenshotreviewpending.
+Rootunrecoverableimportjournalfailure nowsynchronousfatalexit retaininglease/
+journal ratherthanallowbackgroundwriters tooverwriteuncertaindisk. Focused
+verificationneededforthisfinalfailurebranch; priortransaction/APIevidencekept.
+USERconfirmedFluxcreditsadded; requestsdetailedactionableRENDEREDerrorcard.
+SharedProviderErrorInfo kind/provider/httpStatus only, no rawdetails; ACP
+classificationactualnested402/401/403/429/503 andfixedFluxbillingURL. Root
+runtimeevent->tool.providerError stored/clienttyped; p03Card+ChatViewwired with
+summary/resolution/ProviderSettings/explicitRetry/AddFluxcredits; genericlegacy
+errors/setuphelp retained. Types20367PASS; renderedchecks ongoing. Installed
+appnotyetupdated; do notclaimtheoldInternalerrorhistoryrewritten.
+LIVEBUGFIX browserCOMMITTEDf5c004e1: Page.captureScreenshot clearedWebContents
+emulation leavingstalescale; finallyreset/reapplyonbothsuccess/error. Actual
+Electronhost85focusedPASSincltrustedlink/buttonactionsafterrepeatedscreenshots
+at287x115/400x250/1280x800,privacyfixturepreserved. Installed0.1.46 unchanged.
+Finchthreeattempts allnested402credits exhausted, ACPhandshakepassed; baseline
+safeerror6d3a2c23committed. Seanconfirmedcreditsadded; latestrequest requires
+DETAILEDRENDEREDprovidercard notsentenceonly. p06sharedclassifiedmetadata/core,
+p03ProviderErrorCard/ChatView/visualtests, roottoolpersistencewired. No live
+retry/topup/settingschange; P10featureworkpausedandpreserved. Allprivate.
+USER LIVE ISSUES PRIORITY: pausefeaturework, preserveP10UIedits (3browsertests+
+typesfinished; no furtherfeaturework). Installed0.1.46/PID5644. Sable report
+/Users/seandonahoe/.sable/BUG-murage-browser-click.md read: built-inElectron
+clickfalse-success and transientviewportcollapse, notnewheadlessbrowser.
+p04isolatedactualhostreproductionclick/screenshot/scale sequence; no livepages.
+Finch latestnativeerror2026-09-06T13:36:44.526Z: ACPinitializedsuccess then
+providerHTTP402 exhaustedcredits nestedunder-32603 Internalerror. p06confirms
+earlierattempts andfixessafecategorydisplay; no model/account/topup/livechanges.
+Acceptance: causeprovenperissue, focusedregressionrealclick outcome, safeerror
+display; no screenshots'coordinatehypothesis promotedwithoutreproduction.
+P10optionsAPIconfirmation65243PASSsafechoices/blockednochoices/no secretnames;
+actualimport/replay/inertrecordproofpreserved. Rootcallbacknowimmediatejournal
+recoveryonsyncwritefailurebeforeeventloop: rolledbackthrowsoriginal, durable
+committedrollforwardpublishesmemory. P04focusedwrapperfaultchecksassigned;
+unrecoverablerecoverymusthaltwriters beforewholeP10accepted. UIp03ongoing.
+P10actualAPIintegration65323PASS1/212filteredafterknown404fixturecorrection:
+previewnosideeffects,freshinertrecords,oldworkspacepreserved,SOUL+disabledskills,
+pausedroutines,wronghash/secretrefusal,replay409/no duplicate. Transaction12PASS
+separatefaultproof. RootaddedscannedoptionsbranchforZIPUI;blockedarchivesreturn
+no candidatecontent. P03ownsTeamLibraryPanelnativegetPathForFile+dialog/tests,
+p06addsoptionsassertionstoactualAPIcase. Combinedtypes43184running.
+P10transaction12focusedPASS+types; preparedrollback/committedrollforward/
+unknownhashrefusal. APIfixturefirstblockedby3parameter-propertysyntax innew
+errorclasses; rootfixedexplicitfieldsNode24runtimeimportPASS. Nextfixture
+expected403butexistingdesktopcloakcontract404; correctingassertiononlyunder
+Seanexplicitboundedaftertwoattemptscontinuationauthority, no broaderaudit.
+AuthorizedimportpathstillnotprovenuntilremainingactualAPIassertionsrun.
+P10service5focusedPASS+batchseam3PASS (memory/diskbeforepublish/grants). Actual
+HTTPintegrationp06active; transactionp04testing. RootdurablepackageImportReceipt
+onnewbots rejectsrepeatedreview409 bothbeforeasyncworkandinsynccallback; old
+workspaceunchanged. Combinedtypes38409started. Noatomicacceptanceuntilreal
+transaction/APItests. Publicationstillwithdrawn/private.
+P10rootwiringUNVERIFIED:desktop-onlyPOST/api/packages/import preview/import
+witharchivePath+selection+hash, atomiccallbackprepares3JSONroots/files,syncjournal
+thenroutine/storepublish; startuprecoveryafterleasebeforeStore. P03service/P04
+transactionfileschecksongoing; p06testsStore/Routinebatchinclgrantsrejection.
+RootaddedalwaysAllow/chiefScope/oldcursor guards; no actualimportaccepteduntil
+rollback+routeproof. Existingliveappuntouched/privateonly.
+P10rootstore/routines preparePackageAdditionseamsaddedUNVERIFIED: stagecomplete
+JSONwithoutmutatingmemory/events; onlypublishafterdurablesynctransaction. No
+awaitbetweenprepare/commit/publish allowed; importedbotsnogrants, pausedroutines.
+P04journalhelperandP03preparedserviceinflight; rootstartuprecovery/routesnext.
+Types85644running; do notclaimatomicimportcompletebeforefault/routeproof.
+P10archiveIOCOMMITTED6ecdc465:42bundlechecksPASS,17affectedarchiveconfirmation+
+typesPASS; actualratio/path/hashlimits, noexecute/storeimport. P16threeinert
+starterassets+catalogintegrated6asset/catalogtestsPASS; first-runUI notyetwired.
+P10transactionp04approved3recordfiles+onlyfreshbotUUIDworkspaces/skill-state,
+expectedhashjournalrollback/rollforward,1kfiles/50MiBnew+50MiBold; rootbatch
+memorypublication/startuprecovery stillrequired. No publicchanges.
+P10nextintegrationp03ownsnewtransactionservice/test proposal; existinglegacy
+importautoenableslibraryskills cannotbeusedunchangedforuntrustedbundle. Bundle
+skillsinactive/nosync, routinesinactive/composiofalse/computerOff/browserfalse;
+freshIDs/noChiefgrant. P04archiveIOongoing. P06threeofficialstarterassets/tests
+existingpackageformatonly(noUIyet), allsametrustboundary, no model/livecalls.
+P09.1selectionexportCOMMITTEDb61ae39c:21manifest+10compat,4scan,11selection,
+4actualAPIacross2rounds,2actualbrowserfinalPASS+combinedtypes77388exit0.
+Explicitbots/playbooks/routinescheckboxes,exacttextreview,hashboundconfirmation,
+secretblock/no-render,warningack,stale409repreview,legacyexportscanenforced.
+File-basedskillbundlearchive I/O/import stillP09/P10pending; nowholepackage
+completion. Sidebarentrynowopensreviewdialog. No push/publication/privatekept.
+P09actualHTTPexportverificationPASS4scopedcasesacross2rounds(208filteredfirst):
+subset/pausedroutines/hash409,secretblocknomarkdown+legacy422,desktopgate404,
+warningack409->200,legacycompat retained. p06dialogvisualchecksactive,roottypes
+96800running. p04P10archiveIOactive(1000/50MiB/100ratio,hashes,noexec/nooverwrite),
+notstoreimportyet. No userdatamutations/publication.
+P09selectionhelper11tests+typesPASSround2(runOnfixturecorrected), APIcandidates
+stableportablekeys. Rootlegacyteamexportnowfailsflaggedscan422 (safelegacyshape
+unchanged), preventsformatbypass; p03actualroutetestownerinformed. P06modal
+implementationongoing. No schema/helper-onlywholeP09completionorpublicchanges.
+P09routewiredUNVERIFIED: packageoptionsmetadata->explicitselectionpreview->
+hashbounddownload, blockedscan422/no markdown, changedhash409, reviewackrequired.
+p03ownsactualindexAPItests incloldpackagecallertransition;p06ownsmodal+Sidebar
+entry+downloadhelper. Manifest21new+10compatPASS/types; scanner4PASS; no endtoend
+exportaccepteduntilcombinedchecks. Legacyteamformatexistsunchangedseparatepath.
+P09activeintegration: p03puremanifestselectedpayloadpreview, p06boundedcontent
+scanner, p04existingpackage-exportexplicitselection+candidateenumeration.
+Rootownsdesktop-gated/api/teams/export preview/scan/confirmationUIwiring next;
+stableportableplaybookkeys avoidcollisions, sourcebot/routineIDsvalidated.
+No fileexchange/marketplacecompletionclaimfromhelpers. No publicdistribution.
 P08presentationhideCOMMITTEDd6c268a7:27unit+1browserlastChiefhide/show/restore
 PASS, selectedconversationretained/exactsidebarHidden-onlyPATCH; isolatedAPI
 1PASS/208filtered+typecheck28110exit0. BotRecordsidebarHidden optionaltypeplaced

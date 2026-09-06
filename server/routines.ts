@@ -1337,6 +1337,20 @@ export class RoutineManager {
     }
   }
 
+  /** Inert additive batch; caller commits this file with the bot records. */
+  preparePackageAddition(additions: Routine[]) {
+    const ids = new Set(this.routines.map(routine => routine.id));
+    for (const routine of additions) {
+      if (ids.has(routine.id) || routine.enabled || routine.nextRunAt !== null) throw new Error("Unsafe package routine addition");
+      ids.add(routine.id);
+    }
+    const next = [...this.routines, ...additions];
+    return {
+      bytes: Buffer.from(JSON.stringify({ version: 1, routines: next, runs: this.runs, routineRequestReceipts: this.routineRequestReceipts } satisfies RoutineFile, null, 2)),
+      publish: () => { this.routines = next; },
+    };
+  }
+
   private save() {
     // Active receipts own cancellation, timeout, and provider-event routing;
     // evicting one would strand live work. Treat MAX_RUNS as a soft history

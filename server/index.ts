@@ -303,6 +303,9 @@ import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
+import { previewBotPackageImport, importBotPackageArchive } from "./bot-package-import.ts";
+import { readBotPackageArchive } from "./bot-package-archive.ts";
+import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 import {
   PendingTurnCancellations,
@@ -339,6 +342,9 @@ const MIME: Record<string, string> = {
 // Electron child consumes its parent's private capability here; it must not
 // survive in the environment inherited by any provider or MCP process.
 const dataDirLease = acquireDataDirLeaseForProcess(DATA_DIR);
+recoverPackageImportTransaction(DATA_DIR, { assertOwned: () => {
+  if (!dataDirLease) throw new Error("Installation ownership is required");
+} });
 assertRestoreReviewed(DATA_DIR);
 let dataWritersStopped = false;
 process.once("exit", () => {
@@ -7958,6 +7964,69 @@ const server = createServer(async (req, res) => {
       }
       const group = store.createGroup(name, memberIds, false, section, setup);
       return json(res, 201, { group: { ...publicGroupState(group), messages: [] } });
+    }
+    if (method === "POST" && path === "/api/packages/import") {
+      const body = await readBody(req);
+      if (typeof body.archivePath !== "string" || !body.archivePath) return json(res, 400, { error: "Archive path is required" });
+      if (body.action === "options") {
+        const intake = await readBotPackageArchive(body.archivePath);
+        if (intake.scan.blocked) return json(res, 200, { archiveSha256: intake.sha256, scan: intake.scan });
+        const definition = intake.manifest.definition.package;
+        return json(res, 200, { archiveSha256: intake.sha256, scan: intake.scan,
+          agents: definition.agents.map(agent => ({ key: agent.key, name: agent.name, skills: agent.skills ?? [] })),
+          skills: intake.manifest.skills.map(skill => ({ key: skill.key, name: skill.name, dependencies: skill.dependencies, license: skill.license })),
+          routines: (definition.routines ?? []).map(routine => ({ key: routine.key, name: routine.name, agent: routine.agent })),
+          instructions: intake.manifest.instructions,
+        });
+      }
+      if (!body.selection) return json(res, 400, { error: "Explicit selection is required" });
+      if (body.action === "preview") return json(res, 200, await previewBotPackageImport(body.archivePath, { selection: body.selection }));
+      if (body.action !== "import" || typeof body.archiveSha256 !== "string" || typeof body.reviewHash !== "string") return json(res, 400, { error: "Reviewed archive hash is required" });
+      const refuseRepeatedImport = () => {
+        if (store.bots.some(bot => bot.packageImportReceipt?.reviewHash === body.reviewHash && bot.packageImportReceipt?.archiveSha256 === body.archiveSha256)) {
+          throw Object.assign(new Error("This reviewed package was already imported"), { status: 409 });
+        }
+      };
+      refuseRepeatedImport();
+      const result = await importBotPackageArchive({ archivePath: body.archivePath, dataDir: DATA_DIR,
+        selection: body.selection, expectedArchiveSha256: body.archiveSha256, expectedReviewHash: body.reviewHash,
+        acknowledgeWarnings: body.acknowledgeWarnings === true, existingBots: store.bots, modelSelection: await defaultSelection(),
+        atomicCommit: ({ prepared }) => {
+          if (dataWritersStopped || !routines) throw new Error("Installation is closing");
+          refuseRepeatedImport();
+          for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id };
+          const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups);
+          const routineBatch = routines.preparePackageAddition(prepared.routines);
+          const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,
+            ...prepared.files.map(file => [file.path, file.content] as const)]);
+          const expected = new Map<string, string | null>();
+          for (const relative of replacements.keys()) {
+            try { expected.set(relative, createHash("sha256").update(readFileSync(join(DATA_DIR, relative))).digest("hex")); }
+            catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; expected.set(relative, null); }
+          }
+          const assertOwned = () => { if (dataWritersStopped) throw new Error("Installation is closing"); };
+          try {
+            commitPackageImportFiles(DATA_DIR, replacements, expected, { allowedNewBotIds: prepared.bots.map(bot => bot.id), assertOwned });
+          } catch (error) {
+            // Settle a recoverable write failure before the event loop admits
+            // another writer. A durable commit must still publish its state.
+            let recovered: ReturnType<typeof recoverPackageImportTransaction>;
+            try { recovered = recoverPackageImportTransaction(DATA_DIR, { assertOwned }); }
+            catch {
+              // Memory may no longer describe disk. Stop synchronously so no
+              // timer/provider callback writes over retained recovery evidence.
+              // Leave dataWritersStopped false: the stale lease and journal
+              // must survive for explicit recovery at the next startup.
+              process.stderr.write("Package import recovery could not establish a consistent installation. Murage stopped; the recovery journal and original copies were retained.\n");
+              process.exit(1);
+            }
+            if (recovered.status !== "committed") throw error;
+          }
+          routineBatch.publish();
+          botBatch.publish();
+        },
+      });
+      return json(res, 201, result);
     }
     if (method === "POST" && path === "/api/teams/export") {
       const body = await readBody(req);
