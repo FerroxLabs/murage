@@ -5,10 +5,16 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, expect, it } from "vitest";
 import { waitForExit } from "../server/testing/cleanup.ts";
-import { permittedProofPermission } from "./fuigo-proof-proxy.mjs";
+import { isProofPermissionCard, permittedProofPermission } from "./fuigo-proof-proxy.mjs";
 
 let child;
 let directory;
+
+it("does not mistake the welcome choices for a permission request", () => {
+  expect(isProofPermissionCard({ kind: "options", card: { title: "What do you actually want me for?" } })).toBe(false);
+  expect(isProofPermissionCard({ kind: "options", card: { tool: "other", requestId: "fixture-request" } })).toBe(true);
+  expect(isProofPermissionCard({ kind: "options", card: { tool: "other", requestId: "fixture-request", answered: "allow" } })).toBe(false);
+});
 
 it("approves only pinned discovery and exact fixture calls, never shell or arbitrary MCP work", () => {
   const call = (name, rawInput) => ({ _meta: { "fuigo/tool": { version: 1, name } }, rawInput });

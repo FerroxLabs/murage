@@ -100,7 +100,7 @@ async function validateFuigo(resources, platform, required) {
   if (!allowed?.has(target)) {
     throw new Error(`Packaged ${platform} app contains the wrong fuigo target: ${target}`);
   }
-  // Byte-for-byte against the pinned 1.0.1 digest, before macOS signing
+  // Byte-for-byte against the pinned digest, before platform signing
   // rewrites the signature — this is the last point the upstream bytes exist
   // unmodified inside the app.
   verifyFuigoExecutable(executable, target);
@@ -125,6 +125,16 @@ export default async function afterPack(context) {
   );
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
+
+  // electron-builder's single-file extraResources copier does not run its
+  // Windows signing transformer. Sign only the verified packaged copy, using
+  // the same configured signer as the app and installer, before archiving it.
+  if (context.electronPlatformName === "win32" && context.packager) {
+    const executable = path.join(resources, HARNESS_RESOURCE_DIRECTORIES.MURAGE_FUIGO_DIR, FUIGO_EXECUTABLE_NAMES.win32);
+    if (await context.packager.signIf(executable) !== true) {
+      throw new Error("Packaged Fuigo Windows signing did not complete");
+    }
+  }
 
   if (context.electronPlatformName !== "linux") return;
 

@@ -300,8 +300,8 @@ jobs:
               Write-Host "::error::$($_.Name) signed by an unexpected subject: $subject"; $script:fail = 1
             }
           }
-          # the app itself must be OURS, never a vendor's — checked explicitly
-          foreach ($required in @('Murage.exe', 'Murage-*-setup.exe')) {
+          # The app and bundled first-party engine must be signed by us.
+          foreach ($required in @('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe')) {
             Get-ChildItem release -Filter $required -Recurse | ForEach-Object {
               $subject = (Get-AuthenticodeSignature $_.FullName).SignerCertificate.Subject
               if ($subject -notmatch 'Ferrox Labs, LLC') {
@@ -426,7 +426,10 @@ jobs:
         # The .deb path no longer prompts for root from inside the app; it
         # hands the user a command. This proves that command actually installs
         # and resolves dependencies, which dpkg -i did not.
-        run: pnpm smoke:deb-command
+        run: |
+          deb=(release/*.deb)
+          test "${#deb[@]}" -eq 1
+          pnpm smoke:deb-command "${deb[0]}"
       - name: Prove an AppImage update lands on the launched path
         # Mandatory prepublication proof against an isolated candidate feed.
         # After publication, rerun without --candidate-feed for live GitHub proof.

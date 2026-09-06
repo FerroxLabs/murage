@@ -273,6 +273,7 @@ let desktopDataDir = null;
 let desktopDataOwner = null;
 const ownedServerChildren = new Set();
 const credentialWrites = new Set();
+const managedComposioShutdown = new AbortController();
 const companionStarts = new Set();
 
 function assertDesktopStartupActive() {
@@ -2463,6 +2464,10 @@ const desktopStartup = app.whenReady().then(async () => {
       await ensureManagedComposioCredentials({
         brokerUrl: composioBrokerUrl(),
         credentials,
+        timeoutSignal: (milliseconds) => AbortSignal.any([
+          managedComposioShutdown.signal,
+          AbortSignal.timeout(milliseconds),
+        ]),
         // The shared credential state performs the one atomic encrypted
         // write after this registration has derived its complete document.
         saveCredentials: async () => {},
@@ -2530,6 +2535,9 @@ process.once("SIGTERM", requestSignalQuit);
 
 app.on("before-quit", (e) => {
   desktopShutdownStarted = true;
+  // Optional hosted registration must not hold the credential queue open for
+  // its network timeout. Cancel the request, then drain actual writes below.
+  managedComposioShutdown.abort();
   if (cuaCleanedUp) return;
   e.preventDefault();
   if (desktopCleanup) return;
