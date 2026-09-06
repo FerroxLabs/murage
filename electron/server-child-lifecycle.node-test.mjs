@@ -46,11 +46,18 @@ test("real delegated writer holds primary lease until exact child exits",{timeou
   const child=spawn(process.execPath,["--input-type=module","-e",`
     import {acquireDataDirLeaseForProcess} from ${JSON.stringify(module)};
     const lease=acquireDataDirLeaseForProcess(process.env.OWNED_TEST_ROOT);
-    process.on('SIGTERM',()=>process.send({event:'stopping'}));
-    process.on('message',()=>{lease.release();process.exit(0);});
+    process.on('message',message=>{
+      if(message==='stop') {process.send({event:'stopping'});return;}
+      if(message==='finish') {lease.release();process.exit(0);}
+    });
     process.send({event:'ready',consumed:process.env.MURAGE_INTERNAL_DATA_DIR_LEASE===undefined});
   `],{env:{...process.env,OWNED_TEST_ROOT:data,...lease.utilityServerLeaseEnvironment()},stdio:["ignore","ignore","ignore","ipc"]});
   children.push(child);
+  // Windows terminates on SIGTERM without running a JS signal handler.
+  // Use a cooperative fixture stop to exercise the interval before actual
+  // exit on every platform; explicit cleanup signals still kill the process.
+  const kill=child.kill.bind(child);
+  child.kill=signal=>signal?kill(signal):child.send("stop");
   const lifecycle=createServerChildLifecycle(child,{timeoutMs:1500});
   const ready=await new Promise((resolve,reject)=>{child.once("message",resolve);child.once("error",reject);});
   assert.equal(ready.consumed,true);

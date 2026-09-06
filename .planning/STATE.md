@@ -1,6 +1,23 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+ScopedWindows34014985942 Vitest395PASS/20skip +broker7PASS; reachedElectron
+previouslyblocked. Electron5fails/1cancel:3pathassertions,POSIXpermissionfixture,
+namespacepathrealpathfailure, delegatedwriterJS-SIGTERM assumptiontimeout.
+Fixturescorrectednativejoin/WindowsLEASE_BUSY,50localNodePASS/1skip. Lifecycle
+IPCfixture testslease-retentionuntilactualexit,NOTgracefulWindowssignaldrain;
+3PASS, existingrealSIGKILLownershipchecks preserveactualkillcoverage. Namespace
+diagnosticusesstandardtoNamespacedPath andsanitizednativecode/rootkind; still
+needsWindowsruntime, no productionfixjustified/artifactinvalidatedyet.
+Publicdownloadbacktooling3feeds/7payloadsstreamhashcheck45workflowtestsPASS.
+NextscopeWindowsworkflowtests+ALLremainingNode/packagedchecks, preservepassed
+ACPandbrokercorpus. Upload75166stillactive; no publicrelease.
+Localguardcreateddraft383479572(v0.1.45) viaauthorizedlocalidentity; upload75166
+stilllive, firstDEB+arm64DMG/blockmapuploaded. Provestoken-specific403fallback
+works; neverchangedRELEASES_PAT. Windows scopedCI34014985942 job101437096422
+passedtypecheck,affectedtests/downstreamsactive. Postpublishproof willstream
+7publicfeed-listedpayloads onrunner tovalidateactualdownloadhashes plusLinux
+updater; userlaptopneednotdownloadanotherfullcopy. No publishbeforegates.
 All3acceptedartifact downloads COMPLETE. Existingreleaseworkflow completeness
 andfeedhashchecks rerunlocallyPASS21assets/7entries. Guardedlocalupload session
 75166 active usingauthorizedhostghidentity; no publishbeforegates. Exportroot
