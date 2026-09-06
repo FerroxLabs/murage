@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { z } from "zod";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { RESTORE_REVIEW_FILE, readRestoreReview, assertRestoreReviewed } from "../electron/restore-review.mjs";
@@ -29,7 +29,7 @@ function rootPaths(dataDir: string) {
   const paths = dataDirLeasePaths(dataDir);
   const root = paths.canonicalDataDir;
   const home = dataDirLeasePaths(homedir()).canonicalDataDir;
-  const cwd = resolve(process.cwd());
+  const cwd = dataDirLeasePaths(process.cwd()).canonicalDataDir;
   if (root === home || home.startsWith(root + sep) || root === cwd || cwd.startsWith(root + sep)) fail("BROAD_RESTORE_TARGET_REFUSED");
   const stat = entry(root);
   if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) fail("UNSAFE_RESTORE_TARGET");

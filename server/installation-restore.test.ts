@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { restoreInstallation, rollbackInstallationRestore } from "./installation-restore.ts";
 import { acquireDataDirLease, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -96,6 +96,23 @@ it("rejects home and working-tree roots before inspecting or changing them", asy
   for (const target of [homedir(), process.cwd()]) {
     await expect(restoreInstallation(target, f.archive, f.sha)).rejects.toMatchObject({ code: "BROAD_RESTORE_TARGET_REFUSED" });
   }
+});
+
+it("rejects a canonical working directory reached through an alias before reading an archive", async () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-restore-cwd-alias-")); roots.push(root);
+  const working = join(root, "working"), alias = join(root, "alias");
+  mkdirSync(working);
+  writeFileSync(join(working, "keep.txt"), "untouched");
+  symlinkSync(working, alias, process.platform === "win32" ? "junction" : "dir");
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue(alias);
+  try {
+    // No valid archive exists: a regressed guard cannot replace even this
+    // owned fixture while the assertion checks the preflight refusal.
+    await expect(restoreInstallation(working, join(root, "absent.zip"), "a".repeat(64)))
+      .rejects.toMatchObject({ code: "BROAD_RESTORE_TARGET_REFUSED" });
+    expect(readFileSync(join(working, "keep.txt"), "utf8")).toBe("untouched");
+    expect(existsSync(`${dataDirLeasePaths(working).leasePath}.restore.json`)).toBe(false);
+  } finally { cwd.mockRestore(); }
 });
 
 it("rejects malformed external journals without changing the installation", async () => {
