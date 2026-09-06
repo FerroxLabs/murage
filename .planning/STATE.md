@@ -1,6 +1,26 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+WINDOWS NAMESPACE PRODUCT FIX: normalizeonlyrecognizeddrive/UNCnamespacebefore
+native root resolution, preservingcase andphysicalcomponentwalk. Rejectnamespace
+componentstralingdot/space,dotparent/reserveddevices thatarenotordinaryaliases;
+Microsoftprimarydocs confirmextendedprefixdisablesnormalization. Finalcanonical
+normalizationunchanged. Actualanchor equivalence+secondownerrefusal retained;
+temporary rawrootdiagnosticremoved (underlyingAPIneednotworkafterworkaround).
+Local53ownership/lifecyclePASS/1Windowsskip; Windowsnativeconfirmationrequired.
+Namespacefollowuphadbeenqueuedtoidleagent; rootresumedactualimplementation.
+Preparing0.1.46 freshartifactcandidate;0.1.45draft383479572 remainsunpublished,
+21verifiedassets preservedasobsoletecandidateevidence, notforpublication.
+LOCAL DRAFT ASSEMBLY ACCEPTED_SCOPED:upload75166 exit0,draft383479572; reused
+workflow exactstoredbytescheck97657 exit0:21assets,21digestverified. No publish.
+Windowsd872377c34015606472 passedtypecheck/contrast/workflow45/broker7;Electron
+181pass/1fail/5skip(no cancel), onlyvalidnamespaceddriverootrealpathdiagnostic.
+Namespaceowner investigatingminimalproductnormalization; allotherfixturefixes
+pass. Productchange requiresfreshcandidateartifacts; do notshipstale06493fb6.
+ACTIVE Windowsdownstreamconfirmation34015606472 ond872377c: scopedworkflow
+Vitestthenbroker/Electron/packagedserver, allprioraffectedACPpassesretained.
+Namespace diagnostic resultmustguideanyproductchange. Localupload75166live;
+draft383479572, no publicationwhilegatespending.
 ScopedWindows34014985942 Vitest395PASS/20skip +broker7PASS; reachedElectron
 previouslyblocked. Electron5fails/1cancel:3pathassertions,POSIXpermissionfixture,
 namespacepathrealpathfailure, delegatedwriterJS-SIGTERM assumptiontimeout.
