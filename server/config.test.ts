@@ -39,6 +39,40 @@ vi.mock("node:fs", async (original) => {
   return { ...fs, readFileSync: vi.fn(fs.readFileSync) };
 });
 
+describe("explicit web search configuration", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
+
+  it("persists and reloads selected search keys while provider-only updates preserve them", () => {
+    saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" });
+    saveConfig({ webSearch: { provider: "exa" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "exa", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" });
+    expect(JSON.parse(readFileSync(file, "utf8")).webSearch).toEqual(loadConfig().webSearch);
+  });
+
+  it("persists explicit empty-key clearing without removing the other provider key", () => {
+    saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" } });
+    saveConfig({ webSearch: { provider: "off", tavilyApiKey: "" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "off", tavilyApiKey: "", exaApiKey: "fake-exa-key" });
+  });
+
+  it("validates the strict provider schema and leaves legacy engine search unchanged", () => {
+    expect(parseStoredConfig({}).webSearch).toBeUndefined();
+    for (const provider of ["engine", "tavily", "exa", "off"]) expect(parseConfigPatch({ webSearch: { provider } }).webSearch?.provider).toBe(provider);
+    expect(() => parseConfigPatch({ webSearch: { provider: "unknown" } })).toThrow();
+    expect(() => parseConfigPatch({ webSearch: { provider: "tavily", arbitraryEndpoint: "https://example.invalid" } })).toThrow();
+    expect(() => parseConfigPatch({ webSearch: { provider: "exa", exaApiKey: 1 } })).toThrow();
+    vi.stubEnv("TAVILY_API_KEY", "ambient-engine-tavily-key");
+    vi.stubEnv("EXA_API_KEY", "ambient-engine-exa-key");
+    expect(loadConfig().webSearch).toBeUndefined();
+    const inherited = { TAVILY_API_KEY: process.env.TAVILY_API_KEY, EXA_API_KEY: process.env.EXA_API_KEY };
+    stripWorkspaceCredentialEnv(inherited);
+    expect(inherited).toEqual({ TAVILY_API_KEY: "ambient-engine-tavily-key", EXA_API_KEY: "ambient-engine-exa-key" });
+  });
+});
+
 describe("saved configuration recovery", () => {
   const file = join(DATA_DIR, "config.json");
   let loadConfig: typeof import("./config.ts").loadConfig;

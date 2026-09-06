@@ -1,6 +1,22 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+P17 search configuration ACCEPTED (confirmation round 2): explicit engine/tavily/exa/
+off selection with config-only write-only keys; provider-only patch preserves
+keys and explicit empty clears. Absent selection keeps existing engine/tool
+behavior. Never strip existing inherited search credentials or hydrate/spend them
+automatically. Public API/SSE expose configured booleans only. Checks: config
+validation/save/reload/clear tests, actual isolated config API no-secret response,
+client types. No mounted search or paid pilot claim in this configuration slice.
+P04 config/tests; root public status/client typing/API regression. Two rounds.
+Evidence: config 91 tests PASS; actual API/SSE canary test 14911 PASS (1 scoped,
+216 skipped), configured booleans only, provider-switch retained keys, explicit
+clear, invalid provider and unauthorized write refused. Compatibility correction:
+exclude webSearch from fleet reload keys; same running engine bearer survives
+provider switch. Combined types 26049 PASS. Encrypted desktop secretStorage path
+explicitly refuses these keys until OS custody wiring; config-only headless path
+works. No mounted tool or live provider claim. Stage search hunks only; budget
+candidate stays uncommitted at its limit.
 Independent P17 adapter foundation ACCEPTED (round 1); P11 budget
 remains paused/uncommitted at its limit, no automatic follow-up authorization.
 Contract: fixed-endpoint Tavily/Exa search adapters, explicit selection/no fallback,
