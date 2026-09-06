@@ -1,6 +1,19 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+06493fb6 UbuntuCI fullySUCCESS inclhumanspecs;MacCI/controlplane/Linuxpackage
+SUCCESS. AllthreeRelease nativejobsSUCCESS; assembly101434177070 downloading.
+OnlyWindowsCI newfailure fixedtest-only: slowfakeprovider previouslyfinished
+after800ms beforewaitingcardassertion; optionalfilegate nowreleasesafterassertion.
+83focusedgroup/ClaudesuitesPASS/1skip,defaultslowmodeunchanged. ExplicitCI
+windows_only dispatch preservesfullpnpmtest whiledefaultallplatformsunchanged;
+28workflowchecksPASS. Next Windows-onlyconfirmation; noapplicationrebuild.
+06493fb6 WindowsCI terminalFAIL with5018passed/1failed/135skipped/1todo.
+Allfourpreviousblockerspassed. Newobservedfailure group-goal-run.e2e.test.ts316
+busycoordinator wait expects0turns/nullbusyBot, observesworkingturn1. Windows
+agentdiagnosingexactfixture/runtimecause underexplicittravelcontinuation;
+crossresearchratherthanblindrerun. Ubuntu human specs andMacnotarization live;
+Windows+UbuntuReleaseSUCCESS. No publicrelease orproductioncandidatechanges.
 06493fb6 confirmation progress: MacCI SUCCESS; UbuntuCI tests+Electronsyntax
 passed, browserinstall/humanspecsnext; UbuntuCI packageSUCCESS; UbuntuRelease
 SUCCESS. WindowsCI running,WindowsRelease packagedserverstep,Macnotarization.

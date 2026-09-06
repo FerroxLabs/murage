@@ -111,6 +111,7 @@ beforeAll(async () => {
         displayName: "Busy goal fixture",
         environment: {
           FAKE_CLAUDE_MODE: "slow",
+          FAKE_CLAUDE_REPLY_GATE: join(home, "release-busy-goal"),
           FAKE_CLAUDE_REPLIES: JSON.stringify([
             "The unrelated direct task is complete.",
             "The queued team goal is complete.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Waited for the lead, then completed normally.\"}</murage-goal>",
@@ -324,6 +325,10 @@ describe("goal-driven channel runs", () => {
       const waitingState = (await api("GET", "/api/bots?messages=30")).body;
       const waitingRoom = waitingState.groups.find((group: { id: string }) => group.id === room.id);
       const cardId = waitingRoom.messages.find((message: { kind: string }) => message.kind === "goal.run").id;
+
+      // Keep the direct turn active until its queued goal is observed. A
+      // fixed 800 ms reply can finish before slow Windows CI reads the card.
+      writeFileSync(join(home, "release-busy-goal"), "release");
 
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots?messages=30")).body;
