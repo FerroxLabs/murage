@@ -10916,10 +10916,6 @@ const server = createServer(async (req, res) => {
       }
       let configWriteCommitted = false;
       const externalSecretStorage = url.searchParams.get("secretStorage") === "external";
-      if (externalSecretStorage && (patch.webSearch?.tavilyApiKey !== undefined || patch.webSearch?.exaApiKey !== undefined)) {
-        for (const request of browserCleanupRequests) browserCleanup.abort(request);
-        return json(res, 409, { error: "Encrypted desktop storage for native search keys is not connected yet. Search credentials were not saved." });
-      }
       try {
         if (externalSecretStorage) {
           // The packaged Electron caller commits supplied credentials to the
@@ -10935,6 +10931,8 @@ const server = createServer(async (req, res) => {
           if (persisted.tts?.key !== undefined) persisted.tts.key = "";
           if (persisted.imageGen?.key !== undefined) persisted.imageGen.key = "";
           if (persisted.flux?.apiKey !== undefined) persisted.flux.apiKey = "";
+          if (persisted.webSearch?.tavilyApiKey !== undefined) persisted.webSearch.tavilyApiKey = "";
+          if (persisted.webSearch?.exaApiKey !== undefined) persisted.webSearch.exaApiKey = "";
           saveConfig(persisted);
           configWriteCommitted = true;
           syncCredentialEnv(patch);

@@ -7,6 +7,22 @@ import {
 } from "./workspace-credentials.mjs";
 
 describe("workspace credential migration", () => {
+  it("moves search keys into the encrypted document and preserves provider choice across tombstone/reboot/clear", () => {
+    const config = { webSearch: { provider: "exa", tavilyApiKey: "fake-tavily", exaApiKey: "fake-exa" } };
+    const migrated = migrateWorkspaceCredentials(config, {});
+    expect(migrated.config).toEqual({ webSearch: { provider: "exa" } });
+    expect(migrated.credentials).toEqual({ tavilySearchApiKey: "fake-tavily", exaSearchApiKey: "fake-exa" });
+    expect(config.webSearch.tavilyApiKey).toBe("fake-tavily");
+    const reboot = migrateWorkspaceCredentials({ webSearch: { provider: "exa", tavilyApiKey: "", exaApiKey: "" } }, migrated.credentials);
+    expect(reboot.credentials).toEqual(migrated.credentials);
+    expect(workspaceCredentialEnv(reboot.credentials)).toEqual({ MURAGE_TAVILY_SEARCH_KEY: "fake-tavily", MURAGE_EXA_SEARCH_KEY: "fake-exa" });
+    // credential:set removes the actual encrypted entry on clear; its
+    // plaintext tombstone must not resurrect that key at the next boot.
+    const cleared = migrateWorkspaceCredentials({ webSearch: { provider: "exa", tavilyApiKey: "" } }, { exaSearchApiKey: "fake-exa" });
+    expect(workspaceCredentialEnv(cleared.credentials)).toEqual({ MURAGE_EXA_SEARCH_KEY: "fake-exa" });
+    expect(cleared.config.webSearch.provider).toBe("exa");
+  });
+
   it("moves every plaintext secret into the store and deletes the field", () => {
     const config = {
       xai: { key: "xai-secret", url: "https://api.example.test/v1" },

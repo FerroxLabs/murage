@@ -13,6 +13,8 @@ export const WORKSPACE_CREDENTIALS = [
   { section: "tts", field: "key", name: "ttsKey", env: "MURAGE_TTS_KEY" },
   { section: "imageGen", field: "key", name: "openaiImageApiKey", env: "MURAGE_OPENAI_IMAGE_KEY" },
   { section: "opencodeGo", field: "apiKey", name: "opencodeGoApiKey", env: "OPENCODE_API_KEY" },
+  { section: "webSearch", field: "tavilyApiKey", name: "tavilySearchApiKey", env: "MURAGE_TAVILY_SEARCH_KEY" },
+  { section: "webSearch", field: "exaApiKey", name: "exaSearchApiKey", env: "MURAGE_EXA_SEARCH_KEY" },
 ];
 
 /** One boot-time sweep of config.json: move every plaintext workspace secret

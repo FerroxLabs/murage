@@ -255,8 +255,9 @@ const appConfigSchema = z.object({
   /** OpenAI key used only by the in-process avatar image generator. */
   imageGen: z.object({ key: optionalText }).optional(),
   /** Optional external search credentials are write-only workspace state.
-   * Absent keeps existing engine-provided search; no environment auto-import. */
-  webSearch: z.object({ provider: z.enum(["engine", "tavily", "exa", "off"]), tavilyApiKey: optionalText, exaApiKey: optionalText }).strict().optional(),
+   * Absent keeps engine search. Only desktop Murage-specific key variables
+   * are imported; ambient engine/MCP provider credentials remain separate. */
+  webSearch: z.object({ provider: z.enum(["engine", "tavily", "exa", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
@@ -304,7 +305,7 @@ export interface AppConfig {
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
   imageGen?: { key?: string };
-  webSearch?: { provider: "engine" | "tavily" | "exa" | "off"; tavilyApiKey?: string; exaApiKey?: string };
+  webSearch?: { provider?: "engine" | "tavily" | "exa" | "off"; tavilyApiKey?: string; exaApiKey?: string };
   flux?: { apiKey?: string };
   sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
   profile?: { name?: string; email?: string };
@@ -513,6 +514,11 @@ export function loadConfig(): AppConfig {
   if (process.env.MURAGE_TTS_KEY !== undefined) cfg.tts.key = process.env.MURAGE_TTS_KEY;
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.MURAGE_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.MURAGE_OPENAI_IMAGE_KEY;
+  if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined || process.env.MURAGE_EXA_SEARCH_KEY !== undefined) {
+    cfg.webSearch = { ...cfg.webSearch };
+    if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined) cfg.webSearch.tavilyApiKey = process.env.MURAGE_TAVILY_SEARCH_KEY;
+    if (process.env.MURAGE_EXA_SEARCH_KEY !== undefined) cfg.webSearch.exaApiKey = process.env.MURAGE_EXA_SEARCH_KEY;
+  }
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   return cfg;
@@ -534,6 +540,8 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "MURAGE_TTS_KEY"],
     [patch.imageGen?.key, "MURAGE_OPENAI_IMAGE_KEY"],
+    [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
+    [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
     [patch.flux?.apiKey, "FLUX_API_KEY"],
   ];
   for (const [value, name] of secrets) {
@@ -573,6 +581,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENCODE_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
+  "MURAGE_TAVILY_SEARCH_KEY",
+  "MURAGE_EXA_SEARCH_KEY",
   // Flux Router. The whole point of listing it: the raw workspace key must
   // never ride into a spawned CLI's env. Routing injects it post-strip.
   "FLUX_API_KEY",
