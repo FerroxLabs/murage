@@ -45,7 +45,27 @@ const execute = (command, args) => spawnSync(command, args, {
 
 function checked(command, args, run) {
   const result = run(command, args);
-  if (result.error || result.status !== 0) throw new Error(`${command} ${args[0]} failed; refusing to proceed`);
+  if (result.error || result.status !== 0) {
+    // CLI errors can include response bodies, paths, or credentials. Emit only
+    // numeric status and fixed classifications, never the raw stdout/stderr.
+    const text = `${String(result.stderr ?? "").slice(0, 65536)}\n${String(result.stdout ?? "").slice(0, 65536)}`;
+    const http = text.match(/\bHTTP(?:\/\S+)?\s+([45]\d{2})\b/)?.[1] ?? "unknown";
+    const reasons = [
+      [/resource not accessible/i, "resource-access-denied"],
+      [/bad credentials/i, "invalid-credentials"],
+      [/workflow.*scope|scope.*workflow/i, "workflow-scope-required"],
+      [/repository is empty/i, "empty-repository"],
+      [/validation failed/i, "validation-failed"],
+      [/already exists/i, "already-exists"],
+      [/could not resolve host|no such host/i, "dns-failure"],
+      [/no such file or directory/i, "local-file-missing"],
+    ];
+    const reason = reasons.find(([pattern]) => pattern.test(text))?.[1] ?? "unclassified";
+    const processError = ["ETIMEDOUT", "ENOENT", "EACCES", "ENOBUFS"].includes(result.error?.code)
+      ? result.error.code : result.error ? "other" : "none";
+    const operation = command === "gh" && args[0] === "release" && args[1] === "create" ? "gh release create" : `${command} ${args[0]}`;
+    throw new Error(`${operation} failed (exit=${Number.isInteger(result.status) ? result.status : "none"}, HTTP=${http}, reason=${reason}, process=${processError}); refusing to proceed`);
+  }
   return result.stdout;
 }
 

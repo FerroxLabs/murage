@@ -161,6 +161,31 @@ describe("release guard semantics", () => {
 });
 
 describe("draft uploads against a changing remote", () => {
+  it.each([
+    [{ status: 1, stderr: "HTTP 403: Resource not accessible by personal access token" }, "HTTP=403, reason=resource-access-denied, process=none"],
+    [{ status: 1, stderr: "HTTP 422: Validation Failed" }, "HTTP=422, reason=validation-failed, process=none"],
+    [{ status: null, error: { code: "ETIMEDOUT" } }, "HTTP=unknown, reason=unclassified, process=ETIMEDOUT"],
+  ])("classifies draft creation failures without leaking CLI output or retrying", (failure, expected) => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-draft-error-"));
+    writeFileSync(join(dir, "asset.zip"), "artifact");
+    const calls = [];
+    const secret = "private-token-canary-do-not-print";
+    const run = (command, args) => {
+      calls.push([command, ...args]);
+      if (args[0] === "release") return { ...failure, stderr: `${failure.stderr ?? ""}\n${secret}`, stdout: secret };
+      const endpoint = args.at(-1);
+      return endpoint.includes("/tags/") ? http(404, {}) : http(200, endpoint.includes("/releases?") ? [] : { permissions: { push: true } });
+    };
+    try {
+      let error;
+      try { uploadDraft("1.2.3", dir, "unused-notes", run); } catch (caught) { error = caught; }
+      expect(error.message).toContain(`gh release create failed (`);
+      expect(error.message).toContain(expected);
+      expect(error.message).not.toContain(secret);
+      expect(calls.filter(call => call[1] === "release")).toHaveLength(1);
+      expect(calls.flat()).not.toContain("POST");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   function uploadScenario({existing = [], states = [true], collision = false} = {}) {
     const dir = mkdtempSync(join(tmpdir(), "murage-draft-upload-"));
     writeFileSync(join(dir,"asset.zip"),"artifact");

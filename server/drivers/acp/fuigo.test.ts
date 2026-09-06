@@ -451,8 +451,9 @@ describe("fuigo binary resolution — the bundled engine", () => {
     // and not an unconditional prepend.
     const userBin = join(root, "user-bin");
     mkdirSync(userBin, { recursive: true });
-    writeFileSync(join(userBin, "fuigo"), "");
-    chmodSync(join(userBin, "fuigo"), 0o755);
+    const binary = join(userBin, process.platform === "win32" ? "fuigo.exe" : "fuigo");
+    writeFileSync(binary, "");
+    chmodSync(binary, 0o755);
     process.env.PATH = userBin;
     resetPathCacheForTests();
 

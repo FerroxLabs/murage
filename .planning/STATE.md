@@ -1,6 +1,60 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+AUTHORIZED PASS IMPLEMENTED: restore cwd canonicalization nowmatches canonical
+target (realWindowscase/alias defect); safealias regression andFuigo installed
+fixture usesfuigo.exe.41focusedtestsPASS. Indexroutine orphanbranch waitssettled;
+additiveimport comparesexactpriorChiefset (persectionChiefs supported),2focused
+APIPASS. Releaseguard safeexit/HTTP/fixedreason diagnostics37PASS; neverrawstderr
+orcredentials. Draftcause remainsunknown pending actualworkflowexecution.
+Typecheck/diffcheckPASS. Next combinedCI+draftRelease once withnewproduction
+restorebytes. Preservepriornativepasses butcannotshipoldrestoreimplementation.
+No extraaudit via commitskill; usertwo-roundbudget overridesautomaticcritique.
+NEW EXPLICIT AUTHORIZATION: Sean approved a bounded deep dive/correction pass
+for the four remaining CI tests and draft creation. Outcome: required checks
+pass without weakening assertions, and complete verified draft can be assembled.
+Scope: index import/routine fixtures, Windows restore/Fuigo path failures,
+release-create diagnostics/fix. No unrelated audit or features. Root owns index;
+release_mac owns restore/Fuigo; release_updater owns guard. Astra medium all work.
+Verification: focused regressions then affected native CI/assembly confirmation;
+preserve unaffected passing native artifacts. Maximum two rounds this explicit
+pass; stop on unresolved confirmation. No secret logging, no premature publish.
+STOPPED PENDING USER DECISION: all88dc2498 jobs terminal. CI34011970244FAIL
+(Mac/controlplane/LinuxpackagePASS;Ubuntu1failure,Windows4 inclsameUbuntucase).
+Release34011971877FAIL onlyassembly101431163144; allthree nativejobsSUCCESS,
+21assetcompleteness and7feedhash/sizevalidationsPASS, ghreleasecreatefailed.
+Repo no longerempty, authenticatedreleases[]: no draft/assets/publicrelease.
+Originalemptyrepo causecannotexplainnewfailure; guardsuppressessubprocessstderr,
+exactcauseunproven. No furtherfix/retry underexhaustedverificationcycle.
+Same approval blockerhaspersistedthreegoalturns; no livejobs/independent
+release-firstwork remains. Goalblockedpending explicitboundedauthority forfour
+CItestfailures anddraftcreate diagnostics/correction. Fullprogrammepreserved;
+postponednonreleasepackages are notcomplete. Do notpublishoradvance main.
+WINDOWS CI FINALFAIL88dc2498 job101429254843:5011passed/4failed/135skipped/1todo.
+Remaining: index2726 teamimport expectsoneChief findstwo; index5451 sharedUbuntu
+routineinterrupt/PATCH409 race; installation-restore.test97 broadtargetreturns
+RESTORE_INTERRUPTED_REQUIRES_ROLLBACK notBROAD_RESTORE_TARGET_REFUSED;
+fuigo.test460 installed-userbinary fixtureunexpectedbundledPATH. No additional
+fix/retry underexhaustedcycle. Needboundeduserdecision forremaining4checks.
+WindowsnativeReleaseSUCCESS unaffected. Macnotarization/assembly observation
+continuesonexistingrun34011971877; nopublicpublication ornewsourcechanges.
+LATEST NATIVE88dc2498: WindowsRelease101429282006SUCCESS (FuigoValidFerroxLabs,
+allpackagedgates;artifact9982854237,360802066bytes). UbuntuRelease101429282057
+SUCCESS lifecycle/installcommand/updater/upload. Macnotarization andWindowsCI
+stilllive; continuedexacthandlemonitoring,no retries. UbuntuCI5451correction
+awaitingexplicitapprovalafterroundlimit. Publicationstillblocked.
+CONFIRMATION BLOCKER88dc2498: UbuntuCI101429254847 terminalFAIL,5140pass,
+1fail/9skip/1todo. Solefailure index.test.ts5451 orphanroutinebranch interrupts
+then immediately PATCHes ghostmodel,409not200; priorcorrectedbranchpasses.
+No correction/retry authorizedpastthisconfirmationround. Needexplicitdirection
+for remainingfixture-idle correction. MacCI101429254908SUCCESS; UbuntuCI native
+package101429254778SUCCESS; WindowsCI andallReleasejobs stillbeingobserved.
+Publicationblocked; don'tmarkprogrammecomplete orreopenpreviousacceptedwork.
+ACTIVE FINAL CI CONFIRMATION:88dc2498013dc156185be50f2f88f5b7a1bbb2ae committed
+andpushedworkingbranch. CI34011970244 +draftRelease34011971877 launchedonce,
+publish=false. No sourcechanges/retries whilechecksrun. Windows/Linuxagents
+monitor native+CI; rootMac/publication. Ifrequiredcheckfails, recordexactblocker
+andrequestdirection beforemorecorrectionsonthiscycle; no thirdexploration.
 CI CORRECTIONS READY (work-ahead, one grouped confirmation next): Windows
 snapshot/archive fsync needs writable owned scratch handles; r+ fix103focused
 recovery tests pass. Windows fixtures: nativepath expectations, LF source
