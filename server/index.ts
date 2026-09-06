@@ -305,7 +305,7 @@ import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
-import { previewBotPackageImport, importBotPackageArchive } from "./bot-package-import.ts";
+import { previewBotPackageImport, importBotPackageArchive, packageImportSelectionHash } from "./bot-package-import.ts";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
@@ -8030,10 +8030,12 @@ const server = createServer(async (req, res) => {
         });
       }
       if (!body.selection) return json(res, 400, { error: "Explicit selection is required" });
-      if (body.action === "preview") return json(res, 200, await previewBotPackageImport(body.archivePath, { selection: body.selection }));
+      if (body.action === "preview") return json(res, 200, await previewBotPackageImport(body.archivePath, { selection: body.selection, existingBots: store.bots }));
       if (body.action !== "import" || typeof body.archiveSha256 !== "string" || typeof body.reviewHash !== "string") return json(res, 400, { error: "Reviewed archive hash is required" });
+      const selectionHash = packageImportSelectionHash(body.selection);
       const refuseRepeatedImport = () => {
-        if (store.bots.some(bot => bot.packageImportReceipt?.reviewHash === body.reviewHash && bot.packageImportReceipt?.archiveSha256 === body.archiveSha256)) {
+        if (store.bots.some(bot => bot.packageImportReceipt?.archiveSha256 === body.archiveSha256
+          && (bot.packageImportReceipt?.selectionHash === selectionHash || bot.packageImportReceipt?.reviewHash === body.reviewHash))) {
           throw Object.assign(new Error("This reviewed package was already imported"), { status: 409 });
         }
       };
@@ -8044,7 +8046,8 @@ const server = createServer(async (req, res) => {
         atomicCommit: ({ prepared }) => {
           if (dataWritersStopped || !routines) throw new Error("Installation is closing");
           refuseRepeatedImport();
-          for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id };
+          for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id, selectionHash: prepared.selectionHash };
+          prepared.bots[0].packageImportReceipt!.baseline = prepared.baseline;
           const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups);
           const routineBatch = routines.preparePackageAddition(prepared.routines);
           const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,

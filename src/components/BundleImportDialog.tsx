@@ -14,6 +14,10 @@ interface Options {
 interface Preview {
   archiveSha256: string; reviewHash: string; scan: Scan; missingDependencies: string[];
   summary: { name: string; agents: number; skills: number; routines: number; instructions: number; suggestedChief: string | null } | null;
+  comparison?: {
+    status: "new" | "compared" | "unavailable"; incomingRelease: string; previousRelease?: string;
+    changes: { category: string; key: string; change: "added" | "changed" | "omitted" }[];
+  };
 }
 export interface BundleImportResult { name: string; bots: Bot[]; groups: Group[]; routines: Routine[] }
 const emptySelection = (): Selection => ({ agents: [], skills: [], routines: [], instructions: [] });
@@ -89,6 +93,20 @@ export function BundleImportDialog({ archivePath, fileName, onClose, onImported 
       {preview.summary && <p>{preview.summary.agents} bots, {preview.summary.skills} disabled skills, {preview.summary.instructions} instruction files and {preview.summary.routines} paused routines.</p>}
       {preview.missingDependencies.length > 0 && <p role="alert" className="text-danger">Select the missing dependencies: {preview.missingDependencies.join(", ")}. Nothing will be added automatically.</p>}
       {preview.summary?.suggestedChief && <p className="mt-2 text-ink-secondary">The suggested Chief arrives as an ordinary bot. Your current Chief stays unchanged.</p>}
+      {preview.comparison && preview.comparison.status !== "new" && <section aria-label="Package version comparison" className="mt-3 rounded-lg border border-hairline/50 bg-panel p-3">
+        <h3 className="font-semibold">Package version comparison</h3>
+        {preview.comparison.status === "compared" ? <>
+          <p className="mt-1 break-words text-ink-secondary">Last imported selection: {preview.comparison.previousRelease ?? "Version unavailable"} · Selected package: {preview.comparison.incomingRelease}</p>
+          <p className="mt-1 text-ink-secondary">This compares the last imported selection, not your current local edits.</p>
+          {preview.comparison.changes.length > 0 ? <ul className="mt-2 space-y-1">
+            {preview.comparison.changes.map((change, index) => <li key={index} className="break-words">
+              <span className="font-medium">{change.change === "omitted" ? "Not included" : change.change === "added" ? "Added" : "Changed"}</span>
+              {" · " + change.category + ": " + change.key}
+            </li>)}
+          </ul> : <p className="mt-2 text-ink-secondary">No differences from that saved selection were found.</p>}
+        </> : <p className="mt-1 text-ink-secondary">The prior version lacks saved comparison data, so its changes cannot be shown.</p>}
+        <p className="mt-2 font-medium">Imports a separate copy; existing bots and permissions stay unchanged.</p>
+      </section>}
       <p className="mt-2 text-ink-secondary">The scan flags known patterns and is not a guarantee that content is safe. Imported instructions remain untrusted.</p>
       {preview.scan.reviewRequired && <label className="mt-3 flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={Boolean(busy)} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the warnings and want to import this selection.</label>}
     </section>}
