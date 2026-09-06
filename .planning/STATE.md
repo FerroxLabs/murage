@@ -1,6 +1,51 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+CI CORRECTIONS READY (work-ahead, one grouped confirmation next): Windows
+snapshot/archive fsync needs writable owned scratch handles; r+ fix103focused
+recovery tests pass. Windows fixtures: nativepath expectations, LF source
+comparisons, fuigo.exe fixture, POSIX-only mode assertions236pass/7skip.
+Windows ACL privacy is NOT proven by POSIX mode tests. Vite CRLF hashbang import
+failure reproduced; scoped.gitattributes preservesLF for generator/catalog.
+OpenCode fixture pins XDG/OpenCode config roots:21pass with hostileambientpaths.
+Index interrupt acknowledgements precede process settlement; awaitidle before
+freshturn/modelchange/rowcount baseline. Helper firstattempt exposed freshbots
+omitbusy; correctedto requirepresence andbooleanidle. Final16focusedpass;
+no further correction attempts on this issue withoutdirection ifnativefails.
+Human existingfullset166pass/18skip/1failure:mobile Create event vsdesktopCreate
+fixture locator. Correctedlabelmatching passesdesktop+mobile(andbuild), allother
+evidencepreserved. typecheck and124Electron syntaxchecks pass.
+AllnativeRelease215930d6 jobsSUCCESS. Assembly21assets+7feedvalidationspassed,
+draftcreatefailed because publicrelease repoempty. Initialized README only
+underexistingpublicationauthority:release-repo commit6757da07b5dff8a385fd350182bb574f2506e2ef.
+No releasepublished. Newproduction2linefix requiresnewcandidateartifacts;
+next exactcommitCI +draftRelease are groupedconfirmation, notnewaudit.
+CURRENT CI WORK-AHEAD CONTRACT: existing required CI/release checks only.
+Windows release101426464869 and Ubuntu release101426464928 PASSED on215930d6;
+Fuigo Authenticode Valid/Ferrox Labs and Linux lifecycle/updater/install proof
+accepted. Mac release still running. CI34010901256 matrix failed: Ubuntu3,
+Mac1, Windows57 tests. Diagnose grouped underlying causes before corrections;
+preserve native evidence unless packaged source changes invalidate it. Root owns
+index asynchronous fixture timing; composio agent OpenCode Flux fixtures;
+Windows agent platform failures. No broadened audit or third exploratory round.
+Acceptance remains full required CI, native gates, assembly, then authorized
+publication/live-feed proof. New CI failures first observed here; one correction
+and confirmation only; unresolved confirmation blockers require direction.
+LATEST215930d6: realFuigo proofpassed; correctivecodecommitted/pushed. CIrun
+34010901256 control-plane andUbuntu package+smoke jobsSUCCESS; threeOS test
+matrixstillrunning. DraftRelease34010901993 WindowsAzurepackaging andUbuntu
+extra nativechecks stillrunning. No duplicate jobs/source changes. Secondary
+Hetznerpostpublish-readinessSSH failedhostkeyverification; didnotbypassstrict
+checking orusehost. CurrentCIunaffected; no newinfrastructure created.
+CURRENT CONFIRMATION:215930d65218776390f894b3bdc36baa0f832154 committed/pushed
+workingbranch. StandardCI34010901256 +draftRelease34010901993 requested exact
+branch/source; publish=false. Windows/Linuxagents monitor correspondingnative
+gates; root owns CIintegration/publication. No further sourcechanges while
+candidatechecks run. Prior fullsuite411e2274 passes preserved; thisCIvalidates
+newshutdown/signing/fixturechanges acrossallthreeOS+controlplane+nativeLinux.
+Allthreeidentifiedblockers now haveimplemented corrections andfocusedpassing
+evidence, including realFuigo proof. Publication awaits combinedCI/native/
+assembly gates, not moreenhancements. Mainunchanged.
 NEW AUTHORIZATION:Sean authorized anotherbounded3-blocker correctivepass and
 explicitly requested workahead on remaining CIchecks. ScopeUbuntu shutdown,
 WindowsbundledFuigosigning,liveFuigoproof plus deterministicremainingCI blockers;

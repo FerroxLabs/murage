@@ -321,7 +321,11 @@ describe("OpenCode Flux routing", () => {
 
   beforeEach(() => {
     scratch = mkdtempSync(join(tmpdir(), "murage-opencode-flux-"));
-    env = { HOME: scratch, MURAGE_DATA_DIR: join(scratch, "state") };
+    // The driver merges the process environment while the connector receives
+    // this object directly. Pin both higher-priority config roots so runner
+    // XDG/OpenCode overrides cannot send them to different files.
+    env = { HOME: scratch, MURAGE_DATA_DIR: join(scratch, "state"),
+      XDG_CONFIG_HOME: join(scratch, ".config"), OPENCODE_CONFIG_DIR: join(scratch, ".config", "opencode") };
     configPath = join(scratch, ".config", "opencode", "opencode.json");
     mkdirSync(dirname(configPath), { recursive: true });
     process.env.FLUX_API_KEY = FLUX_KEY;

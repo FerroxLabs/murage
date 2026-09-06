@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -22,12 +22,12 @@ describe("harnessResourceEnvironment", () => {
     const resources = "/Applications/Murage.app/Contents/Resources";
     expect(harnessResourceEnvironment(resources)).toEqual({
       MURAGE_RESOURCES_PATH: resources,
-      MURAGE_STATIC_DIR: `${resources}/ui`,
-      MURAGE_SKILLS_DIR: `${resources}/skills`,
-      MURAGE_SKILL_LIBRARY: `${resources}/skills-library`,
-      MURAGE_LIBRARY_DIR: `${resources}/library`,
-      MURAGE_BOT_LIBRARY_DIR: `${resources}/bot-library`,
-      MURAGE_FUIGO_DIR: `${resources}/fuigo`,
+      MURAGE_STATIC_DIR: join(resources, "ui"),
+      MURAGE_SKILLS_DIR: join(resources, "skills"),
+      MURAGE_SKILL_LIBRARY: join(resources, "skills-library"),
+      MURAGE_LIBRARY_DIR: join(resources, "library"),
+      MURAGE_BOT_LIBRARY_DIR: join(resources, "bot-library"),
+      MURAGE_FUIGO_DIR: join(resources, "fuigo"),
     });
   });
 
@@ -91,7 +91,7 @@ describe("packaged resource contract", () => {
         join("bot-library", "builtins", `${entry.slug}.json`),
       ].filter((relative) => existsSync(join(repoRoot, relative)));
       expect(candidates, `${entry.slug} has no committed package document`).not.toHaveLength(0);
-      expect(packagedRoots.has(candidates[0].split("/")[0])).toBe(true);
+      expect(packagedRoots.has(candidates[0].split(sep)[0])).toBe(true);
     }
   });
 
@@ -142,8 +142,8 @@ describe("bundled fuigo engine contract", () => {
 
   it("resolves the bundled engine inside a packaged Resources directory", () => {
     const resources = "/Applications/Murage.app/Contents/Resources";
-    expect(bundledFuigoPath(resources, "darwin")).toBe(`${resources}/fuigo/fuigo`);
-    expect(bundledFuigoPath(resources, "win32")).toBe(`${resources}/fuigo/fuigo.exe`);
+    expect(bundledFuigoPath(resources, "darwin")).toBe(join(resources, "fuigo", "fuigo"));
+    expect(bundledFuigoPath(resources, "win32")).toBe(join(resources, "fuigo", "fuigo.exe"));
     expect(() => bundledFuigoPath(resources, "aix")).toThrow(/no bundled fuigo/);
   });
 

@@ -218,12 +218,29 @@ const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = 5_000)
 /** Obtain authority from an actual active fake-provider mount, never a test
  * mint endpoint or a bearer retained after stopping/changing its source. */
 const startInternalFixtureTurn = async (botId: string, groupId?: string, text = "hold this fixture turn") => {
+  // Windows taskkill completes asynchronously after interrupt acknowledges.
+  // A fresh authority fixture must not steer into that retiring provider turn.
+  await expect.poll(async () => {
+    const state = (await api("GET", "/api/bots?messages=0")).body;
+    const bot = state.bots.find((bot: { id: string }) => bot.id === botId);
+    const group = groupId ? state.groups.find((group: { id: string }) => group.id === groupId) : undefined;
+    return {
+      present: Boolean(bot) && (!groupId || Boolean(group)),
+      busy: Boolean(bot?.busy),
+      working: Boolean(group?.working),
+    };
+  }, { timeout: 5_000 }).toEqual({ present: true, busy: false, working: false });
   expect((await desktopApi("PATCH", `/api/bots/${botId}`, {
     modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
   })).status).toBe(200);
   rmSync(fakeClaudeDump, { force: true });
   const target = groupId ? `/api/groups/${groupId}/messages` : `/api/bots/${botId}/messages`;
-  expect((await api("POST", target, { text })).status).toBe(202);
+  const started = await api("POST", target, { text });
+  expect(started.status).toBe(202);
+  if (!groupId) {
+    expect(started.body.steered).not.toBe(true);
+    expect(started.body.queued).not.toBe(true);
+  }
   const dump = await readJsonFileWhenReady<{
     pid: number;
     mcpConfig: { mcpServers: Record<string, { env: Record<string, string> }> };
@@ -5386,6 +5403,9 @@ describe("harness HTTP API", () => {
           executionThreadId: runCards[0].routineRun.executionThreadId,
         });
         expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+        await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
+        { timeout: 5_000 }).toBe(false);
         expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
           modelSelection: { instanceId: "ghost", model: "unavailable-fixture" },
         })).status).toBe(200);
@@ -6810,6 +6830,11 @@ describe("internal capability authority", () => {
         credentialId: "openaiImageApiKey", reason: "must not append after revocation",
       }, turn.headers);
       expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      // Interrupt acknowledges cancellation; provider teardown can still append
+      // its terminal activity. Settle that before measuring rejected-body writes.
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+        .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
+      { timeout: 5_000 }).toBe(false);
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
       expect(response.status).toBe(401);

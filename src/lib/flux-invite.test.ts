@@ -216,7 +216,7 @@ describe("nothing in the app is gated on a Flux key", () => {
   it("reads flux?.configured in the two places that own the offer, and nowhere else", () => {
     const readers = sources()
       .filter((path) => /flux\?\.configured|flux\.configured/.test(readFileSync(path, "utf8")))
-      .map((path) => path.slice(srcRoot.length + 1))
+      .map((path) => path.slice(srcRoot.length + 1).replace(/\\/g, "/"))
       // store.tsx declares the type; declaring it is not gating on it
       .filter((rel) => rel !== "state/store.tsx");
     expect(readers.sort()).toEqual([...OWNERS].filter((o) => readers.includes(o)).sort());

@@ -134,7 +134,7 @@ async function snapshotDatabaseWhileOwned(dataDir: string, destination: string) 
     if (after.ino !== identity.ino || after.dev !== identity.dev) throw new InstallationSnapshotError("SOURCE_CHANGED");
     const sha256 = digestFile(staged);
     const bytes = statSync(staged).size;
-    const flush = openSync(staged, "r");
+    const flush = openSync(staged, "r+"); // Windows FlushFileBuffers requires a writable handle.
     try { fsyncSync(flush); } finally { closeSync(flush); }
     linkSync(staged, target);
     return { status: "copied" as const, ...counts, bytes, sha256 };
