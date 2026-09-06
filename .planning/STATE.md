@@ -1,6 +1,66 @@
 # Murage takeover state
 
 Goal: all five approved stages. Status: active; programme incomplete.
+Releasecleanup: obsoleteownedUNPUBLISHED0.1.45draft383479572 deletedafter
+0.1.46publication+postproof. Local21assetexportrelease-export-06493fb6-TLbAt0
+retainedforrecovery/evidence. Published0.1.46andits21assetsuntouched. NoVultrVM,
+firewallorTailscaledevicecreatedbythisreleasework; launchDMGmountcleaned.
+RELEASE-FIRST DELIVERY VERIFIED:0.1.46 publicrelease383546296,21storedSHA256
+verifiedassets. Postpublication34028288341/job101473090800 SUCCESS: all7public
+versionedpayloadsdownloaded,3feeds exactversion/size/SHA512matched; actualpackaged
+Linuxupdater realGitHub0.1.46 feed, failedinstallpreservation, originalpath,
+checksum,launcher/relaunchPASS. Artifactreuse,no rebuild. Differentialprocessing
+ran0KB(deltafixturealreadycontains0.1.46bytes); notnonzero-crossversionproof.
+Installed/launchedactualsignedarm64app forSean. KnownWindowsbuiltinbrowser
+Electroncanarydisabled/fails remainsdisclosed. RELEASES_PAT403 remainsautomation
+credentiallimitation; authorizedlocalguardfallbackdeliveredreleasewithoutsecret
+changes. Overallfive-stageprogramme NOTcomplete; reviewdeferredscope separately.
+USERREQUEST actualapp launchfulfilled: verified0.1.46arm64DMG appversion and
+strictdeepcodesign, installednew /Applications/Murage.app (noexistingbundle),
+launchedviaopen, process98077 observed. MountedDMGejected/ownedemptymountdir
+removed. Do NOT useuser'sliveapp/data for mutationtests. Postpublishproof
+34028288341 remainsnextgoalcheck; releasealreadypublic383546296.
+PUBLISHED0.1.46 at2026-09-06T10:44:33Z viaauthorizedguardpublish89451 exit0.
+Release383546296 draftfalse,21assets; localstoredbytescheck69225PASS21digests.
+https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.46
+Applicationce1b3efb20a1afc89aa0e5cd52a1ab2919c47e11; producer34026884990.
+Postpublicationpackage-linuxverification-only dispatchrequestedonce fromsame
+toolingbranch, source_run_id34026884990 expected_version0.1.46 fullsourceSHA.
+Mustobservepublic7payloadhashchecks+realGitHubLinuxupdater; notyetproven.
+Fullprogrammedeferredscopeincomplete; nevermarkgoalcompletejustforrelease.
+Active0.1.46guarduploadsession64699. Pollhandlebeforeanyretry. Allrequired
+candidateCI/nativeevidenceaccepted; remainingreleaseactionsstoredbytesproof,
+authorizedpublication,publicdownload/liveupdate. 0.1.45draftobsolete/unpublished.
+0.1.46 ALLexportsCOMPLETE(Mac51387exit0). Localexistingworkflowchecks14966PASS:
+21assetscomplete,all7feedentriesactualhash/sizeverified. Guarded0.1.46upload
+nowstartedusingauthorizedlocalidentity, unchangedRELEASES_PAT. Assets/notes at
+.planning/release-export-0146-wZz7Jz. NextstoredGitHubdigestcheck,publish,then
+public7payloadhash+realLinuxupdaterworkflow. No newaudit/platformrebuild.
+0.1.46 ALLNATIVEJOBS SUCCESS exactce1b3efb/run34026884990. Windows75563 andLinux
+72318 downloadsexit0; Mac51387 active artifact9987544601(1760526213bytes,
+sha2564b9a337ef9d3b1958ae5b1f009f6c84dfc5fa3de426e815b6444bd93761c61b4).
+Exportrootrelease-export-0146-wZz7Jz. Nextall21asset/feedchecks thenlocalguard
+uploadandGitHubdigestverification, authorizedpublish, publicdownload/liveupdate.
+0.1.46 nativeWindows101469359390 andUbuntu101469359436 SUCCESS; Mac101469359415
+notarizationpassed/staplingactive. Freshacceptedexports startedonce at
+.planning/release-export-0146-wZz7Jz: Windows75563 artifact9987494277;
+Linux72318 artifact9987463155. Macdownloadwaitsartifactupload. Release notes
+preparedforce1b3efb/run34026884990. No publicrelease; guardedlocalfallback next.
+ACTIVE0.1.46Release34026884990 exactce1b3efb20a1afc89aa0e5cd52a1ab2919c47e11,
+publish=false. Windowsgatepassed180Vitest/7broker/182Electron/packagedserver+
+10proxy paths. UpstreamElectronWindowsbrowsercanarystillfailsnonblocking;
+donotclaimbuiltinbrowserworking, retainknownrelease-note limitation. Local
+typecheckpassed. Awaitfreshnativeartifacts; useauthorizedlocalguardfallback
+forknownworkflowcredential403withoutbroadeningRELEASES_PAT.
+Windows namespace/lease/downstream confirmation34016596417 job101441330766
+SUCCESS on ce1b3efb20a1afc89aa0e5cd52a1ab2919c47e11. Localtypecheck68459 exit0.
+Fresh0.1.46 signedRelease nowrequestedonce exactSHA,publish=false; prior0.1.45
+draft remainsunpublished. PreservepassedCIevidence, no repeatnamespaceaudit.
+ce1b3efb0.1.46 namespacefix committed/pushed. NativeWindowsconfirmation
+34016596417 launchedonce:7workflow/lease-relatedVitestselectors plusallbroker,
+Electron andpackagedserver. WaitnativePASSbeforefreshsignedRelease (avoidwaste).
+Localtypecheck68459stilllive/slowlaptop,norestart. Prior0.1.45draft383479572
+fullyverifiedbutobsolete/unpublished; noautopublish. Guardeduploadfinished.
 WINDOWS NAMESPACE PRODUCT FIX: normalizeonlyrecognizeddrive/UNCnamespacebefore
 native root resolution, preservingcase andphysicalcomponentwalk. Rejectnamespace
 componentstralingdot/space,dotparent/reserveddevices thatarenotordinaryaliases;
