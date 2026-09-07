@@ -1,5 +1,22 @@
 # Murage takeover state
 
+Acceptedselectedports frontend98821/server87677/projectbroker8073 builds PASS.
+No brokercode deployed. CSSbrowser33993PASS andscreenshot inspected readableboth
+skins. RootintegratingonlyverifiedCSS/thinkingfollow/heldnote/Composiopagination.
+Codexshutdown patch remains isolated pendingexplicitfixturecontinuation; known
+browsernavigate-readiness remains diagnosed/unfixed. No furtheraudit or publish.
+
+Upstreamselectedports inprogress. CSS e9d6b523 adapted dualShikipalettes:
+29focusedchecksPASS; browser33993PASS bothskinscontrast>=4.5, selectionusesink,
+cachedmarkupreskinworks (firstfixtureexpectedwronglighthex correctedonly).
+ThinkingResizeObserver andheldnote actualguardwording implemented125testsPASS.
+Composiopagination44testsPASS inclbroker, no deployment. Combinedbuilds98821/
+87677 running. Brokerprojectcheck generatingrequiredtypes beforetsc.
+Codexcandidate after2rounds blockedonfixturePIDdumpordering, safelysaved to
+.planning/candidates/codex-shutdown-round2.patch and removedONLYownedCodexdiff
+fromworkingtree. No thirdtest, no unverifiedCodexport integrated. Existingprivate
+app remainsprivate.6 until acceptedports package; no publish or browserrewrite.
+
 Roleenforcement accepted afterexplicitusercontinuation: UIfixture48971 PASS
 usingexistingSidebar browserstub; API14+serverbuild/frontendtypes alreadyPASS.
 Newgrant/roleenginechange failclosed; demotion allowed; internalleadcreation and

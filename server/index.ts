@@ -50,7 +50,7 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
-import { approvalKey, autoVerdict } from "./auto-approve.ts";
+import { approvalKey, autoVerdict, approvalHoldNote } from "./auto-approve.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -2356,11 +2356,7 @@ bus.subscribe((event: RuntimeEvent) => {
             permission && !event.approvalScope
               ? approvalKey(event.tool, event.summary, event.approvalScope)
               : undefined,
-          // in auto mode a card can only mean the guard stopped it — say so
-          held:
-            permission && asker?.autoApprove
-              ? "This looked destructive, so auto mode stopped to ask."
-              : undefined,
+          held: permission ? approvalHoldNote(verdict) : undefined,
           approvalScope: event.approvalScope,
         },
       });

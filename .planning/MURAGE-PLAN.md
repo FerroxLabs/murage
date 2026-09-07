@@ -9,6 +9,27 @@ selected relevant changes with bounded proof. No wholesalemerge, rollback of
 Murage behavior, automatic expansion into deferredgroups/marketplace, publication
 or external state changes. Preserve current two-round limits per underlying issue.
 
+Selected-port disposition after source review:
+- e9d6b523 lightcodepalette: adapted to Murage's Light/Dark skins; user reproduced
+  unreadablecode; nativebrowser light/dark/selection/cache-switch checkpassed.
+- 351506e0 delayedthinking: ResizeObserver bottom-follow with detachedscrollback
+  preserved; helpertests and sharedchat/group integration included.
+- 45cc2cf0 Composio catalog: bounded multi-page direct/managed fetch, no partial
+  catalogue silently presented as complete, cursorvalidation and lazyicons.
+- dbfad94e/d6c9674e heldnote: adapted wording from existing verdictsource;
+  no importedapprovalMode or permission decisions changed.
+- dd7e4f16/b7133b3b Codexshutdown/lateoutput: candidate saved separately at
+  .planning/candidates/codex-shutdown-round2.patch;36existingtestspassed but new
+  fixturePID-write ordering unverified after2rounds. Not integrated; explicit
+  continuation needed for test-only ordering correction and targetedconfirmation.
+- Browserengine replacement/recovery commits: architectural change, notported.
+  Retain working Electron surface; separatelyreproducedreadinessrace stillopen.
+- Native mobilelocalization/dictation/keyboard changes: no correspondingnative
+  products in this fork. Newdeployment stacks and broaderAntigravitypermission
+  modes deferred. VMroomauthority/Podmanownership/sandbox/font changes need
+  separate compatible/nativeproof scope; no silentprivilege widening.
+Full comparisons: UPSTREAM-59-60-RUNTIME.md and UPSTREAM-59-60-UI-PLATFORM.md.
+
 ## Approved build-list additions: library discovery and prose cleanup
 
 Separate Bots, Teams and Skills in existinglibrary; teams expose purpose,

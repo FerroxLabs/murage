@@ -41,7 +41,7 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
-import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
+import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
 import {
   BUBBLE_INTERACTIVE,
@@ -913,6 +913,7 @@ export function GroupView({ group }: { group: Group }) {
   const stream = useStreaming();
   const streaming = stream.streaming[group.threadId];
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
   const [follow, setFollow] = useState(true);
@@ -1020,6 +1021,7 @@ export function GroupView({ group }: { group: Group }) {
   }, []);
 
   useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
+  useBottomFollowResize(scrollRef, transcriptRef, followRef, setupPending ? null : transcriptKey);
 
   const appliedFocus = useRef<number | null>(null);
   useEffect(() => {
@@ -1281,6 +1283,7 @@ export function GroupView({ group }: { group: Group }) {
         <div
           className="flex w-full flex-col gap-3"
           style={{ paddingBottom: composerDock.pad }}
+          ref={transcriptRef}
           role="log"
           aria-live="polite"
           aria-label={`Room ${group.name}`}
