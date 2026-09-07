@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       vitest_file:
-        description: "Windows-only scoped confirmation: existing test files/directories, one per line; other Vitest evidence reused"
+        description: "Scoped confirmation: existing test files/directories, one per line; other Vitest evidence reused"
         required: false
         type: string
   push:
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   test:
-    name: ${{ inputs.vitest_file && 'Scoped Windows confirmation' || 'typecheck + test' }} (${{ matrix.os }})
+    name: ${{ inputs.vitest_file && 'Scoped CI confirmation' || 'typecheck + test' }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -38,11 +38,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate scoped Windows confirmation input
+      - name: Validate scoped CI confirmation input
         shell: bash
         env:
           VITEST_FILE: ${{ inputs.vitest_file }}
-          WINDOWS_ONLY: ${{ inputs.windows_only }}
         run: |
           node --input-type=module <<'EOF'
           import assert from 'node:assert/strict';
@@ -51,7 +50,6 @@ jobs:
           const selection = process.env.VITEST_FILE ?? '';
           if (selection) {
             assert.equal(process.env.GITHUB_EVENT_NAME, 'workflow_dispatch', 'scoped tests require manual dispatch');
-            assert.equal(process.env.WINDOWS_ONLY, 'true', 'vitest_file requires windows_only=true');
             const paths = selection.split('\n');
             assert.ok(paths.length <= 16, 'at most sixteen scoped paths are allowed');
             for (const file of paths) {
@@ -63,7 +61,7 @@ jobs:
               const inside = relative(realpathSync('.'), realpathSync(file));
               assert.ok(inside && !isAbsolute(inside) && inside !== '..' && !inside.startsWith(`..${sep}`), 'vitest_file escapes the checkout');
             }
-            console.log(`Scoped Windows confirmation: ${paths.join(', ')}; unaffected Vitest results are reused, not rerun.`);
+            console.log(`Scoped CI confirmation: ${paths.join(', ')}; unaffected Vitest results are reused, not rerun.`);
           }
           EOF
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
@@ -72,6 +70,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare the pinned local memory test model
+        # P06 executes real offline inference; a clean runner must prepare the
+        # hash-pinned fixture before tests, not skip it or fetch during inference.
+        run: node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination "${{ github.workspace }}/.planning/memory-evidence/model"
       - name: Validate locale catalogs
         if: matrix.os == 'ubuntu-latest'
         run: pnpm i18n:check
@@ -95,10 +97,10 @@ jobs:
         shell: bash
         env:
           VITEST_FILE: ${{ inputs.vitest_file }}
-          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: "1"
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
         run: |
           echo "Scoped Vitest confirmation only: $VITEST_FILE"
-          mapfile -t test_paths <<< "$VITEST_FILE"
+          test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
           pnpm check:contrast
           pnpm exec vitest run "${test_paths[@]}"
           pnpm broker:test

@@ -14,7 +14,7 @@ import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-arc
 import { createBotPackageEntry } from "./bot-package-manifest.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -503,7 +503,7 @@ beforeAll(async () => {
 
   // The isolated negative control selects a preserved pre-change harness;
   // production never gains an authorization bypass or test mint endpoint.
-  child = spawn(process.execPath, ["--import", join(SERVER_DIR, "testing", "search-fetch-preload.mjs"), process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -4910,7 +4910,7 @@ describe("harness HTTP API", () => {
     };
     if (process.env.PATH) isolatedEnv.PATH = process.env.PATH;
     if (process.env.SystemRoot) isolatedEnv.SystemRoot = process.env.SystemRoot;
-    const isolatedChild = spawn(process.execPath, ["--import", noAckDesktopPrelude, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(noAckDesktopPrelude).href, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: isolatedEnv,
       stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -5036,7 +5036,7 @@ describe("harness HTTP API", () => {
     let isolatedStderr = "";
     const isolatedChild = spawn(
       process.execPath,
-      ["--import", ackDesktopPrelude, join(SERVER_DIR, "index.ts")],
+      ["--import", pathToFileURL(ackDesktopPrelude).href, join(SERVER_DIR, "index.ts")],
       {
         cwd: ROOT,
         env: {
@@ -5117,7 +5117,7 @@ describe("harness HTTP API", () => {
       });
     `)}`;
     let isolatedStderr = "";
-    const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(desktopPrelude).href, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -5241,7 +5241,7 @@ describe("harness HTTP API", () => {
       });
     `)}`;
     let isolatedStderr = "";
-    const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(desktopPrelude).href, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
