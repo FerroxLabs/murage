@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { chunksFor } from "./chunks.ts";
 
 export interface ModelManifest {model:string;revision:string;dimensions:number;files:Array<{path:string;bytes:number;sha256:string}>}
+/** The pinned native ONNX package has no Intel macOS binding. */
+export function supportsNativeMemoryModel(platform:NodeJS.Platform=process.platform,arch:string=process.arch){return !(platform==="darwin"&&arch==="x64");}
 export class MemoryEmbeddings {
   private extractor: any;
   readonly identity: string;
@@ -11,6 +13,7 @@ export class MemoryEmbeddings {
   readonly manifest: ModelManifest;
   constructor(directory: string, manifest: ModelManifest){this.directory=directory;this.manifest=manifest;this.identity=`${manifest.model}@${manifest.revision}`;}
   async load() {
+    if(!supportsNativeMemoryModel())throw new Error("MEMORY_SEMANTIC_PLATFORM_UNAVAILABLE");
     if(this.extractor)return;
     for(const file of this.manifest.files){
       const path=join(this.directory,file.path), stat=lstatSync(path);

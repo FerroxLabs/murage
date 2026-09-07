@@ -7,7 +7,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
@@ -562,7 +562,9 @@ afterAll(async () => {
 
 describe("harness HTTP API", () => {
   it("P20 refuses checkpoint restoration while another bot owns the same canonical project folder", async () => {
-    const project = mkdtempSync(join(home, "shared-restore-project-"));
+    // Match the lease's native canonical path from the outset. In particular,
+    // a Windows TEMP short-name spelling is not the canonical-folder fixture.
+    const project = realpathSync.native(mkdtempSync(join(home, "shared-restore-project-")));
     const alias = join(home, `shared-restore-alias-${Date.now()}`);
     const file = join(project, "work.txt");
     writeFileSync(file, "checkpoint contents");
@@ -575,7 +577,12 @@ describe("harness HTTP API", () => {
       await startInternalFixtureTurn(restorer.id);
       const checkpointResponse = await desktopApi("GET", `/api/bots/${restorer.id}/checkpoints?cwd=${encodeURIComponent(project)}`);
       expect(checkpointResponse.status).toBe(200);
-      expect(checkpointResponse.body.checkpoints.length).toBeGreaterThan(0);
+      const checkpointDiagnostics = JSON.stringify({
+        response: checkpointResponse.body,
+        warnings: stderr.split(/\r?\n/).filter(line => line.includes("workspace checkpoints disabled") && line.includes(restorer.id)).map(redactSecretsInText),
+      });
+      expect(checkpointResponse.body.enabled, checkpointDiagnostics).toBe(true);
+      expect(checkpointResponse.body.checkpoints.length, checkpointDiagnostics).toBeGreaterThan(0);
       const checkpoint = checkpointResponse.body.checkpoints[0].hash;
       expect(checkpoint).toMatch(/^[a-f0-9]{40}$/);
       await api("POST", `/api/bots/${restorer.id}/interrupt`);
@@ -4910,7 +4917,7 @@ describe("harness HTTP API", () => {
     };
     if (process.env.PATH) isolatedEnv.PATH = process.env.PATH;
     if (process.env.SystemRoot) isolatedEnv.SystemRoot = process.env.SystemRoot;
-    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(noAckDesktopPrelude).href, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", noAckDesktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: isolatedEnv,
       stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -5036,7 +5043,7 @@ describe("harness HTTP API", () => {
     let isolatedStderr = "";
     const isolatedChild = spawn(
       process.execPath,
-      ["--import", pathToFileURL(ackDesktopPrelude).href, join(SERVER_DIR, "index.ts")],
+      ["--import", ackDesktopPrelude, join(SERVER_DIR, "index.ts")],
       {
         cwd: ROOT,
         env: {
@@ -5117,7 +5124,7 @@ describe("harness HTTP API", () => {
       });
     `)}`;
     let isolatedStderr = "";
-    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(desktopPrelude).href, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -5241,7 +5248,7 @@ describe("harness HTTP API", () => {
       });
     `)}`;
     let isolatedStderr = "";
-    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(desktopPrelude).href, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -7344,9 +7351,13 @@ describe("internal capability authority", () => {
     }
   });
 
-  it("binds a headless browser mount and exact-session cleanup to its live computer claim", async () => {
+  it(process.platform === "win32"
+    ? "keeps unsupported Windows headless browser sessions unmounted and rejects peer claims"
+    : "binds a headless browser mount and exact-session cleanup to its live computer claim", async () => {
     const binary = join(home, "fake-agent-browser");
     const closeLog = join(home, "fake-agent-browser-close.jsonl");
+    const engineKey = join(home, ".murage", "browser-engine-key");
+    const hadEngineKey = existsSync(engineKey);
     writeFileSync(binary, `#!${process.execPath}\nconst fs=require('node:fs');\nconst args=process.argv.slice(2);\nif(args[0]==='--version'){console.log('agent-browser 0.36.0');process.exit(0);}\nif(args[2]==='close'){fs.appendFileSync(${JSON.stringify(closeLog)},JSON.stringify({args,session:process.env.AGENT_BROWSER_SESSION})+'\\n');process.exit(0);}\nprocess.exit(1);\n`, { mode: 0o700 });
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
@@ -7354,6 +7365,21 @@ describe("internal capability authority", () => {
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { browser: true })).status).toBe(200);
       const turn = await startInternalFixtureTurn(bot.id);
       const mounted = turn.dump.mcpConfig.mcpServers.browser;
+      if (process.platform === "win32") {
+        // browserIntegration deliberately returns before native headless setup
+        // on Windows. Assert that policy through a real turn, not a skipped or
+        // platform-spoofed mount/cleanup test for an unsupported engine path.
+        expect(mounted).toBeUndefined();
+        expect(existsSync(engineKey)).toBe(hadEngineKey);
+        expect(existsSync(closeLog)).toBe(false);
+        const endpoint = new URL("/api/internal/headless-browser", BASE);
+        endpoint.searchParams.set("botId", bot.id);
+        endpoint.searchParams.set("threadId", turn.env.MURAGE_THREAD_ID);
+        expect((await fetch(endpoint, { headers: turn.headers })).status).toBe(403);
+        await api("POST", `/api/bots/${bot.id}/interrupt`);
+        expect((await fetch(endpoint, { headers: turn.headers })).status).toBe(401);
+        return;
+      }
       expect(mounted.args[0]).toMatch(/headless-browser-proxy/);
       const token = mounted.env.MURAGE_CONTROL_TOKEN;
       const endpoint = mounted.env.MURAGE_HEADLESS_BROWSER_URL;

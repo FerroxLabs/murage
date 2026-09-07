@@ -155,8 +155,9 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "late-output", environment: { FAKE_CODEX_SHUTDOWN_DELAY_MS: "5500" } });
     await instance.adapter.sendTurn({ threadId: "t-timeout", text: "go" });
     await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
-    const { pid } = JSON.parse(readFileSync(dump, "utf8"));
+    let windowsPid: number | undefined;
     if (process.platform === "win32") {
+      windowsPid = JSON.parse(readFileSync(dump, "utf8")).pid;
       // killCliTree uses taskkill /F on Windows, and its libuv SIGTERM
       // fallback also forces termination. Neither runs the POSIX delay handler.
       await expect(instance.adapter.interruptTurn("t-timeout")).resolves.toBeUndefined();
@@ -170,6 +171,8 @@ describe("CodexDriver turns (fake app-server)", () => {
       await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
     }
     await recorder.until(event => event.type === "turn.completed");
+    // Preserve the original POSIX read after the producer has closed its dump.
+    const pid = windowsPid ?? JSON.parse(readFileSync(dump, "utf8")).pid;
     expect(() => process.kill(pid, 0)).toThrow();
     expect(instance.adapter.hasSession?.("t-timeout")).toBe(false);
     expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
