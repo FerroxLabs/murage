@@ -1,3 +1,4 @@
+import { supportsNativeMemoryModel } from "./embeddings.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -80,6 +81,7 @@ type ModelState={state:"missing"|"unverified"|"downloading"|"ready"|"failed";byt
 let download:ModelState|undefined;
 function modelStatus():ModelState {
   const spec=manifest(),totalBytes=spec.files.reduce((sum,file)=>sum+file.bytes,0);
+  if(!supportsNativeMemoryModel())return {state:"failed",bytesDownloaded:0,totalBytes,revision:spec.revision,model:spec.model,error:"Intel Mac builds use keyword memory in this release. The native semantic model is not available on this platform."};
   if(download)return {...download};
   let present=0;
   for(const file of spec.files){const path=join(DATA_DIR,"memory-model",file.path);try{const stat=lstatSync(path);if(stat.isFile()&&!stat.isSymbolicLink()&&stat.size===file.bytes)present+=file.bytes;}catch{/* not installed */}}
@@ -200,6 +202,6 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   }
   if(input.action==="import-preview")return previewMemoryImport(ticket,input.selections,roster);
   if(input.action==="import-commit")return commitMemoryImport(ticket,input.previewId,roster);
-  if(input.action==="model-download"){if(download?.state!=="downloading")void downloadModel(options);return {model:modelStatus()};}
+  if(input.action==="model-download"){if(!supportsNativeMemoryModel())throw Object.assign(new Error("Intel Mac builds use keyword memory; a semantic model download is not available in this release."),{status:409});if(download?.state!=="downloading")void downloadModel(options);return {model:modelStatus()};}
   throw new Error("MEMORY_ROUTE_UNAVAILABLE");
 }

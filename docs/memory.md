@@ -42,3 +42,8 @@ Preserve the original installation and a verified backup before any separately a
 Use the existing installation backup, inspection, restore-review and rollback flow with a compatible candidate binary. Backups retain authoritative memory and deletion history; derived indexes can be rebuilt. Restoring into an existing installation merges its destination deletion ledger before activation. A new installation cannot know deletions absent from its backup and requires owner review. Restored memory remains paused until reviewed.
 
 Feature rollback means selecting Off or Paused with the compatible binary. Do not open a migrated memory database with private.7, remove recovery markers, or delete retained recovery copies to bypass review. See [memory verification](verification/memory.md) for evidence boundaries and fixture commands.
+
+
+## Intel macOS
+
+Intel Macs use keyword retrieval in this release because the pinned native semantic runtime does not provide an Intel macOS binding. Owner review, corrections, sharing, pins, forgetting and source recovery remain available. Unavailable semantic-model downloads are refused on Intel Macs; no semantic inference is claimed there. Apple Silicon, Windows x64 and Linux x64 retain the native local-model path.
