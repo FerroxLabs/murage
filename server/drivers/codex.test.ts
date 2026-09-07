@@ -130,6 +130,35 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
   });
 
+  it("waits for child exit before completion and ignores buffered and later output after settlement", async () => {
+    await create({ mode: "late-output" });
+    const dump = join(scratch, "shutdown.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-shutdown", text: "go" });
+    await recorder.until((event) => event.type === "item.completed" && event.itemType === "assistant_text");
+    const { pid } = JSON.parse(readFileSync(dump, "utf8"));
+    expect(instance.adapter.hasSession?.("t-shutdown")).toBe(true);
+    expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
+    await recorder.until((event) => event.type === "turn.completed");
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(instance.adapter.hasSession?.("t-shutdown")).toBe(false);
+    expect(recorder.events.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.filter((event) => event.type === "content.delta").map((event) => event.delta))
+      .toEqual(["done from fake codex"]);
+  });
+
+  it("reports shutdown timeout without releasing the live process or listeners", async () => {
+    await create({ mode: "late-output", environment: { FAKE_CODEX_SHUTDOWN_DELAY_MS: "5500" } });
+    await instance.adapter.sendTurn({ threadId: "t-timeout", text: "go" });
+    await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
+    await expect(instance.adapter.interruptTurn("t-timeout")).rejects.toThrow("shutdown is still pending");
+    expect(instance.adapter.hasSession?.("t-timeout")).toBe(true);
+    await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
+    await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+    await recorder.until(event => event.type === "turn.completed");
+    expect(instance.adapter.hasSession?.("t-timeout")).toBe(false);
+  }, 10000);
+
   it("strips ambient routing switches from the codex child env", async () => {
     // An OPENAI_BASE_URL left in the shell by a provider switcher would point
     // the CLI's own ChatGPT login at a third party, silently, every turn.
