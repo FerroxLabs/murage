@@ -197,7 +197,7 @@ export function noteForReason(reason: string | undefined, fallback: string): str
       // produce two subtly different instructions.
       return NEEDS_KEY_NOTE;
     case "premium":
-      return "Voice typing needs a paid Flux plan. The key is fine — the plan doesn’t cover it yet.";
+      return "Voice typing needs a paid Flux plan. The key is fine; the plan doesn’t cover it yet.";
     case "auth":
       return "Flux rejected that key. Paste a fresh one in Settings on the computer.";
     case "unavailable":

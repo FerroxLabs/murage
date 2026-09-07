@@ -28,18 +28,24 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 import { planStart } from "../bin/murage.mjs";
 import { readEnvFile } from "../lib/env-file.mjs";
 import { DEFAULT_DOOR_PORT, buildServeArgs, doorAnswers, doorPort, enroll } from "../lib/tailscale.mjs";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "murage.mjs");
-const scratch = () => mkdtempSync(join(tmpdir(), "murage-door-test-"));
+const scratchDirs = [];
+const scratch = () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-door-test-")));
+  scratchDirs.push(dir);
+  return dir;
+};
+after(() => { for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true }); });
 const SECRET = "tskey-auth-kRDeadBeef-NEVERPUTMEINARGV";
 const LOOPBACK_ONLY_SERVER = `server.listen(PORT, "127.0.0.1", () => {});`;
 
@@ -123,7 +129,14 @@ async function fakeDoor() {
  */
 function runCli(args, env) {
   return new Promise((res, rej) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
+    // Exercise this CLI as a standalone install. A missing fixture payload
+    // must never fall through into the developer's actual companion source.
+    const installed = join(dirname(env.MURAGE_DATA_DIR), "installer");
+    mkdirSync(join(installed, "bin"), { recursive: true });
+    cpSync(join(dirname(dirname(CLI)), "lib"), join(installed, "lib"), { recursive: true });
+    cpSync(CLI, join(installed, "bin", "murage.mjs"));
+    const child = spawn(process.execPath, [join(installed,"bin","murage.mjs"), ...args], {
+      detached: process.platform !== "win32",
       // stdin IGNORED, so every prompt resolves to its default and nothing hangs.
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...env, NO_COLOR: "1" },
@@ -131,12 +144,23 @@ function runCli(args, env) {
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
-    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
-    child.on("error", rej);
-    child.on("close", (code) => {
+    let done = false;
+    const finish = (error, code) => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
-      res({ status: code ?? 0, out });
-    });
+      // Kill only this fixture's group, including descendants holding pipes
+      // after a regressed launcher exits. Never wait indefinitely on close.
+      try {
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else process.kill(-child.pid,"SIGKILL");
+      } catch {}
+      child.stdout.destroy(); child.stderr.destroy();
+      if (error) rej(error); else res({ status: code ?? 0, out });
+    };
+    const timer = setTimeout(() => finish(new Error(`CLI exceeded its 30s fixture budget:\n${out}`)), 30_000);
+    child.on("error", error => finish(error));
+    child.on("close", code => finish(null, code));
   });
 }
 
@@ -145,6 +169,8 @@ function setupEnv(home, extra = {}) {
   writeFileSync(entry, LOOPBACK_ONLY_SERVER);
   return {
     ...process.env,
+    HOME: home,
+    USERPROFILE: home,
     MURAGE_SERVER_ENTRY: entry,
     MURAGE_DATA_DIR: join(home, ".murage-server"),
     MURAGE_ENV_FILE: join(home, ".murage-server", "murage.env"),
@@ -152,6 +178,7 @@ function setupEnv(home, extra = {}) {
     TS_AUTHKEY: "",
     TAILSCALE_AUTHKEY: "",
     MURAGE_BROWSER_PORT: "",
+    MURAGE_COMPANION_ENTRY: join(home,"missing-companion.mjs"),
     ...extra,
   };
 }
@@ -232,9 +259,12 @@ test("`murage status` does NOT call a proxy aimed at the harness configured", as
   // The regression this whole item exists for: a serve pointed at 8799 is
   // broken, and status must not report it as a working deployment.
   const home = scratch();
+  const door = await fakeDoor();
+  const port = door.port;
+  await door.close();
   const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: "http://127.0.0.1:8799" });
-  const { out } = await runCli(["status"], setupEnv(home, { MURAGE_TAILSCALE_BIN: stub }));
-  assert.match(out, /no tailnet proxy in front of the browser door 127\.0\.0\.1:8813/);
+  const { out } = await runCli(["status"], setupEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(port) }));
+  assert.match(out, new RegExp(`no tailnet proxy in front of the browser door 127\\.0\\.0\\.1:${port}`));
 });
 
 // ── (b) the harness port does not move ────────────────────────────────────
@@ -314,18 +344,19 @@ test("enroll skips the proxy entirely when the door is not answering", async () 
   assert.ok(!calls.some((c) => c.includes("serve --bg")), `configured a proxy with no door:\n${calls.join("\n")}`);
 });
 
-test("`murage setup` declines serve, loudly, when the door cannot be brought up", async () => {
+test("`murage setup` may finish enrollment without a proxy when the sidecar is absent", async () => {
   const home = scratch();
   const log = join(home, "argv.log");
   const stub = tailscaleStub(home, { logFile: log, proxyTarget: null, firstStatusNeedsLogin: true });
-  // Port 9 is reserved/discard. Setup now STARTS the sidecar rather than only
-  // probing for one, so the failure being proven here is the sidecar refusing
-  // to bind that port and exiting — after which serve must still be declined.
-  const env = setupEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: "9" });
+  const door = await fakeDoor();
+  const port = door.port;
+  await door.close();
+  const env = setupEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(port) });
   const { status, out } = await runCli(["setup"], env);
   assert.equal(status, 0, out);
   assert.match(out, /browser door is not running/);
-  assert.match(out, /http:\/\/127\.0\.0\.1:9\/enter/);
+  assert.match(out, /sidecar is not in this install/);
+  assert.match(out, new RegExp(`http://127\\.0\\.0\\.1:${port}/enter`));
 
   const argv = readFileSync(log, "utf8");
   assert.ok(
@@ -336,4 +367,28 @@ test("`murage setup` declines serve, loudly, when the door cannot be brought up"
   const envFile = readEnvFile(join(home, ".murage-server", "murage.env"));
   assert.equal(envFile.MURAGE_TRUSTED_PROXY, undefined);
   assert.equal(envFile.MURAGE_PORT, "8799");
+});
+
+test("`murage setup` fails closed when its installed temporary sidecar crashes", async () => {
+  const home = scratch();
+  const log = join(home,"argv.log");
+  const stub = tailscaleStub(home,{logFile:log,proxyTarget:null,firstStatusNeedsLogin:true});
+  const door = await fakeDoor();
+  const port = door.port;
+  await door.close();
+  const sidecar = join(home,"failed-sidecar.mjs");
+  const marker = join(home,"failed-sidecar.pid");
+  writeFileSync(sidecar, `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(marker)},String(process.pid));process.exit(7);`);
+  const {status,out} = await runCli(["setup"],setupEnv(home,{
+    MURAGE_TAILSCALE_BIN:stub,MURAGE_BROWSER_PORT:String(port),MURAGE_COMPANION_ENTRY:sidecar,
+  }));
+  assert.equal(status,1,out);
+  assert.match(out,/setup-time sidecar exited unexpectedly \(code 7\)/);
+  assert.match(out,/Not configuring a tailnet proxy/);
+  assert.ok(existsSync(marker),"the intended sidecar fixture never ran");
+  assert.throws(()=>process.kill(Number(readFileSync(marker,"utf8")),0),{code:"ESRCH"});
+  const commands = readFileSync(log,"utf8").trim().split("\n");
+  assert.ok(!commands.some(line=>line.startsWith("serve --bg")),"configured a proxy after sidecar failure");
+  assert.ok(!commands.some(line=>line.startsWith("up ")),"continued enrollment after sidecar failure");
+  assert.equal(existsSync(join(home,".murage-server","murage.env")),false,"failed setup wrote a success configuration");
 });

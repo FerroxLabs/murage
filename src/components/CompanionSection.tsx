@@ -112,7 +112,7 @@ export function webUiSteps(source: {
       detail: remote
         ? "Secure address, over your tailnet."
         : addressed
-          ? "Optional — plain HTTP inside your tailnet works now."
+          ? "Optional: plain HTTP inside your tailnet works now."
           : "Needs an address first.",
     },
   ];
@@ -188,8 +188,8 @@ function ConfirmRemoteAccess({
         <h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
           Tailscale will put your tailnet’s own HTTPS certificate in front of Murage on this computer,
-          and Murage will listen only on loopback behind it. Every device signed into your tailnet — a
-          phone, a laptop, a tablet — can then open it at a plain address with nothing to install.
+          and Murage will listen only on loopback behind it. Every device signed into your tailnet (a
+          phone, a laptop, a tablet) can then open it at a plain address with nothing to install.
         </p>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
           Nothing is published to the public internet: this uses <span className="text-ink">tailscale serve</span>,
@@ -267,7 +267,7 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
     <div>
       <div className="text-[13px] text-ink">Scan it, or type the code</div>
       <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-        Scan this with the camera on the device you want to use — a phone, a tablet, another laptop —
+        Scan this with the camera on the device you want to use (a phone, a tablet, another laptop),
         and Murage opens signed in, in its browser. A computer with no camera types the code instead.
         Either way that device has to be signed into the same tailnet as this one. Nothing to install.
       </p>
@@ -339,7 +339,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
         // component. It reads as being about phones and is not: this pane is
         // about any device, and the subtitle says so.
         title="Phone setup happens on the computer"
-        subtitle="You are already using Murage in a browser. To pair another device — a phone, a tablet, another laptop — or to change how devices reach Murage, open Settings on the computer running it."
+        subtitle="You are already using Murage in a browser. To pair another device (a phone, a tablet, another laptop) or to change how devices reach Murage, open Settings on the computer running it."
       />
     );
   }
@@ -385,7 +385,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
       <div>
         <h2 className="text-[19px] font-semibold text-ink">WebUI</h2>
         <p className="mt-1 max-w-[560px] text-[13px] leading-relaxed text-ink-secondary">
-          Use Murage from any device you own — hand it work from a phone on the sofa, a laptop in
+          Use Murage from any device you own. Hand it work from a phone on the sofa, a laptop in
           another city, or a browser tab next to this one. Over your own tailnet, never the internet.
         </p>
       </div>
@@ -453,7 +453,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
               </div>
             ) : (
               <div className="mt-1.5 text-[12px] text-ink-secondary">
-                No address yet — the door is starting, or Tailscale is not up on this computer.
+                No address yet; the door is starting, or Tailscale is not up on this computer.
               </div>
             )}
           </div>
@@ -466,7 +466,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
               Remote access is on. Any device signed into your tailnet can open{" "}
               <span className="font-mono text-ink">{remote.url ?? doorUrl}</span> and, with a code from
               below, sign in. Nothing is exposed to the public internet, and it stays on until you turn
-              it off — including after a restart.
+              it off, including after a restart.
             </div>
           </div>
         )}

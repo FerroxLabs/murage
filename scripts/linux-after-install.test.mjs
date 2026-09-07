@@ -39,6 +39,13 @@ afterEach(() => {
   }
 });
 
+it("targets the packaged product directory rather than the upstream brand", () => {
+  const productName = /^productName: (.+)$/m.exec(fs.readFileSync(path.join(root, "electron-builder.yml"), "utf8"))?.[1];
+  const installRoot = /^  APP_ROOT=(.+)$/m.exec(fs.readFileSync(hook, "utf8"))?.[1];
+  expect(productName).toBe("Murage");
+  expect(installRoot).toBe(`/opt/${productName}`);
+});
+
 describe.skipIf(process.platform !== "linux")("Linux DEB upgrade hook", () => {
   it("repairs legacy directory and executable modes idempotently", () => {
     const { appRoot, resources, cuaRoot, chromiumSandbox } = fixture();

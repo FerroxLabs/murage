@@ -85,6 +85,7 @@ export function buildMcpServers(turn: SendTurnInput): Record<string, unknown> | 
       ...(local.scope ? { scope: local.scope } : {}),
     };
   }
+  if (turn.integrations?.memory) servers["murage-memory"] = { ...turn.integrations.memory };
   if (turn.integrations?.agents) servers.agents = { ...turn.integrations.agents };
   if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
   if (turn.integrations?.dweb) {
@@ -831,6 +832,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           // Integrations arrive as stdio MCP servers mounted by the
           // pi-mcp-extension (pi core has no MCP client of its own).
           agentsMcp: true,
+          memoryMcp: true,
           computerMcp: true,
           composioMcp: true,
           phoneMcp: true,

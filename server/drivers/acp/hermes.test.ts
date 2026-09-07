@@ -355,7 +355,8 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(yaml).not.toContain("flux-auto");
   });
 
-  it("keeps the bearer token off other users of the machine", async () => {
+  // POSIX mode bits cannot establish Windows ACL privacy.
+  it.skipIf(process.platform === "win32")("keeps the bearer token private through POSIX permissions", async () => {
     await spawnFor("flux-auto");
     expect(statSync(scopedYaml()).mode & 0o777).toBe(0o600);
     expect(statSync(fluxHermesHome(scopedEnv())).mode & 0o777).toBe(0o700);

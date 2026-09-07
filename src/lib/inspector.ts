@@ -1,8 +1,21 @@
 // Turning the inspector's two record shapes into one-line summaries. Pure
 // so the panel stays a thin renderer and the labels can be tested.
 import type { RuntimeEvent } from "../../server/contracts.ts";
-import type { InspectorEntry, NativeRecord } from "../../server/thread-events.ts";
+import type { InspectorEntry, InspectorPage, NativeRecord } from "../../server/thread-events.ts";
 export type { InspectorEntry, InspectorPage, NativeRecord } from "../../server/thread-events.ts";
+
+export function inspectorCountLabel(shown: number, total: number, complete = true): string {
+  if (!complete) return `${shown} recent records; total not fully counted`;
+  return shown < total ? `last ${shown} of ${total}` : `${shown} entries`;
+}
+
+/** Live frames cannot make a partially counted disk snapshot exact. */
+export function appendInspectorRuntime(page: InspectorPage | null, runtime: RuntimeEvent): InspectorPage {
+  if (page?.entries.some((entry) => entry.kind === "runtime" && entry.data.eventId === runtime.eventId)) return page;
+  const entry: InspectorEntry = { kind: "runtime", at: runtime.createdAt, data: runtime };
+  if (!page) return { entries: [entry], total: { runtime: 1, native: 0 }, totalComplete: { runtime: false, native: false } };
+  return { ...page, entries: [...page.entries, entry], total: { ...page.total, runtime: page.total.runtime + 1 } };
+}
 
 interface FoldPreview {
   text: string;
@@ -84,6 +97,7 @@ export function summarizeRuntime(e: RuntimeEvent): { summary: string; tone: Insp
       return { summary: `${e.itemType} updated${typeof e.tokens === "number" ? ` · ${e.tokens} tok` : ""}`, tone: "plain" };
     case "item.completed":
       if (e.itemType === "assistant_text") return { summary: `assistant: ${clip(oneLine(e.text))}`, tone: "plain" };
+      if (e.itemType === "assistant_image") return { summary: "assistant image generated", tone: "plain" };
       return { summary: `tool ${e.ok ? "ok" : "failed"}`, tone: e.ok ? "plain" : "error" };
     case "content.delta":
       return { summary: `${e.streamKind}: ${clip(oneLine(e.delta))}`, tone: "plain" };

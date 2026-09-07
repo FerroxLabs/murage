@@ -22,6 +22,8 @@ const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const posixOnly = describe.skipIf(process.platform === "win32");
+const DESKTOP_SECRET = "bc0123456789defa".repeat(4);
+const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET };
 
 interface Msg {
   id: string;
@@ -50,14 +52,17 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   let home: string;
   let stderr = "";
 
-  const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  const api = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: { ...(body ? { "content-type": "application/json" } : {}), ...headers },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
   };
+  // Authority setup is explicit; branching, sends, reads and interrupts
+  // continue to exercise the uncredentialed remote surface.
+  const desktopApi = (method: string, path: string, body?: unknown) => api(method, path, body, DESKTOP_HEADERS);
 
   const getBot = async (id: string) =>
     (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
@@ -95,6 +100,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -127,9 +133,9 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
     "forks on edit, replies on the new branch, and switches versions cleanly",
     async () => {
       const created = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${created.id}`, {
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
         modelSelection: { instanceId: "happy", model: "fake-model" },
-      });
+      })).status).toBe(200);
 
       // turn 1 settles on the original branch
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "original question" })).status).toBe(202);
@@ -191,16 +197,16 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
     "refuses to rewind a live thread, then edits cleanly once it is stopped",
     async () => {
       const created = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${created.id}`, {
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
         modelSelection: { instanceId: "hang", model: "fake-model" },
-      });
+      })).status).toBe(200);
 
       // start a turn that will never finish on its own
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first try" })).status).toBe(202);
       await waitFor(async () => (await getBot(created.id)).busy === true, "the hung turn to start");
 
       const backendBefore = (await getBot(created.id)).cloudBackend;
-      const backendChange = await api("PATCH", `/api/bots/${created.id}`, { cloudBackend: "vps" });
+      const backendChange = await desktopApi("PATCH", `/api/bots/${created.id}`, { cloudBackend: "vps" });
       expect(backendChange.status).toBe(409);
       expect(backendChange.body.error).toContain("stop the active turn");
       expect((await getBot(created.id)).cloudBackend).toBe(backendBefore);
@@ -259,9 +265,9 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
     "replays the thread to a fresh engine after a mid-thread model switch",
     async () => {
       const created = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${created.id}`, {
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
         modelSelection: { instanceId: "happy", model: "fake-model" },
-      });
+      })).status).toBe(200);
 
       // turn 1 on the first engine, carrying a token only the transcript knows
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "my dog is named Biscuit" })).status).toBe(202);
@@ -271,9 +277,9 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       }, "the first reply");
 
       // switch the bot to a second engine that has never seen this thread
-      await api("PATCH", `/api/bots/${created.id}`, {
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
         modelSelection: { instanceId: "second", model: "fake-model" },
-      });
+      })).status).toBe(200);
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "what is my dog called?" })).status).toBe(202);
       await waitFor(async () => {
         const b = await getBot(created.id);
@@ -282,9 +288,9 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
 
       // …and back to the first engine, whose own session is now stale: it
       // has a cursor here, but the second engine took a turn since
-      await api("PATCH", `/api/bots/${created.id}`, {
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
         modelSelection: { instanceId: "happy", model: "fake-model" },
-      });
+      })).status).toBe(200);
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "and again?" })).status).toBe(202);
       await waitFor(async () => {
         const b = await getBot(created.id);

@@ -9,6 +9,9 @@ import { z } from "zod";
 import {
   CalendarClock,
   CalendarDays,
+  Check,
+  Cloud,
+  Box,
   Columns2,
   Globe,
   Hand,
@@ -20,6 +23,7 @@ import {
   Power,
   Settings,
   Smartphone,
+  Sparkles,
   X,
 } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
@@ -52,6 +56,38 @@ import {
   writeComputerPanelView,
   type ComputerPanelView,
 } from "@/lib/computer-panel-view";
+
+export function ScreenStreamNotice({ message }: { message?: string }) {
+  return message ? <p role="status" className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">{message}</p> : null;
+}
+
+type ComputerChoice = "auto" | "cloud" | "vm" | "local" | "browser" | "off";
+export function ComputerDestinationGrid({ value, unavailable, onSelect }: {
+  value: ComputerChoice;
+  unavailable: Partial<Record<ComputerChoice, string>>;
+  onSelect: (choice: ComputerChoice) => void;
+}) {
+  return <div role="group" aria-label="Computer destination" className="mt-3 grid auto-rows-fr grid-cols-2 gap-2">
+    {([
+      ["auto", "Auto", "Use an existing computer", Sparkles],
+      ["cloud", "Cloud", "Hosted desktop", Cloud],
+      ["vm", "Local VM", "Separate local desktop", Box],
+      ["local", "This computer", "Your screen and apps", Monitor],
+      ["browser", "Browser", "Web pages only", Globe],
+      ["off", "Off", "No desktop access", Power],
+    ] as const).map(([choice, label, description, Icon]) => <button key={choice} type="button"
+      aria-label={label} aria-pressed={value === choice} disabled={Boolean(unavailable[choice])}
+      title={unavailable[choice]} onClick={() => onSelect(choice)}
+      className={cn("min-w-0 rounded-lg border px-2.5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+        value === choice ? "border-accent/60 bg-accent/10 text-ink" : "border-hairline/50 bg-panel/30 text-ink-secondary",
+        unavailable[choice] ? "cursor-not-allowed" : "hover:border-accent/40 hover:bg-control/60")}>
+      <span className="flex items-center gap-2 text-[12px] font-medium leading-4">
+        {value === choice ? <Check size={14} className="shrink-0 text-accent" /> : <Icon size={14} className="shrink-0" />}{label}
+      </span>
+      <span className="mt-1.5 block text-[11px] leading-4 text-ink-secondary">{unavailable[choice] ?? description}</span>
+    </button>)}
+  </div>;
+}
 
 interface VpsComputerStatus {
   configured: boolean;
@@ -107,6 +143,9 @@ function routineScheduleLabel(routine: Routine) {
       hour: "numeric",
       minute: "2-digit",
     });
+  }
+  if (routine.schedule.type === "interval") {
+    return `Every ${routine.schedule.everyMinutes} min`;
   }
   const days = routine.schedule.weekdays;
   const cadence =
@@ -186,6 +225,7 @@ export function ComputerPanel({
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState(false);
+  const [localAutoWarningChoice, setLocalAutoWarningChoice] = useState<"local" | "auto">("local");
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const [phase, setPhase] = useState<Phase>("checking");
   const [boxState, setBoxState] = useState<string | null>(null);
@@ -285,7 +325,7 @@ export function ComputerPanel({
         ? "the Local VM"
       : bot.computer === "local"
         ? "this computer"
-        : bot.computer === "off"
+        : bot.computer === "off" || bot.computer === "browser"
           ? null
           : phase === "ready"
             ? cloudBackend === "vps" ? "the self-hosted VPS selected by Auto" : "the cloud box selected by Auto"
@@ -306,7 +346,7 @@ export function ComputerPanel({
     setVpsStatus(null);
     setLocalFrame(null);
     setError(null);
-    if (bot.computer === "off") {
+    if (bot.computer === "off" || bot.computer === "browser") {
       setPhase("off");
       return;
     }
@@ -502,6 +542,7 @@ export function ComputerPanel({
   // idle bot — a drawer left open overnight must not keep shooting.
   const pageVisible = usePageVisible();
   const live = state.screens[bot.id];
+  const liveNotice = state.screenNotices?.[bot.id];
   const sseFlowing = Boolean(bot.busy && live);
   const inFlight = useRef(false);
   useEffect(() => {
@@ -936,6 +977,7 @@ export function ComputerPanel({
         </div>
       ) : (
       <div className="flex-1 overflow-y-auto px-5 pb-5">
+          <ScreenStreamNotice message={liveNotice} />
           {/* Screen preview */}
           <div className="mb-1.5 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
             <span>{bot.name}'s screen</span>
@@ -988,7 +1030,7 @@ export function ComputerPanel({
                     ? isLinux
                       ? "Ready for approved bot actions. Start the separate preview below when you want to watch the screen."
                       : localMisses >= 3
-                      ? "No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app."
+                      ? "No frames yet; the preview needs Screen Recording permission. After granting, relaunch the app."
                       : "Capturing this computer's screen…"
                     : emptyState[phase]}
               </span>
@@ -1063,7 +1105,7 @@ export function ComputerPanel({
         {phase === "unconfigured" && (
           <div className="mt-3 rounded-xl bg-card p-4">
             <div className="mb-3 text-[13px] text-ink-secondary">
-              Add a Box API key to give this bot a cloud computer — it spins up right here.
+              Add a Box API key to give this bot a cloud computer; it spins up right here.
             </div>
             <ApiKeyRow
               section="box"
@@ -1131,9 +1173,9 @@ export function ComputerPanel({
         {(phase === "ready" || phase === "vm") && control.held && (
           <div className="mt-3 rounded-xl border border-accent/25 bg-accent/10 p-4">
             <div className="text-[13px] leading-relaxed text-ink">
-              You have the wheel — the bot's clicks and keystrokes are refused until you hand it back.
+              You have the wheel; the bot's clicks and keystrokes are refused until you hand it back.
               {phase === "ready" && " Use Open desktop to drive."}
-              {phase === "vm" && " Use Open desktop to drive — the preview here is watch-only."}
+              {phase === "vm" && " Use Open desktop to drive; the preview here is watch-only."}
             </div>
             <button
               onClick={() => {
@@ -1238,56 +1280,26 @@ export function ComputerPanel({
                     ? "Auto reuses a ready VPS when one exists, otherwise this computer. "
                     : "Auto uses a cloud box when one exists, otherwise this computer. ")}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
-              in a container on this machine — free and separate from your own desktop. Set it up in App
+              in a container on this machine, free and separate from your own desktop. Set it up in App
               Settings → Local VM.
           </div>
-          <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
-            {(
-              [
-                ["cloud", "Cloud"],
-                ["vm", "Local VM"],
-                ["local", "This computer"],
-                ["off", "Off"],
-              ] as const
-            ).map(([mode, label], i) => (
-              (() => {
-                const disabled =
-                  (mode === "cloud" && !cloudSupported) ||
-                  (mode === "vm" && !vmSupported) ||
-                  (mode === "local" && !localSelectable);
-                const unavailableTitle =
-                  mode === "vm" && !vmSupported
-                    ? "This model engine cannot use the Local VM"
-                    : mode === "cloud" && !cloudSupported
-                      ? "This model engine cannot use cloud computer tools"
-                      : mode === "local" && !localSelectable
-                        ? localDisabledReason ?? "Local computer control isn't ready"
-                          : undefined;
-                return (
-              <button
-                key={mode}
-                disabled={disabled}
-                title={unavailableTitle}
-                onClick={() => {
-                  if (mode === bot.computer) return;
-                  if (mode === "local" && bot.autoApprove) setLocalAutoWarning(true);
-                  else dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } });
-                }}
-                className={cn(
-                  "flex-1 py-1.5 text-[13px]",
-                  i > 0 && "border-l border-hairline/40",
-                  disabled && "cursor-not-allowed opacity-40",
-                  bot.computer === mode
-                    ? "bg-control text-ink"
-                    : "text-ink-secondary hover:bg-control/60 hover:text-ink",
-                )}
-              >
-                {label}
-              </button>
-                );
-              })()
-            ))}
-          </div>
+          <ComputerDestinationGrid value={bot.computer ?? "auto"} unavailable={{
+            ...(!cloudSupported ? { cloud: "This engine cannot use cloud computer tools" } : {}),
+            ...(!vmSupported ? { vm: "This engine cannot use the Local VM" } : {}),
+            ...(!localSelectable ? { local: localDisabledReason ?? "Local control is not ready" } : {}),
+            ...(!builtInBrowserEnabled(state.config) || !window.muragebox?.browser
+              ? { browser: !builtInBrowserEnabled(state.config) ? "Enable Browser in Settings" : "Browser setup required on this host" } : {}),
+          }} onSelect={(mode) => {
+            if (mode === (bot.computer ?? "auto")) return;
+            if (bot.autoApprove && (mode === "local" || (mode === "auto" && !isLinux && localSelectable))) {
+              setLocalAutoWarningChoice(mode); setLocalAutoWarning(true); return;
+            }
+            dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode === "auto" ? null : mode,
+              ...(mode === "browser" ? { browser: true } : {}) } });
+          }} />
+          {bot.computer === "browser" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">
+            Browser tools can work with web pages without desktop access. {browserEnabled ? "Open the Browser tab above to view it." : "An interactive browser preview is unavailable here."}
+          </p>}
           {(!bot.computer || bot.computer === "cloud") && (
             <>
               <CloudBackendPicker
@@ -1404,7 +1416,7 @@ export function ComputerPanel({
       open={localAutoWarning}
       onCancel={() => setLocalAutoWarning(false)}
       onConfirm={() => {
-        dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "local", acknowledgeLocalAuto: true } });
+        dispatch({ type: "updateBot", botId: bot.id, patch: { computer: localAutoWarningChoice === "auto" ? null : "local", acknowledgeLocalAuto: true } });
         setLocalAutoWarning(false);
       }}
     />

@@ -440,9 +440,9 @@ export function BrowserPanel({
           // The person may already be typing into the native page. Keep the
           // agent gated even though the durable lease endpoint failed; a
           // subsequent Take control click retries the server transition.
-          setError("Browser control could not be confirmed. The bot remains paused here for safety — retry Take control.");
+          setError("Browser control could not be confirmed. The bot remains paused here for safety. Retry Take control.");
         } else if (result.failed === "durable-release") {
-          setError("Control could not be handed back. The bot remains paused here for safety — retry Hand back.");
+          setError("Control could not be handed back. The bot remains paused here for safety. Retry Hand back.");
         } else if (result.failed === "native-release") {
           setError("The server released control, but this browser remains paused locally for safety. Reopen the Browser panel to retry.");
         }
@@ -732,7 +732,7 @@ export function BrowserPanel({
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="min-w-0 text-[12px] leading-relaxed text-ink-secondary">
           {control.held
-            ? "You have the wheel — the bot waits until you hand it back."
+            ? "You have the wheel; the bot waits until you hand it back."
             : "Click into the page to take over any time; the bot pauses while you drive."}
         </div>
         <button

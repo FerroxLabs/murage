@@ -43,6 +43,30 @@ afterEach(async () => {
 });
 
 describe("connector MCP bridge", () => {
+  it("preserves distinct account aliases and canonical duplicates in authenticated requests", async () => {
+    let received: any;
+    const harness = await listen((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        received = JSON.parse(body);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    const lines = start({ MURAGE_HARNESS_URL: harness, MURAGE_CONNECTORS_TOKEN: "fixture-secret" });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: {
+      name: "COMPOSIO_MANAGE_CONNECTIONS", arguments: { toolkits: [
+        { toolkit: " GMAIL ", alias: " Personal " }, { name: "gmail", account: "Work", action: "connect" },
+        { toolkit: "gmail", alias: "work" }, { toolkit: "gmail", alias: "Ignored", action: "remove" }, "GMAIL",
+      ] },
+    } })}\n`);
+    const reply = await nextJson(lines);
+    expect(received.items).toEqual([{ slug: "gmail", alias: "Personal" }, { slug: "gmail", alias: "Work" }, { slug: "gmail" }]);
+    expect(received.slugs).toEqual(["gmail"]);
+    expect(reply.result.content[0].text).toContain("gmail (Work)");
+  });
+
   it("turns agent connection requests into authenticated chat-card requests", async () => {
     let received: any = null;
     const harness = await listen((request, response) => {
@@ -56,7 +80,8 @@ describe("connector MCP bridge", () => {
     });
     const lines = start({
       MURAGE_HARNESS_URL: harness,
-      MURAGE_COMMS_TOKEN: "bridge-secret",
+      MURAGE_COMMS_TOKEN: "different-agents-capability",
+      MURAGE_CONNECTORS_TOKEN: "bridge-secret",
       MURAGE_BOT_ID: "bot-1",
       MURAGE_THREAD_ID: "thread-1",
     });

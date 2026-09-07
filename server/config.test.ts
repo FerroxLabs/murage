@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { customMcpServers,
   DATA_DIR,
@@ -32,6 +33,259 @@ import { customMcpServers,
   ROUTING_ENV,
   type AppConfig,
 } from "./config.ts";
+
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return { ...fs, readFileSync: vi.fn(fs.readFileSync) };
+});
+
+describe("explicit web search configuration", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_TAVILY_SEARCH_KEY", undefined); vi.stubEnv("MURAGE_EXA_SEARCH_KEY", undefined); vi.stubEnv("MURAGE_FIRECRAWL_SEARCH_KEY", undefined); });
+  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
+
+  it("preserves, hydrates, rotates and clears Firecrawl keys independently of provider selection", () => {
+    saveConfig(parseConfigPatch({ webSearch: { provider: "firecrawl", firecrawlApiKey: "file-firecrawl", exaApiKey: "file-exa" } }));
+    saveConfig({ webSearch: { provider: "auto" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "auto", firecrawlApiKey: "file-firecrawl", exaApiKey: "file-exa" });
+    vi.stubEnv("MURAGE_FIRECRAWL_SEARCH_KEY", "encrypted-firecrawl");
+    expect(loadConfig().webSearch?.firecrawlApiKey).toBe("encrypted-firecrawl");
+    syncCredentialEnv({ webSearch: { firecrawlApiKey: "rotated-firecrawl" } });
+    expect(loadConfig().webSearch?.firecrawlApiKey).toBe("rotated-firecrawl");
+    saveConfig({ webSearch: { firecrawlApiKey: "" } });
+    syncCredentialEnv({ webSearch: { firecrawlApiKey: "" } });
+    expect(process.env.MURAGE_FIRECRAWL_SEARCH_KEY).toBeUndefined();
+    expect(loadConfig().webSearch).toEqual({ provider: "auto", firecrawlApiKey: "", exaApiKey: "file-exa" });
+    const env = { MURAGE_FIRECRAWL_SEARCH_KEY: "private-firecrawl", FIRECRAWL_API_KEY: "external-mcp-key" };
+    stripWorkspaceCredentialEnv(env);
+    expect(env).toEqual({ FIRECRAWL_API_KEY: "external-mcp-key" });
+    expect(() => parseConfigPatch({ webSearch: { firecrawlApiKey: 1 } })).toThrow();
+  });
+
+  it("persists and reloads selected search keys while provider-only updates preserve them", () => {
+    saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" });
+    saveConfig({ webSearch: { provider: "exa" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "exa", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" });
+    expect(JSON.parse(readFileSync(file, "utf8")).webSearch).toEqual(loadConfig().webSearch);
+  });
+
+  it("persists explicit empty-key clearing without removing the other provider key", () => {
+    saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" } });
+    saveConfig({ webSearch: { provider: "off", tavilyApiKey: "" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "off", tavilyApiKey: "", exaApiKey: "fake-exa-key" });
+  });
+
+  it("supports key-only encrypted credential updates without changing the selected provider", () => {
+    saveConfig({ webSearch: { provider: "exa", tavilyApiKey: "file-tavily", exaApiKey: "file-exa" } });
+    const patch = parseConfigPatch({ webSearch: { tavilyApiKey: "new-tavily" } });
+    saveConfig(patch);
+    expect(loadConfig().webSearch).toEqual({ provider: "exa", tavilyApiKey: "new-tavily", exaApiKey: "file-exa" });
+    expect(parseStoredConfig({ webSearch: { tavilyApiKey: "fixture" } }).webSearch?.provider).toBeUndefined();
+  });
+
+  it("hydrates and synchronizes only Murage-specific search keys and strips them from children", () => {
+    saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "", exaApiKey: "" } });
+    vi.stubEnv("TAVILY_API_KEY", "existing-engine-key");
+    vi.stubEnv("EXA_API_KEY", "existing-mcp-key");
+    vi.stubEnv("MURAGE_TAVILY_SEARCH_KEY", "encrypted-tavily");
+    vi.stubEnv("MURAGE_EXA_SEARCH_KEY", "encrypted-exa");
+    expect(loadConfig().webSearch).toEqual({ provider: "tavily", tavilyApiKey: "encrypted-tavily", exaApiKey: "encrypted-exa" });
+    syncCredentialEnv({ webSearch: { tavilyApiKey: "rotated-tavily" } });
+    expect(loadConfig().webSearch?.tavilyApiKey).toBe("rotated-tavily");
+    syncCredentialEnv({ webSearch: { tavilyApiKey: "" } });
+    expect(process.env.MURAGE_TAVILY_SEARCH_KEY).toBeUndefined();
+    expect(loadConfig().webSearch?.tavilyApiKey).toBe("");
+    expect(loadConfig().webSearch?.exaApiKey).toBe("encrypted-exa");
+    const env = { MURAGE_TAVILY_SEARCH_KEY: "private-tavily", MURAGE_EXA_SEARCH_KEY: "private-exa", TAVILY_API_KEY: process.env.TAVILY_API_KEY, EXA_API_KEY: process.env.EXA_API_KEY };
+    stripWorkspaceCredentialEnv(env);
+    expect(env).toEqual({ TAVILY_API_KEY: "existing-engine-key", EXA_API_KEY: "existing-mcp-key" });
+  });
+
+  it("validates the strict provider schema and leaves legacy engine search unchanged", () => {
+    expect(parseStoredConfig({}).webSearch).toBeUndefined();
+    for (const provider of ["engine", "tavily", "exa", "off"]) expect(parseConfigPatch({ webSearch: { provider } }).webSearch?.provider).toBe(provider);
+    expect(() => parseConfigPatch({ webSearch: { provider: "unknown" } })).toThrow();
+    expect(() => parseConfigPatch({ webSearch: { provider: "tavily", arbitraryEndpoint: "https://example.invalid" } })).toThrow();
+    expect(() => parseConfigPatch({ webSearch: { provider: "exa", exaApiKey: 1 } })).toThrow();
+    vi.stubEnv("TAVILY_API_KEY", "ambient-engine-tavily-key");
+    vi.stubEnv("EXA_API_KEY", "ambient-engine-exa-key");
+    expect(loadConfig().webSearch).toBeUndefined();
+    const inherited = { TAVILY_API_KEY: process.env.TAVILY_API_KEY, EXA_API_KEY: process.env.EXA_API_KEY };
+    stripWorkspaceCredentialEnv(inherited);
+    expect(inherited).toEqual({ TAVILY_API_KEY: "ambient-engine-tavily-key", EXA_API_KEY: "ambient-engine-exa-key" });
+  });
+});
+
+describe("notification preference configuration", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+  it("persists privacy and quiet hours while partial changes preserve false preferences", () => {
+    const quietHours = { enabled: true, start: "22:00", end: "07:00", timeZone: "Asia/Bangkok" };
+    saveConfig({ notifications: { attention: true, completion: false, failures: false, previewContent: false, quietHours } });
+    const patch = parseConfigPatch({ notifications: { attention: false } });
+    expect(patch.notifications).toEqual({ attention: false });
+    saveConfig(patch);
+    expect(loadConfig().notifications).toEqual({ attention: false, completion: false, failures: false, previewContent: false, quietHours });
+    expect(JSON.parse(readFileSync(file, "utf8")).notifications).toEqual(loadConfig().notifications);
+    expect(parseStoredConfig({}).notifications).toBeUndefined();
+  });
+  it.each([
+    { enabled: true, start: "25:00", end: "07:00", timeZone: "UTC" },
+    { enabled: true, start: "22:00", end: "07:00", timeZone: "Not/A_Zone" },
+    { enabled: true, start: "22:00", end: "22:00", timeZone: "UTC" },
+  ])("refuses invalid quiet-hours configuration without changing stored bytes: %j", quietHours => {
+    writeFileSync(file, "{}");
+    expect(() => saveConfig({ notifications: { quietHours } })).toThrow();
+    expect(() => parseConfigPatch({ notifications: { quietHours } })).toThrow();
+    expect(readFileSync(file, "utf8")).toBe("{}");
+  });
+});
+
+describe("Telegram credential configuration", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_TELEGRAM_BOT_TOKEN", undefined); });
+  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
+  it("preserves target choice on key saves, hydrates private boot credentials and clears explicitly", () => {
+    saveConfig({ telegram: { targetBotId: "fixture-bot", botToken: "old-fixture-token" } });
+    saveConfig(parseConfigPatch({ telegram: { botToken: "new-fixture-token" } }));
+    expect(loadConfig().telegram).toEqual({ targetBotId: "fixture-bot", botToken: "new-fixture-token" });
+    vi.stubEnv("MURAGE_TELEGRAM_BOT_TOKEN", "encrypted-fixture-token");
+    expect(loadConfig().telegram?.botToken).toBe("encrypted-fixture-token");
+    saveConfig({ telegram: { botToken: "" } }); syncCredentialEnv({ telegram: { botToken: "" } });
+    expect(loadConfig().telegram).toEqual({ targetBotId: "fixture-bot", botToken: "" });
+    syncCredentialEnv({ telegram: { botToken: "rotated-fixture-token" } });
+    expect(loadConfig().telegram?.botToken).toBe("rotated-fixture-token");
+    const childEnv = { MURAGE_TELEGRAM_BOT_TOKEN: "private", TELEGRAM_BOT_TOKEN: "independent-tool" };
+    stripWorkspaceCredentialEnv(childEnv);
+    expect(childEnv).toEqual({ TELEGRAM_BOT_TOKEN: "independent-tool" });
+  });
+  it("rejects malformed and oversized fields without adding polling defaults", () => {
+    expect(parseStoredConfig({}).telegram).toBeUndefined();
+    const invalid: Array<Record<string, string | number | boolean>> = [{ botToken: 1 }, { botToken: "x".repeat(257) }, { targetBotId: "x".repeat(161) }, { polling: true }];
+    for (const telegram of invalid) expect(() => parseConfigPatch({ telegram })).toThrow();
+  });
+});
+
+describe("saved configuration recovery", () => {
+  const file = join(DATA_DIR, "config.json");
+  let loadConfig: typeof import("./config.ts").loadConfig;
+  beforeEach(async () => {
+    // setup.ts imports config before this file's fs mock. Reload the reader
+    // so injected read errors hit the production read, not the assertion's
+    // later inspection of unchanged bytes.
+    vi.mocked(readFileSync).mockReset();
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(readFileSync).mockImplementation(realFs.readFileSync);
+    vi.resetModules();
+    loadConfig = (await import("./config.ts")).loadConfig;
+    mkdirSync(DATA_DIR, { recursive: true });
+    rmSync(file, { recursive: true, force: true });
+  });
+  afterEach(async () => {
+    vi.mocked(readFileSync).mockReset();
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(readFileSync).mockImplementation(realFs.readFileSync);
+    vi.unstubAllEnvs();
+    rmSync(file, { recursive: true, force: true });
+  });
+
+  it("allows a truly missing file and valid empty config without requiring modern fields", () => {
+    vi.stubEnv("XAI_API_KEY", "fixture-env-key");
+    expect(loadConfig().xai?.key).toBe("fixture-env-key");
+    expect(existsSync(file)).toBe(false);
+    writeFileSync(file, "{}");
+    expect(loadConfig().xai?.key).toBe("fixture-env-key");
+    expect(readFileSync(file, "utf8")).toBe("{}");
+  });
+
+  it.each([
+    ["", "invalid-json"], ["{", "invalid-json"], ['{"private":"never-echo-this",', "invalid-json"],
+    ["null", "invalid-shape"], ["[]", "invalid-shape"], ['"private-root"', "invalid-shape"],
+    ['{"instances":{"bad":{"driver":42}}}', "invalid-shape"], ['{"profile":[]}', "invalid-shape"],
+  ])("preserves damaged bytes and reports a sanitized recovery error for %j", (raw, reason) => {
+    writeFileSync(file, raw);
+    let failure: unknown;
+    try { loadConfig(); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: file, reason });
+    expect(String(failure)).not.toMatch(/never-echo-this|private-root|Unexpected token/);
+    expect((failure as Error).cause).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+
+  it.each(["EACCES", "EPERM", "EIO", "ENOENT"])("does not discard an existing config after read error %s", (code) => {
+    const raw = '{"profile":{"name":"Fixture owner"}}';
+    writeFileSync(file, raw);
+    vi.mocked(readFileSync).mockImplementationOnce(() => { throw Object.assign(new Error("fixture read failed"), { code }); });
+    expect(() => loadConfig()).toThrowError(expect.objectContaining({
+      code: "PERSISTED_STATE_RECOVERY_REQUIRED", filePath: file, reason: "unreadable", readErrorCode: code,
+    }));
+    expect(readFileSync(file, "utf8")).toBe(raw);
+  });
+
+  it.skipIf(process.platform === "win32")("does not mistake a dangling config link for a first run", () => {
+    const target = join(DATA_DIR, "absent-config-target");
+    symlinkSync(target, file);
+    expect(() => loadConfig()).toThrowError(expect.objectContaining({ reason: "unreadable" }));
+    expect(lstatSync(file).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
+  });
+});
+
+describe("legacy directory migration scope", () => {
+  let fixtureHome: string;
+  beforeEach(() => {
+    fixtureHome = mkdtempSync(join(tmpdir(), "murage-config-migration-"));
+    vi.stubEnv("HOME", fixtureHome);
+    vi.stubEnv("USERPROFILE", fixtureHome);
+    vi.stubEnv("MURAGE_DATA_DIR", undefined);
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    rmSync(fixtureHome, { recursive: true, force: true });
+  });
+  const seedLegacy = () => {
+    const legacy = join(fixtureHome, ".opengrokbot");
+    mkdirSync(legacy);
+    writeFileSync(join(legacy, "config.json"), '{"profile":{"name":"Legacy fixture"}}');
+    return legacy;
+  };
+
+  it("migrates the intended default directory and keeps valid legacy settings", async () => {
+    const legacy = seedLegacy();
+    const config = await import("./config.ts");
+    config.ensureDirs();
+    expect(existsSync(legacy)).toBe(false);
+    expect(config.loadConfig().profile?.name).toBe("Legacy fixture");
+    expect(existsSync(join(config.DATA_DIR, "events"))).toBe(true);
+  });
+
+  it.each(["custom", ".murage"])("an explicit %s override never adopts the default legacy directory", async (directory) => {
+    const legacy = seedLegacy();
+    const target = join(fixtureHome, directory);
+    vi.stubEnv("MURAGE_DATA_DIR", target);
+    const config = await import("./config.ts");
+    config.ensureDirs();
+    expect(readFileSync(join(legacy, "config.json"), "utf8")).toBe('{"profile":{"name":"Legacy fixture"}}');
+    expect(existsSync(join(config.DATA_DIR, "config.json"))).toBe(false);
+    expect(existsSync(join(config.DATA_DIR, "events"))).toBe(true);
+  });
+
+  it("does not migrate a legacy directory owned by another lease holder", async () => {
+    const legacy = seedLegacy();
+    const { acquireDataDirLease } = await import("../electron/data-dir-lease.mjs");
+    const held = acquireDataDirLease(legacy);
+    try {
+      const config = await import("./config.ts");
+      expect(() => config.ensureDirs()).toThrowError(expect.objectContaining({ code: "PERSISTED_STATE_RECOVERY_REQUIRED" }));
+      expect(readFileSync(join(legacy, "config.json"), "utf8")).toContain("Legacy fixture");
+      expect(existsSync(config.DATA_DIR)).toBe(false);
+    } finally { held.release(); }
+  });
+});
 
 describe("configuration boundaries", () => {
   it("keeps supported stored settings and drops unrelated top-level data", () => {
@@ -824,6 +1078,22 @@ describe("customMcpServers", () => {
       }),
     );
     expect(Object.keys(out)).toEqual(["good_name"]);
+  });
+
+  it("skips saved entries with reserved environment names, preserving valid siblings and the config", () => {
+    const config = cfg({
+      ...Object.fromEntries([
+        "MURAGE_COMMS_TOKEN", "murage_harness_url", "MURAGEBOX_TOKEN", "muragebox_url",
+        "ELECTRON_RUN_AS_NODE", "electron_run_as_node", "DWEB_URL", "dweb_url",
+        "PH_ANDROID_SERIAL", "ph_android_serial",
+      ].map((key, index) => [`blocked${index}`, { command: "blocked", env: { [key]: "private-value" } }])),
+      notes: { command: "notes", env: { NOTES_TOKEN: "notes-token" } },
+    });
+    const before = JSON.stringify(config);
+    expect(customMcpServers(config)).toEqual({
+      notes: { command: "notes", args: [], env: { NOTES_TOKEN: "notes-token" } },
+    });
+    expect(JSON.stringify(config)).toBe(before);
   });
 
   it("skips url transports with a teaching message, not a crash", () => {

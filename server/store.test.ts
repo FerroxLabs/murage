@@ -2,7 +2,7 @@
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -676,13 +676,103 @@ describe("Store", () => {
   });
 
 
-  it("tolerates a corrupt bots.json by starting empty", () => {
-    const store = new Store(selection);
-    store.createBot();
-    writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
+  describe("persisted-state recovery boundary", () => {
+    it.each(["bots.json", "groups.json"])("preserves corrupt %s and prevents creating over it", (file) => {
+      const original = '{"privateData":"must survive",';
+      mkdirSync(DATA_DIR, { recursive: true });
+      writeFileSync(join(DATA_DIR, file), original);
+      expect(() => {
+        const reloaded = new Store(selection);
+        if (file === "bots.json") reloaded.createBot();
+        else reloaded.createGroup("Replacement", []);
+      }).toThrowError(expect.objectContaining({
+        name: "PersistedStateRecoveryError",
+        code: "PERSISTED_STATE_RECOVERY_REQUIRED",
+        filePath: join(DATA_DIR, file),
+        reason: "invalid-json",
+      }));
+      expect(readFileSync(join(DATA_DIR, file), "utf8")).toBe(original);
+    });
 
-    const reloaded = new Store(selection);
-    expect(reloaded.bots).toEqual([]);
+    it.each(["bots.json", "groups.json"])("refuses invalid shapes in %s without modifying bytes", (file) => {
+      mkdirSync(DATA_DIR, { recursive: true });
+      for (const original of ["null", "{}", "42", '"text"', "[null]", "[[]]", '[{"id":"missing-thread"}]']) {
+        writeFileSync(join(DATA_DIR, file), original);
+        expect(() => new Store(selection)).toThrowError(expect.objectContaining({
+          name: "PersistedStateRecoveryError", reason: "invalid-shape", filePath: join(DATA_DIR, file),
+        }));
+        expect(readFileSync(join(DATA_DIR, file), "utf8")).toBe(original);
+      }
+    });
+
+    it.each(["bots.json", "groups.json"])("refuses an unreadable %s instead of treating it as absent", (file) => {
+      // A directory fails readFileSync deterministically, including when the
+      // test user can bypass chmod restrictions. Do not touch real user data.
+      const target = join(DATA_DIR, file);
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, "preserve-me"), "original");
+      expect(() => new Store(selection)).toThrowError(expect.objectContaining({
+        name: "PersistedStateRecoveryError", reason: "unreadable", filePath: target,
+      }));
+      expect(readFileSync(join(target, "preserve-me"), "utf8")).toBe("original");
+    });
+
+    it("validates both files before a migration can rewrite either one", () => {
+      const store = new Store(selection);
+      const bot = store.createBot({}, { seedMessages: false });
+      store.patchBot(bot.id, { busy: true });
+      const botsFile = join(DATA_DIR, "bots.json");
+      const originalBots = readFileSync(botsFile, "utf8");
+      writeFileSync(join(DATA_DIR, "groups.json"), "broken");
+      expect(() => new Store(selection)).toThrowError(expect.objectContaining({ reason: "invalid-json" }));
+      expect(readFileSync(botsFile, "utf8")).toBe(originalBots);
+      expect(readFileSync(join(DATA_DIR, "groups.json"), "utf8")).toBe("broken");
+    });
+
+    it("still allows missing files on a fresh install", () => {
+      const store = new Store(selection);
+      expect(store.bots).toEqual([]);
+      expect(store.groups).toEqual([]);
+      const bot = store.createBot({}, { seedMessages: false });
+      const group = store.createGroup("First room", [bot.id]);
+      const reloaded = new Store(selection);
+      expect(reloaded.bot(bot.id)?.threadId).toBe(bot.threadId);
+      expect(reloaded.group(group.id)?.threadId).toBe(group.threadId);
+    });
+
+    it("keeps pre-task bot and room migrations compatible", () => {
+      const store = new Store(selection);
+      const bot = store.createBot({}, { seedMessages: false });
+      const group = store.createGroup("Legacy room", [bot.id]);
+      store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Legacy conversation" });
+      const botsFile = join(DATA_DIR, "bots.json");
+      const groupsFile = join(DATA_DIR, "groups.json");
+      const bots = JSON.parse(readFileSync(botsFile, "utf8"));
+      const groups = JSON.parse(readFileSync(groupsFile, "utf8"));
+      delete bots[0].tasks;
+      bots[0].resumeCursors = { claude: "legacy-session" };
+      delete groups[0].tasks;
+      delete groups[0].defaultResponder;
+      writeFileSync(botsFile, JSON.stringify(bots));
+      writeFileSync(groupsFile, JSON.stringify(groups));
+      const reloaded = new Store(selection);
+      expect(reloaded.bot(bot.id)?.tasks).toMatchObject([
+        { threadId: bot.threadId, resumeCursors: { claude: "legacy-session" } },
+      ]);
+      expect(reloaded.group(group.id)?.tasks).toMatchObject([{ threadId: group.threadId }]);
+      expect(reloaded.group(group.id)?.defaultResponder).toEqual({ kind: "member", botId: bot.id });
+      expect(reloaded.messagesFor(bot.threadId)[0].text).toBe("Legacy conversation");
+    });
+
+    it.skipIf(process.platform === "win32")("does not treat dangling state symlinks as fresh installation", () => {
+      mkdirSync(DATA_DIR, { recursive: true });
+      const target = join(DATA_DIR, "bots.json");
+      symlinkSync("missing-saved-state.json", target);
+      expect(() => new Store(selection)).toThrowError(expect.objectContaining({
+        reason: "unreadable", readErrorCode: "ENOENT", filePath: target,
+      }));
+      expect(readlinkSync(target)).toBe("missing-saved-state.json");
+    });
   });
 
   it("busy is wiped even when bots.json says otherwise", () => {
@@ -1714,5 +1804,101 @@ describe("a team's first lead", () => {
 
     expect(store.bot(bruce.id)!.chiefOfStaff).toBe(true);
     expect(store.bot(kessler.id)!.chiefOfStaff).toBe(true);
+  });
+});
+
+// Crash recovery for room goals. The orchestrator that drives a goal lives
+// only in memory, so a durable "working" card is a lie the moment the
+// process dies. reconcileInterruptedGroupGoals is what makes the transcript
+// honest again before any client reads it.
+describe("Store.reconcileInterruptedGroupGoals", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  const seedWorkingGoal = (store: Store, threadId: string, runId: string) =>
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "goal.run",
+      text: "Goal in progress: coordinating.",
+      goalRun: {
+        runId,
+        goal: "Ship the release notes",
+        status: "working",
+        coordinatorBotId: "lead-1",
+        coordinatorName: "Lead",
+        turnCount: 2,
+        maxTurns: 13,
+        startedAt: 1,
+      },
+    });
+
+  it("fails an orphaned working goal card that no scheduler run explains", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Launch team", [bot.id]);
+    const card = seedWorkingGoal(store, room.threadId, "orphan-run");
+
+    expect(store.reconcileInterruptedGroupGoals(undefined, "Murage restarted before this goal finished.", 99)).toBe(1);
+
+    const patched = store.messagesFor(room.threadId).find((message) => message.id === card.id);
+    expect(patched).toMatchObject({
+      text: "Goal failed: Murage restarted before this goal finished.",
+      goalRun: {
+        status: "failed",
+        detail: "Murage restarted before this goal finished.",
+        turnCount: 2,
+        finishedAt: 99,
+      },
+    });
+  });
+
+  it("prefers the scheduler's terminal truth over the fallback failure", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Launch team", [bot.id]);
+    const card = seedWorkingGoal(store, room.threadId, "scheduled-run");
+
+    const recovered = store.reconcileInterruptedGroupGoals((runId, threadId) =>
+      runId === "scheduled-run" && threadId === room.threadId
+        ? { status: "completed", detail: "The scheduled report shipped.", finishedAt: 6 }
+        : null,
+    );
+
+    expect(recovered).toBe(1);
+    expect(store.messagesFor(room.threadId).find((message) => message.id === card.id)).toMatchObject({
+      text: "Goal completed: The scheduled report shipped.",
+      goalRun: { status: "completed", detail: "The scheduled report shipped.", finishedAt: 6 },
+    });
+  });
+
+  it("leaves already-settled cards and threads no room owns alone", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Launch team", [bot.id]);
+    const settled = store.appendMessage(room.threadId, {
+      role: "bot",
+      kind: "goal.run",
+      text: "Goal completed: done already.",
+      goalRun: {
+        runId: "settled-run",
+        goal: "Already done",
+        status: "completed",
+        coordinatorBotId: "lead-1",
+        coordinatorName: "Lead",
+        turnCount: 3,
+        maxTurns: 13,
+        startedAt: 1,
+        finishedAt: 2,
+      },
+    });
+    // a direct bot thread is not a room thread: its card must not be touched
+    const stray = seedWorkingGoal(store, bot.threadId, "stray-run");
+
+    expect(store.reconcileInterruptedGroupGoals()).toBe(0);
+    expect(store.messagesFor(room.threadId).find((message) => message.id === settled.id)?.goalRun?.status)
+      .toBe("completed");
+    expect(store.messagesFor(bot.threadId).find((message) => message.id === stray.id)?.goalRun?.status)
+      .toBe("working");
   });
 });

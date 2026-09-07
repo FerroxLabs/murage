@@ -12,7 +12,7 @@ import { knownSurface, surface, type SurfaceAnswer } from "./surface";
  * THREE states, and the third is the important one:
  *
  *   true       confirmed desktop — the local app, on loopback
- *   false      confirmed remote  — a phone, through the browser door
+ *   false      remote or transient fail-closed fallback
  *   undefined  not asked yet
  *
  * `undefined` must render the NEUTRAL thing, never the desktop thing. A phone
@@ -23,15 +23,27 @@ import { knownSurface, surface, type SurfaceAnswer } from "./surface";
 export function useDesktopSurface(): boolean | undefined {
   const [answer, setAnswer] = useState<SurfaceAnswer | undefined>(() => knownSurface());
   useEffect(() => {
-    if (answer !== undefined) return;
     let live = true;
-    void surface().then((next) => {
-      if (live) setAnswer(next);
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = 500;
+    const resolve = async () => {
+      const next = await surface();
+      if (!live) return;
+      setAnswer(next);
+      // A transient fallback is safe to render, but is not confirmation.
+      // Keep mounted screens recoverable while the harness starts. A real
+      // remote answer stops here, including on the browser door.
+      if (knownSurface() === undefined) {
+        timer = setTimeout(resolve, delay);
+        delay = Math.min(delay * 2, 10_000);
+      }
+    };
+    void resolve();
     return () => {
       live = false;
+      clearTimeout(timer);
     };
-  }, [answer]);
+  }, []);
   return resolveDesktopSurface(answer, (globalThis as { muragebox?: unknown }).muragebox);
 }
 

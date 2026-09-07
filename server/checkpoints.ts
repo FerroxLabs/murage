@@ -364,7 +364,7 @@ export async function checkpointsEnabled(botId: string, cwd: string): Promise<bo
  * committed first ("before restore"), so the restore itself shows up as a
  * checkpoint and can be undone; HEAD never moves backwards, only forward
  * over the "restored" commit. Excluded and gitignored files are untouched. */
-export async function restore(botId: string, cwd: string, hash: string): Promise<RestoreResult> {
+export async function restore(botId: string, cwd: string, hash: string, options: { assertCurrent?: () => void } = {}): Promise<RestoreResult> {
   if (disabledBots.has(botId)) {
     return { ok: false, error: "checkpoints are disabled for this bot until the app restarts (an earlier snapshot failed — see the server log)" };
   }
@@ -379,6 +379,7 @@ export async function restore(botId: string, cwd: string, hash: string): Promise
       return { ok: false, error: "no checkpoints exist for this folder" };
     }
     return await serialize(shadow, async (): Promise<RestoreResult> => {
+      options.assertCurrent?.();
       const env = gitEnv(shadow, worktree);
       try {
         await runGit(["cat-file", "-e", `${hash}^{commit}`], worktree, env);
@@ -403,7 +404,9 @@ export async function restore(botId: string, cwd: string, hash: string): Promise
       // too makes clean blind to everything the checkpoint owns; what clean
       // then sweeps is exactly the strays the safety commit could not stage
       // (unreadable files, add races) — never ignored/excluded files (no -x).
+      options.assertCurrent?.();
       await runGit(["restore", "--source", hash, "--staged", "--worktree", "--", "."], worktree, env);
+      options.assertCurrent?.();
       await runGit(["clean", "-fd"], worktree, env);
       // record the post-restore state (also re-syncs the index with the
       // deletions restore made), so the timeline shows the rollback

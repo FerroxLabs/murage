@@ -87,6 +87,16 @@ describe("desktop notifications", () => {
     });
   });
 
+  it("does not reintroduce a profile image into private lock-screen previews", () => {
+    const { notices } = installNotification("granted");
+    const onOpen = vi.fn();
+    showNotification({ ...frame, title: "Murage", body: "Open Murage to review.", botName: "", privatePreview: true }, onOpen, "https://example.com/private-avatar.png");
+    expect(notices[0].options?.icon).toBeUndefined();
+    expect(notices[0].title).toBe("Murage");
+    notices[0].onclick?.();
+    expect(onOpen).toHaveBeenCalledWith({ botId: frame.botId, threadId: frame.threadId });
+  });
+
   it("groups under the bot, not the thread", () => {
     const { notices } = installNotification("granted");
 

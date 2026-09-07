@@ -12,6 +12,7 @@ import type { CompanionEndpoint } from "../src/endpoints.ts";
 import { scrub } from "../src/wire.ts";
 
 const TOKEN = "murage_test_token";
+const COMPANION_TOKEN = "ab".repeat(32);
 
 /** Nested past any plausible stack, so `scrub`'s recursion gives out while
  * JSON.parse does not. The payload is what the scrubber is meant to remove. */
@@ -26,6 +27,7 @@ let sidecar: Server;
 let sidecarPort = 0;
 let cloudDesktopAccess = true;
 let companionMarker = "";
+let companionProof = "";
 let endpointCandidates: CompanionEndpoint[] = [];
 /** What the stub harness answers with next. Set per test. */
 let respond: (res: ServerResponse) => void = (res) => res.end();
@@ -51,6 +53,7 @@ const device = async (
 beforeAll(async () => {
   harness = createServer((req, res) => {
     companionMarker = String(req.headers["x-murage-companion"] ?? "");
+    companionProof = String(req.headers["x-murage-companion-token"] ?? "");
     respond(res);
   });
   const harnessPort = await listen(harness);
@@ -58,6 +61,7 @@ beforeAll(async () => {
   sidecar = createServer(
     createProxyHandler({
       harnessPort,
+      companionToken: COMPANION_TOKEN,
       authenticate: (t) => (t === TOKEN ? { cloudDesktopAccess } : null),
       redeem: () => ({ error: "not used here" }),
       serverName: () => "Test computer",
@@ -107,6 +111,7 @@ describe("preparing a harness response for a device", () => {
     expect(status).toBe(200);
     expect(JSON.parse(text).joinUrl).toBe("https://desktop.example/session/fresh");
     expect(companionMarker).toBe("1");
+    expect(companionProof).toBe(COMPANION_TOKEN);
   });
 
   it("never forwards a body it could not scrub", async () => {
@@ -128,6 +133,7 @@ describe("preparing a harness response for a device", () => {
     const { status, text } = await device();
     expect(status === 200 && text.includes("resumeCursors")).toBe(false);
     expect(text).not.toContain("cursor-value");
+    expect(companionProof).toBe("");
   });
 
   it("answers 502 when scrubbing actually throws", async () => {

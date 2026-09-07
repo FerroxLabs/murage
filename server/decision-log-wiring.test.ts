@@ -19,25 +19,29 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { DecisionRow } from "./decision-log.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const PORT = 18800 + Math.floor(Math.random() * 10_000);
-const BASE = `http://127.0.0.1:${PORT}`;
+let base: string;
+let desktopHeaders: Record<string, string>;
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
-  const res = await fetch(`${BASE}${path}`, {
+const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+  const res = await fetch(`${base}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
 };
+// Normal sends, answers and reads remain on the unmarked remote surface.
+const api = (method: string, path: string, body?: unknown) => request(method, path, body);
+const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 
 /** Newest matching decision row, or null when none shows up in time. */
 async function waitForDecision(pred: (r: DecisionRow) => boolean, ms = 30_000): Promise<DecisionRow | null> {
@@ -100,10 +104,10 @@ async function waitForRunThread(runId: string, ms = 20_000) {
  * folds that to tool "shell", summary "echo hi" — so the always-allow key
  * is "shell:echo"). */
 async function makePermissionBot(patch: Record<string, unknown>) {
-  const created = await api("POST", "/api/bots");
+  const created = await api("POST", "/api/bots", { modelSelection: { instanceId: "grok", model: "fake-model" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot;
-  const patched = await api("PATCH", `/api/bots/${bot.id}`, {
+  const patched = await desktopApi("PATCH", `/api/bots/${bot.id}`, {
     ...patch,
     modelSelection: { instanceId: "grok", model: "fake-model" },
   });
@@ -113,6 +117,8 @@ async function makePermissionBot(patch: Record<string, unknown>) {
 
 posixOnly("authorization decisions are logged", () => {
   beforeAll(async () => {
+    const port = await freePortBlock([0, 1]);
+    base = `http://127.0.0.1:${port}`;
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-decisions-e2e-"));
     mkdirSync(join(home, ".murage"), { recursive: true });
@@ -135,7 +141,9 @@ posixOnly("authorization decisions are logged", () => {
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,
         USERPROFILE: home,
-        MURAGE_PORT: String(PORT),
+        MURAGE_PORT: String(port),
+        MURAGE_WEBHOOK_PORT: String(port + 1),
+        MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -143,13 +151,18 @@ posixOnly("authorization decisions are logged", () => {
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
-        if ((await fetch(`${BASE}/api/health`)).ok) break;
+        if ((await fetch(`${base}/api/health`)).ok) break;
       } catch {
         /* not up yet */
       }
       if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
+    const proof = await api("GET", "/api/desktop-secret");
+    expect(proof.status).toBe(200);
+    expect(proof.body.secret).toMatch(/^[a-f0-9]{64}$/);
+    desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+    expect((await api("GET", "/api/config")).body.surface).toBe("remote");
   }, 40_000);
 
   afterAll(async () => {
@@ -232,7 +245,7 @@ posixOnly("authorization decisions are logged", () => {
       // unattended block — which is precisely what the row must say.
       const bot = await makePermissionBot({ name: "Nightshift", autoApprove: true, alwaysAllow: ["shell:echo"] });
 
-      const hook = await api("POST", "/api/webhooks", {
+      const hook = await desktopApi("POST", "/api/webhooks", {
         name: "Nightly build",
         prompt: "Handle the incoming build event",
         botId: bot.id,

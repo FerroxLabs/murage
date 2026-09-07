@@ -9,6 +9,7 @@ import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
 import { api, useStore, type InstanceInfo } from "@/state/store";
 import { EngineGroupLabel } from "./EngineGroupLabel";
+import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
 import { splitEngineRail } from "@/lib/engine-rail";
 import { cn } from "@/lib/cn";
@@ -200,10 +201,28 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
 
 function EngineRow({ instance }: { instance: InstanceInfo }) {
   const { refreshInstances } = useStore();
+  const cliConfigurable = !["grok", "openai-compat", "boxAgent"].includes(instance.driverKind);
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wasOpenFor = useRef<string | null>(null);
+  const changeGate = useRef(false);
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const setEnabled = async () => {
+    if (changeGate.current || switching) return;
+    changeGate.current = true; setSwitching(true); setError(null); setSaved(null);
+    try {
+      await api(`/api/instances/${encodeURIComponent(instance.instanceId)}`, {
+        method: "PATCH", body: JSON.stringify({ enabled: instance.enabled === false }),
+      });
+      setConfirmationOpen(false);
+      setSaved(instance.enabled === false ? "Engine enabled." : "Engine disabled.");
+      await Promise.resolve(refreshInstances()).catch(() => { setSaved("Change saved. Refresh the engine list to see its current status."); });
+    } catch (error) { setError(error instanceof Error ? error.message : "Could not update engine"); }
+    finally { changeGate.current = false; setSwitching(false); }
+  };
 
   // Close the picker when this instance's override changes to anything else
   // — a save from this row, another tab, or the 5-min refresh. The picker
@@ -217,7 +236,8 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
   }, [instance.cli]);
 
   const reset = () => {
-    if (switching) return;
+    if (switching || changeGate.current) return;
+    changeGate.current = true;
     setSwitching(true);
     setError(null);
     api(`/api/instances/${encodeURIComponent(instance.instanceId)}`, {
@@ -228,7 +248,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       // refresh failure should not tell the user the reset itself failed.
       .then(() => Promise.resolve(refreshInstances()).catch(() => {}))
       .catch((e) => setError(e.message))
-      .finally(() => setSwitching(false));
+      .finally(() => { changeGate.current = false; setSwitching(false); });
   };
 
   return (
@@ -247,17 +267,26 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
           )
         )}
         <span className="flex-1" />
+        <button
+          onClick={() => { setConfirmationOpen(value => !value); setSaved(null); }}
+          disabled={switching || open}
+          aria-expanded={confirmationOpen}
+          className="shrink-0 rounded-lg border border-hairline/40 px-3 py-1 text-[12px] text-ink disabled:opacity-50"
+        >
+          {instance.enabled === false ? "Enable" : "Disable"}
+        </button>
         {instance.cli && (
           <button
             onClick={reset}
-            disabled={switching}
+            disabled={switching || open || confirmationOpen}
             className="shrink-0 text-[11.5px] text-ink-secondary hover:text-ink disabled:opacity-50"
           >
             {switching ? "Resetting…" : "Reset"}
           </button>
         )}
-        <button
+        {cliConfigurable && <button
           onClick={() => setOpen((v) => !v)}
+          disabled={switching || confirmationOpen}
           aria-expanded={open}
           className={cn(
             "shrink-0 rounded-lg border border-hairline/40 px-3 py-1 text-[12px]",
@@ -265,9 +294,30 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
           )}
         >
           Set CLI…
-        </button>
+        </button>}
       </div>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
+      {saved && <div role="status" className="mt-1 text-[12px] text-success">{saved}</div>}
+      <p className="mt-1 text-[12px] text-ink-secondary">
+        {instance.enabled === false ? "Disabled" : needsCli(instance)
+          ? instance.snapshot.reason ?? "Not detected"
+          : needsSignIn(instance) ? "Detected · sign-in required"
+            : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
+      </p>
+      {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
+        <EngineSetup instance={instance} className="mt-2" />
+      )}
+      {confirmationOpen && (
+        <div className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
+          <p>Changing engine availability reloads providers and interrupts running turns. Enabling an engine may probe its CLI and inherited configuration; it does not resume restored work.</p>
+          <div className="mt-2 flex gap-2">
+            <button disabled={switching} onClick={() => void setEnabled()} className="rounded-lg bg-raised px-3 py-2 disabled:opacity-50">
+              {switching ? "Saving..." : instance.enabled === false ? "Confirm enable" : "Confirm disable"}
+            </button>
+            <button disabled={switching} onClick={() => setConfirmationOpen(false)} className="rounded-lg px-3 py-2 text-ink-secondary">Cancel</button>
+          </div>
+        </div>
+      )}
       {open && (
         <CustomPicker
           instance={instance}
@@ -285,7 +335,7 @@ export function EnginesSettings() {
   // every KNOWN-driver instance has cliDefault; unknown-driver shadows have
   // neither unless an override was set. Including them keeps a Reset-able row
   // (and a Set CLI… path) for engines the running build doesn't recognize.
-  const rows = state.instances.filter((i) => i.cli !== undefined || i.cliDefault !== undefined || i.snapshot.state === "unavailable");
+  const rows = state.instances.filter((i) => i.enabled !== undefined || i.cli !== undefined || i.cliDefault !== undefined || i.snapshot.state === "unavailable");
 
   return (
     <div className="flex flex-col gap-5">
@@ -308,7 +358,7 @@ export function EnginesSettings() {
         );
       })()}
       <div className="text-[12px] leading-relaxed text-ink-secondary">
-        Set CLI points an engine at a specific binary — a versioned build, a wrapper script, or an
+        Set CLI points an engine at a specific binary: a versioned build, a wrapper script, or an
         absolute path. Saving reloads providers and interrupts any running turns.
       </div>
     </div>

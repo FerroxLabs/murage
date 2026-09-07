@@ -12,6 +12,7 @@ import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
+import { useDesktopSurface } from "@/lib/use-surface";
 
 interface ApprovalLabels {
   [tool: string]: string;
@@ -35,6 +36,11 @@ export function isRoutineApproval(pending: Pending): boolean {
 
 export function isSkillApproval(pending: Pending): boolean {
   return Boolean(pending.message.card?.skillRequest);
+}
+
+function needsRoutineReview(pending: Pending): boolean {
+  const card = pending.message.card;
+  return isRoutineApproval(pending) && !card?.answered && !/^[a-f0-9]{64}$/.test(card?.routineProposalDigest ?? "");
 }
 
 /** Open approvals on a thread, oldest first — answered/dismissed drop out. */
@@ -136,6 +142,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
         <SkillRequestPreview request={pending.message.card.skillRequest} />
       )}
       {pending.held && <div className="mt-2 text-[12px] text-warning">{pending.held}</div>}
+      {!pending.held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
     </div>
   );
 });
@@ -153,6 +160,7 @@ export function PendingApprovalActions({
   onCancelTurn: () => void;
 }) {
   const { dispatch } = useStore();
+  const desktop = useDesktopSurface();
   const isRoutineRequest = isRoutineApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
   const durableRequest = isRoutineRequest || isSkillRequest;
@@ -167,7 +175,7 @@ export function PendingApprovalActions({
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
-      alwaysAllow: always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
+      alwaysAllow: desktop === true && always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
     });
 
   const base = "rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors";
@@ -184,7 +192,7 @@ export function PendingApprovalActions({
       >
         {isRoutineRequest ? "Cancel" : "Deny"}
       </button>
-      {!durableRequest && bot && pending.allowKey && (
+      {desktop === true && !durableRequest && bot && pending.allowKey && (
         <button
           onClick={() => decide("allow", true)}
           title={`Stop asking ${bot.name} about ${pending.allowKey}`}
@@ -195,7 +203,7 @@ export function PendingApprovalActions({
       )}
       <button
         onClick={() => decide("allow")}
-        disabled={isSkillRequest && !reviewedSha256}
+        disabled={(isSkillRequest && !reviewedSha256) || needsRoutineReview(pending)}
         className={cn(
           base,
           "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",

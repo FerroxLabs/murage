@@ -53,6 +53,8 @@ extraResources:
     to: licenses/Murage-LICENSE.txt
   - from: NOTICE
     to: licenses/Murage-NOTICE.txt
+  - from: third_party/installation-archive
+    to: licenses/installation-archive
   # cloudflared is distributed under Apache-2.0 as a separate executable.
   # Murage itself uses the same full license text; ship another named
   # copy so the third-party executable's terms remain unambiguous.
@@ -74,6 +76,12 @@ extraResources:
     to: ui
   - from: dist-server
     to: server
+  # A FileMatcher skips its root node_modules directory; copy this staged
+  # runtime as its own resource root so nested dependencies remain intact.
+  - from: dist-server/node_modules
+    to: server/node_modules
+    filter:
+      - "**/*"
   # The shipped skill catalog installSkillFromLibrary reads every time someone
   # hires a bot or a team. 67 MB / 4,411 files verbatim, ~20 MB compressed in
   # each artifact. Without it MURAGE_SKILL_LIBRARY points at an absent

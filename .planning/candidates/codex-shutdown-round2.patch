@@ -1,0 +1,185 @@
+diff --git a/server/drivers/codex.test.ts b/server/drivers/codex.test.ts
+index 15c9db5a..c3e55c49 100644
+--- a/server/drivers/codex.test.ts
++++ b/server/drivers/codex.test.ts
+@@ -130,6 +130,23 @@ describe("CodexDriver turns (fake app-server)", () => {
+     expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
+   });
+ 
++  it("waits for child exit before completion and ignores buffered and later output after settlement", async () => {
++    await create({ mode: "late-output" });
++    const dump = join(scratch, "shutdown.json");
++    process.env.FAKE_CODEX_DUMP = dump;
++    await instance.adapter.sendTurn({ threadId: "t-shutdown", text: "go" });
++    await recorder.until((event) => event.type === "item.completed" && event.itemType === "assistant_text");
++    const { pid } = JSON.parse(readFileSync(dump, "utf8"));
++    expect(instance.adapter.hasSession?.("t-shutdown")).toBe(true);
++    expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
++    await recorder.until((event) => event.type === "turn.completed");
++    expect(() => process.kill(pid, 0)).toThrow();
++    expect(instance.adapter.hasSession?.("t-shutdown")).toBe(false);
++    expect(recorder.events.filter((event) => event.type === "turn.completed")).toHaveLength(1);
++    expect(recorder.events.filter((event) => event.type === "content.delta").map((event) => event.delta))
++      .toEqual(["done from fake codex"]);
++  });
++
+   it("strips ambient routing switches from the codex child env", async () => {
+     // An OPENAI_BASE_URL left in the shell by a provider switcher would point
+     // the CLI's own ChatGPT login at a third party, silently, every turn.
+diff --git a/server/drivers/codex.ts b/server/drivers/codex.ts
+index fecfa3ad..1ee0530c 100644
+--- a/server/drivers/codex.ts
++++ b/server/drivers/codex.ts
+@@ -139,7 +139,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+     await refreshModels();
+     const listeners = new Set<RuntimeEventListener>();
+     interface Turn {
+-      stop: () => void;
++      stop: () => Promise<boolean>;
+       turnId: string;
+       asks: Map<string, (behavior: "allow" | "deny" | "answer", message?: string, source?: "user" | "timeout" | "system") => void>;
+     }
+@@ -291,20 +291,46 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+           send({ jsonrpc: "2.0", id, method, params });
+         });
+ 
++      let stopping: Promise<boolean> | undefined;
++      const terminate = () => stopping ??= new Promise<boolean>((resolve) => {
++        if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
++          resolve(true);
++          return;
++        }
++        const closed = () => {
++          clearTimeout(timer);
++          resolve(true);
++        };
++        const timer = setTimeout(() => {
++          child.off("close", closed);
++          resolve(false);
++        }, 5_000);
++        timer.unref?.();
++        child.once("close", closed);
++        killCliTree(child);
++      });
+       const stop = () => {
+         stopRequested = true;
+-        killCliTree(child);
++        return terminate();
+       };
+ 
+-      const settle = (ok: boolean, stopReason: string | null) => {
++      const settle = async (ok: boolean, stopReason: string | null) => {
+         if (state.settled) return;
+         state.settled = true;
+         for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
+         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
+         rpcPending.clear();
+-        active.delete(threadId);
+-        emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(state.usage ? { usage: state.usage } : {}) });
+-        stop(); // the app-server never exits on its own
++        const complete = () => {
++          if (active.get(threadId)?.stop !== stop) return;
++          active.delete(threadId);
++          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(state.usage ? { usage: state.usage } : {}) });
++        };
++        if (await stop()) complete();
++        else {
++          emit({ ...base(threadId, turnId), type: "runtime.error", message: "codex did not shut down after termination was requested" });
++          if (child.exitCode !== null || child.signalCode !== null) complete();
++          else child.once("close", complete);
++        }
+       };
+ 
+       // server→client approval request → canonical request.opened
+@@ -520,9 +546,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+       // multibyte characters that straddle two reads and corrupts the text
+       child.stdout.setEncoding("utf8");
+       child.stdout.on("data", (chunk) => {
++        if (abandoned || state.settled) return;
+         buf += chunk;
+         let nl;
+-        while ((nl = buf.indexOf("\n")) !== -1) {
++        while (!state.settled && (nl = buf.indexOf("\n")) !== -1) {
+           const line = buf.slice(0, nl);
+           buf = buf.slice(nl + 1);
+           if (!line.trim()) continue;
+@@ -654,7 +681,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+           // This app-server never exits by itself. Retire the failed attempt
+           // and silence its late handlers before the replacement launches.
+           abandoned = true;
+-          killCliTree(child);
++          if (!await terminate()) {
++            await settle(false, "shutdown_timeout");
++            return;
++          }
+           await new Promise<void>((resolve) => {
+             const timer = setTimeout(resolve, Math.max(1, Math.round(delayMs * retryScale)));
+             timer.unref?.();
+@@ -724,7 +754,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+         effortLevels: ["low", "medium", "high", "xhigh", "max"],
+       },
+       sendTurn,
+-      interruptTurn: async (threadId) => active.get(threadId)?.stop(),
++      interruptTurn: async (threadId) => { await active.get(threadId)?.stop(); },
+       respondToRequest: async (threadId, requestId, decision) => {
+         const turn = active.get(threadId);
+         const finish = turn?.asks.get(requestId);
+@@ -734,7 +764,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+       },
+       hasSession: (threadId) => active.has(threadId),
+       stopAll: async () => {
+-        for (const { stop } of active.values()) stop();
++        await Promise.all([...active.values()].map(({ stop }) => stop()));
+       },
+       onEvent: (listener) => {
+         listeners.add(listener);
+@@ -742,7 +772,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
+       },
+     },
+     dispose: async () => {
+-      for (const { stop } of active.values()) stop();
++      await Promise.all([...active.values()].map(({ stop }) => stop()));
+       listeners.clear();
+     },
+   };
+diff --git a/server/testing/fake-codex-app-server.ts b/server/testing/fake-codex-app-server.ts
+index deef4861..67fa165c 100755
+--- a/server/testing/fake-codex-app-server.ts
++++ b/server/testing/fake-codex-app-server.ts
+@@ -38,11 +38,20 @@ const dump = () => {
+   if (process.env.FAKE_CODEX_DUMP) {
+     writeFileSync(
+       process.env.FAKE_CODEX_DUMP,
+-      JSON.stringify({ argv: process.argv.slice(2), env: process.env, calls, decision }, null, 2),
++      JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: process.env, calls, decision }, null, 2),
+     );
+   }
+ };
+ 
++if (mode === "late-output") {
++  process.on("SIGTERM", () => {
++    setTimeout(() => {
++      notify("item/agentMessage/delta", { itemId: "late-chunk", delta: "late chunk must be ignored" });
++    }, 20);
++    setTimeout(() => process.exit(0), 150);
++  });
++}
++
+ const finishTurn = () => {
+   notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed" } });
+   notify("item/completed", { item: { id: "w1", type: "webSearch", status: "completed" } });
+@@ -66,7 +75,13 @@ const finishTurn = () => {
+   notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "done from fake codex" } });
+   notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, cachedInputTokens: 4, outputTokens: 3 } } });
+   dump();
+-  notify("turn/completed", { turn: { status: "completed" } });
++  if (mode === "late-output") {
++    // One write ensures the completion and late frame share the parser buffer.
++    process.stdout.write([
++      { jsonrpc: "2.0", method: "turn/completed", params: { turn: { status: "completed" } } },
++      { jsonrpc: "2.0", method: "item/agentMessage/delta", params: { itemId: "late-buffer", delta: "late buffered text must be ignored" } },
++    ].map((message) => JSON.stringify(message)).join("\n") + "\n");
++  } else notify("turn/completed", { turn: { status: "completed" } });
+ };
+ 
+ let buf = "";

@@ -184,9 +184,9 @@ describe("the desktop secret itself", () => {
     ).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("offers the dev injection here, because this process is not the packaged app", () => {
-    // The rig, `pnpm dev:server` and this suite all run outside Electron, so
-    // the harness may hand the secret to a loopback caller that asks. The
+  it("offers the dev injection because the fixture explicitly opts in", () => {
+    // The rig, `pnpm dev:server` and this suite explicitly request the
+    // development handshake. Merely running outside Electron is insufficient. The
     // packaged app cannot reach that branch — see the subprocess test below,
     // which is the only way to observe an import under a different launch.
     expect(devDesktopSecretOffered()).toBe(true);
@@ -220,6 +220,29 @@ describe("the desktop secret itself", () => {
     // a developer's harness: the env var is honoured and the value is offered
     const dev = run({ MURAGE_DEV_DESKTOP_SECRET: pinned, MURAGE_DESKTOP_PARENT: "" });
     expect(dev.offered).toBe(true);
+    const production = run({
+      NODE_ENV: "production",
+      MURAGE_DEV_DESKTOP_SECRET: "",
+      MURAGE_ALLOW_DEV_DESKTOP_SECRET: "",
+      MURAGE_NO_DEV_DESKTOP_SECRET: "",
+      MURAGE_DESKTOP_PARENT: "",
+    });
+    expect(production.offered).toBe(false);
+    const plainNode = run({
+      NODE_ENV: "",
+      MURAGE_DEV_DESKTOP_SECRET: "",
+      MURAGE_ALLOW_DEV_DESKTOP_SECRET: "",
+      MURAGE_NO_DEV_DESKTOP_SECRET: "",
+      MURAGE_DESKTOP_PARENT: "",
+    });
+    expect(plainNode.offered).toBe(false);
+    const explicitDev = run({
+      MURAGE_DEV_DESKTOP_SECRET: "",
+      MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+      MURAGE_NO_DEV_DESKTOP_SECRET: "",
+      MURAGE_DESKTOP_PARENT: "",
+    });
+    expect(explicitDev.offered).toBe(true);
     expect(dev.secret).toBe(pinned);
 
     // the packaged app's child: the same env var is ignored outright, and a

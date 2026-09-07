@@ -28,16 +28,17 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 import {
   companionEnv,
   resolveCompanionEntry,
   spawnCompanion,
+  startupProbe,
   waitForDoor,
 } from "../lib/companion.mjs";
 import { readEnvFile } from "../lib/env-file.mjs";
@@ -46,7 +47,13 @@ import { serveOrigin } from "../lib/tailscale.mjs";
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "murage.mjs");
 /** The checkout, so the cross-lane guard can read the sidecar's own parser. */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const scratch = () => mkdtempSync(join(tmpdir(), "murage-sidecar-test-"));
+const scratchDirs = [];
+const scratch = () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-sidecar-test-")));
+  scratchDirs.push(dir);
+  return dir;
+};
+after(() => { for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true }); });
 const SECRET = "tskey-auth-kRDeadBeef-NEVERPUTMEINARGV";
 const LOOPBACK_ONLY_SERVER = `server.listen(PORT, "127.0.0.1", () => {});`;
 
@@ -140,21 +147,42 @@ function alreadyServing(dir) {
 /** Run the CLI asynchronously with stdin ignored, so prompts take defaults. */
 function runCli(args, env, { killAfterMs = 0 } = {}) {
   return new Promise((res, rej) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
+    // An isolated install has no source/build fallback into the developer's
+    // real companion. Missing-sidecar coverage must really mean missing.
+    const installed = join(dirname(env.MURAGE_DATA_DIR), "installer");
+    mkdirSync(join(installed, "bin"), { recursive: true });
+    cpSync(join(dirname(dirname(CLI)), "lib"), join(installed, "lib"), { recursive: true });
+    cpSync(CLI, join(installed, "bin", "murage.mjs"));
+    const child = spawn(process.execPath, [join(installed, "bin", "murage.mjs"), ...args], {
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...env, NO_COLOR: "1" },
     });
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
-    const hard = setTimeout(() => child.kill("SIGKILL"), 60_000);
-    const soft = killAfterMs ? setTimeout(() => child.kill("SIGTERM"), killAfterMs) : null;
-    child.on("error", rej);
-    child.on("close", (code) => {
+    let done = false;
+    const killOwned = () => {
+      try {
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else process.kill(-child.pid, "SIGKILL");
+      } catch {}
+    };
+    const finish = (error, code) => {
+      if (done) return;
+      done = true;
       clearTimeout(hard);
       if (soft) clearTimeout(soft);
-      res({ status: code ?? 0, out });
-    });
+      killOwned();
+      child.stdout.destroy(); child.stderr.destroy();
+      if (error) rej(error); else res({ status: code ?? 0, out });
+    };
+    // A dead launcher can leave a descendant holding stdout open. Kill only
+    // this fixture's group and settle explicitly; never wait forever on close.
+    const hard = setTimeout(() => finish(new Error(`CLI exceeded its 30s fixture budget:\n${out}`)), 30_000);
+    const soft = killAfterMs ? setTimeout(() => child.kill("SIGTERM"), killAfterMs) : null;
+    child.on("error", error => finish(error));
+    child.on("close", code => finish(null, code));
   });
 }
 
@@ -163,6 +191,8 @@ function baseEnv(home, extra = {}) {
   writeFileSync(entry, LOOPBACK_ONLY_SERVER);
   return {
     ...process.env,
+    HOME: home,
+    USERPROFILE: home,
     MURAGE_SERVER_ENTRY: entry,
     MURAGE_DATA_DIR: join(home, ".murage-server"),
     MURAGE_ENV_FILE: join(home, ".murage-server", "murage.env"),
@@ -382,6 +412,34 @@ test("spawnCompanion's stop() resolves only once the process is actually gone", 
   await sidecar.stop(); // safe twice
 });
 
+test("spawnCompanion contains executable spawn errors and stop still resolves", async () => {
+  const home = scratch();
+  const sidecar = spawnCompanion({
+    resolved: { entry: "unused", execArgv: [] }, env: {}, stdio: "ignore",
+    spawnImpl: (_command, args, opts) => spawn(join(home,"missing-executable"),args,opts),
+  });
+  const error = await new Promise(resolve => sidecar.child.once("error",resolve));
+  assert.equal(error.code,"ENOENT");
+  assert.equal(sidecar.alive(),false);
+  await sidecar.stop();
+});
+
+test("startupProbe is bounded and waits for its exact process to be gone", async () => {
+  const home = scratch();
+  const marker = join(home,"probe.pid");
+  const source = `require('node:fs').writeFileSync(${JSON.stringify(marker)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`;
+  const result = await startupProbe(process.execPath,["-e",source],{timeoutMs:500});
+  assert.equal(result,null);
+  assert.equal(existsSync(marker),true,"probe did not actually reach its stubborn-child stage");
+  assert.throws(()=>process.kill(Number(readFileSync(marker,"utf8")),0),{code:"ESRCH"});
+});
+
+test("startupProbe does not spawn when startup is already cancelled", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  assert.equal(await startupProbe("must-not-execute",[],{signal:controller.signal}),null);
+});
+
 // ── (c) setup starts the door, then fronts it, then cleans up ─────────────
 
 test("`murage setup` STARTS the sidecar and only then points serve at the door", async () => {
@@ -538,10 +596,7 @@ test("`murage start` runs the harness anyway when the sidecar is missing, and sa
   });
   writeFileSync(env.MURAGE_SERVER_ENTRY, "setInterval(() => {}, 1 << 30);");
   const { out } = await runCli(["start"], env, { killAfterMs: 2_500 });
-  // The repo checkout DOES have companion/src/index.ts, so the honest outcome
-  // here is that it found one — either branch must name the door, and neither
-  // may silently start a harness with nothing in front of it.
-  assert.match(out, /companion sidecar|browser door/, out);
+  assert.match(out, /companion sidecar is not in this install — starting the harness alone/, out);
 });
 
 test("`murage start` takes the harness down when the sidecar dies", async () => {
@@ -579,7 +634,7 @@ test("`murage status` reports the door as answering when the sidecar is up", asy
   const door = await freePort();
   const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: `http://127.0.0.1:${door}` });
   const entry = fakeSidecar(home, { envDump: join(home, "e.json") });
-  const env = baseEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(door) });
+  const env = baseEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(door), MURAGE_COMPANION_ENTRY: entry });
   const sidecar = spawnCompanion({
     resolved: { entry, execArgv: [] },
     env: companionEnv({ base: env, harnessPort: 8799, doorPort: door, dataDir: join(home, "d") }),

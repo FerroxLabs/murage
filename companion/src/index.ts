@@ -61,6 +61,8 @@ import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts"
 import {
   lanAddresses,
   refreshTailnetName,
+  refreshBrowserServe,
+  TAILSCALE_BUDGET_MS,
   tailnetName,
   tailnetSelfAddress,
   tailscaleAddress,
@@ -75,6 +77,9 @@ import {
 } from "./mdns.ts";
 import { createProxyHandler } from "./proxy.ts";
 import { companionOriginSocket, listenCompanionOrigin } from "./origin.ts";
+
+const companionToken = process.env.MURAGE_COMPANION_TOKEN;
+delete process.env.MURAGE_COMPANION_TOKEN;
 
 /** A port from the environment, or the default. Anything that is not a whole
  * number in range is the default — a typo'd port must not become port 0. */
@@ -167,10 +172,9 @@ const BROWSER_BIND: BrowserBindMode =
 const BROWSER_SCHEME: BoundIdentity["scheme"] = process.env.MURAGE_BROWSER_SCHEME === "https" ? "https" : "http";
 /** The proxy standing in front of the door, when one was put there.
  *
- * Set by the desktop app when it turns on `tailscale serve` — never inferred
- * here. The sidecar cannot see a proxy it does not terminate, and guessing
- * one from the fact that the door happens to be on loopback would claim HTTPS
- * for a machine where nobody ran `serve`.
+ * The parent may supply a boot hint. Before binding, and before each rebind,
+ * a read-only Serve observation replaces it with the currently owned front.
+ * Loopback alone is never evidence of HTTPS.
  *
  * Two things follow from it, and both are the point:
  *   - `/state` advertises the front's address, so the QR is the portless
@@ -178,11 +182,11 @@ const BROWSER_SCHEME: BoundIdentity["scheme"] = process.env.MURAGE_BROWSER_SCHEM
  *     `https://<name>:8813` which the certificate does not cover.
  *   - the front's scheme decides the session cookie, because the browser's
  *     view of the connection is the one the cookie has to match. */
-const BROWSER_FRONT = browserFront(process.env.MURAGE_BROWSER_PUBLIC_ORIGIN);
+let BROWSER_FRONT = browserFront(process.env.MURAGE_BROWSER_PUBLIC_ORIGIN);
 /** What a browser sees. The front's scheme when there is a front, because
  * `serve` terminates TLS and the client is on HTTPS whatever this process
  * bound. Falls back to the configured scheme when nothing is in front. */
-const BROWSER_CLIENT_SCHEME: BoundIdentity["scheme"] = BROWSER_FRONT?.scheme ?? BROWSER_SCHEME;
+let BROWSER_CLIENT_SCHEME: BoundIdentity["scheme"] = BROWSER_FRONT?.scheme ?? BROWSER_SCHEME;
 const SERVICE_TYPE = "_murage._tcp";
 let hostedUrl = hostedCompanionUrl(process.env.MURAGE_COMPANION_HOSTED_URL);
 const PRIVATE_ORIGIN = companionOriginSocket(process.env.MURAGE_COMPANION_INTERNAL_ORIGIN);
@@ -217,8 +221,8 @@ const browserDoor = () =>
     BROWSER_CLIENT_SCHEME,
     BROWSER_PORT,
     browserBoundHost,
-    tailnetName(),
-    tailscaleAddress(),
+    browserBoundHost === "127.0.0.1" ? null : tailnetName(),
+    browserBoundHost === "127.0.0.1" ? null : tailscaleAddress(),
     BROWSER_FRONT,
   );
 
@@ -299,7 +303,7 @@ const companionBindHost = (): string | null => {
 /** Where the door should be bound right now, given Tailscale as it is right
  * now. Throws only in the explicit `tailnet` mode. */
 const desiredBrowserBindHost = (): string =>
-  browserBindHost(BROWSER_BIND, tailscaleAddress(), tailnetSelfAddress(), (reason) =>
+  BROWSER_FRONT ? "127.0.0.1" : browserBindHost(BROWSER_BIND, tailscaleAddress(), tailnetSelfAddress(), (reason) =>
     console.log(`browser door staying on loopback: ${reason}`),
   );
 
@@ -389,6 +393,7 @@ const service = (): ServiceInfo => ({
 const connectedDevices = createConnectedDeviceTracker();
 const proxy = createProxyHandler({
     harnessPort: HARNESS_PORT,
+    companionToken,
     // `authenticate` also stamps lastSeenAt, which is what makes the control
     // page able to say when a phone was last heard from.
     authenticate: (token) => devices.authenticate(token),
@@ -413,6 +418,7 @@ const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
 const browser = createServer(
   createBrowserHandler({
     harnessPort: HARNESS_PORT,
+    companionToken,
     identity: browserIdentity,
     devices,
     connected: connectedDevices.open,
@@ -451,8 +457,9 @@ const control = createControlServer({
   // still only on loopback. The control route awaits this before it replies,
   // so the state it sends back describes the door as it now is.
   refreshTailscale: async () => {
+    const deadline = Date.now() + TAILSCALE_BUDGET_MS;
     await refreshTailnetName();
-    await moveBrowserDoor();
+    await moveBrowserDoor(deadline);
   },
   browserDoor,
 });
@@ -461,16 +468,32 @@ const control = createControlServer({
  * anything else. Nothing here can throw: it is called from a request handler
  * and from startup, and a door that could not move is a log line, not a dead
  * sidecar. */
-async function moveBrowserDoor(): Promise<void> {
-  const result = await rebindBrowserDoor({
-    server: browser,
-    port: BROWSER_PORT,
-    boundHost: browserBoundHost,
-    desiredHost: desiredBrowserBindHost,
-    listen,
-  });
-  browserBoundHost = result.host;
-  if (!result.note.startsWith("already bound")) console.log(`browser door: ${result.note}`);
+let browserMove: Promise<void> | null = null;
+function moveBrowserDoor(deadline?: number): Promise<void> {
+  if (browserMove) return browserMove;
+  const moving = (async () => {
+    const observed = await refreshBrowserServe(BROWSER_PORT, {deadline});
+    BROWSER_FRONT = observed.owner === "ours" ? browserFront(observed.origin) : null;
+    BROWSER_CLIENT_SCHEME = BROWSER_FRONT?.scheme ?? "http";
+    if (observed.problem) console.warn(`browser HTTPS: ${observed.problem}`);
+    const preserveHost = observed.owner === "other" || observed.owner === "unknown" ? browserBoundHost : null;
+    const result = await rebindBrowserDoor({
+      server: browser,
+      port: BROWSER_PORT,
+      boundHost: browserBoundHost,
+      desiredHost: () => preserveHost ?? desiredBrowserBindHost(),
+      listen,
+    });
+    browserBoundHost = result.host;
+    if (BROWSER_FRONT && result.host !== "127.0.0.1") {
+      BROWSER_FRONT = null;
+      BROWSER_CLIENT_SCHEME = "http";
+      console.warn("browser HTTPS: the owned proxy could not be matched to a loopback listener; HTTPS is not advertised.");
+    }
+    if (!result.note.startsWith("already bound")) console.log(`browser door: ${result.note}`);
+  })().finally(()=>{ if (browserMove === moving) browserMove = null; });
+  browserMove = moving;
+  return moving;
 }
 
 /** Bind a server, turning a bind failure into a sentence rather than a stack
@@ -586,9 +609,11 @@ async function main(): Promise<void> {
   // loopback and the door still comes up; under the explicit `tailnet` mode
   // this throws rather than falling back, which is what that mode is for.
   // Tailscale arriving later moves the door — see `moveBrowserDoor`.
-  const bindHost = desiredBrowserBindHost();
-  await listen(browser, BROWSER_PORT, bindHost);
-  browserBoundHost = bindHost;
+  await moveBrowserDoor();
+  if (!browserBoundHost) {
+    desiredBrowserBindHost(); // Preserve the explicit-tailnet refusal detail.
+    throw new Error("the browser door could not bind; see its startup diagnostic");
+  }
 
   // After the tailnet probe for the same reason the browser door is: the
   // `tailnet` mode has no address to bind until Tailscale has been asked.

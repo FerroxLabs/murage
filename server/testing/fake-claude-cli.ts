@@ -19,11 +19,13 @@
 //                      bounded multi-turn orchestration deterministic.
 //   FAKE_CLAUDE_REPLY_STATE Optional counter file shared by fresh CLI
 //                      processes so scripted replies keep their order.
+//   FAKE_CLAUDE_REPLY_GATE Optional file whose creation releases slow replies.
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
 const scriptedReplies = (() => {
@@ -204,10 +206,19 @@ const playTurn = (prompt: JsonValue) => {
   // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model });
 
-  if (mode === "hang") {
+  if (mode === "hang" || promptText(prompt).includes("__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
-    setInterval(() => {}, 1_000);
+    const gateDir = process.env.FAKE_CLAUDE_FINISH_GATE_DIR;
+    const gate = gateDir ? join(gateDir, String(process.pid)) : undefined;
+    const timer = setInterval(() => {
+      if (!gate || !existsSync(gate)) return;
+      unlinkSync(gate);
+      clearInterval(timer);
+      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 0 } });
+      turnRunning = false;
+      finishIfDone();
+    }, gate ? 10 : 1_000);
     return;
   }
 
@@ -253,11 +264,19 @@ const playTurn = (prompt: JsonValue) => {
     // a gap a test can steer into; the closing reply carries anything that
     // was folded in, the way the real CLI includes a mid-turn message in
     // the same turn's next model call
-    setTimeout(() => {
+    const finishSlow = () => {
       const tail = steered.length ? ` + steered: ${steered.join(" | ")}` : "";
       out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}${tail}` }] } });
       finish();
-    }, 800);
+    };
+    const gate = process.env.FAKE_CLAUDE_REPLY_GATE;
+    if (gate) {
+      const timer = setInterval(() => {
+        if (!existsSync(gate)) return;
+        clearInterval(timer);
+        finishSlow();
+      }, 10);
+    } else setTimeout(finishSlow, 800);
   } else {
     finish();
   }

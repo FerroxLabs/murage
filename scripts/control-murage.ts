@@ -260,6 +260,7 @@ export interface VerificationServer {
 export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
+  options: { instrumentationSource?: string } = {},
 ): Promise<VerificationServer> {
   const port = await freePortBlock([0, 1]);
   if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
@@ -273,7 +274,7 @@ export async function launchVerificationServer(
   const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     instances: {
-      claude: {
+      verification: {
         driver: "claudeAgent",
         displayName: "Verification fixture",
         config: { cli: FAKE_CLI },
@@ -301,13 +302,18 @@ export async function launchVerificationServer(
     TMPDIR: fixtureTemp,
     HERMES_HOME: join(dataDir, ".hermes"),
     MURAGE_DATA_DIR: dataDir,
+    MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     MURAGE_PORT: String(port),
     MURAGE_WEBHOOK_PORT: String(port + 1),
     FAKE_CLAUDE_MODE: "happy",
     FAKE_CLAUDE_DUMP: fixtureDumpPath,
     PATH: "",
   });
-  const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
+  // Optional fixture-owned observation only. Existing callers retain exactly
+  // their previous launch; no preload path or source enters a live app config.
+  const instrumentationPath = join(dataDir, ".verification-instrumentation.mjs");
+  if (options.instrumentationSource !== undefined) writeFileSync(instrumentationPath, options.instrumentationSource, { mode: 0o600 });
+  const child = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", instrumentationPath]), join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: childEnv,
     stdio: ["ignore", log, log],

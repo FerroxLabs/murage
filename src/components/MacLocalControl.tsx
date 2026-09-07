@@ -61,7 +61,7 @@ export function MacLocalControl() {
           <div className="text-[14px] font-medium text-ink">Allow control of this computer</div>
           <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">
             Murage needs Accessibility and Screen Recording in System Settings before a bot can
-            use this Mac. After you grant both, click Retry — macOS may still ask you to relaunch the app.
+            use this Mac. After you grant both, click Retry; macOS may still ask you to relaunch the app.
           </p>
           {error && (
             <div className="mt-2 flex gap-1.5 text-[12px] text-danger">

@@ -27,6 +27,28 @@ const COPY = {
   { label: string; tone: string; border: string }
 >;
 
+const GOAL_COPY = {
+  completed: COPY.completed,
+  "needs-input": { label: "Needs your input", tone: "text-warning", border: "border-warning/35" },
+  blocked: { label: "Blocked", tone: "text-danger", border: "border-danger/35" },
+  "limit-reached": { label: "Turn limit reached", tone: "text-warning", border: "border-warning/35" },
+  paused: { label: "Paused", tone: "text-warning", border: "border-warning/35" },
+  stopped: { label: "Stopped", tone: "text-ink-secondary", border: "border-hairline/45" },
+  failed: COPY.failed,
+} satisfies Record<
+  NonNullable<RoutineRunCardData["goalStatus"]>,
+  { label: string; tone: string; border: string }
+>;
+
+function goalVisualStatus(run: RoutineRunCardData): RoutineRunCardData["status"] {
+  if (run.goalStatus === "needs-input") return "waiting";
+  if (run.goalStatus === "blocked" || run.goalStatus === "limit-reached" || run.goalStatus === "failed") {
+    return "failed";
+  }
+  if (run.goalStatus === "stopped") return "cancelled";
+  return run.status;
+}
+
 function compactDetail(value: string | undefined): string {
   const clean = value?.replace(/\s+/g, " ").trim() ?? "";
   return clean.length > DETAIL_LIMIT ? `${clean.slice(0, DETAIL_LIMIT - 1).trimEnd()}…` : clean;
@@ -83,7 +105,8 @@ export function RoutineRunCard({
     ) : null;
   }
 
-  const copy = COPY[run.status];
+  const copy = run.goalStatus ? GOAL_COPY[run.goalStatus] : COPY[run.status];
+  const visualStatus = goalVisualStatus(run);
   const detail = compactDetail(
     run.status === "failed" || run.status === "missed"
       ? (run.error ?? run.summary)
@@ -101,7 +124,7 @@ export function RoutineRunCard({
     >
       <div className="flex items-start gap-3">
         <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl bg-inset">
-          <StatusIcon status={run.status} />
+          <StatusIcon status={visualStatus} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

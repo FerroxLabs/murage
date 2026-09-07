@@ -1,9 +1,31 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readThreadEvents } from "./thread-events.ts";
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return { ...fs, openSync: vi.fn(fs.openSync), readSync: vi.fn(fs.readSync) };
+});
+const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+const { readThreadEvents } = await import(process.env.MURAGE_THREAD_EVENTS_CONTROL_ENTRY ?? "./thread-events.ts") as typeof import("./thread-events.ts");
+
+function measuredReads() {
+  const paths = new Map<number, string>();
+  const bytes = new Map<string, number>();
+  vi.mocked(openSync).mockImplementation(((...args: unknown[]) => {
+    const fd = Reflect.apply(actualFs.openSync, null, args) as number;
+    paths.set(fd, String(args[0]));
+    return fd;
+  }) as typeof openSync);
+  vi.mocked(readSync).mockImplementation(((...args: unknown[]) => {
+    const count = Reflect.apply(actualFs.readSync, null, args) as number;
+    const path = paths.get(args[0] as number)!;
+    bytes.set(path, (bytes.get(path) ?? 0) + count);
+    return count;
+  }) as typeof readSync);
+  return bytes;
+}
 
 const dirs: string[] = [];
 function tmp() {
@@ -12,6 +34,8 @@ function tmp() {
   return d;
 }
 afterEach(() => {
+  vi.mocked(openSync).mockImplementation(actualFs.openSync);
+  vi.mocked(readSync).mockImplementation(actualFs.readSync);
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
@@ -25,6 +49,7 @@ describe("readThreadEvents", () => {
     expect(readThreadEvents({ eventsDir, nativeDir, threadId: "t1" })).toEqual({
       entries: [],
       total: { runtime: 0, native: 0 },
+      totalComplete: { runtime: true, native: true },
     });
   });
 
@@ -156,5 +181,73 @@ describe("readThreadEvents", () => {
     const eventsDir = tmp();
     const nativeDir = tmp();
     expect(() => readThreadEvents({ eventsDir, nativeDir, threadId: "../bots" })).toThrow(/thread id/);
+  });
+
+  it("bounds cold and large-growth reads per file, resumes counting, and never changes log bytes", () => {
+    const eventsDir = tmp(), nativeDir = tmp();
+    const eventFile = join(eventsDir, "t1.ndjson"), nativeFile = join(nativeDir, "t1.ndjson");
+    const recent = line(runtime({ eventId: "recent", createdAt: "2", type: "turn.started" }));
+    const nativeRecent = line({ at: "2", dir: "in", source: "fixture", msg: "recent" });
+    const oversizedPrefix = "x".repeat(20 * 1024 * 1024) + "\n";
+    const eventBytes = oversizedPrefix + recent;
+    const nativeBytes = oversizedPrefix + nativeRecent;
+    writeFileSync(eventFile, eventBytes);
+    writeFileSync(nativeFile, nativeBytes);
+    const measured = measuredReads();
+    const request = () => readThreadEvents({ eventsDir, nativeDir, threadId: "t1", limit: 1 });
+    const first = request();
+    // The baseline control must fail on measured I/O before new metadata.
+    for (const file of [eventFile, nativeFile]) expect(measured.get(file)).toBeLessThanOrEqual(16 * 1024 * 1024);
+    expect(first.totalComplete).toEqual({ runtime: false, native: false });
+    expect(first.entries).toHaveLength(2);
+    expect(first.entries[0]?.data).toMatchObject({ eventId: "recent" });
+    measured.clear();
+    expect(request().totalComplete).toEqual({ runtime: false, native: false });
+    for (const file of [eventFile, nativeFile]) expect(measured.get(file)).toBeLessThanOrEqual(16 * 1024 * 1024);
+    measured.clear();
+    const complete = request();
+    expect(complete.totalComplete).toEqual({ runtime: true, native: true });
+    expect(complete.total).toEqual({ runtime: 2, native: 2 });
+    expect(readFileSync(eventFile, "utf8")).toBe(eventBytes);
+    expect(readFileSync(nativeFile, "utf8")).toBe(nativeBytes);
+
+    appendFileSync(eventFile, oversizedPrefix + recent);
+    measured.clear();
+    const grown = request();
+    expect(measured.get(eventFile)).toBeLessThanOrEqual(16 * 1024 * 1024);
+    expect(grown.totalComplete?.runtime).toBe(false);
+    expect(grown.entries.some((entry) => entry.kind === "runtime")).toBe(true);
+    expect(readFileSync(eventFile, "utf8")).toBe(eventBytes + oversizedPrefix + recent);
+  });
+
+  it("carries a partial line across the counting budget and resets after truncation or inode replacement", () => {
+    const eventsDir = tmp(), nativeDir = tmp();
+    const file = join(eventsDir, "t1.ndjson");
+    writeFileSync(file, "x".repeat(8 * 1024 * 1024 - 1) + "\r\n" + line(runtime({ eventId: "tail", createdAt: "1", type: "turn.started" })));
+    const first = readThreadEvents({ eventsDir, nativeDir, threadId: "t1", limit: 1 });
+    expect(first.totalComplete?.runtime).toBe(false);
+    const second = readThreadEvents({ eventsDir, nativeDir, threadId: "t1", limit: 1 });
+    expect(second.total.runtime).toBe(2);
+    expect(second.totalComplete?.runtime).toBe(true);
+    writeFileSync(file, line(runtime({ eventId: "truncated", createdAt: "2", type: "turn.started" })));
+    expect(readThreadEvents({ eventsDir, nativeDir, threadId: "t1" }).total.runtime).toBe(1);
+    renameSync(file, file + ".old");
+    writeFileSync(file, line(runtime({ eventId: "replacement", createdAt: "3", type: "turn.started" })));
+    const replacement = readThreadEvents({ eventsDir, nativeDir, threadId: "t1" });
+    expect(replacement.total).toEqual({ runtime: 1, native: 0 });
+    expect(replacement.totalComplete).toEqual({ runtime: true, native: true });
+    expect(replacement.entries[0]?.data).toMatchObject({ eventId: "replacement" });
+  });
+
+  it("marks unreadable files and failed counts incomplete instead of reporting exact zero", () => {
+    const eventsDir = tmp(), nativeDir = tmp();
+    const file = join(eventsDir, "t1.ndjson");
+    writeFileSync(file, line(runtime({ eventId: "one", createdAt: "1", type: "turn.started" })));
+    vi.mocked(openSync).mockImplementationOnce(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    expect(readThreadEvents({ eventsDir, nativeDir, threadId: "t1" }).totalComplete).toEqual({ runtime: false, native: true });
+    vi.mocked(readSync).mockImplementationOnce(() => { throw Object.assign(new Error("read failed"), { code: "EIO" }); });
+    const page = readThreadEvents({ eventsDir, nativeDir, threadId: "t1" });
+    expect(page.totalComplete?.runtime).toBe(false);
+    expect(page.entries).toHaveLength(1);
   });
 });

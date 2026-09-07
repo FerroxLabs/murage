@@ -2,6 +2,7 @@
 // other endpoints that speak the OpenAI chat-completions contract.
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { requestMemoryExtraction } from "../memory/extract.ts";
 
 const DRIVER_KIND = "openai-compat";
 const DEFAULT_MODELS: ModelCatalog = {
@@ -123,7 +124,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
     };
     if (apiKey) void fetchModels();
 
-    return createOpenAIChatRuntime({
+    const runtime=createOpenAIChatRuntime({
       input,
       driverKind: DRIVER_KIND,
       apiKey,
@@ -155,5 +156,10 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         }),
       },
     });
+    let usable=false;
+    try{const url=new URL(config.url);usable=Boolean(apiKey&&input.enabled&&["http:","https:"].includes(url.protocol)&&!url.username&&!url.password);}catch{/* invalid configured endpoint */}
+    if(usable)runtime.extractMemory=(text,maximumOutputTokens,signal)=>requestMemoryExtraction({url:config.url,apiKey,model:catalog.default,
+      ...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})},text,maximumOutputTokens,signal);
+    return runtime;
   },
 };

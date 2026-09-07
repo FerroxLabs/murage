@@ -40,6 +40,8 @@ const yamlEsmPlugin = {
 
 // Every file run as its own process. Keep in sync with the spawn sites above.
 const ENTRY_POINTS = [
+  "memory/worker.ts",
+  "drivers/memory-proxy.ts",
   "index.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
   // shared avatar contract widens TypeScript's inferred emit root to the repo,
@@ -57,6 +59,7 @@ const ENTRY_POINTS = [
   "drivers/dweb-proxy.ts",
   "drivers/phone-proxy.ts",
   "drivers/browser-proxy.ts",
+  "drivers/headless-browser-proxy.ts",
 ];
 
 await build({
@@ -67,11 +70,17 @@ await build({
   format: "esm",
   outbase: server,
   outdir: join(root, "dist-server"),
+  // Bundled CommonJS ZIP dependencies still require Node built-ins.
+  banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
   // Written after tsc, replacing its output for these entry points.
   allowOverwrite: true,
   logLevel: "info",
   plugins: [yamlEsmPlugin],
+  external: ["@huggingface/transformers"],
 });
+
+copyFileSync(join(root,"shared","memory-model-manifest.json"),join(root,"dist-server","memory-model-manifest.json"));
+await import("./stage-memory-runtime.mjs");
 
 // External MCP clients launch this as an independent stdio process. Keep its
 // source under scripts for a pleasant checkout command (`pnpm mcp`), but ship
@@ -84,6 +93,20 @@ await build({
   target: "node20",
   format: "esm",
   outfile: join(root, "dist-server", "mcp-server.js"),
+  allowOverwrite: true,
+  logLevel: "info",
+});
+
+// Offline installation backup/inspection must remain usable when the harness
+// cannot boot. ZIP libraries are CommonJS and use built-in Node requires.
+await build({
+  entryPoints: [join(root, "scripts", "installation-recovery.ts"), join(root, "scripts", "installation-recovery-worker.ts")],
+  bundle: true,
+  platform: "node",
+  target: "node24",
+  format: "esm",
+  outdir: join(root, "dist-server"),
+  banner: { js: 'import { createRequire as __recoveryRequire } from "node:module"; const require = __recoveryRequire(import.meta.url);' },
   allowOverwrite: true,
   logLevel: "info",
 });

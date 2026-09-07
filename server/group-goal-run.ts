@@ -120,6 +120,10 @@ export function groupGoalCoordinatorInstructions(args: {
   turn: number;
   maxTurns: number;
   remainingTurns: number;
+  /** A harness observation the coordinator must act on this turn — e.g. a
+   * teammate stayed busy past the wait cap. Returned as data rather than
+   * ending the run, so the lead can reassign or report blocked itself. */
+  note?: string;
 }): string {
   const roster = args.members
     .filter((member) => !member.hidden)
@@ -130,6 +134,7 @@ export function groupGoalCoordinatorInstructions(args: {
     `Goal: ${args.goal}`,
     `Available room members: ${roster}.`,
     `This is team turn ${args.turn} of ${args.maxTurns}; ${args.remainingTurns} turn(s) remain after this one.`,
+    ...(args.note ? [`Harness note: ${args.note}`] : []),
     "Use the conversation as the progress ledger. Decide whether the goal is genuinely complete, needs the human, is blocked, or needs one named teammate next.",
     "Do not continue merely to generate discussion. Do not claim completion unless the requested deliverable or answer is present in the conversation.",
     "Write a brief human-facing update or final answer, then end with exactly one private control envelope on its own line.",

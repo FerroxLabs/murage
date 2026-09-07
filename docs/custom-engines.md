@@ -6,8 +6,8 @@ after editing (instance entries are read at boot).
 
 ## Any ACP agent (a CLI you spawn)
 
-If an agent CLI speaks [ACP](https://agentclientprotocol.com) over stdio —
-`fx acp`, a Zed-style agent server, your own wrapper — point a `customAcp`
+If an agent CLI speaks [ACP](https://agentclientprotocol.com) over stdio (such as
+`fx acp`, a Zed-style agent server, or your own wrapper), point a `customAcp`
 instance at it:
 
 ```json
@@ -27,16 +27,16 @@ instance at it:
   works). You can also set it from the app: Settings → Engines → *Set CLI…* on
   the instance's row. An instance without a command shows up with exactly that
   hint instead of failing at first message.
-- **Sign in first.** The driver has no auth flow of its own — run the CLI once
+- **Sign in first.** The driver has no auth flow of its own; run the CLI once
   in a terminal and log in there; Murage spawns it with your login intact.
 - **Model choice stays inside the agent.** The picker shows a single
   "Agent default" entry; whatever the CLI is configured to run is what runs.
 - **`environment`** is passed to the CLI child. Foreign provider keys
   (XAI_API_KEY, OPENAI_COMPAT_API_KEY, …) are deliberately stripped so a
   custom CLI can never bill against another engine's login.
-- **Permissions** ride ACP's own `session/request_permission` — if your agent
+- **Permissions** ride ACP's own `session/request_permission`: if your agent
   asks, the request becomes a normal approval card in chat.
-- Multiple instances are fine — one per agent.
+- Multiple instances are fine, one per agent.
 
 ## Any OpenAI-compatible endpoint (no process at all)
 
@@ -65,7 +65,7 @@ entry:
   instances can hold different keys without colliding.
 - The driver lists the endpoint's `/models` when it can and keeps your
   `model` as a custom option either way.
-- Honest limits: chat text + reasoning streams only — **no tool calls**, so
+- Honest limits: chat text + reasoning streams only, **no tool calls**, so
   bots on these instances answer and write, but don't operate computers or
   connected apps.
 

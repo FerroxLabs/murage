@@ -5,6 +5,9 @@
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
 
+import type { ProviderErrorInfo } from "../shared/provider-error.ts";
+import type { MemoryBundle } from "../shared/memory.ts";
+
 export type DriverKind = string;
 export type InstanceId = string;
 export type ThreadId = string;
@@ -110,6 +113,11 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
     | { type: "item.completed"; itemType: "tool"; ok: boolean }
     | { type: "item.completed"; itemType: "assistant_text"; text: string }
+    /** Provider-generated raster bytes. This event is folded into the
+     * private attachment store and is never forwarded to renderer SSE: a
+     * multi-megabyte base64 result belongs in one durable message URL, not
+     * duplicated through every connected window. */
+    | { type: "item.completed"; itemType: "assistant_image"; data: string; alt?: string }
     | { type: "content.delta"; streamKind: "assistant_text" | "reasoning_text"; delta: string }
     | {
         type: "request.opened";
@@ -131,7 +139,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; setup?: boolean }
+    | { type: "runtime.error"; message: string; setup?: boolean; providerError?: ProviderErrorInfo }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -148,6 +156,8 @@ export type RequestOutcome = "allowed-once" | "rejected" | "answered" | "unavail
 // the first turn (the agentcal per-turn-process model) with resumeCursor
 // carrying the provider-native continuation (e.g. a claude session id).
 export interface SendTurnInput {
+  /** Server-authorized reference bundle; the shared adapter consumes it once. */
+  memoryContext?: MemoryBundle;
   threadId: ThreadId;
   text: string;
   model?: string;
@@ -159,6 +169,7 @@ export interface SendTurnInput {
   system?: string;
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
+    memory?: { command: string; args: string[]; env: Record<string, string> };
     /** A local stdio bridge owns the remote Composio transport. Keeping the
      * bridge harness-controlled lets it turn connection requests into trusted
      * chat cards consistently across provider CLIs. */
@@ -213,6 +224,8 @@ export interface TurnStartResult {
 export interface ProviderAdapter {
   readonly provider: DriverKind;
   readonly capabilities: {
+    memoryDelivery?: "prefixed-reference" | "unavailable";
+    memoryMcp?: boolean;
     sessionModelSwitch: "in-session" | "unsupported";
     /** True when the driver mounts turn.integrations.agents as MCP tools —
      * the harness only offers agents tooling (and prompts about it) to
@@ -257,6 +270,10 @@ export interface ProviderAdapter {
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;
+  /** Retire retained native state for exactly this thread, including idle
+   * sessions. Resolves after retirement; callers must omit stale resume cursors.
+   * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
+  resetSession?(threadId: ThreadId): Promise<void>;
   /** Answer a pending ask. Resolves with what actually happened — never
    * throws for an ask that is no longer there: `unavailable` means nobody
    * could take the answer (the turn ended, the broker died, the driver
@@ -351,6 +368,9 @@ export interface ProviderInstance {
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
   generateText?(prompt: string): Promise<string>;
+  /** Explicitly qualified tool-free bounded memory extraction. Absence means
+   * unavailable; never infer it from chat, MCP, or generic text generation. */
+  extractMemory?(text: string, maximumOutputTokens: number, signal: AbortSignal): Promise<string>;
   /** Isolated, tool-free permission review on this same provider. Kept
    * separate from generateText so the UI never infers a security capability
    * from a generic helper that may expose prompts in argv or lack approvals. */

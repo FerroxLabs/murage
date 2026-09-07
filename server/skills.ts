@@ -49,8 +49,12 @@ import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { LEARN_SOURCE_PREFIX } from "./skill-learn.ts";
+import { LEARN_SOURCE_PREFIX, MEMORY_LEARN_SOURCE_PREFIX, memoryLearnSourceId, buildMemoryLearnRequest } from "./skill-learn.ts";
+import { database } from "./database.ts";
+import { requireMemoryOwner } from "./memory/authority.ts";
+import { memoryState } from "./memory/repository.ts";
 import { parseSkillManifest as parseLibrarySkillManifest } from "./skill-library.ts";
+import { collectPackageExportSkills } from "./package-export-files.ts";
 import { workspaceDir } from "./workspace.ts";
 
 /** Spec rule: lowercase alphanumerics with single hyphens, 1-64 chars,
@@ -59,6 +63,51 @@ import { workspaceDir } from "./workspace.ts";
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const SKILL_NAME_MAX = 64;
 export const DESCRIPTION_MAX = 1024;
+
+function memorySkillSnapshot(id: string, version: number) {
+  const db = database();
+  const record = db.prepare("SELECT id,version,scope_id,text,state FROM memory_records WHERE id=? AND version=?").get(id,version);
+  if (!record || record.state !== "active") throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+  const parents = db.prepare(`WITH RECURSIVE parents(id,version) AS (
+    SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d JOIN parents p ON d.child_id=p.id AND d.child_version=p.version LIMIT 101)
+    SELECT p.id,p.version,r.scope_id,r.text,r.state FROM parents p LEFT JOIN memory_records r ON r.id=p.id AND r.version=p.version ORDER BY p.id,p.version`).all(id,version);
+  if (parents.length > 100) throw new Error("MEMORY_SKILL_SOURCE_LIMIT");
+  const evidence = [];
+  for (const parent of parents) {
+    if (parent.state !== "active" || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(parent.id,parent.version)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+    const sources = db.prepare(`SELECT e.source_id,e.source_revision,e.start_byte,e.end_byte,s.revision,s.state,v.content_hash,v.payload FROM memory_evidence e
+      LEFT JOIN memory_sources s ON s.id=e.source_id LEFT JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision
+      WHERE e.record_id=? AND e.record_version=? ORDER BY e.source_id,e.start_byte LIMIT 101`).all(parent.id,parent.version);
+    if (evidence.length + sources.length > 100) throw new Error("MEMORY_SKILL_SOURCE_LIMIT");
+    for (const source of sources) {
+      if (source.state !== "active" || source.revision !== source.source_revision || !source.payload || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.source_id,source.source_revision)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+      const text = JSON.parse(String(source.payload)).text;
+      if (typeof text !== "string" || Number(source.start_byte) < 0 || Number(source.end_byte) <= Number(source.start_byte) || Number(source.end_byte) > Buffer.byteLength(text)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+      evidence.push({ id: source.source_id, revision: source.source_revision, hash: source.content_hash, start: source.start_byte, end: source.end_byte });
+    }
+  }
+  return { record: { id, version, scopeId: String(record.scope_id), text: String(record.text) }, hash: createHash("sha256").update(JSON.stringify({parents,evidence})).digest("hex") };
+}
+
+/** An owner creates this source ticket only after choosing an already-authorized
+ * bot. It is consumed by real skill staging and approval; it creates no skill. */
+export function prepareMemorySkillReview(ticket: object, botId: string, id: string, version: number) {
+  requireMemoryOwner(ticket);
+  const snapshot = memorySkillSnapshot(id,version), state = memoryState(), reviewId = randomUUID();
+  database().prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,?,'granted',?)").run(`memory-skill-review:${reviewId}`,snapshot.record.scopeId,botId,state.policyRevision,JSON.stringify({botId,id,version,hash:snapshot.hash,policyRevision:state.policyRevision,deletionEpoch:state.deletionEpoch}));
+  const source = `${MEMORY_LEARN_SOURCE_PREFIX}${reviewId}`;
+  return { botId, record: { id, version }, source, request: buildMemoryLearnRequest(source,snapshot.record) };
+}
+
+export function assertMemorySkillReview(botId: string, source: string): void {
+  const reviewId = memoryLearnSourceId(source);
+  if (!reviewId) return; // ordinary /learn sources retain their existing behavior
+  const row = database().prepare("SELECT state,intent FROM memory_scope_bindings WHERE id=?").get(`memory-skill-review:${reviewId}`);
+  if (!row || row.state !== "granted") throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+  const review = JSON.parse(String(row.intent)), state = memoryState();
+  if (review.botId !== botId || review.policyRevision !== state.policyRevision || review.deletionEpoch !== state.deletionEpoch) throw new Error("MEMORY_SKILL_SOURCE_REVOKED");
+  if (memorySkillSnapshot(review.id,review.version).hash !== review.hash) throw new Error("MEMORY_SKILL_SOURCE_CHANGED");
+}
 /** One SKILL.md may be at most this large; the spec recommends <5k tokens. */
 export const SKILL_FILE_MAX_BYTES = 256 * 1024;
 /** Index budget: name+description lines only, ~100 tokens per skill. */
@@ -731,6 +780,44 @@ export function listSkills(botId: string): SkillListing[] {
   return Object.entries(manifest)
     .map(([name, entry]) => skillListing(botId, name, entry))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Read-only package export source. Unlike readManifest, this must never
+ * migrate legacy metadata merely because the user opened an export picker. */
+export function getSkillExportSource(botId: string, name: string): Readonly<{ directory: string; expectedSkillSha256: string }> | null {
+  if (!isSkillName(name)) return null;
+  const securePath = manifestPath(botId);
+  let manifest: SkillManifest | null;
+  if (existsSync(securePath)) {
+    const stat = lstatSync(securePath);
+    if (directoryEntryState(dirname(securePath)) !== "directory" || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return null;
+    manifest = manifestFromFile(securePath);
+  } else {
+    const root = existingSkillsRoot(botId);
+    if (!root) return null;
+    const legacyPath = join(root, "skills.json");
+    if (!existsSync(legacyPath)) return null;
+    const stat = lstatSync(legacyPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return null;
+    manifest = manifestFromFile(legacyPath);
+    if (manifest) manifest = Object.fromEntries(Object.entries(manifest).map(([key, entry]) => [key, { ...entry, storageRevision: undefined }]));
+  }
+  const entry = manifest?.[name];
+  if (!entry) return null;
+  const directory = skillDirectory(botId, name, entry);
+  return directory ? Object.freeze({ directory, expectedSkillSha256: entry.sha256 }) : null;
+}
+
+/** Selected installed skill bytes only; reviewed revisions never fall back
+ * to a stale workspace/skills/name copy. Dependencies require human review. */
+export function snapshotInstalledSkill(botId: string, name: string) {
+  try {
+    const source = getSkillExportSource(botId, name);
+    if (!source) throw new Error("unavailable");
+    const snapshot = collectPackageExportSkills(workspaceDir(botId), [name], new Map([[name, source]]));
+    const metadata = snapshot.skills[0];
+    return { key: name, name, license: metadata.license, dependencies: null, payloads: snapshot.payloads, warnings: snapshot.warnings };
+  } catch { throw new Error("Selected installed skill could not be exported safely"); }
 }
 
 export function readSkillFile(botId: string, name: string): string | null {
@@ -1407,6 +1494,8 @@ export function stageSkillWrite(
   if (input.action !== "create" && input.action !== "update") {
     return { error: 'learned skills support action "create" or "update"' };
   }
+  try { assertMemorySkillReview(botId,input.source?.trim() ?? ""); }
+  catch (error) { return { error: error instanceof Error ? error.message : "MEMORY_SKILL_SOURCE_UNAVAILABLE" }; }
   const redactedFiles = input.files.map((file) => ({
     path: file.path,
     content: redactSecretsInText(file.content),
@@ -1545,6 +1634,8 @@ export function applyStagedSkillWrite(
     syncSkillLinks(botId);
     return listing;
   }
+  try { assertMemorySkillReview(botId,staged.source); }
+  catch (error) { return { error: error instanceof Error ? error.message : "MEMORY_SKILL_SOURCE_UNAVAILABLE" }; }
   const prepared = preparedLearnedSkill(staged.files);
   if ("error" in prepared) return prepared;
   const sha256 = createHash("sha256").update(prepared.files[0]!.content).digest("hex");

@@ -29,7 +29,7 @@ export function UsageSection() {
   return (
     <Card title="Usage" subtitle="Tokens and cost per bot, added up from every settled turn. Only engines that report a price show one.">
       {rows.length === 0 ? (
-        <div className="text-[13px] text-ink-secondary">Nothing spent yet — figures appear after a bot's first turn.</div>
+        <div className="text-[13px] text-ink-secondary">Nothing spent yet. Figures appear after a bot's first turn.</div>
       ) : (
         <div className="flex flex-col">
           <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-5 border-b border-hairline/40 pb-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">
@@ -60,13 +60,13 @@ export function UsageSection() {
           {cachedInput(total) > 0 && (
             <div className="mt-3 text-[12px] leading-relaxed text-ink-secondary">
               Tokens count everything the model read and wrote. Each turn resends the whole conversation with the system prompt and tool
-              schemas, so {formatTokens(cachedInput(total))} of the input was context re-read from the provider's cache rather than new text —
-              hover a figure for the split.
+              schemas, so {formatTokens(cachedInput(total))} of the input was context re-read from the provider's cache rather than new text.
+              Hover a figure for the split.
             </div>
           )}
           {hasFiniteCost(total.costUsd) && (
             <div className="mt-3 text-[12px] leading-relaxed text-ink-secondary">
-              Cost is {billings.size === 1 ? costCaption([...billings][0]) : "as each engine reports it — on a subscription it's an equivalent, not a charge"}.
+              Cost is {billings.size === 1 ? costCaption([...billings][0]) : "as each engine reports it; on a subscription it's an equivalent, not a charge"}.
             </div>
           )}
         </div>

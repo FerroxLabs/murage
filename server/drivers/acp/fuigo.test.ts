@@ -412,8 +412,9 @@ describe("fuigo binary resolution — the bundled engine", () => {
     emptyBin = join(root, "empty-bin");
     mkdirSync(bundleDir, { recursive: true });
     mkdirSync(emptyBin, { recursive: true });
-    writeFileSync(join(bundleDir, "fuigo"), "");
-    chmodSync(join(bundleDir, "fuigo"), 0o755);
+    const binary = join(bundleDir, process.platform === "win32" ? "fuigo.exe" : "fuigo");
+    writeFileSync(binary, "");
+    chmodSync(binary, 0o755);
     // HOME moves too: augmentedPath() scans ~/.fuigo/bin unconditionally
     // (env-path.ts:38), and a developer machine has a real fuigo there — which
     // would make this assert the opposite of what it means to.
@@ -450,8 +451,9 @@ describe("fuigo binary resolution — the bundled engine", () => {
     // and not an unconditional prepend.
     const userBin = join(root, "user-bin");
     mkdirSync(userBin, { recursive: true });
-    writeFileSync(join(userBin, "fuigo"), "");
-    chmodSync(join(userBin, "fuigo"), 0o755);
+    const binary = join(userBin, process.platform === "win32" ? "fuigo.exe" : "fuigo");
+    writeFileSync(binary, "");
+    chmodSync(binary, 0o755);
     process.env.PATH = userBin;
     resetPathCacheForTests();
 

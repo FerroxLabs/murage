@@ -53,6 +53,19 @@ describe("reading what serve is already doing", () => {
     expect(readServeStatus(OURS, { proxyTarget: TARGET })).toEqual({ owner: "ours", host: NAME });
   });
 
+  it("refuses mixed 443 owners even when our matching entry appears first", async () => {
+    const mixed = JSON.parse(OURS);
+    mixed.Web["other.tail1234.ts.net:443"] = {Handlers:{"/":{Proxy:"http://127.0.0.1:3000"}}};
+    expect(readServeStatus(JSON.stringify(mixed),{proxyTarget:TARGET}).owner).toBe("other");
+    const {run,calls} = fakeTailscale({version:found,"serve status --json":{ok:true,stdout:JSON.stringify(mixed),stderr:""}});
+    expect((await disableServe({run,proxyTarget:TARGET})).reason).toBe("conflict");
+    expect(calls.some(call=>call.endsWith(" off"))).toBe(false);
+  });
+
+  it("does not adopt another proxy path on the same socket", () => {
+    expect(sameTarget(`${TARGET}/another-service`,TARGET)).toBe(false);
+  });
+
   it("treats an empty config as a free port", () => {
     expect(readServeStatus("{}", { proxyTarget: TARGET })).toEqual({ owner: "none" });
     expect(readServeStatus("", { proxyTarget: TARGET })).toEqual({ owner: "none" });
@@ -263,15 +276,17 @@ describe("reading state without changing it", () => {
     expect(calls).toEqual(["version", "serve status --json"]);
   });
 
-  it("reads an unconfigured node's empty complaint as 'nothing there'", async () => {
-    const { run } = fakeTailscale({
+  it("refuses an unexplained read failure instead of treating it as an empty config", async () => {
+    const { run, calls } = fakeTailscale({
       version: found,
       "serve status --json": { ok: false, stdout: "", stderr: "" },
     });
     expect(await serveState({ run, proxyTarget: TARGET })).toMatchObject({
       available: true,
       on: false,
-      reason: null,
+      reason: "failed",
     });
+    expect((await enableServe({run,proxyTarget:TARGET})).on).toBe(false);
+    expect(calls.some(call=>call.startsWith("serve --bg"))).toBe(false);
   });
 });

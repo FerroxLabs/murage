@@ -1,0 +1,4 @@
+# Vite's SSR evaluator rejects this imported hashbang script with CRLF.
+/scripts/build-local-catalog.mjs text eol=lf
+# The catalog regression compares these bytes with the generator's LF output.
+/library/catalog.json text eol=lf

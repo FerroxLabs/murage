@@ -12,10 +12,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ensureDirs } from "../../config.ts";
+import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
@@ -219,6 +219,7 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODELS;
     delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
+    delete process.env.FAKE_ACP_LOAD_NULL;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -276,6 +277,41 @@ describe("ACP turns (fake CLI)", () => {
       .filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text")
       .map((e) => (e as { text: string }).text);
     expect(texts).toEqual(["before one", "before two", "after"]);
+  });
+
+  it("normalizes a structured ACP image block without treating it as text", async () => {
+    await create(GeminiAgentDriver, "image");
+    await instance.adapter.sendTurn({ threadId: "t-image", text: "draw it" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const image = recorder.events.find(
+      (e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image",
+    );
+    expect(image).toMatchObject({
+      type: "item.completed",
+      itemType: "assistant_image",
+      alt: "Generated image",
+    });
+    expect(image && "data" in image ? (image as { data: string }).data : "").toMatch(/^iVBOR/);
+    expect(
+      recorder.events.some(
+        (e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text",
+      ),
+    ).toBe(false);
+  });
+
+  // The native tee is a plain 0644-adjacent file people paste into bug
+  // reports, and an image block is megabytes of base64. The bytes must reach
+  // the normalizer and nothing else.
+  it("keeps the image bytes out of the provider-native log", async () => {
+    await create(GeminiAgentDriver, "image");
+    await instance.adapter.sendTurn({ threadId: "t-image-log", text: "draw it" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const log = readFileSync(join(NATIVE_DIR, "t-image-log.ndjson"), "utf8");
+    expect(log).toContain("agent_message_chunk");
+    expect(log).toContain("[image data: ");
+    expect(log).not.toContain("iVBOR");
   });
 
   it("reads token usage from the root of the prompt result", async () => {
@@ -482,21 +518,59 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
   });
 
-  it("mounts user-configured custom MCP servers after the built-ins", async () => {
+  it("mounts dedicated memory without agents and rejects custom replacement", async () => {
+    await create();
+    const dump=join(scratch,"memory-dump.json");process.env.FAKE_ACP_DUMP=dump;
+    await instance.adapter.sendTurn({threadId:"memory-only",text:"recall",integrations:{
+      memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
+      custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
+    }});
+    await recorder.until(event=>event.type==="turn.completed");
+    const seen=JSON.parse(readFileSync(dump,"utf8"));
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+    expect(seen.mcpServers).toEqual([{name:"murage-memory",command:process.execPath,args:["/fake/memory-proxy.js"],env:[
+      {name:"MURAGE_HARNESS_URL",value:"http://127.0.0.1:1"},{name:"MURAGE_MEMORY_TOKEN",value:"memory-fixture-secret"},
+    ]}]);
+  });
+
+  it("skips custom MCP entries with reserved env names while preserving built-ins and ordinary custom mounts", async () => {
     await create();
     const dump = join(scratch, "custom-dump.json");
     process.env.FAKE_ACP_DUMP = dump;
+    const blocked = Object.fromEntries([
+      "MURAGE_COMMS_TOKEN", "murage_harness_url", "MURAGEBOX_TOKEN", "muragebox_url",
+      "ELECTRON_RUN_AS_NODE", "electron_run_as_node", "DWEB_URL", "dweb_url",
+      "PH_ANDROID_SERIAL", "ph_android_serial",
+    ].map((key, index) => [`blocked${index}`, {
+      command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
+    }]));
     await instance.adapter.sendTurn({
       threadId: "t-custom-mcp",
       text: "go",
       integrations: {
+        agents: {
+          command: process.execPath,
+          args: ["/fake/agents-proxy.js"],
+          env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "built-in-token" },
+        },
         custom: {
+          ...blocked,
+          bearer_request: { command: "attacker-mcp", args: [], env: { MURAGE_COMMS_TOKEN: "" } },
           notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
         },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["agents", "notes"]);
+    expect(JSON.stringify(seen.mcpServers)).not.toContain("attacker-mcp");
+    expect(seen.mcpServers).toContainEqual({
+      name: "agents", command: process.execPath, args: ["/fake/agents-proxy.js"],
+      env: [
+        { name: "MURAGE_HARNESS_URL", value: "http://127.0.0.1:1" },
+        { name: "MURAGE_COMMS_TOKEN", value: "built-in-token" },
+      ],
+    });
     expect(seen.mcpServers).toContainEqual({
       name: "notes",
       command: "npx",
@@ -624,6 +698,22 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ setup: true });
   });
 
+  it("explains nested credit exhaustion without exposing provider data", async () => {
+    await create(GrokAgentDriver, "credit-exhausted");
+    await instance.adapter.sendTurn({ threadId: "t-credit-exhausted", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.", providerError: { kind: "credits", httpStatus: 402 } });
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid/);
+  });
+
+  it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
+    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("ACP request failed");
+    expect(acpRpcErrorMessage({ message: "Authentication required", data: { token: "fake-secret-canary" } })).toBe("Authentication required");
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.");
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai.evil.invalid/" } })).not.toContain("Flux Router is out of credits");
+  });
+
   it("selectModel confirms the requested model before prompting", async () => {
     process.env.FAKE_ACP_MODELS = "m-one,m-two";
     await create(SelectModelDriver);
@@ -683,6 +773,26 @@ describe("ACP turns (fake CLI)", () => {
     // hook must fire on a resumed thread as well
     const started = await recorder.until((e) => e.type === "session.started");
     expect(started).toMatchObject({ sessionId: "resumed-thread-1", model: "m-two" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+  });
+
+  // A resumed thread whose session the agent has forgotten. session/load
+  // SUCCEEDS -- it just answers null -- so the catch below it never runs, and
+  // before the guard the driver kept the dead cursor, skipped session/new and
+  // prompted a session that no longer existed. The fresh id is the assertion:
+  // "gone-cursor" would come back as the sessionId if the guard were removed.
+  it("falls through to session/new when session/load answers null", async () => {
+    process.env.FAKE_ACP_LOAD_NULL = "1";
+    await create(GrokAgentDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-resume-null",
+      text: "go",
+      resumeCursor: "gone-cursor",
+    });
+
+    const started = await recorder.until((e) => e.type === "session.started");
+    expect(started).toMatchObject({ sessionId: "fake-acp-session" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });

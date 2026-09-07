@@ -14,10 +14,29 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { connectorActionLabel, mergeCompleteConnectorStatus } from "./PluginsPanel";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const panel = readFileSync(join(here, "PluginsPanel.tsx"), "utf8");
 const composio = readFileSync(join(here, "../../server/composio.ts"), "utf8");
+
+describe("pending OAuth recovery", () => {
+  it("checks a pending authorization without a URL and continues only with its retained URL", () => {
+    for (const hasAccounts of [false, true]) {
+      const pending = { busy: false, included: false, pending: true, hasAccounts, failed: false };
+      expect(connectorActionLabel("ready", { ...pending, canContinue: false })).toBe("Check status");
+      expect(connectorActionLabel("ready", { ...pending, canContinue: true })).toBe("Continue");
+      expect(connectorActionLabel("error", { ...pending, canContinue: false })).toBe("Unavailable");
+    }
+  });
+
+  it("keeps the previous account inventory when its current status cannot be read", () => {
+    const previous = {
+      gmail: { connected: true, pending: true, accounts: [{ id: "fixture-account", status: "ACTIVE" }] },
+    };
+    expect(mergeCompleteConnectorStatus(previous, {}, new Map(), new Map(), false)).toEqual(previous);
+  });
+});
 
 describe("the connectors panel names its account", () => {
   it("says which of the two Composio identities is in use", () => {

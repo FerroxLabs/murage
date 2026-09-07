@@ -1,0 +1,11 @@
+{
+  "reviewer": "fable",
+  "requestedModel": "fable",
+  "planSha256": "1346e66220e9acf7a0c9e05c4bdb170738140a56638344a2fba74443f74c1ae9",
+  "inputSha256": "78516ffec57f9c76f626438547e23022b31d13ace6746fa5c82e7615466f8716",
+  "startedAt": "2026-09-06T11:46:00.029Z",
+  "finishedAt": "2026-09-06T11:47:40.467Z",
+  "timedOut": false,
+  "code": 0,
+  "signal": null
+}

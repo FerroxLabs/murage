@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "./bottom-follow";
+import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, followBottomGrowth } from "./bottom-follow";
+
+it("follows delayed growth only while pinned", () => {
+  const calls: ScrollToOptions[] = [];
+  const scroller = { scrollHeight: 1240, scrollTo: (options: ScrollToOptions) => calls.push(options) };
+  expect(followBottomGrowth(scroller, true)).toBe(true);
+  expect(calls).toEqual([{ top: 1240 }]);
+  expect(followBottomGrowth(scroller, false)).toBe(false);
+  expect(calls).toHaveLength(1);
+});
 
 describe("shouldResumeBottomFollow", () => {
   it("does not re-pin a small upward scroll inside the near-bottom zone", () => {

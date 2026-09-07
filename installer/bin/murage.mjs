@@ -21,13 +21,14 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BindRefused, resolveBindFromEnv } from "../lib/bind.mjs";
-import { companionEnv, resolveCompanionEntry, spawnCompanion, waitForDoor } from "../lib/companion.mjs";
+import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupProbe, waitForDoor } from "../lib/companion.mjs";
 import { envFilePermissions, readEnvFile, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
 import { stageUnit } from "../lib/systemd.mjs";
@@ -287,16 +288,65 @@ async function bringDoorUp(port, harnessPort) {
   console.log(c.dim(`\n  Starting the companion sidecar to bring the browser door up…`));
   console.log(c.dim(`  ${resolved.entry} (${resolved.kind})`));
   announceDeviceDoorClosed();
-  const sidecar = spawnCompanion({
-    resolved,
-    env: companionEnv({ base: process.env, harnessPort, doorPort: port, dataDir: DATA_DIR }),
-    stdio: "ignore",
-  });
-  const stop = async () => {
-    await sidecar.stop();
-    console.log(c.dim(`  stopped the setup-time sidecar; \`murage start\` runs it for real.`));
+  const startup = new AbortController();
+  let sidecar;
+  let waiting = Promise.resolve();
+  let stopping;
+  const stop = () => {
+    if (stopping) return stopping;
+    startup.abort();
+    stopping = (async () => {
+      try {
+        const results = await Promise.allSettled([sidecar?.stop(), waiting]);
+        const failed = results.find(result => result.status === "rejected");
+        if (failed) throw failed.reason;
+        console.log(c.dim(`  stopped the setup-time sidecar; \`murage start\` runs it for real.`));
+      } finally {
+        process.off("SIGINT", interrupted);
+        process.off("SIGTERM", terminated);
+      }
+    })();
+    return stopping;
   };
-  const waited = await waitForDoor({ probe: () => ts.doorAnswers({ port }), alive: sidecar.alive });
+  const end = code => {
+    void stop().then(() => { closeRl(); process.exit(code); }, error => {
+      fail(`could not stop the setup-time sidecar: ${error.message}`);
+      process.exit(1);
+    });
+  };
+  const interrupted = () => end(130);
+  const terminated = () => end(143);
+  process.on("SIGINT", interrupted);
+  process.on("SIGTERM", terminated);
+  let waited;
+  try {
+    sidecar = spawnCompanion({
+      resolved,
+      env: companionEnv({ base: process.env, harnessPort, doorPort: port, dataDir: DATA_DIR }),
+      stdio: "ignore",
+    });
+    sidecar.child.once("error", error => {
+      if (stopping) return;
+      fail(`the setup-time sidecar could not start: ${error.message}`);
+      end(1);
+    });
+    sidecar.child.once("exit", code => {
+      if (stopping) return;
+      fail(`the setup-time sidecar exited unexpectedly (code ${code})`);
+      end(1);
+    });
+    waiting = waitForDoor({
+      signal: startup.signal,
+      alive: sidecar.alive,
+      probe: () => ts.doorAnswers({ port, fetchImpl: (url, options) => fetch(url, {
+        ...options, signal: AbortSignal.any([options.signal, startup.signal]),
+      }) }),
+    });
+    waited = await waiting;
+  } catch (error) {
+    await stop();
+    throw error;
+  }
   if (!waited.up) {
     warn(`the browser door is not running: ${c.dim(already.url)} did not answer — ${waited.reason}`);
     console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
@@ -566,7 +616,7 @@ export function planStart(env, server) {
   return { go: true, address: bind.address, mode: bind.mode, port };
 }
 
-function start() {
+async function start() {
   const found = resolveServerEntry();
   if (!found) {
     fail("Server payload not found. Run `murage setup`, or set MURAGE_SERVER_ENTRY.");
@@ -587,72 +637,83 @@ function start() {
   env.MURAGE_BIND_ADDRESS = plan.address;
   env.MURAGE_BIND_MODE = plan.mode;
   env.NODE_ENV = env.NODE_ENV || "production";
+  // A headless deployment never exposes a desktop developer credential,
+  // including when the operator launched it from a development shell.
+  env.MURAGE_NO_DEV_DESKTOP_SECRET = "1";
+  env.MURAGE_COMPANION_TOKEN = randomBytes(32).toString("hex");
 
   console.log(c.dim(`  binding ${plan.address}:${plan.port} (${plan.mode})`));
   const args = found.entry.endsWith(".ts") ? ["--experimental-strip-types", found.entry] : [found.entry];
-  const child = spawn(process.execPath, args, { env, stdio: "inherit" });
-
-  // The sidecar, alongside the harness — because on this deployment it is not
-  // an optional extra. `tailscale serve` fronts the browser door and nothing
-  // else; a box running only the harness answers 502 on the one URL setup told
-  // the operator to open.
+  const startup = new AbortController();
+  let harness;
+  let sidecar;
+  let starting = Promise.resolve();
   let stopping = false;
-  const sidecar = startSidecar(env, plan.port, {
-    // A door that dies and never comes back is the defect this whole change
-    // exists to remove, re-created quietly at 3am. Take the process down with
-    // it so `Restart=always` brings BOTH back, rather than leaving a harness
-    // running behind a proxy that now answers 502.
-    onExit: (code) => {
-      if (stopping) return;
-      stopping = true;
-      fail(`the companion sidecar exited (code ${code}) — taking the harness down so both restart together.`);
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* already gone */
-      }
-      process.exit(1);
-    },
-  });
-
-  const shutdown = (sig) => {
-    if (stopping) return;
+  let shuttingDown;
+  const shutdown = (code, signal = "SIGTERM") => {
+    if (stopping) return shuttingDown;
     stopping = true;
-    try {
-      child.kill(sig);
-    } catch {
-      /* already gone */
-    }
-    sidecar?.stop();
+    startup.abort();
+    shuttingDown = (async () => {
+      const results = await Promise.allSettled([harness?.stop(signal), sidecar?.stop(signal), starting]);
+      const failed = results.find(result => result.status === "rejected");
+      if (failed) fail(`startup or shutdown failed: ${failed.reason?.message ?? failed.reason}`);
+      // These are the exact owned children. Exit only after their departure
+      // and the aborted startup probe have been observed.
+      process.exit(failed ? 1 : code);
+    })();
+    return shuttingDown;
   };
-  child.on("exit", (code) => {
-    // The harness leaving is the end of the deployment; do not leave a door
-    // standing in front of nothing.
-    sidecar?.stop();
-    process.exit(code ?? 0);
-  });
-  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => shutdown(sig));
+  // Register before the first spawn, not after potentially slow startup work.
+  process.on("SIGINT", () => { void shutdown(130, "SIGINT"); });
+  process.on("SIGTERM", () => { void shutdown(143); });
+  try {
+    harness = ownChild(spawn(process.execPath, args, { env, stdio: "inherit" }));
+    harness.child.once("error", error => {
+      if (!stopping) fail(`the harness could not start: ${error.message}`);
+      void shutdown(1);
+    });
+    harness.child.once("exit", (code) => { void shutdown(code ?? 1); });
+    starting = startSidecar(env, plan.port, {
+      signal: startup.signal,
+      onStarted: child => { sidecar = child; },
+      onError: error => {
+        if (!stopping) fail(`the companion sidecar could not start: ${error.message}`);
+        void shutdown(1);
+      },
+      onExit: code => {
+        if (stopping) return;
+        fail(`the companion sidecar exited (code ${code}) — taking the harness down so both restart together.`);
+        void shutdown(1);
+      },
+    });
+    await starting;
+  } catch (error) {
+    if (!stopping) fail(`could not start Murage: ${error.message}`);
+    await shutdown(1);
+  }
 }
 
 /**
  * Start the companion sidecar next to the harness, or say precisely why not.
  *
- * Never fatal. A box with a harness and no door is degraded — reachable over
+ * A missing payload is not fatal. A box with a harness and no door is degraded — reachable over
  * an SSH tunnel, not over the tailnet — and that is worth saying out loud and
  * continuing, rather than refusing to run the app at all.
  *
  * @param {Record<string,string|undefined>} env the harness's resolved env
  * @param {number} harnessPort
- * @returns {{ stop: () => void } | null}
+ * @returns {Promise<{ stop: () => Promise<void> } | null>}
  */
-export function startSidecar(env, harnessPort, deps = {}) {
+export async function startSidecar(env, harnessPort, deps = {}) {
   const resolve_ = deps.resolveCompanionEntry ?? resolveCompanionEntry;
   const spawn_ = deps.spawnCompanion ?? spawnCompanion;
   const front = deps.doorFront ?? doorFront;
   const log = deps.log ?? console.log;
   const say = deps.warn ?? warn;
 
-  const resolved = resolve_(INSTALLER_ROOT, REPO_ROOT);
+  if (deps.signal?.aborted) return null;
+  const resolved = resolve_(INSTALLER_ROOT, REPO_ROOT, existsSync, env);
   if (!resolved) {
     say("the companion sidecar is not in this install — starting the harness alone.");
     log(c.dim("  Nothing will be listening on the browser door, so the tailnet URL will 502."));
@@ -660,7 +721,8 @@ export function startSidecar(env, harnessPort, deps = {}) {
     return null;
   }
   const door = ts.doorPort(env);
-  const origin = front(door);
+  const origin = await front(door, { env, signal: deps.signal });
+  if (deps.signal?.aborted) return null;
   log(c.dim(`  companion sidecar ${resolved.entry} (${resolved.kind})`));
   log(c.dim(`  browser door 127.0.0.1:${door}${origin ? ` behind ${origin}` : " (no verified proxy in front)"}`));
   // The long-running sidecar, so this is the one whose posture matters most.
@@ -678,8 +740,10 @@ export function startSidecar(env, harnessPort, deps = {}) {
     }),
     stdio: "inherit",
   });
+  deps.onStarted?.(sidecar);
+  if (deps.onError) sidecar.child.on("error", deps.onError);
   if (deps.onExit) sidecar.child.on("exit", (code) => deps.onExit(code));
-  return { stop: () => void sidecar.stop(), child: sidecar.child };
+  return sidecar;
 }
 
 /**
@@ -690,13 +754,20 @@ export function startSidecar(env, harnessPort, deps = {}) {
  * door ends up issuing `Secure` cookies for an https listener that was never
  * configured, and printing a QR for an address that does not resolve.
  * @param {number} door
- * @returns {string | null}
+ * @returns {Promise<string | null>}
  */
-function doorFront(door) {
-  if (!ts.isInstalled()) return null;
-  const share = ts.shareStatus({ port: door });
+async function doorFront(door, { env = process.env, signal } = {}) {
+  // Resolve without spawning a synchronous `which` after the harness starts.
+  const bin = ts.tailscaleBin({ env, onPath: command =>
+    String(env.PATH ?? "").split(delimiter).some(path => existsSync(join(path, command))) });
+  if (!bin) return null;
+  const output = await startupProbe(bin, ["serve", "status", "--json"], { env, signal });
+  if (!output) return null;
+  let doc;
+  try { doc = JSON.parse(output); } catch { return null; }
+  const share = ts.inspectShareConfig(doc, door);
   if (!share.configured || share.publicExposure) return null;
-  return ts.serveOrigin(share.raw, door);
+  return ts.serveOrigin(doc, door);
 }
 
 async function status() {
@@ -822,7 +893,7 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 if (isMain) {
   const cmd = (process.argv[2] || "help").toLowerCase();
   if (cmd === "setup") await setup();
-  else if (cmd === "start") start();
+  else if (cmd === "start") await start();
   else if (cmd === "status") await status();
   else if (cmd === "resetpass" || cmd === "reset-password") resetpass();
   else if (cmd === "version" || cmd === "--version" || cmd === "-v") {

@@ -32,6 +32,8 @@ import { createSseScrubber, isJson, scrub } from "./wire.ts";
 export interface ProxyOptions {
   /** Where the harness is listening on loopback. */
   harnessPort: number;
+  /** Private parent-to-harness proof, never a device credential or response field. */
+  companionToken?: string;
   /** Does this bearer token belong to a paired device? */
   authenticate: (token: string | undefined) => { id?: string; cloudDesktopAccess: boolean } | null;
   /** Redeem a pairing code. Handled here and never forwarded: the harness
@@ -332,6 +334,9 @@ export function createProxyHandler(options: ProxyOptions) {
         error: "cloud desktop access is off for this phone — enable it in Murage → Settings → Phone",
       });
     }
+    if (isCloudDesktopJoin(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
+      return sendJson(res, 503, { error: "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start" });
+    }
 
     // Pairing terminates here. Forwarding it would hand the harness a route
     // it does not have, and the 404 would read to a phone as "wrong address".
@@ -432,7 +437,10 @@ export function createProxyHandler(options: ProxyOptions) {
           port: options.harnessPort,
           path: req.url,
           method,
-          headers: forwardHeaders(req, body),
+          headers: {
+            ...forwardHeaders(req, body),
+            ...(isCloudDesktopJoin(method, path) ? { "x-murage-companion-token": options.companionToken! } : {}),
+          },
         },
         (harness) => {
           clearTimeout(headersDeadline);

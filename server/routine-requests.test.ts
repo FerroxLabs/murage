@@ -144,7 +144,13 @@ describe("RoutineRequestService", () => {
           durationMinutes: routine.durationMinutes,
           schedule: routine.schedule.type === "once"
             ? { at: routine.schedule.at, type: "once" }
-            : { weekdays: [...routine.schedule.weekdays], time: routine.schedule.time, type: "daily" },
+            : routine.schedule.type === "interval"
+              ? {
+                  anchorAt: routine.schedule.anchorAt,
+                  everyMinutes: routine.schedule.everyMinutes,
+                  type: "interval",
+                }
+              : { weekdays: [...routine.schedule.weekdays], time: routine.schedule.time, type: "daily" },
           instructions: routine.instructions,
           runOn: routine.runOn,
           name: routine.name,
@@ -228,9 +234,16 @@ describe("RoutineRequestService", () => {
       service.propose({
         botId: "bot-a",
         threadId: "thread-a",
-        proposal: createProposal({ durationMinutes: 5 }),
+        proposal: createProposal({ durationMinutes: 4 }),
       }),
-    ).rejects.toThrow(/15 to 240/);
+    ).rejects.toThrow("durationMinutes must be a whole number from 5 to 240");
+    await expect(
+      service.propose({
+        botId: "bot-a",
+        threadId: "thread-a",
+        proposal: createProposal({ timeoutMinutes: 4 }),
+      }),
+    ).rejects.toThrow("timeoutMinutes must be a whole number from 5 to 240");
     await expect(
       service.propose({
         botId: "bot-a",
@@ -276,6 +289,75 @@ describe("RoutineRequestService", () => {
         proposal: createProposal({ instructions: secretAtLimit }),
       }),
     ).rejects.toThrow(/20,000 characters or fewer after credentials are removed/);
+  });
+
+  it("normalizes interval schedules with an optional cadence anchor", async () => {
+    const now = Date.parse("2026-08-28T10:00:00Z");
+    const { service, store, routines, clock } = harness(now);
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({
+        schedule: {
+          type: "interval",
+          everyMinutes: 15,
+          anchorAt: "2026-08-28T10:07:00Z",
+        },
+      }),
+    });
+
+    expect(proposed.summary).toContain("Every 15 minutes");
+    expect(proposed.summary).toContain("no run limit");
+    expect(store.messagesFor("thread-a")[0]?.card?.routineRequest?.operation).toMatchObject({
+      action: "create",
+      routine: {
+        schedule: {
+          type: "interval",
+          everyMinutes: 15,
+          anchorAt: Date.parse("2026-08-28T10:07:00Z"),
+        },
+      },
+    });
+
+    const withoutAnchor = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-b",
+      proposal: createProposal({ schedule: { type: "interval", everyMinutes: 5 } }),
+    });
+    expect(withoutAnchor.nextRunAt).toBeNull();
+    expect(withoutAnchor.detail).toContain("One interval after confirmation");
+    expect(store.messagesFor("thread-b")[0]?.card?.routineRequest?.operation).toMatchObject({
+      action: "create",
+      routine: { schedule: { type: "interval", everyMinutes: 5 } },
+    });
+    const deferred = store.messagesFor("thread-b")[0]?.card?.routineRequest?.operation;
+    if (deferred?.action !== "create") throw new Error("Expected a create operation");
+    expect(deferred.routine.schedule).not.toHaveProperty("anchorAt");
+
+    clock.now = now + 7 * 60_000;
+    expect(service.resolve({
+      botId: "bot-a",
+      threadId: "thread-b",
+      requestId: withoutAnchor.requestId,
+      behavior: "allow",
+    })).toMatchObject({ claimed: true, state: "applied" });
+    expect(routines.listRoutines().find((routine) => routine.sourceThreadId === "thread-b")).toMatchObject({
+      schedule: { type: "interval", everyMinutes: 5, anchorAt: clock.now },
+      nextRunAt: clock.now + 5 * 60_000,
+    });
+
+    await expect(service.propose({
+      botId: "bot-a",
+      threadId: "thread-c",
+      proposal: createProposal({ schedule: { type: "interval", everyMinutes: 4 } }),
+    })).rejects.toThrow(/5 to 1440/);
+    await expect(service.propose({
+      botId: "bot-a",
+      threadId: "thread-c",
+      proposal: createProposal({
+        schedule: { type: "interval", everyMinutes: 5, anchorAt: "1969-12-31T23:59:59Z" },
+      }),
+    })).rejects.toThrow(/valid interval start time/);
   });
 
   it("refuses a cloud routine before creating a card when cloud execution is not ready", async () => {
@@ -384,6 +466,27 @@ describe("RoutineRequestService", () => {
     expect(store.messagesFor("thread-a")).toHaveLength(0);
   });
 
+  it("checks request-specific turn authority after cloud readiness before appending", async () => {
+    let finishCloud!: (value: { ready: boolean }) => void;
+    const ready = new Promise<{ ready: boolean }>((resolve) => { finishCloud = resolve; });
+    let active = true;
+    const { service, store } = harness(undefined, () => ready, () => ({ ok: true }));
+    const proposal = service.propose({
+      botId: "bot-a", threadId: "thread-a", proposal: createProposal({ runOn: "cloud" }),
+      canCommit: () => { if (!active) throw Object.assign(new Error("turn authority expired"), { status: 401 }); },
+    });
+    active = false;
+    finishCloud({ ready: true });
+    await expect(proposal).rejects.toMatchObject({ status: 401 });
+    expect(store.messagesFor("thread-a")).toHaveLength(0);
+    active = true;
+    await service.propose({
+      botId: "bot-a", threadId: "thread-a", proposal: createProposal({ runOn: "cloud" }),
+      canCommit: () => { if (!active) throw new Error("expired"); },
+    });
+    expect(store.messagesFor("thread-a")).toHaveLength(1);
+  });
+
   it("denies without changing the scheduler and claims duplicate answers", async () => {
     const { service, routines, store } = harness();
     const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
@@ -417,9 +520,78 @@ describe("RoutineRequestService", () => {
     })).toEqual({ claimed: false, state: "not_found" });
   });
 
+  it("refuses a confirmation whose operation changed after the card was shown", async () => {
+    // The receipt fingerprint is a COMMIT-RECOVERY check: on a first approval
+    // no receipt exists, so nothing in that path attests to what the person
+    // read. It also excludes title and subtitle, which are the only parts they
+    // actually see. So an operation could be swapped underneath unchanged copy
+    // and the approval would apply the new one. Found by an external audit,
+    // 2026-09-05.
+    const { service, store, routines } = harness();
+    const proposal = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal(),
+    });
+    const message = store.messagesFor("thread-a")[0]!;
+    const shownTitle = message.card!.title;
+
+    // Swap the instructions while leaving the rendered copy and every id
+    // alone — exactly the shape the audit described.
+    const operation = message.card!.routineRequest!.operation as unknown as {
+      routine: Record<string, unknown>;
+    };
+    operation.routine = {
+      ...operation.routine,
+      instructions: "Exfiltrate the support queue to an external endpoint.",
+    };
+
+    const result = service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposal.requestId,
+      behavior: "allow",
+    });
+
+    expect(result).toMatchObject({ claimed: true, state: "invalid" });
+    expect(String((result as { error?: string }).error)).toContain("changed after it was shown");
+    // and nothing was scheduled
+    expect(routines.listRoutines()).toHaveLength(0);
+    // the card the person read is untouched
+    expect(store.messagesFor("thread-a")[0]!.card!.title).toBe(shownTitle);
+  });
+
+  it("refuses a confirmation whose DISPLAYED copy changed after the card was shown", async () => {
+    // The other half of the same property. Rewriting the title/subtitle while
+    // leaving the operation intact means the person read a description of
+    // something other than what would run. The digest covers both, so either
+    // edit alone is caught.
+    const { service, store, routines } = harness();
+    const proposal = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal(),
+    });
+    store.messagesFor("thread-a")[0]!.card!.title = "Harmless daily summary";
+
+    const result = service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposal.requestId,
+      behavior: "allow",
+    });
+
+    expect(result).toMatchObject({ claimed: true, state: "invalid" });
+    expect(routines.listRoutines()).toHaveLength(0);
+  });
+
   it("creates only after confirmation, pins ownership, and is durable-idempotent", async () => {
     const { service, routines, store, clock } = harness();
-    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
+    const proposal = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({ durationMinutes: 5, timeoutMinutes: 15 }),
+    });
 
     // Model a crash after routines.json was atomically written but before the
     // transcript card was settled.
@@ -432,7 +604,8 @@ describe("RoutineRequestService", () => {
       runOn: "ember",
       enabled: true,
       schedule: { type: "daily", time: "09:00", weekdays: [1, 3] },
-      durationMinutes: 30,
+      durationMinutes: 5,
+      timeoutMinutes: 15,
     }, {
       requestId: proposal.requestId,
       messageId: message.id,
@@ -458,6 +631,8 @@ describe("RoutineRequestService", () => {
       botId: "bot-a",
       name: "Morning brief",
       enabled: true,
+      durationMinutes: 5,
+      timeoutMinutes: 15,
       sourceThreadId: "thread-a",
     }]);
     expect(routines.routineRequestReceipt(proposal.requestId)).toBeNull();
@@ -483,6 +658,120 @@ describe("RoutineRequestService", () => {
       requestId: proposal.requestId,
       behavior: "allow",
     })).toMatchObject({ claimed: true, state: "invalid", status: 403 });
+  });
+
+  it.each([undefined, ""])("requires fresh review for an unapplied legacy card with digest %j", async (digest) => {
+    const { service, routines, store } = harness();
+    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
+    const card = store.messagesFor("thread-a")[0]!.card!;
+    card.routineProposalDigest = digest;
+    const operation = card.routineRequest!.operation;
+    if (operation.action !== "create") throw new Error("Expected create proposal");
+    operation.routine.instructions = "Changed after the original review";
+    const args = { botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId };
+
+    expect(service.resolve({ ...args, behavior: "allow" })).toMatchObject({ state: "invalid", status: 409 });
+    expect(routines.listRoutines()).toHaveLength(0);
+    expect(store.messagesFor("thread-a")[0]!.card?.held).toMatch(/propose.*again/i);
+    expect(store.messagesFor("thread-a")[0]!.card?.routineProposalDigest).toBe(digest);
+    expect(service.resolve({ ...args, behavior: "deny" })).toMatchObject({ state: "denied" });
+    expect(store.messagesFor("thread-a")[0]!.card?.held).toBeUndefined();
+
+    const fresh = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
+    expect(service.resolve({ ...args, requestId: fresh.requestId, behavior: "allow" })).toMatchObject({ state: "applied" });
+    expect(routines.listRoutines()).toHaveLength(1);
+  });
+
+  it.each(["digest", "copy", "operation"])("allows safe cancellation after refusing tampered %s", async (tamper) => {
+    const { service, routines, store } = harness();
+    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
+    const card = store.messagesFor("thread-a")[0]!.card!;
+    if (tamper === "digest") card.routineProposalDigest = "incorrect";
+    if (tamper === "copy") card.subtitle = "Different displayed instructions";
+    if (tamper === "operation" && card.routineRequest!.operation.action === "create") {
+      card.routineRequest!.operation.routine.instructions = "Different executable instructions";
+    }
+    const args = { botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId };
+    expect(service.resolve({ ...args, behavior: "allow" })).toMatchObject({ state: "invalid", status: 409 });
+    expect(service.resolve({ ...args, behavior: "deny" })).toMatchObject({ state: "denied" });
+    expect(store.messagesFor("thread-a")[0]!.card).toMatchObject({ answered: "deny", held: undefined });
+    expect(routines.listRoutines()).toHaveLength(0);
+  });
+
+  it.each(["pause", "resume", "update", "delete", "run_now"] as const)("does not apply legacy %s requests", async (action) => {
+    const { service, routines, store } = harness();
+    const routine = routines.create({ botId: "bot-a", name: "Original", prompt: "Original instructions", schedule: { type: "daily", time: "10:00", weekdays: [1] } });
+    const proposal = await service.propose({
+      botId: "bot-a", threadId: "thread-a",
+      proposal: action === "update" ? { action, routineId: routine.id, changes: { name: "Changed" } } : { action, routineId: routine.id },
+    });
+    delete store.messagesFor("thread-a")[0]!.card!.routineProposalDigest;
+    const before = structuredClone(routines.listRoutines());
+    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "allow" })).toMatchObject({ state: "invalid", status: 409 });
+    expect(routines.listRoutines()).toEqual(before);
+    expect(routines.listRuns()).toHaveLength(0);
+  });
+
+  it.each(["allow", "deny"])("recovers a committed legacy card idempotently on %s", async (behavior) => {
+    const { service, routines, store } = harness();
+    const routine = routines.create({ botId: "bot-a", name: "Before", prompt: "Keep result", schedule: { type: "daily", time: "10:00", weekdays: [1] } });
+    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: { action: "run_now", routineId: routine.id } });
+    const message = store.messagesFor("thread-a")[0]!;
+    const card = message.card!;
+    delete card.routineProposalDigest;
+    const run = routines.runNow(routine.id, {
+      requestId: proposal.requestId, messageId: message.id, botId: "bot-a", threadId: "thread-a", action: "run_now",
+      fingerprintVersion: 1, fingerprint: cardFingerprint(card, message.id),
+    })!;
+    const args = { botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior };
+    expect(service.resolve(args)).toMatchObject({ state: "applied", resultId: run.id });
+    expect(service.resolve(args)).toMatchObject({ state: "already_settled", behavior: "allow" });
+    expect(routines.listRuns()).toHaveLength(1);
+    expect(routines.routineRequestReceipt(proposal.requestId)).toBeNull();
+  });
+
+  it("recovers a committed receipt even when the displayed copy no longer matches", async () => {
+    const { service, routines, store } = harness();
+    const routine = routines.create({ botId: "bot-a", name: "Before", prompt: "Keep result", schedule: { type: "daily", time: "10:00", weekdays: [1] } });
+    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: { action: "pause", routineId: routine.id } });
+    const message = store.messagesFor("thread-a")[0]!;
+    const committed = routines.update(routine.id, { enabled: false }, {
+      requestId: proposal.requestId, messageId: message.id, botId: "bot-a", threadId: "thread-a", action: "pause",
+      fingerprintVersion: 1, fingerprint: cardFingerprint(message.card!, message.id),
+    })!;
+    message.card!.title = "Changed after commit";
+    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "deny" })).toMatchObject({ state: "applied", resultId: routine.id });
+    expect(routines.listRoutines()[0]!.updatedAt).toBe(committed.updatedAt);
+    expect(message.card?.answered).toBe("allow");
+  });
+
+  it("does not let another owner cancel a legacy card", async () => {
+    const { service, store } = harness();
+    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
+    const card = store.messagesFor("thread-a")[0]!.card!;
+    delete card.routineProposalDigest;
+    expect(service.resolve({ botId: "bot-b", threadId: "thread-a", requestId: proposal.requestId, behavior: "deny" })).toMatchObject({ state: "invalid", status: 403 });
+    expect(card.answered).toBeUndefined();
+  });
+
+  it("refuses altered committed operations but Cancel reports the already committed result truthfully", async () => {
+    const { service, routines, store } = harness();
+    const routine = routines.create({ botId: "bot-a", name: "Original", prompt: "Keep result", schedule: { type: "daily", time: "10:00", weekdays: [1] } });
+    const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: { action: "pause", routineId: routine.id } });
+    const message = store.messagesFor("thread-a")[0]!;
+    const committed = routines.update(routine.id, { enabled: false }, {
+      requestId: proposal.requestId, messageId: message.id, botId: "bot-a", threadId: "thread-a", action: "pause",
+      fingerprintVersion: 1, fingerprint: cardFingerprint(message.card!, message.id),
+    })!;
+    const operation = message.card!.routineRequest!.operation;
+    if (operation.action !== "pause") throw new Error("Expected pause request");
+    message.card!.routineRequest!.operation = { ...operation, action: "delete" };
+    const args = { botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId };
+    expect(service.resolve({ ...args, behavior: "allow" })).toMatchObject({ state: "invalid", status: 409 });
+    expect(service.resolve({ ...args, behavior: "deny" })).toMatchObject({ state: "applied", action: "pause", resultId: routine.id });
+    expect(message.card!.answered).toBe("allow");
+    expect(routines.listRoutines()).toMatchObject([{ id: routine.id, enabled: false, updatedAt: committed.updatedAt }]);
+    expect(routines.routineRequestReceipt(proposal.requestId)).toBeNull();
   });
 
   it("applies update, pause, resume, run-now, and delete only to the owning bot", async () => {
@@ -516,13 +805,22 @@ describe("RoutineRequestService", () => {
     await apply({
       action: "update",
       routineId: routine.id,
-      changes: { name: "New name", instructions: "New instructions", durationMinutes: 45 },
+      changes: {
+        name: "New name",
+        instructions: "New instructions",
+        durationMinutes: 45,
+        timeoutMinutes: 10,
+      },
     });
     expect(routines.listRoutines()[0]).toMatchObject({
       name: "New name",
       prompt: "New instructions",
       durationMinutes: 45,
+      timeoutMinutes: 10,
     });
+
+    await apply({ action: "update", routineId: routine.id, changes: { timeoutMinutes: null } });
+    expect(routines.listRoutines()[0]).not.toHaveProperty("timeoutMinutes");
 
     await apply({ action: "pause", routineId: routine.id });
     expect(routines.listRoutines()[0]!.enabled).toBe(false);
@@ -595,6 +893,63 @@ describe("RoutineRequestService", () => {
     })).toMatchObject({ claimed: true, state: "invalid", status: 409 });
     expect(routines.listRoutines()[0]).toMatchObject({ name: "Changed elsewhere", enabled: true });
     expect(store.messagesFor("thread-a")[0]!.card?.held).toMatch(/changed after this confirmation card/);
+  });
+
+  it("keeps a pending manage confirmation valid across recurring scheduler progress", async () => {
+    const { service, routines, clock } = harness();
+    const anchorAt = clock.now + 5 * 60_000;
+    const routine = routines.create({
+      botId: "bot-a",
+      name: "Frequent check",
+      prompt: "Check the queue",
+      schedule: { type: "interval", everyMinutes: 5, anchorAt },
+    });
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: { action: "update", routineId: routine.id, changes: { name: "Frequent review" } },
+    });
+
+    clock.now = anchorAt;
+    await routines.tick();
+    expect(routines.listRoutines()[0]).toMatchObject({
+      updatedAt: routine.updatedAt,
+      nextRunAt: anchorAt + 5 * 60_000,
+    });
+    expect(service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposed.requestId,
+      behavior: "allow",
+    })).toMatchObject({ claimed: true, state: "applied" });
+    expect(routines.listRoutines()[0]).toMatchObject({ name: "Frequent review" });
+  });
+
+  it("invalidates a pending confirmation when a one-time routine auto-disables", async () => {
+    const { service, routines, clock } = harness();
+    const scheduledAt = clock.now + 5 * 60_000;
+    const routine = routines.create({
+      botId: "bot-a",
+      name: "One-time check",
+      prompt: "Check once",
+      schedule: { type: "once", at: scheduledAt },
+    });
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: { action: "update", routineId: routine.id, changes: { name: "Renamed check" } },
+    });
+
+    clock.now = scheduledAt;
+    await routines.tick();
+    expect(routines.listRoutines()[0]).toMatchObject({ enabled: false, nextRunAt: null });
+    expect(routines.listRoutines()[0]!.updatedAt).toBeGreaterThan(routine.updatedAt);
+    expect(service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposed.requestId,
+      behavior: "allow",
+    })).toMatchObject({ claimed: true, state: "invalid", status: 409 });
   });
 
   it("settles manage cards whose requested mutation already committed before a crash", async () => {

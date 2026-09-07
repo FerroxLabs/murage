@@ -32,7 +32,8 @@ export type DecisionKind =
   | "user-approved"
   | "user-denied"
   | "review-would-approve"
-  | "review-would-deny";
+  | "review-would-deny"
+  | "log-omitted";
 
 /** Who or what produced the decision. The AutoVerdictSource values carry
  * straight through from auto-approve.ts; `question` marks cards a rule may
@@ -47,7 +48,8 @@ export type DecisionSource =
   | "skill"
   | "user"
   | "auto-review"
-  | "auto-review-shadow";
+  | "auto-review-shadow"
+  | "logger";
 
 export interface DecisionRow {
   at: string;
@@ -63,6 +65,8 @@ export interface DecisionRow {
   rule?: string;
   /** the turn ran with nobody at the keyboard when this was decided */
   unattended?: boolean;
+  /** Diagnostic rows unavailable because of overload, oversize or write failure. */
+  omitted?: number;
 }
 
 const FILE_NAME = "decisions.ndjson";
@@ -73,11 +77,23 @@ const FILE_NAME = "decisions.ndjson";
 // is years of human-scale approvals, and anything fancier — dated segments,
 // compression — is more machinery than an audit trail this size warrants.
 const MAX_BYTES = 4 * 1024 * 1024;
-const writeQueues = new Map<string, Promise<void>>();
+export const DECISION_MAX_PENDING_BYTES = 1024 * 1024;
+export const DECISION_MAX_PENDING_RECORDS = 256;
+export const DECISION_MAX_RECORD_BYTES = 64 * 1024;
+interface WriteQueue {
+  items: Array<{ encoded: string; bytes: number; maxBytes: number }>;
+  bytes: number;
+  omitted: number;
+  markerBytes: number;
+  maxBytes: number;
+  running?: Promise<void>;
+}
+const writeQueues = new Map<string, WriteQueue>();
+const addOmissions = (queue: WriteQueue, count = 1) => { queue.omitted = Math.min(Number.MAX_SAFE_INTEGER, queue.omitted + count); };
 
 async function writeDecision(
   dataDir: string,
-  row: Omit<DecisionRow, "at">,
+  encoded: string,
   maxBytes: number,
 ): Promise<void> {
   const file = join(dataDir, FILE_NAME);
@@ -86,8 +102,32 @@ async function writeDecision(
   } catch {
     /* no live file yet — nothing to rotate */
   }
-  const record = redactSecrets({ at: new Date().toISOString(), ...row });
-  await appendFile(file, JSON.stringify(record) + "\n", { mode: 0o600 });
+  await appendFile(file, encoded, { mode: 0o600 });
+}
+
+async function drain(dataDir: string, queue: WriteQueue): Promise<void> {
+  while (queue.items.length || queue.omitted) {
+    const item = queue.items[0];
+    if (item) {
+      try { await writeDecision(dataDir, item.encoded, item.maxBytes); }
+      catch {
+        // Keep bounded evidence of the gap, not rows or a retry promise chain.
+        addOmissions(queue, queue.items.length);
+        queue.items = []; queue.bytes = 0;
+        return;
+      }
+      queue.items.shift(); queue.bytes -= item.bytes;
+    } else {
+      const omitted = queue.omitted;
+      queue.omitted = 0;
+      const encoded = JSON.stringify({ at: new Date().toISOString(), threadId: "", decision: "log-omitted", source: "logger", omitted,
+        summary: "Diagnostic decision rows omitted by queue/record limits or write failure; authorization and transcript records are unchanged." }) + "\n";
+      queue.markerBytes = Buffer.byteLength(encoded);
+      try { await writeDecision(dataDir, encoded, queue.maxBytes); }
+      catch { addOmissions(queue, omitted + queue.items.length); queue.items = []; queue.bytes = 0; return; }
+      finally { queue.markerBytes = 0; }
+    }
+  }
 }
 
 /** Append one decision row. Fire-and-forget, mirroring the event bus tee:
@@ -98,25 +138,41 @@ export function appendDecision(
   row: Omit<DecisionRow, "at">,
   opts?: { maxBytes?: number },
 ): void {
-  const previous = writeQueues.get(dataDir) ?? Promise.resolve();
-  // Serialize stat → optional rotate → append for each directory. Without
-  // this queue two simultaneous approvals can both rotate, overwrite .1,
-  // or append out of decision order.
-  const queued = previous
-    .then(() => writeDecision(dataDir, row, opts?.maxBytes ?? MAX_BYTES))
-    .catch(() => {
-      /* logging must never take down the fold */
+  let queue = writeQueues.get(dataDir);
+  if (!queue) {
+    queue = { items: [], bytes: 0, omitted: 0, markerBytes: 0, maxBytes: opts?.maxBytes ?? MAX_BYTES };
+    writeQueues.set(dataDir, queue);
+  }
+  // Encode/redact before retaining anything. The bounds include the current
+  // write; already-admitted records stay FIFO. Overload retains only a count.
+  try {
+    const encoded = JSON.stringify(redactSecrets({ at: new Date().toISOString(), ...row })) + "\n";
+    const bytes = Buffer.byteLength(encoded);
+    if (bytes > DECISION_MAX_RECORD_BYTES || queue.bytes + queue.markerBytes + bytes > DECISION_MAX_PENDING_BYTES || queue.items.length + (queue.markerBytes ? 1 : 0) >= DECISION_MAX_PENDING_RECORDS) addOmissions(queue);
+    else {
+      queue.items.push({ encoded, bytes, maxBytes: opts?.maxBytes ?? MAX_BYTES });
+      queue.bytes += bytes;
+    }
+  } catch { addOmissions(queue); }
+  if (!queue.running) {
+    const current = queue;
+    current.running = drain(dataDir, current).finally(() => {
+      current.running = undefined;
+      if (!current.items.length && !current.omitted) writeQueues.delete(dataDir);
     });
-  writeQueues.set(dataDir, queued);
-  void queued.finally(() => {
-    if (writeQueues.get(dataDir) === queued) writeQueues.delete(dataDir);
-  });
+  }
+}
+
+/** Bounded diagnostic counters; never exposes retained row content. */
+export function decisionLogQueueStatus(dataDir: string) {
+  const queue = writeQueues.get(dataDir);
+  return { pendingBytes: (queue?.bytes ?? 0) + (queue?.markerBytes ?? 0), pendingRecords: (queue?.items.length ?? 0) + (queue?.markerBytes ? 1 : 0), omitted: queue?.omitted ?? 0 };
 }
 
 /** Test/shutdown seam: wait until every decision already queued for this
  * directory has reached disk. Normal request paths deliberately do not wait. */
 export async function flushDecisionLog(dataDir: string): Promise<void> {
-  await writeQueues.get(dataDir);
+  await writeQueues.get(dataDir)?.running;
 }
 
 const isDecisionRow = (value: unknown): value is DecisionRow =>

@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Bug,
-  Clock,
   Copy,
   Folder,
   ListTree,
@@ -26,6 +25,7 @@ import {
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { plainTextClamped } from "@/lib/plain-text";
+import { telegramMessageDisplay } from "@/lib/telegram-message-display";
 import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
 import {
   useStore,
@@ -39,6 +39,8 @@ import {
   type Message,
 } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
+import { ProviderErrorCard } from "./ProviderErrorCard";
+import type { ProviderErrorInfo } from "../../shared/provider-error";
 import { BotAvatar, EmberAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
@@ -76,7 +78,7 @@ import { ActivityRun } from "./ActivityRun";
 import { TurnNarrationRun } from "./TurnNarrationRun";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
-import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
+import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
 import {
   BUBBLE_INTERACTIVE,
@@ -312,11 +314,16 @@ function ErrorRow({
   message,
   onRetry,
   setupInstance,
+  providerError,
+  onOpenProviderSettings,
 }: {
   message: string;
   onRetry?: () => void;
   setupInstance?: InstanceInfo;
+  providerError?: ProviderErrorInfo;
+  onOpenProviderSettings: () => void;
 }) {
+  if (providerError) return <ProviderErrorCard info={providerError} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
   return (
     <div className="flex justify-start">
       <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
@@ -453,8 +460,9 @@ function Bubble({
   const speech = useSpeech();
   const text = message.text ?? "";
   const webhookView = user ? webhookMessageView(text) : null;
-  const attachments = user && !webhookView ? splitTranscriptAttachments(text) : null;
-  const visibleText = webhookView?.task ?? attachments?.display ?? text;
+  const telegramView = user ? telegramMessageDisplay(text) : null;
+  const attachments = user && !webhookView && !telegramView ? splitTranscriptAttachments(text) : null;
+  const visibleText = telegramView?.body ?? webhookView?.task ?? attachments?.display ?? text;
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
@@ -641,6 +649,7 @@ function Bubble({
             </div>
           ) : user ? (
             <>
+              {telegramView && <div className="mb-1 text-[11px] font-medium text-ink-secondary">Telegram</div>}
               {attachments && attachments.images.length > 0 && (
                 <AttachedImageGallery paths={attachments.images} />
               )}
@@ -655,7 +664,7 @@ function Bubble({
                 </div>
               )}
               {message.steered && (
-                <div className="mt-1 text-[11px] text-ink-secondary/70" title="Sent while the bot was working — it saw this before its next step, inside the same turn.">
+                <div className="mt-1 text-[11px] text-ink-secondary/70" title="Sent while the bot was working; it saw this before its next step, inside the same turn.">
                   sent mid-turn
                 </div>
               )}
@@ -671,8 +680,14 @@ function Bubble({
               )}
             </>
           ) : (
-            <MessageBoundary fallbackText={text}>
-              <ChatMarkdown text={text} />
+            <MessageBoundary fallbackText={text || "Generated image"}>
+              {message.attachments?.length ? (
+                <AttachedImageGallery
+                  paths={message.attachments.map((attachment) => attachment.path)}
+                  className={text ? "justify-start" : "mb-0 justify-start"}
+                />
+              ) : null}
+              {text ? <ChatMarkdown text={text} /> : null}
             </MessageBoundary>
           )}
         </div>
@@ -681,8 +696,8 @@ function Bubble({
         {!user && (
           <>
             <div className="flex flex-col gap-0.5 self-end pb-0.5">
-              <CopyButton text={text} />
-              {message.kind === "text" && (
+              {text && <CopyButton text={text} />}
+              {message.kind === "text" && text && (
                 <SpeakButton text={text} botId={bot.id} messageId={message.id} voiceId={bot.voice} />
               )}
               {isLastBotText && !bot.busy && onRegenerate && (
@@ -995,6 +1010,8 @@ const MessagesList = memo(function MessagesList({
                     message={m.tool.name.slice(6).trim()}
                     onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
                     setupInstance={m.tool.setup ? engine : undefined}
+                    providerError={m.tool.providerError}
+                    onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}
                   />
                 );
               }
@@ -1083,6 +1100,7 @@ function PinnedBanner({
 export function ChatView({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
 
@@ -1191,6 +1209,7 @@ export function ChatView({ bot }: { bot: Bot }) {
     return () => clearTimeout(timer);
   }, [lastMessage?.id, lastMessage?.role, lastMessage?.kind, lastMessage?.text]);
   const presenceVisible = waiting || popping !== null;
+  const poppingMessage = popping ? messages.find((message) => message.id === popping.id) : undefined;
   // Wall-clock anchor for the working row's elapsed readout — set when the
   // turn starts, cleared when it settles, reset on bot switch.
   const [busySince, setBusySince] = useState<number | null>(null);
@@ -1227,6 +1246,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   }, []);
 
   useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+  useBottomFollowResize(scrollRef, transcriptRef, followRef, transcriptKey);
 
   // A search result may be hundreds of rows before the mounted tail. Open a
   // bounded window around it first; useFocusMessage then scrolls and flashes
@@ -1523,6 +1543,7 @@ export function ChatView({ bot }: { bot: Bot }) {
         <div
           className="flex w-full flex-col gap-3"
           style={{ paddingBottom: composerDock.pad }}
+          ref={transcriptRef}
           role="log"
           aria-live="polite"
           aria-label={`Conversation with ${bot.name}`}
@@ -1588,39 +1609,18 @@ export function ChatView({ bot }: { bot: Bot }) {
           >
             {popping ? (
               <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-                <MessageBoundary fallbackText={popping.text}>
-                  <ChatMarkdown text={popping.text} />
+                <MessageBoundary fallbackText={popping.text || "Generated image"}>
+                  {poppingMessage?.attachments?.length ? (
+                    <AttachedImageGallery
+                      paths={poppingMessage.attachments.map((attachment) => attachment.path)}
+                      className={popping.text ? "justify-start" : "mb-0 justify-start"}
+                    />
+                  ) : null}
+                  {popping.text ? <ChatMarkdown text={popping.text} /> : null}
                 </MessageBoundary>
               </div>
             ) : null}
           </TurnPresence>
-          {/* Ghost tail: 1:1 sends made mid-turn wait in the server's steer
-              queue and stay off the transcript until drain (they must never
-              become the active leaf). These rows are that queue made visible,
-              in send order, each with its own cancel. */}
-          {bot.busy &&
-            (state.pendingQueued[bot.threadId] ?? []).map((entry) => (
-              <div key={entry.queueId} className="flex flex-col items-end">
-                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
-                  {entry.text}
-                </div>
-                <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
-                  <Clock size={11} aria-hidden="true" />
-                  <span>Queued — wait, or inject now</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      dispatch({ type: "cancelQueued", botId: bot.id, queueId: entry.queueId })
-                    }
-                    aria-label="Cancel queued message"
-                    title="Cancel queued message"
-                    className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
-                  >
-                    <X size={11} strokeWidth={2.5} />
-                  </button>
-                </div>
-              </div>
-            ))}
         </div>
       </div>
 

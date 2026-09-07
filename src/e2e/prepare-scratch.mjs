@@ -34,7 +34,7 @@ writeFileSync(
   `${JSON.stringify(
     {
       instances: {
-        claude: {
+        verification: {
           driver: "claudeAgent",
           displayName: "Fixture Claude",
           config: { cli: fakeClaudeCli },

@@ -155,7 +155,7 @@ describe("the usage report says what is missing instead of rendering less", () =
     const text = usageReport(cached, { billing: "metered" }).map((line) => line.text);
     expect(text[0]).toBe("4 turns");
     expect(text[1]).toBe("313k in (300k cached) · 1.3k out");
-    expect(text[2]).toBe("14.3k tok new — the figure on the chip");
+    expect(text[2]).toBe("14.3k tok new: the figure on the chip");
     expect(text[3]).toBe("cached = context re-read each turn, not new text");
     expect(text[4]).toBe("$0.42 billed to your API key");
   });
