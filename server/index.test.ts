@@ -551,6 +551,8 @@ beforeAll(async () => {
   }
 }, 30_000);
 
+const deferredCheckpointDirectories: string[] = [];
+
 afterAll(async () => {
   boxStub?.close();
   // Upstream fixed this same Linux scratch-cleanup flake with an inline
@@ -558,6 +560,7 @@ afterAll(async () => {
   // an exit that is actually waited for before the delete begins.
   await waitForExit(child, { signal: "SIGTERM" });
   await removeTempDir(home);
+  for (const directory of deferredCheckpointDirectories) expect(existsSync(directory), "owned checkpoint fixture must be removed after server shutdown").toBe(false);
 });
 
 describe("harness HTTP API", () => {
@@ -599,7 +602,11 @@ describe("harness HTTP API", () => {
         await desktopApi("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
       }
       if (process.platform !== "win32") rmSync(alias, { force: true });
-      rmSync(project, { recursive: true, force: true });
+      // Windows retains directory handles until the owning fixture server closes.
+      // The suite already removes this project's parent home after shutdown;
+      // verify that deferred removal rather than racing it inside this test.
+      if (process.platform === "win32") deferredCheckpointDirectories.push(project);
+      else rmSync(project, { recursive: true, force: true });
     }
   }, 20000);
 
