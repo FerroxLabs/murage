@@ -354,8 +354,11 @@ async function proxyMcp(request: Request, installation: InstallationRow, env: En
   return new Response(response.body, { status: response.status, headers });
 }
 
-async function catalog(env: Env) {
-  const response = await fetch(`${env.COMPOSIO_TOOLKIT_BASE}/toolkits?limit=500&sort_by=usage`, {
+async function catalog(env: Env, url: URL) {
+  const params = new URLSearchParams({ limit: "500", sort_by: "usage" });
+  const cursor = url.searchParams.get("cursor");
+  if (cursor && /^[A-Za-z0-9+/_=-]{1,256}$/.test(cursor)) params.set("cursor", cursor);
+  const response = await fetch(`${env.COMPOSIO_TOOLKIT_BASE}/toolkits?${params}`, {
     headers: { accept: "application/json", "x-api-key": env.COMPOSIO_API_KEY },
     signal: AbortSignal.timeout(20_000),
   });
@@ -640,7 +643,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
   if (!installation) return json({ error: "unauthorized" }, 401);
   if (request.method === "GET" && url.pathname === "/v1/me") return json({ installationId: installation.id });
   if (request.method === "POST" && url.pathname === "/v1/mcp") return proxyMcp(request, installation, env, ctx);
-  if (request.method === "GET" && url.pathname === "/v1/catalog") return catalog(env);
+  if (request.method === "GET" && url.pathname === "/v1/catalog") return catalog(env, url);
   if (request.method === "GET" && url.pathname === "/v1/connectors/connected") return connectedServices(installation, env, ctx);
   if (request.method === "GET" && url.pathname === "/v1/connectors") return connectionStatus(url, installation, env, ctx);
   const accountMatch = url.pathname.match(/^\/v1\/connectors\/([a-z0-9][a-z0-9_-]{0,80})\/accounts\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/);
@@ -667,6 +670,7 @@ export default {
 
 export {
   authorize,
+  catalog,
   connectedServices,
   connectionStatus,
   createSession,

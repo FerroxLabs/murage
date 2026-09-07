@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   authorize,
+  catalog,
   connectedServices,
   connectionStatus,
   createSession,
@@ -54,6 +55,26 @@ function testEnv(fetchCalls: Array<{ url: string; init?: RequestInit }>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("connected-apps broker boundaries", () => {
+  it("forwards only bounded catalog cursors and fixes page parameters", async () => {
+    const calls: string[] = [];
+    const { env } = testEnv([]);
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      calls.push(String(input));
+      return Response.json({ items: [] });
+    });
+    const catalogEnv = { ...env, COMPOSIO_TOOLKIT_BASE: "https://backend.composio.dev/api/v3" } as never;
+    for (const cursor of [null, "page+2/==", " &limit=1", "a".repeat(257)]) {
+      const url = new URL("https://broker.example.test/v1/catalog?limit=1&sort_by=secret");
+      if (cursor) url.searchParams.set("cursor", cursor);
+      await catalog(catalogEnv, url);
+    }
+    expect(calls.map(value => new URL(value).searchParams.get("cursor"))).toEqual([null, "page+2/==", null, null]);
+    for (const value of calls) {
+      expect(new URL(value).searchParams.get("limit")).toBe("500");
+      expect(new URL(value).searchParams.get("sort_by")).toBe("usage");
+    }
+  });
+
   it("accepts an empty authorize body as a first-account request", async () => {
     await expect(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
       method: "POST",

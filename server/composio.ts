@@ -1076,45 +1076,76 @@ const CURATED: ToolkitCard[] = [
 
 let toolkitCache: { at: number; cards: ToolkitCard[]; identity: string } | null = null;
 let toolkitRequestGeneration = 0;
+const MAX_CATALOG_PAGES = 20;
+const MAX_CATALOG_ITEMS = 10_000;
 
 /**
  * Marketplace catalog. Tries the v3 toolkits API (official names,
  * descriptions, logos — cached 10 min); falls back to the curated list.
  */
-export async function listToolkits(cfg: AppConfig): Promise<{ cards: ToolkitCard[]; source: "api" | "curated" }> {
+export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSignal } = {}): Promise<{ cards: ToolkitCard[]; source: "api" | "curated" }> {
   const generation = ++toolkitRequestGeneration;
   const identity = selectedBackendIdentity(cfg, true);
+  if (options.signal?.aborted) return { cards: CURATED, source: "curated" };
   if (identity && toolkitCache?.identity === identity && Date.now() - toolkitCache.at < 10 * 60_000) {
     return { cards: toolkitCache.cards, source: "api" };
   }
   const backendKey = activeBroker(cfg) ? undefined : cfg.composio?.apiKey;
   if (backendKey || activeBroker(cfg)) {
-    try {
-      const res = backendKey
-        ? await fetch(`${toolkitBase()}/toolkits?limit=500&sort_by=usage`, {
-            headers: { "x-api-key": backendKey },
-            signal: AbortSignal.timeout(15_000),
-          })
-        : await brokerRequest(cfg, "/v1/catalog", { signal: AbortSignal.timeout(15_000) });
-      if (res.ok) {
+    // One budget for the whole catalog, rather than multiplying latency by
+    // the page ceiling. Cancellation/identity changes never publish old data.
+    const deadline = AbortSignal.timeout(15_000);
+    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+    const cardsBySlug = new Map<string, ToolkitCard>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let itemCount = 0;
+    let complete = false;
+    for (let page = 0; page < MAX_CATALOG_PAGES && itemCount < MAX_CATALOG_ITEMS; page += 1) {
+      if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
+      try {
+        const params = new URLSearchParams({ limit: "500", sort_by: "usage" });
+        if (cursor) params.set("cursor", cursor);
+        const res = backendKey
+          ? await fetch(`${toolkitBase()}/toolkits?${params}`, { headers: { "x-api-key": backendKey }, signal })
+          : await brokerRequest(cfg, cursor ? `/v1/catalog?${new URLSearchParams({ cursor })}` : "/v1/catalog", { signal });
+        if (!res.ok) break;
         const json: any = await res.json();
-        if (selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
+        if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
         const items = json.items ?? json.data ?? [];
-        if (Array.isArray(items) && items.length) {
-          const cards: ToolkitCard[] = items.map((t: any) => ({
-            slug: (t.slug ?? t.key ?? t.name ?? "").toLowerCase(),
-            label: t.name ?? t.slug ?? "",
-            blurb: (t.meta?.description ?? t.description ?? "").slice(0, 90),
+        if (!Array.isArray(items)) break;
+        const boundedItems = items.slice(0, MAX_CATALOG_ITEMS - itemCount);
+        itemCount += boundedItems.length;
+        for (const t of boundedItems) {
+          if (!t || typeof t !== "object") continue;
+          const slug = String(t.slug ?? t.key ?? t.name ?? "").trim().toLowerCase();
+          if (!slug || cardsBySlug.has(slug)) continue;
+          cardsBySlug.set(slug, {
+            slug,
+            label: String(t.name ?? t.slug ?? ""),
+            blurb: String(t.meta?.description ?? t.description ?? "").slice(0, 90),
             logo: t.meta?.logo ?? t.logo ?? null,
             noAuth: t.no_auth === true,
             domain: null,
-          }));
-          if (identity && generation === toolkitRequestGeneration) toolkitCache = { at: Date.now(), cards, identity };
-          return { cards, source: "api" };
+          });
         }
+        const next = typeof json.next_cursor === "string" ? json.next_cursor.trim() : "";
+        if (!next) { complete = boundedItems.length === items.length; break; }
+        if (!/^[A-Za-z0-9+/_=-]{1,256}$/.test(next) || seenCursors.has(next)) break;
+        seenCursors.add(next);
+        cursor = next;
+      } catch {
+        // Fail below without leaking upstream details or presenting a partial
+        // catalog as complete. First-page failures retain the curated fallback.
+        break;
       }
-    } catch {
-      /* fall through to curated */
+    }
+    if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
+    if (!complete && cardsBySlug.size) throw new Error("The app catalog could not be loaded completely. Please retry.");
+    if (cardsBySlug.size) {
+      const cards = [...cardsBySlug.values()];
+      if (complete && identity && generation === toolkitRequestGeneration) toolkitCache = { at: Date.now(), cards, identity };
+      return { cards, source: "api" };
     }
   }
   return { cards: CURATED, source: "curated" };

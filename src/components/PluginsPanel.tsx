@@ -174,13 +174,14 @@ function ServiceIcon({ card }: { card: ToolkitCard }) {
   // 0 = official logo, 1 = favicon by domain, 2 = monogram
   const [stage, setStage] = useState(card.logo ? 0 : card.domain ? 1 : 2);
   if (stage === 0 && card.logo) {
-    return <img src={card.logo} alt="" className="size-11 rounded-xl object-contain" onError={() => setStage(1)} />;
+    return <img src={card.logo} alt="" loading="lazy" className="size-11 rounded-xl object-contain" onError={() => setStage(1)} />;
   }
   if (stage === 1 && card.domain) {
     return (
       <img
         src={`https://www.google.com/s2/favicons?domain=${card.domain}&sz=64`}
         alt=""
+        loading="lazy"
         className="size-11 rounded-xl object-contain"
         onError={() => setStage(2)}
       />

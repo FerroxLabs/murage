@@ -160,6 +160,18 @@ export interface AutoVerdict {
   rule?: string;
 }
 
+/** Presentation only. A held card names the actual guard, never changes it. */
+export function approvalHoldNote(verdict: AutoVerdict | null | undefined): string | undefined {
+  if (!verdict || verdict.approve) return undefined;
+  switch (verdict.source) {
+    case "destructive-guard": return "This action may be destructive. Review it before allowing it.";
+    case "sensitive-guard": return "This action may access sensitive data. Review it before allowing it.";
+    case "unattended-block": return "This task started outside the desktop. Your approval is required before this action can continue.";
+    case "local-computer-block": return "This action controls your computer. Your approval is required.";
+    default: return undefined;
+  }
+}
+
 /** The verdict AND its provenance. The decision itself is unchanged from
  * autoDecision below — this exists so the decision log can record which
  * rule decided without the call site re-deriving (and eventually
