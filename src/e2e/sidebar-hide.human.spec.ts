@@ -19,16 +19,23 @@ test.beforeAll(async()=>{
         const state={...initialState,bots:[window.fixtureBot],selectedId:'chief',config:{features:{},box:{configured:false}},instances:[]};
         const dispatch=action=>{if(action.type==='fixtureRoster'){state.bots=action.bots;state.groups=action.groups;}if(action.type==='botPatched')state.bots=state.bots.map(bot=>bot.id===action.bot.id?action.bot:bot);if(action.type==='select')state.selectedId=action.id;window.fixtureStore={state:{...state},dispatch};listeners.forEach(fn=>fn());};dispatch({});
         createRoot(document.getElementById('root')).render(React.createElement(Sidebar,{open:true,onClose:()=>{}}));`;
-    },configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=='/__hide')return next();res.setHeader('content-type','text/html');res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root" style="height:100dvh"></div><script type="module" src="/__hide.js"></script>');});},
+    },configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=='/__hide')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root" style="height:100dvh"></div><script type="module" src="/__hide.js"></script></body></html>');});},
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
 test('sidebar roster readability',async({page},testInfo)=>{
   test.setTimeout(60000);
   await page.setViewportSize({width:1280,height:900});
+  await page.addInitScript(()=>localStorage.setItem('murage.sidebarDensity','comfortable'));
   await page.route('**/api/config',route=>route.fulfill({json:{features:{}}}));
   await page.route('**/api/desktop-secret',route=>route.fulfill({json:{secret:'fixture-secret'}}));
   await page.goto(`${origin}/__hide`);
+  await page.evaluate(()=>document.fonts.ready);
+  expect(await page.evaluate(()=>document.compatMode)).toBe('CSS1Compat');
+  await expect(page.getByRole('complementary',{name:'Bots and navigation'})).toHaveCSS('width','320px');
+  // A mobile/touch project stays hover:none when its viewport is widened.
+  // The production row deliberately reserves its touch controls in that case.
+  const canHover=await page.evaluate(()=>matchMedia('(hover: hover)').matches);
   await expect(page.getByText('Fixture Chief',{exact:true})).toBeVisible();
   await page.evaluate(()=>{
     const fixture=(window as any).fixtureStore;
@@ -43,11 +50,18 @@ test('sidebar roster readability',async({page},testInfo)=>{
   await page.screenshot({path:testInfo.outputPath(process.env.SIDEBAR_BASELINE ? 'sidebar-before.png' : 'sidebar-after.png')});
   if(process.env.SIDEBAR_BASELINE)return;
   const row=page.locator('div[role="button"]').filter({has:page.getByText('Market Research Analyst',{exact:true})});
-  await expect(row).toHaveCSS('padding-right','12px');
+  await expect(row).toHaveCSS('padding-right',canHover?'12px':'84px');
   const name=page.getByText('Market Research Analyst',{exact:true});
-  expect(await name.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
-  await row.hover();
-  await expect(row).toHaveCSS('padding-right','84px');
+  if(canHover){
+    const metrics=await name.evaluate(element=>{const style=getComputedStyle(element);return {scrollWidth:element.scrollWidth,clientWidth:element.clientWidth,width:element.getBoundingClientRect().width,fontFamily:style.fontFamily,fontSize:style.fontSize,fontWeight:style.fontWeight};});
+    // Keep the real desktop clipping gate; do not substitute a narrower font
+    // or allow ellipsis merely because another platform's font is wider.
+    expect(metrics.scrollWidth,JSON.stringify(metrics)).toBeLessThanOrEqual(metrics.clientWidth);
+    await row.hover();
+    await expect(row).toHaveCSS('padding-right','84px');
+  }else{
+    await expect(name).toHaveAttribute('aria-label','Rename Market Research Analyst');
+  }
   await expect(page.getByRole('button',{name:'More actions for Market Research Analyst'})).toHaveCSS('opacity','1');
   await row.focus();
   await page.mouse.move(1200,850);
@@ -61,7 +75,7 @@ test('sidebar roster readability',async({page},testInfo)=>{
   await page.getByRole('button',{name:'Choose sidebar density'}).click();
   await page.getByRole('button',{name:'compact',exact:true}).click();
   await page.mouse.move(1200,850);
-  await expect(row).toHaveCSS('padding-right','8px');
+  await expect(row).toHaveCSS('padding-right',canHover?'8px':'84px');
   await page.screenshot({path:testInfo.outputPath('sidebar-compact.png')});
   await page.getByRole('button',{name:'Collapse sidebar to avatars'}).click();
   await expect(page.getByRole('button',{name:'Market Research Analyst',exact:true})).toBeVisible();

@@ -326,8 +326,21 @@ describe("scoped Windows confirmation", () => {
     expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
     expect(ci.jobs.test.strategy.matrix.os).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
     expect(ci.jobs.test.steps.find(step => step.name === "Run tests").run).toBe("pnpm test");
-    expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only }}');
-    expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only }}');
+    expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
+    expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
+  });
+});
+
+describe("scoped Ubuntu human confirmation", () => {
+  it("uses explicit manual selection while preserving default CI", () => {
+    const ci = load("ci.yml");
+    expect(triggers(ci).workflow_dispatch.inputs.human_files.type).toBe("string");
+    expect(ci.jobs.test.if).toBe('${{ !inputs.human_files }}');
+    const job = ci.jobs["human-confirmation"];
+    expect(job.if).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}");
+    expect(job["runs-on"]).toBe("ubuntu-latest");
+    expect(job.steps.find(step => step.name === "Confirm selected human specs").run).toContain('playwright test "${human_paths[@]}" --retries=0 --trace=on');
+    expect(job.steps.find(step => step.name === "Upload human screenshots and traces").if).toBe("always()");
   });
 });
 
