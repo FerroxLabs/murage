@@ -305,10 +305,12 @@ describe("curated slugs and the catalogue agree", () => {
     expect(live.filter(({ entry }) => !Object.hasOwn(INTAKE_MATCH_TERMS, entry.slug))).toEqual([]);
   });
 
-  // DEAD DATA, PINNED RATHER THAN ALLOWLISTED AWAY. These 19 entries declare
+  // DEAD DATA, PINNED RATHER THAN ALLOWLISTED AWAY. The 19 legacy entries declare
   // skills that resolve to nothing in this build, so `intakeProfileAt`
   // returns null and their curated terms can never reach a card. Pinning the
-  // exact set fails BOTH ways: a new slug going dark breaks it, and one of
+  // Three starter profiles instead use embedded playbooks via their dedicated
+  // package preview, not standalone skill files. Pin those explicitly too.
+  // The exact set fails BOTH ways: a new slug going dark breaks it, and one of
   // these gaining a skill breaks it too, which an allowlist would not.
   it("exactly these curated slugs resolve no skills on disk", () => {
     const bySlug = new Map(catalog.map((entry) => [entry.slug, entry]));
@@ -322,7 +324,8 @@ describe("curated slugs and the catalogue agree", () => {
       "100x-marketing", "cli-setup", "competitor-watch", "cowork", "engineering",
       "game-3d", "inbox-follow-up", "moltbook", "moltbook-skills", "morph-ppt",
       "morph-ppt-3d", "planning-with-files", "ppt-creator", "reddit-lead-miner",
-      "seo-growth", "star-office-helper", "ui-ux-pro-max", "word-creator",
+      "seo-growth", "star-office-helper", "starter-business-team", "starter-personal-home",
+      "starter-solo-business", "ui-ux-pro-max", "word-creator",
       "word-form-creator",
     ]);
   });
@@ -330,10 +333,10 @@ describe("curated slugs and the catalogue agree", () => {
 
 describe("the size of the lists", () => {
   const terms = Object.values(INTAKE_MATCH_TERMS).flatMap((line) => line.split(" ").filter(Boolean));
-  it("is what the comment above them says", () => {
-    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(129);
-    expect(terms).toHaveLength(1608);
-    expect(new Set(terms).size).toBe(858);
+  it("matches the maintained inventory including the three starter profiles", () => {
+    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(132);
+    expect(terms).toHaveLength(1621);
+    expect(new Set(terms).size).toBe(870);
     expect(INTAKE_GENERIC_WORDS.size).toBe(554);
   });
 });

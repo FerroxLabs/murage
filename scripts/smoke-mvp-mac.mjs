@@ -6,7 +6,7 @@ import { tmpdir, homedir, userInfo } from "node:os";
 import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
 const executablePath = resolve(process.argv[2] ?? "");
-if (!executablePath.includes("/release-mvp-") || !executablePath.endsWith("/Murage.app/Contents/MacOS/Murage")) throw new Error("Explicit private MVP executable required");
+if (!/\/release-(?:mvp|private)-/.test(executablePath) || !executablePath.endsWith("/Murage.app/Contents/MacOS/Murage")) throw new Error("Explicit private preview executable required");
 const scratch = mkdtempSync(join(tmpdir(), "murage-native-mvp-"));
 const loginIdentity = userInfo();
 const data = join(scratch, "data"), userData = join(scratch, "user-data");
