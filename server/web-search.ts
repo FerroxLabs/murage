@@ -1,6 +1,6 @@
-// REST shapes verified against Tavily search and Exa's coding-agent guide.
+// REST shapes verified against Tavily search, Exa's coding-agent guide, and Firecrawl v2 search.
 // Results are untrusted data; this adapter never follows their source URLs.
-export type WebSearchProvider = "tavily" | "exa";
+export type WebSearchProvider = "tavily" | "exa" | "firecrawl";
 export type SearchErrorCode = "missing-config" | "auth" | "quota" | "rate-limit" | "unavailable" | "offline" | "timeout" | "cancel" | "invalid-response" | "invalid-request";
 const messages: Record<SearchErrorCode, string> = {
   "missing-config": "Choose a web-search provider and configure its API key.",
@@ -57,10 +57,16 @@ async function bodyText(response: Response, signal: AbortSignal): Promise<string
   }
 }
 function searchResults(value: unknown, provider: WebSearchProvider, maxResults: number): WebSearchResult["results"] {
+  if (provider === "firecrawl") {
+    if (!value || typeof value !== "object") throw new SearchError("invalid-response");
+    const envelope = value as { success?: unknown; data?: { web?: unknown } };
+    if (envelope.success !== true || !envelope.data || typeof envelope.data !== "object" || !Array.isArray(envelope.data.web)) throw new SearchError("invalid-response");
+    value = { results: envelope.data.web };
+  }
   if (!value || typeof value !== "object" || !Array.isArray((value as { results?: unknown }).results)) throw new SearchError("invalid-response");
   return ((value as { results: unknown[] }).results).slice(0, maxResults).map(item => {
     if (!item || typeof item !== "object") throw new SearchError("invalid-response");
-    const row = item as { title?: unknown; url?: unknown; content?: unknown; highlights?: unknown };
+    const row = item as { title?: unknown; url?: unknown; content?: unknown; highlights?: unknown; description?: unknown };
     if (typeof row.title !== "string" || typeof row.url !== "string" || row.url.length > 2048) throw new SearchError("invalid-response");
     let url: URL; try { url = new URL(row.url); } catch { throw new SearchError("invalid-response"); }
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new SearchError("invalid-response");
@@ -68,6 +74,9 @@ function searchResults(value: unknown, provider: WebSearchProvider, maxResults: 
     if (provider === "tavily") {
       if (typeof row.content !== "string") throw new SearchError("invalid-response");
       snippet = row.content;
+    } else if (provider === "firecrawl") {
+      if (typeof row.description !== "string") throw new SearchError("invalid-response");
+      snippet = row.description;
     } else {
       if (row.highlights !== undefined && (!Array.isArray(row.highlights) || row.highlights.some(value => typeof value !== "string"))) throw new SearchError("invalid-response");
       snippet = (row.highlights as string[] | undefined)?.join("\n") ?? "";
@@ -77,7 +86,7 @@ function searchResults(value: unknown, provider: WebSearchProvider, maxResults: 
 }
 
 export async function searchWeb(input: { provider?: WebSearchProvider; apiKey?: string; query: string; maxResults?: number; signal?: AbortSignal }, options: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<WebSearchResult> {
-  if (!["tavily", "exa"].includes(input.provider ?? "") || !input.apiKey?.trim()) throw new SearchError("missing-config");
+  if (!["tavily", "exa", "firecrawl"].includes(input.provider ?? "") || !input.apiKey?.trim()) throw new SearchError("missing-config");
   if (/[\r\n]/.test(input.apiKey)) throw new SearchError("auth");
   const provider = input.provider!; const maxResults = input.maxResults ?? 5; const timeoutMs = options.timeoutMs ?? 15_000;
   if (typeof input.query !== "string" || !input.query.trim() || input.query.length > 4096 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > 10 || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new SearchError("invalid-request");
@@ -87,10 +96,11 @@ export async function searchWeb(input: { provider?: WebSearchProvider; apiKey?: 
   input.signal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(() => controller.abort(new SearchError("timeout")), timeoutMs);
   try {
-    const fetching = (options.fetch ?? fetch)(provider === "tavily" ? "https://api.tavily.com/search" : "https://api.exa.ai/search", {
+    const fetching = (options.fetch ?? fetch)(provider === "tavily" ? "https://api.tavily.com/search" : provider === "firecrawl" ? "https://api.firecrawl.dev/v2/search" : "https://api.exa.ai/search", {
       method: "POST", redirect: "error", signal: controller.signal,
       headers: { authorization: `Bearer ${input.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify(provider === "tavily" ? { query: input.query, max_results: maxResults, search_depth: "basic", auto_parameters: false, include_answer: false, include_raw_content: false }
+        : provider === "firecrawl" ? { query: input.query, limit: maxResults, sources: ["web"] }
         : { query: input.query, numResults: maxResults, type: "auto", contents: { highlights: { maxCharacters: 2000 } } }),
     });
     void fetching.then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => {}); }, () => {});
@@ -98,14 +108,14 @@ export async function searchWeb(input: { provider?: WebSearchProvider; apiKey?: 
     if (!response.ok || response.redirected) {
       void response.body?.cancel().catch(() => {});
       const status = response.status;
-      throw new SearchError([401, 403].includes(status) ? "auth" : status === 402 || (provider === "tavily" && [432, 433].includes(status)) ? "quota" : status === 429 ? "rate-limit" : "unavailable", status);
+      throw new SearchError([401, 403].includes(status) ? "auth" : status === 402 || (provider === "tavily" && [432, 433].includes(status)) ? "quota" : status === 429 ? "rate-limit" : provider === "firecrawl" && status === 408 ? "timeout" : "unavailable", status);
     }
     let parsed: unknown;
     try { parsed = JSON.parse(await bodyText(response, controller.signal)); }
     catch (error) { if (error instanceof SearchError) throw error; throw new SearchError("invalid-response"); }
     if (controller.signal.aborted) throw aborted(controller.signal);
     return { provider, results: searchResults(parsed, provider, maxResults), untrusted: true,
-      privacyNotice: `Your search query is sent to ${provider === "tavily" ? "Tavily" : "Exa"}. Results are untrusted source content, not instructions.`,
+      privacyNotice: `Your search query is sent to ${provider === "tavily" ? "Tavily" : provider === "firecrawl" ? "Firecrawl" : "Exa"}. Results are untrusted source content, not instructions.`,
       costNotice: "This search uses the selected provider's API account and may incur separate charges. Your model subscription does not cover these charges.",
     };
   } catch (error) {

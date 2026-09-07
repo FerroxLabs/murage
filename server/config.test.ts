@@ -41,8 +41,26 @@ vi.mock("node:fs", async (original) => {
 
 describe("explicit web search configuration", () => {
   const file = join(DATA_DIR, "config.json");
-  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_TAVILY_SEARCH_KEY", undefined); vi.stubEnv("MURAGE_EXA_SEARCH_KEY", undefined); });
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_TAVILY_SEARCH_KEY", undefined); vi.stubEnv("MURAGE_EXA_SEARCH_KEY", undefined); vi.stubEnv("MURAGE_FIRECRAWL_SEARCH_KEY", undefined); });
   afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
+
+  it("preserves, hydrates, rotates and clears Firecrawl keys independently of provider selection", () => {
+    saveConfig(parseConfigPatch({ webSearch: { provider: "firecrawl", firecrawlApiKey: "file-firecrawl", exaApiKey: "file-exa" } }));
+    saveConfig({ webSearch: { provider: "auto" } });
+    expect(loadConfig().webSearch).toEqual({ provider: "auto", firecrawlApiKey: "file-firecrawl", exaApiKey: "file-exa" });
+    vi.stubEnv("MURAGE_FIRECRAWL_SEARCH_KEY", "encrypted-firecrawl");
+    expect(loadConfig().webSearch?.firecrawlApiKey).toBe("encrypted-firecrawl");
+    syncCredentialEnv({ webSearch: { firecrawlApiKey: "rotated-firecrawl" } });
+    expect(loadConfig().webSearch?.firecrawlApiKey).toBe("rotated-firecrawl");
+    saveConfig({ webSearch: { firecrawlApiKey: "" } });
+    syncCredentialEnv({ webSearch: { firecrawlApiKey: "" } });
+    expect(process.env.MURAGE_FIRECRAWL_SEARCH_KEY).toBeUndefined();
+    expect(loadConfig().webSearch).toEqual({ provider: "auto", firecrawlApiKey: "", exaApiKey: "file-exa" });
+    const env = { MURAGE_FIRECRAWL_SEARCH_KEY: "private-firecrawl", FIRECRAWL_API_KEY: "external-mcp-key" };
+    stripWorkspaceCredentialEnv(env);
+    expect(env).toEqual({ FIRECRAWL_API_KEY: "external-mcp-key" });
+    expect(() => parseConfigPatch({ webSearch: { firecrawlApiKey: 1 } })).toThrow();
+  });
 
   it("persists and reloads selected search keys while provider-only updates preserve them", () => {
     saveConfig({ webSearch: { provider: "tavily", tavilyApiKey: "fake-tavily-key", exaApiKey: "fake-exa-key" } });

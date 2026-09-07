@@ -1,5 +1,208 @@
 # Murage private MVP — active execution contract
 
+## Approved build-list additions: library discovery and prose cleanup
+
+Separate Bots, Teams and Skills in existinglibrary; teams expose purpose,
+expectedoutcomes/examples and memberdescriptions from package metadata before
+Addteam. Preserve importreview/IDs/localfirstbehavior; no newmarketplace or
+bulkBotMRRimport. BotMRR inspected as optionalfuturetemplate source (20 listed
+teams, portableMarkdown; sampleengineering identifiesMIT). Parser already
+recognizes botmrr:1, but no newthirdpartytemplate installed by this pass.
+Remove emdashes from userfacingprose/descriptions/sitehelp, preserve functional
+symbols/emptyvalue placeholders/code/commands/requiredlicensing. No claims or
+behaviorchanged. These additions are userauthorized, not verification discoveries.
+Relevantfocusedtests/renderedproof+combinedbuild only, shared two-roundlimits.
+
+## Current execution priority — private working build, not RC
+
+Sean explicitly requested all listed integration work: Fuigo1.0.6, bounded sidebar
+cleanup, finish Settings/Telegram UX and enginefirst/Firecrawl, consolidate a
+private build with accurate install/version/checksum docs, close available native
+and signing gates honestly. This authorizes the specifically listed single
+Settingsbrowser continuation with adequate timeout; prior2roundhistory retained,
+not a freshaudit. Telegram groups remain deferred futureplanning only.
+No publicpublication, productionnetworking or installedappoverwrite implied.
+Recommendations (not addedimplementation): existing-engine sign-in/reconnect
+guidance useful now; new embeddedauthflow, advancedrecovery/isolatedteams deferred.
+
+## Release-focused follow-through approved by Sean
+
+Finish existing Settings/search integration, update Murage's pinned Fuigo from
+1.0.4 to Sean's published1.0.6 with exactartifact/integration checks, then one
+bounded sidebar cleanup: clearer grouping, readable bot names and reduced
+secondary-row clutter while preserving hide/restore, roles, unread and routing.
+Capture existing sidebar baseline before editing and freeze concrete changes.
+Telegram groups/topics/multiple destinations are now authorized for detailed
+planning below, NOT implementation before current release work/sidebar closure.
+
+## Telegram destinations — detailed next-package plan
+
+### Objective and sequencing
+
+Extend the existing SINGLE-OWNER Murage installation to explicitly enrolled
+Telegram groups/topics and multiple destinations. Group membership/admin status
+never grants Murage authority. Keep one Telegram bot credential and one verified
+owner identity; route by immutable IDs, not usernames or topic titles.
+Execution order: finish current Settings/search integration, Fuigo1.0.6 and
+sidebar; package the release candidate; then obtain execution approval for this
+frozen Telegram plan. No multi-user/RBAC/platform expansion hidden in this work.
+
+### Concrete examples
+
+| Telegram destination | Murage target | Context and output |
+|---|---|---|
+| Sean's private DM with SableCOS_Bot | Sable | Existing owner conversation and private approvals. |
+| Operations group, General topic | Sable | Group-scoped thread, not Sean's private Sable thread. |
+| Operations group, Development topic | Finch | Its own topic-scoped thread; only Sean may request work. |
+| Operations group, Finance topic | Carrie | Separate thread and explicitly selected resources. No automatic private-account disclosure. |
+| A separate launch-project group | Assigned bot/team coordinator | Independent project conversation even if the same bot handles another group. |
+| Announcements group | Selected published summaries | Outbound-only; group messages never start tasks. |
+
+Multiple destinations means explicit mappings, not broadcasting all replies.
+One message goes to one matched route. Same bot can serve several routes without
+sharing those routes' transcripts. Unmapped topics do not inherit General's route.
+Topic renames preserve ID binding. Topic deletion/group migration pauses affected
+routes until revalidated; no automatic retargeting based on display name.
+
+### Authority and information boundaries
+
+1. Only the verified owner's immutable Telegram user ID may start work. Ignore
+   non-owner messages before model dispatch/storage/cost; do not summarize the
+   whole group or treat other members as delegated requesters by default.
+2. Group admins can manage Telegram membership, not Murage permissions. Owner
+   commands, replies and enrollment must match the exact group/topic mapping.
+3. Require explicit bot-directed commands/replies in groups. Do not depend on
+   the bot seeing every message or disable Telegram privacy mode implicitly.
+4. Quoted/forwarded team content can be supplied by Sean as source material; its
+   authors gain no authority. Forwarded pairing/approval messages never bind.
+5. Permission buttons are sent only to Sean's verified private DM. Bind every
+   button to connection, route, bot, thread, current request fingerprint, action,
+   nonce, expiry and owner. Revoking a route invalidates outstanding decisions.
+6. Separate EXECUTION approval from PUBLICATION approval. Allowing an action
+   never authorizes posting its output to a group.
+7. Group members can read group posts. Default substantive results go privately
+   to Sean with a separate 'Post to <group/topic>' single-use button bound to
+   the exact rendered text and destination. No model-controlled destination.
+8. Group history excludes owner DM and other routes. Only explicitly shared
+   persona/context is included, not private bot/section memories by default.
+9. A separate transcript/system prompt is not a data sandbox. Existing engine
+   inheritance, files and connected accounts may still reveal private material.
+   Preserve intentional owner-private Fuigo behavior; do not promise isolation
+   without enforcing and verifying the provider/tool/resource boundary.
+10. Therefore auto-posted model output is OFF in the first implementation.
+    A later optional restricted-context auto-post mode needs actual capability
+    enforcement and leak tests; unsupported engines must not offer that mode.
+    Fixed non-sensitive acknowledgements can post automatically once authorized.
+11. Publication review only protects the Murage delivery path. Group-origin
+    execution must not have an unrestricted alternate outbound-posting path.
+    Enforce the route's tool/resource policy; if an engine cannot enforce it,
+    surface the request privately for owner handling rather than advertise
+    isolated autonomous group execution. No prompt-only security guarantee.
+
+### User setup (Channels > Telegram > Add destination)
+
+1. Add the existing Telegram bot to the group; explain minimal required Telegram
+   permissions, with no blanket administrator request.
+2. Murage creates a short-lived one-time enrollment command. Sean sends it in
+   the intended group/topic. Receive/verify owner + bot + actual chat/topic IDs.
+3. Show a confirmation card with group/topic name, target bot and its context.
+   Defaults: 'Only you can request work'; 'Results privately to you for review'.
+4. Save the route and send one fixed confirmation to the enrolled destination.
+5. Destination row shows target, mode, status, pause/disconnect and setup help.
+   Changing target or audience invalidates old pending work/approvals safely.
+6. Owner may choose outbound-only announcements instead of accepting requests.
+   Never ask for a BotFather token per Murage assistant.
+
+### Data and implementation seams
+
+- Connection: existing encrypted bot credential + bot identity + verified owner.
+- Destination: generated routeId, connectionId, chatId, topicId (explicit optional
+  value, never a wildcard), targetBotId, conversationId, inbound/outbound mode,
+  enabled state and reviewed-publication policy. Name is display metadata only.
+- Enforce a unique active (connectionId, chatId, topicId) mapping. Migrate current
+  owner DM additively; do not discard token, chat history or user configuration.
+- server/telegram-update.ts: preserve sender/group/topic/forward provenance;
+  server/telegram-channel.ts and telegram-service.ts: route-aware enrollment,
+  owner admission, durable dedup, polling and route-scoped revocation.
+- shared/routine-event.ts and server/routines.ts: route provenance and FIFO per
+  conversation; event budgets survive routing/delegation; no unrelated-thread
+  interference or cross-route late-event settlement.
+- server/index.ts: route-owned conversation/resource construction, existing
+  permission resolver, private approval dispatch, content-bound publish decision.
+- server/telegram-approvals.ts: distinct permission/publication action kinds,
+  domain-separated one-use tokens, exact current request/content binding.
+- Settings Channels/Telegram: destination setup/list/status with existing tokens,
+  no new standalone administration UI. Add clear channel-origin labels in chat.
+- Tests use isolated profiles and fake engines; live pilot uses one owned group,
+  two topics and one non-owner test participant with consent. No customer data.
+
+### Bounded implementation packages and acceptance
+
+| Package | Deliverable | Frozen proof | Estimated focused effort |
+|---|---|---|---|
+| T1 | Destination schema, DM migration, owner enrollment | Existing DM retained; duplicate/forged/expired enrollment refused; no secret output | 3–4 h |
+| T2 | Exact group/topic routing and sequential conversations | Two topics -> two correct targets/threads; non-owner/unmapped/forwarded input starts zero work | 4–6 h |
+| T3 | Private execution approvals + owner-reviewed group publication | Correct owner/button only; exact action/content/destination; expiry/replay/revoke and target-change refusal; no private-history auto-post | 5–7 h |
+| T4 | Add destination, status/pause/remove and clear errors | Keyboard/mobile setup; privacy defaults visible; no dead ends or unexpected broadcasts | 3–4 h |
+| T5 | Integration, negative cases, one live pilot and handoff | Owner request in each topic, private decision, exact approved result in correct topic, non-owner ignored, route revoke verified | 5–9 h |
+
+Estimate: 20–30 focused engineering hours, approximately 3–5 working days with
+integration and owner pilot time. Confidence medium: current private-channel
+plumbing exists, but group privacy/publication is new. Does not include current
+release/sidebar work, service outages, new native platform acquisition, or
+multi-user administration. Parallelize routing/settings after schema freeze;
+root alone owns shared authority/context integration. More agents do not remove
+the sequential identity/security/pilot dependencies.
+
+One implementation verification round plus one targeted confirmation across the
+package; keep known failure counts visible. No third exploratory audit. Scope
+changes or remaining blocked requirements require an explicit decision.
+
+### Not included / longer-term product direction
+
+- No staff roles, invitations, delegated approvals, shared ownership or per-seat
+  accounts. Murage remains single-owner with controlled external destinations.
+- If a future team product is wanted, add explicit principals, role/resource
+  permissions, per-principal quotas, membership revocation and audit attribution
+  as a separate milestone. Telegram group membership cannot stand in for this.
+- No automatic reading of all group traffic, automatic private-memory sharing,
+  public autonomous publishing, cross-topic fan-out or permanent tool grants.
+- No attachments/voice expansion or new messaging platforms in this package.
+
+## Authorized engine-first search backup and provider pilot
+
+Sean confirmed engine-managed remains preferred/default. Harness web_search is
+available as fallback when the engine lacks search or a native search fails/hits
+a limit; fallback uses existing Parallel -> DuckDuckGo. No hidden paid cascade.
+Adapter-internal native searches cannot be transparently intercepted; expose the
+fallback tool and clear engine instructions, and disclose this limit honestly.
+Explicit paid choices Tavily/Exa/Firecrawl stay user-selected; Off stays off.
+Add Firecrawl SEARCH only using existing/reference patterns, encrypted credential
+custody, safe bounded results and current official API. Brave key gets one direct
+API smoke, not an unapproved native provider/crawl feature. One harmless query per
+supplied key; never print keys, preserve supplied files, no unlimited retries.
+Checks: scoped fallback API+tool prompt tests, Firecrawl adapter/custody/parity,
+search settings browser/types/build, single live provider query/citations. Two
+verification rounds, reuse previous evidence, no fullsuite. Pending priorSettings
+browser gate remains pending, not reset under this package.
+
+## Authorized Settings and Telegram UX pass
+
+Sean approved: separate Models & Engines, Tools & Connections, Channels with a
+simple Telegram token/setup/pairing guide; replace raw framing with Telegram
+label in chat; settled approval card shows outcome/removes buttons; show pairing
+expiry and recovery. Preserve existing design/tokens and desktop-only credential
+surfaces. Existing engines/connections deep-link ids retained; channels additive.
+No token readback, permissions weakened, new channel integrations or auth flows.
+Scope: Settings surfaces/type, rendering-only message helper, Telegram card edits
+and expiry state. Root backend, AstraMedium Settings and transcript workers.
+Acceptance: persisted/model messages unchanged; single-use decision remains final
+even if card-edit fails; safe same-chat/message update; expired code never binds,
+renewal is explicit; keyboard-friendly copy/setup/status, no secret screenshots.
+Checks: focused unit/security cases, isolated browser checks+screenshots, types
+and relevant builds, one private candidate. At most one verification round and
+targeted confirmation; reuse existing live decision/history/formatting evidence.
+
 ## Authorized Telegram follow-up — shared history, approvals, formatting
 
 Sean approved this bounded package after the live request/reply pilot passed.

@@ -2264,6 +2264,7 @@ const CREDENTIAL_PATCH = {
   openaiImageApiKey: (value) => ({ imageGen: { key: value } }),
   tavilySearchApiKey: (value) => ({ webSearch: { tavilyApiKey: value } }),
   exaSearchApiKey: (value) => ({ webSearch: { exaApiKey: value } }),
+  firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
 };
 

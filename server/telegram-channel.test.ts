@@ -14,6 +14,17 @@ function fixture() {
   const options = { file: join(root, "channel.json"), transport, botIdentityId: "123", enqueue, runResult: () => ({ status: "completed", output: "Done" }) };
   return { options, transport, enqueue, updates: (value: any[]) => { updates = value; } };
 }
+it("explains exact expired pairing once without binding or enqueueing", async () => {
+  const f = fixture(); let now = 1000;
+  const channel = new TelegramChannel({ ...f.options, now: () => now });
+  const pairing = channel.beginPairing(); now = pairing.expiresAt;
+  expect(channel.status().pairingExpired).toBe(true);
+  f.updates([message(1, `/pair ${"0".repeat(64)}`)]); await channel.pollOnce();
+  expect(f.transport.sendMessage).not.toHaveBeenCalled();
+  f.updates([message(2, `/pair ${pairing.code}`), message(3, `/pair ${pairing.code}`)]); await channel.pollOnce();
+  expect(f.transport.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: expect.stringContaining("pairing code expired") }));
+  expect(channel.status().paired).toBe(false); expect(f.enqueue).not.toHaveBeenCalled();
+});
 it("pairs only exact private human challenge then persists and deduplicates delivery across restart", async () => {
   const f = fixture(), channel = new TelegramChannel(f.options), challenge = channel.beginPairing();
   expect(readFileSync(f.options.file, "utf8")).not.toContain(challenge.code);

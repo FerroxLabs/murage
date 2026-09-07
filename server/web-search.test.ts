@@ -22,6 +22,35 @@ describe("bounded provider-neutral web search", () => {
     expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({ query: input.query, numResults: 2, type: "auto", contents: { highlights: { maxCharacters: 2000 } } });
     expect(result.results[0].snippet).toBe("First excerpt\nSecond excerpt");
   });
+  it("uses explicit paid Firecrawl v2 web search and normalizes bounded descriptions", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: true, data: { web: Array.from({ length: 3 }, () => ({ title: "T".repeat(400), url: "https://example.com/", description: "D".repeat(3000) })) } }));
+    const result = await searchWeb({ ...input, provider: "firecrawl", maxResults: 2 }, { fetch: fetcher });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toBe("https://api.firecrawl.dev/v2/search");
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "POST", redirect: "error", headers: { authorization: "Bearer fake-secret-canary" } });
+    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({ query: input.query, limit: 2, sources: ["web"] });
+    expect(result.provider).toBe("firecrawl"); expect(result.results).toHaveLength(2);
+    expect(result.results[0].title).toHaveLength(300); expect(result.results[0].snippet).toHaveLength(2000);
+    expect(result.untrusted).toBe(true); expect(result.privacyNotice).toContain("Firecrawl"); expect(result.costNotice).toContain("separate charges");
+    await expect(searchWeb({ ...input, provider: "firecrawl" }, { fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: true, data: { web: [] } })) })).resolves.toMatchObject({ results: [] });
+  });
+  it.each([[401, "auth"], [403, "auth"], [402, "quota"], [429, "rate-limit"], [408, "timeout"], [500, "unavailable"]])("classifies Firecrawl HTTP %s without leaking errors or falling back", async (status, code) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response("fake-secret-canary fixture query", { status: status as number }));
+    const error = await searchWeb({ ...input, provider: "firecrawl" }, { fetch: fetcher }).catch(error => error);
+    expect(error).toMatchObject({ code, status });
+    expect(`${error.message} ${JSON.stringify(error)}`).not.toMatch(/fake-secret-canary|fixture query/);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("rejects Firecrawl failures, old or malformed envelopes, and unsafe result URLs", async () => {
+    for (const payload of [null, { success: false, error: "fake-secret-canary fixture query" }, { success: true, data: [] }, { success: true, data: {} }, { data: { web: [] } },
+      ...[{ title: "x", url: "https://example.com/", description: 42 }, { title: "x", url: "file:///private/data", description: "x" }, { title: "x", url: "https://user:secret@example.com/", description: "x" }].map(row => ({ success: true, data: { web: [row] } }))]) {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(payload));
+      const error = await searchWeb({ ...input, provider: "firecrawl" }, { fetch: fetcher }).catch(error => error);
+      expect(error).toMatchObject({ code: "invalid-response" });
+      expect(`${error.message} ${JSON.stringify(error)}`).not.toMatch(/fake-secret-canary|fixture query/);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  });
   it("does not fetch without explicit provider/key or valid inputs", async () => {
     const fetcher = vi.fn<typeof fetch>();
     await expect(searchWeb({ ...input, provider: undefined }, { fetch: fetcher })).rejects.toMatchObject({ code: "missing-config" });

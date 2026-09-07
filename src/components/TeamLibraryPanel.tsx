@@ -31,6 +31,10 @@ import { BundleImportDialog, type BundleImportResult } from "./BundleImportDialo
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
 
+export function matchesLibraryView(members: number, view: TeamLibraryView): boolean {
+  return view === "bots" ? members === 1 : view === "teams" && members > 1;
+}
+
 interface TeamCatalogEntry {
   slug: string;
   name: string;
@@ -261,7 +265,7 @@ function TeamRow({
       <TeamGlyph index={index} />
       <div className="min-w-0 flex-1">
         <h3 className="truncate text-[14px] font-medium text-ink">{entry.name}</h3>
-        <p className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{entry.outcome ?? entry.summary}</p>
+        <p className="mt-0.5 line-clamp-3 text-[12.5px] leading-relaxed text-ink-secondary">{plainText(entry.outcome ?? entry.summary)}</p>
         <p className="mt-1 truncate text-[11.5px] text-ink-secondary/80">{facts.join(" · ")}</p>
       </div>
       <button
@@ -270,7 +274,7 @@ function TeamRow({
         className="flex min-w-[72px] items-center justify-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
       >
         {busySlug === entry.slug && <Loader2 size={13} className="animate-spin" />}
-        {busySlug === entry.slug ? "Loading" : "Load"}
+        {busySlug === entry.slug ? "Loading" : "Preview"}
       </button>
     </article>
   );
@@ -877,7 +881,7 @@ export function TeamLibraryPanel({
   // lands, `teamOrder` is null and the full catalog shows — a search box that
   // empties the list while it thinks reads as "no results", which is the bug
   // this panel is being fixed for.
-  const catalogTeams = catalog?.teams ?? [];
+  const catalogTeams = (catalog?.teams ?? []).filter((entry) => matchesLibraryView(entry.members, view));
   const visibleTeams = (() => {
     if (browsing) return catalogTeams;
     if (activeFacet) return [];
@@ -939,7 +943,7 @@ export function TeamLibraryPanel({
                 </button>
               )}
               <h2 id="team-library-title" className="truncate text-[22px] font-semibold tracking-[-0.01em] text-ink">
-                {pending ? pending.name : "Teams"}
+                {pending ? pending.name : "Library"}
               </h2>
             </div>
             <p className={cn("mt-1 text-[13px] text-ink-secondary", pending && "ml-9")}>
@@ -947,7 +951,7 @@ export function TeamLibraryPanel({
                   ? pending.kind === "package"
                     ? `${pending.members.length} bots · portable Markdown playbook`
                     : `${pending.members.length} ready-to-load bots`
-                  : "Start with a complete playbook or bring your own."}
+                  : "Find an individual bot, a team, or a skill for your work."}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -966,7 +970,32 @@ export function TeamLibraryPanel({
           <>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6 sm:px-8">
               {pending.description && (
-                <p className="max-w-2xl text-[13.5px] leading-relaxed text-ink-secondary">{plainText(pending.description)}</p>
+                <section>
+                  <h3 className="mb-2 text-[14px] font-semibold text-ink">Purpose</h3>
+                  <p className="max-w-2xl text-[13.5px] leading-relaxed text-ink-secondary">{plainText(pending.description)}</p>
+                </section>
+              )}
+              {!!pending.outcomes?.length && (
+                <section className="mt-5">
+                  <h3 className="mb-2 text-[14px] font-semibold text-ink">Expected outcomes</h3>
+                  <ul className="list-disc space-y-2 pl-5 text-[13.5px] leading-relaxed text-ink-secondary">
+                    {pending.outcomes.map((outcome, index) => <li key={index}>{plainText(outcome)}</li>)}
+                  </ul>
+                </section>
+              )}
+              {!!pending.examples?.length && (
+                <section className="mt-5">
+                  <h3 className="mb-2 text-[14px] font-semibold text-ink">Example requests</h3>
+                  <div className="space-y-3 text-[13.5px] leading-relaxed text-ink-secondary">
+                    {pending.examples.map((example, index) => (
+                      <div key={index} className="rounded-xl bg-raised/45 p-3">
+                        <h4 className="font-medium text-ink">{plainText(example.title)}</h4>
+                        <p className="mt-1"><span className="font-medium">Request: </span>{plainText(example.input)}</p>
+                        <p className="mt-1"><span className="font-medium">Expected result: </span>{plainText(example.output)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               )}
               {pending.kind === "package" && (
                 <div className="mt-5 flex flex-wrap gap-2 text-[11.5px] text-ink-secondary">
@@ -977,7 +1006,7 @@ export function TeamLibraryPanel({
                   <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Plug size={13} />{pending.apps.length} connections</span>
                 </div>
               )}
-              <div className="mt-6 text-[12px] font-medium text-ink-secondary">Team members</div>
+              <div className="mt-6 text-[12px] font-medium text-ink-secondary">{pending.members.length === 1 ? "Your bot" : "Team members and roles"}</div>
               <div className="mt-2 grid grid-cols-1 gap-x-10 md:grid-cols-2">
                 {pending.members.map((member, index) => (
                   <div key={`${member.name}-${index}`} className="flex min-h-[72px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
@@ -987,6 +1016,7 @@ export function TeamLibraryPanel({
                     <div className="min-w-0">
                       <div className="truncate text-[14px] font-medium text-ink">{member.name}</div>
                       <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{member.title || "General assistant"}</div>
+                      {member.description && <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">{plainText(member.description)}</p>}
                     </div>
                   </div>
                 ))}
@@ -1009,7 +1039,7 @@ export function TeamLibraryPanel({
                     Joins your {currentBotCount} current {currentBotCount === 1 ? "bot" : "bots"}. Nothing is removed or replaced.
                   </>
                 ) : (
-                  pending.kind === "package" ? "Review the complete setup, then activate the playbook." : "No channel is created—you can make one later if you want."
+                  pending.kind === "package" ? "Review the complete setup, then activate the playbook." : "No channel is created; you can make one later if you want."
                 )}
               </div>
               <button
@@ -1023,8 +1053,8 @@ export function TeamLibraryPanel({
                   : pending.kind === "package" && currentBotCount === 0
                     ? "Activate playbook"
                     : currentBotCount === 0
-                      ? "Load team"
-                      : "Add team"}
+                      ? pending.members.length === 1 ? "Load bot" : "Load team"
+                      : pending.members.length === 1 ? "Add bot" : "Add team"}
               </button>
             </footer>
           </>
@@ -1086,8 +1116,8 @@ export function TeamLibraryPanel({
                       // silently filter the results being typed for.
                       if (event.target.value.trim()) setActiveFacet(null);
                     }}
-                    placeholder={totalSkills ? `Search ${totalSkills.toLocaleString()} skills and teams` : "Search teams"}
-                    aria-label="Search teams and skills"
+                    placeholder={`Search ${view}`}
+                    aria-label={`Search ${view}`}
                     className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
                   />
                   {(search || activeFacet) && (
@@ -1113,18 +1143,18 @@ export function TeamLibraryPanel({
                       search box and nothing else, so "Add a skill to Bruce"
                       and "browse teams" arrived at the same screen. */}
                   <div role="tablist" aria-label="Library view" className="mb-4 inline-flex rounded-xl bg-raised/60 p-1">
-                    {(["teams", "skills"] as const).map((candidate) => (
+                    {(["bots", "teams", "skills"] as const).map((candidate) => (
                       <button
                         key={candidate}
                         role="tab"
                         aria-selected={view === candidate}
-                        onClick={() => setView(candidate)}
+                        onClick={() => { setView(candidate); setActiveFacet(null); }}
                         className={cn(
                           "rounded-lg px-4 py-1.5 text-[13px] transition-colors",
                           view === candidate ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
                         )}
                       >
-                        {candidate === "teams" ? "Teams" : "Skills"}
+                        {candidate === "bots" ? "Bots" : candidate === "teams" ? "Teams" : "Skills"}
                       </button>
                     ))}
                   </div>
@@ -1139,7 +1169,7 @@ export function TeamLibraryPanel({
                   )}
                   {/* Browse, with nothing typed. Krug: search only helps
                       someone who already knows what to ask for. */}
-                  {facets.length > 0 && (
+                  {view === "skills" && facets.length > 0 && (
                     <div className="mb-5">
                       <div className="mb-2 flex items-baseline justify-between gap-3">
                         <div className="text-[12px] font-medium text-ink-secondary">
@@ -1184,12 +1214,12 @@ export function TeamLibraryPanel({
                   )}
 
                   <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-ink-secondary">
-                    {activeFacet ? `Skills in ${facetLabel(activeFacet)}` : view === "skills" ? "Skills" : "Teams"}
+                    {activeFacet ? `Skills in ${facetLabel(activeFacet)}` : view === "skills" ? "Skills" : `${visibleTeams.length} ${view}`}
                     {searching && <Loader2 size={12} className="animate-spin" />}
                   </div>
                   {catalogLoading && (
                     <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
-                      <Loader2 size={16} className="animate-spin" /> Loading teams…
+                      <Loader2 size={16} className="animate-spin" /> Loading library…
                     </div>
                   )}
                   {!catalogLoading && catalogError && (
@@ -1202,7 +1232,7 @@ export function TeamLibraryPanel({
                       imports an entire crew of bots; offering it to someone who
                       asked for one skill is how this flow produced workspaces
                       full of agents nobody wanted. */}
-                  {!catalogLoading && catalog && !activeFacet && view === "teams" && (
+                  {!catalogLoading && catalog && !activeFacet && view !== "skills" && (
                     <>
                       {/* Browsing: grouped by the catalog's own categories, so
                           the shape of the library is visible at a glance.
@@ -1243,9 +1273,9 @@ export function TeamLibraryPanel({
                       {/* Only worth saying when there IS something below it to
                           point at; otherwise the full empty state says it once,
                           properly, with somewhere to go. */}
-                      {!browsing && visibleTeams.length === 0 && skillHits.length > 0 && (
+                      {!browsing && visibleTeams.length === 0 && (
                         <p className="px-1 pb-2 text-[12.5px] text-ink-secondary">
-                          No team matches “{normalizedSearch}”. Individual skills below do.
+                          No {view} match “{normalizedSearch}”. Try another search or library tab.
                         </p>
                       )}
                     </>
@@ -1253,7 +1283,7 @@ export function TeamLibraryPanel({
 
                   {/* Skills. 2,010 of the 2,237 that ship are named by no team,
                       so without this section they are reachable from nowhere. */}
-                  {(activeFacet || (!browsing && skillHits.length > 0)) && (
+                  {view === "skills" && (activeFacet || (!browsing && skillHits.length > 0)) && (
                     <section className={cn(activeFacet ? "" : "mt-7 border-t border-hairline/35 pt-6")}>
                       {!activeFacet && (
                         <h3 className="mb-3 text-[12px] font-medium text-ink-secondary">
@@ -1264,9 +1294,6 @@ export function TeamLibraryPanel({
                               about. */}
                           {/* The skills view already names the agent in its
                               own heading; saying it twice is noise. */}
-                          {preselectedBot && view !== "skills" && (
-                            <span className="opacity-60"> · for {preselectedBot.name}</span>
-                          )}
                         </h3>
                       )}
                       <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
@@ -1295,12 +1322,12 @@ export function TeamLibraryPanel({
                       simply not in either corpus, say so and offer the browse
                       that does not require knowing what to ask for — never a
                       confidently irrelevant top hit. */}
-                  {!catalogLoading && catalog && !browsing && !activeFacet && !searching
+                  {view === "skills" && !catalogLoading && catalog && !browsing && !activeFacet && !searching
                     && visibleTeams.length === 0 && skillHits.length === 0 && (
                     <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
                       <div className="text-[14px] font-medium text-ink">Nothing matches “{normalizedSearch}”</div>
                       <div className="mt-1 max-w-sm text-[12.5px] text-ink-secondary">
-                        Those words aren’t in any team or skill here. Try a different word, or browse by topic.
+                        No skills match these words. Try a different word, or browse by topic.
                       </div>
                       {facets.length > 0 && (
                         <div className="mt-4 flex flex-wrap justify-center gap-1.5">
@@ -1395,7 +1422,7 @@ export function TeamLibraryPanel({
                 <div>
                   <div className="mb-3 text-[12px] font-medium text-ink-secondary">Start from a project folder</div>
                   <p className="max-w-2xl text-[12.5px] leading-relaxed text-ink-secondary">
-                    Point the scout at a folder. It reads what&apos;s in there — README, dependencies, layout — and
+                    Point the scout at a folder. It reads what&apos;s in there (README, dependencies, layout) and
                     suggests a team for it. Nothing is created until you say so.
                   </p>
                   <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -1466,7 +1493,7 @@ export function TeamLibraryPanel({
 
                       {directory && directory.length > 0 && (
                         <>
-                          <div className="mt-5 text-[12px] font-medium text-ink-secondary">From the community directory — tick to add</div>
+                    <div className="mt-5 text-[12px] font-medium text-ink-secondary">From the community directory: tick to add</div>
                           <div className="mt-1 flex flex-col">
                             {directory.map((candidate) => (
                               <div key={candidate.slug} className="flex items-center gap-3 border-b border-hairline/35 px-1 py-3">

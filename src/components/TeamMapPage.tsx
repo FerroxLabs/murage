@@ -392,7 +392,7 @@ export function TeamMapPage() {
               <span className="text-[11px] tabular-nums text-ink-secondary">{org.individuals.length}</span>
             </div>
             <p className="mb-3 text-[11.5px] leading-relaxed text-ink-secondary">
-              No team leader — each one reports to the Chief of Staff directly.
+              No team leader; each one reports to the Chief of Staff directly.
             </p>
             <div className="space-y-2">
               {org.individuals.map((bot) => (
@@ -416,7 +416,7 @@ export function TeamMapPage() {
             </span>
           </div>
           <p className="mt-1 text-[12.5px] text-ink-secondary">
-            The whole org chart — who leads what, who is working, and where tasks are moving.
+            The whole org chart: who leads what, who is working, and where tasks are moving.
           </p>
         </div>
         <button
@@ -468,7 +468,7 @@ export function TeamMapPage() {
             <div className="mt-2.5 space-y-3">
               <div className="rounded-xl border border-dashed border-hairline bg-panel px-4 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
                 No Chief of Staff yet. Open an agent's profile, set its Role to Chief of Staff, and it takes the
-                top of this chart — team leaders and individual assistants report to it.
+                top of this chart; team leaders and individual assistants report to it.
               </div>
               <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] items-start gap-4">{branches}</div>
             </div>

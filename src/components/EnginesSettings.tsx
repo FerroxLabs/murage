@@ -358,7 +358,7 @@ export function EnginesSettings() {
         );
       })()}
       <div className="text-[12px] leading-relaxed text-ink-secondary">
-        Set CLI points an engine at a specific binary — a versioned build, a wrapper script, or an
+        Set CLI points an engine at a specific binary: a versioned build, a wrapper script, or an
         absolute path. Saving reloads providers and interrupts any running turns.
       </div>
     </div>

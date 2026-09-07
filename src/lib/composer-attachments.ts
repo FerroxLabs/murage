@@ -373,7 +373,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
     rejectedNames.push(...result.rejectedNames);
   }
   const pathless = rejectedNames.length
-    ? `${rejectedNames.join(", ")} — that file has no path on disk. Save it first, then attach it from Finder.`
+    ? `${rejectedNames.join(", ")}; that file has no path on disk. Save it first, then attach it from Finder.`
     : null;
   const failed = imageErrors.length ? imageErrors.join("; ") : null;
   return {

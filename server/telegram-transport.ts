@@ -89,7 +89,13 @@ export class TelegramTransport {
     const result = await this.request("answerCallbackQuery", { callback_query_id: input.id, text: input.text }, false, input.signal);
     if (result !== true) throw new TelegramTransportError("invalid-response");
   }
-  private async request(method: "getMe" | "getUpdates" | "sendMessage" | "answerCallbackQuery", body: Json, sending: boolean, signal?: AbortSignal, pollMs = 0): Promise<unknown> {
+  async settleApprovalMessage(input: { chatId: string; messageId: number; text: string; signal?: AbortSignal }): Promise<void> {
+    if (!chatId(input.chatId) || !integer(input.messageId, 1) || !input.text || input.text.length > 4096) throw new TelegramTransportError("invalid-request");
+    const result = await this.request("editMessageText", { chat_id: input.chatId, message_id: input.messageId,
+      text: input.text, reply_markup: { inline_keyboard: [] } }, false, input.signal);
+    if (!object(result) || result.message_id !== input.messageId || !object(result.chat) || String(result.chat.id) !== input.chatId) throw new TelegramTransportError("invalid-response");
+  }
+  private async request(method: "getMe" | "getUpdates" | "sendMessage" | "answerCallbackQuery" | "editMessageText", body: Json, sending: boolean, signal?: AbortSignal, pollMs = 0): Promise<unknown> {
     if (signal?.aborted) throw new TelegramTransportError("cancel");
     const controller = new AbortController(); let dispatched = false;
     const stop = () => controller.abort(new TelegramTransportError("cancel", { uncertain: sending && dispatched }));

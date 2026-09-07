@@ -125,7 +125,7 @@ export function LocalScreenPreview() {
             Preview this computer
           </div>
           <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            Preview only — starting a preview does not grant local control.
+            Preview only: starting a preview does not grant local control.
           </div>
         </div>
         <span className="shrink-0 rounded-full bg-raised px-2 py-1 text-[10px] font-medium text-ink-secondary">

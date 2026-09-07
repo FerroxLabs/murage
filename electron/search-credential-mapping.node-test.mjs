@@ -9,7 +9,7 @@ test("actual desktop search credential mapping preserves provider selection", ()
   const mapping = source.match(/const CREDENTIAL_PATCH = (\{[\s\S]*?\n\});/);
   assert.ok(mapping);
   const handlers = runInNewContext(`(${mapping[1]})`);
-  for (const [name, field, env] of [["tavilySearchApiKey", "tavilyApiKey", "MURAGE_TAVILY_SEARCH_KEY"], ["exaSearchApiKey", "exaApiKey", "MURAGE_EXA_SEARCH_KEY"]]) {
+  for (const [name, field, env] of [["tavilySearchApiKey", "tavilyApiKey", "MURAGE_TAVILY_SEARCH_KEY"], ["exaSearchApiKey", "exaApiKey", "MURAGE_EXA_SEARCH_KEY"], ["firecrawlSearchApiKey", "firecrawlApiKey", "MURAGE_FIRECRAWL_SEARCH_KEY"]]) {
     assert.deepEqual(JSON.parse(JSON.stringify(handlers[name]("fake-search-key"))), { webSearch: { [field]: "fake-search-key" } });
     assert.deepEqual(WORKSPACE_CREDENTIALS.find(item => item.name === name), { section: "webSearch", field, name, env });
     assert.deepEqual(JSON.parse(JSON.stringify(handlers[name](""))), { webSearch: { [field]: "" } });

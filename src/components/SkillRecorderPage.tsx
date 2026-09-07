@@ -435,7 +435,7 @@ export function SkillRecorderPage() {
                     <span>{events.length} moments</span>
                   </div>
                   <p className="mt-3 min-h-12 text-[13px] leading-5 text-ink">
-                    {[transcript, partialTranscript].filter(Boolean).join(" ") || "Start speaking — your transcript will appear here."}
+                    {[transcript, partialTranscript].filter(Boolean).join(" ") || "Start speaking; your transcript will appear here."}
                   </p>
                 </div>
                 <button type="button" onClick={() => void stop()} className="mx-auto mt-7 flex items-center gap-2 rounded-2xl bg-danger px-6 py-3 text-[14px] font-semibold text-white">

@@ -370,7 +370,7 @@ export interface ConfigStatus {
   /** Flux Router key. Presence only — the key itself is never sent to the
    * renderer. Write it with PATCH /api/config `{ flux: { apiKey } }`. */
   flux?: { configured: boolean };
-  webSearch?: { provider: "engine" | "auto" | "tavily" | "exa" | "off"; tavilyConfigured: boolean; exaConfigured: boolean };
+  webSearch?: { provider: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off"; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean };
   notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
@@ -472,6 +472,7 @@ export type AppSettingsSection =
   | "experimental"
   | "connections"
   | "engines"
+  | "channels"
   | "companion"
   | "computer"
   | "usage";
@@ -588,7 +589,7 @@ export type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
  *  landing a person on the team grid after they asked for a skill is how the
  *  intake's one escape hatch stopped being an escape hatch. Absent means the
  *  panel's own default. */
-export type TeamLibraryView = "teams" | "skills";
+export type TeamLibraryView = "bots" | "teams" | "skills";
 
 export type Action =
   | {

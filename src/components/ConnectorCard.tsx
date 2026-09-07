@@ -114,7 +114,7 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
             </p>
             {!connected && (
               <p className="mt-1 text-[11.5px] text-ink-secondary/80">
-                Sign in or enter the app key on the secure connection page — never in chat.
+                Sign in or enter the app key on the secure connection page, never in chat.
               </p>
             )}
             {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}

@@ -548,7 +548,7 @@ export function PluginsPanel() {
           <div className="mx-6 mb-1 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning sm:mx-8">
             <TriangleAlert size={14} className="mt-px shrink-0" />
             <span>
-              Showing the previous account inventory — connection status could not be checked just now.
+              Showing the previous account inventory; connection status could not be checked just now.
               Refresh connection status before adding another account.
             </span>
           </div>

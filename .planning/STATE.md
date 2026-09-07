@@ -1,5 +1,119 @@
 # Murage takeover state
 
+Combinedprivatebuild sourcefreeze now: Fuigo1.0.6 pins/stage11PASS; sidebar53unit
+andfocuseddesktop/phoneinteractionPASS; library26unit+2browserPASS; Settings
+authorized90s continuation17222 PASS37s (copy/expiry/renew/paired/pollstop/revoke/
+error+desktopmobilecaptures), closing oldgate. Usercopy sweep complete66prose
+fragments plusdocs/locales,45focusedtests+i18nPASS. RootSidebar2prosestringsfinal.
+Namedfinalchecks: onecombinedVitest run, frontend/serverbuild, electronnode
+tests, packagedresource smoke, signedMacprivateZIP/native startup, Linuxpackage
+onownedHetznercheckout. No newaudit; fixchange-induced failures withinconfirmation.
+NotaryprofileAC_PASSWORD definitively unavailable (notarytoolhistory exit69);
+Windowsnativehost unavailable. No publicrelease or falseallplatformclaim.
+
+User authorized finishing precise remainingintegrationlist as PRIVATE WORKING
+BUILD, notRC. Rootsingle90s Settingsbrowsercontinuation; sidebarworker owns
+Sidebar+focusedproof, platformworker read-onlysign/nativegates. Fuigo1.0.6 staged
+and11testspassed already; no restartaudit. Preserve userdirtyAGENTS/.ijfw files.
+Telegram groups deferred; futureplan retained. No publish/installedappoverwrite.
+
+Releasefirst authorized; detailed futureTelegramdestinationplan now in
+MURAGE-PLAN.md (owner-only group/topics/destinationmapping, private approvals,
+audience-scoped contexts+reviewedpublication; no implicitmultiuserproduct).
+Estimate20–30focusedengineeringhours/3–5workingdays, excludescurrentrelease/sidebar.
+Telegramimplementation still notstarted. Fuigo1.0.6 release lane advanced:
+sixpublishedartifactintegrities/headers/digests verified;11focusedtestspassed;
+currentdarwinarm64 staged executable1.0.6(b921c6ded37d). Otherplatformheaders
+inspected, notexecuted. Evidence .planning/fuigo-106-evidence.md. Newcombined
+app package/sidebar remainsnext; do notcallstaging a shippedrelease.
+
+Engine-first search + Firecrawl implementation verified in worktree. Default
+engine preserved; Murage web_search call now serves Parallel->DDG fallback,
+explicitpaidselected only, Off409; agent prompt/description prefersnativefirst.
+No transparent interception claim forengine-internal searches. Firecrawl v2search
+adapter23testsPASS; credentialcustody/parity159tests+1mappingPASS; tool/free35PASS.
+ScopedAPI enginefallback passed34321; newstatusfield stalefixture corrected and
+write-only/preservation APIconfirmation76312 PASS. FirecrawlUI24942 PASS, screenshot
+inspected. server8348 PASS; frontend27869 completed pertool. ExistingSettingsUX
+browser gate remains pending under its original2roundbudget; source not loaded
+into runningprivatepreview, no publication or silent paidprovider selection.
+
+One live query per provided key15422, allsuccess3citations each. Brave1111ms,
+Exa1394ms, Firecrawl1854ms, Tavily2720ms. Query: MDN JavaScript Array map
+documentation. No retries, extraqueries, crawl/scrape or thirdpartyURLfetches.
+Keys read only from owner-only /Users/seandonahoe/.config/murage/provider-keys.hUhjuA;
+neverprinted, files preserved. Brave directAPItest only, notnativeintegration.
+
+Settings/Telegram UX implementation complete in worktree, NOT fully accepted or
+installed into runningpreview. Backend40tests81512 PASS, servertypes44504 PASS;
+chat29tests+desktopbrowserPASS (chatlabel screenshot .planning/telegram-ux-evidence/
+chat-label.png); SettingsSurface5PASS. Settingsbrowserround1 fixturetimingassertion
+corrected; round2 reached copy/expiry/renew/automaticpaired but hit30s overall
+timeout before pollingstop/revoke-error/desktop screenshot. Mobileimage inspected
+readable; see .planning/next-programme/telegram-settings-browser-results/.
+Frontend42869/server61840 builds PASS; existing CSS/chunks warnings unchanged.
+No thirdbrowsercycle. Remaining blocked check: complete last Settingsbrowser
+assertions with adequate one-run test timeout after userdecision. No proven new
+product defect at timeout. Live Sable remains on1a5a3c0d privatepreview unaffected.
+Keep user AGENTS/.ijfw edits out of integration; uncommitted implementation held.
+
+New user-approved UX package active (contract at top MURAGE-PLAN.md). Root owns
+settledTelegramcard edits/expiry; workers own Settings split/setup and chatlabel.
+Preserve ongoing pairedSable until idlecandidate update; no broaderfeatures.
+Previous controlledfixture cleaned; denial liveproof sealed; pending syntax-only
+constructor correction is owned work and will be included in this candidate.
+
+Fixturecleanup complete: revokedfixtureTelegram, closedbroker, SIGINTowned
+launcher26247;37271 exit0 and tempfixturedata removed. ExistingliveSablepreview
+requestedfreshpairing using retainedencryptedtoken; waiting ownercommand only.
+No competingfixturepoller. No installedappreplacement/publication.
+
+Controlled Telegram denial PASSED: exactprovider request.resolved deny/sourceuser
+01:07:55.560Z and user-denied ledger01:07:55.571Z. Firstclick succeeded; laterclick
+genericexpired/changed/alreadyanswered correctly preventedreplay but poorUX.
+Evidence sealed TELEGRAM-APPROVAL-LIVE.md beforefixturecleanup. No command ran;
+liveallowexecution nottested, automatedallowcasespassed. Don't repeatfixture.
+Nextcleanup isolatedlauncher37271 andrestoreSablepairing, no productaudit.
+
+Controlledapprovalfixture live37271 child26248 URLhttp://127.0.0.1:20394,
+data /var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verify-data-xoM92r.
+Initialsource launch exposed unsupportedTSparameterproperty in newapprovalclass;
+replaced with explicitfields (no behaviorchange),12approvaltestsPASS, fixtureboot
+PASS. Existingcontrol createdfakebot735aeaa0-37de-4b59-88d9-8dbe6bc2138a,
+thread49882613-52c2-4a69-af07-39d79c757a3a, heldfakeCLI active. Realpermission
+broker received testask telegram-fixture-deny-1; no shellcommandexecutionpath.
+Telegram token read fromencryptedstore into fixturememory, externalstorage keeps
+config blank. LiveSable channel paused viarevoke; fixturepairchallenge created.
+NodeREPL brokerSocket/brokerReply track exactreply. User needs pair thenDeny.
+Afterproof: revoke fixture, interrupt exactlauncher37271 toremoveownedtempdata,
+restoreliveSablepairing. Neverleave competingpollers or declareSabletestpassed.
+
+Sean authorized controlled approval fixture after two Sable prompts did not
+produce a card (not failed callback verification). Frozen continuation: existing
+fake-engine server, known private permission broker request, realTelegram owner
+button allow/deny -> exactbroker reply, no command execution. Temporary test bot
+only; no Sable policy changes, no publicrelease. Existing paired ownership may
+be re-paired to fixture explicitly; restoreSable afterward. One fixturepilot and
+targetedconfirmation only; preserve prior unit/security evidence.
+
+Live Telegram follow-up: user screenshots show inbound message in Sable's current
+Murage conversation, firstreply and subsequent correct maple recall, rendered
+bold without literalMarkdown. Approval-button livecheck remains pending. Visible
+UNTRUSTED framing in desktop bubble is presentation followup, not permission to
+remove source provenance. Pair expiry correctly blocked earlier latecommand but
+silent expiry UX remains recorded; no extra fix cycle started.
+
+Telegram follow-up candidate1a5a3c0d committed locally; private0.1.47-mvp.5
+packaging68692 active. Round1 combined101testsPASS/1expectedcallbackinventory
+fixturefailure; corrected allowed_updates expectation. Confirmation15testsPASS
+(transport+rootpermissionwiring); unaffected module/history/formatter passes reused.
+Servertypes79485/frontend66996/server47663 PASS. No fullsuite or thirdaudit.
+Old livepreview idle, revoked and cleanquit0 for update. Newlivepilot pending:
+same visible thread across2messages, renderedHTML and harmless permissionbuttons.
+Permissionbuttons support live ordinary tool requests only; richer reviewed
+skill/routine/security operations remain inapp. No permanent grants/free-text
+approvals. Native Windows/Linux not newly verified; no publicrelease.
+
 Telegram original MVP live test PASSED (user screenshot exact requested phrase,
 follow-up reply). New explicitly approved package: shared primary conversation,
 single-use owner approval buttons and HTML formatting; frozencontract at top of

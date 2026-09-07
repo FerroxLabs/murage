@@ -339,7 +339,7 @@ function groupPreview(group: Group, bots: Bot[]): string {
   }
   if (group.working) return "The team is working…";
   const last = group.messages.at(-1);
-  if (!last) return "No messages yet";
+  if (!last) return `${group.memberIds.length} ${group.memberIds.length === 1 ? "bot" : "bots"}`;
   const text = last.kind === "activity" && last.tool
     ? last.tool.name
     : last.kind === "goal.run" && last.goalRun
@@ -424,7 +424,10 @@ function GroupListItem({
       <StackedEmbers members={members} density={density} />
       <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-ink">
+            <Users size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+            <span className="truncate">{group.name}</span>
+          </span>
           {selected && last && <span className="shrink-0 text-xs text-ink-secondary">{formatTime(last.at)}</span>}
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -634,7 +637,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
           bots={bots}
           picked={picked}
           onToggle={toggle}
-          emptyHint="Create a bot first — channels are made of bots."
+          emptyHint="Create a bot first. Channels are made of bots."
         />
         <button
           onClick={create}
@@ -971,13 +974,17 @@ function BotListItem({
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
+  const rowPreview = botRole(bot) === "member" || selected || bot.unread || bot.busy || bot.activity === "waiting-on-you"
+    ? preview(bot)
+    : "";
   const rowClass = cn(
     "flex w-full items-center rounded-xl border text-left",
     iconOnly
       ? "justify-center px-1 py-1.5"
       : density === "compact"
-        ? "gap-2 px-2 py-1.5 pr-[5.25rem]"
-        : "gap-3 px-3 py-2.5 pr-[5.25rem]",
+        ? "gap-2 px-2 py-1.5"
+        : "gap-3 px-3 py-2.5",
+    !iconOnly && "group-hover:pr-[5.25rem] group-focus-within:pr-[5.25rem] max-md:pr-[5.25rem] [@media(hover:none)]:pr-[5.25rem]",
     // ONLY the Chief of Staff, not every bot that leads something.
     //
     // This read `bot.chiefOfStaff`, which is true for a team leader too, so
@@ -1052,8 +1059,8 @@ function BotListItem({
                 <RoleIcon bot={bot} size={11} decorative /> {BOT_ROLE_BADGE[botRole(bot)]}
               </span>
             )}
-            {botRole(bot) !== "member" && preview(bot) && <span className="shrink-0 text-ink-secondary/60">·</span>}
-            <span className="truncate">{preview(bot)}</span>
+            {botRole(bot) !== "member" && rowPreview && <span className="shrink-0 text-ink-secondary/60">·</span>}
+            <span className="truncate">{rowPreview}</span>
           </span>
           {bot.unread && (
             <span className="size-2 shrink-0 rounded-full bg-accent" />
@@ -2133,7 +2140,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           kind={pendingDelete.kind === "bot" ? "bot" : "conversation"}
           detail={
             pendingDelete.kind === "bot"
-              ? "Its entire conversation history goes with it, along with any skills and playbooks it was given. This cannot be undone — archive it instead if you might want it back."
+              ? "Its entire conversation history goes with it, along with any skills and playbooks it was given. This cannot be undone. Archive it instead if you might want it back."
               : "Every message in this conversation is removed. The bots themselves are not deleted. This cannot be undone."
           }
           onCancel={() => setPendingDelete(null)}

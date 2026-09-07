@@ -5,7 +5,9 @@ export interface PendingTeamImport {
   kind: "team" | "package";
   name: string;
   description: string;
-  members: Array<{ name: string; title: string }>;
+  members: Array<{ name: string; title: string; description?: string }>;
+  outcomes?: string[];
+  examples?: Array<{ title: string; input: string; output: string }>;
   chiefOfStaff?: string;
   rooms: number;
   playbooks: number;
@@ -41,6 +43,7 @@ export function teamImportPreview(manifest: unknown): PendingTeamImport {
     return {
       name: value.name.trim(),
       title: typeof value.title === "string" ? value.title.trim() : "",
+      ...(typeof value.description === "string" ? { description: value.description.trim() } : {}),
     };
   });
   return {
@@ -86,7 +89,11 @@ function packagePreview(root: Record<string, unknown>, manifest: unknown): Pendi
     if (!agent || typeof agent !== "object" || Array.isArray(agent)) throw new Error(`Bot ${index + 1} is invalid.`);
     const value = agent as Record<string, unknown>;
     if (typeof value.name !== "string" || !value.name.trim()) throw new Error(`Bot ${index + 1} does not have a name.`);
-    return { name: value.name.trim(), title: typeof value.title === "string" ? value.title.trim() : "" };
+    return {
+      name: value.name.trim(),
+      title: typeof value.title === "string" ? value.title.trim() : "",
+      ...(typeof value.description === "string" ? { description: value.description.trim() } : {}),
+    };
   });
   const chiefKey = typeof pkg.chiefOfStaff === "string" ? pkg.chiefOfStaff : undefined;
   const chief = chiefKey
@@ -109,6 +116,13 @@ function packagePreview(root: Record<string, unknown>, manifest: unknown): Pendi
     kind: "package",
     name: pkg.name.trim(),
     description: typeof pkg.summary === "string" ? pkg.summary.trim() : "",
+    outcomes: Array.isArray(pkg.outcomes) ? pkg.outcomes.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [],
+    examples: Array.isArray(pkg.examples) ? pkg.examples.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const example = item as Record<string, unknown>;
+      return typeof example.title === "string" && typeof example.input === "string" && typeof example.output === "string"
+        ? [{ title: example.title, input: example.input, output: example.output }] : [];
+    }) : [],
     members,
     ...(typeof chief === "string" ? { chiefOfStaff: chief } : {}),
     rooms: Array.isArray(pkg.rooms) ? pkg.rooms.length : 0,

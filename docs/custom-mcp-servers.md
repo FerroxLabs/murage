@@ -13,8 +13,8 @@ This first version supports local stdio commands. It deliberately does not
 accept remote MCP URLs or shell command strings.
 
 **The panel is desktop-only.** An `mcpServers` entry is a command line that
-every capable bot spawns, so all six routes behind it — the list, the add,
-the edit, the enable toggle, the delete and the connection test — answer 404
+every capable bot spawns, so all six routes behind it (the list, the add,
+the edit, the enable toggle, the delete and the connection test) answer 404
 to anything that cannot prove it is the desktop renderer. A paired phone has
 no MCP settings. The generic `PUT /api/config` route refuses the field for
 the same reason.
@@ -36,7 +36,7 @@ The same registry lives in `~/.murage/config.json`:
 ```
 
 If you edit the file by hand, restart Murage. Every bot whose engine can
-mount custom MCP servers (Claude, Codex, and all ACP engines — Grok, Gemini,
+mount custom MCP servers (Claude, Codex, and all ACP engines: Grok, Gemini,
 Kimi, Droid, Cursor, opencode, Qwen, Hermes, and `customAcp`) gets the
 enabled tools on its next turn.
 
@@ -45,7 +45,7 @@ enabled tools on its next turn.
 - **Permission cards by default.** Custom servers are never pre-approved:
   on Claude their tools route through the permission broker into Allow/Deny
   cards; on Codex they keep the on-request approval policy; ACP engines
-  relay the agent's own permission asks. Built-ins stay pre-quieted — only
+  relay the agent's own permission asks. Built-ins stay pre-quieted; only
   *your* servers ask.
 - **Reserved names are refused** (`computer`, `agents`, `composio`,
   `browser`, `phone`, `dweb`, `muragebox`, …) so a custom entry can never shadow
@@ -59,12 +59,12 @@ enabled tools on its next turn.
 - **Credentials stay off argv.** `env` values travel in the child
   environment (Codex argv carries env *names* only; Claude uses the private
   0600 mcp-config file; ACP passes them in the session payload with the
-  wire log redacted). They do persist as plaintext in the 0600 config file —
+  wire log redacted). They do persist as plaintext in the 0600 config file;
   prefer tokens scoped to the one server.
 - **Testing is bounded.** The test command is stopped after the handshake (or
   eight seconds), its output is capped, and its stderr is never sent to the UI.
   It inherits none of Murage's workspace or provider credentials; only the
   environment variables configured for that MCP server are added.
 - `"enabled": false` parks an entry without deleting it.
-- Stdio servers only for now — `url` transports are a planned follow-up and
+- Stdio servers only for now; `url` transports are a planned follow-up and
   are skipped with a note.

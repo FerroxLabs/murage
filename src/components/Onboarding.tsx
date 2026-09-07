@@ -290,7 +290,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           <div className="flex min-h-0 flex-col">
             <h1 className="text-[18px] font-semibold text-ink">Your engines</h1>
             <p className="mt-1 text-[13.5px] text-ink-secondary">
-              Bots run on AI tools installed on this computer — here&rsquo;s what we found.
+              Bots run on AI tools installed on this computer; here&rsquo;s what we found.
             </p>
             <div className="mt-4 flex min-h-0 flex-col gap-2.5 overflow-y-auto pr-1">
               {!instances ? (
