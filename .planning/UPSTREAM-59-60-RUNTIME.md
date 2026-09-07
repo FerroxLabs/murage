@@ -22,6 +22,14 @@ Status: source comparison complete; verification rounds not started. Next action
 
 ## Selected Codex package execution
 
+UPDATE: Sean authorized continuation. PID dump is now written before the observed
+assistant event; targeted delayedexit/lateoutput test63609 PASS. Shutdown timeout
+also propagates failure from interrupt/stopAll/dispose instead of resolving as
+successful cleanup; targeted native5.5s delay test36055 PASS proves ownership and
+listeners retained until realexit. Servertypes24645 PASS. Prior36passing cases
+unaffected. Correctedcandidate is now locallyintegrated; private.6 doesnotcontain
+it. Originaltwo-roundfailure history below retained, not currentblockedstatus.
+
 Provenance: selected ports of dd7e4f16 and b7133b3b. Outcome: defer turn completion and retry until the owned app-server closes, retain ownership on a bounded shutdown timeout, and ignore output after settlement. Scope: `server/drivers/codex.ts`, `server/drivers/codex.test.ts`, necessary fake mode in `server/testing/fake-codex-app-server.ts`. Shared killCliTree API, approval protocol, native instruction history, and other drivers remain unchanged. The driver wraps existing tree termination in a memoized five-second close wait; interrupt/stopAll/dispose await it. Required checks: focused Codex test file, scoped lint, whitespace check. Two rounds maximum; no live app mutations.
 
 - Implementation present; not accepted. Round 1 `pnpm exec vitest run server/drivers/codex.test.ts`: 36 passed, one new test failed because its predicate expected an agent-message itemId that canonical events omit. Corrected the predicate and assertion to canonical assistant text. Scoped `pnpm exec oxlint server/drivers/codex.ts server/drivers/codex.test.ts server/testing/fake-codex-app-server.ts` exited 0 with pre-existing warnings. `git diff --check` passed.

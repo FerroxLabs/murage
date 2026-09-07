@@ -139,7 +139,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     await refreshModels();
     const listeners = new Set<RuntimeEventListener>();
     interface Turn {
-      stop: () => void;
+      stop: () => Promise<boolean>;
       turnId: string;
       asks: Map<string, (behavior: "allow" | "deny" | "answer", message?: string, source?: "user" | "timeout" | "system") => void>;
     }
@@ -291,20 +291,46 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           send({ jsonrpc: "2.0", id, method, params });
         });
 
+      let stopping: Promise<boolean> | undefined;
+      const terminate = () => stopping ??= new Promise<boolean>((resolve) => {
+        if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+          resolve(true);
+          return;
+        }
+        const closed = () => {
+          clearTimeout(timer);
+          resolve(true);
+        };
+        const timer = setTimeout(() => {
+          child.off("close", closed);
+          resolve(false);
+        }, 5_000);
+        timer.unref?.();
+        child.once("close", closed);
+        killCliTree(child);
+      });
       const stop = () => {
         stopRequested = true;
-        killCliTree(child);
+        return terminate();
       };
 
-      const settle = (ok: boolean, stopReason: string | null) => {
+      const settle = async (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;
         state.settled = true;
         for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
-        active.delete(threadId);
-        emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(state.usage ? { usage: state.usage } : {}) });
-        stop(); // the app-server never exits on its own
+        const complete = () => {
+          if (active.get(threadId)?.stop !== stop) return;
+          active.delete(threadId);
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(state.usage ? { usage: state.usage } : {}) });
+        };
+        if (await stop()) complete();
+        else {
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: "codex did not shut down after termination was requested" });
+          if (child.exitCode !== null || child.signalCode !== null) complete();
+          else child.once("close", complete);
+        }
       };
 
       // server→client approval request → canonical request.opened
@@ -520,9 +546,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // multibyte characters that straddle two reads and corrupts the text
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
+        if (abandoned || state.settled) return;
         buf += chunk;
         let nl;
-        while ((nl = buf.indexOf("\n")) !== -1) {
+        while (!state.settled && (nl = buf.indexOf("\n")) !== -1) {
           const line = buf.slice(0, nl);
           buf = buf.slice(nl + 1);
           if (!line.trim()) continue;
@@ -654,7 +681,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // This app-server never exits by itself. Retire the failed attempt
           // and silence its late handlers before the replacement launches.
           abandoned = true;
-          killCliTree(child);
+          if (!await terminate()) {
+            await settle(false, "shutdown_timeout");
+            return;
+          }
           await new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, Math.max(1, Math.round(delayMs * retryScale)));
             timer.unref?.();
@@ -724,7 +754,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         effortLevels: ["low", "medium", "high", "xhigh", "max"],
       },
       sendTurn,
-      interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+      interruptTurn: async (threadId) => {
+        if (await active.get(threadId)?.stop() === false) throw new Error("codex shutdown is still pending; the process remains owned");
+      },
       respondToRequest: async (threadId, requestId, decision) => {
         const turn = active.get(threadId);
         const finish = turn?.asks.get(requestId);
@@ -734,7 +766,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       },
       hasSession: (threadId) => active.has(threadId),
       stopAll: async () => {
-        for (const { stop } of active.values()) stop();
+        const stopped = await Promise.all([...active.values()].map(({ stop }) => stop()));
+        if (stopped.includes(false)) throw new Error("codex shutdown is still pending; the processes remain owned");
       },
       onEvent: (listener) => {
         listeners.add(listener);
@@ -742,7 +775,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       },
     },
     dispose: async () => {
-      for (const { stop } of active.values()) stop();
+      const stopped = await Promise.all([...active.values()].map(({ stop }) => stop()));
+      if (stopped.includes(false)) throw new Error("codex shutdown is still pending; listeners remain attached");
       listeners.clear();
     },
   };

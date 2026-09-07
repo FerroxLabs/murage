@@ -18,10 +18,12 @@ Selected-port disposition after source review:
   catalogue silently presented as complete, cursorvalidation and lazyicons.
 - dbfad94e/d6c9674e heldnote: adapted wording from existing verdictsource;
   no importedapprovalMode or permission decisions changed.
-- dd7e4f16/b7133b3b Codexshutdown/lateoutput: candidate saved separately at
-  .planning/candidates/codex-shutdown-round2.patch;36existingtestspassed but new
-  fixturePID-write ordering unverified after2rounds. Not integrated; explicit
-  continuation needed for test-only ordering correction and targetedconfirmation.
+- dd7e4f16/b7133b3b Codexshutdown/lateoutput: explicitusercontinuation completed
+  PID-before-observed-event fixture correction. Delayedexit/lateoutput regression
+  passed; stop/stopAll/dispose now reject boundedtimeouts without releasing owned
+  process/listeners, covered by a 5.5s native fake-process case. Prior36passes
+  retained, targeted2passes andservertypesPASS. Archivedfailedpatch retained only
+  as history; corrected implementation integrated locally, not in private.6.
 - Browserengine replacement/recovery commits: architectural change, notported.
   Retain working Electron surface; separatelyreproducedreadinessrace stillopen.
 - Native mobilelocalization/dictation/keyboard changes: no correspondingnative

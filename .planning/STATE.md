@@ -1,5 +1,13 @@
 # Murage takeover state
 
+Codexcontinuation accepted: originalPIDdumpfixturecorrection63609 PASS; explicit
+timeoutfailure propagation added to exportedshutdownmethods, livefakeprocess5.5s
+case36055 PASS verifiesprocess/listeners retained untilrealexit. Types24645 PASS,
+36priorpassesreused. No actualCodexaccount/Windowsruntimeclaim. Upstreamselected
+fivefixes locallyintegrated; currentprivate.6 remainsunchangeduntilnextpackage.
+Browserreadiness cause alreadyproved, recommendedboundedinitialemptyobservation
+retry + explicitunknownreadiness, notnetworkidle or browserengine replacement.
+
 Acceptedselectedports frontend98821/server87677/projectbroker8073 builds PASS.
 No brokercode deployed. CSSbrowser33993PASS andscreenshot inspected readableboth
 skins. RootintegratingonlyverifiedCSS/thinkingfollow/heldnote/Composiopagination.
