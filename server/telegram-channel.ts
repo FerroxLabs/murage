@@ -13,7 +13,7 @@ const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Num
 const schema = z.object({ version: z.literal(1), botIdentityId: identity, enabled: z.boolean(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), binding: z.object({ senderId: identity, chatId: identity }).strict().nullable(), pairing: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite() }).strict().nullable(), records: z.array(recordSchema).max(200) }).strict();
 type State = z.infer<typeof schema>;
 interface Options {
-  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery">>; botIdentityId: string;
+  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage">>; botIdentityId: string;
   approvals?: TelegramApprovalActions;
   enqueue: (input: { deliveryId: string; prompt: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
@@ -31,12 +31,14 @@ export class TelegramChannel {
   private polling?: Promise<void>;
   private error: string | null = null;
   private approvals?: TelegramApprovals;
+  private expiryNoticeSent = false;
   constructor(options: Options) {
     if (!identity.safeParse(options.botIdentityId).success) fail();
     this.options = options;
     if (options.approvals && options.transport.answerCallbackQuery) this.approvals = new TelegramApprovals(options.approvals, {
       sendMessage: input => options.transport.sendMessage(input),
       answerCallbackQuery: input => options.transport.answerCallbackQuery!(input),
+      ...(options.transport.settleApprovalMessage ? { settleApprovalMessage: input => options.transport.settleApprovalMessage!(input) } : {}),
     }, options.now);
     this.state = { version: 1, botIdentityId: options.botIdentityId, enabled: false, offset: 0, binding: null, pairing: null, records: [] };
     try {
@@ -64,12 +66,14 @@ export class TelegramChannel {
   beginPairing() {
     if (this.state.binding) throw new Error("Revoke the existing Telegram pairing first.");
     if (this.stopped) throw new Error("Telegram channel is stopped.");
+    this.expiryNoticeSent = false;
     const code = randomBytes(32).toString("hex"), expiresAt = (this.options.now?.() ?? Date.now()) + 600000;
     this.mutate(state => { state.enabled = true; state.pairing = { hash: digest(code), expiresAt }; });
     return { code, expiresAt };
   }
   status() {
     return { enabled: this.state.enabled && !this.stopped, paired: Boolean(this.state.binding), pairingExpiresAt: this.state.pairing?.expiresAt ?? null,
+      pairingExpired: Boolean(this.state.pairing && (this.options.now?.() ?? Date.now()) >= this.state.pairing.expiresAt),
       pending: this.state.records.filter(record => ["accepted", "queued", "sending"].includes(record.state)).length,
       uncertain: this.state.records.filter(record => record.state === "uncertain").length, error: this.error };
   }
@@ -107,6 +111,15 @@ export class TelegramChannel {
         continue;
       }
       const message = update.kind === "message" && update.chatType === "private" && !update.forwarded ? update : null;
+      if (message && !this.state.binding && this.state.pairing && (this.options.now?.() ?? Date.now()) >= this.state.pairing.expiresAt
+        && /^\/pair [a-f0-9]{64}$/.test(message.text) && digest(message.text.slice(6)) === this.state.pairing.hash) {
+        this.mutate(state => { state.offset = update.updateId + 1; });
+        if (!this.expiryNoticeSent) {
+          this.expiryNoticeSent = true;
+          await this.options.transport.sendMessage({ chatId: message.chatId, text: "This pairing code expired. In Murage, open Settings → Channels → Telegram and create a new pairing code. No messages have been sent to your bot.", signal });
+        }
+        continue;
+      }
       if (message && !this.state.binding && this.state.pairing && (this.options.now?.() ?? Date.now()) < this.state.pairing.expiresAt && /^\/pair [a-f0-9]{64}$/.test(message.text) && digest(message.text.slice(6)) === this.state.pairing.hash) {
         this.mutate(state => { state.binding = { senderId: message.senderId, chatId: message.chatId }; state.pairing = null; state.offset = update.updateId + 1; });
         continue;

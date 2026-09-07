@@ -103,7 +103,7 @@ export function CallTargetButton({
       : !window.muragebox?.speechStart
         ? "The speech service is unavailable in this app build. Restart or update Murage."
         : !configured
-          ? "Add an ElevenLabs API key — or switch to the built-in Mac voices — so the bot can speak during calls."
+          ? "Add an ElevenLabs API key (or switch to the built-in Mac voices) so the bot can speak during calls."
           : !voiceReady
             ? voices.length > 1
               ? "Give every channel member a voice before starting a channel call."
@@ -365,7 +365,7 @@ function Call({ bot }: { bot: Bot }) {
         }
         // not a decision — leave the card up and say so rather than
         // guessing consent from an ambiguous sentence
-        void sayThenListen("Sorry — is that a yes or a no?");
+        void sayThenListen("Sorry, is that a yes or a no?");
         return;
       }
 

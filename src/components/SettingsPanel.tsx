@@ -154,7 +154,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
       {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
       {pinnedElsewhere && (
         <div className="mt-2 text-[12px] text-ink-secondary">
-          New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"} — start a new task to use the new folder.
+          New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"}; start a new task to use the new folder.
         </div>
       )}
     </div>
@@ -242,7 +242,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
         <div>
           <div className="text-[15px] font-medium text-ink">Memory</div>
           <div className="mt-0.5 text-[13px] text-ink-secondary">
-            Notes this bot keeps between tasks — plain files you can edit.
+            Notes this bot keeps between tasks: plain files you can edit.
           </div>
         </div>
         <ChevronDown size={16} className={cn("shrink-0 text-ink-secondary transition-transform", open && "rotate-180")} />
@@ -289,7 +289,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
             </button>
             {truncated && (
               <span className="text-[11.5px] text-ink-secondary">
-                Over the budget — only the top of this file loads each turn.
+                Over the budget; only the top of this file loads each turn.
               </span>
             )}
           </div>
@@ -470,7 +470,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             />
             <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
               Written to this agent at the start of every turn, in its own words. Its teammates
-              also read it when they decide who to hand work to — so keep it about the job.
+              also read it when they decide who to hand work to, so keep it about the job.
             </p>
           </Field>
           <Field label="Personality">
@@ -483,7 +483,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             />
             <div className="mt-1.5 flex items-start justify-between gap-3">
               <p className="text-[12px] leading-relaxed text-ink-secondary">
-                How this agent talks — spoken to it, and read by nothing else. A teammate
+                How this agent talks, spoken to it, and read by nothing else. A teammate
                 deciding who to delegate to never sees it.
               </p>
               <span className="shrink-0 pt-px text-[11.5px] tabular-nums text-ink-secondary">
@@ -568,7 +568,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                     : !canUseBrowser
                       ? "This bot's current engine cannot use the built-in browser."
                       : browserEnabled
-                        ? "This bot has its own browser tab in the computer panel — its own logins, watchable and takeable at any time."
+                        ? "This bot has its own browser tab in the computer panel, with its own logins, watchable and takeable at any time."
                         : "Keep the built-in browser unavailable to this bot."}
               </div>
             </div>
@@ -718,10 +718,10 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {bot.computer === "local"
                   ? bot.autoApprove
-                    ? "Keeps going on this computer — you'll still be asked about anything destructive, and about questions it asks you."
+                    ? "Keeps going on this computer; you'll still be asked about anything destructive, and about questions it asks you."
                     : "Approve each action on this computer yourself. Turn on to let this bot keep working without stopping to ask."
                   : bot.autoApprove
-                  ? "Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you."
+                  ? "Keeps going on its own; you'll still be asked about anything destructive, and about questions it asks you."
                   : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
               </div>
             </div>

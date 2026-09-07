@@ -1030,7 +1030,7 @@ export function ComputerPanel({
                     ? isLinux
                       ? "Ready for approved bot actions. Start the separate preview below when you want to watch the screen."
                       : localMisses >= 3
-                      ? "No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app."
+                      ? "No frames yet; the preview needs Screen Recording permission. After granting, relaunch the app."
                       : "Capturing this computer's screen…"
                     : emptyState[phase]}
               </span>
@@ -1105,7 +1105,7 @@ export function ComputerPanel({
         {phase === "unconfigured" && (
           <div className="mt-3 rounded-xl bg-card p-4">
             <div className="mb-3 text-[13px] text-ink-secondary">
-              Add a Box API key to give this bot a cloud computer — it spins up right here.
+              Add a Box API key to give this bot a cloud computer; it spins up right here.
             </div>
             <ApiKeyRow
               section="box"
@@ -1173,9 +1173,9 @@ export function ComputerPanel({
         {(phase === "ready" || phase === "vm") && control.held && (
           <div className="mt-3 rounded-xl border border-accent/25 bg-accent/10 p-4">
             <div className="text-[13px] leading-relaxed text-ink">
-              You have the wheel — the bot's clicks and keystrokes are refused until you hand it back.
+              You have the wheel; the bot's clicks and keystrokes are refused until you hand it back.
               {phase === "ready" && " Use Open desktop to drive."}
-              {phase === "vm" && " Use Open desktop to drive — the preview here is watch-only."}
+              {phase === "vm" && " Use Open desktop to drive; the preview here is watch-only."}
             </div>
             <button
               onClick={() => {
@@ -1280,7 +1280,7 @@ export function ComputerPanel({
                     ? "Auto reuses a ready VPS when one exists, otherwise this computer. "
                     : "Auto uses a cloud box when one exists, otherwise this computer. ")}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
-              in a container on this machine — free and separate from your own desktop. Set it up in App
+              in a container on this machine, free and separate from your own desktop. Set it up in App
               Settings → Local VM.
           </div>
           <ComputerDestinationGrid value={bot.computer ?? "auto"} unavailable={{

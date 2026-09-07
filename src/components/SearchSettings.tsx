@@ -2,16 +2,19 @@ import { useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { t } from "@/lib/i18n";
 
-type SearchProvider = "engine" | "auto" | "tavily" | "exa" | "off";
-type KeyProvider = "tavily" | "exa";
-const labels = { tavily: "Tavily", exa: "Exa" } as const;
+type SearchProvider = "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off";
+type KeyProvider = "tavily" | "exa" | "firecrawl";
+const labels = { tavily: "Tavily", exa: "Exa", firecrawl: "Firecrawl" } as const;
+const keyFields = { tavily: "tavilyApiKey", exa: "exaApiKey", firecrawl: "firecrawlApiKey" } as const;
+const credentialNames = { tavily: "tavilySearchApiKey", exa: "exaSearchApiKey", firecrawl: "firecrawlSearchApiKey" } as const;
+const configuredFields = { tavily: "tavilyConfigured", exa: "exaConfigured", firecrawl: "firecrawlConfigured" } as const;
 
 /** Credential custody and provider selection are separate writes. Saving a
  * key never probes the paid service or silently changes the chosen provider. */
 export function SearchSettings() {
   const { state, dispatch } = useStore();
   const search = state.config?.webSearch;
-  const [values, setValues] = useState({ tavily: "", exa: "" });
+  const [values, setValues] = useState({ tavily: "", exa: "", firecrawl: "" });
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -36,9 +39,9 @@ export function SearchSettings() {
     gate.current = true; setBusy(provider + (clear ? "-clear" : "-save")); setError(""); setNotice("");
     try {
       const config: ConfigStatus = window.muragebox?.setCredential
-        ? await window.muragebox.setCredential(provider === "tavily" ? "tavilySearchApiKey" : "exaSearchApiKey", value)
-        : await api("/api/config", { method: "PUT", body: JSON.stringify({ webSearch: { [provider === "tavily" ? "tavilyApiKey" : "exaApiKey"]: value } }) });
-      const configured = config.webSearch?.[provider === "tavily" ? "tavilyConfigured" : "exaConfigured"];
+        ? await window.muragebox.setCredential(credentialNames[provider], value)
+        : await api("/api/config", { method: "PUT", body: JSON.stringify({ webSearch: { [keyFields[provider]]: value } }) });
+      const configured = config.webSearch?.[configuredFields[provider]];
       if (configured !== !clear) throw new Error("Credential save was not confirmed");
       dispatch({ type: "configStatus", config });
       setValues(current => ({ ...current, [provider]: "" }));
@@ -54,10 +57,11 @@ export function SearchSettings() {
     <select id="web-search-provider" value={search?.provider ?? "engine"} disabled={!search || Boolean(busy)}
       onChange={event => void choose(event.target.value as SearchProvider)}
       className={"mt-1 min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50 " + focus}>
-      <option value="engine">{t("searchSettings.engineOption")}</option>
+      <option value="engine">Engine search first — free backup if needed</option>
       <option value="auto">Free search — Parallel, then DuckDuckGo</option>
       <option value="tavily">Tavily</option>
       <option value="exa">Exa</option>
+      <option value="firecrawl">Firecrawl</option>
       <option value="off">{t("searchSettings.offOption")}</option>
     </select>
     <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{search?.provider === "off"
@@ -65,11 +69,11 @@ export function SearchSettings() {
       : search?.provider === "auto"
         ? "No API key required. Queries go to Parallel and, if it fails, DuckDuckGo. Free-service availability may change."
       : search?.provider === "engine"
-        ? t("searchSettings.engineHelp")
+        ? "Use the engine's own search first. If unavailable, failed or limited, the bot can use Murage's backup: Parallel, then DuckDuckGo. Backup queries are sent to those services; paid keys are never used automatically."
         : t("searchSettings.externalHelp")}</p>
     <div className="mt-4 space-y-4">
-      {(["tavily", "exa"] as const).map(provider => {
-        const configured = search?.[provider === "tavily" ? "tavilyConfigured" : "exaConfigured"] === true;
+      {(["tavily", "exa", "firecrawl"] as const).map(provider => {
+        const configured = search?.[configuredFields[provider]] === true;
         const name = labels[provider];
         return <div key={provider}>
           <div className="flex flex-wrap items-center gap-2">

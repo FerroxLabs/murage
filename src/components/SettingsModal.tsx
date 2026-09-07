@@ -3,7 +3,7 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Coins, FlaskConical, Globe, KeyRound, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
+import { Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
@@ -51,8 +51,9 @@ const SECTIONS: Array<{
   //
   // Phone is here for a different reason: on a phone it is an offer to do the
   // thing you have already done.
-  { id: "connections", label: "Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "flux", "flux router", "models", "router", "paste", "env", "search", "tavily", "exa"] },
-  { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli"] },
+  { id: "engines", label: "Models & Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys"] },
+  { id: "connections", label: "Tools & Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "paste", "env", "search", "tavily", "exa", "transcription"] },
+  { id: "channels", label: "Channels", icon: MessageCircle, desktopOnly: true, keywords: ["telegram", "botfather", "pair", "slack", "discord", "whatsapp", "messaging"] },
   { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
   { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
   { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
@@ -181,7 +182,7 @@ function AnalyticsRow() {
   return (
     <Card
       title="Usage analytics"
-      subtitle="Anonymous product events — app opened, which features get used. Never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup."
+      subtitle="Anonymous product events: app opened, which features get used. Never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup."
     >
       <Switch
         checked={on}
@@ -222,7 +223,7 @@ function LanguageRow() {
   return (
     <Card
       title="Language"
-      subtitle="The app follows your system language unless you pick one here. Only part of the interface is translated so far — untranslated text stays in English."
+      subtitle="The app follows your system language unless you pick one here. Only part of the interface is translated so far; untranslated text stays in English."
     >
       <select
         value={current}
@@ -269,7 +270,7 @@ function ToolCallsRow() {
   return (
     <Card
       title="Tool calls"
-      subtitle="Show each tool a bot runs in the transcript. Off by default — the mascot already shows that work is happening."
+      subtitle="Show each tool a bot runs in the transcript. Off by default; the mascot already shows that work is happening."
     >
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
@@ -451,7 +452,7 @@ function BrowserProfilesRow() {
       subtitle="Named sign-in sessions any bot can use. Create one from a bot's Browser tab; sign in once and it stays."
     >
       {profiles.length === 0 ? (
-        <div className="text-[13px] text-ink-secondary">No profiles yet — pick "+ Add profile…" under a bot's browser.</div>
+        <div className="text-[13px] text-ink-secondary">No profiles yet. Pick "+ Add profile…" under a bot's browser.</div>
       ) : (
         <div className="flex flex-col divide-y divide-hairline/30">
           {profiles.map((profile) => {
@@ -747,7 +748,7 @@ export function SettingsModal() {
 
             {desktop === true && section === "connections" && (
               <Card
-                title="Connections"
+                title="Tools & Connections"
                 subtitle="Connect your apps with your own Composio project key. Every key here stays on this computer."
               >
                 <div className="flex flex-col gap-4">
@@ -764,11 +765,6 @@ export function SettingsModal() {
                   <PasteKeys />
                   <TranscriptionSettings />
                   <SearchSettings />
-                  <TelegramSettings />
-                  {/* Flux Router. Sits with the other optional keys because
-                      that is what it is: nothing here is required for the app
-                      to work, and every engine is authenticated on its own. */}
-                  <FluxKeyCard />
                   {/* Composio sits with the other keys rather than folded into
                       a "Self-host connected apps" disclosure, which is where it
                       used to live. That disclosure made sense while Ferrox's
@@ -780,16 +776,23 @@ export function SettingsModal() {
                   <ApiKeyRow section="composio" />
                   <ApiKeyRow section="box" />
                   <VpsConnection />
-                  <ApiKeyRow section="opencodeGo" />
                 </div>
               </Card>
             )}
 
             {desktop === true && section === "engines" && (
-              <Card title="Engine CLIs" subtitle="Which binary each engine runs. Saved as you go.">
-                <EnginesSettings />
-              </Card>
+              <>
+                <FluxKeyCard />
+                <Card title="Model provider" subtitle="Connect your OpenCode model provider.">
+                  <ApiKeyRow section="opencodeGo" />
+                </Card>
+                <Card title="Engine CLIs" subtitle="Which binary each engine runs. Saved as you go.">
+                  <EnginesSettings />
+                </Card>
+              </>
             )}
+
+            {desktop === true && section === "channels" && <TelegramSettings />}
 
             {desktop === true && section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
 

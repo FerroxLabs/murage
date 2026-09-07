@@ -1083,7 +1083,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
  * rewrite of the thing underneath it. */
 export const WEB_UI_TITLE = "Open Murage in your browser";
 export const WEB_UI_SUBTITLE =
-  "Scan a code and Murage opens in the browser on your phone, tablet, or another computer — "
+  "Scan a code and Murage opens in the browser on your phone, tablet, or another computer: "
   + "over your own Tailscale network. Nothing to install, and nothing exposed to the internet.";
 
 /** What still has to be true before there is anything to scan.
@@ -1139,7 +1139,7 @@ export function webUiReadiness(source: {
       ...base,
       ready: false,
       blocker:
-        "Tailscale isn’t signed in on this computer yet. Install it, sign in, then check again — "
+        "Tailscale isn’t signed in on this computer yet. Install it, sign in, then check again: "
         + "your phone needs to be signed into the same tailnet.",
     };
   }
@@ -1581,7 +1581,7 @@ export function PhoneSetupFlowView({
       {!c.pairingExpired && c.browserLink && c.browserDoor && (
         <p className="mt-2.5 max-w-[390px] text-[11.5px] leading-relaxed text-ink-secondary">
           Opens <span className="text-ink">{doorAddressLabel(c.browserDoor)}</span> in the browser on
-          whichever device scans it — a phone, a tablet, a laptop. That device has to be signed into
+          whichever device scans it: a phone, a tablet, a laptop. That device has to be signed into
           the same tailnet.
         </p>
       )}

@@ -9,11 +9,11 @@
 
 </div>
 
-Murage brings your agents, conversations, tasks and approvals into one workspace. Give each agent—an **Ember**—a role and an engine, work with it directly, or bring several agents into a shared channel.
+Murage brings your agents, conversations, tasks and approvals into one workspace. Give each agent (an **Ember**) a role and an engine, work with it directly, or bring several agents into a shared channel.
 
 ## Download
 
-**[Murage 0.1.46 — release notes and versioned downloads](https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.46)**
+**[Murage 0.1.46: release notes and versioned downloads](https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.46)**
 
 These direct links always download the latest public release:
 

@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { plainTextClamped } from "@/lib/plain-text";
+import { telegramMessageDisplay } from "@/lib/telegram-message-display";
 import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
 import {
   useStore,
@@ -459,8 +460,9 @@ function Bubble({
   const speech = useSpeech();
   const text = message.text ?? "";
   const webhookView = user ? webhookMessageView(text) : null;
-  const attachments = user && !webhookView ? splitTranscriptAttachments(text) : null;
-  const visibleText = webhookView?.task ?? attachments?.display ?? text;
+  const telegramView = user ? telegramMessageDisplay(text) : null;
+  const attachments = user && !webhookView && !telegramView ? splitTranscriptAttachments(text) : null;
+  const visibleText = telegramView?.body ?? webhookView?.task ?? attachments?.display ?? text;
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
@@ -647,6 +649,7 @@ function Bubble({
             </div>
           ) : user ? (
             <>
+              {telegramView && <div className="mb-1 text-[11px] font-medium text-ink-secondary">Telegram</div>}
               {attachments && attachments.images.length > 0 && (
                 <AttachedImageGallery paths={attachments.images} />
               )}
@@ -661,7 +664,7 @@ function Bubble({
                 </div>
               )}
               {message.steered && (
-                <div className="mt-1 text-[11px] text-ink-secondary/70" title="Sent while the bot was working — it saw this before its next step, inside the same turn.">
+                <div className="mt-1 text-[11px] text-ink-secondary/70" title="Sent while the bot was working; it saw this before its next step, inside the same turn.">
                   sent mid-turn
                 </div>
               )}

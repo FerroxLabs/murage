@@ -18,10 +18,12 @@ const source = readFileSync(
 import {
   archivedRestorePatch,
   teamImportSkillSummary,
+  matchesLibraryView,
   type ArchivedTeamBot,
   type TeamImportSkillError,
 } from "./TeamLibraryPanel";
 import { botRole } from "@/lib/bot-role";
+import { teamImportPreview } from "@/lib/team-import";
 
 
 describe("team import is additive", () => {
@@ -48,12 +50,12 @@ const store = readFileSync(fileURLToPath(new URL("../state/store.tsx", import.me
 const sidebar = readFileSync(fileURLToPath(new URL("./Sidebar.tsx", import.meta.url)), "utf8");
 const intakeCard = readFileSync(fileURLToPath(new URL("./BotIntakeCard.tsx", import.meta.url)), "utf8");
 
-describe("the panel has two halves, and 'add a skill' lands on the right one", () => {
+describe("the library separates bots, teams and skills", () => {
   it("carries a real view, all the way from the action that opened it", () => {
     // It had `activeFacet` and a search box and nothing else, so "Add a skill
     // to Bruce" and "browse teams" arrived at the same screen — a grid of Load
     // buttons that import a whole crew.
-    expect(store).toContain('export type TeamLibraryView = "teams" | "skills";');
+    expect(store).toContain('export type TeamLibraryView = "bots" | "teams" | "skills";');
     expect(store).toContain('| { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView }');
     expect(source).toContain("initialView?: TeamLibraryView;");
     expect(source).toContain('useState<TeamLibraryView>(initialView ?? "teams")');
@@ -73,12 +75,33 @@ describe("the panel has two halves, and 'add a skill' lands on the right one", (
     // `TeamRow`'s action imports an entire crew of bots. Offering it to
     // someone who asked for one skill is how this produced workspaces full of
     // agents nobody wanted.
-    expect(source).toContain('!catalogLoading && catalog && !activeFacet && view === "teams" && (');
+    expect(source).toContain('!catalogLoading && catalog && !activeFacet && view !== "skills" && (');
   });
 
   it("switching back is one press, so the view is never a trap", () => {
     expect(source).toContain('role="tablist" aria-label="Library view"');
-    expect(source).toContain("onClick={() => setView(candidate)}");
+    expect(source).toContain("setView(candidate); setActiveFacet(null);");
+  });
+
+  it("classifies by actual member count without leaking bots into teams or skills", () => {
+    const entries = [{ slug: "solo", members: 1 }, { slug: "crew", members: 3 }, { slug: "empty", members: 0 }];
+    expect(entries.filter(entry => matchesLibraryView(entry.members, "bots")).map(entry => entry.slug)).toEqual(["solo"]);
+    expect(entries.filter(entry => matchesLibraryView(entry.members, "teams")).map(entry => entry.slug)).toEqual(["crew"]);
+    expect(entries.filter(entry => matchesLibraryView(entry.members, "skills"))).toEqual([]);
+  });
+
+  it("preserves authored purpose, outcomes, examples and role details in the preview", () => {
+    const manifest = { format: "murage.package", version: 1, package: {
+      name: "Review crew", summary: "Review supplied customer notes.", outcomes: ["An evidence-backed brief", null, 7],
+      examples: [{ title: "Interview review", input: "Summarize this interview", output: "A summary of supplied notes" }, {}],
+      agents: [{ name: "Reviewer", title: "Research", description: "Checks claims against supplied notes." }],
+    } };
+    const preview = teamImportPreview(manifest);
+    expect(preview.manifest).toBe(manifest);
+    expect(preview.description).toBe("Review supplied customer notes.");
+    expect(preview.outcomes).toEqual(["An evidence-backed brief"]);
+    expect(preview.examples).toEqual([{ title: "Interview review", input: "Summarize this interview", output: "A summary of supplied notes" }]);
+    expect(preview.members[0].description).toBe("Checks claims against supplied notes.");
   });
 });
 

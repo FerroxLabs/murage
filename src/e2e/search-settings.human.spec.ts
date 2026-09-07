@@ -33,6 +33,34 @@ test.beforeAll(async () => {
   origin = "http://127.0.0.1:" + address.port;
 });
 test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test("Firecrawl key setup preserves engine-first default until explicitly selected", async ({ page }, info) => {
+  test.setTimeout(45000);
+  await page.addInitScript(() => {
+    (window as any).credentialCalls = [];
+    (window as any).muragebox = { setCredential: async (name: string, value: string) => {
+      (window as any).credentialCalls.push({ name, supplied: Boolean(value) });
+      return { webSearch: { provider: "engine", tavilyConfigured: false, exaConfigured: false, firecrawlConfigured: true } };
+    } };
+  });
+  const providerWrites: string[] = [];
+  await page.route("**/api/config", route => {
+    const provider = route.request().postDataJSON().webSearch.provider; providerWrites.push(provider);
+    return route.fulfill({ json: { webSearch: { provider, tavilyConfigured: false, exaConfigured: false, firecrawlConfigured: true } } });
+  });
+  await page.goto(origin + "/__search");
+  await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("engine");
+  await expect(page.getByText("Use the engine's own search first.", { exact: false })).toBeVisible();
+  await page.getByLabel("Firecrawl API key", { exact: true }).fill("fake-firecrawl-key");
+  await page.getByRole("button", { name: "Save Firecrawl key", exact: true }).click();
+  await expect(page.getByLabel("Firecrawl API key", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("engine");
+  expect(await page.evaluate(() => (window as any).credentialCalls)).toEqual([{ name: "firecrawlSearchApiKey", supplied: true }]);
+  expect(providerWrites).toEqual([]);
+  await page.getByLabel("Search provider", { exact: true }).selectOption("firecrawl");
+  await expect(page.getByRole("status")).toHaveText("Search provider saved.");
+  expect(providerWrites).toEqual(["firecrawl"]);
+  await page.screenshot({ path: info.outputPath("firecrawl-settings.png"), fullPage: true });
+});
 test("free search selection discloses fallback without saving keys or searching", async ({ page }) => {
   const writes: unknown[] = [];
   await page.route("**/api/config", route => {
@@ -85,7 +113,7 @@ test("browser fallback saves provider separately and replaces or clears write-on
   });
   await page.goto(origin + "/__search");
   await expect(page.getByLabel("Search provider")).toHaveValue("engine");
-  await expect(page.getByText("Your engine keeps its existing tools. No Tavily or Exa account is required.")).toBeVisible();
+  await expect(page.getByText("Use the engine's own search first.", { exact: false })).toBeVisible();
   await page.getByLabel("Search provider").selectOption("tavily");
   await expect(page.getByRole("status")).toContainText("Search provider saved");
   const input = page.getByLabel("Tavily API key", { exact: true });

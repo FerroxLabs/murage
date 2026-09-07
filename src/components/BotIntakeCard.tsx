@@ -332,7 +332,7 @@ function IntakeQuestion({
                 </button>
               </div>
               <div className="mt-2 text-[12px] text-ink-secondary">
-                {applyProfileDetail(profile, bot.name, !keepName)} Nothing else in your workspace changes —{" "}
+                {applyProfileDetail(profile, bot.name, !keepName)} Nothing else in your workspace changes;{" "}
                 no new agent is created.
               </div>
             </div>
@@ -404,7 +404,7 @@ function IntakeQuestion({
           {suggestion && !profile && looseSkills.length === 0 && (
             <div className="mt-4 rounded-xl border border-hairline/40 bg-inset px-3.5 py-3">
               <div className="text-[13.5px] text-ink-secondary">
-                Nothing in the library clearly matches that. Try naming the work itself — "reading my trading
+                Nothing in the library clearly matches that. Try naming the work itself: "reading my trading
                 charts", "chasing invoices", "writing blog posts".
               </div>
               <button

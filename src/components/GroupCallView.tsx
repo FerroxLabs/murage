@@ -267,7 +267,7 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
           });
           return;
         }
-        enqueueSpeech("Sorry — is that a yes or a no?", openApproval.member, true);
+        enqueueSpeech("Sorry, is that a yes or a no?", openApproval.member, true);
         return;
       }
 

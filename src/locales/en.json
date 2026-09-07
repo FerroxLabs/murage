@@ -1,6 +1,6 @@
 {
   "noEngines.title": "Install an AI engine to get started",
-  "noEngines.intro": "Murage doesn't ship a model of its own — your bots run on an AI CLI installed on this computer, using your existing login. Set up any one of these and your bots come alive.",
+  "noEngines.intro": "Murage doesn't ship a model of its own: your bots run on an AI CLI installed on this computer, using your existing login. Set up any one of these and your bots come alive.",
   "engines.cloud": "Cloud",
   "engines.local": "Local",
   "common.checkAgain": "Check again",

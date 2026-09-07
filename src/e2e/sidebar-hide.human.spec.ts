@@ -17,12 +17,60 @@ test.beforeAll(async()=>{
         const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
         window.fixtureBot={id:'chief',name:'Fixture Chief',chiefOfStaff:true,chiefScope:'workspace',color:'blue',threadId:'thread-chief',tasks:[],messages:[],modelSelection:{instanceId:'fixture',model:'test'},description:'',autoApprove:false};
         const state={...initialState,bots:[window.fixtureBot],selectedId:'chief',config:{features:{},box:{configured:false}},instances:[]};
-        const dispatch=action=>{if(action.type==='botPatched')state.bots=state.bots.map(bot=>bot.id===action.bot.id?action.bot:bot);if(action.type==='select')state.selectedId=action.id;window.fixtureStore={state:{...state},dispatch};listeners.forEach(fn=>fn());};dispatch({});
+        const dispatch=action=>{if(action.type==='fixtureRoster'){state.bots=action.bots;state.groups=action.groups;}if(action.type==='botPatched')state.bots=state.bots.map(bot=>bot.id===action.bot.id?action.bot:bot);if(action.type==='select')state.selectedId=action.id;window.fixtureStore={state:{...state},dispatch};listeners.forEach(fn=>fn());};dispatch({});
         createRoot(document.getElementById('root')).render(React.createElement(Sidebar,{open:true,onClose:()=>{}}));`;
     },configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=='/__hide')return next();res.setHeader('content-type','text/html');res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root" style="height:100dvh"></div><script type="module" src="/__hide.js"></script>');});},
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test('sidebar roster readability',async({page},testInfo)=>{
+  test.setTimeout(60000);
+  await page.setViewportSize({width:1280,height:900});
+  await page.route('**/api/config',route=>route.fulfill({json:{features:{}}}));
+  await page.route('**/api/desktop-secret',route=>route.fulfill({json:{secret:'fixture-secret'}}));
+  await page.goto(`${origin}/__hide`);
+  await expect(page.getByText('Fixture Chief',{exact:true})).toBeVisible();
+  await page.evaluate(()=>{
+    const fixture=(window as any).fixtureStore;
+    const base=(window as any).fixtureBot;
+    fixture.state.bots=[base,{...base,id:'lead',name:'Research Director',chiefScope:undefined,section:'Research'},
+      {...base,id:'analyst',name:'Market Research Analyst',chiefOfStaff:false,chiefScope:undefined,section:'Research',unread:true}];
+    fixture.state.groups=[{id:'room',name:'Research planning',memberIds:['lead','analyst'],messages:[],createdAt:Date.now(),unread:true}];
+    fixture.dispatch({type:'fixtureRoster',bots:fixture.state.bots,groups:fixture.state.groups});
+  });
+  await expect(page.getByText('Market Research Analyst',{exact:true})).toBeVisible();
+  await page.mouse.move(1200,850);
+  await page.screenshot({path:testInfo.outputPath(process.env.SIDEBAR_BASELINE ? 'sidebar-before.png' : 'sidebar-after.png')});
+  if(process.env.SIDEBAR_BASELINE)return;
+  const row=page.locator('div[role="button"]').filter({has:page.getByText('Market Research Analyst',{exact:true})});
+  await expect(row).toHaveCSS('padding-right','12px');
+  const name=page.getByText('Market Research Analyst',{exact:true});
+  expect(await name.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+  await row.hover();
+  await expect(row).toHaveCSS('padding-right','84px');
+  await expect(page.getByRole('button',{name:'More actions for Market Research Analyst'})).toHaveCSS('opacity','1');
+  await row.focus();
+  await page.mouse.move(1200,850);
+  await expect(row).toHaveCSS('padding-right','84px');
+  await row.press('Shift+F10');
+  await expect(page.getByRole('button',{name:'Hide from sidebar',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'More actions for Market Research Analyst'}).click();
+  await expect(page.getByRole('button',{name:'Hide from sidebar',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Choose sidebar density'}).click();
+  await page.getByRole('button',{name:'compact',exact:true}).click();
+  await page.mouse.move(1200,850);
+  await expect(row).toHaveCSS('padding-right','8px');
+  await page.screenshot({path:testInfo.outputPath('sidebar-compact.png')});
+  await page.getByRole('button',{name:'Collapse sidebar to avatars'}).click();
+  await expect(page.getByRole('button',{name:'Market Research Analyst',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Expand sidebar'}).click();
+  await page.setViewportSize({width:390,height:844});
+  await expect(row).toHaveCSS('padding-right','84px');
+  await expect(page.getByRole('button',{name:'More actions for Market Research Analyst'})).toHaveCSS('opacity','1');
+  await page.screenshot({path:testInfo.outputPath('sidebar-phone.png')});
+});
 test('hide and restore the last Chief without archiving or changing the selected conversation',async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
   await page.route('**/api/config',route=>route.fulfill({json:{features:{}}}));

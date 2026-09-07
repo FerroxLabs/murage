@@ -109,7 +109,7 @@ export function usageChip(u: TaskUsage, billing?: "metered" | "subscription"): s
 
 /** How to caption a cost figure given how the engine is billed. */
 export function costCaption(billing: "metered" | "subscription" | undefined): string {
-  if (billing === "subscription") return "equivalent — on your subscription, not billed";
+  if (billing === "subscription") return "equivalent: on your subscription, not billed";
   if (billing === "metered") return "billed to your API key";
   return "as reported by the engine";
 }
@@ -148,7 +148,7 @@ export function usageReport(u: TaskUsage, context: UsageReportContext = {}): Usa
   if (isMidTurn(context)) {
     lines.push({
       id: "stale",
-      text: "Working now — these are the last settled turn's figures. They update when this turn finishes.",
+      text: "Working now; these are the last settled turn's figures. They update when this turn finishes.",
     });
   }
   lines.push({ id: "turns", text: `${u.turns} turn${u.turns === 1 ? "" : "s"}` });
@@ -156,7 +156,7 @@ export function usageReport(u: TaskUsage, context: UsageReportContext = {}): Usa
   // the two can be reconciled instead of looking like a discrepancy.
   lines.push({ id: "breakdown", text: usageDetail(u) });
   if (cachedInput(u) > 0) {
-    lines.push({ id: "fresh", text: `${formatTokens(freshTokens(u))} tok new — the figure on the chip` });
+    lines.push({ id: "fresh", text: `${formatTokens(freshTokens(u))} tok new: the figure on the chip` });
     // the whole thread rides along on every turn, so most of "in" is the
     // model re-reading what it already saw — say so, or the figure reads as
     // a bug (issue #527)
@@ -167,7 +167,7 @@ export function usageReport(u: TaskUsage, context: UsageReportContext = {}): Usa
     // lost the number.
     lines.push({
       id: "no-cache",
-      text: "no cached input reported by this engine — the chip is the whole in + out figure",
+      text: "no cached input reported by this engine; the chip is the whole in + out figure",
     });
   }
   lines.push(

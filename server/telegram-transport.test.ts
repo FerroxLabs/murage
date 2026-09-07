@@ -3,6 +3,14 @@ import { TelegramTransport } from "./telegram-transport.ts";
 const token = "123456:FAKE_TOKEN_CANARY_1234567890";
 const ok = (result: unknown) => Response.json({ ok: true, result });
 describe("bounded Telegram transport", () => {
+  it("edits exact approval message and removes its inline buttons", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(ok({ message_id: 7, chat: { id: 7 } }));
+    const transport = new TelegramTransport({ token, fetch: fetcher });
+    await transport.settleApprovalMessage({ chatId: "7", messageId: 7, text: "Fixture\nDenied." });
+    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({ chat_id: "7", message_id: 7, text: "Fixture\nDenied.", reply_markup: { inline_keyboard: [] } });
+    await expect(transport.settleApprovalMessage({ chatId: "invalid", messageId: 7, text: "No" })).rejects.toMatchObject({ code: "invalid-request" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("delivers HTML and owner buttons and acknowledges callbacks", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok({ message_id: 7, chat: { id: 7 } })).mockResolvedValueOnce(ok(true));
     const transport = new TelegramTransport({ token, fetch: fetcher });

@@ -7,6 +7,17 @@ import {
 } from "./workspace-credentials.mjs";
 
 describe("workspace credential migration", () => {
+  it("migrates Firecrawl custody through reboot and clear without changing other search credentials", () => {
+    const config = { webSearch: { provider: "firecrawl", firecrawlApiKey: "fake-firecrawl", tavilyApiKey: "fake-tavily" } };
+    const migrated = migrateWorkspaceCredentials(config, {});
+    expect(migrated.config).toEqual({ webSearch: { provider: "firecrawl" } });
+    expect(migrated.credentials).toEqual({ firecrawlSearchApiKey: "fake-firecrawl", tavilySearchApiKey: "fake-tavily" });
+    const reboot = migrateWorkspaceCredentials({ webSearch: { provider: "firecrawl", firecrawlApiKey: "" } }, migrated.credentials);
+    expect(workspaceCredentialEnv(reboot.credentials)).toEqual({ MURAGE_FIRECRAWL_SEARCH_KEY: "fake-firecrawl", MURAGE_TAVILY_SEARCH_KEY: "fake-tavily" });
+    const cleared = migrateWorkspaceCredentials({ webSearch: { provider: "firecrawl", firecrawlApiKey: "" } }, { tavilySearchApiKey: "fake-tavily" });
+    expect(workspaceCredentialEnv(cleared.credentials)).toEqual({ MURAGE_TAVILY_SEARCH_KEY: "fake-tavily" });
+    expect(cleared.config.webSearch.provider).toBe("firecrawl");
+  });
   it("migrates Telegram custody without changing the target or resurrecting cleared tokens", () => {
     const migrated = migrateWorkspaceCredentials({ telegram: { botToken: "fake-bot-token", targetBotId: "chosen-bot" } }, {});
     expect(migrated.config).toEqual({ telegram: { targetBotId: "chosen-bot" } });

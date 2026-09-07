@@ -1394,6 +1394,10 @@ describe("harness HTTP API", () => {
       expect(free.status).toBe(200);
       expect(await free.json()).toMatchObject({ provider: "parallel", fallbackUsed: false, untrusted: true,
         results: [{ title: "Free fixture source", url: "https://example.com/free" }] });
+      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "engine" } });
+      const engineBackup = await search();
+      expect(engineBackup.status).toBe(200);
+      expect(await engineBackup.json()).toMatchObject({ routing: "engine-fallback", provider: "parallel", untrusted: true });
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       expect((await search()).status).toBe(401);
       expect(JSON.parse(readFileSync(requestFile, "utf8")).calls).toBe(1);
@@ -1416,6 +1420,11 @@ describe("harness HTTP API", () => {
       expect(JSON.stringify(external.body)).not.toContain(secret);
       expect(JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8")).webSearch).toEqual({ provider: "tavily", tavilyApiKey: "" });
       expect((await api("GET", "/api/config")).body.webSearch.tavilyConfigured).toBe(true);
+      const firecrawl = await desktopApi("PATCH", "/api/config?secretStorage=external", { webSearch: { firecrawlApiKey: secret + "-firecrawl" } });
+      expect(firecrawl.status).toBe(200);
+      expect(firecrawl.body.webSearch).toMatchObject({ provider: "tavily", firecrawlConfigured: true });
+      expect(JSON.stringify(firecrawl.body)).not.toContain(secret);
+      expect(JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8")).webSearch.firecrawlApiKey).toBe("");
       const saved = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "tavily", tavilyApiKey: secret, exaApiKey: secret + "-exa" } });
       expect(saved.status).toBe(200);
       expect(JSON.stringify(saved.body)).not.toContain(secret);
@@ -1425,26 +1434,26 @@ describe("harness HTTP API", () => {
       expect(switched.status).toBe(200);
       expect((await fetch(`${BASE}/api/internal/agents?self=${activeBotId}`, { headers: activeTurn.headers })).status).toBe(200);
       const frame = await events.until(frame => frame.kind === "config" && frame.webSearch?.provider === "exa");
-      expect(frame.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true });
+      expect(frame.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true });
       expect(JSON.stringify(frame)).not.toContain(secret);
       for (const get of [api, desktopApi]) {
         const visible = await get("GET", "/api/config");
-        expect(visible.body.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true });
+        expect(visible.body.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true });
         expect(JSON.stringify(visible.body)).not.toContain(secret);
       }
       const persisted = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
-      expect(persisted.webSearch).toEqual({ provider: "exa", tavilyApiKey: secret, exaApiKey: secret + "-exa" });
+      expect(persisted.webSearch).toEqual({ provider: "exa", tavilyApiKey: secret, exaApiKey: secret + "-exa", firecrawlApiKey: "" });
       expect((await desktopApi("PATCH", "/api/config", { webSearch: { provider: "automatic-paid-fallback" } })).status).toBe(400);
-      const cleared = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "off", tavilyApiKey: "", exaApiKey: "" } });
+      const cleared = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "off", tavilyApiKey: "", exaApiKey: "", firecrawlApiKey: "" } });
       expect(cleared.status).toBe(200);
-      expect((await api("GET", "/api/config")).body.webSearch).toEqual({ provider: "off", tavilyConfigured: false, exaConfigured: false });
+      expect((await api("GET", "/api/config")).body.webSearch).toEqual({ provider: "off", tavilyConfigured: false, exaConfigured: false, firecrawlConfigured: false });
     } finally {
       events.close();
       if (activeBotId) {
         await api("POST", `/api/bots/${activeBotId}/interrupt`);
         await desktopApi("DELETE", `/api/bots/${activeBotId}`);
       }
-      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "engine", tavilyApiKey: "", exaApiKey: "" } });
+      await desktopApi("PATCH", "/api/config", { webSearch: { provider: "engine", tavilyApiKey: "", exaApiKey: "", firecrawlApiKey: "" } });
     }
   });
 
