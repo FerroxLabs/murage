@@ -12,6 +12,7 @@ import { extname, join } from "node:path";
 import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
+import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
@@ -7362,6 +7363,10 @@ const server = createServer(async (req, res) => {
         if (duplicate) {
           return json(res, 409, { error: `@${duplicate.name} already exists in this section; use list_bots` });
         }
+        if (wantsLead) {
+          const error = leadershipAdmissionError(registry.get(chief.modelSelection.instanceId), chief.modelSelection.instanceId);
+          if (error) return json(res, 409, { error });
+        }
         const createSlot = internalCapabilities.reserve(internalClaim, "create");
         if (!createSlot) return json(res, 429, { error: "at most four bots can be created per turn" });
         try {
@@ -8517,6 +8522,10 @@ const server = createServer(async (req, res) => {
       let group: GroupRecord | undefined;
       try {
         const selection = await defaultSelection();
+        if (pkg?.chiefOfStaff) {
+          const error = leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId);
+          if (error) return json(res, 409, { error });
+        }
         const existingSections = new Set(
           [...store.bots.map((bot) => bot.section), ...store.groups.map((candidate) => candidate.section)]
             .filter((section): section is string => Boolean(section?.trim()))
@@ -9550,6 +9559,13 @@ const server = createServer(async (req, res) => {
         body.chiefOfStaff !== false &&
         section !== undefined &&
         sectionKey(existingBot?.section) !== sectionKey(section);
+      const changesLeaderSelection = keepsChiefRole && normalizedSelection
+        && JSON.stringify(normalizedSelection) !== JSON.stringify(existingBot?.modelSelection);
+      if (keepsChiefRole && (body.chiefOfStaff === true || requestedScope || chiefMovedSections || changesLeaderSelection)) {
+        const selection = normalizedSelection ?? existingBot?.modelSelection;
+        const error = leadershipAdmissionError(selection ? registry.get(selection.instanceId) : undefined, selection?.instanceId ?? "");
+        if (error) return json(res, 409, { error });
+      }
       if (existingBot && normalizedSelection
         && JSON.stringify(normalizedSelection) !== JSON.stringify(existingBot.modelSelection)) {
         revokeInternalBot(existingBot.id);

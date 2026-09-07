@@ -1,5 +1,14 @@
 # Murage private MVP — active execution contract
 
+## Queued upstream reconciliation: OpenMausBot 0.1.59 / 0.1.60
+
+Sean requested investigation after current role-enforcement and browser-readiness
+work. Compare exact released changes against current source, classify already
+implemented/applicable fixes/intentional divergence/deferredfeatures, then apply
+selected relevant changes with bounded proof. No wholesalemerge, rollback of
+Murage behavior, automatic expansion into deferredgroups/marketplace, publication
+or external state changes. Preserve current two-round limits per underlying issue.
+
 ## Approved build-list additions: library discovery and prose cleanup
 
 Separate Bots, Teams and Skills in existinglibrary; teams expose purpose,

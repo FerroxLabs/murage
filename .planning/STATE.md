@@ -1,5 +1,35 @@
 # Murage takeover state
 
+Roleenforcement accepted afterexplicitusercontinuation: UIfixture48971 PASS
+usingexistingSidebar browserstub; API14+serverbuild/frontendtypes alreadyPASS.
+Newgrant/roleenginechange failclosed; demotion allowed; internalleadcreation and
+legacybotpackagegrant use sameadmissionguard. Runningprivate.6 notyetupdated.
+Browserreadiness diagnostic complete, productionfix notstarted. Upstream59/60
+release metadata verified viaGitHubAPI now; sourcecomparisonnext, no wholesale
+browserarchitecture port or permission-mode change inferred fromrelease presence.
+
+Role-enforcement server confirmation59623 PASS14relevantAPIchecks, serverbuild
+34852 PASS, frontendtypes97579 PASS. InitialAPIround had2fixtureexpectationissues
+(absentfalseflag and incapableghost usedas incumbent); fixturescorrected without
+weakeningnewcapabilitypolicy. PureadmissioncheckPASS. New SidebarLeadership.test
+collection failedwindowundefined56015: unlike existingSidebar.test it didnotmock
+DesktopCapabilities. No productionUI failureobserved, but UIgate NOTaccepted.
+Package round2 reached; recordprecise testharnessblock andrequestdirection before
+anothercorrectiverun. Runningprivateapp remains previousbuild, fix notpackaged.
+Browserreadiness investigation COMPLETE: nativeearlyempty reproduced360ms vs
+sameURL links2040ms; quick/blank/privateblockcontrols preserved. No productfix.
+Evidence BROWSER-READINESS-CHECK.md; test is diagnostic reproduction, notfixproof.
+Userqueued OpenMausBot0.1.59/0.1.60 reconciliation aftercurrentwork; no imports yet.
+
+User-authorized role enforcement active: block newleadership via PATCH,
+internalcreate-bot lead and legacy bot-package import when effective registered
+engine lacks enabledagentsMcp; block incompatibleenginechange forremainingleader;
+allow demotion/recovery. Sidebarindividual promotion guarded. Frozenchecks
+isolatedAPI no-write denial/capablepositive/demotion+focusedroles/importtests and
+types/build; two rounds only. No config-wide engine-health policy added.
+Sable newnavigate-readiness report readfull; separate diagnostic nativefixture
+agent testing only, no browserproductionfix authorized by investigation request.
+
 Frozencombinedsource e9320c2b locallycommitted. FullVitest99684 STILLRUNNING,
 do notrestart; outputquiet expected. Frontend68029/server81838 PASS;
 electron4284 190PASS1platformskip; contrast37pairsperthemePASS; docs4430 PASS
