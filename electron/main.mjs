@@ -65,6 +65,22 @@ import {
 } from "./companion-account-service.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
+// Explicit fixture/profile isolation must precede credentials and the instance lock.
+// Ordinary installed launches keep Electron's default paths unchanged.
+if (process.env.MURAGE_USER_DATA !== undefined) {
+  const userData = process.env.MURAGE_USER_DATA;
+  const dataDir = process.env.MURAGE_DATA_DIR;
+  if (!userData || !path.isAbsolute(userData) || !dataDir || !path.isAbsolute(dataDir)
+    || !fs.lstatSync(userData).isDirectory() || !fs.lstatSync(dataDir).isDirectory()
+    || fs.lstatSync(userData).isSymbolicLink() || fs.lstatSync(dataDir).isSymbolicLink()) {
+    throw new Error("MURAGE_USER_DATA requires existing absolute non-symlink user-data and MURAGE_DATA_DIR directories");
+  }
+  const isolatedUserData = fs.realpathSync(userData);
+  app.setPath("userData", isolatedUserData);
+  app.setPath("sessionData", isolatedUserData);
+  app.setAppLogsPath(path.join(isolatedUserData, "logs"));
+}
+
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
 const nativeActions = nativeDesktopActions(process.platform);
 const companionToken = randomBytes(32).toString("hex");

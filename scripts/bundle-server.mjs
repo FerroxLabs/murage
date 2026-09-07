@@ -40,6 +40,8 @@ const yamlEsmPlugin = {
 
 // Every file run as its own process. Keep in sync with the spawn sites above.
 const ENTRY_POINTS = [
+  "memory/worker.ts",
+  "drivers/memory-proxy.ts",
   "index.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
   // shared avatar contract widens TypeScript's inferred emit root to the repo,
@@ -74,7 +76,11 @@ await build({
   allowOverwrite: true,
   logLevel: "info",
   plugins: [yamlEsmPlugin],
+  external: ["@huggingface/transformers"],
 });
+
+copyFileSync(join(root,"shared","memory-model-manifest.json"),join(root,"dist-server","memory-model-manifest.json"));
+await import("./stage-memory-runtime.mjs");
 
 // External MCP clients launch this as an independent stdio process. Keep its
 // source under scripts for a pleasant checkout command (`pnpm mcp`), but ship

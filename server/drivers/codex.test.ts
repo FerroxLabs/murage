@@ -421,6 +421,24 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv).not.toContain('mcp_servers.notes.default_tools_approval_mode');
   });
 
+  it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
+    await create();
+    const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;
+    await instance.adapter.sendTurn({threadId:"memory-only",text:"recall",integrations:{
+      memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
+      custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
+    }});
+    await recorder.until(event=>event.type==="turn.completed");
+    const seen=JSON.parse(readFileSync(dump,"utf8")),argv=seen.argv.join(" ");
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+    expect(argv).toContain("mcp_servers.murage-memory.command");
+    expect(argv).toContain("/fake/memory-proxy.js");
+    expect(argv).not.toContain("attacker-mcp");
+    expect(argv).not.toContain("memory-fixture-secret");
+    expect(seen.env.MURAGE_MEMORY_TOKEN).toBe("memory-fixture-secret");
+    expect(argv).not.toContain("mcp_servers.agents.command");
+  });
+
   it("mounts peer-agent comms without placing the comms token in argv", async () => {
     await create();
     const dump = join(scratch, "agents.json");

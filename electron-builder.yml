@@ -76,6 +76,12 @@ extraResources:
     to: ui
   - from: dist-server
     to: server
+  # A FileMatcher skips its root node_modules directory; copy this staged
+  # runtime as its own resource root so nested dependencies remain intact.
+  - from: dist-server/node_modules
+    to: server/node_modules
+    filter:
+      - "**/*"
   # The shipped skill catalog installSkillFromLibrary reads every time someone
   # hires a bot or a team. 67 MB / 4,411 files verbatim, ~20 MB compressed in
   # each artifact. Without it MURAGE_SKILL_LIBRARY points at an absent

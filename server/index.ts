@@ -1,3 +1,14 @@
+import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
+import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
+import { ownerMemoryTicket } from "./memory/authority.ts";
+import { buildMemoryBundle } from "./memory/bundle.ts";
+import { MemoryDispatchReceipt, memoryContinuationChanged } from "./memory/dispatch.ts";
+import { memoryAccess, type MemoryAccess } from "./memory/policy.ts";
+import { memoryState } from "./memory/repository.ts";
+import { continuationMemoryRevoked, filterMemoryReplay } from "./memory/disclosures.ts";
+import { memoryAgentRoute } from "./memory/routes.ts";
+import { MemoryWorkerController } from "./memory/worker-controller.ts";
+import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memory/settlement.ts";
 // Murage server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
@@ -223,7 +234,6 @@ import {
   ensureWorkspace,
   listMemoryTopics,
   isMemoryTopicName,
-  memorySystemPrompt,
 } from "./workspace.ts";
 import {
   readMemoryFile,
@@ -235,7 +245,6 @@ import {
   readSectionContext,
   sectionContextKey,
   sectionContextLabel,
-  sectionContextSystemPrompt,
   writeSectionContext,
   SECTION_CONTEXT_MAX_BYTES,
 } from "./section-context.ts";
@@ -256,6 +265,7 @@ import {
   setSkillEnabled,
   skillsSystemPrompt,
   stageSkillWrite,
+  assertMemorySkillReview,
 } from "./skills.ts";
 import { fetchSkillFromSource } from "./skill-fetch.ts";
 import { expandLearnTurnText, learnSource } from "./skill-learn.ts";
@@ -442,10 +452,12 @@ const projectTurnLeases = new ProjectTurnLeases();
 const internalTurnOwners = new Map<string, {
   botId: string; generation: string; depth: number; skillAuthoring: boolean;
   eventId?: string;
+  memorySkillSource?: string;
   tokens: Partial<Record<InternalCapabilityKind, string>>;
 }>();
 function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string): void {
   internalCapabilities.begin(botId, threadId, generation);
+  memoryDispatches.delete(threadId);
   internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId, tokens: {} });
 }
 function internalToken(botId: string, threadId: string, generation: string, kind: InternalCapabilityKind): string {
@@ -744,6 +756,7 @@ function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): Dir
   else if (internalTurnOwners.get(expectedThreadId)?.botId === botId) revokeInternalThread(expectedThreadId);
   const claim = directTurnDispatchClaims.get(botId);
   if (!claim || (expectedThreadId !== undefined && claim.threadId !== expectedThreadId)) return null;
+  recordMemorySettlement(claim.threadId, claim.id, "cancelled");
   directTurnDispatchClaims.delete(botId);
   // Setup has not called the adapter yet, so there is no provider handshake
   // (and no unknown turn id) to quarantine. Dispatching is the only phase in
@@ -1077,6 +1090,28 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
+const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
+function turnMemoryAccess(botId: string, threadId: string, generation: string): MemoryAccess {
+  const token = internalToken(botId,threadId,generation,"memory");
+  return memoryAccess(internalCapabilities,internalCapabilities.resolve(`Bearer ${token}`)!,()=>({bots:store.bots,groups:store.groups}));
+}
+function memoryIntegration(botId: string, threadId: string, generation: string) {
+  return {command:process.execPath,args:[SPAWNED_PROXIES.memory],env:{...AGENTS_NODE_FLAG,
+    MURAGE_HARNESS_URL:`http://127.0.0.1:${PORT}`,MURAGE_MEMORY_TOKEN:internalToken(botId,threadId,generation,"memory")}};
+}
+const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,signal)=>{
+  const selected=memoryExtractorInstanceId();
+  if(!selected)return;
+  const instance=registry.get(String(selected));
+  return consolidateMemorySource(jobId,instance?.extractMemory?.bind(instance)??null,signal);
+},onIdleConsolidation:async(signal)=>{
+  const selected=memoryExtractorInstanceId();
+  const instance=selected?registry.get(selected):null;
+  if(!instance?.extractMemory)return;
+  const [jobId]=pendingMemoryConsolidationJobs(1);
+  if(jobId)return consolidateMemorySource(jobId,instance.extractMemory.bind(instance),signal);
+}});
+memoryWorker.start();
 const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
@@ -1445,6 +1480,7 @@ function cancelGroupTurnOperations(
     detail: "Stopped by you.",
   },
 ) {
+  recordMemorySettlement(threadId, `group-stop:${store.activeLeaf(threadId)}`, "cancelled");
   revokeInternalThread(threadId);
   for (const operation of groupTurnOperations.get(groupId) ?? []) {
     if (operation.threadId !== threadId) continue;
@@ -1852,6 +1888,7 @@ const watchdog = new TurnWatchdog({
       kind: "activity",
       tool: { name: `error: no activity for ${minutes} minutes — the turn was stopped`, ok: false },
     });
+    recordMemorySettlement(turn.threadId, `watchdog:${store.activeLeaf(turn.threadId)}`, "interrupted");
     finalizeDelegationWatch(turn.threadId, false, "", "Delegated turn stalled and was stopped");
     turnUsage.delete(turn.threadId);
     roomStallCompletions.stall(turn.threadId);
@@ -1893,6 +1930,7 @@ const watchdog = new TurnWatchdog({
     release.unref?.();
   },
 });
+reconcileInterruptedMemoryTurns();
 watchdog.start();
 
 async function reviewPermissionCard(args: {
@@ -1969,6 +2007,15 @@ async function reviewPermissionCard(args: {
 }
 
 bus.subscribe((event: RuntimeEvent) => {
+  // Observe acceptance BEFORE terminal capability cleanup. Some adapters emit
+  // their complete turn synchronously from sendTurn before its promise resolves.
+  const receipt=memoryDispatches.get(event.threadId);
+  if(receipt && !shouldIgnoreProviderEvent(event) && (!event.providerInstanceId || event.providerInstanceId===receipt.instanceId)
+    && (!receipt.turnId || !event.turnId || receipt.turnId===event.turnId)) {
+    if(event.turnId)receipt.turnId=event.turnId;
+    if(event.type==="session.started" && event.sessionId)receipt.sessionStarted(event.sessionId);
+    if(event.type==="turn.completed")receipt.completed(event.ok);
+  }
   if ((event.type === "turn.completed" || event.type === "session.exited") && event.turnId) {
     projectTurnLeases.complete(event.threadId, event.turnId);
     internalCapabilities.completeProviderTurn(event.threadId, event.turnId);
@@ -2170,6 +2217,8 @@ bus.subscribe((event: RuntimeEvent) => {
 
   const pushMessage = (m: Omit<Message, "id" | "at">) => {
     const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
+    const receipt=memoryDispatches.get(event.threadId);
+    if(m.role==="bot" && receipt && (!receipt.turnId || !event.turnId || receipt.turnId===event.turnId))receipt.output(message.id);
     return message;
   };
 
@@ -2179,6 +2228,9 @@ bus.subscribe((event: RuntimeEvent) => {
   }
 
   switch (event.type) {
+    case "turn.started":
+      recordMemorySettlement(event.threadId, event.turnId ?? `start:${store.activeLeaf(event.threadId)}`, "working");
+      break;
     case "session.started":
       if (bot && event.sessionId && event.providerInstanceId) {
         store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId);
@@ -2509,7 +2561,8 @@ bus.subscribe((event: RuntimeEvent) => {
           });
         }
       }
-      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId);
+      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, event.ok ? "completed" : event.stopReason === "cancelled" ? "cancelled" : "failed");
+      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, event.ok ? "completed" : "failed");
       const reply = lastReply.get(event.threadId) ?? "";
       lastReply.delete(event.threadId);
       const lastReported = turnUsage.get(event.threadId);
@@ -3037,6 +3090,8 @@ async function startTurn(
   text: string,
   opts?: {
     commsDepth?: number;
+    /** Server-owned source ticket for explicit memory-to-skill review. */
+    memorySkillSource?: string;
     userMessage?: Message;
     /** Extra transcript ids to omit (every drained queued line, not just the last). */
     excludeMessageIds?: string[];
@@ -3147,7 +3202,7 @@ async function startTurn(
   // Resolve its quote from full storage, while the replay itself remains
   // strictly limited to the selected branch below.
   const messagesById = new Map(store.messagesFor(threadId).map((message) => [message.id, message]));
-  const transcript = activeMessages
+  let transcript = activeMessages
     .filter((m) => m.kind === "text" && m.text && !skipTranscript.has(m.id))
     .slice(-40)
     .map((m) => ({
@@ -3178,7 +3233,7 @@ async function startTurn(
     skillRecorderEnabled(cfg) &&
     commsDepth < MAX_COMMS_DEPTH &&
     instance.adapter.capabilities.agentsMcp === true;
-  const { turnText, resume } = buildTurnContext({
+  let { turnText, resume } = buildTurnContext({
     text: promptWithReply(skillAuthoring ? expandLearnTurnText(text) : text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
     transcript,
     rewound,
@@ -3190,7 +3245,7 @@ async function startTurn(
   // can arrive during async computer/setup work and clear the task cursor;
   // this already-built turn must either keep its old session or replay on the
   // following turn, never start a blank session with no transcript.
-  const resumeCursor = resume ? task.resumeCursors[instanceId] : undefined;
+  let resumeCursor = resume ? task.resumeCursors[instanceId] : undefined;
 
   const persona = [
     `You are ${bot.name}, a personal bot in Murage.`,
@@ -3206,6 +3261,7 @@ async function startTurn(
   // hang the HTTP request
   const dispatchClaimId = randomUUID();
   beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId);
+  if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnGenerationByBot.set(bot.id, dispatchClaimId);
   directTurnDispatchClaims.set(bot.id, { id: dispatchClaimId, threadId, phase: "setup" });
   store.setActivity(bot.id, "working");
@@ -3527,12 +3583,51 @@ async function startTurn(
       // pre-id window: wait for the old handshake to settle or for its bounded
       // quarantine to expire, then revalidate this exact claim before launch.
       await pendingCancelledProviderHandshakes.waitForClear(threadId);
+      let memoryReceipt: MemoryDispatchReceipt | undefined;
+      if(memoryState().mode==="active") {
+        const access=turnMemoryAccess(bot.id,threadId,dispatchClaimId);
+        const revoked=Boolean(resumeCursor && continuationMemoryRevoked(threadId,instanceId,String(resumeCursor),access));
+        const needsReplay=!resumeCursor || revoked || ["grok","openai","openai-compatible","minimax"].includes(instance.driverKind);
+        if(needsReplay) {
+          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowedById=new Map(allowed.map(message=>[message.id,message]));
+          transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
+            .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
+          const rebuilt=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
+            rewound:rewound||revoked,fresh,externallyUpdated:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"});
+          turnText=rebuilt.turnText;
+          if(revoked)resumeCursor=undefined;
+        }
+        const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
+        const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
+        const bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
+          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowedById=new Map(allowed.map(message=>[message.id,message]));
+          transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
+            .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
+          turnText=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
+            rewound:true,fresh:false,externallyUpdated:false,replaysNatively:instance.driverKind==="grok"}).turnText;
+          resumeCursor=undefined;
+        }
+        if(!resumeCursor) {
+          // Claude's idle retained process is not reported by hasSession; its
+          // explicit per-thread reset must run even when no active turn exists.
+          if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+          else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+        }
+        memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId);
+        memoryDispatches.set(threadId,memoryReceipt);
+        if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,dispatchClaimId);
+      }
       if (!markDirectTurnDispatching(bot.id, dispatchClaimId, threadId)) {
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
       }
       watchdog.watch(threadId, bot.id);
       projectTurnLeases.markDispatched(dispatchClaimId);
+      memoryReceipt?.assertCurrent();
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
+        memoryContext:memoryReceipt?.bundle,
         threadId,
         text: turnText,
         model,
@@ -3587,8 +3682,7 @@ async function startTurn(
             : "") +
           routinePrompt +
           learnPrompt +
-          sectionContextSystemPrompt(bot.section) +
-          (privateWorkspace ? memorySystemPrompt(bot.id) + skillsSystemPrompt(bot.id) : "") +
+          (privateWorkspace ? skillsSystemPrompt(bot.id) : "") +
           skillInstructions +
           packagePlaybooks +
           (opts?.automationSource === "webhook"
@@ -3606,6 +3700,7 @@ async function startTurn(
       }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
         await instance.adapter.interruptTurn(threadId).catch(() => {});
       });
+      if(!dispatch.cancelled)memoryReceipt?.accepted();
       if (!internalCapabilities.bindProviderTurn(threadId, dispatchClaimId, dispatch.value.turnId)) {
         revokeInternalGeneration(threadId, dispatchClaimId);
       }
@@ -3662,6 +3757,7 @@ async function startTurn(
         return;
       }
       if (!ownsLatestGeneration) return;
+      recordMemorySettlement(threadId, dispatchClaimId, "setup-failed");
       const message = e instanceof Error ? e.message : String(e);
       store.appendMessage(threadId, {
         role: "bot",
@@ -4192,8 +4288,8 @@ type GroupTurnOrchestration = {
   onTurnStarted?: (turnId: string) => void;
 };
 
-function serializeRoomContext(threadId: string, userName: string): string {
-  const messages = store.messagesFor(threadId);
+function serializeRoomContext(threadId: string, userName: string, permitted?: Message[]): string {
+  const messages = permitted ?? store.messagesFor(threadId);
   const messagesById = new Map(messages.map((message) => [message.id, message]));
   return messages
     .filter((m) => m.kind === "text" && m.text)
@@ -4452,7 +4548,7 @@ async function runGroupMemberTurn(
 
   const learnTurn = skillAuthoring && latestUser?.text ? expandLearnTurnText(latestUser.text) : "";
   const learnBlock = learnTurn && learnTurn !== latestUser?.text ? `\n\n${learnTurn}` : "";
-  const text = `${serializeRoomContext(threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation ? `\n\n${cardContinuation}` : ""
+  let text = `${serializeRoomContext(threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation ? `\n\n${cardContinuation}` : ""
   }`;
 
   // same workspace + memory as a 1:1 turn — the room is a different
@@ -4489,8 +4585,7 @@ async function runGroupMemberTurn(
     // not stop needing Gmail because it is answering in a room.
     composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
     (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
-    sectionContextSystemPrompt(bot.section) +
-    (workspace ? `\n${memorySystemPrompt(bot.id).trim()}${skillsSystemPrompt(bot.id)}` : "") +
+    (workspace ? skillsSystemPrompt(bot.id) : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, bot.playbooks);
 
@@ -4537,6 +4632,22 @@ async function runGroupMemberTurn(
       return true;
     }
   }
+  let memoryReceipt: MemoryDispatchReceipt | undefined;
+  const prepareRoomMemory=async()=>{
+    if(memoryState().mode!=="active")return;
+    const access=turnMemoryAccess(bot.id,threadId,internalGeneration);
+    const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
+    text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
+    const selection=memberTurnSelection(bot.modelSelection);
+    const availableContextTokens=instance.models.options.find(option=>option.id===(selection.model??instance.models.default))?.contextWindow??20480;
+    const query=Buffer.from(latestUser?.text??"").subarray(0,4093).toString("utf8").replace(/�+$/,"");
+    const bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+    if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+    else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+    memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
+    memoryDispatches.set(threadId,memoryReceipt);
+    if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,internalGeneration);
+  };
   let providerTurnId: string | undefined;
   let abandoned = false;
   const retirementOwner = `room-abandoned:${randomUUID()}`;
@@ -4600,7 +4711,12 @@ async function runGroupMemberTurn(
     watchdog.watch(threadId, bot.id);
     onProviderHandshakeStarted?.();
     projectTurnLeases.markDispatched(internalGeneration);
-    guardTurnDispatch(instance.adapter.sendTurn({
+    void (async()=>{
+      await prepareRoomMemory();
+      if(abandoned||isCancelled?.()||internalTurnOwners.get(threadId)?.generation!==internalGeneration)throw new Error("turn stopped before memory dispatch");
+      memoryReceipt?.assertCurrent();
+      return guardTurnDispatch(instance.adapter.sendTurn({
+        memoryContext:memoryReceipt?.bundle,
         threadId,
         text,
         system: roomSystem,
@@ -4613,8 +4729,10 @@ async function runGroupMemberTurn(
         // sendTurn completed setup, revoke again and interrupt the real turn.
         await releaseBrowserCapabilityForThread(threadId);
         await instance.adapter.interruptTurn(threadId).catch(() => {});
-      })
+      });
+    })()
       .then((dispatch) => {
+        if(!dispatch.cancelled)memoryReceipt?.accepted();
         if (!internalCapabilities.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId)) {
           revokeInternalGeneration(threadId, internalGeneration);
         }
@@ -4637,6 +4755,7 @@ async function runGroupMemberTurn(
         onProviderHandshakeSettled?.();
         clearCancelledProviderHandshake(threadId, retirementOwner);
         if (abandoned) return;
+        recordMemorySettlement(threadId, `room-setup:${store.activeLeaf(threadId)}`, "setup-failed");
         const message = err instanceof Error ? err.message : "turn failed";
         store.appendMessage(threadId, {
           role: "bot",
@@ -6065,6 +6184,7 @@ async function reloadProviders() {
   // async under the hood), stranding the bot busy — and its screen poller —
   // forever. Settle anything still marked busy.
   for (const b of store.bots.filter((b) => b.busy)) {
+    recordMemorySettlement(b.threadId, `reload:${store.activeLeaf(b.threadId)}`, "interrupted");
     const vmThread = [...localVmThreadTargets.entries()].find(([, target]) =>
       localVmLeaseFor(target).current(localVmOwnerBusy)?.botId === b.id
     )?.[0];
@@ -6712,6 +6832,36 @@ const server = createServer(async (req, res) => {
     if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop") {
       return json(res, 404, { error: "no such route" });
     }
+    if((method==="GET" && path==="/api/memory/status") || (method==="POST" && path==="/api/memory/action")) {
+      try {
+        const body=method==="POST"?await readBody(req):undefined;
+        const result=await memoryOwnerRoute(path,body,ownerMemoryTicket(),{bots:store.bots,groups:store.groups},{
+          runtimeStatus:()=>memoryWorker.status(),
+          startSkillReview:async({botId,source,request})=>{
+            const target=store.bot(botId);
+            const instance=target?registry.get(target.modelSelection.instanceId):null;
+            if(!target || !instance || !skillRecorderEnabled(cfg) || instance.adapter.capabilities.agentsMcp!==true)
+              throw new Error("MEMORY_SKILL_REVIEW_UNAVAILABLE");
+            if(target.busy)throw new Error("MEMORY_SKILL_REVIEW_BOT_BUSY");
+            assertMemorySkillReview(botId,source);
+            const message=await startTurn(botId,request,{memorySkillSource:source});
+            if(!message)throw new Error("MEMORY_SKILL_REVIEW_NOT_DISPATCHED");
+            return {botId,threadId:target.threadId,messageId:message.id};
+          },
+
+          extractors:()=>registry.instances().filter(instance=>instance.enabled && ["openai-compat","grok","minimax"].includes(instance.driverKind))
+            .map(instance=>({instanceId:instance.instanceId,label:instance.displayName??instance.driverKind,eligible:typeof instance.extractMemory==="function",...(typeof instance.extractMemory!=="function"?{reason:"A tool-free capped extractor is unavailable for this engine."}:{})})),
+        });
+        if(path==="/api/memory/action" && body && typeof body==="object" && "action" in body && body.action==="configure") {
+          if(["off","paused"].includes(memoryState().mode))await memoryWorker.stop();
+          else memoryWorker.start();
+        }
+        return json(res,200,result);
+      } catch(error) {
+        const status=error && typeof error==="object" && "status" in error && typeof error.status==="number"?error.status:400;
+        return json(res,status,{error:error instanceof Error?error.message:"MEMORY_ACTION_FAILED"});
+      }
+    }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
@@ -6720,7 +6870,7 @@ const server = createServer(async (req, res) => {
       if (!internalClaim) {
         return json(res, 401, { error: "unauthorized" });
       }
-      const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/connectors/")
+      const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith("/api/internal/connectors/")
         ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       const requireActiveInternal = () => {
@@ -6731,6 +6881,11 @@ const server = createServer(async (req, res) => {
       };
       const internalOwner = internalTurnOwners.get(internalClaim.threadId);
       if (!internalOwner || internalOwner.generation !== internalClaim.generation) return json(res, 401, { error: "internal turn owner is unavailable" });
+      if(requiredKind==="memory") {
+        if(method!=="POST")return json(res,405,{error:"memory routes require POST"});
+        const access=memoryAccess(internalCapabilities,internalClaim,()=>({bots:store.bots,groups:store.groups}));
+        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker));
+      }
       const internalEventId = internalOwner.eventId;
       const admitEventAction = (kind: "create" | "handoff", admissionId: string) => {
         requireActiveInternal();
@@ -6962,7 +7117,7 @@ const server = createServer(async (req, res) => {
         if (!skillMd.trim()) {
           return json(res, 400, { error: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter, for example ---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n' });
         }
-        const source = typeof body.source === "string" ? body.source.trim() : "";
+        const source = internalOwner.memorySkillSource ?? (typeof body.source === "string" ? body.source.trim() : "");
         if (!source) return json(res, 400, { error: 'source must be a URL, folder, or "conversation"' });
         const targetName = typeof body.skill_name === "string" ? body.skill_name.trim() : "";
         if (action === "update" && !targetName) {
@@ -11607,6 +11762,7 @@ const gracefulShutdown = createGracefulShutdown({
       calendarCalls?.stop();
       webhookIngress?.server.close();
     },
+    () => memoryWorker.stop(),
     () => releaseAllBrowserCapabilities(),
     async () => {
       const retiringProjects = projectTurnLeases.generations();

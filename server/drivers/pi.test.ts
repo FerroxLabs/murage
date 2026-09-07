@@ -418,6 +418,7 @@ describe("PiDriver turns (fake CLI)", () => {
       threadId: "t-mcp",
       text: "hi",
       integrations: {
+        memory: { command: "node", args: ["memory-proxy.js"], env: { MURAGE_MEMORY_TOKEN: "fixture-memory" } },
         composio: { command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } },
         computer: { kind: "box", boxId: "b1", token: "bt", control: { url: "http://c", token: "ct" } },
       },
@@ -437,6 +438,8 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(mcpRow!.argv[extIndex + 1]).toContain("pi-mcp-extension");
 
     const servers = mcpRow!.mcpConfig!.mcpServers!;
+    expect(servers["murage-memory"]).toEqual({ command: "node", args: ["memory-proxy.js"], env: { MURAGE_MEMORY_TOKEN: "fixture-memory" } });
+    expect(JSON.stringify(mcpRow!.argv)).not.toContain("fixture-memory");
     // composio passes through verbatim as a stdio server
     expect(servers.composio).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
     // the cloud computer wraps in the computer-proxy spawn contract

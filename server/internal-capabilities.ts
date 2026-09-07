@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
-export type InternalCapabilityKind = "agents" | "connectors" | "computer";
+export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory";
 export type InternalCapability = Readonly<{
   botId: string;
   threadId: string;
@@ -53,7 +53,7 @@ export class InternalCapabilities {
     const owner = this.#generations.get(input.threadId);
     if (!owner || owner.id !== input.generation || owner.botId !== input.botId
       || !Number.isInteger(input.depth) || input.depth < 0
-      || !["agents", "connectors", "computer"].includes(input.kind)
+      || !["agents", "connectors", "computer", "memory"].includes(input.kind)
       || typeof input.skillAuthoring !== "boolean") throw new Error("invalid internal capability owner");
     const claim: InternalCapability = Object.freeze({ ...input, expiresAt: this.#now() + this.#orphanMs });
     const token = randomBytes(24).toString("hex");

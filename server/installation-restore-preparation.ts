@@ -1,3 +1,4 @@
+import { pauseRestoredMemory } from "./memory/restore.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -190,6 +191,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
           const encoded = JSON.stringify(after);
           if (encoded !== row.json) update.run(encoded, row.thread_id, row.id);
         }
+        if (pauseRestoredMemory(db)) modifications.push({component:"messages.db",action:"Memory paused; worker leases and provider disclosures invalidated; indexes require rebuild"});
         db.exec("COMMIT");
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }

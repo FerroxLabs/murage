@@ -10,62 +10,11 @@
 // Legacy JSON thread files import lazily: the first read of a thread with
 // no rows pulls the old file in, after which the DB is the source of
 // truth (the JSON file is left behind as a one-time backup).
-import { chmodSync, closeSync, existsSync, openSync, readFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { chmodSync, readFileSync, renameSync } from "node:fs";
 
-import { DATA_DIR } from "./config.ts";
+import { database as db, closeDatabase, transaction } from "./database.ts";
 import type { Message } from "./store.ts";
-
-const DB_FILE = () => join(DATA_DIR, "messages.db");
-
-let handle: DatabaseSync | null = null;
-let handlePath: string | null = null;
-
-function open(): DatabaseSync {
-  const file = DB_FILE();
-  // Transcripts can contain private conversations and tool output. Create
-  // the database with owner-only permissions and also repair an existing
-  // file that may have inherited a permissive umask.
-  closeSync(openSync(file, "a", 0o600));
-  try {
-    chmodSync(file, 0o600);
-  } catch {}
-  const db = new DatabaseSync(file);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA synchronous = NORMAL");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      thread_id TEXT NOT NULL,
-      id TEXT NOT NULL,
-      at INTEGER NOT NULL,
-      role TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      text TEXT,
-      json TEXT NOT NULL,
-      PRIMARY KEY (thread_id, id)
-    );
-    CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
-    CREATE TABLE IF NOT EXISTS thread_state (
-      thread_id TEXT PRIMARY KEY,
-      active_leaf_id TEXT
-    );
-  `);
-  return db;
-}
-
-/** The live handle — reopened when the file was removed out from under us
- * (tests wipe DATA_DIR between cases; a fresh Store must get a fresh DB,
- * not a handle onto an unlinked inode). */
-function db(): DatabaseSync {
-  if (handle && handlePath === DB_FILE() && existsSync(DB_FILE())) return handle;
-  try {
-    handle?.close();
-  } catch {}
-  handle = open();
-  handlePath = DB_FILE();
-  return handle;
-}
+import { captureMessage, captureBranchChange, captureThreadDeletion } from "./memory/capture.ts";
 
 const rowToMessage = (row: { json: string }): Message => JSON.parse(row.json) as Message;
 
@@ -110,7 +59,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
     for (const message of messages) {
       insert.run(threadId, message.id, message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message));
     }
-    setActiveLeaf(threadId, activeLeafId);
+    writeActiveLeaf(threadId, activeLeafId);
     db().exec("COMMIT");
   } catch (error) {
     db().exec("ROLLBACK");
@@ -127,30 +76,33 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   return { messages, activeLeafId };
 }
 
-export function insertMessage(threadId: string, message: Message): void {
+function writeMessage(threadId: string, message: Message): void {
   db()
     .prepare("INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(threadId, message.id, message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message));
+  captureMessage(db(), threadId, message);
+}
+
+export function insertMessage(threadId: string, message: Message): void {
+  transaction(() => writeMessage(threadId, message));
 }
 
 /** Persist a new message and the branch head as one crash-safe mutation. */
 export function appendMessage(threadId: string, message: Message): void {
-  const database = db();
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    insertMessage(threadId, message);
-    setActiveLeaf(threadId, message.id);
-    database.exec("COMMIT");
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
+  transaction(() => {
+    const previous = db().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?").get(threadId)?.active_leaf_id;
+    writeMessage(threadId, message);
+    writeActiveLeaf(threadId, message.id);
+    if ((message.parentId ?? null) !== (previous ?? null)) captureBranchChange(db(), threadId, message.id);
+  });
 }
 
 export function updateMessage(threadId: string, message: Message): void {
-  db()
-    .prepare("UPDATE messages SET at = ?, role = ?, kind = ?, text = ?, json = ? WHERE thread_id = ? AND id = ?")
-    .run(message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message), threadId, message.id);
+  transaction(database => {
+    database.prepare("UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?")
+      .run(message.at,message.role,message.kind,message.text??null,JSON.stringify(message),threadId,message.id);
+    captureMessage(database,threadId,message);
+  });
 }
 
 /** Goal cards are new SQLite-backed messages, so crash recovery can locate
@@ -166,7 +118,7 @@ export function workingGoalRunMessages(): Array<{ threadId: string; message: Mes
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
 }
 
-export function setActiveLeaf(threadId: string, leafId: string | null): void {
+function writeActiveLeaf(threadId: string, leafId: string | null): void {
   db()
     .prepare(
       "INSERT INTO thread_state (thread_id, active_leaf_id) VALUES (?, ?) " +
@@ -175,9 +127,16 @@ export function setActiveLeaf(threadId: string, leafId: string | null): void {
     .run(threadId, leafId);
 }
 
+export function setActiveLeaf(threadId: string, leafId: string | null): void {
+  transaction(database => { writeActiveLeaf(threadId,leafId); captureBranchChange(database,threadId,leafId); });
+}
+
 export function deleteThread(threadId: string): void {
-  db().prepare("DELETE FROM messages WHERE thread_id = ?").run(threadId);
-  db().prepare("DELETE FROM thread_state WHERE thread_id = ?").run(threadId);
+  transaction(database => {
+    captureThreadDeletion(database,threadId);
+    database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
+    database.prepare("DELETE FROM thread_state WHERE thread_id=?").run(threadId);
+  });
 }
 
 export interface SearchHit {
@@ -276,9 +235,5 @@ export function searchMessages(
 
 /** Test/shutdown hook — closes the handle so a wiped DATA_DIR starts clean. */
 export function closeMessageDb(): void {
-  try {
-    handle?.close();
-  } catch {}
-  handle = null;
-  handlePath = null;
+  closeDatabase();
 }

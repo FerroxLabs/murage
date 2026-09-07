@@ -20,6 +20,7 @@ import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
+import { MemorySettings } from "./MemorySettings";
 
 function Field({
   label,
@@ -332,6 +333,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (
     p: Partial<
@@ -702,6 +704,10 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           {/* keyed so switching bots never shows one bot's notes under another's name */}
           <MemoryCard key={bot.id} bot={bot} />
+          <details className="rounded-xl bg-card p-4" onToggle={event => setMemoryOpen(event.currentTarget.open)}>
+            <summary className="cursor-pointer text-[15px] font-medium text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">Managed memory</summary>
+            {memoryOpen && <div className="mt-3"><MemorySettings key={`memory-${bot.id}`} botId={bot.id} /></div>}
+          </details>
 
           {/* "Add a skill" is the other end of assignment: it opens the
               library with THIS agent already chosen, so the person never has

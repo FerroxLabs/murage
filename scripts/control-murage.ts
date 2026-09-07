@@ -260,6 +260,7 @@ export interface VerificationServer {
 export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
+  options: { instrumentationSource?: string } = {},
 ): Promise<VerificationServer> {
   const port = await freePortBlock([0, 1]);
   if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
@@ -308,7 +309,11 @@ export async function launchVerificationServer(
     FAKE_CLAUDE_DUMP: fixtureDumpPath,
     PATH: "",
   });
-  const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
+  // Optional fixture-owned observation only. Existing callers retain exactly
+  // their previous launch; no preload path or source enters a live app config.
+  const instrumentationPath = join(dataDir, ".verification-instrumentation.mjs");
+  if (options.instrumentationSource !== undefined) writeFileSync(instrumentationPath, options.instrumentationSource, { mode: 0o600 });
+  const child = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", instrumentationPath]), join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: childEnv,
     stdio: ["ignore", log, log],

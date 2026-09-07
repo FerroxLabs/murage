@@ -1,3 +1,4 @@
+import { mergeDestinationMemoryDeletions } from "./memory/restore.ts";
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -103,7 +104,9 @@ export async function restoreInstallation(dataDir: string, archive: string, expe
     const tx = transactionPaths(paths.root, id);
     candidate = tx.candidate;
     const markerPath = join(prepared.stateDirectory, RESTORE_REVIEW_FILE);
+    const memoryRestore = mergeDestinationMemoryDeletions(paths.root, prepared.stateDirectory);
     const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+    marker.modifications.push({component:"messages.db",action:`Memory restore: ${memoryRestore.history}; ${memoryRestore.merged} destination tombstones retained`});
     writeFileAtomic(markerPath, JSON.stringify({ ...marker, transactionId: id }) + "\n", { mode: 0o600 });
     move(prepared.stateDirectory, tx.candidate);
     const originalIdentity = entry(paths.root) ? directoryIdentity(paths.root) : null;

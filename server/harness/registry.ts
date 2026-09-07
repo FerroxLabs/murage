@@ -6,6 +6,7 @@
 // touching its siblings.
 import { findCliCandidates } from "../env-path.ts";
 import { filterFluxRows } from "../flux-surface.ts";
+import { decorateMemoryInstance } from "./memory-adapter.ts";
 import type {
   AnyProviderDriver,
   InstanceConfigMap,
@@ -103,7 +104,7 @@ export class ProviderRegistry {
           enabled: entry.enabled ?? true,
           config,
         });
-        this.byId.set(instanceId, { instanceId, live });
+        this.byId.set(instanceId, { instanceId, live: decorateMemoryInstance(live) });
       } catch (e) {
         this.byId.set(instanceId, {
           instanceId,
@@ -198,6 +199,8 @@ export class ProviderRegistry {
             queueing: inst.adapter.capabilities.queueing === true,
             localComputerMcp: inst.adapter.capabilities.localComputerMcp === true,
             approvalReview: inst.reviewPermission !== undefined,
+            memoryDelivery: inst.adapter.capabilities.memoryDelivery ?? "unavailable",
+            memoryMcp: inst.adapter.capabilities.memoryMcp === true,
           },
           access: driver?.metadata.access ?? "subscription",
           install: driver?.install,
