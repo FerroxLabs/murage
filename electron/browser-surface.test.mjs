@@ -284,6 +284,7 @@ function harness(options = {}) {
     notify: (state) => states.push(state),
     platform: "darwin",
     settleMs: 0,
+    firstContentWaitMs: 0,
     // real time (waits have real deadlines) but strictly monotonic (LRU order)
     now: () => Date.now() + (clock += 1),
     ...options,

@@ -1,5 +1,19 @@
 # Browser navigation readiness diagnostic — 2026-09-07
 
+## Fix update (explicitly authorized after diagnostic)
+
+Implemented bounded first-content observation only for initially empty navigation:
+up to2500ms extra, explicit readinessunknown if still empty, no blanketnetworkidle.
+Protected snapshots keep their own explanation. Human takeover and turn cancellation
+are checked before/after observations. MCP schema preservesreadiness and formats
+unknown as observation uncertainty instead of `(empty page)`.
+
+Focused native/host/surface/proxy check79634:99/99PASS firstfixround.
+Nativequick442ms, blank2863ms withunknownreadiness, delayed2028ms withbothlinks
+already in navigateresult. SameURLlater snapshotretainedlinks. Takeover/cancel and
+private-network denial controls passed. Historical diagnosis below is preserved
+as pre-fix evidence; it no longer describes this sourcecandidate.
+
 ## Frozen contract
 
 Reproduce or reject Sable's new early-empty navigation observation using the real Electron browser surface and authenticated host, an isolated local-controlled page, and quick/blank controls. Preserve private-network rejection and user data. Scope is new fixture/test/evidence files only; no production fix, external website dependency, click investigation, or commit. Stop after at most two diagnostic attempts and report a bounded recommendation.

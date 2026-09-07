@@ -1,5 +1,5 @@
 "use strict";
-// Diagnostic contract: expose the current early-empty navigation response,
+// Regression contract: bounded first-content observation and honest unknown,
 // with real Chromium and host calls but no external website or user data.
 const assert = require("node:assert/strict");
 const { mkdtempSync, rmSync } = require("node:fs");
@@ -67,11 +67,20 @@ app.whenReady().then(async () => {
       assert.equal(state.readyState, "complete");
       assert.ok(events.some(event => event.name === "did-finish-load"));
       assert.ok(events.some(event => event.name === "did-stop-loading"));
-      if (mode === "quick") assert.match(first.yaml, /link "One"/);
-      else assert.equal(first.yaml, "");
+      if (mode === "quick" || mode === "delayed") {
+        assert.match(first.yaml, /link "One"/);
+        assert.match(first.yaml, /link "Two"/);
+        assert.equal(first.readiness, "content-observed");
+      } else {
+        assert.equal(first.yaml, "");
+        assert.equal(first.readiness, "unknown");
+        assert.ok(first.notes.some(note => note.includes("may be blank or still rendering")));
+        assert.ok(returnedMs < 5000, `blank observation exceeded bound: ${returnedMs}`);
+      }
+      if (mode === "quick") assert.ok(returnedMs < 1500, `quick content was delayed: ${returnedMs}`);
       const record = { mode, returnedMs, lifecycle: [...events], loading, state, firstYaml: first.yaml };
       if (mode === "delayed") {
-        assert.equal(state.links, 0);
+        assert.equal(state.links, 2);
         // Read-only observation waits for the fixture's own timer; no reload,
         // DOM mutation, click, or production wait behavior is injected.
         await view.webContents.executeJavaScript(`new Promise((resolve,reject)=>{const deadline=Date.now()+5000;const poll=()=>{if(window.renderedAt)resolve();else if(Date.now()>deadline)reject(new Error('render timeout'));else setTimeout(poll,25)};poll()})`);
@@ -84,9 +93,16 @@ app.whenReady().then(async () => {
       }
       process.stdout.write(JSON.stringify(record) + "\n");
     }
+    const takeover = manager.navigate("readiness", "https://readiness.example.test/blank", "");
+    const takeoverTimer = setTimeout(() => manager.setHumanControl("readiness", true, ""), 500);
+    try { await assert.rejects(takeover, /held by the user|control changed/i); } finally { clearTimeout(takeoverTimer); }
+    manager.setHumanControl("readiness", false, "");
+    const cancelled = manager.navigate("readiness", "https://readiness.example.test/blank", "");
+    const cancelTimer = setTimeout(() => manager.cancelAgentActions("readiness"), 500);
+    try { await assert.rejects(cancelled, /cancelled|turn ended/i); } finally { clearTimeout(cancelTimer); }
     await assert.rejects(manager.navigate("readiness", "http://127.0.0.1/", ""), /Local and private-network/);
-    assert.deepEqual(requests.filter(path => path !== "/favicon.ico"), ["/quick", "/blank", "/delayed"]);
-    process.stdout.write("actual-host-navigation-early-empty-reproduced; private-network-block-preserved\n");
+    assert.deepEqual(requests.filter(path => path !== "/favicon.ico"), ["/quick", "/blank", "/delayed", "/blank", "/blank"]);
+    process.stdout.write("actual-host-navigation-readiness-passed; private-network-block-preserved; takeover-cancel-preserved\n");
   } finally {
     await host.stop(); manager.closeAll(); owner.destroy();
   }

@@ -1,5 +1,24 @@
 # Murage takeover state
 
+BrowserreadinessFIX accepted firstfixround79634:99PASS includesnative delayed2s
+firstcontent, quick442ms, blank2863ms explicitunknown, takeover/cancel/privacy
+andactualMCPunknownformat. Native/browserproduction sourceupdated, notmigration.
+Managedbrokerpaginationdeployedf2125411-2113-451b-b14d-f38dd4bd1eed withunchanged
+livebaselineconfig/quotas. ROOTauthenticatedlivecatalogproof500+500items HTTP200,
+no mode/keychanges. Brokerexportevidence preserved, tasktempcleaned byworker.
+Builds71288/6725 actualtoolresults thenprivateupdatedpackage. No fullaudit/public
+apprelease. PreviouslyopenWindows/notarization/Linuxupdatergates unchanged.
+
+Userauthorized readinessFIX/privatepackage/managedbrokerdeploy. Frozenreadiness
+contract: onlyinitialempty nav gets <=2.5s retry, quickcontentfast, blankdeadline
+explicitunknown, protectedcontentwithheld, takeover/cancel/networkgates retained.
+Native diagnostic convertedtofixregression; no productionnetworkpolicyrelaxed.
+Brokerworker verifiedactualCloudflarelivebaseline anddeployedpaginationONLY
+versionf2125411-2113-451b-b14d-f38dd4bd1eed, rollback260270be-d2df-4b62-b732-
+0868c81bc745; health200/authguard401/settingsunchanged. Noquota/schema/migration
+activation. Authenticatedlivecatalogtraversal notyetproved. Rootprivate.6 client
+reportedown-keymode; itsmode/keysnotchanged. App updateafterfocusedreadinessproof.
+
 Codexcontinuation accepted: originalPIDdumpfixturecorrection63609 PASS; explicit
 timeoutfailure propagation added to exportedshutdownmethods, livefakeprocess5.5s
 case36055 PASS verifiesprocess/listeners retained untilrealexit. Types24645 PASS,
