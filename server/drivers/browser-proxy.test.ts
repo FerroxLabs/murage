@@ -76,6 +76,7 @@ beforeAll(async () => {
         res.writeHead(400);
         return res.end(JSON.stringify({ error: "that browser ref is stale or unknown — take a new browser_snapshot" }));
       }
+      if (path.endsWith("/navigate") && body.url === "https://empty.example/") return res.end(JSON.stringify({ ...PAGE, elements: [], yaml: "", readiness: "unknown" }));
       if (path.endsWith("/state")) return res.end(JSON.stringify({ url: PAGE.url, title: PAGE.title, loading: true }));
       if (path.endsWith("/read")) return res.end(JSON.stringify({ url: PAGE.url, title: PAGE.title, text: "Cart\n\n2 items · $80", truncated: false }));
       if (path.endsWith("/wait")) return res.end(JSON.stringify({ ...PAGE, notes: ["More of the page is off-screen: 900px below (browser_scroll to see it)."] }));
@@ -165,6 +166,12 @@ describe("browser MCP proxy", () => {
     expect(hits).toEqual([{ path: "/v1/bots/bot-1/navigate", auth: `Bearer ${TOKEN}`, body: { url: "shop.example/cart", profile: "work" } }]);
     expect(text(res)).toBe('Browser — Cart: https://shop.example/cart\nb1 link "Home"\nb2 textbox "Search" (value="shoes")');
     expect(res.result.isError).toBeFalsy();
+  });
+
+  it("preserves unknown readiness across the real MCP proxy boundary", async () => {
+    const result = await callTool("browser_navigate", { url: "https://empty.example/" });
+    expect(text(result)).toContain("Readiness unknown: no accessible content observed yet.");
+    expect(text(result)).not.toContain("(empty page)");
   });
 
   it("acts on refs and relays the host's own sentence when one is stale", async () => {
@@ -292,6 +299,11 @@ describe("classifyWall", () => {
 });
 
 describe("formatObserved", () => {
+  it("does not turn uncertain readiness into a claim that the page is empty", () => {
+    const rendered = formatObserved({ url: "https://empty.example/", title: "Empty", elements: [], yaml: "", readiness: "unknown" });
+    expect(rendered).toContain("Readiness unknown");
+    expect(rendered).not.toContain("(empty page)");
+  });
   it("prefers the Playwright-style snapshot when the surface has one", () => {
     expect(
       formatObserved({ url: "https://a.example/p?token=1", title: "T", elements: [], yaml: '- link "Docs" [ref=e1]', notes: ["900px below"] }),

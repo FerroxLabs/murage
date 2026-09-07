@@ -444,6 +444,7 @@ function domSnapshotContainsProtectedValue(snapshot) {
  * @param {(botId: string) => string} [options.partitionFor] test seam for the per-bot partition
  * @param {number} [options.settleMs]
  * @param {number} [options.loadWaitMs]
+ * @param {number} [options.firstContentWaitMs] bounded test seam; no user setting
  * @param {number} [options.maxViews]
  * @param {() => number} [options.now]
  */
@@ -458,6 +459,7 @@ function createBrowserSurfaceManager({
   profilePartitionFor: ownProfilePartitionFor = browserProfilePartition,
   settleMs = SETTLE_MS,
   loadWaitMs = LOAD_WAIT_MS,
+  firstContentWaitMs = 2500,
   maxViews = MAX_VIEWS,
   now = () => Date.now(),
   injectedSource = loadInjectedSource(),
@@ -1713,6 +1715,32 @@ function createBrowserSurfaceManager({
     return snapshot(entry);
   };
 
+  // Load completion does not imply client-rendered content is present. Only
+  // initially empty navigation observations get this bounded extra wait.
+  const observeNavigation = async (entry, lease, source) => {
+    await settle(entry);
+    assertAgentLease(entry, lease, source);
+    let page = await snapshot(entry);
+    assertAgentLease(entry, lease, source);
+    const notes = new Set(page.notes);
+    const empty = (value) => value.url && (value.yaml !== null && value.yaml !== undefined
+      ? !value.yaml.trim() : value.elements.length === 0);
+    const deadline = Date.now() + Math.min(2500, Math.max(0, firstContentWaitMs));
+    while (empty(page) && Date.now() < deadline) {
+      await sleep(Math.min(150, deadline - Date.now()));
+      assertAgentLease(entry, lease, source);
+      page = await snapshot(entry);
+      assertAgentLease(entry, lease, source);
+      for (const note of page.notes) notes.add(note);
+    }
+    // Protected observations retain their own explanation, never an empty-page
+    // diagnosis or a delayed retry that could disclose private human input.
+    if (!page.url) return page;
+    if (!empty(page)) return { ...page, notes: [...notes], readiness: "content-observed" };
+    const note = "No accessible content was observed within the navigation wait. The page may be blank or still rendering. Use browser_snapshot or browser_wait_for with expected text; do not assume the page has no content.";
+    return { ...page, readiness: "unknown", notes: [...notes, note], text: note };
+  };
+
   const staleRefError = () => new Error("that browser ref is stale because the page changed — take a new browser_snapshot");
 
   /** Re-check the exact reviewed target before every ref action. Rich refs
@@ -1948,7 +1976,7 @@ function createBrowserSurfaceManager({
             throw new Error(`could not open ${url ?? String(rawUrl ?? "")}: ${error?.message ?? error}`);
           }
         }
-        return observe(entry);
+        return observeNavigation(entry, lease, source);
       });
     },
 
