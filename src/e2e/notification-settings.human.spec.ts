@@ -6,6 +6,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NotificationPreferences } from "../../shared/notification-preferences";
+// The default quiet-hours zone comes from the browser, not the CI host clock.
+test.use({ timezoneId: "Asia/Bangkok" });
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));

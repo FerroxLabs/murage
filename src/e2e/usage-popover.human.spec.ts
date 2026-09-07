@@ -131,7 +131,7 @@ test.describe("the token chip's popover", () => {
     expect(lines).toEqual([
       "4 turns",
       "313k in (300k cached) · 1.3k out",
-      "14.3k tok new — the figure on the chip",
+      "14.3k tok new: the figure on the chip",
       "cached = context re-read each turn, not new text",
       expect.stringContaining("$0.42"),
     ]);
