@@ -12,6 +12,9 @@ import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
+import { persistMemoryRoster, reconcileMemoryRoster } from "./memory/policy.ts";
+import { transaction } from "./database.ts";
+import { recordMemorySettlement, type MemoryTurnOutcome } from "./memory/settlement.ts";
 import { workspaceDir } from "./workspace.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
@@ -925,10 +928,11 @@ export class Store {
       const legacyFile = messagesFile(threadId);
       if (existsSync(legacyFile)) mdb.readThread(threadId, legacyFile);
     }
+    reconcileMemoryRoster(this);
   }
 
   private saveBots(bots: BotRecord[] = this.bots) {
-    writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2));
+    persistMemoryRoster({ bots, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2)));
   }
 
   /** Prepare an additive import without changing memory or emitting events.
@@ -957,6 +961,7 @@ export class Store {
       ]),
       publish: () => {
         this.bots = nextBots; this.groups = nextGroups;
+        reconcileMemoryRoster(this);
         for (const bot of bots) this.emit({ type: "bot", botId: bot.id });
         for (const group of groups) this.emit({ type: "group", groupId: group.id });
       },
@@ -964,7 +969,7 @@ export class Store {
   }
 
   private saveGroups() {
-    writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, ...g }) => g), null, 2));
+    persistMemoryRoster(this, () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, ...g }) => g), null, 2)));
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -1308,24 +1313,27 @@ export class Store {
   /** Mark the last assistant text on the active branch as this turn's final
    * visible answer. If a provider ends after commentary without emitting a
    * separate answer, that commentary remains visible as the safe fallback. */
-  markTerminalAssistantMessage(threadId: string, turnId: string): Message | null {
-    const path = this.activePath(threadId);
-    for (let i = path.length - 1; i >= 0; i -= 1) {
-      const message = path[i];
-      if (message.role === "bot" && message.kind === "text" && message.turnId === turnId) {
-        if (message.turnTerminal) return message;
-        return this.patchMessage(threadId, message.id, { turnTerminal: true });
-      }
+  markTerminalAssistantMessage(threadId: string, turnId: string, outcome: MemoryTurnOutcome = "completed"): Message | null {
+    const t = this.thread(threadId);
+    const message = [...this.activePath(threadId)].reverse().find(m => m.role === "bot" && m.kind === "text" && m.turnId === turnId);
+    const next = message ? { ...message, turnTerminal: true } : null;
+    transaction(() => {
+      if (next) mdb.updateMessage(threadId,next);
+      recordMemorySettlement(threadId,turnId,outcome);
+    });
+    if (next) {
+      t.messages[t.messages.findIndex(m => m.id === next.id)] = next;
+      this.emit({type:"message.patch",threadId,message:next});
     }
-    return null;
+    return next;
   }
 
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const t = this.thread(threadId);
     const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
+    mdb.appendMessage(threadId, full);
     t.messages.push(full);
     t.activeLeafId = full.id;
-    mdb.appendMessage(threadId, full);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames(t)) {
         mdb.updateMessage(threadId, pruned);
@@ -1354,8 +1362,8 @@ export class Store {
     if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
     const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
     const children = t.messages.filter((m) => m.parentId === anchorId);
-    t.messages.push(full);
     mdb.appendMessage(threadId, full);
+    t.messages.push(full);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames(t)) {
         mdb.updateMessage(threadId, pruned);
@@ -1428,9 +1436,9 @@ export class Store {
       parentId: source.parentId ?? null,
       replyToId: source.replyToId,
     };
+    mdb.appendMessage(threadId, full);
     t.messages.push(full);
     t.activeLeafId = full.id;
-    mdb.appendMessage(threadId, full);
     this.emit({ type: "message", threadId, message: full });
     return full;
   }
@@ -1446,8 +1454,8 @@ export class Store {
       if (!children.length) break;
       cur = children.reduce((a, b) => (b.at >= a.at ? b : a)).id;
     }
-    t.activeLeafId = cur;
     mdb.setActiveLeaf(threadId, cur);
+    t.activeLeafId = cur;
     this.emit({ type: "thread", threadId, activeLeafId: cur });
     return cur;
   }

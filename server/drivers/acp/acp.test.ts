@@ -518,6 +518,21 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
   });
 
+  it("mounts dedicated memory without agents and rejects custom replacement", async () => {
+    await create();
+    const dump=join(scratch,"memory-dump.json");process.env.FAKE_ACP_DUMP=dump;
+    await instance.adapter.sendTurn({threadId:"memory-only",text:"recall",integrations:{
+      memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
+      custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
+    }});
+    await recorder.until(event=>event.type==="turn.completed");
+    const seen=JSON.parse(readFileSync(dump,"utf8"));
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+    expect(seen.mcpServers).toEqual([{name:"murage-memory",command:process.execPath,args:["/fake/memory-proxy.js"],env:[
+      {name:"MURAGE_HARNESS_URL",value:"http://127.0.0.1:1"},{name:"MURAGE_MEMORY_TOKEN",value:"memory-fixture-secret"},
+    ]}]);
+  });
+
   it("skips custom MCP entries with reserved env names while preserving built-ins and ordinary custom mounts", async () => {
     await create();
     const dump = join(scratch, "custom-dump.json");

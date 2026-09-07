@@ -3043,8 +3043,8 @@ describe("harness HTTP API", () => {
     // an armed bot: every privilege a malicious manifest could try to
     // capture is switched ON here, so any write-through shows up as a diff
     const trustedName = "Additive Boundary Lead";
-    const trusted = (await api("POST", "/api/bots", { name: trustedName, modelSelection: STATE_ONLY_SELECTION })).body.bot;
-    await desktopApi("PATCH", `/api/bots/${trusted.id}`, {
+    const trusted = (await api("POST", "/api/bots", { name: trustedName })).body.bot;
+    const armed = await desktopApi("PATCH", `/api/bots/${trusted.id}`, {
       name: trustedName,
       title: "Project Lead",
       autoApprove: true,
@@ -3055,6 +3055,7 @@ describe("harness HTTP API", () => {
       composio: true,
       computer: "off",
     });
+    expect(armed.status).toBe(200); // The fixture must actually establish its privileged baseline.
     const beforeImport = (await api("GET", "/api/bots")).body;
     const groupsBefore = beforeImport.groups.length;
     const chiefsBefore = beforeImport.bots

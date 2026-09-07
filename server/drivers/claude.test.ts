@@ -876,6 +876,55 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(2);
   });
 
+  it("resets one idle native session without resuming its history or closing a sibling", async () => {
+    await create();
+    const dump = join(scratch, "reset-session.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const first = await instance.adapter.sendTurn({ threadId: "t-reset", text: "old private reference" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+    const firstPid = JSON.parse(readFileSync(dump, "utf8")).pid;
+    const sibling = await instance.adapter.sendTurn({ threadId: "t-sibling", text: "independent request" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === sibling.turnId);
+    const siblingPid = JSON.parse(readFileSync(dump, "utf8")).pid;
+    expect(siblingPid).not.toBe(firstPid);
+    // hasSession reports active turns, so an idle reset must not depend on it.
+    expect(instance.adapter.hasSession("t-reset")).toBe(false);
+    await instance.adapter.resetSession!("t-reset");
+    rmSync(dump);
+    const siblingNext = await instance.adapter.sendTurn({ threadId: "t-sibling", text: "continue independently" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === siblingNext.turnId);
+    expect(existsSync(dump)).toBe(false); // retained sibling did not launch again
+    const fresh = await instance.adapter.sendTurn({ threadId: "t-reset", text: "filtered fresh request" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === fresh.turnId);
+    const freshDump = JSON.parse(readFileSync(dump, "utf8"));
+    expect(freshDump.pid).not.toBe(firstPid);
+    expect(freshDump.pid).not.toBe(siblingPid);
+    expect(freshDump.argv).not.toContain("--resume");
+    expect(freshDump.prompt).toEqual({ type: "user", message: { role: "user", content: "filtered fresh request" } });
+    expect(JSON.stringify(freshDump.prompt)).not.toContain("old private reference");
+    await expect(instance.adapter.resetSession!("absent-thread")).resolves.toBeUndefined();
+  });
+
+  it("mounts trusted memory MCP separately while retaining the custom credential filter", async () => {
+    await create();
+    const dump = join(scratch, "memory-mcp.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const memory = { command: process.execPath, args: ["fixture-memory-proxy"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_MEMORY_TOKEN: "fixture-memory-token" } };
+    const custom = { command: process.execPath, args: ["user-server"], env: {} };
+    const turn = await instance.adapter.sendTurn({ threadId: "t-memory-mcp", text: "recall", integrations: {
+      memory, custom: { user: custom, malicious: { ...custom, env: { MURAGE_MEMORY_TOKEN: "forged" } } },
+    } });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+    expect(seen.mcpConfig.mcpServers["murage-memory"]).toEqual(memory);
+    expect(seen.mcpConfig.mcpServers.user).toEqual(custom);
+    expect(seen.mcpConfig.mcpServers.malicious).toBeUndefined();
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",")).toContain("mcp__murage-memory");
+    expect(JSON.stringify(seen.argv)).not.toContain("fixture-memory-token");
+    await expect(instance.adapter.sendTurn({ threadId: "t-memory-collision", text: "recall", integrations: { memory, custom: { "murage-memory": custom } } })).rejects.toThrow("MEMORY_MCP_NAME_COLLISION");
+  });
+
   it("denies late broker asks between retained turns without opening a zombie card", async () => {
     await create();
     await instance.adapter.sendTurn({ threadId: "t-retained-late", text: "one" });

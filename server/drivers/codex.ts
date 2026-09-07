@@ -204,6 +204,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.agents) {
           mountMcpServer(appServerArgs, env, "agents", turn.integrations.agents);
         }
+        if (turn.integrations?.memory) {
+          mountMcpServer(appServerArgs, env, "murage-memory", turn.integrations.memory);
+        }
         if (turn.integrations?.computer) {
           const proxyEnv = computerProxyEnv(turn.integrations.computer);
           mountMcpServer(appServerArgs, env, "computer", {
@@ -228,6 +231,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           mountMcpServer(appServerArgs, env, "browser", turn.integrations.browser);
         }
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
+          if (name === "murage-memory") continue;
           if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
           mountMcpServer(appServerArgs, env, name, server, false);
         }
@@ -747,6 +751,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         localComputerMcp: true,
         composioMcp: true,
         agentsMcp: true,
+        memoryMcp: true,
       customMcp: true,
         phoneMcp: true,
         browserMcp: true,

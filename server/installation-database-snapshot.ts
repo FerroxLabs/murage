@@ -3,6 +3,7 @@ import { closeSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readS
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
+import { validateMemorySchema } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
 
 export class InstallationSnapshotError extends Error {
@@ -35,8 +36,12 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
   const fail = (code: string): never => { throw new InstallationSnapshotError(code); };
   // A private archive is still untrusted input. Reject executable schema and
   // unknown tables instead of allowing triggers to run during preparation.
+  let memoryObjects = new Set<string>();
+  try { memoryObjects = validateMemorySchema(db); }
+  catch { fail("DATABASE_SCHEMA_UNSUPPORTED"); }
   const schema = db.prepare("SELECT type,name,tbl_name FROM sqlite_schema").all();
   for (const item of schema) {
+    if (memoryObjects.has(String(item.name))) continue;
     if (item.type === "table" && ["messages", "thread_state"].includes(String(item.name))) continue;
     if (item.type === "index" && ["messages", "thread_state"].includes(String(item.tbl_name)) && (String(item.name).startsWith("sqlite_autoindex_") || item.name === "messages_thread")) continue;
     fail("DATABASE_SCHEMA_UNSUPPORTED");

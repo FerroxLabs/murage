@@ -305,6 +305,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (agents) {
           servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
         }
+        const memory = turn.integrations?.memory;
+        if (memory) {
+          servers.push({ name: "murage-memory", command: memory.command, args: memory.args, env: acpEnv(memory.env) });
+        }
         const composio = turn.integrations?.composio;
         if (composio) {
           servers.push({
@@ -342,6 +346,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // collision keeps the built-in (reserved names are filtered at the
         // config boundary; this is defense in depth).
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
+          if (name === "murage-memory") continue;
           if (servers.some((existing) => existing.name === name)) continue;
           if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
           servers.push({ name, command: server.command, args: server.args, env: acpEnv(server.env) });
@@ -832,6 +837,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           capabilities: {
             sessionModelSwitch: "unsupported",
             agentsMcp: true,
+            memoryMcp: true,
         customMcp: true,
             computerMcp: true,
             composioMcp: true,
