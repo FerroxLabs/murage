@@ -1,64 +1,53 @@
-# fuigo release provenance
+# Fuigo release provenance
 
-Murage stages Ferrox Labs' own `fuigo` 1.0.1 engine as a separate executable so
-a desktop install has a working engine without Node, npm, or `npx` on the
-machine. Fuigo is published on the public npm registry:
+Murage pins Fuigo **1.0.7** as a separate native executable. A desktop install
+therefore needs no Node, npm, or global Fuigo installation to run this engine.
+The release source is the [official npm manifest](https://registry.npmjs.org/fuigo/1.0.7),
+which declares six exact-version `@fuigo/<platform>-<arch>` optional dependencies.
 
-<https://www.npmjs.com/package/fuigo/v/1.0.1>
+## Verified published assets
 
-`fuigo` is Ferrox Labs' work, derived from the Apache-2.0 licensed
-[`xai-org/grok-build`](https://github.com/xai-org/grok-build) and paired with a
-FluxRouter provider. It is distributed under the Apache License 2.0 — the same
-license Murage itself uses — and the distribution carries a separately named
-copy of the complete Apache 2.0 text at
-`resources/licenses/fuigo-LICENSE.txt`, plus the upstream third-party notices
-at `resources/licenses/fuigo-THIRD_PARTY_NOTICES.md` (a verbatim copy of
-`THIRD_PARTY_NOTICES.md` in this directory, which is byte-identical in all four
-platform packages).
+For this bump, every wrapper/platform manifest signature was checked against the
+npm registry's published signing key, and every downloaded tarball matched its
+manifest's SHA-512 integrity and SHA-1 shasum. The SHA-256 pins below were computed
+from those tarballs and their Brotli-decompressed native executables. No upstream
+postinstall script was executed. Release/download evidence is recorded in
+`.planning/memory-evidence/fuigo-1.0.7-release.json`.
 
-## Why the npm platform packages and not `npm install`
-
-The `fuigo` npm entry point is a Node launcher: `bin/fuigo` is a
-`#!/usr/bin/env node` shim, and the real executable arrives brotli-compressed
-as `bin/fuigo[.exe].br` inside the matching `fuigo-<platform>-<arch>` optional
-dependency. `postinstall` decompresses it into `~/.fuigo/bin` on the installing
-machine. Copying anything out of `node_modules` would therefore ship either the
-compressed artifact or a shim that needs Node — neither of which runs from an
-installer. `scripts/prepare-fuigo.mjs` fetches the platform package directly,
-decompresses `bin/fuigo[.exe].br`, and stages the real native executable.
-
-## Pinned assets
-
-Every asset is pinned to 1.0.1 — never a floating range for a shipped binary —
-and `scripts/prepare-fuigo.mjs` verifies these SHA-256 digests before an
-executable can be staged. `scripts/after-pack.mjs` verifies the executable
-digest again, inside the packaged app, before either artifact is assembled.
-
-| Murage target | npm package tarball | Tarball SHA-256 | Decompressed executable SHA-256 |
+| Target | npm package | Tarball SHA-256 | Decompressed executable SHA-256 |
 | --- | --- | --- | --- |
-| macOS arm64 | `fuigo-darwin-arm64-1.0.1.tgz` | `c4a5d836be258734dc0da0566b26e9841cbb59fd59ff6ec6442d7efc2e93f914` | `d861b35824ead4f96ec60e26ae3389d8245cce1081402a6a3c58e93b6449c140` |
-| macOS x64 | `fuigo-darwin-x64-1.0.1.tgz` | `db7f26a39fbb63913fbd8cff35fa989815b948ba2060c9fe9f08a7f288f3a2ea` | `60a398bfa4482171acf36ffe7d42ea61f9e8b2e96acbcb9f1531b5159b2f32bb` |
-| Linux x64 | `fuigo-linux-x64-1.0.1.tgz` | `a3cbfb62b735ead7af46d3e45f2ee719efe064f1b0235c7b7aa2e56b1112e4c3` | `f58e78d1fca5f0ef0400672be6c1238dcf7222862ddf3f2fae6dbe270adeff0a` |
-| Windows x64 | `fuigo-win32-x64-1.0.1.tgz` | `6be9462ea8c37ad81353051a42ba71d4d50fe3e2dc88172cfdaf107d6ba95a8b` | `1f4cdc47f13ba88f02bceba262824cccf20d4978b0eae2bcfb2b9d1e96cfbc38` |
+| macOS arm64 | `@fuigo/darwin-arm64@1.0.7` | `15a2b8f4cfae2cde5139edb9851a0fa0c2a0a2294efb6750ce2ba4d4d24f2645` | `41a8bd3697ea28624d7c94e784bdccae09ac7e5343d064b6accee5a2ad8bddb4` |
+| macOS x64 | `@fuigo/darwin-x64@1.0.7` | `29d5e898c5b13e497bbda1e63a334d6c5e82cfc9b3c174a1b791e01dd2446788` | `cc8a49c34722b1ec976fe3fa226899bffd435559464a3e1eaf7177648791c895` |
+| Linux arm64 (pin only) | `@fuigo/linux-arm64@1.0.7` | `dd6c574a54257501ac7bee64e8da69efca69f719193d76443750b7a7afcfb2d7` | `77af3b40226ae50546191e677532e27078c9cd279922eed4e126425232baea00` |
+| Linux x64 | `@fuigo/linux-x64@1.0.7` | `fb3cfcc3467bd5f7f5e0fdf5828bc0a2f3f16606e9e592c2153384cbf94f0341` | `ffc5d96357bbcab19dfc5025905c999dc6b7a9a1b815bc606dfe7325a6f64a7d` |
+| Windows arm64 (pin only) | `@fuigo/win32-arm64@1.0.7` | `4c9be39f227fd9ce7b71cc84492c61a775b40638a3012c9a43e7461df6da8a77` | `add0bdb737572e521ebd6d0e25f92ec0e64e723d94592e380d61cf8d4419cf6e` |
+| Windows x64 | `@fuigo/win32-x64@1.0.7` | `32f2aab3dde7eb8ad69407e013031ef435bebaef187bf952a0f1295a7dd4a0f7` | `af26c191f89bb3c61785f8e927561f615ea2bda804187d25b3e2589dd985bdd3` |
 
-`fuigo-linux-arm64` also exists on the registry; Murage does not build a Linux
-arm64 desktop target, so it is not pinned here. `fuigo` 1.0.1 declares
-`fuigo-win32-arm64` as an optional dependency but **no such package is
-published** (the registry answers 404). Murage builds Windows x64 only, so that
-gap does not affect this distribution — but a future Windows arm64 target
-cannot be staged until that package exists.
+The tarball URL for each target is
+`https://registry.npmjs.org/@fuigo/<target>/-/<target>-1.0.7.tgz`.
+The wrapper is a Node launcher; the platform package contains
+`package/bin/fuigo.br` (`fuigo.exe.br` on Windows). The existing
+`scripts/prepare-fuigo.mjs` downloads and verifies that archive, decompresses the
+native executable, and verifies its bytes and executable header before staging.
 
-The staged executables are generated build output and are intentionally not
-checked into git; they land under the gitignored `dist-native/fuigo/` tree. Set
-`MURAGE_FUIGO_ARCHIVE_DIR` to a directory containing the exact published
-tarballs to prepare a package from a reviewed local download. Otherwise the
-preparation script downloads them from the registry URLs above.
+Murage still builds macOS arm64/x64, Linux x64 and Windows x64. Linux/Windows
+arm64 remain pinned but not stageable because the shared executable-header parser
+does not classify their ELF aarch64 / PE ARM64 headers. This bump adds no platform
+or parser support.
 
-## macOS signing
+Staged output remains under the ignored `dist-native/fuigo/` tree. Set
+`MURAGE_FUIGO_ARCHIVE_DIR` to a directory containing these exact reviewed tarballs
+to avoid another download. Nothing is installed globally or copied into a live
+user profile. Preparing, testing and packaging the native engine are separate
+checks from this source/digest update.
 
-The published darwin executables are ad-hoc, linker-signed thin Mach-O files
-with no entitlements and no non-system dylib dependencies. The macOS release
-process replaces that ad-hoc signature with Murage's Developer ID signature as
-part of signing the app bundle — the same nested-code treatment `cloudflared`
-and `cua-driver` receive — so the bundled engine is covered by notarization.
-Linux and Windows packages retain the exact decompressed upstream bytes.
+## License and native memory
+
+The published package declares Apache-2.0. Its `THIRD_PARTY_NOTICES.md` matches the
+retained copy in this directory; the existing distribution license/notice mapping
+is unchanged. Packaged macOS signing continues through the existing nested-code
+signing process; checksum review is not signing or notarization proof.
+
+The 1.0.7 wrapper README and package manifest do not document native-memory
+defaults. This dependency bump does not infer or change those defaults, Murage
+memory settings, authentication, or provider configuration.

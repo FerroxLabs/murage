@@ -371,13 +371,15 @@ describe("the sidecar in front of an unmodified harness", () => {
     expect(smuggled.status).toBe(400);
   });
 
-  it("only remembers an always-allow key carried by a pending card", async () => {
+  it("cannot create a permanent always-allow grant from the companion surface", async () => {
     const { body } = await device("GET", "/api/bots");
     const bot = body.bots[0];
     const attempt = await device("POST", `/api/bots/${bot.id}/always-allow`, {
       body: { allowKey: "Bash" },
     });
-    expect(attempt.status).toBe(409);
+    // Permanent grants are desktop-only (M02); paired-device authority is
+    // limited to ordinary one-time responses and explicit cloud-desktop join.
+    expect(attempt.status).toBe(404);
 
     const refreshed = await device("GET", "/api/bots");
     expect(refreshed.body.bots.find((candidate: any) => candidate.id === bot.id).alwaysAllow ?? []).not.toContain("Bash");

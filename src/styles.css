@@ -81,6 +81,7 @@
    can't tree-shake them away, and so a palette can redefine them freely.
    Values are Dark's, to match the `@theme` defaults above. */
 :root {
+  --code-color-scheme: dark;
   /* ink carried by a filled accent / danger / success surface (see the rule
      at the bottom of this file, which is what makes them take effect) */
   --color-accent-ink: #2a1207;
@@ -105,6 +106,7 @@
    `[data-skin]` subtree can switch back to it.
    ───────────────────────────────────────────────────────────────────────── */
 [data-skin="dark"] {
+  --code-color-scheme: dark;
   --color-app: #0a0a0a;           /* Wayland --bg-base, verbatim */
   --color-panel: #171717;         /* sidebar ≈ Wayland --workspace-btn-bg */
   --color-card: #1f1f1f;          /* the content plane ≈ Wayland --bg-1 */
@@ -169,6 +171,7 @@
    decorative fills, Murage renders them as text.
    ───────────────────────────────────────────────────────────────────────── */
 [data-skin="light"] {
+  --code-color-scheme: light;
   --color-app: #f7f7f7;           /* Wayland --bg-1 — the content ground */
   --color-panel: #f0f0f0;         /* Wayland --bg-2 — sidebar and chrome,
                                      recessed one rung under the content */
@@ -253,6 +256,9 @@ body,
    state is self-healing `100%`. */
 #root {
   height: 100%;
+  /* Focus and scrollIntoView belong to the panel/transcript scrollers.
+     Unlike hidden, clip cannot scroll the whole shell past its header. */
+  overflow: clip;
 }
 
 html[data-keyboard="open"] #root {
@@ -348,6 +354,12 @@ body {
 ::selection {
   background: color-mix(in oklab, var(--color-accent) 45%, transparent);
   color: var(--color-ink);
+}
+
+/* Dual Shiki palettes follow the nearest application skin, including cached
+   blocks, without changing the color scheme of native controls. */
+.chat-md .shiki {
+  color-scheme: var(--code-color-scheme);
 }
 
 /* Chromium honours EITHER the standard properties OR the ::-webkit-scrollbar

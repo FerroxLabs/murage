@@ -16,6 +16,7 @@ import { join, dirname } from "node:path";
 
 import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
+import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
@@ -776,6 +777,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.agents = { ...turn.integrations.agents };
         allowed.push("mcp__agents");
       }
+      if (turn.integrations?.memory) {
+        if (Object.hasOwn(turn.integrations.custom ?? {}, "murage-memory")) throw new Error("MEMORY_MCP_NAME_COLLISION");
+        mcpServers["murage-memory"] = { ...turn.integrations.memory };
+        allowed.push("mcp__murage-memory");
+      }
       if (turn.integrations?.phone) {
         mcpServers.phone = { ...turn.integrations.phone };
         allowed.push("mcp__phone");
@@ -804,6 +810,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // skip any residual collision instead of clobbering a built-in.
       for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
         if (name in mcpServers) continue;
+        if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
         mcpServers[name] = { ...server };
       }
       // permission broker: anything acceptEdits would silently deny becomes
@@ -1360,6 +1367,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         capabilities: {
           sessionModelSwitch: "in-session",
           agentsMcp: true,
+          memoryMcp: true,
         customMcp: true,
           computerMcp: true,
           composioMcp: true,
@@ -1373,6 +1381,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         sendTurn,
         steer,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        resetSession: async (threadId) => {
+          // interruptTurn alone ignores retained idle sessions. Cancel any
+          // active retry as well, then await this thread's existing close path.
+          const session = sessions.get(threadId);
+          active.get(threadId)?.stop();
+          if (!session) return;
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              session.child.off("close", closed);
+              reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
+            }, 10_000);
+            const closed = () => { clearTimeout(timeout); resolve(); };
+            session.child.once("close", closed);
+            closeSession(threadId, "memory context reset");
+          });
+        },
         respondToRequest: async (threadId, requestId, decision) => {
           // fail-closed by construction: no broker, or an ask that already
           // timed out / settled, is `unavailable` — the caller denies

@@ -32,8 +32,8 @@ CUA supply-chain work is tracked in [issue #113](https://github.com/FerroxLabs/m
 
 Choose one Ubuntu 24.04 x86_64 package from the latest release:
 
-- [Debian package (`Murage-amd64.deb`)](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage-amd64.deb) — recommended; APT installs its desktop dependencies.
-- [Portable AppImage (`Murage.AppImage`)](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage.AppImage) — does not install system files.
+- [Debian package (`Murage-amd64.deb`)](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage-amd64.deb): recommended; APT installs its desktop dependencies.
+- [Portable AppImage (`Murage.AppImage`)](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage.AppImage): does not install system files.
 - [SHA-256 checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt)
 
 Versioned packages and previous releases remain available on the

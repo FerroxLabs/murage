@@ -4,7 +4,7 @@
 // assert what would have been dispatched to the harness. The harness itself
 // stays out of these — the integration happens in comms.test.ts (the full
 // e2e through the agents proxy + fake ACP CLI).
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +14,8 @@ import type { ModelSelection } from "./contracts.ts";
 import {
   drainDelegations,
   findDelegationReceipt,
+  formatDelegationElapsed,
+  summarizeDelegatedActivity,
   MAX_BUSY_ATTEMPTS,
   pendingDelegationInfo,
   pendingDelegationSnapshot,
@@ -633,6 +635,51 @@ describe("busy retries and receipts", () => {
   const chipCount = (needle: string) =>
     store.messagesFor(from.threadId).filter((m) => m.kind === "activity" && m.tool?.name?.includes(needle)).length;
 
+  it("persists the originating event through reload and a busy retry before dispatch", async () => {
+    const eventId = "event:trusted-generation_42";
+    store.patchBot(target.id, { busy: true });
+    const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "event follow-up", depth: 0, eventId }, 1);
+    expect(queued.result).toBe("ok");
+    const saved = () => JSON.parse(readFileSync(join(DATA_DIR, "delegations.json"), "utf8"));
+    expect(saved()[from.threadId][0].eventId).toBe(eventId);
+    _resetPending();
+    _loadPending();
+    const runTarget = vi.fn();
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chipCount("retry 1/") === 1);
+    expect(runTarget).not.toHaveBeenCalled();
+    expect(saved()[from.threadId][0]).toMatchObject({ eventId, waitingOnBusy: true });
+    // Reload the parked item too, then release this exact busy period.
+    _resetPending();
+    _loadPending();
+    store.patchBot(target.id, { busy: false });
+    expect(releaseDelegationsWaitingOn(target.id)).toEqual([from.threadId]);
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(runTarget.mock.calls[0]![6]).toBe(from.id);
+    expect(runTarget.mock.calls[0]![7]).toBe(eventId);
+  });
+
+  it("rejects malformed persisted event markers instead of dispatching them as ordinary turns", async () => {
+    const invalid = [null, "", " ", 42, {}, ["event"], "event with spaces", "x".repeat(129), "event\ninjection"];
+    const items = invalid.map((eventId, index) => ({ id: "invalid-" + index, fromBotId: from.id, toBotId: target.id, message: "must not run", depth: 0, attempts: 0, eventId }));
+    const legacy = { id: "legacy", fromBotId: from.id, toBotId: target.id, message: "legacy allowed", depth: 0, attempts: 0 };
+    writeFileSync(join(DATA_DIR, "delegations.json"), JSON.stringify({ [from.threadId]: [...items, legacy] }));
+    _resetPending();
+    _loadPending();
+    expect(_pendingCount(from.threadId)).toBe(1);
+    const runTarget = vi.fn();
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(runTarget.mock.calls[0]![1]).toContain("legacy allowed");
+    expect(runTarget.mock.calls[0]![7]).toBeUndefined();
+  });
+
+  it("rejects an invalid supplied event identity before queueing", () => {
+    expect(() => queueDelegation(commsBus, from, { toBotId: target.id, message: "no", depth: 0, eventId: " " }, 1)).toThrow("Invalid delegation event identity");
+    expect(_pendingCount(from.threadId)).toBe(0);
+  });
+
   it("keeps a handoff queued while the target is busy and dispatches on the retry drain", async () => {
     store.patchBot(target.id, { busy: true });
     const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "later", depth: 0 }, 1);
@@ -938,5 +985,55 @@ describe("delegations queued from a room", () => {
     expect(runTargetCalls.map((call) => call.toBotId)).toEqual([lead.id]);
     expect(findDelegationReceipt(blocked.id!)).toMatchObject({ status: "dropped" });
     expect(findDelegationReceipt(ok.id!)).toBeNull(); // dispatched, not dropped
+  });
+});
+
+
+describe("delegated turn status helpers", () => {
+  it("formats elapsed time compactly", () => {
+    expect(formatDelegationElapsed(5_000)).toBe("5s");
+    expect(formatDelegationElapsed(65_000)).toBe("65s");
+    expect(formatDelegationElapsed(95_000)).toBe("1m 35s");
+    expect(formatDelegationElapsed(180_000)).toBe("3m");
+    // a clock that went backwards must not print a negative age
+    expect(formatDelegationElapsed(-5_000)).toBe("0s");
+  });
+
+  it("summarizeDelegatedActivity keeps only post-dispatch activity, newest last, bounded", () => {
+    const messages = [
+      { at: 900, kind: "text", text: "before dispatch (the user's ask)" },
+      { at: 1_100, kind: "activity", tool: { name: "Delegated to @Helper: followup" } },
+      { at: 1_200, kind: "text", text: "peer inbound message" },
+      { at: 1_300, kind: "activity", tool: { name: "tool: Bash" } },
+      { at: 1_400, kind: "text", text: "  multi  space   reply " },
+      { at: 1_500, kind: "activity" },
+      { at: 1_600, kind: "unknown-kind" },
+    ];
+    const lines = summarizeDelegatedActivity(messages, 1_000, 5);
+    expect(lines).toEqual([
+      "tool: Delegated to @Helper: followup",
+      "text: peer inbound message",
+      "tool: tool: Bash",
+      "text: multi space reply",
+    ]);
+  });
+
+  it("summarizeDelegatedActivity bounds the list to the newest lines", () => {
+    const messages = Array.from({ length: 9 }, (_, index) => ({
+      at: 1_000 + index,
+      kind: "activity",
+      tool: { name: `step-${index}` },
+    }));
+    const lines = summarizeDelegatedActivity(messages, 1_000, 3);
+    expect(lines).toEqual(["tool: step-6", "tool: step-7", "tool: step-8"]);
+  });
+
+  it("reports nothing at all when the peer has produced nothing since dispatch", () => {
+    // The empty list is the signal the proxy renders as "may be stuck", so
+    // a pre-dispatch transcript must not leak into it and look like work.
+    expect(summarizeDelegatedActivity(
+      [{ at: 500, kind: "text", text: "the ask" }, { at: 900, kind: "activity", tool: { name: "Bash" } }],
+      1_000,
+    )).toEqual([]);
   });
 });

@@ -24,7 +24,7 @@ export function groupResponseHint(group: Group, members: Bot[]): string {
   if (value.kind === "everyone") return "Everyone responds unless you @mention specific bots.";
   if (value.kind === "mentions") return "Mention a bot with @ to bring them in.";
   const name = defaultResponderName(group, members) ?? "The lead bot";
-  return `${name} responds by default — @mention someone else to choose them instead.`;
+  return `${name} responds by default; @mention someone else to choose them instead.`;
 }
 
 export function groupComposerHint(group: Group, members: Bot[]): string {

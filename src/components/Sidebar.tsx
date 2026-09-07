@@ -12,6 +12,8 @@ import {
   ClipboardCopy,
   Copy,
   Crown,
+  Eye,
+  EyeOff,
   FolderMinus,
   FolderPlus,
   Library,
@@ -42,7 +44,7 @@ import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { nextRename } from "@/lib/rename";
-import { downloadAllBots } from "@/lib/team-files";
+import { TeamExportDialog } from "./TeamExportDialog";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import {
@@ -90,6 +92,7 @@ import {
 import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 
 /** What the bottom-left toast is currently saying. `detail` is a second,
@@ -336,7 +339,7 @@ function groupPreview(group: Group, bots: Bot[]): string {
   }
   if (group.working) return "The team is working…";
   const last = group.messages.at(-1);
-  if (!last) return "No messages yet";
+  if (!last) return `${group.memberIds.length} ${group.memberIds.length === 1 ? "bot" : "bots"}`;
   const text = last.kind === "activity" && last.tool
     ? last.tool.name
     : last.kind === "goal.run" && last.goalRun
@@ -381,10 +384,12 @@ function GroupListItem({
   group,
   density,
   onMenu,
+  onNavigate,
 }: {
   group: Group;
   density: SidebarDensity;
   onMenu: (menu: { groupId: string; x: number; y: number }) => void;
+  onNavigate: () => void;
 }) {
   const { state, dispatch } = useStore();
   const selected = state.activeView === "chat" && state.selectedId === group.id;
@@ -394,7 +399,7 @@ function GroupListItem({
   const last = group.messages.at(-1);
   return (
     <button
-      onClick={() => dispatch({ type: "select", id: group.id })}
+      onClick={() => { dispatch({ type: "select", id: group.id }); onNavigate(); }}
       onContextMenu={(e) => {
         e.preventDefault();
         onMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
@@ -419,7 +424,10 @@ function GroupListItem({
       <StackedEmbers members={members} density={density} />
       <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-ink">
+            <Users size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+            <span className="truncate">{group.name}</span>
+          </span>
           {selected && last && <span className="shrink-0 text-xs text-ink-secondary">{formatTime(last.at)}</span>}
         </div>
         <div className="flex items-center justify-between gap-2">
@@ -629,7 +637,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
           bots={bots}
           picked={picked}
           onToggle={toggle}
-          emptyHint="Create a bot first — channels are made of bots."
+          emptyHint="Create a bot first. Channels are made of bots."
         />
         <button
           onClick={create}
@@ -766,16 +774,26 @@ function SectionPicker({
   );
 }
 
-function BotContextMenu({
+export function leadershipPromotionBlocked(role: ReturnType<typeof botRole>, canCoordinate: boolean): boolean {
+  return role !== "chief" && role !== "leader" && !canCoordinate;
+}
+
+export function sidebarBotVisible(bot: Pick<Bot, "hidden" | "sidebarHidden">, showHidden: boolean): boolean {
+  return !bot.hidden && (showHidden || !bot.sidebarHidden);
+}
+
+export function BotContextMenu({
   menu,
   onClose,
   onArchive,
+  onToggleHidden,
   onRequestDelete,
   onMoveToSection,
 }: {
   menu: MenuState;
   onClose: () => void;
   onArchive: (bot: Bot) => void;
+  onToggleHidden: (bot: Bot) => void;
   onRequestDelete: (bot: Bot) => void;
   onMoveToSection: (botId: string) => void;
 }) {
@@ -887,8 +905,8 @@ function BotContextMenu({
                   : botRolePatch("leader"),
             }),
           {
-            disabled: role === "member" && !canCoordinate,
-            hint: role === "member" && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
+            disabled: leadershipPromotionBlocked(role, canCoordinate),
+            hint: leadershipPromotionBlocked(role, canCoordinate) ? "Choose an engine with Murage delegation support first" : undefined,
           },
         ),
         item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to section", () => {
@@ -914,6 +932,8 @@ function BotContextMenu({
           void navigator.clipboard?.writeText(bot.threadId);
         }),
         divider("d3"),
+        item(bot.sidebarHidden ? <Eye size={16} /> : <EyeOff size={16} />,
+          bot.sidebarHidden ? "Restore to sidebar" : "Hide from sidebar", () => onToggleHidden(bot)),
         item(
           <Archive size={16} className="text-ink-secondary" />,
           "Archive",
@@ -937,12 +957,14 @@ function BotListItem({
   onMenu,
   onArchive,
   archiveDisabled,
+  onNavigate,
 }: {
   bot: Bot;
   density: SidebarDensity;
   onMenu: (menu: MenuState) => void;
   onArchive: (bot: Bot) => void;
   archiveDisabled: boolean;
+  onNavigate: () => void;
 }) {
   const { state, dispatch } = useStore();
   const [renaming, setRenaming] = useState(false);
@@ -956,13 +978,17 @@ function BotListItem({
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
+  const rowPreview = botRole(bot) === "member" || selected || bot.unread || bot.busy || bot.activity === "waiting-on-you"
+    ? preview(bot)
+    : "";
   const rowClass = cn(
     "flex w-full items-center rounded-xl border text-left",
     iconOnly
       ? "justify-center px-1 py-1.5"
       : density === "compact"
-        ? "gap-2 px-2 py-1.5 pr-[5.25rem]"
-        : "gap-3 px-3 py-2.5 pr-[5.25rem]",
+        ? "gap-2 px-2 py-1.5"
+        : "gap-3 px-3 py-2.5",
+    !iconOnly && "group-hover:pr-[5.25rem] group-focus-within:pr-[5.25rem] max-md:pr-[5.25rem] [@media(hover:none)]:pr-[5.25rem]",
     // ONLY the Chief of Staff, not every bot that leads something.
     //
     // This read `bot.chiefOfStaff`, which is true for a team leader too, so
@@ -1000,6 +1026,7 @@ function BotListItem({
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
             {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
+            {bot.sidebarHidden && <EyeOff size={12} className="shrink-0 text-ink-secondary" aria-label="Hidden from sidebar" />}
             <RenameTitle
               key={iconOnly ? "icons" : "expanded"}
               value={bot.name}
@@ -1036,8 +1063,8 @@ function BotListItem({
                 <RoleIcon bot={bot} size={11} decorative /> {BOT_ROLE_BADGE[botRole(bot)]}
               </span>
             )}
-            {botRole(bot) !== "member" && preview(bot) && <span className="shrink-0 text-ink-secondary/60">·</span>}
-            <span className="truncate">{preview(bot)}</span>
+            {botRole(bot) !== "member" && rowPreview && <span className="shrink-0 text-ink-secondary/60">·</span>}
+            <span className="truncate">{rowPreview}</span>
           </span>
           {bot.unread && (
             <span className="size-2 shrink-0 rounded-full bg-accent" />
@@ -1067,27 +1094,21 @@ function BotListItem({
     onMenu({ botId: bot.id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
   };
 
-  // Keep the rename <input> out of role="button" — a button's descendants
-  // are presentational, which hides the field from assistive tech.
-  if (renaming) {
-    return (
-      <div className={rowClass} onContextMenu={onContextMenu}>
-        {body}
-      </div>
-    );
-  }
-
+  // Keep the same tree while editing so RenameTitle is not remounted and
+  // reset. Omit the row's button role while its accessible input is present.
   return (
     <div className="group relative" title={iconOnly ? bot.name : undefined}>
       <div
-        role="button"
-        tabIndex={0}
+        role={renaming ? undefined : "button"}
+        tabIndex={renaming ? undefined : 0}
         aria-label={iconOnly ? bot.name : undefined}
-        onClick={() => dispatch({ type: "select", id: bot.id })}
+        onClick={() => { if (!renaming) { dispatch({ type: "select", id: bot.id }); onNavigate(); } }}
         onKeyDown={(event) => {
+          if (renaming) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             dispatch({ type: "select", id: bot.id });
+            onNavigate();
             return;
           }
           onMenuKeyDown(event);
@@ -1275,6 +1296,9 @@ function ArchivedBotsPanel({
 }
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+  // Selection is an explicit navigation event even when its id is unchanged.
+  // Row menus and inline rename do not call this callback.
+  const onNavigate = () => { if (open) onClose(); };
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
   const { capabilities } = useDesktopCapabilities();
@@ -1293,7 +1317,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [newRoom, setNewRoom] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
-  const [exportingTeam, setExportingTeam] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenChange = useRef(false);
+  const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
   const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
@@ -1364,23 +1390,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const timer = window.setTimeout(() => setTeamFeedback(null), 5000);
     return () => window.clearTimeout(timer);
   }, [teamFeedback]);
-
-  const exportAllBots = async () => {
-    setExportingTeam(true);
-    setTeamFeedback(null);
-    try {
-      const exported = await downloadAllBots();
-      track("team_exported", { members: exported.members, scope: "all_visible" });
-      setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
-    } catch (cause) {
-      setTeamFeedback({
-        error: true,
-        text: cause instanceof Error ? cause.message : String(cause),
-      });
-    } finally {
-      setExportingTeam(false);
-    }
-  };
 
   const undoTeamLoad = async (result: TeamImportResult) => {
     setTeamFeedback(null);
@@ -1455,6 +1464,22 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     }
   };
 
+  const toggleSidebarHidden = async (bot: Bot) => {
+    if (hiddenChange.current) return;
+    hiddenChange.current = true;
+    setMenu(null);
+    setTeamFeedback({ error: false, text: bot.sidebarHidden ? "Restoring to sidebar…" : "Hiding from sidebar…" });
+    try {
+      const response = await api(`/api/bots/${bot.id}`, {
+        method: "PATCH", body: JSON.stringify({ sidebarHidden: !bot.sidebarHidden }),
+      });
+      dispatch({ type: "botPatched", bot: response.bot });
+      setTeamFeedback({ error: false, text: bot.sidebarHidden ? `${bot.name} restored to sidebar` : `${bot.name} hidden from sidebar. Its work continues.` });
+    } catch (cause) {
+      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
+    } finally { hiddenChange.current = false; }
+  };
+
   const undoBotArchive = async (bot: { id: string; name: string }) => {
     setTeamFeedback(null);
     try {
@@ -1490,7 +1515,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   // section below the list (debounced, lands on the message).
 
   const matchingBots = state.bots
-    .filter((b) => !b.hidden)
+    .filter((b) => sidebarBotVisible(b, showHidden))
     .filter(
       (b) =>
         !q ||
@@ -1608,6 +1633,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   };
   const activeBotCount = state.bots.filter((bot) => !bot.hidden).length;
   const archivedBots = state.bots.filter((bot) => bot.hidden);
+  const sidebarHiddenCount = state.bots.filter((bot) => !bot.hidden && bot.sidebarHidden).length;
 
   return (
     <aside
@@ -1745,13 +1771,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <button
                   onClick={() => {
                     setPlusOpen(false);
-                    void exportAllBots();
+                    setExportTeamOpen(true);
                   }}
-                  disabled={exportingTeam}
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
-                  {exportingTeam ? <Loader2 size={16} className="animate-spin text-ink-secondary" /> : <ArrowDownToLine size={16} className="text-ink-secondary" />}
-                  {exportingTeam ? "Exporting…" : "Export all bots"}
+                  <ArrowDownToLine size={16} className="text-ink-secondary" />
+                  Export selected contents
                 </button>
                 <button
                   onClick={() => {
@@ -1798,6 +1823,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       </div>
 
       {/* Bot list */}
+      {sidebarHiddenCount > 0 && <button type="button" aria-pressed={showHidden}
+        onClick={() => setShowHidden(value => !value)}
+        className="mx-3 mb-2 rounded-lg border border-hairline/40 px-2 py-2 text-[12px] text-ink-secondary hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        {showHidden ? "Hide hidden bots" : "Show hidden"} ({sidebarHiddenCount})
+      </button>}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
           {matchingBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
@@ -1807,6 +1837,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <div className="mb-1.5">
               <BotListItem
                 bot={unsectionedChief}
+                onNavigate={onNavigate}
                 density={density}
                 onMenu={setMenu}
                 onArchive={(bot) => void archiveBot(bot)}
@@ -1880,6 +1911,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     {sectionChiefItems.map((bot) => (
                       <BotListItem
                         key={bot.id}
+                        onNavigate={onNavigate}
                         bot={bot}
                         density={density}
                         onMenu={setMenu}
@@ -1890,6 +1922,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     {sectionGroupItems.map((group) => (
                       <GroupListItem
                         key={group.id}
+                        onNavigate={onNavigate}
                         group={group}
                         density={density}
                         onMenu={setRoomMenu}
@@ -1898,6 +1931,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     {sectionBotItems.map((bot) => (
                       <BotListItem
                         key={bot.id}
+                        onNavigate={onNavigate}
                         bot={bot}
                         density={density}
                         onMenu={setMenu}
@@ -1922,59 +1956,66 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
       {/* Footer */}
       <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
-        <button
-          onClick={() => dispatch({ type: "showTeamMap" })}
-          aria-label={density === "icons" ? "Team map" : undefined}
-          title={density === "icons" ? "Team map" : undefined}
-          className={cn(
-            "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
-            density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-            state.activeView === "team-map" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-          )}
-        >
-          <Network size={20} className={state.activeView === "team-map" ? "text-accent" : "text-ink-secondary"} />
-          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Team map</span>
-        </button>
-        {skillRecorderEnabled(state.config) && (
-          <button
-            onClick={() => dispatch({ type: "showSkillRecorder" })}
-            aria-label={density === "icons" ? "Teach a skill" : undefined}
-            title={density === "icons" ? "Teach a skill" : undefined}
-            className={cn(
-              "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
-              density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-              state.activeView === "skill-recorder" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+        {/* The icon rail is already one icon per destination, so folding those
+            icons behind a hover menu inside an icon rail helps nobody: in that
+            density the four rows stay exactly as they were. */}
+        {density === "icons" && (
+          <>
+            <button
+              onClick={() => dispatch({ type: "showTeamMap" })}
+              aria-label={density === "icons" ? "Team map" : undefined}
+              title={density === "icons" ? "Team map" : undefined}
+              className={cn(
+                "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
+                density === "icons" ? "justify-center px-2" : "gap-3 px-3",
+                state.activeView === "team-map" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+              )}
+            >
+              <Network size={20} className={state.activeView === "team-map" ? "text-accent" : "text-ink-secondary"} />
+              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Team map</span>
+            </button>
+            {skillRecorderEnabled(state.config) && (
+              <button
+                onClick={() => dispatch({ type: "showSkillRecorder" })}
+                aria-label={density === "icons" ? "Teach a skill" : undefined}
+                title={density === "icons" ? "Teach a skill" : undefined}
+                className={cn(
+                  "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
+                  density === "icons" ? "justify-center px-2" : "gap-3 px-3",
+                  state.activeView === "skill-recorder" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+                )}
+              >
+                <Sparkles size={20} className={state.activeView === "skill-recorder" ? "text-accent" : "text-ink-secondary"} />
+                <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Teach a skill</span>
+              </button>
             )}
-          >
-            <Sparkles size={20} className={state.activeView === "skill-recorder" ? "text-accent" : "text-ink-secondary"} />
-            <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Teach a skill</span>
-          </button>
+            <button
+              onClick={() => dispatch({ type: "showRoutines" })}
+              aria-label={density === "icons" ? "Calendar" : undefined}
+              title={density === "icons" ? "Calendar" : undefined}
+              className={cn(
+                "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
+                density === "icons" ? "justify-center px-2" : "gap-3 px-3",
+                state.activeView === "routines" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+              )}
+            >
+              <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
+              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Calendar</span>
+              {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
+                <span className="size-2 rounded-full bg-danger" />
+              )}
+            </button>
+            <button
+              onClick={() => dispatch({ type: "togglePlugins", open: true })}
+              className={cn("flex min-h-10 w-full items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "gap-3 px-3")}
+              aria-label={density === "icons" ? "Connected apps" : undefined}
+              title={density === "icons" ? "Connected apps" : undefined}
+            >
+              <Puzzle size={20} className="text-ink-secondary" />
+              <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
+            </button>
+          </>
         )}
-        <button
-          onClick={() => dispatch({ type: "showRoutines" })}
-          aria-label={density === "icons" ? "Calendar" : undefined}
-          title={density === "icons" ? "Calendar" : undefined}
-          className={cn(
-            "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
-            density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-            state.activeView === "routines" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-          )}
-        >
-          <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Calendar</span>
-          {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
-            <span className="size-2 rounded-full bg-danger" />
-          )}
-        </button>
-        <button
-          onClick={() => dispatch({ type: "togglePlugins", open: true })}
-          className={cn("flex min-h-10 w-full items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "gap-3 px-3")}
-          aria-label={density === "icons" ? "Connected apps" : undefined}
-          title={density === "icons" ? "Connected apps" : undefined}
-        >
-          <Puzzle size={20} className="text-ink-secondary" />
-          <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
-        </button>
         {/* The only thing this button does is open Settings → Phone, and that
             section does not exist on a phone — it is the setup screen for
             getting Murage ONTO one. A dot that opens an empty pane is worse
@@ -1983,6 +2024,48 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <SidebarPhoneButton
             density={density}
             onOpen={() => dispatch(phoneSettingsAction())}
+          />
+        )}
+        {density !== "icons" && (
+          <SidebarMoreMenu
+            compact={density === "compact"}
+            items={[
+              {
+                key: "team-map",
+                label: "Team map",
+                icon: <Network size={18} />,
+                active: state.activeView === "team-map",
+                onSelect: () => dispatch({ type: "showTeamMap" }),
+              },
+              ...(skillRecorderEnabled(state.config)
+                ? [
+                    {
+                      key: "skill-recorder",
+                      label: "Teach a skill",
+                      icon: <Sparkles size={18} />,
+                      active: state.activeView === "skill-recorder",
+                      onSelect: () => dispatch({ type: "showSkillRecorder" }),
+                    },
+                  ]
+                : []),
+              {
+                key: "routines",
+                label: "Calendar",
+                icon: <CalendarDays size={18} />,
+                active: state.activeView === "routines",
+                // folded away, this dot would otherwise vanish with the row
+                attention: state.routineRuns.some(
+                  (run) => ["failed", "missed"].includes(run.status) && !run.seenAt,
+                ),
+                onSelect: () => dispatch({ type: "showRoutines" }),
+              },
+              {
+                key: "plugins",
+                label: "Connected apps",
+                icon: <Puzzle size={18} />,
+                onSelect: () => dispatch({ type: "togglePlugins", open: true }),
+              },
+            ]}
           />
         )}
         <div className={cn("flex items-center", density === "icons" && "justify-center")}>
@@ -2019,10 +2102,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           menu={menu}
           onClose={() => setMenu(null)}
           onArchive={(bot) => void archiveBot(bot)}
+          onToggleHidden={(bot) => void toggleSidebarHidden(bot)}
           onRequestDelete={(bot) => setPendingDelete({ kind: "bot", id: bot.id, name: bot.name })}
           onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
         />
       )}
+      {exportTeamOpen && <TeamExportDialog onClose={() => setExportTeamOpen(false)} onExported={exported => {
+        track("team_exported", { members: exported.members, scope: "selected" });
+        setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
+      }} />}
       {sectionPicker && (
         <SectionPicker
           current={state.bots.find((b) => b.id === sectionPicker.botId)?.section}
@@ -2056,7 +2144,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           kind={pendingDelete.kind === "bot" ? "bot" : "conversation"}
           detail={
             pendingDelete.kind === "bot"
-              ? "Its entire conversation history goes with it, along with any skills and playbooks it was given. This cannot be undone — archive it instead if you might want it back."
+              ? "Its entire conversation history goes with it, along with any skills and playbooks it was given. This cannot be undone. Archive it instead if you might want it back."
               : "Every message in this conversation is removed. The bots themselves are not deleted. This cannot be undone."
           }
           onCancel={() => setPendingDelete(null)}

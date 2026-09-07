@@ -62,7 +62,7 @@ export default defineConfig({
       // prepare-scratch.mjs wipes and re-seeds the scratch data dir *before*
       // the server binds, so the harness always boots from a known state. It
       // runs only when Playwright actually starts this server.
-      command: "node src/e2e/prepare-scratch.mjs && pnpm dev:server",
+      command: "node src/e2e/prepare-scratch.mjs && node src/e2e/start-server.mjs harness",
       url: `${HARNESS_URL}/api/health`,
       // Never the default ~/.murage. server/config.ts:445 reads this.
       env: {
@@ -78,9 +78,10 @@ export default defineConfig({
     {
       // vite.config.ts proxies /api to MURAGE_PORT, so this hands the dev
       // server the scratch harness rather than whatever is on 8799.
-      command: "pnpm dev",
+      command: "node src/e2e/start-server.mjs ui",
       url: APP_URL,
       env: {
+        MURAGE_DATA_DIR: SCRATCH_DATA_DIR,
         MURAGE_UI_PORT: String(UI_PORT),
         MURAGE_PORT: String(HARNESS_PORT),
       },

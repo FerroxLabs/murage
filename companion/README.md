@@ -75,6 +75,15 @@ With the harness already up (`pnpm dev:server`), from the repo root:
 pnpm companion
 ```
 
+Separate manual/development launches support the ordinary companion routes,
+but cloud-desktop join requires a private shared launch proof as well as the
+device's enabled cloud-desktop capability. Use the packaged desktop app or
+`murage start` to launch the harness and its owned companion together. Those
+parents generate `MURAGE_COMPANION_TOKEN` privately for that launch; it is not a
+pairing token, renderer setting, or value to paste into a client. A standalone
+companion without that proof returns an actionable error for desktop join.
+The `x-murage-companion` marker alone grants no join authority.
+
 It prints where to point the phone, and where you pair:
 
 ```text

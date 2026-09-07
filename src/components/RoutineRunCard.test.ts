@@ -41,6 +41,17 @@ describe("RoutineRunCard", () => {
     expect(markup).toContain('aria-label="Morning brief routine run: Completed"');
   });
 
+  it("keeps a terminal team-goal outcome distinct from scheduler completion", () => {
+    const markup = renderToStaticMarkup(createElement(RoutineRunCard, {
+      message: message("completed", { goalStatus: "blocked", summary: "The team needs a missing credential." }),
+      onOpen: vi.fn(),
+    }));
+
+    expect(markup).toContain("Blocked");
+    expect(markup).not.toContain(">Completed<");
+    expect(markup).toContain("The team needs a missing credential.");
+  });
+
   it("makes a waiting question or approval an explicit Review action", () => {
     const markup = renderToStaticMarkup(createElement(RoutineRunCard, {
       message: message("waiting", { summary: "The routine needs an answer before it can continue." }),

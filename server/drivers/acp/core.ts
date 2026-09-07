@@ -18,6 +18,21 @@ import { homedir } from "node:os";
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { classifyProviderError } from "../../../shared/provider-error.ts";
+
+/** Some ACP providers wrap actionable billing failures in "Internal error".
+ * Classify only the observed shape; never copy nested provider data or URLs
+ * into the transcript, where they may contain credentials or request text. */
+export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
+  const info = classifyProviderError(error);
+  if (info?.kind === "credits") {
+    if (info.provider === "flux-router") {
+      return "Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.";
+    }
+    return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
+  }
+  return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
+}
 
 /**
  * A `host::model` pick talks to a loopback server with its own key.
@@ -43,6 +58,7 @@ import type {
 import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
+import { isHarnessOwnedMcpEnvName } from "../../mcp-registry.ts";
 
 // Resolved from the server root, never relative to this file: bundling inlines
 // this module two directories up, so the `".."` pair here would climb past the
@@ -148,10 +164,20 @@ export interface AcpSupport {
   }): Promise<void>;
 }
 
-const INIT_TIMEOUT = 20_000;
-const SESSION_CONFIG_TIMEOUT = 20_000; // configureSession's per-request default
-const NEW_SESSION_TIMEOUT = 30_000;
-const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+/** Handshake budgets, overridable per box. A cold `npx`-shaped agent, a slow
+ *  disk or a first run that downloads its own runtime blows the old 20s ceiling
+ *  and the turn dies before the agent ever speaks; these are generous enough to
+ *  cover that and still short enough that a genuinely wedged CLI surfaces as an
+ *  error instead of a hang. A non-numeric or non-positive override is ignored
+ *  rather than passed through as NaN, which would disarm the timeout entirely. */
+const envOr = (key: string, fallback: number): number => {
+  const n = Number(process.env[key]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
+const SESSION_CONFIG_TIMEOUT = envOr("MURAGE_ACP_SESSION_CONFIG_MS", 60_000); // configureSession's per-request default
+const NEW_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_NEW_MS", 90_000);
+const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // history replay on a long thread is slow
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -236,6 +262,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const emit = (event: RuntimeEvent) => {
         for (const l of [...listeners]) l(event);
       };
+
+      // ACP content blocks may carry a complete raster image inline. Keep the
+      // bytes available to the normalizer, but never duplicate megabytes of
+      // base64 into the provider-native diagnostic log.
+      const nativeLogMessage = (msg: any): unknown => {
+        const content = msg?.params?.update?.content;
+        if (
+          msg?.method !== "session/update" ||
+          msg?.params?.update?.sessionUpdate !== "agent_message_chunk" ||
+          content?.type !== "image" ||
+          typeof content.data !== "string"
+        ) return msg;
+        return {
+          ...msg,
+          params: {
+            ...msg.params,
+            update: {
+              ...msg.params.update,
+              content: { ...content, data: `[image data: ${content.data.length} base64 chars]` },
+            },
+          },
+        };
+      };
       const base = (threadId: string, turnId: string) => ({
         eventId: newEventId(),
         provider: DRIVER_KIND,
@@ -255,6 +304,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const agents = turn.integrations?.agents;
         if (agents) {
           servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
+        }
+        const memory = turn.integrations?.memory;
+        if (memory) {
+          servers.push({ name: "murage-memory", command: memory.command, args: memory.args, env: acpEnv(memory.env) });
         }
         const composio = turn.integrations?.composio;
         if (composio) {
@@ -293,7 +346,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // collision keeps the built-in (reserved names are filtered at the
         // config boundary; this is defense in depth).
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
+          if (name === "murage-memory") continue;
           if (servers.some((existing) => existing.name === name)) continue;
+          if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
           servers.push({ name, command: server.command, args: server.args, env: acpEnv(server.env) });
         }
         return servers;
@@ -469,8 +524,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const u = p.update ?? {};
           switch (u.sessionUpdate) {
             case "agent_message_chunk": {
-              const delta = u.content?.text;
-              if (typeof delta === "string" && delta) {
+              const content = u.content;
+              const delta = content?.text;
+              if (content?.type === "image" && typeof content.data === "string" && content.data) {
+                flushAssistantText();
+                emit({
+                  ...base(threadId, turnId),
+                  type: "item.completed",
+                  itemType: "assistant_image",
+                  data: content.data,
+                  alt: "Generated image",
+                });
+              } else if (typeof delta === "string" && delta) {
                 state.text += delta;
                 emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
               }
@@ -526,14 +591,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             } catch {
               continue;
             }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg });
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
             if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
               const pend = rpcPending.get(msg.id);
               if (pend) {
                 rpcPending.delete(msg.id);
                 if (pend.timer) clearTimeout(pend.timer);
                 if (msg.error) {
-                  const error = new Error(msg.error.message ?? JSON.stringify(msg.error));
+                  const error = new Error(acpRpcErrorMessage(msg.error));
                   Object.assign(error, { code: msg.error.code, data: msg.error.data });
                   pend.reject(error);
                 } else {
@@ -609,7 +674,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   { sessionId: cursor, cwd, mcpServers },
                   LOAD_SESSION_TIMEOUT,
                 );
-                sessionId = cursor;
+                // An agent is allowed to ANSWER session/load with null when the
+                // session is gone. Taking the cursor on that answer pinned
+                // sessionId to a dead id, skipped the session/new below, and
+                // prompted a session the agent had already forgotten.
+                if (sessionResult) sessionId = cursor;
               } catch {
                 /* session gone, load unsupported, or too slow — start fresh */
               }
@@ -721,6 +790,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!state.settled) {
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
+              const providerError = classifyProviderError(e);
               // Authentication setup is a user action, not a retry. The
               // classifier is preferred; loginNote remains a compatibility
               // fallback for existing ACP supports.
@@ -730,6 +800,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "runtime.error",
                 message,
+                ...(providerError ? { providerError } : {}),
                 ...(needsAuth ? { setup: true } : {}),
               });
               settle(false, needsAuth ? "auth_required" : "rpc_error");
@@ -766,6 +837,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           capabilities: {
             sessionModelSwitch: "unsupported",
             agentsMcp: true,
+            memoryMcp: true,
         customMcp: true,
             computerMcp: true,
             composioMcp: true,

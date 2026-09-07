@@ -1,7 +1,7 @@
 // A project API key (ak_…) creates/reuses one Composio Session. That
 // Session owns connection state, auth links and the MCP endpoint.
 import { saveConfig, type AppConfig } from "./config.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
@@ -217,6 +217,24 @@ function brokerAccess(): { url: string; token: string } | null {
 function activeBroker(cfg: AppConfig): { url: string; token: string } | null {
   if (cfg.composio?.apiKey) return null;
   return brokerAccess();
+}
+
+// Adapted from upstream52cd9563. Credentials are hashed, never duplicated in
+// cache/transport keys. The project's own key still takes precedence.
+function backendFingerprint(kind: string, endpoint: string, credential: string): string {
+  return createHash("sha256").update(JSON.stringify([kind, endpoint, credential])).digest("hex");
+}
+function selectedBackendIdentity(cfg: AppConfig, catalog = false): string | null {
+  const broker = activeBroker(cfg);
+  if (broker) return backendFingerprint(catalog ? "managed-catalog" : "managed", broker.url, broker.token);
+  const key = cfg.composio?.apiKey;
+  return key ? backendFingerprint(catalog ? "project-catalog" : "project", catalog ? toolkitBase() : apiBase(), key) : null;
+}
+const transportSessionBackends = new Map<string, string>();
+function rememberTransportSession(id: string, identity: string) {
+  transportSessionBackends.delete(id);
+  transportSessionBackends.set(id, identity);
+  while (transportSessionBackends.size > 512) transportSessionBackends.delete(transportSessionBackends.keys().next().value!);
 }
 
 export function connectionMode(cfg: AppConfig): "managed" | "self-hosted" | "unavailable" {
@@ -545,20 +563,27 @@ export async function prepareProjectSession(
 async function ensureProjectSession(cfg: AppConfig): Promise<SessionResponse> {
   const composio = cfg.composio;
   if (!composio?.apiKey) throw new Error("No Composio project key configured");
+  const key = composio.apiKey, endpoint = apiBase();
+  const assertCurrent = () => {
+    if (cfg.composio !== composio || composio.apiKey !== key || apiBase() !== endpoint) throw new Error("Connected-app configuration changed; retry the request");
+  };
   if (composio.sessionId) {
-    const existing = await getProjectSession(composio.apiKey, composio.sessionId);
+    const existing = await getProjectSession(key, composio.sessionId);
+    assertCurrent();
     if (existing && (supportsMultiAccount(existing) || multiAccountUpgradeAttempted.has(existing.session_id))) {
       return existing;
     }
   }
   // A missing/deleted session is recreated and its non-secret identifiers are
   // persisted so an edited config/env setup does not recreate it every launch.
-  const prepared = await prepareProjectSession(composio.apiKey, composio);
+  const prepared = await prepareProjectSession(key, composio);
+  assertCurrent();
   multiAccountUpgradeAttempted.add(prepared.sessionId);
   composio.userId = prepared.userId;
   composio.sessionId = prepared.sessionId;
   saveConfig({ composio: { userId: prepared.userId, sessionId: prepared.sessionId } });
-  const created = await getProjectSession(composio.apiKey, prepared.sessionId);
+  const created = await getProjectSession(key, prepared.sessionId);
+  assertCurrent();
   if (!created) throw new Error("Composio Session disappeared after creation");
   return created;
 }
@@ -607,7 +632,7 @@ export async function mcpIntegration(
       MURAGE_CONNECTOR_UPSTREAM_URL: `${context.harnessUrl}/api/internal/connectors/mcp`,
       MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: `Bearer ${context.commsToken}` }),
       MURAGE_HARNESS_URL: context.harnessUrl,
-      MURAGE_COMMS_TOKEN: context.commsToken,
+      MURAGE_CONNECTORS_TOKEN: context.commsToken,
       MURAGE_BOT_ID: context.botId,
       MURAGE_THREAD_ID: context.threadId,
     },
@@ -620,21 +645,33 @@ export async function relayMcp(
   transportSessionId?: string,
 ): Promise<{ status: number; bytes: Uint8Array; contentType: string; transportSessionId?: string }> {
   const broker = activeBroker(cfg);
+  const selectedIdentity = selectedBackendIdentity(cfg);
+  const projectKey = cfg.composio?.apiKey;
+  let projectSessionId: string | undefined;
+  const assertCurrent = () => {
+    if (selectedBackendIdentity(cfg) !== selectedIdentity || (projectSessionId !== undefined && cfg.composio?.sessionId !== projectSessionId)) throw new Error("Connected-app configuration changed; retry the request");
+  };
   let url: string;
+  let identity: string;
   const headers = new Headers({
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   });
-  if (transportSessionId) headers.set("mcp-session-id", transportSessionId);
   if (broker) {
     url = `${broker.url}/v1/mcp`;
     headers.set("authorization", `Bearer ${broker.token}`);
+    identity = backendFingerprint("managed-mcp", url, broker.token);
   } else {
-    if (!cfg.composio?.apiKey) throw new Error("Connected apps are unavailable");
+    if (!projectKey) throw new Error("Connected apps are unavailable");
     const session = await ensureProjectSession(cfg);
+    projectSessionId = session.session_id;
+    assertCurrent();
     url = session.mcp.url;
-    headers.set("x-api-key", cfg.composio.apiKey);
+    headers.set("x-api-key", projectKey);
+    identity = backendFingerprint("project-mcp", url, projectKey);
   }
+  const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
+  if (forwarded) headers.set("mcp-session-id", forwarded);
   const response = await fetch(url, {
     method: "POST",
     headers,
@@ -645,11 +682,15 @@ export async function relayMcp(
   if (declared > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
+  assertCurrent();
+  if (forwarded) rememberTransportSession(forwarded, identity);
+  const nextSession = response.headers.get("mcp-session-id") ?? undefined;
+  if (nextSession) rememberTransportSession(nextSession, identity);
   return {
     status: response.status,
     bytes,
     contentType: response.headers.get("content-type") ?? "application/json",
-    transportSessionId: response.headers.get("mcp-session-id") ?? undefined,
+    transportSessionId: nextSession,
   };
 }
 
@@ -1033,43 +1074,78 @@ const CURATED: ToolkitCard[] = [
   { slug: "stripe", label: "Stripe", blurb: "Payments and customers", domain: "stripe.com", logo: null },
 ];
 
-let toolkitCache: { at: number; cards: ToolkitCard[] } | null = null;
+let toolkitCache: { at: number; cards: ToolkitCard[]; identity: string } | null = null;
+let toolkitRequestGeneration = 0;
+const MAX_CATALOG_PAGES = 20;
+const MAX_CATALOG_ITEMS = 10_000;
 
 /**
  * Marketplace catalog. Tries the v3 toolkits API (official names,
  * descriptions, logos — cached 10 min); falls back to the curated list.
  */
-export async function listToolkits(cfg: AppConfig): Promise<{ cards: ToolkitCard[]; source: "api" | "curated" }> {
-  if (toolkitCache && Date.now() - toolkitCache.at < 10 * 60_000) {
+export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSignal } = {}): Promise<{ cards: ToolkitCard[]; source: "api" | "curated" }> {
+  const generation = ++toolkitRequestGeneration;
+  const identity = selectedBackendIdentity(cfg, true);
+  if (options.signal?.aborted) return { cards: CURATED, source: "curated" };
+  if (identity && toolkitCache?.identity === identity && Date.now() - toolkitCache.at < 10 * 60_000) {
     return { cards: toolkitCache.cards, source: "api" };
   }
   const backendKey = activeBroker(cfg) ? undefined : cfg.composio?.apiKey;
   if (backendKey || activeBroker(cfg)) {
-    try {
-      const res = backendKey
-        ? await fetch(`${toolkitBase()}/toolkits?limit=500&sort_by=usage`, {
-            headers: { "x-api-key": backendKey },
-            signal: AbortSignal.timeout(15_000),
-          })
-        : await brokerRequest(cfg, "/v1/catalog", { signal: AbortSignal.timeout(15_000) });
-      if (res.ok) {
+    // One budget for the whole catalog, rather than multiplying latency by
+    // the page ceiling. Cancellation/identity changes never publish old data.
+    const deadline = AbortSignal.timeout(15_000);
+    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+    const cardsBySlug = new Map<string, ToolkitCard>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let itemCount = 0;
+    let complete = false;
+    for (let page = 0; page < MAX_CATALOG_PAGES && itemCount < MAX_CATALOG_ITEMS; page += 1) {
+      if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
+      try {
+        const params = new URLSearchParams({ limit: "500", sort_by: "usage" });
+        if (cursor) params.set("cursor", cursor);
+        const res = backendKey
+          ? await fetch(`${toolkitBase()}/toolkits?${params}`, { headers: { "x-api-key": backendKey }, signal })
+          : await brokerRequest(cfg, cursor ? `/v1/catalog?${new URLSearchParams({ cursor })}` : "/v1/catalog", { signal });
+        if (!res.ok) break;
         const json: any = await res.json();
+        if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
         const items = json.items ?? json.data ?? [];
-        if (Array.isArray(items) && items.length) {
-          const cards: ToolkitCard[] = items.map((t: any) => ({
-            slug: (t.slug ?? t.key ?? t.name ?? "").toLowerCase(),
-            label: t.name ?? t.slug ?? "",
-            blurb: (t.meta?.description ?? t.description ?? "").slice(0, 90),
+        if (!Array.isArray(items)) break;
+        const boundedItems = items.slice(0, MAX_CATALOG_ITEMS - itemCount);
+        itemCount += boundedItems.length;
+        for (const t of boundedItems) {
+          if (!t || typeof t !== "object") continue;
+          const slug = String(t.slug ?? t.key ?? t.name ?? "").trim().toLowerCase();
+          if (!slug || cardsBySlug.has(slug)) continue;
+          cardsBySlug.set(slug, {
+            slug,
+            label: String(t.name ?? t.slug ?? ""),
+            blurb: String(t.meta?.description ?? t.description ?? "").slice(0, 90),
             logo: t.meta?.logo ?? t.logo ?? null,
             noAuth: t.no_auth === true,
             domain: null,
-          }));
-          toolkitCache = { at: Date.now(), cards };
-          return { cards, source: "api" };
+          });
         }
+        const next = typeof json.next_cursor === "string" ? json.next_cursor.trim() : "";
+        if (!next) { complete = boundedItems.length === items.length; break; }
+        if (!/^[A-Za-z0-9+/_=-]{1,256}$/.test(next) || seenCursors.has(next)) break;
+        seenCursors.add(next);
+        cursor = next;
+      } catch {
+        // Fail below without leaking upstream details or presenting a partial
+        // catalog as complete. First-page failures retain the curated fallback.
+        break;
       }
-    } catch {
-      /* fall through to curated */
+    }
+    if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
+    if (!complete && cardsBySlug.size) throw new Error("The app catalog could not be loaded completely. Please retry.");
+    if (cardsBySlug.size) {
+      const cards = [...cardsBySlug.values()];
+      if (complete && identity && generation === toolkitRequestGeneration) toolkitCache = { at: Date.now(), cards, identity };
+      return { cards, source: "api" };
     }
   }
   return { cards: CURATED, source: "curated" };

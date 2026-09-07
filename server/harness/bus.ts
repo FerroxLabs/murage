@@ -14,6 +14,26 @@ import { newId, type ProviderInstance, type RuntimeEvent, type RuntimeEventListe
 const INCOMPLETE_LOG_MESSAGE =
   "Canonical event history is incomplete: Murage could not write one or more events to disk. Live updates will continue.";
 
+/** Provider image bytes, out of the on-disk log.
+ *
+ * `redactSecrets` scrubs CREDENTIAL-shaped content; nothing in it knows about
+ * base64 payloads. So the ACP driver carefully kept generated-image bytes out
+ * of native/<thread>.ndjson while the very same payload went verbatim into
+ * events/<thread>.ndjson — the sibling file, and the one the comment below
+ * calls "a file people paste into bug reports". Half the job.
+ *
+ * The shape is kept so the log still shows that an image happened and how big
+ * it was; only the payload goes. Found by the sweep's own verifier after two
+ * external audits called this lane clean. */
+function withoutImageBytes(event: RuntimeEvent): RuntimeEvent {
+  const candidate = event as unknown as { itemType?: unknown; data?: unknown };
+  if (candidate.itemType !== "assistant_image" || typeof candidate.data !== "string") return event;
+  return {
+    ...event,
+    data: `[image data: ${candidate.data.length} base64 chars]`,
+  } as RuntimeEvent;
+}
+
 export class EventBus {
   private listeners = new Set<RuntimeEventListener>();
   private unsubscribes: Array<() => void> = [];
@@ -41,7 +61,8 @@ export class EventBus {
 
   publish(event: RuntimeEvent) {
     const pendingWarning = this.pendingLogWarnings.get(event.threadId);
-    const persistedEvents = pendingWarning ? [pendingWarning, redactSecrets(event)] : [redactSecrets(event)];
+    const loggable = redactSecrets(withoutImageBytes(event));
+    const persistedEvents = pendingWarning ? [pendingWarning, loggable] : [loggable];
     try {
       // the canonical log is a file people paste into bug reports; scrub
       // credential-shaped content (tool titles, request summaries, reply

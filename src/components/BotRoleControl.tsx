@@ -142,7 +142,7 @@ export function BotRoleControl({ bot, canCoordinate }: { bot: Bot; canCoordinate
         {option(
           "chief",
           "Runs the whole workspace. Hands each team's work to its leader and works with the individual assistants directly. One per workspace.",
-          chiefHolder && `${chiefHolder.name} is Chief of Staff today. Choosing this hands the role over — ${chiefHolder.name} stays on as a team leader.`,
+          chiefHolder && `${chiefHolder.name} is Chief of Staff today. Choosing this hands the role over; ${chiefHolder.name} stays on as a team leader.`,
         )}
 
         {/* The rail IS the hierarchy: everything inside this border hangs off
@@ -169,7 +169,7 @@ export function BotRoleControl({ bot, canCoordinate }: { bot: Bot; canCoordinate
 
       {leadershipBlocked && (
         <div className="mt-3 text-[12.5px] leading-relaxed text-ink-secondary">
-          Choose a Claude or ACP engine to let {bot.name} lead — leading means contacting other bots, and its
+          Choose a Claude or ACP engine to let {bot.name} lead. Leading means contacting other bots, and its
           current engine cannot.
         </div>
       )}

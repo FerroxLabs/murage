@@ -121,7 +121,7 @@ describe("persona — the micro field", () => {
 // routing decisions and into files other people download. persona is appended
 // to the persona string at the two turn sites and read NOWHERE else. A future
 // edit that "helpfully" adds it to the roster line must fail here.
-const readSource = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
+const readSource = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
 const DIRECT_TURN_PERSONA = `  const persona = [
     \`You are \${bot.name}, a personal bot in Murage.\`,

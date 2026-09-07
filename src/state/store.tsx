@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
+import type { ProviderErrorInfo } from "../../shared/provider-error";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
@@ -40,6 +41,26 @@ import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
+import { newSendId } from "@/lib/send-id";
+
+const MAX_ROUTINE_RUNS = 2_000;
+const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting"]);
+
+function trimRoutineRuns(runs: readonly RoutineRun[]): RoutineRun[] {
+  const sorted = [...runs].sort((a, b) => b.scheduledFor - a.scheduledFor);
+  if (sorted.length <= MAX_ROUTINE_RUNS) return sorted;
+  const activeCount = sorted.reduce(
+    (count, run) => count + (ACTIVE_ROUTINE_RUN_STATUSES.has(run.status) ? 1 : 0),
+    0,
+  );
+  let terminalSlots = Math.max(0, MAX_ROUTINE_RUNS - activeCount);
+  return sorted.filter((run) => {
+    if (ACTIVE_ROUTINE_RUN_STATUSES.has(run.status)) return true;
+    if (terminalSlots === 0) return false;
+    terminalSlots -= 1;
+    return true;
+  });
+}
 
 export type { EmberColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
@@ -61,6 +82,7 @@ export interface OptionCardData {
   approvalScope?: "local-computer";
   /** Persisted proposal used by the server when the user confirms it. */
   routineRequest?: RoutineRequestCardData;
+  routineProposalDigest?: string;
   /** Staged learned-skill change; applied only after the user confirms this card. */
   skillRequest?: SkillRequestCardData;
   /** Present when this card is a turn of the new-bot setup conversation.
@@ -73,6 +95,7 @@ export interface OptionCardData {
 
 export interface ConnectorCardData {
   slug: string;
+  alias?: string;
   label: string;
   description: string;
   status: "required" | "authorizing" | "connected" | "failed";
@@ -100,6 +123,8 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
   text?: string;
+  /** Provider-generated files attached to this assistant response. */
+  attachments?: Array<{ kind: "image"; path: string; mime: string }>;
   card?: OptionCardData;
   connector?: ConnectorCardData;
   secret?: SecretRequestCardData;
@@ -112,7 +137,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; providerError?: ProviderErrorInfo };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** Provider turn that produced this message. */
@@ -246,7 +271,7 @@ export interface Bot {
   activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
-  computer?: "cloud" | "vm" | "local" | "off";
+  computer?: "cloud" | "vm" | "local" | "browser" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
   cloudBackend?: CloudBackend;
   /** Allow Auto to prepare/start the managed VPS container. Off by default. */
@@ -265,6 +290,7 @@ export interface Bot {
   voice?: string;
   pinned?: boolean;
   hidden?: boolean;
+  sidebarHidden?: boolean;
   /** Sidebar section this bot renders under; absent = unsectioned. */
   section?: string;
   /** the one message pinned to the top of this bot's active thread */
@@ -344,6 +370,8 @@ export interface ConfigStatus {
   /** Flux Router key. Presence only — the key itself is never sent to the
    * renderer. Write it with PATCH /api/config `{ flux: { apiKey } }`. */
   flux?: { configured: boolean };
+  webSearch?: { provider: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off"; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean };
+  notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
   /** UI language override; "" (or absent) follows the system language. */
@@ -364,7 +392,7 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "profile" | "language" | "features" | "browserProfiles"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "webSearch" | "notifications" | "profile" | "language" | "features" | "browserProfiles"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -379,6 +407,8 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     tts: frame.tts,
     imageGen: frame.imageGen,
     flux: frame.flux,
+    webSearch: frame.webSearch,
+    notifications: frame.notifications,
     profile: frame.profile,
     language: frame.language,
     features: frame.features,
@@ -398,6 +428,7 @@ export interface EngineInstall {
 
 /** One row of GET /api/instances — the model picker's data. */
 export interface InstanceInfo {
+  enabled?: boolean;
   instanceId: string;
   driverKind: string;
   displayName: string;
@@ -441,6 +472,7 @@ export type AppSettingsSection =
   | "experimental"
   | "connections"
   | "engines"
+  | "channels"
   | "companion"
   | "computer"
   | "usage";
@@ -467,6 +499,8 @@ export interface AppState {
   appSettingsSection: AppSettingsSection;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
+  /** A bounded preview warning; the last good pixels remain available. */
+  screenNotices?: Record<string, string>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   /** who is driving each bot's computer: held = the person has the wheel
@@ -555,7 +589,7 @@ export type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
  *  landing a person on the team grid after they asked for a skill is how the
  *  intake's one escape hatch stopped being an escape hatch. Absent means the
  *  panel's own default. */
-export type TeamLibraryView = "teams" | "skills";
+export type TeamLibraryView = "bots" | "teams" | "skills";
 
 export type Action =
   | {
@@ -661,6 +695,7 @@ export type Action =
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
+  | { type: "screenUnavailable"; botId: string; message: string }
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "setModel"; botId: string; selection: ModelSelection }
@@ -858,7 +893,7 @@ export function reducer(state: AppState, action: Action): AppState {
         pluginsOpen: false,
       };
     case "routinesHydrated":
-      return { ...state, routines: action.routines, routineRuns: action.runs };
+      return { ...state, routines: action.routines, routineRuns: trimRoutineRuns(action.runs) };
     case "routinePatched": {
       const exists = state.routines.some((routine) => routine.id === action.routine.id);
       return {
@@ -875,7 +910,10 @@ export function reducer(state: AppState, action: Action): AppState {
       const runs = exists
         ? state.routineRuns.map((run) => (run.id === action.run.id ? action.run : run))
         : [action.run, ...state.routineRuns];
-      return { ...state, routineRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
+      return {
+        ...state,
+        routineRuns: trimRoutineRuns(runs),
+      };
     }
     case "webhooksHydrated":
       return { ...state, webhooks: action.webhooks, webhookAttempts: action.attempts, webhookIngress: action.ingress };
@@ -1126,12 +1164,18 @@ export function reducer(state: AppState, action: Action): AppState {
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
       }));
     }
-    case "screenFrame":
+    case "screenUnavailable":
+      return { ...state, screenNotices: { ...state.screenNotices, [action.botId]: action.message } };
+    case "screenFrame": {
+      const notices = { ...state.screenNotices };
+      delete notices[action.botId];
       return {
         ...withMascotMotion(state, action.botId, "success"),
         screens: { ...state.screens, [action.botId]: { png: action.png, mime: action.mime } },
+        screenNotices: notices,
         provisioning: { ...state.provisioning, [action.botId]: false },
       };
+    }
     case "provisioning":
       return {
         ...(action.on ? withMascotMotion(state, action.botId, "launch") : state),
@@ -1261,6 +1305,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return updateBot(scoped, action.botId, (b) => ({
         ...b,
         ...botPatch,
+        computer: Object.hasOwn(botPatch, "computer") ? botPatch.computer ?? undefined : b.computer,
         // Absent, never false — one shape for "no", the same as on disk.
         ...(botPatch.individual === false ? { individual: undefined } : {}),
       }));
@@ -1462,7 +1507,12 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
     },
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  // The status rides along, the way `composer-attachments.ts` already does it.
+  // Without it every failure looks alike to a caller, and the peripheral
+  // retry loop cannot tell "the harness hiccuped" from "this surface is never
+  // going to be allowed" — so it retried a deliberate 403 every 30 seconds
+  // for as long as the phone had the tab open.
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), { status: res.status });
   return body;
 }
 
@@ -1473,6 +1523,19 @@ export interface PeripheralSnapshotLoad<Key extends string = string> {
 
 function normalizeSnapshotFailure(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
+}
+
+/** Statuses that mean "not on this surface", as opposed to "not right now".
+ *
+ * 403 is the surface gate refusing a phone a desktop-only route; 404 is the
+ * same decision expressed by not mounting the route at all (see the
+ * `requestSurface(...) !== "desktop"` pattern in `server/index.ts`). Both are
+ * stable for the life of the session, so a retry is pure battery. */
+const PERMANENTLY_REFUSED = new Set([403, 404]);
+
+export function isPermanentlyRefused(error: unknown): boolean {
+  const status = (error as { status?: unknown } | undefined)?.status;
+  return typeof status === "number" && PERMANENTLY_REFUSED.has(status);
 }
 
 /** A refused SSE resume needs the chat transcript snapshot before its cursor
@@ -1671,7 +1734,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (quizBeforeSend) persistCard(action.botId, quizBeforeSend.id, { dismissed: true });
           const threadId =
             action.threadId ?? stateRef.current.bots.find((bot) => bot.id === action.botId)?.threadId;
-          const sendId = action.sendId ?? crypto.randomUUID();
+          const sendId = action.sendId ?? newSendId();
           void api(`/api/bots/${action.botId}/messages`, {
             method: "POST",
             body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId }),
@@ -1837,17 +1900,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api(`/api/bots/${action.botId}`, { method: "DELETE" }).catch(showError);
           break;
         case "markUnread":
-          api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify({ unread: true }) }).catch(
-            () => {},
-          );
+          api(`/api/bots/${action.botId}/read`, { method: "POST", body: JSON.stringify({ unread: true }) }).catch(showError);
           break;
         case "select": {
           const bot = stateRef.current.bots.find((b) => b.id === action.id);
           const group = stateRef.current.groups.find((g) => g.id === action.id);
           if (bot?.unread) {
-            api(`/api/bots/${action.id}`, { method: "PATCH", body: JSON.stringify({ unread: false }) }).catch(() => {});
+            api(`/api/bots/${action.id}/read`, { method: "POST" }).catch(() => {});
           } else if (group?.unread) {
-            api(`/api/groups/${action.id}`, { method: "PATCH", body: JSON.stringify({ unread: false }) }).catch(() => {});
+            api(`/api/groups/${action.id}/read`, { method: "POST" }).catch(() => {});
           }
           break;
         }
@@ -1865,7 +1926,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "sendGroup": {
           const threadId =
             action.threadId ?? stateRef.current.groups.find((group) => group.id === action.groupId)?.threadId;
-          const sendId = action.sendId ?? crypto.randomUUID();
+          const sendId = action.sendId ?? newSendId();
           api(`/api/groups/${action.groupId}/messages`, {
             method: "POST",
             body: JSON.stringify({
@@ -2038,6 +2099,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!alive) return;
       const refresh = refreshState(part.key);
       if (refresh.timer) return;
+      // A surface gate is a decision, not an outage. Routes the harness keeps
+      // for the desktop answer 403 (or 404, when the route is not mounted on
+      // this surface at all) and will answer the same way forever — retrying
+      // cannot change the reply, it just wakes a phone's radio every 30
+      // seconds until the tab closes. Give up on this panel and say so once.
+      //
+      // 401 is deliberately NOT in this set: a browser session can be renewed,
+      // so that one really is worth another attempt.
+      if (isPermanentlyRefused(error)) {
+        console.warn(`snapshot: ${part.key} is not available on this surface; not retrying`, error);
+        return;
+      }
       if (error !== undefined) {
         console.warn(`snapshot: ${part.key} refresh failed; retrying`, error);
       }
@@ -2194,11 +2267,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected chat clears its badge immediately
           if (bot.unread && bot.id === stateRef.current.selectedId) {
             bot.unread = false;
-            fetch(`/api/bots/${bot.id}`, {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ unread: false }),
-            }).catch(() => {});
+            void api(`/api/bots/${bot.id}/read`, { method: "POST" }).catch(() => {});
           }
           rawDispatch({
             type: "botPatched",
@@ -2211,11 +2280,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected room clears its badge immediately
           if (group.unread && group.id === stateRef.current.selectedId) {
             group.unread = false;
-            fetch(`/api/groups/${group.id}`, {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ unread: false }),
-            }).catch(() => {});
+            void api(`/api/groups/${group.id}/read`, { method: "POST" }).catch(() => {});
           }
           rawDispatch({ type: "groupPatched", group });
           break;
@@ -2282,6 +2347,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "screen":
           rawDispatch({ type: "screenFrame", botId: frame.botId, png: frame.png, mime: frame.mime ?? "image/png" });
+          break;
+        case "screen.unavailable":
+          if (typeof frame.botId === "string" && typeof frame.message === "string") {
+            rawDispatch({ type: "screenUnavailable", botId: frame.botId, message: frame.message.slice(0, 512) });
+          }
           break;
         case "computer":
           rawDispatch({ type: "provisioning", botId: frame.botId, on: frame.state === "provisioning" });

@@ -68,7 +68,9 @@ test("a phone is never asked to introduce itself, or to set itself up", async ({
   // drawer, so the drawer opens first.
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings" }).first().click();
-  await page.getByRole("button", { name: "Phone" }).click();
+  await expect(page.getByRole("button", { name: "Phone", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Connections", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Engines", exact: true })).toHaveCount(0);
   for (const copy of [PHONE_WIZARD, ...DENIALS]) {
     await expect(page.getByText(copy)).toHaveCount(0);
   }

@@ -1,6 +1,22 @@
 name: CI
 
 on:
+  # Branches created by GITHUB_TOKEN do not emit their own push event, so the
+  # release-prep workflow dispatches this one explicitly for the version PR.
+  workflow_dispatch:
+    inputs:
+      windows_only:
+        description: "Confirm Windows-only fixture changes; reuse unaffected platform evidence"
+        type: boolean
+        default: false
+      vitest_file:
+        description: "Scoped confirmation: existing test files/directories, one per line; other Vitest evidence reused"
+        required: false
+        type: string
+      human_files:
+        description: "Ubuntu human-only confirmation: existing src/e2e/*.human.spec.ts files, one per line; prior CI evidence reused"
+        required: false
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -15,23 +31,54 @@ concurrency:
 
 jobs:
   test:
-    name: typecheck + test (${{ matrix.os }})
+    if: ${{ !inputs.human_files }}
+    name: ${{ inputs.vitest_file && 'Scoped CI confirmation' || 'typecheck + test' }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate scoped CI confirmation input
+        shell: bash
+        env:
+          VITEST_FILE: ${{ inputs.vitest_file }}
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { lstatSync, realpathSync } from 'node:fs';
+          import { isAbsolute, relative, sep } from 'node:path';
+          const selection = process.env.VITEST_FILE ?? '';
+          if (selection) {
+            assert.equal(process.env.GITHUB_EVENT_NAME, 'workflow_dispatch', 'scoped tests require manual dispatch');
+            const paths = selection.split('\n');
+            assert.ok(paths.length <= 16, 'at most sixteen scoped paths are allowed');
+            for (const file of paths) {
+              const testFile = /^(server|electron|src|shared|companion|scripts)\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.test\.(ts|mjs)$/.test(file);
+              const testDirectory = /^(server|electron|src|shared|companion|scripts)(?:\/[A-Za-z0-9_-]+)+$/.test(file);
+              assert.ok(testFile || testDirectory, 'vitest_file must contain repository-relative test files or directories');
+              const stat = lstatSync(file);
+              assert.ok((testFile && stat.isFile()) || (testDirectory && stat.isDirectory()), 'scoped path must be an existing test file or directory');
+              const inside = relative(realpathSync('.'), realpathSync(file));
+              assert.ok(inside && !isAbsolute(inside) && inside !== '..' && !inside.startsWith(`..${sep}`), 'vitest_file escapes the checkout');
+            }
+            console.log(`Scoped CI confirmation: ${paths.join(', ')}; unaffected Vitest results are reused, not rerun.`);
+          }
+          EOF
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare the pinned local memory test model
+        # P06 executes real offline inference; a clean runner must prepare the
+        # hash-pinned fixture before tests, not skip it or fetch during inference.
+        run: node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination "${{ github.workspace }}/.planning/memory-evidence/model"
       - name: Validate locale catalogs
         if: matrix.os == 'ubuntu-latest'
         run: pnpm i18n:check
@@ -42,6 +89,7 @@ jobs:
         run: node --input-type=commonjs -e "require('electron')"
       - run: pnpm typecheck
       - name: Run tests
+        if: inputs.vitest_file == ''
         run: pnpm test
         env:
           # Electron 43 currently exits with EXCEPTION_BREAKPOINT before ready
@@ -49,6 +97,20 @@ jobs:
           # ACL is present. Production fails closed there through the tested
           # browser-platform gate; keep probing the upstream regression below.
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+      - name: Scoped Vitest confirmation and required downstream suites
+        if: inputs.vitest_file != ''
+        shell: bash
+        env:
+          VITEST_FILE: ${{ inputs.vitest_file }}
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+        run: |
+          echo "Scoped Vitest confirmation only: $VITEST_FILE"
+          test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
+          pnpm check:contrast
+          pnpm exec vitest run "${test_paths[@]}"
+          pnpm broker:test
+          pnpm test:electron
+          pnpm test:packaged-server
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
         continue-on-error: true
@@ -82,7 +144,68 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: pnpm exec vite build
 
+  human-confirmation:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}
+    name: Scoped Ubuntu human confirmation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Validate selected human specs
+        shell: bash
+        env:
+          HUMAN_FILES: ${{ inputs.human_files }}
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { lstatSync, realpathSync } from 'node:fs';
+          import { isAbsolute, relative, sep } from 'node:path';
+          assert.equal(process.env.GITHUB_EVENT_NAME, 'workflow_dispatch');
+          const files = (process.env.HUMAN_FILES ?? '').split('\n');
+          assert.ok(files.length >= 1 && files.length <= 16, 'select one to sixteen human specs');
+          assert.equal(new Set(files).size, files.length, 'duplicate human specs are not allowed');
+          const checkout = realpathSync('.');
+          for (const file of files) {
+            assert.match(file, /^src\/e2e\/[A-Za-z0-9_.-]+\.human\.spec\.ts$/, 'select repository-relative human spec files');
+            assert.ok(lstatSync(file).isFile(), 'selected human spec must be an existing regular file');
+            const inside = relative(checkout, realpathSync(file));
+            assert.ok(inside && !isAbsolute(inside) && inside !== '..' && !inside.startsWith(`..${sep}`), 'human spec escapes the checkout');
+          }
+          console.log(`Human-only confirmation: ${files.join(', ')}; prior test, control-plane and package results are reused.`);
+          EOF
+      - run: pnpm install --frozen-lockfile
+      - name: Install the Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: production UI build
+        run: pnpm exec vite build
+      - name: Confirm selected human specs
+        shell: bash
+        env:
+          HUMAN_FILES: ${{ inputs.human_files }}
+        run: |
+          human_paths=()
+          while IFS= read -r human_path; do human_paths+=("$human_path"); done <<< "$HUMAN_FILES"
+          pnpm exec playwright test "${human_paths[@]}" --retries=0 --trace=on
+      - name: Upload human screenshots and traces
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: murage-scoped-human-confirmation
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: warn
+          retention-days: 7
+
   control-plane:
+    if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: control-plane check + workerd tests + dry run
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -101,6 +224,7 @@ jobs:
       - run: pnpm control-plane:dry-run
 
   package-linux:
+    if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
     timeout-minutes: 25

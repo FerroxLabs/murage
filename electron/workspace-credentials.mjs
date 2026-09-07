@@ -8,11 +8,15 @@
 // credentials.bin field it lives in, and the env var the spawned server
 // prefers over the file (server/config.ts loadConfig).
 export const WORKSPACE_CREDENTIALS = [
+  { section: "telegram", field: "botToken", name: "telegramBotToken", env: "MURAGE_TELEGRAM_BOT_TOKEN" },
   { section: "xai", field: "key", name: "xaiApiKey", env: "XAI_API_KEY" },
   { section: "box", field: "token", name: "boxToken", env: "BOX_TOKEN" },
   { section: "tts", field: "key", name: "ttsKey", env: "MURAGE_TTS_KEY" },
   { section: "imageGen", field: "key", name: "openaiImageApiKey", env: "MURAGE_OPENAI_IMAGE_KEY" },
   { section: "opencodeGo", field: "apiKey", name: "opencodeGoApiKey", env: "OPENCODE_API_KEY" },
+  { section: "webSearch", field: "tavilyApiKey", name: "tavilySearchApiKey", env: "MURAGE_TAVILY_SEARCH_KEY" },
+  { section: "webSearch", field: "exaApiKey", name: "exaSearchApiKey", env: "MURAGE_EXA_SEARCH_KEY" },
+  { section: "webSearch", field: "firecrawlApiKey", name: "firecrawlSearchApiKey", env: "MURAGE_FIRECRAWL_SEARCH_KEY" },
 ];
 
 /** One boot-time sweep of config.json: move every plaintext workspace secret

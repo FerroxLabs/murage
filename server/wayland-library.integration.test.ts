@@ -3,7 +3,7 @@
 // Every other skill test builds its own synthetic library and proves the
 // mechanism. This one runs the real generated artifacts through the real
 // code path — the on-disk catalog in skills-library/, the assistant packages
-// in library/assistants/, the team manifests in teams-library/teams/ — so a
+// in library/assistants/, the vendored team packages in library/packages/ — so a
 // generator that writes something the installer will not accept fails here
 // rather than in a customer's workspace.
 //
@@ -17,14 +17,16 @@ import { fileURLToPath } from "node:url";
 
 import { parseBotPackage } from "./bot-package.ts";
 import { installSkillFromLibrary, listSkills, setSkillEnabled, skillsSystemPrompt } from "./skills.ts";
-import { parseTeamManifest } from "./team-manifest.ts";
 import { workspaceDir } from "./workspace.ts";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const SKILL_LIBRARY = join(REPO, "skills-library");
 const ASSISTANT_LIBRARY = join(REPO, "library", "assistants");
 const BUILTIN_LIBRARY = join(REPO, "bot-library", "builtins");
-const TEAM_LIBRARY = join(REPO, "teams-library", "teams");
+// teams-library/teams was an untracked generator intermediate. Customers
+// receive the richer committed package documents, so a clean checkout must
+// validate those exact bytes rather than require the generator author's tree.
+const TEAM_LIBRARY = join(REPO, "library", "packages");
 
 /** The three native discovery directories syncSkillLinks publishes into. */
 const NATIVE_SKILL_DIRS = [".claude/skills", ".agents/skills", ".grok/skills"];
@@ -111,14 +113,15 @@ describe("the generated Wayland library installs through the real per-bot skill 
   });
 });
 
-describe("a generated team manifest resolves to generated assistant packages", () => {
+describe("a shipped Wayland team package resolves to generated assistant packages", () => {
   it("parses dev-shop and finds every member key as a real bot package agent", () => {
     const raw = JSON.parse(readFileSync(join(TEAM_LIBRARY, "dev-shop.json"), "utf8"));
-    const manifest = parseTeamManifest(raw);
-    expect(manifest.team.name).toBe("Dev Shop");
-    expect(manifest.team.members.length).toBeGreaterThan(0);
+    const document = parseBotPackage(raw);
+    expect(document.package.id).toBe("dev-shop");
+    expect(document.package.name).toBe("Dev Shop");
+    expect(document.package.agents.length).toBeGreaterThan(0);
 
-    for (const member of manifest.team.members) {
+    for (const member of document.package.agents) {
       const assistant = join(ASSISTANT_LIBRARY, `${member.key}.json`);
       const builtin = join(BUILTIN_LIBRARY, `${member.key}.json`);
       const path = existsSync(assistant) ? assistant : builtin;
@@ -131,13 +134,36 @@ describe("a generated team manifest resolves to generated assistant packages", (
     }
   });
 
-  it("resolves every member of every generated team manifest", () => {
+  it("resolves every member of every shipped Wayland team package", () => {
     const files = readdirSync(TEAM_LIBRARY).filter((f) => f.endsWith(".json"));
     expect(files.length).toBeGreaterThan(50);
+    // Starter packages author their roles inline. The importer creates bots
+    // from these definitions and their linked playbooks, without consulting
+    // the standalone assistant library. Keep that exception explicit so a
+    // missing generated assistant in any existing team still fails.
+    const embeddedRosters: Record<string, string[]> = {
+      "starter-personal-home": ["home-planner"],
+      "starter-solo-business": ["business-planner", "draft-partner"],
+      "starter-business-team": ["team-coordinator", "delivery-partner", "review-partner"],
+    };
+    for (const id of Object.keys(embeddedRosters)) expect(files).toContain(`${id}.json`);
     const unresolved: string[] = [];
     for (const file of files) {
-      const manifest = parseTeamManifest(JSON.parse(readFileSync(join(TEAM_LIBRARY, file), "utf8")));
-      for (const member of manifest.team.members) {
+      const document = parseBotPackage(JSON.parse(readFileSync(join(TEAM_LIBRARY, file), "utf8")));
+      const embeddedRoster = embeddedRosters[document.package.id];
+      if (embeddedRoster) {
+        expect(document.package.agents.map((member) => member.key)).toEqual(embeddedRoster);
+      }
+      for (const member of document.package.agents) {
+        if (embeddedRoster) {
+          expect(member.description?.trim().length, `${file} → ${member.key} description`).toBeGreaterThan(0);
+          expect(member.playbooks?.length, `${file} → ${member.key} playbooks`).toBeGreaterThan(0);
+          for (const key of member.playbooks ?? []) {
+            const playbook = document.package.playbooks?.find((entry) => entry.key === key);
+            expect(playbook?.instructions.trim().length, `${file} → ${member.key} → ${key}`).toBeGreaterThan(0);
+          }
+          continue;
+        }
         const found =
           existsSync(join(ASSISTANT_LIBRARY, `${member.key}.json`)) ||
           existsSync(join(BUILTIN_LIBRARY, `${member.key}.json`));

@@ -4,6 +4,7 @@ import { AlertTriangle, BookOpen, Sparkles, X } from "lucide-react";
 import { api, useStore, type Bot, type BotAnnouncement } from "@/state/store";
 import { cn } from "@/lib/cn";
 import {
+  invalidateSkillCount,
   setSkillCount,
   setupOverwriteReasons,
   setupWouldOverwrite,
@@ -331,7 +332,7 @@ function IntakeQuestion({
                 </button>
               </div>
               <div className="mt-2 text-[12px] text-ink-secondary">
-                {applyProfileDetail(profile, bot.name, !keepName)} Nothing else in your workspace changes —{" "}
+                {applyProfileDetail(profile, bot.name, !keepName)} Nothing else in your workspace changes;{" "}
                 no new agent is created.
               </div>
             </div>
@@ -403,7 +404,7 @@ function IntakeQuestion({
           {suggestion && !profile && looseSkills.length === 0 && (
             <div className="mt-4 rounded-xl border border-hairline/40 bg-inset px-3.5 py-3">
               <div className="text-[13.5px] text-ink-secondary">
-                Nothing in the library clearly matches that. Try naming the work itself — "reading my trading
+                Nothing in the library clearly matches that. Try naming the work itself: "reading my trading
                 charts", "chasing invoices", "writing blog posts".
               </div>
               <button
@@ -446,6 +447,8 @@ export function BotSetupAction({ bot }: { bot: Bot }) {
 
   const warns = setupWouldOverwrite(skillCount, bot);
   const reasons = setupOverwriteReasons(skillCount, bot);
+  const checking = skillCount === null;
+  const unavailable = skillCount === -1;
 
   if (!open) {
     return (
@@ -454,22 +457,28 @@ export function BotSetupAction({ bot }: { bot: Bot }) {
           <div className="min-w-0">
             <div className="text-[15px] font-medium text-ink">Set up this bot</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
-              {warns
+              {checking ? `Checking what ${bot.name} already has…` : unavailable ? `Could not read ${bot.name}'s skills. Retry the check before starting setup.` : warns
                 ? `Say what you want ${bot.name} for and pick a specialist profile or skills to match. ${bot.name} is already set up, so this will say what it would change first.`
                 : `Say what you want ${bot.name} for and pick a specialist profile or skills to match.`}
             </div>
           </div>
           <button
             type="button"
+            disabled={checking}
             onClick={() => {
+              if (checking) return;
+              if (unavailable) {
+                invalidateSkillCount(bot.id);
+                return;
+              }
               setOpen(true);
               setAcknowledged(!warns);
             }}
-            className="shrink-0 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised"
+            className="shrink-0 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised disabled:cursor-wait disabled:opacity-50"
           >
             <span className="inline-flex items-center gap-1.5">
               <Sparkles size={14} />
-              Set up
+              {checking ? "Checking setup…" : unavailable ? "Retry skill check" : "Set up"}
             </span>
           </button>
         </div>
@@ -483,7 +492,7 @@ export function BotSetupAction({ bot }: { bot: Bot }) {
         <div className="flex items-start gap-2.5">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />
           <div className="min-w-0">
-            <div className="text-[15px] font-medium text-ink">{bot.name} is already set up</div>
+            <div className="text-[15px] font-medium text-ink">{reasons.length > 0 ? `${bot.name} is already set up` : "Review the current setup"}</div>
             <div className="mt-1 text-[13px] text-ink-secondary">
               {reasons.length > 0
                 ? `Running setup can add skills and change what ${bot.name} is for. This agent already has ${listPhrase(reasons)}.`

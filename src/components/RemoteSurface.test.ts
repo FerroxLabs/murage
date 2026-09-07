@@ -28,7 +28,7 @@ import { describe, expect, it } from "vitest";
 import { resolveDesktopSurface } from "../lib/use-surface";
 import { webUiReadinessRows, type WebUiReadiness } from "./PhoneSetupFlow";
 
-const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
+const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
 const app = read("../App.tsx");
 const onboarding = read("./Onboarding.tsx");

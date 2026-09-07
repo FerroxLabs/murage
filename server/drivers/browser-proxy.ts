@@ -45,6 +45,7 @@ const pageSchema = z.object({
   elements: z.array(elementSchema).default([]),
   /** Playwright-style ARIA snapshot with [ref=eN] refs; absent when the surface fell back to the bare tree */
   yaml: z.string().nullable().optional(),
+  readiness: z.enum(["content-observed", "unknown"]).optional(),
   /** what the surface did or noticed on the bot's behalf: answered dialogs, off-screen content */
   notes: z.array(z.string()).default([]),
 });
@@ -154,8 +155,9 @@ export function formatObserved(page: ObservedPage): string {
   const url = safeBrowserUrl(page.url) ?? (page.url === "about:blank" ? "about:blank" : "URL unavailable");
   const wall = classifyWall(page);
   const notes = [...(page.notes ?? []), ...(wall ? [wallNote(wall)] : [])];
+  const empty = page.readiness === "unknown" ? "Readiness unknown: no accessible content observed yet." : "(empty page)";
   if (page.yaml !== undefined && page.yaml !== null) {
-    return [`Browser — ${page.title || "Untitled"}: ${url}`, page.yaml || "(empty page)", ...notes].join("\n");
+    return [`Browser — ${page.title || "Untitled"}: ${url}`, page.yaml || empty, ...notes].join("\n");
   }
   const lines = page.elements.map((element) => {
     const flags = [
@@ -165,7 +167,7 @@ export function formatObserved(page: ObservedPage): string {
     ].filter(Boolean);
     return `${element.ref} ${element.role} ${JSON.stringify(element.name)}${flags.length ? ` (${flags.join(", ")})` : ""}`;
   });
-  return [`Browser — ${page.title || "Untitled"}: ${url}`, lines.join("\n") || "No interactive elements found.", ...notes].join("\n");
+  return [`Browser — ${page.title || "Untitled"}: ${url}`, lines.join("\n") || (page.readiness === "unknown" ? empty : "No interactive elements found."), ...notes].join("\n");
 }
 
 export type HostRequest = (operation: string, body?: object) => Promise<unknown>;

@@ -20,6 +20,8 @@ import {
 } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 
 export function resolveCli(cli: string, args: string[] = []): ResolvedSpawn {
@@ -154,9 +156,19 @@ export function killCliTree(child: ChildProcess): void {
 /** Per-turn broker channel: unix socket on POSIX, named pipe on Windows
  * (Node can't listen on a filesystem socket path there — EACCES). */
 export function brokerSocketPath(dataDir: string, tag: string): string {
-  return process.platform === "win32"
+  if (process.platform === "win32") return (
     // Named pipes share a global namespace; DATA_DIR cannot isolate two
     // concurrent app instances the way a POSIX socket directory does.
-    ? `\\\\.\\pipe\\murage-perm-${process.pid}-${tag}`
-    : join(dataDir, `perm-${tag}.sock`);
+    `\\\\.\\pipe\\murage-perm-${process.pid}-${tag}`
+  );
+  const preferred = join(dataDir, `perm-${tag}.sock`);
+  // Count bytes, not characters: canonical macOS paths gain /private and
+  // multibyte usernames can cross sun_path's limit with few visible letters.
+  if (Buffer.byteLength(preferred) < 104) return preferred;
+  const scope = createHash("sha256").update(`${dataDir}\0${process.pid}\0${tag}`).digest("hex").slice(0, 24);
+  const filename = `murage-perm-${scope}.sock`;
+  const temporary = join(tmpdir(), filename);
+  // TMPDIR may itself be too deep. The broker chmods its socket to0600; the
+  // hash includes installation, process and tag to avoid cross-root aliases.
+  return Buffer.byteLength(temporary) < 104 ? temporary : join("/tmp", filename);
 }

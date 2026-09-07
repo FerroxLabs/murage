@@ -20,6 +20,7 @@ const SECTIONS = [
   { id: "general", desktopOnly: undefined },
   { id: "connections", desktopOnly: true },
   { id: "engines", desktopOnly: true },
+  { id: "channels", desktopOnly: true },
   { id: "companion", desktopOnly: true },
   { id: "computer", desktopOnly: true },
   { id: "usage", desktopOnly: undefined },
@@ -30,6 +31,7 @@ describe("which settings a surface may see", () => {
     const ids = sectionsForSurface(SECTIONS, false).map((entry) => entry.id);
     expect(ids).not.toContain("connections");
     expect(ids).not.toContain("engines");
+    expect(ids).not.toContain("channels");
     expect(ids).not.toContain("computer");
     expect(ids).not.toContain("companion");
     // and still leaves it something worth opening
@@ -51,7 +53,7 @@ describe("which settings a surface may see", () => {
     // A stale `appSettingsSection` — set on the desktop, or restored from
     // state — must not render a withheld pane just because the nav no longer
     // offers it.
-    for (const id of ["connections", "engines", "computer", "companion"]) {
+    for (const id of ["connections", "engines", "channels", "computer", "companion"]) {
       expect(source, `${id} renders without a surface check`).toContain(`desktop === true && section === "${id}"`);
     }
   });

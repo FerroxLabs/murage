@@ -67,6 +67,6 @@ describe.skipIf(process.platform === "win32")("VPS Cua MCP bridge", () => {
 
     const result = await runBridge(bin, "x".repeat(4 * 1024 * 1024));
 
-    expect(result.code).toBe(0);
+    expect(result.code, result.stderr).toBe(0);
   });
 });

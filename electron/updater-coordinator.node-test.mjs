@@ -402,3 +402,117 @@ test("without a hand-off the install still quits and installs", async () => {
   assert.equal(called, 1);
   assert.equal(h.getState().status, "installing");
 });
+
+test("a staged update survives automatic checks until a manual refresh", async () => {
+  const h = harness();
+  let checks = 0;
+  h.updater.checkForUpdates = async () => {
+    checks += 1;
+    h.updater.emit("checking-for-update");
+    h.updater.emit("update-available", { version: "2.1.0" });
+  };
+  await downloadInto(h);
+  const staged = h.getState();
+  await h.coordinator.check();
+  assert.equal(checks, 0);
+  assert.deepEqual(h.getState(), staged);
+  await h.coordinator.check(true);
+  assert.equal(checks, 1);
+  assert.equal(h.getState().status, "available");
+  assert.equal(h.getState().version, "2.1.0");
+});
+
+for (const late of [false, true]) {
+  test(`a superseded check error cannot erase a download (${late ? "after" : "before"} promise cleanup)`, async () => {
+    const h = harness();
+    const pending = deferred();
+    h.updater.checkForUpdates = () => pending.promise;
+    const check = h.coordinator.check();
+    await downloadInto(h);
+    const error = new Error("superseded feed error");
+    if (late) {
+      pending.resolve();
+      await check;
+      h.updater.emit("error", error);
+    } else {
+      h.updater.emit("error", error);
+      pending.reject(error);
+      await check;
+    }
+    assert.equal(h.getState().status, "downloaded");
+    assert.equal(h.getState().version, "2.0.0");
+  });
+}
+
+test("checks preserve active installation and a completed package hand-off", async () => {
+  const pending = deferred();
+  const h = harness({ handOffInstall: () => pending.promise });
+  let checks = 0;
+  h.updater.checkForUpdates = async () => { checks += 1; h.updater.emit("update-not-available"); };
+  await downloadInto(h);
+  h.coordinator.install();
+  await h.coordinator.check();
+  await h.coordinator.check(true);
+  assert.equal(checks, 0);
+  assert.equal(h.getState().status, "installing");
+  pending.resolve({ command: "fixture install command", terminalOpened: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  const handedOff = h.getState();
+  await h.coordinator.check();
+  h.updater.emit("error", new Error("unattributed late feed error"));
+  assert.equal(checks, 0);
+  assert.equal(h.getState().status, "handed-off");
+  assert.deepEqual(h.getState(), handedOff);
+});
+
+for (const action of ["check", "download", "hand-off"]) {
+  test(`a failed manual ${action} remains visible across automatic checks and can be refreshed`, async () => {
+    const h = harness({ handOffInstall: () => Promise.reject(new Error("hand-off failed")) });
+    if (action === "check") {
+      h.updater.checkForUpdates = () => Promise.reject(new Error("check failed"));
+      await h.coordinator.check(true);
+    } else if (action === "download") {
+      h.updater.downloadUpdate = () => Promise.reject(new Error("download failed"));
+      await h.coordinator.download();
+    } else {
+      await downloadInto(h);
+      h.coordinator.install();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const failed = h.getState();
+    let checks = 0;
+    h.updater.checkForUpdates = async () => { checks += 1; h.updater.emit("update-not-available"); };
+    await h.coordinator.check();
+    h.updater.emit("error", new Error("unattributed old check error"));
+    assert.equal(checks, 0);
+    assert.equal(h.getState().status, "error");
+    assert.deepEqual(h.getState(), failed);
+    await h.coordinator.check(true);
+    assert.equal(checks, 1);
+    assert.equal(h.getState().status, "idle");
+  });
+}
+
+for (const action of ["check", "download", "install"]) {
+  test(`a fresh user ${action} still reports its error after a staged update`, async () => {
+    const h = harness();
+    await downloadInto(h);
+    const fail = () => {
+      const error = new Error(`${action} failed`);
+      h.updater.emit("error", error);
+      return Promise.reject(error);
+    };
+    if (action === "check") {
+      h.updater.checkForUpdates = fail;
+      await h.coordinator.check(true);
+    } else if (action === "download") {
+      h.updater.downloadUpdate = fail;
+      await h.coordinator.download();
+    } else {
+      h.updater.quitAndInstall = () => h.updater.emit("error", new Error("install failed"));
+      h.coordinator.install();
+    }
+    assert.equal(h.getState().status, "error");
+    assert.equal(h.getState().message, `${action} failed`);
+  });
+}

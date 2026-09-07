@@ -32,6 +32,15 @@ on:
         required: false
         type: boolean
         default: false
+  # Merging a version bump to main IS the release trigger. `publish` is a
+  # workflow_dispatch input only, so a push-started run leaves a DRAFT — a
+  # human still publishes it. The should_release guard below is what keeps
+  # an unrelated package.json edit from starting a signed build.
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
 
 permissions:
   contents: read
@@ -44,28 +53,48 @@ jobs:
     outputs:
       sha: ${{ steps.pin.outputs.sha }}
       version: ${{ steps.pin.outputs.version }}
+      should_release: ${{ steps.pin.outputs.should_release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          # github.sha, not github.ref: on a push the branch tip can already
+          # have moved, and a release must pin the exact commit that carried
+          # the version bump. fetch-depth 0 so the pre-push blob is readable.
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - id: pin
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          current=$(node scripts/release-guard.mjs version)
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+          should_release=true
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            # Fail closed. If the previous package.json cannot be read we
+            # cannot tell a version bump from a dependency edit, and guessing
+            # either way is wrong: guessing "release" ships an unintended
+            # signed build, guessing "skip" silently drops a real release.
+            git cat-file -e "$BEFORE:package.json" 2>/dev/null || {
+              echo "::error::cannot verify the version before this push; refusing to start a release"
+              exit 1
+            }
+            previous=$(git show "$BEFORE:package.json" | node -e 'let s=""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.parse(s).version))')
+            should_release=$(node scripts/release-guard.mjs should-release "$current" "$previous")
+          fi
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
       - name: Refuse to overwrite a published release
+        if: steps.pin.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
-          v="v$(node -p "require('./package.json').version")"
-          if gh release view "$v" --repo FerroxLabs/murage-releases --json isDraft --jq .isDraft 2>/dev/null | grep -q false; then
-            echo "::error::$v is already published on murage-releases — bump the version first"
-            exit 1
-          fi
+          node scripts/release-guard.mjs available "$(node scripts/release-guard.mjs version)"
 
   mac:
     name: macOS arm64 + x64 (sign, notarize, staple)
     needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: macos-14
     timeout-minutes: 90
     steps:
@@ -222,6 +251,7 @@ jobs:
   windows:
     name: Windows x64
     needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -270,8 +300,8 @@ jobs:
               Write-Host "::error::$($_.Name) signed by an unexpected subject: $subject"; $script:fail = 1
             }
           }
-          # the app itself must be OURS, never a vendor's — checked explicitly
-          foreach ($required in @('Murage.exe', 'Murage-*-setup.exe')) {
+          # The app and bundled first-party engine must be signed by us.
+          foreach ($required in @('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe')) {
             Get-ChildItem release -Filter $required -Recurse | ForEach-Object {
               $subject = (Get-AuthenticodeSignature $_.FullName).SignerCertificate.Subject
               if ($subject -notmatch 'Ferrox Labs, LLC') {
@@ -334,6 +364,7 @@ jobs:
   linux:
     name: Ubuntu 24.04 x64
     needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -395,13 +426,14 @@ jobs:
         # The .deb path no longer prompts for root from inside the app; it
         # hands the user a command. This proves that command actually installs
         # and resolves dependencies, which dpkg -i did not.
-        run: pnpm smoke:deb-command
+        run: |
+          deb=(release/*.deb)
+          test "${#deb[@]}" -eq 1
+          pnpm smoke:deb-command "${deb[0]}"
       - name: Prove an AppImage update lands on the launched path
-        # Reads the live release feed, so it cannot pass until a first release
-        # exists. Reports instead of blocking — the assertion it makes is
-        # already covered by unit tests; this is the end-to-end confirmation.
-        continue-on-error: true
-        run: pnpm smoke:linux-update
+        # Mandatory prepublication proof against an isolated candidate feed.
+        # After publication, rerun without --candidate-feed for live GitHub proof.
+        run: pnpm smoke:linux-update --candidate-feed
       - name: Remove the installed upgrade fixture
         if: always()
         run: sudo dpkg --purge murage || true
@@ -425,6 +457,7 @@ jobs:
   assemble:
     name: Assemble the draft and verify every feed
     needs: [prepare, mac, windows, linux]
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     # generate-notes is a POST and needs Contents: write. Granted here rather
     # than at the workflow level so the build jobs stay read-only.
@@ -435,6 +468,13 @@ jobs:
       group: release-assemble-v${{ needs.prepare.outputs.version }}
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: assets
@@ -537,30 +577,25 @@ jobs:
             echo "::warning::could not generate notes from pull requests; using the commit reference"
           fi
       - name: Create or update the draft with the complete asset set
+        id: upload
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          tag="v$VERSION"
-          # Only a NEW draft takes the generated notes. A rerun must not wipe
-          # edits a human made while reviewing the draft.
-          if ! gh release view "$tag" --repo FerroxLabs/murage-releases > /dev/null 2>&1; then
-            gh release create "$tag" --repo FerroxLabs/murage-releases \
-              --draft --title "Murage $VERSION" \
-              --notes-file "$RUNNER_TEMP/release-notes.md"
-          fi
-          for file in assets/*; do
-            gh release upload "$tag" "$file" --repo FerroxLabs/murage-releases --clobber
-          done
-          echo "asset count: $(gh release view "$tag" --repo FerroxLabs/murage-releases --json assets --jq '.assets | length')"
+          # Rechecks draft status at every upload boundary and binds uploads
+          # to one numeric release ID. Existing assets must match exactly;
+          # there is no automatic delete or --clobber path.
+          release_id=$(node scripts/release-guard.mjs upload "$VERSION" assets "$RUNNER_TEMP/release-notes.md")
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
       - name: Prove the draft holds the exact staged bytes
-        # An upload that half-succeeded, or a --clobber that silently kept the
-        # old asset, is invisible until a user's download fails its checksum.
+        # An upload that half-succeeded is invisible until a user's download
+        # fails its checksum.
         # Compare GitHub's own digest for every asset against what we staged.
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_ID: ${{ steps.upload.outputs.release_id }}
         run: |
           node --input-type=module - "$VERSION" <<'EOF'
           import { createHash } from "node:crypto";
@@ -572,11 +607,8 @@ jobs:
             name,
             `sha256:${createHash("sha256").update(readFileSync(join("assets", name))).digest("hex")}`,
           ]));
-          const view = () => JSON.parse(execFileSync(
-            "gh",
-            ["release", "view", `v${version}`, "--repo", "FerroxLabs/murage-releases", "--json", "assets"],
-            { encoding: "utf8" },
-          )).assets;
+          const { assertDraft } = await import("./scripts/release-guard.mjs");
+          const view = () => assertDraft(version, Number(process.env.RELEASE_ID)).assets;
           // Names and upload state are deterministic and available the moment
           // gh answers, so they are checked unconditionally. Digests are
           // GitHub's and are computed asynchronously, so those get a bounded
@@ -618,8 +650,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_ID: ${{ steps.upload.outputs.release_id }}
         run: |
-          gh release edit "v$VERSION" --repo FerroxLabs/murage-releases --draft=false --latest
-          # a draft that LOOKS published is the 0.1.24 failure mode — verify
-          gh release view "v$VERSION" --repo FerroxLabs/murage-releases --json isDraft --jq .isDraft | grep -q false
+          node scripts/release-guard.mjs publish "$VERSION" "$RELEASE_ID"
           echo "v$VERSION is live"

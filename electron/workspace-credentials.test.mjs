@@ -7,6 +7,43 @@ import {
 } from "./workspace-credentials.mjs";
 
 describe("workspace credential migration", () => {
+  it("migrates Firecrawl custody through reboot and clear without changing other search credentials", () => {
+    const config = { webSearch: { provider: "firecrawl", firecrawlApiKey: "fake-firecrawl", tavilyApiKey: "fake-tavily" } };
+    const migrated = migrateWorkspaceCredentials(config, {});
+    expect(migrated.config).toEqual({ webSearch: { provider: "firecrawl" } });
+    expect(migrated.credentials).toEqual({ firecrawlSearchApiKey: "fake-firecrawl", tavilySearchApiKey: "fake-tavily" });
+    const reboot = migrateWorkspaceCredentials({ webSearch: { provider: "firecrawl", firecrawlApiKey: "" } }, migrated.credentials);
+    expect(workspaceCredentialEnv(reboot.credentials)).toEqual({ MURAGE_FIRECRAWL_SEARCH_KEY: "fake-firecrawl", MURAGE_TAVILY_SEARCH_KEY: "fake-tavily" });
+    const cleared = migrateWorkspaceCredentials({ webSearch: { provider: "firecrawl", firecrawlApiKey: "" } }, { tavilySearchApiKey: "fake-tavily" });
+    expect(workspaceCredentialEnv(cleared.credentials)).toEqual({ MURAGE_TAVILY_SEARCH_KEY: "fake-tavily" });
+    expect(cleared.config.webSearch.provider).toBe("firecrawl");
+  });
+  it("migrates Telegram custody without changing the target or resurrecting cleared tokens", () => {
+    const migrated = migrateWorkspaceCredentials({ telegram: { botToken: "fake-bot-token", targetBotId: "chosen-bot" } }, {});
+    expect(migrated.config).toEqual({ telegram: { targetBotId: "chosen-bot" } });
+    expect(migrated.credentials).toEqual({ telegramBotToken: "fake-bot-token" });
+    const reboot = migrateWorkspaceCredentials({ telegram: { botToken: "", targetBotId: "chosen-bot" } }, migrated.credentials);
+    expect(workspaceCredentialEnv(reboot.credentials)).toEqual({ MURAGE_TELEGRAM_BOT_TOKEN: "fake-bot-token" });
+    const cleared = migrateWorkspaceCredentials({ telegram: { botToken: "", targetBotId: "chosen-bot" } }, {});
+    expect(workspaceCredentialEnv(cleared.credentials)).toEqual({});
+    expect(cleared.config.telegram.targetBotId).toBe("chosen-bot");
+  });
+  it("moves search keys into the encrypted document and preserves provider choice across tombstone/reboot/clear", () => {
+    const config = { webSearch: { provider: "exa", tavilyApiKey: "fake-tavily", exaApiKey: "fake-exa" } };
+    const migrated = migrateWorkspaceCredentials(config, {});
+    expect(migrated.config).toEqual({ webSearch: { provider: "exa" } });
+    expect(migrated.credentials).toEqual({ tavilySearchApiKey: "fake-tavily", exaSearchApiKey: "fake-exa" });
+    expect(config.webSearch.tavilyApiKey).toBe("fake-tavily");
+    const reboot = migrateWorkspaceCredentials({ webSearch: { provider: "exa", tavilyApiKey: "", exaApiKey: "" } }, migrated.credentials);
+    expect(reboot.credentials).toEqual(migrated.credentials);
+    expect(workspaceCredentialEnv(reboot.credentials)).toEqual({ MURAGE_TAVILY_SEARCH_KEY: "fake-tavily", MURAGE_EXA_SEARCH_KEY: "fake-exa" });
+    // credential:set removes the actual encrypted entry on clear; its
+    // plaintext tombstone must not resurrect that key at the next boot.
+    const cleared = migrateWorkspaceCredentials({ webSearch: { provider: "exa", tavilyApiKey: "" } }, { exaSearchApiKey: "fake-exa" });
+    expect(workspaceCredentialEnv(cleared.credentials)).toEqual({ MURAGE_EXA_SEARCH_KEY: "fake-exa" });
+    expect(cleared.config.webSearch.provider).toBe("exa");
+  });
+
   it("moves every plaintext secret into the store and deletes the field", () => {
     const config = {
       xai: { key: "xai-secret", url: "https://api.example.test/v1" },

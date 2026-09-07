@@ -138,22 +138,28 @@ export function readServeStatus(raw, { proxyTarget, port = SERVE_PORT } = {}) {
       conflict: "Tailscale's serve configuration could not be read, so Murage will not overwrite it.",
     };
   }
-  if (!config || typeof config !== "object") return { owner: "none" };
+  if (!config || typeof config !== "object" || Array.isArray(config) ||
+      (config.Web !== undefined && (!config.Web || typeof config.Web !== "object" || Array.isArray(config.Web)))) {
+    return { owner: "unknown", conflict: "Tailscale's serve configuration has an unknown shape; Murage will not overwrite it." };
+  }
 
   const suffix = `:${port}`;
   const web = config.Web && typeof config.Web === "object" ? config.Web : {};
   const entries = Object.entries(web).filter(([key]) => key.endsWith(suffix));
+  if (entries.length > 1) {
+    return { owner: "other", host: null, conflict: `Multiple HTTPS routes occupy port ${port} (${entries.map(([key]) => key).join(", ")}); Murage will not overwrite or adopt mixed ownership.` };
+  }
   if (entries.length === 0) {
     // A TCP forward on 443 with no Web handler is still somebody using the
     // port — `serve --https` would replace it.
     const tcp = config.TCP && typeof config.TCP === "object" ? config.TCP : {};
     const onPort = tcp[String(port)];
-    if (onPort && typeof onPort === "object" && !onPort.HTTPS) {
+    if (onPort !== undefined) {
       return {
         owner: "other",
         host: null,
         conflict:
-          `Tailscale is already forwarding raw TCP on port ${port} on this machine. ` +
+          `Tailscale already has a listener without our Web handler on port ${port} on this machine. ` +
           "Murage will not replace it — turn that off first, or leave browser access on plain HTTP.",
       };
     }
@@ -162,10 +168,16 @@ export function readServeStatus(raw, { proxyTarget, port = SERVE_PORT } = {}) {
 
   for (const [key, value] of entries) {
     const host = key.slice(0, -suffix.length);
+    try {
+      const front = new URL(`https://${host}`);
+      if (front.hostname !== host.toLowerCase() || front.port || front.username || front.password || front.pathname !== "/" || front.search || front.hash) throw new Error("invalid host");
+    } catch {
+      return {owner:"unknown",conflict:"Tailscale Serve has an invalid HTTPS host; Murage will not overwrite it."};
+    }
     const funnel = config.AllowFunnel && typeof config.AllowFunnel === "object"
       ? config.AllowFunnel[key]
       : undefined;
-    if (funnel === true) {
+    if (funnel) {
       // Funnel is the public internet. Never adopted, never quietly turned
       // off: it was somebody's deliberate act and it is not ours to reverse.
       return {
@@ -221,6 +233,7 @@ export function sameTarget(left, right) {
     if (!raw) return null;
     try {
       const url = new URL(raw.includes("://") ? raw : `http://${raw}`);
+      if (url.username || url.password || url.search || url.hash || url.pathname !== "/") return null;
       const port = url.port || (url.protocol === "https:" ? "443" : "80");
       const host = url.hostname === "localhost" ? "127.0.0.1" : url.hostname;
       return `${url.protocol}//${host}:${port}`;
@@ -294,10 +307,11 @@ export async function serveState({ run = runTailscale, cli: known, proxyTarget, 
   }
   const status = await run(cli, ["serve", "status", "--json"], TAILSCALE_BUDGET_MS);
   if (!status.ok) {
-    // An unconfigured node exits non-zero on some versions with nothing to
-    // say. Treat an empty complaint as "no config", and a real one as itself.
+    // Only an explicit no-config result proves absence. An unexplained
+    // failure may be an outage or a permissions problem, never permission
+    // to overwrite configuration we could not inspect.
     const complaint = status.stderr.trim();
-    if (!complaint || /no serve config|not configured/i.test(complaint)) {
+    if (/no serve config|not configured/i.test(complaint)) {
       return { available: true, on: false, host: null, reason: null, message: null, cli };
     }
     const { reason, message } = classifyServeFailure(complaint);
@@ -331,7 +345,7 @@ export async function serveState({ run = runTailscale, cli: known, proxyTarget, 
 export async function enableServe({ run = runTailscale, proxyTarget, port = SERVE_PORT } = {}) {
   const before = await serveState({ run, proxyTarget, port });
   if (!before.available) return before;
-  if (before.reason === "conflict") return before;
+  if (before.reason) return before;
   if (before.on) return before;
 
   const cli = before.cli;

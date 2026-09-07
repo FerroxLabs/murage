@@ -95,6 +95,33 @@ export function isImageFile(file: { type: string; size: number }): boolean {
   );
 }
 
+/** Read one clipboard representation, not both: Chromium may expose the
+ * same image in items and files, or only in items for a native macOS paste. */
+type ClipboardData = {
+  items: ArrayLike<{ kind: string; type: string; getAsFile(): File | null }>;
+  files: ArrayLike<File>;
+};
+
+export function clipboardImageFiles(data: ClipboardData): File[] {
+  const images = Array.from(data.items).flatMap((item) => {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) return [];
+    try {
+      const file = item.getAsFile();
+      return file && isImageFile(file) ? [file] : [];
+    } catch {
+      return [];
+    }
+  });
+  return images.length ? images : Array.from(data.files).filter(isImageFile);
+}
+
+/** Include unsupported/unreadable images so the composer can explain a
+ * refusal instead of silently treating the paste as empty text. */
+export function clipboardHasImages(data: ClipboardData): boolean {
+  return Array.from(data.items).some((item) => item.kind === "file" && item.type.startsWith("image/")) ||
+    Array.from(data.files).some((file) => file.type.startsWith("image/"));
+}
+
 /** Persist a pasted image server-side and return the attachment chip data.
  * The server writes ~/.murage/attachments/<uuid>.<ext> and answers
  * with the path; the prompt references that path so every CLI can open it. */
@@ -346,7 +373,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
     rejectedNames.push(...result.rejectedNames);
   }
   const pathless = rejectedNames.length
-    ? `${rejectedNames.join(", ")} — that file has no path on disk. Save it first, then attach it from Finder.`
+    ? `${rejectedNames.join(", ")}; that file has no path on disk. Save it first, then attach it from Finder.`
     : null;
   const failed = imageErrors.length ? imageErrors.join("; ") : null;
   return {

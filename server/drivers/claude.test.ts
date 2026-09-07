@@ -615,16 +615,25 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(allowed).toContain("mcp__agents");
   });
 
-  it("mounts custom MCP servers without pre-allowing their tools", async () => {
+  it("skips custom MCP entries with reserved env names while preserving built-ins and ordinary approval behavior", async () => {
     await create();
     const dump = join(scratch, "custom-mcp.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
+    const blocked = Object.fromEntries([
+      "MURAGE_COMMS_TOKEN", "murage_harness_url", "MURAGEBOX_TOKEN", "muragebox_url",
+      "ELECTRON_RUN_AS_NODE", "electron_run_as_node", "DWEB_URL", "dweb_url",
+      "PH_ANDROID_SERIAL", "ph_android_serial",
+    ].map((key, index) => [`blocked${index}`, {
+      command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
+    }]));
 
     await instance.adapter.sendTurn({
       threadId: "t-custom-mcp",
       text: "hi",
       integrations: {
         custom: {
+          ...blocked,
+          bearer_request: { command: "attacker-mcp", args: [], env: { MURAGE_COMMS_TOKEN: "" } },
           notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
         },
         agents: {
@@ -637,6 +646,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
+    for (const name of [...Object.keys(blocked), "bearer_request"]) {
+      expect(seen.mcpConfig.mcpServers).not.toHaveProperty(name);
+    }
+    expect(JSON.stringify(seen.mcpConfig)).not.toContain("attacker-mcp");
+    expect(seen.mcpConfig.mcpServers.agents.env).toMatchObject({
+      MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "tok",
+    });
     // the server reaches the CLI through the private mcp-config file…
     expect(seen.mcpConfig.mcpServers.notes).toMatchObject({
       command: "npx",
@@ -860,6 +876,55 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(2);
   });
 
+  it("resets one idle native session without resuming its history or closing a sibling", async () => {
+    await create();
+    const dump = join(scratch, "reset-session.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const first = await instance.adapter.sendTurn({ threadId: "t-reset", text: "old private reference" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+    const firstPid = JSON.parse(readFileSync(dump, "utf8")).pid;
+    const sibling = await instance.adapter.sendTurn({ threadId: "t-sibling", text: "independent request" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === sibling.turnId);
+    const siblingPid = JSON.parse(readFileSync(dump, "utf8")).pid;
+    expect(siblingPid).not.toBe(firstPid);
+    // hasSession reports active turns, so an idle reset must not depend on it.
+    expect(instance.adapter.hasSession("t-reset")).toBe(false);
+    await instance.adapter.resetSession!("t-reset");
+    rmSync(dump);
+    const siblingNext = await instance.adapter.sendTurn({ threadId: "t-sibling", text: "continue independently" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === siblingNext.turnId);
+    expect(existsSync(dump)).toBe(false); // retained sibling did not launch again
+    const fresh = await instance.adapter.sendTurn({ threadId: "t-reset", text: "filtered fresh request" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === fresh.turnId);
+    const freshDump = JSON.parse(readFileSync(dump, "utf8"));
+    expect(freshDump.pid).not.toBe(firstPid);
+    expect(freshDump.pid).not.toBe(siblingPid);
+    expect(freshDump.argv).not.toContain("--resume");
+    expect(freshDump.prompt).toEqual({ type: "user", message: { role: "user", content: "filtered fresh request" } });
+    expect(JSON.stringify(freshDump.prompt)).not.toContain("old private reference");
+    await expect(instance.adapter.resetSession!("absent-thread")).resolves.toBeUndefined();
+  });
+
+  it("mounts trusted memory MCP separately while retaining the custom credential filter", async () => {
+    await create();
+    const dump = join(scratch, "memory-mcp.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const memory = { command: process.execPath, args: ["fixture-memory-proxy"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_MEMORY_TOKEN: "fixture-memory-token" } };
+    const custom = { command: process.execPath, args: ["user-server"], env: {} };
+    const turn = await instance.adapter.sendTurn({ threadId: "t-memory-mcp", text: "recall", integrations: {
+      memory, custom: { user: custom, malicious: { ...custom, env: { MURAGE_MEMORY_TOKEN: "forged" } } },
+    } });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+    expect(seen.mcpConfig.mcpServers["murage-memory"]).toEqual(memory);
+    expect(seen.mcpConfig.mcpServers.user).toEqual(custom);
+    expect(seen.mcpConfig.mcpServers.malicious).toBeUndefined();
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",")).toContain("mcp__murage-memory");
+    expect(JSON.stringify(seen.argv)).not.toContain("fixture-memory-token");
+    await expect(instance.adapter.sendTurn({ threadId: "t-memory-collision", text: "recall", integrations: { memory, custom: { "murage-memory": custom } } })).rejects.toThrow("MEMORY_MCP_NAME_COLLISION");
+  });
+
   it("denies late broker asks between retained turns without opening a zombie card", async () => {
     await create();
     await instance.adapter.sendTurn({ threadId: "t-retained-late", text: "one" });
@@ -881,6 +946,28 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       instance.adapter.respondToRequest("t-retained-late", "ask-between", { behavior: "allow" }),
     ).resolves.toBe("unavailable");
     conn.end();
+  });
+
+  it("rotates internal capabilities while resuming the same conversation", async () => {
+    await create();
+    const dumpPath = join(scratch, "rotated-capability.json");
+    process.env.FAKE_CLAUDE_DUMP = dumpPath;
+    const agents = (token: string) => ({
+      command: process.execPath, args: ["fixture-agents-proxy"],
+      env: { MURAGE_BOT_ID: "fixture-bot", MURAGE_THREAD_ID: "t-rotate", MURAGE_COMMS_TOKEN: token },
+    });
+    const first = await instance.adapter.sendTurn({ threadId: "t-rotate", text: "one", integrations: { agents: agents("first-capability") } });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
+    const firstDump = JSON.parse(readFileSync(dumpPath, "utf8"));
+    const session = (recorder.events.find((event) => event.type === "session.started") as { sessionId: string }).sessionId;
+    rmSync(dumpPath);
+    const second = await instance.adapter.sendTurn({ threadId: "t-rotate", text: "two", resumeCursor: session, integrations: { agents: agents("second-capability") } });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
+    const secondDump = JSON.parse(readFileSync(dumpPath, "utf8"));
+    expect(secondDump.pid).not.toBe(firstDump.pid);
+    expect(secondDump.argv[secondDump.argv.indexOf("--resume") + 1]).toBe(session);
+    expect(secondDump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN).toBe("second-capability");
+    expect(JSON.stringify(secondDump.mcpConfig)).not.toContain("first-capability");
   });
 
   it("replaces and resumes a live process when its spawn contract changes", async () => {

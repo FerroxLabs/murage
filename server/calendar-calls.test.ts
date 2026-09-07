@@ -47,7 +47,7 @@ describe("CalendarCallManager", () => {
   it("persists calls and returns defensive copies", () => {
     const file = tempFile();
     const calls = manager(file);
-    const created = calls.create(input());
+    const created = calls.create(input({ durationMinutes: 5 }));
     created.botIds.push("chief");
     created.attachments[0]!.name = "changed";
 
@@ -59,7 +59,7 @@ describe("CalendarCallManager", () => {
     expect(manager(file).list()[0]).toMatchObject({
       id: created.id,
       description: "Review the launch plan",
-      durationMinutes: 45,
+      durationMinutes: 5,
       attachments: [{ path: "/safe/local/Launch brief.pdf", kind: "file" }],
     });
   });
@@ -143,7 +143,9 @@ describe("CalendarCallManager", () => {
     const calls = manager();
     expect(() => calls.create(input({ botIds: [] }))).toThrow(/at least one bot/i);
     expect(() => calls.create(input({ botIds: ["missing"] }))).toThrow(/no longer exist/i);
-    expect(() => calls.create(input({ durationMinutes: 10 }))).toThrow(/15 and 240/);
+    expect(() => calls.create(input({ durationMinutes: 4 }))).toThrow(
+      "Call duration must be between 5 and 240 minutes",
+    );
     expect(() => calls.create(input({
       schedule: { type: "daily", time: "25:00", weekdays: [1] },
     }))).toThrow(/valid call schedule/i);

@@ -179,6 +179,8 @@ describe("token drift", () => {
       // SVG presentation attributes in raw markup strings (EmberAvatar): these
       // are `stroke-linecap` / `stroke-width` / `fill-rule`, not utilities.
       "linecap", "linejoin", "width", "rule", "opacity",
+      // CSS box-sizing: border-box is not a border colour utility.
+      "box",
     ]);
     // Tailwind's built-in palette. TeamLibraryPanel paints four categorical bot
     // glyphs from it on purpose — they are identity colours like the mascot's,
@@ -260,14 +262,14 @@ describe("token drift", () => {
         .replace(/^[ \t]*\/\/.*$/gm, "");
       const hits = source.match(/#[0-9a-fA-F]{3,8}\b/g);
       if (!hits) continue;
-      const name = relative(root, file);
+      const name = relative(root, file).replace(/\\/g, "/");
       if (!(name in ALLOWED)) offenders.push(`${name} (${hits.length}: ${hits[0]})`);
     }
     expect(offenders).toEqual([]);
     // The allowlist must not rot into a list of files that no longer exist.
     for (const name of Object.keys(ALLOWED)) {
       expect(`${name} exists`).toBe(
-        files.some((file) => relative(root, file) === name) ? `${name} exists` : `${name} missing`,
+        files.some((file) => relative(root, file).replace(/\\/g, "/") === name) ? `${name} exists` : `${name} missing`,
       );
     }
   });

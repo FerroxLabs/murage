@@ -104,6 +104,9 @@
  *  a diff that adds one word should be one word wide. `intakeMatchTerms`
  *  splits and caches. */
 export const INTAKE_MATCH_TERMS: Readonly<Record<string, string>> = {
+  "starter-personal-home": "appointments chores home household",
+  "starter-solo-business": "business freelancer freelance solopreneur solo",
+  "starter-business-team": "collaboration coordination teammates responsibilities",
   beacon: "acquisition ads advertising audience avinash budget business channel channels discovery growth intent kaushik marketing seo social traffic",
   coin: "accounting bookkeeping budget burn cash cashflow crabtree economics expenses finance financial forecast founder greg invoice invoices invoicing margin math numbers payroll pricing profit receivables revenue runway tax taxes",
   copy: "audience awareness bio copy copywriter copywriting ctas customer email headline headlines hook hooks landing linkedin marketing newsletter pages personal posts sales voice website wording",

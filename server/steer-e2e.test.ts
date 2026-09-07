@@ -12,12 +12,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const PORT = 18800 + Math.floor(Math.random() * 10_000);
-const BASE = `http://127.0.0.1:${PORT}`;
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 posixOnly("mid-turn steering e2e", () => {
@@ -25,14 +24,27 @@ posixOnly("mid-turn steering e2e", () => {
   let home: string;
   let stderr = "";
   let steerGate: string;
+  let base: string;
+  let desktopHeaders: Record<string, string>;
 
-  const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
-    const res = await fetch(`${BASE}${path}`, {
+  const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+    const res = await fetch(`${base}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
+  };
+  const api = (method: string, path: string, body?: unknown) => request(method, path, body);
+  const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
+  const makeBot = async (instanceId: string, model: string) => {
+    const modelSelection = { instanceId, model };
+    const created = await api("POST", "/api/bots", { modelSelection });
+    expect(created.status).toBe(201);
+    const patched = await desktopApi("PATCH", `/api/bots/${created.body.bot.id}`, { modelSelection });
+    expect(patched.status).toBe(200);
+    expect(patched.body.bot.modelSelection).toMatchObject(modelSelection);
+    return patched.body.bot;
   };
   const getBot = async (id: string) => (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
   const waitFor = async (predicate: () => Promise<boolean>, what: string, ms = 30_000) => {
@@ -44,6 +56,8 @@ posixOnly("mid-turn steering e2e", () => {
   };
 
   beforeAll(async () => {
+    const port = await freePortBlock([0, 1]);
+    base = `http://127.0.0.1:${port}`;
     chmodSync(FAKE_CLAUDE, 0o755);
     chmodSync(FAKE_ACP, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-steer-"));
@@ -66,14 +80,14 @@ posixOnly("mid-turn steering e2e", () => {
     );
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
-      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(PORT) },
+      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
-        if ((await fetch(`${BASE}/api/health`)).ok) break;
+        if ((await fetch(`${base}/api/health`)).ok) break;
       } catch {
         /* not up yet */
       }
@@ -81,6 +95,11 @@ posixOnly("mid-turn steering e2e", () => {
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
+    const proof = await api("GET", "/api/desktop-secret");
+    expect(proof.status).toBe(200);
+    expect(proof.body.secret).toMatch(/^[a-f0-9]{64}$/);
+    desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+    expect((await api("GET", "/api/config")).body.surface).toBe("remote");
   }, 30_000);
 
   afterAll(async () => {
@@ -96,8 +115,7 @@ posixOnly("mid-turn steering e2e", () => {
   it(
     "a message during a Claude turn is steered into it: 202, in the transcript in order and marked, folded into the reply",
     async () => {
-      const created = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${created.id}`, { modelSelection: { instanceId: "claude", model: "claude-fake" } });
+      const created = await makeBot("claude", "claude-fake");
       const instances = (await api("GET", "/api/instances")).body.instances;
       expect(instances.find((i: any) => i.instanceId === "claude").capabilities.queueing).toBe(true);
 
@@ -129,10 +147,7 @@ posixOnly("mid-turn steering e2e", () => {
   );
 
   it("rejects a delayed steer acknowledgement after the bot is deleted", async () => {
-    const created = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${created.id}`, {
-      modelSelection: { instanceId: "claudeRace", model: "claude-fake" },
-    });
+    const created = await makeBot("claudeRace", "claude-fake");
 
     expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first race turn" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id))?.busy === true, "the race turn to start");
@@ -155,7 +170,7 @@ posixOnly("mid-turn steering e2e", () => {
     expect(prematurelySettled).toBe(false);
 
     await waitFor(async () => (await getBot(created.id))?.busy === false, "the original race turn to settle");
-    expect((await api("DELETE", `/api/bots/${created.id}`)).status).toBe(200);
+    expect((await desktopApi("DELETE", `/api/bots/${created.id}`)).status).toBe(200);
     writeFileSync(steerGate, "open");
 
     const rejected = await delayed;
@@ -164,8 +179,7 @@ posixOnly("mid-turn steering e2e", () => {
   }, 40_000);
 
   it("an engine without a live session preserves the message in the server-side queue", async () => {
-    const created = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${created.id}`, { modelSelection: { instanceId: "acp", model: "fake-model" } });
+    const created = await makeBot("acp", "fake-model");
     expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id)).busy === true, "the hung turn to start");
     const queued = await api("POST", `/api/bots/${created.id}/messages`, { text: "second" });

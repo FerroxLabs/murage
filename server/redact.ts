@@ -69,9 +69,32 @@ export function redactSecretsInText(text: string): string {
 /** Deep copy with credential VALUES replaced. Handles the two shapes that
  * actually carry them: a plain object of env vars ({KEY: "v"}) and the ACP
  * wire shape (env: [{name, value}]). Anything unrecognised is copied as-is. */
+/** How deep the structural walk goes before it stops descending.
+ *
+ * Twelve is far past any real provider payload. What matters is what happens
+ * AT the limit: see below. */
+const MAX_DEPTH = 12;
+
 export function redactSecrets(input: unknown, depth = 0): unknown {
   if (typeof input === "string") return redactSecretsInText(input);
-  if (depth > 12 || input === null || typeof input !== "object") return input;
+  if (input === null || typeof input !== "object") return input;
+  if (depth > MAX_DEPTH) {
+    // FAIL CLOSED. This used to `return input`, which handed the entire
+    // remaining subtree back unscrubbed — `{token: "…"}` nested thirteen deep
+    // was written verbatim into ~/.murage/events/*.ndjson, the file people
+    // paste into bug reports. Exhausting a traversal budget is not evidence
+    // that the subtree is safe.
+    //
+    // The content pass still runs over the serialised form, so a credential
+    // down here is masked and the shape stays legible for debugging.
+    // Serialisation can throw on a cycle or a BigInt; that is exactly the
+    // case where guessing is worst, so it collapses to a marker.
+    try {
+      return redactSecretsInText(JSON.stringify(input) ?? "");
+    } catch {
+      return "«redacted: unserialisable subtree past depth budget»";
+    }
+  }
 
   if (Array.isArray(input)) {
     return input.map((item) => {
@@ -83,14 +106,25 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
         typeof (item as { name?: unknown }).name === "string" &&
         typeof (item as { value?: unknown }).value === "string"
       ) {
-        const entry = item as { name: string; value: string };
+        const entry = item as { name: string; value: string } & Record<string, unknown>;
+        // Scrub the WHOLE entry first, then decide about `value`.
+        //
+        // This used to spread `{...entry}` and rewrite only `value`, so every
+        // other property rode through untouched — and the shortcut is not
+        // limited to ACP env arrays, it fires on ANY array element that
+        // happens to have string `name` and `value`. An element like
+        // `{name, value, authorization: "Bearer …", metadata: {password}}`
+        // therefore defeated the only scrub standing between a provider
+        // payload and the on-disk log.
+        const scrubbed = redactSecrets({ ...entry }, depth + 1) as Record<string, unknown>;
         // A non-secret-shaped name (a custom env var, a feature flag) does
         // not clear the value of suspicion — the same content pass every
         // other string in this tree gets is what catches a credential
         // someone stashed under an ordinary-looking name.
-        return isSecretName(entry.name)
-          ? { ...entry, value: mask(entry.value) }
-          : { ...entry, value: redactSecretsInText(entry.value) };
+        return {
+          ...scrubbed,
+          value: isSecretName(entry.name) ? mask(entry.value) : redactSecretsInText(entry.value),
+        };
       }
       return redactSecrets(item, depth + 1);
     });

@@ -1,14 +1,20 @@
 // Config + data dirs. One file, ~/.murage/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
-import { readFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
+import { parseStoredMcpServer } from "./mcp-registry.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
+import { dataDirLeasePaths } from "./data-dir-lease.ts";
+import { migrateLegacyDataDirectory } from "../electron/data-dir-migration.mjs";
+import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
+import { notificationPreferencesSchema, type NotificationPreferences } from "../shared/notification-preferences.ts";
 
 const optionalText = z.string().optional();
 const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -230,6 +236,8 @@ const instanceConfigSchema = z.object({
 });
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
 const appConfigSchema = z.object({
+  telegram: z.object({ botToken: z.string().max(256).optional(), targetBotId: z.string().max(160).optional() }).strict().optional(),
+  notifications: notificationPreferencesSchema.optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
    * upstream (e.g. "fireworks"). Both are non-secret and optional. */
@@ -249,6 +257,10 @@ const appConfigSchema = z.object({
   tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["elevenlabs", "system"]).optional() }).optional(),
   /** OpenAI key used only by the in-process avatar image generator. */
   imageGen: z.object({ key: optionalText }).optional(),
+  /** Optional external search credentials are write-only workspace state.
+   * Absent keeps engine search. Only desktop Murage-specific key variables
+   * are imported; ambient engine/MCP provider credentials remain separate. */
+  webSearch: z.object({ provider: z.enum(["engine", "auto", "tavily", "exa", "firecrawl", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText, firecrawlApiKey: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
@@ -269,6 +281,8 @@ const appConfigSchema = z.object({
   features: featureConfigSchema.optional(),
   browserProfiles: browserProfilesSchema.optional(),
   instances: instanceConfigMapSchema.optional(),
+  /** Restored installations require deliberate engine enablement. */
+  engineDiscovery: z.enum(["automatic", "explicit"]).optional(),
   /** User-configured MCP servers, mounted into every capable engine. Kept
    * loosely typed HERE on purpose: parseStoredConfig throws away the whole
    * file on a schema error, and one bad server entry must degrade to a
@@ -278,10 +292,19 @@ const appConfigSchema = z.object({
 const storedAppConfigSchema = appConfigSchema.extend({
   browserProfiles: storedBrowserProfilesSchema.optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true });
+const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend({
+  attention: notificationPreferencesSchema.shape.attention.removeDefault().optional(),
+  completion: notificationPreferencesSchema.shape.completion.removeDefault().optional(),
+  failures: notificationPreferencesSchema.shape.failures.removeDefault().optional(),
+  previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
+});
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
+  telegram?: { botToken?: string; targetBotId?: string };
+  notifications?: NotificationPreferences;
+  engineDiscovery?: "automatic" | "explicit";
   mcpServers?: Record<string, unknown>;
   language?: string;
   xai?: { key?: string; url?: string };
@@ -293,6 +316,7 @@ export interface AppConfig {
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
   imageGen?: { key?: string };
+  webSearch?: { provider?: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string };
   sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
   profile?: { name?: string; email?: string };
@@ -312,6 +336,7 @@ export type BrowserProfile = z.output<typeof browserProfileSchema> & {
   partitionId?: string;
 };
 export type ConfigPatch = z.output<typeof appConfigPatchSchema>;
+type ConfigWritePatch = Omit<Partial<AppConfig>, "notifications"> & { notifications?: Partial<NotificationPreferences> };
 
 /** Resolve a canonical profile record to its exact durable Electron
  * partition identity. Callers must never substitute the display/API id. */
@@ -404,6 +429,19 @@ export function loadBrowserProfileIdAliases(): ReadonlyMap<string, string> {
 }
 
 export function parseConfigPatch(value: JsonValue): ConfigPatch {
+  // saveConfig now knows how to write `mcpServers`, and that field decides
+  // which local processes every capable bot spawns as tool servers. It is
+  // therefore settable ONLY through the desktop-gated /api/mcp/servers
+  // routes. PUT/PATCH /api/config is reachable from a paired phone, so it
+  // refuses the field outright rather than leaning on the patch schema's
+  // silent strip — a strip is a side effect of `.omit()` that a later schema
+  // change could quietly undo, and this must be a code property.
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "mcpServers")) {
+    throw Object.assign(
+      new Error("mcpServers is managed from the MCP servers panel on the desktop, not this route"),
+      { status: 400 },
+    );
+  }
   const parsed = appConfigPatchSchema.safeParse(value);
   if (!parsed.success) {
     throw Object.assign(new Error(schemaIssue(parsed.error, "Invalid configuration")), { status: 400 });
@@ -442,7 +480,9 @@ export function builtInBrowserEnabled(cfg: AppConfig): boolean {
 }
 
 // MURAGE_DATA_DIR isolates test/soak rigs from the user's real fleet.
-export const DATA_DIR = process.env.MURAGE_DATA_DIR ?? join(homedir(), ".murage");
+// Resolve physical aliases before deriving any child path. Otherwise a
+// symlink followed by '..' can lock one directory and write into another.
+export const DATA_DIR = dataDirLeasePaths(process.env.MURAGE_DATA_DIR ?? join(homedir(), ".murage")).canonicalDataDir;
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
@@ -450,22 +490,17 @@ export const NATIVE_DIR = join(DATA_DIR, "native");
 export function ensureDirs() {
   // one-time migration from the pre-rename data dir — bots, transcripts,
   // config and keys all carry over
-  if (!existsSync(DATA_DIR) && existsSync(LEGACY_DATA_DIR)) {
-    try {
-      renameSync(LEGACY_DATA_DIR, DATA_DIR);
-    } catch {
-      /* cross-device or busy — fall through to a fresh dir */
-    }
-  }
+  migrateLegacyDataDirectory({ dataDir: DATA_DIR, legacyDataDir: LEGACY_DATA_DIR, enabled: process.env.MURAGE_DATA_DIR === undefined });
   for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
 }
 
 export function loadConfig(): AppConfig {
   let cfg: AppConfig = {};
-  try {
-    cfg = parseStoredConfig(parseJson(readFileSync(join(DATA_DIR, "config.json"), "utf8")));
-  } catch {
-    /* first run — env fallbacks below */
+  const file = join(DATA_DIR, "config.json");
+  const saved = readPersistedJson(file, path => readFileSync(path, "utf8"));
+  if (saved !== undefined) {
+    try { cfg = parseStoredConfig(saved as JsonValue); }
+    catch { throw new PersistedStateRecoveryError(file, "invalid-shape"); }
   }
   // Env wins over the file for every credential. The desktop shell keeps
   // these secrets OS-encrypted and hands them to this process as env at
@@ -491,6 +526,13 @@ export function loadConfig(): AppConfig {
   if (process.env.MURAGE_TTS_KEY !== undefined) cfg.tts.key = process.env.MURAGE_TTS_KEY;
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.MURAGE_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.MURAGE_OPENAI_IMAGE_KEY;
+  if (process.env.MURAGE_TELEGRAM_BOT_TOKEN !== undefined) cfg.telegram = { ...cfg.telegram, botToken: process.env.MURAGE_TELEGRAM_BOT_TOKEN };
+  if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined || process.env.MURAGE_EXA_SEARCH_KEY !== undefined || process.env.MURAGE_FIRECRAWL_SEARCH_KEY !== undefined) {
+    cfg.webSearch = { ...cfg.webSearch };
+    if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined) cfg.webSearch.tavilyApiKey = process.env.MURAGE_TAVILY_SEARCH_KEY;
+    if (process.env.MURAGE_EXA_SEARCH_KEY !== undefined) cfg.webSearch.exaApiKey = process.env.MURAGE_EXA_SEARCH_KEY;
+    if (process.env.MURAGE_FIRECRAWL_SEARCH_KEY !== undefined) cfg.webSearch.firecrawlApiKey = process.env.MURAGE_FIRECRAWL_SEARCH_KEY;
+  }
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   return cfg;
@@ -503,7 +545,7 @@ export function loadConfig(): AppConfig {
  * user cleared the credential, so the var is dropped and the (now empty)
  * file value is authoritative again. Fields absent from the patch are
  * untouched. */
-export function syncCredentialEnv(patch: Partial<AppConfig>): void {
+export function syncCredentialEnv(patch: ConfigWritePatch): void {
   const secrets: Array<[value: string | undefined, name: string]> = [
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
@@ -512,6 +554,10 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "MURAGE_TTS_KEY"],
     [patch.imageGen?.key, "MURAGE_OPENAI_IMAGE_KEY"],
+    [patch.telegram?.botToken, "MURAGE_TELEGRAM_BOT_TOKEN"],
+    [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
+    [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
+    [patch.webSearch?.firecrawlApiKey, "MURAGE_FIRECRAWL_SEARCH_KEY"],
     [patch.flux?.apiKey, "FLUX_API_KEY"],
   ];
   for (const [value, name] of secrets) {
@@ -539,6 +585,11 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
  * secret receives it through instanceConfigs() narrowing, and to every other
  * child these are someone else's keys riding along in `...process.env`. */
 export const WORKSPACE_CREDENTIAL_ENV = [
+  // An explicitly pinned developer proof is still operator authority, not an
+  // engine credential. Never pass it into tool/agent child environments.
+  "MURAGE_DEV_DESKTOP_SECRET",
+  "MURAGE_COMPANION_TOKEN",
+  "MURAGE_INTERNAL_DATA_DIR_LEASE",
   "XAI_API_KEY",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
@@ -546,6 +597,10 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENCODE_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
+  "MURAGE_TELEGRAM_BOT_TOKEN",
+  "MURAGE_TAVILY_SEARCH_KEY",
+  "MURAGE_EXA_SEARCH_KEY",
+  "MURAGE_FIRECRAWL_SEARCH_KEY",
   // Flux Router. The whole point of listing it: the raw workspace key must
   // never ride into a spawned CLI's env. Routing injects it post-strip.
   "FLUX_API_KEY",
@@ -628,7 +683,7 @@ export function stripRoutingEnv(env: Record<string, string | undefined>): void {
 
 /** Merge a partial config into ~/.murage/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
-export function saveConfig(patch: Partial<AppConfig>): void {
+export function saveConfig(patch: ConfigWritePatch): void {
   const p = join(DATA_DIR, "config.json");
   let disk: JsonObject = {};
   try {
@@ -637,13 +692,13 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  const checkedPatch = appConfigSchema.partial().parse(patch);
+  const checkedPatch = appConfigSchema.partial().extend({ notifications: notificationPreferencesPatchSchema.optional() }).parse(patch);
   // A write is the durable migration point. Preserve every other raw key in
   // config.json, but never write #567's mixed-case or duplicate profile ids
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "flux", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -652,6 +707,13 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     disk[key] = merged;
   }
   if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);
+  // Custom MCP mutations arrive only from the desktop-gated /api/mcp/servers
+  // routes (parseConfigPatch refuses the field on the generic config route),
+  // but saveConfig stays the single atomic persistence boundary. The whole
+  // map is the unit of change, so a delete arrives as the shorter map.
+  if (checkedPatch.mcpServers !== undefined) {
+    disk.mcpServers = jsonObjectSchema.parse(checkedPatch.mcpServers);
+  }
   // scalar, not a section: the merge loop above only walks objects
   if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
   // the whole list is the unit of change: an add or a delete arrives as the
@@ -704,7 +766,7 @@ export function withInstanceCli(
   cli: string,
 ): InstanceCliUpdate {
   const next: AppConfig = structuredClone(cfg);
-  const map = instanceConfigs(next);
+  const map = persistableInstanceConfigs(next);
   // hasOwn, not truthiness: map is a plain object literal, so
   // map["__proto__"] resolves to Object.prototype — truthy — and the
   // assignment below would poison EVERY object in the process (instanceId
@@ -722,6 +784,12 @@ export function withInstanceCli(
     delete rest.cli;
     entry.config = Object.keys(rest).length ? rest : undefined;
   }
+  next.instances = map;
+  return { ok: true, config: next };
+}
+
+function persistableInstanceConfigs(next: AppConfig): InstanceConfigMap {
+  const map = instanceConfigs(next);
   for (const e of Object.values(map)) {
     if (!e.environment) continue;
     const injected = injectedEnvironment(next, e.driver);
@@ -730,6 +798,14 @@ export function withInstanceCli(
     }
     if (!Object.keys(e.environment).length) delete e.environment;
   }
+  return map;
+}
+
+export function withInstanceEnabled(cfg: AppConfig, instanceId: string, enabled: boolean): InstanceCliUpdate {
+  const next = structuredClone(cfg);
+  const map = persistableInstanceConfigs(next);
+  if (!Object.hasOwn(map, instanceId) || typeof enabled !== "boolean") return { ok: false, config: cfg };
+  map[instanceId].enabled = enabled;
   next.instances = map;
   return { ok: true, config: next };
 }
@@ -777,27 +853,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   // CLI"), so a default `gemini` instance could only ever show unavailable.
   // The driver stays registered for enterprise licences, which keep Gemini
   // CLI — `{"instances": {"gemini": {"driver": "geminiAgent"}}}` restores it.
-  const DEFAULT_FLEET: InstanceConfigMap = {
-    // Fuigo leads: Murage SHIPS its binary, so it is the only engine that can
-    // be available on a machine with no CLIs installed. Registering the driver
-    // in BUILT_IN_DRIVERS only populates driversByKind — instanceConfigs() is
-    // the ONLY source of instances, so without a row here the engine has no
-    // instance, never appears in describe(), and remains unreachable.
-    fuigo: { driver: "fuigoAgent" },
-    grok: { driver: "grokAgent" },
-    kimi: { driver: "kimiAgent" },
-    droid: { driver: "droidAgent" },
-    cursor: { driver: "cursorAgent" },
-    claude: { driver: "claudeAgent" },
-    codex: { driver: "codex" },
-    antigravity: { driver: "antigravityAgent" },
-    opencodeGo: { driver: "opencodeGo" },
-    computer: { driver: "boxAgent" },
-    openaiCompat: { driver: "openai-compat" },
-    qwen: { driver: "qwenAgent" },
-    hermes: { driver: "hermesAgent" },
-    pi: { driver: "piAgent" },
-  };
+  const DEFAULT_FLEET = DEFAULT_INSTANCES;
   const CUSTOM_ONLY = {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
@@ -815,12 +871,12 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     openaiCompat: { driver: "openai-compat" },
     ...CUSTOM_ONLY,
   } as const;
-  const configured = cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;
+  const configured = cfg.engineDiscovery === "explicit" ? cfg.instances ?? {} : cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;
   const map: InstanceConfigMap = configured ? { ...configured } : { ...DEFAULT_FLEET };
   // Product fleets pick up newly shipped engines. A one-off test/shadow map
   // (no claude/grok/codex) is left exactly as written.
   if (
-    configured &&
+    cfg.engineDiscovery !== "explicit" && configured &&
     (Object.hasOwn(configured, "claude") || Object.hasOwn(configured, "grok") || Object.hasOwn(configured, "codex"))
   ) {
     for (const [id, entry] of Object.entries(PRODUCT_FLEET_ADDITIONS)) {
@@ -873,30 +929,6 @@ export interface CustomMcpServer {
   env: Record<string, string>;
 }
 
-const customMcpEntrySchema = z
-  .object({
-    command: z.string().min(1),
-    args: z.array(z.string()).optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
-
-const CUSTOM_MCP_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
-/** Server keys the harness mounts itself — a custom entry must never
- * shadow or clobber one of these across any driver's namespace. */
-const RESERVED_MCP_NAMES = new Set([
-  "muragebox",
-  "computer",
-  "agents",
-  "composio",
-  "browser",
-  "phone",
-  "dweb",
-  "murage_connectors",
-  "murage_phone",
-]);
-
 const reportedMcpSkips = new Set<string>();
 function skipMcpEntry(name: string, why: string): void {
   const key = `${name}: ${why}`;
@@ -909,28 +941,23 @@ function skipMcpEntry(name: string, why: string): void {
 export function customMcpServers(cfg: AppConfig): Record<string, CustomMcpServer> {
   const out: Record<string, CustomMcpServer> = {};
   for (const [name, raw] of Object.entries(cfg.mcpServers ?? {})) {
-    if (!CUSTOM_MCP_NAME.test(name)) {
-      skipMcpEntry(name, "server names are lowercase letters, digits, _ or - (max 32 chars), starting with a letter");
-      continue;
-    }
-    if (RESERVED_MCP_NAMES.has(name)) {
-      skipMcpEntry(name, "that name is reserved for a built-in server — pick another");
-      continue;
-    }
     if (raw && typeof raw === "object" && "url" in raw) {
       skipMcpEntry(name, 'only stdio servers ("command") are supported so far — HTTP transports are a planned follow-up');
       continue;
     }
-    const parsed = customMcpEntrySchema.safeParse(raw);
-    if (!parsed.success) {
-      skipMcpEntry(name, `invalid entry (${parsed.error.issues[0]?.message ?? "schema mismatch"}) — expected { "command": "npx", "args": [...], "env": { ... } }`);
+    // One parser for the file and the settings panel: mcp-registry.ts owns
+    // the name rules, the reserved list and the entry shape, so a server the
+    // UI accepts is exactly a server the fleet will mount.
+    const parsed = parseStoredMcpServer(name, raw);
+    if (!parsed.ok) {
+      skipMcpEntry(name, `${parsed.error} Expected { "command": "npx", "args": [...], "env": { ... } }`);
       continue;
     }
-    if (parsed.data.enabled === false) continue;
+    if (!parsed.server.enabled) continue;
     out[name] = {
-      command: parsed.data.command,
-      args: parsed.data.args ?? [],
-      env: parsed.data.env ?? {},
+      command: parsed.server.command,
+      args: parsed.server.args,
+      env: parsed.server.env,
     };
   }
   return out;

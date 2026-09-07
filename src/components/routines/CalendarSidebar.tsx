@@ -11,9 +11,10 @@ export interface CalendarSidebarProps {
   anchor: number;
   onSelectDate: (at: number) => void;
   onCreate: () => void;
+  canCreate?: boolean;
 }
 
-export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: CalendarSidebarProps) {
+export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate, canCreate = false }: CalendarSidebarProps) {
   const [query, setQuery] = useState("");
   const filteredBots = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -24,6 +25,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
   }, [bots, query]);
 
   const beginBotDrag = (event: DragEvent<HTMLDivElement>, bot: Bot) => {
+    if (!canCreate) return event.preventDefault();
     event.dataTransfer.effectAllowed = "copy";
     event.dataTransfer.setData(BOT_CALENDAR_DRAG_TYPE, bot.id);
     event.dataTransfer.setData("text/plain", bot.id);
@@ -34,7 +36,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
       aria-label="Calendar sidebar"
       className="flex h-full w-[320px] shrink-0 flex-col overflow-hidden border-r border-hairline/40 bg-panel"
     >
-      <div className="px-4 pb-2 pt-4">
+      {canCreate && <div className="px-4 pb-2 pt-4">
         <button
           type="button"
           onClick={onCreate}
@@ -43,7 +45,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
           <Plus size={17} strokeWidth={2.5} aria-hidden="true" />
           Create
         </button>
-      </div>
+      </div>}
 
       <MiniMonth anchor={anchor} onSelect={onSelectDate} />
 
@@ -76,22 +78,22 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
           />
         </label>
 
-        <div role="list" aria-label="Bots available to schedule" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-0.5">
+        <div role="list" aria-label={canCreate ? "Bots available to schedule" : "Calendar bots"} className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-0.5">
           {filteredBots.map((bot) => (
             <div
               key={bot.id}
-              draggable
+              draggable={canCreate}
               onDragStart={(event) => beginBotDrag(event, bot)}
               role="listitem"
-              className="group flex cursor-grab items-center gap-2 rounded-xl px-2 py-2 transition-colors hover:bg-raised/80 active:cursor-grabbing"
-              aria-label={`Drag ${bot.name} onto the calendar`}
-              title={`Drag ${bot.name} onto a time slot`}
+              className={`group flex items-center gap-2 rounded-xl px-2 py-2 transition-colors hover:bg-raised/80 ${canCreate ? "cursor-grab active:cursor-grabbing" : ""}`}
+              aria-label={canCreate ? `Drag ${bot.name} onto the calendar` : bot.name}
+              title={canCreate ? `Drag ${bot.name} onto a time slot` : bot.name}
             >
-              <GripVertical
+              {canCreate && <GripVertical
                 size={13}
                 className="shrink-0 text-ink-secondary/35 transition-colors group-hover:text-ink-secondary"
                 aria-hidden="true"
-              />
+              />}
               <BotAvatar bot={bot} size={27} animated={false} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[11.5px] font-medium text-ink">{bot.name}</div>
@@ -99,9 +101,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
                   {bot.title || "BotAgent"}
                 </div>
               </div>
-              <span className="shrink-0 rounded-full border border-hairline/50 px-1.5 py-0.5 text-[8.5px] text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100">
-                Drag
-              </span>
+              {canCreate && <span className="shrink-0 rounded-full border border-hairline/50 px-1.5 py-0.5 text-[8.5px] text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100">Drag</span>}
             </div>
           ))}
 
@@ -113,7 +113,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
         </div>
 
         <p className="mt-2 px-2 text-[9.5px] leading-relaxed text-ink-secondary/65">
-          Drag a bot onto any time to schedule it.
+          {canCreate ? "Drag a bot onto any time to schedule it." : "Create or change schedules in the desktop app."}
         </p>
       </section>
     </aside>

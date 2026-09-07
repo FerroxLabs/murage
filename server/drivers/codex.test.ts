@@ -5,7 +5,7 @@
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CodexDriver } from "./codex.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { NATIVE_DIR } from "../config.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
@@ -129,6 +130,56 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
   });
 
+  it("waits for child exit before completion and ignores buffered and later output after settlement", async () => {
+    await create({ mode: "late-output" });
+    const dump = join(scratch, "shutdown.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-shutdown", text: "go" });
+    await recorder.until((event) => event.type === "item.completed" && event.itemType === "assistant_text");
+    const { pid } = JSON.parse(readFileSync(dump, "utf8"));
+    expect(instance.adapter.hasSession?.("t-shutdown")).toBe(true);
+    expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
+    await recorder.until((event) => event.type === "turn.completed");
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(instance.adapter.hasSession?.("t-shutdown")).toBe(false);
+    expect(recorder.events.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.filter((event) => event.type === "content.delta").map((event) => event.delta))
+      .toEqual(["done from fake codex"]);
+  });
+
+  it(process.platform === "win32"
+    ? "confirms native Windows termination despite the fixture's POSIX shutdown delay"
+    : "reports shutdown timeout without releasing the live process or listeners", async () => {
+    const dump = join(scratch, "shutdown-timeout.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await create({ mode: "late-output", environment: { FAKE_CODEX_SHUTDOWN_DELAY_MS: "5500" } });
+    await instance.adapter.sendTurn({ threadId: "t-timeout", text: "go" });
+    await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
+    let windowsPid: number | undefined;
+    if (process.platform === "win32") {
+      windowsPid = JSON.parse(readFileSync(dump, "utf8")).pid;
+      // killCliTree uses taskkill /F on Windows, and its libuv SIGTERM
+      // fallback also forces termination. Neither runs the POSIX delay handler.
+      await expect(instance.adapter.interruptTurn("t-timeout")).resolves.toBeUndefined();
+      await recorder.until(event => event.type === "turn.completed");
+      await expect(instance.adapter.stopAll()).resolves.toBeUndefined();
+      await expect(instance.dispose()).resolves.toBeUndefined();
+    } else {
+      await expect(instance.adapter.interruptTurn("t-timeout")).rejects.toThrow("shutdown is still pending");
+      expect(instance.adapter.hasSession?.("t-timeout")).toBe(true);
+      await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
+      await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+    }
+    await recorder.until(event => event.type === "turn.completed");
+    // Preserve the original POSIX read after the producer has closed its dump.
+    const pid = windowsPid ?? JSON.parse(readFileSync(dump, "utf8")).pid;
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(instance.adapter.hasSession?.("t-timeout")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.filter(event => event.type === "content.delta").map(event => event.delta))
+      .toEqual(["done from fake codex"]);
+  }, 10000);
+
   it("strips ambient routing switches from the codex child env", async () => {
     // An OPENAI_BASE_URL left in the shell by a provider switcher would point
     // the CLI's own ChatGPT login at a third party, silently, every turn.
@@ -233,6 +284,48 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
   });
 
+  it("normalizes native image generation bytes without exposing the provider path", async () => {
+    await create({ mode: "image" });
+    await instance.adapter.sendTurn({
+      threadId: "t-image",
+      text: "make an image",
+      model: "gpt-5.6-sol",
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const image = recorder.events.find(
+      (event) => event.type === "item.completed" && event.itemType === "assistant_image",
+    );
+    expect(image).toMatchObject({
+      itemType: "assistant_image",
+      itemId: "img1",
+      alt: "a tiny green mouse",
+    });
+    expect(image && "data" in image ? image.data : "").toMatch(/^iVBOR/);
+    // savedPath is the app-server's own file. Reading it would make the
+    // harness depend on a path it did not write; the bytes are the contract.
+    expect(JSON.stringify(image)).not.toContain("provider-owned-path");
+  });
+
+  it("keeps the generated raster out of the native protocol tee", async () => {
+    // ~/.murage/native/*.ndjson is an ordinary file people paste into bug
+    // reports. A megabyte of base64 in it is both useless and a leak of the
+    // provider's local path, so the entry keeps the shape and loses both.
+    await create({ mode: "image" });
+    // appendNative never creates its directory (ensureDirs does that at
+    // boot) and swallows the ENOENT, so the unit test makes it itself.
+    mkdirSync(NATIVE_DIR, { recursive: true });
+    const threadId = `t-image-log-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "make an image", model: "gpt-5.6-sol" });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const logged = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
+    expect(logged).toContain("imageGeneration");
+    expect(logged).toContain("base64 chars]");
+    expect(logged).not.toContain("iVBORw0KGgo");
+    expect(logged).not.toContain("provider-owned-path");
+  });
+
   it("keeps the full command when a Windows interpreter prefix is long", async () => {
     await create({ mode: "windows-command" });
     await instance.adapter.sendTurn({ threadId: "t-windows-command", text: "read notes" });
@@ -294,29 +387,50 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.MURAGE_COMMS_TOKEN).toBe("per-boot-token");
   });
 
-  it("mounts custom MCP servers on-request while built-ins stay pre-quieted", async () => {
+  it("skips custom MCP entries before copying reserved env or requesting a bearer, preserving built-ins and approval behavior", async () => {
     await create();
     const dump = join(scratch, "custom-mcp.json");
     process.env.FAKE_CODEX_DUMP = dump;
     expect(instance.adapter.capabilities.customMcp).toBe(true);
+    const blocked = Object.fromEntries([
+      "MURAGE_COMMS_TOKEN", "MURAGE_CONNECTOR_UPSTREAM_URL", "murage_harness_url",
+      "MURAGEBOX_TOKEN", "muragebox_url", "ELECTRON_RUN_AS_NODE", "electron_run_as_node",
+      "DWEB_URL", "dweb_url", "PH_ANDROID_SERIAL", "ph_android_serial",
+    ].map((key, index) => [`blocked${index}`, {
+      command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
+    }]));
 
     await instance.adapter.sendTurn({
       threadId: "t-custom-mcp",
       text: "go",
       integrations: {
         custom: {
+          ...blocked,
+          bearer_request: { command: "attacker-mcp", args: [], env: { MURAGE_COMMS_TOKEN: "" } },
           notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
         },
         composio: {
           command: process.execPath,
           args: ["/tmp/connector-proxy.js"],
-          env: { MURAGE_COMMS_TOKEN: "per-boot-token" },
+          env: {
+            MURAGE_COMMS_TOKEN: "per-boot-token",
+            MURAGE_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
+          },
         },
       },
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     const argv = seen.argv.join(" ");
+    for (const name of [...Object.keys(blocked), "bearer_request"]) {
+      expect(argv).not.toContain(`mcp_servers.${name}.`);
+    }
+    expect(argv).not.toContain("attacker-mcp");
+    expect(seen.env.CUSTOM_REJECTED_MARKER).toBeUndefined();
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBe("per-boot-token");
+    expect(seen.env.MURAGE_CONNECTOR_UPSTREAM_URL).toBe("http://127.0.0.1:8799/api/internal/connectors/mcp");
+    expect(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.notes.env_vars=")))
+      .toBe('mcp_servers.notes.env_vars=["NOTES_TOKEN"]');
     expect(argv).toContain("mcp_servers.notes.command");
     // env value stays in the child env; argv carries names only
     expect(argv).toContain("NOTES_TOKEN");
@@ -326,6 +440,24 @@ describe("CodexDriver turns (fake app-server)", () => {
     // server does NOT — its tool calls arrive as approval cards
     expect(argv).toContain('mcp_servers.murage_connectors.default_tools_approval_mode');
     expect(argv).not.toContain('mcp_servers.notes.default_tools_approval_mode');
+  });
+
+  it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
+    await create();
+    const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;
+    await instance.adapter.sendTurn({threadId:"memory-only",text:"recall",integrations:{
+      memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
+      custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
+    }});
+    await recorder.until(event=>event.type==="turn.completed");
+    const seen=JSON.parse(readFileSync(dump,"utf8")),argv=seen.argv.join(" ");
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+    expect(argv).toContain("mcp_servers.murage-memory.command");
+    expect(argv).toContain("/fake/memory-proxy.js");
+    expect(argv).not.toContain("attacker-mcp");
+    expect(argv).not.toContain("memory-fixture-secret");
+    expect(seen.env.MURAGE_MEMORY_TOKEN).toBe("memory-fixture-secret");
+    expect(argv).not.toContain("mcp_servers.agents.command");
   });
 
   it("mounts peer-agent comms without placing the comms token in argv", async () => {

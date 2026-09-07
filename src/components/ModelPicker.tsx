@@ -1,10 +1,11 @@
 // Compact model picker: providers live on a Cloud/Local rail. Ready engines
 // show a short suggested list with search and an explicit all-models view;
 // engines that need setup show one focused action instead of a disabled wall.
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { useStore, type Bot, type InstanceInfo, type ModelSelection } from "@/state/store";
 import { filterCustomModels, partitionCustomModels, suggestedModels } from "@/lib/custom-models";
+import { singleFlight } from "@/lib/single-flight";
 import { isCustomOnly, splitEngineRail } from "@/lib/engine-rail";
 import { ProviderMark } from "./ProviderIcons";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
@@ -122,16 +123,27 @@ export function ModelPicker({
   const [pane, setPane] = useState<"main" | "custom">("main");
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  // A ref, not the `refreshing` state: two opens in the same tick both read the
+  // stale `false` off state and fire twice. The ref is written synchronously.
 
   const selection = bot.modelSelection;
   const active = state.instances.find((instance) => instance.instanceId === selection.instanceId);
   const railInstance =
     state.instances.find((instance) => instance.instanceId === (railId ?? selection.instanceId)) ?? state.instances[0];
 
+  // The gate lives in src/lib/single-flight.ts so it can actually be tested —
+  // this file renders to static markup in tests, with no click to make, which
+  // is how the guard originally shipped with zero coverage.
+  const refreshModels = useMemo(
+    () => singleFlight(refreshInstances, setRefreshing),
+    [refreshInstances],
+  );
+
   useEffect(() => {
-    if (open) void refreshInstances();
-  }, [open, refreshInstances]);
+    if (open) refreshModels();
+  }, [open, refreshModels]);
 
   useEffect(() => {
     if (!open) return;
@@ -333,14 +345,35 @@ export function ModelPicker({
                 <div className="shrink-0 px-4 pb-2 pt-3.5">
                   <div className="flex items-center justify-between gap-3">
                     <div className="truncate text-[14px] font-semibold text-ink">{railInstance.displayName}</div>
-                    <span
-                      className={cn(
-                        "shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium",
-                        blocked ? "bg-warning/10 text-warning" : "bg-success/10 text-success",
-                      )}
-                    >
-                      {pane === "custom" && !blocked ? "Local models" : engineStatus(railInstance)}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        data-model-refresh
+                        disabled={refreshing}
+                        onClick={refreshModels}
+                        aria-label={
+                          refreshing
+                            ? `Refreshing ${railInstance.displayName} models`
+                            : `Refresh ${railInstance.displayName} models`
+                        }
+                        title="Refresh models"
+                        className="flex size-6 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink disabled:cursor-wait disabled:opacity-70"
+                      >
+                        {refreshing ? (
+                          <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                        ) : (
+                          <RefreshCw size={12} aria-hidden="true" />
+                        )}
+                      </button>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium",
+                          blocked ? "bg-warning/10 text-warning" : "bg-success/10 text-success",
+                        )}
+                      >
+                        {pane === "custom" && !blocked ? "Local models" : engineStatus(railInstance)}
+                      </span>
+                    </div>
                   </div>
                   <div className="mt-0.5 text-[11.5px] text-ink-secondary">
                     {pane === "custom"

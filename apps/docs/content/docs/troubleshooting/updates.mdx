@@ -8,8 +8,8 @@ Murage checks for updates in the background and offers the download in a card at
 
 | Build | What the button does |
 |---|---|
-| macOS, Windows, Linux AppImage | **Restart to update** — the app replaces itself and reopens. An AppImage is always rewritten at the path you launch, so your launcher, symlink or dock pin keeps working. |
-| Ubuntu `.deb` (and rpm/pacman) | **Install** — Murage downloads and verifies the package, copies the install command, and opens a terminal for you to paste it into. The app never installs a system package itself, so it never asks for your administrator password. |
+| macOS, Windows, Linux AppImage | **Restart to update**: the app replaces itself and reopens. An AppImage is always rewritten at the path you launch, so your launcher, symlink or dock pin keeps working. |
+| Ubuntu `.deb` (and rpm/pacman) | **Install**: Murage downloads and verifies the package, copies the install command, and opens a terminal for you to paste it into. The app never installs a system package itself, so it never asks for your administrator password. |
 
 Ubuntu packages are installed from the releases repository by hand, so the app hands you the exact line rather than guessing at a package handler:
 
@@ -35,7 +35,7 @@ The install command is on your clipboard either way. Open a terminal yourself an
 sudo apt-get install -y ~/.cache/murage-updater/pending/Murage-*-amd64.deb
 ```
 
-Use `apt-get`, not `dpkg -i` — only `apt-get` resolves dependencies, and on Ubuntu 24.04 ours are satisfied through virtual packages that `dpkg` alone will not follow.
+Use `apt-get`, not `dpkg -i`: only `apt-get` resolves dependencies, and on Ubuntu 24.04 ours are satisfied through virtual packages that `dpkg` alone will not follow.
 
 ## Verify the installed version
 

@@ -485,7 +485,8 @@ describe("the receipt is what tells our block from the user's", () => {
   });
 });
 
-describe("permissions", () => {
+// Node's POSIX mode bits do not represent Windows ACL privacy.
+describe.skipIf(process.platform === "win32")("POSIX permissions", () => {
   it("creates a new config 0600 — it holds a bearer token", async () => {
     const r = rig();
     await connectOpenCodeFlux({ key: KEY, env: r.env });

@@ -6,6 +6,8 @@ import {
   appendPastedText,
   attachmentBasename,
   attachmentImageUrl,
+  clipboardHasImages,
+  clipboardImageFiles,
   composeMessage,
   isImageFile,
   splitTranscriptAttachments,
@@ -155,5 +157,48 @@ describe("isImageFile", () => {
     expect(isImageFile({ type: "image/webp", size: 10 })).toBe(true);
     expect(isImageFile({ type: "image/svg+xml", size: 10 })).toBe(false);
     expect(isImageFile({ type: "text/plain", size: 10 })).toBe(false);
+  });
+});
+
+describe("clipboard image intake", () => {
+  function clipboard(items: Partial<DataTransferItem>[], files: File[] = []) {
+    return { items, files } as unknown as Pick<DataTransfer, "items" | "files">;
+  }
+  function item(file: File): Partial<DataTransferItem> {
+    return { kind: "file", type: file.type, getAsFile: () => file };
+  }
+
+  it("prefers image items and does not duplicate the files representation", () => {
+    const png = new File(["png"], "shot.png", { type: "image/png" });
+    const data = clipboard([item(png)], [png]);
+    expect(clipboardHasImages(data)).toBe(true);
+    expect(clipboardImageFiles(data)).toEqual([png]);
+    expect(clipboardImageFiles(clipboard([item(png)]))).toEqual([png]);
+  });
+
+  it("falls back to readable files when image items are absent or unreadable", () => {
+    const jpeg = new File(["jpeg"], "shot.jpg", { type: "image/jpeg" });
+    expect(clipboardImageFiles(clipboard([], [jpeg]))).toEqual([jpeg]);
+    expect(clipboardImageFiles(clipboard([
+      { kind: "file", type: "image/png", getAsFile: () => null },
+    ], [jpeg]))).toEqual([jpeg]);
+  });
+
+  it("rejects unsupported actual files even if an item claims PNG", () => {
+    const svg = new File(["<svg/>"], "shot.svg", { type: "image/svg+xml" });
+    const data = clipboard([{ kind: "file", type: "image/png", getAsFile: () => svg }], [svg]);
+    expect(clipboardHasImages(data)).toBe(true);
+    expect(clipboardImageFiles(data)).toEqual([]);
+  });
+
+  it("recognizes unreadable images without throwing or treating text as images", () => {
+    const data = clipboard([
+      { kind: "file", type: "image/png", getAsFile: () => { throw new Error("unreadable"); } },
+    ]);
+    expect(clipboardHasImages(data)).toBe(true);
+    expect(clipboardImageFiles(data)).toEqual([]);
+    const text = clipboard([{ kind: "string", type: "text/plain" }]);
+    expect(clipboardHasImages(text)).toBe(false);
+    expect(clipboardImageFiles(text)).toEqual([]);
   });
 });

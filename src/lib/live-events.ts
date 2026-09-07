@@ -89,6 +89,12 @@ const bridgeSecret = (): string => {
 
 let desktopSecret = bridgeSecret();
 let pendingSecret: Promise<string> | null = null;
+let secretRetryable = false;
+
+/** A failed secret lookup cannot confirm that this renderer is remote. */
+export function desktopSurfaceSecretNeedsRetry(): boolean {
+  return secretRetryable;
+}
 
 /** The secret, or "" when this renderer has not been given one. Absent means
  * absent: nothing here invents a value, and a request without one is simply
@@ -104,16 +110,21 @@ export function desktopSurfaceHeaders(): Record<string, string> {
   return desktopSecret ? { [SURFACE_SECRET_HEADER]: desktopSecret } : {};
 }
 
-/** Resolve the secret once, and remember the answer.
+/** Resolve the secret and remember it; refresh before a replacement stream.
  *
  * Called before the first hydration fetch and before the stream opens. It
  * never rejects: a harness that will not hand one over leaves this renderer
  * on the scoped surface, which is a smaller app, not a broken one. */
-export function ensureDesktopSurfaceSecret(): Promise<string> {
-  if (desktopSecret) return Promise.resolve(desktopSecret);
+export function ensureDesktopSurfaceSecret(refresh = false): Promise<string> {
+  if (pendingSecret) return pendingSecret;
+  if (desktopSecret && !refresh && !secretRetryable) return Promise.resolve(desktopSecret);
   // A late preload is still the packaged answer — re-read before asking.
-  desktopSecret = bridgeSecret();
-  if (desktopSecret) return Promise.resolve(desktopSecret);
+  const injected = bridgeSecret();
+  if (injected) {
+    desktopSecret = injected;
+    secretRetryable = false;
+    return Promise.resolve(desktopSecret);
+  }
   // Deliberately NOT behind `import.meta.env.DEV`.
   //
   // It used to be, and that left a real configuration with no path to the
@@ -145,13 +156,24 @@ export function ensureDesktopSurfaceSecret(): Promise<string> {
   }
   pendingSecret ??= globalThis
     .fetch(DEV_SECRET_PATH)
-    .then((res) => (res.ok ? res.json() : null))
+    .then((res) => {
+      secretRetryable = res.ok || (res.status !== 403 && res.status !== 404);
+      return res.ok ? res.json() : null;
+    })
     .then((body: { secret?: unknown } | null) => {
       const secret = typeof body?.secret === "string" ? body.secret : "";
-      if (secret) desktopSecret = secret;
+      if (secret) {
+        desktopSecret = secret;
+        secretRetryable = false;
+      } else if (body !== null) {
+        secretRetryable = true;
+      }
       return desktopSecret;
     })
-    .catch(() => desktopSecret)
+    .catch(() => {
+      secretRetryable = true;
+      return desktopSecret;
+    })
     .finally(() => {
       pendingSecret = null;
     });
@@ -163,6 +185,7 @@ export function ensureDesktopSurfaceSecret(): Promise<string> {
 export function setDesktopSurfaceSecretForTest(value: string): void {
   desktopSecret = value;
   pendingSecret = null;
+  secretRetryable = false;
 }
 
 export function liveEventsUrl(options?: { since?: string | null; screens?: boolean }): string {
@@ -295,6 +318,8 @@ export function openLiveEvents(
   let source: LiveEventSourceLike | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryAttempt = 0;
+  let hasConnected = false;
+  let refreshing = false;
   let cursor: string | null = null;
   let lastHeardAt = platform.now();
   let snapshotGeneration = 0;
@@ -345,7 +370,7 @@ export function openLiveEvents(
     scheduleReconnect();
   };
 
-  connect = () => {
+  const openSource = () => {
     if (stopped || source || !platform.isOnline()) return;
     let current: LiveEventSourceLike;
     try {
@@ -359,6 +384,7 @@ export function openLiveEvents(
     }
 
     source = current;
+    hasConnected = true;
     lastHeardAt = platform.now();
     current.onopen = () => {
       if (stopped || source !== current) return;
@@ -435,6 +461,26 @@ export function openLiveEvents(
       // through onSnapshotRequired and receive only numbered application data.
       if (frame.kind !== "hello") handlers.onFrame(frame);
     };
+  };
+
+  connect = () => {
+    if (stopped || source || refreshing || !platform.isOnline()) return;
+    // A separately launched harness rotates its proof on restart. Renew it
+    // before replacing the stream, so both SSE and hydration use the new
+    // proof. A remote client has no proof and never repeats forbidden probes.
+    if (hasConnected && (desktopSecret || secretRetryable)) {
+      refreshing = true;
+      void ensureDesktopSurfaceSecret(true).then(() => {
+        refreshing = false;
+        if (secretRetryable) {
+          scheduleReconnect();
+          return;
+        }
+        openSource();
+      });
+      return;
+    }
+    openSource();
   };
 
   const reconnectNow = (reportDisconnect: boolean) => {

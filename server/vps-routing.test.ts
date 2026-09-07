@@ -34,6 +34,8 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
+const DESKTOP_SECRET = "cd0123456789efab".repeat(4);
+const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET };
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const CONTAINER_ID = "b".repeat(64);
 
@@ -135,14 +137,15 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
 
   type ApiBody = Record<string, string | boolean | { instanceId: string; model: string } | { sshAlias: string }>;
 
-  const api = async (method: string, path: string, body?: ApiBody): Promise<{ status: number; body: any }> => {
+  const api = async (method: string, path: string, body?: ApiBody, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: { ...(body ? { "content-type": "application/json" } : {}), ...headers },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
   };
+  const desktopApi = (method: string, path: string, body?: ApiBody) => api(method, path, body, DESKTOP_HEADERS);
 
   const botById = async (id: string) =>
     (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
@@ -195,6 +198,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
       MURAGE_EXTRA_PATH: fakeBin,
       FAKE_DOCKER_DIR: fakeBin,
       FAKE_DOCKER_LOG: dockerLog,
@@ -229,14 +233,14 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
   it(
     "mounts the VPS computer on the turn, tells the model, reuses without provisioning, and clears the claim",
     async () => {
-      expect((await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
+      expect((await desktopApi("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
 
       const bot = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${bot.id}`, {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
         name: "Remote hand",
         modelSelection: { instanceId: "vps", model: "fake-model" },
-      });
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" })).status).toBe(200);
+      })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" })).status).toBe(200);
       // bot.computer stays unset — Auto, the mode that must never provision
 
       const sent = await api("POST", `/api/bots/${bot.id}/messages`, { text: "check the remote desktop" });
@@ -244,11 +248,11 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
       await until(async () => (await botById(bot.id))?.busy === true, "the gated turn");
 
       // the turn is claimed: the SSH alias cannot be swapped under it...
-      const aliasChange = await api("PUT", "/api/config", { vps: { sshAlias: "other-vps" } });
+      const aliasChange = await desktopApi("PUT", "/api/config", { vps: { sshAlias: "other-vps" } });
       expect(aliasChange.status).toBe(409);
       expect(aliasChange.body.error).toMatch(/active VPS turn/);
       // ...and neither can the bot's cloud backend
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "box" })).status).toBe(409);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "box" })).status).toBe(409);
 
       // open the gate: the echo settles carrying the FULL prompt
       writeFileSync(gateFile, "open");
@@ -299,9 +303,9 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
       expect(status.body).toMatchObject({ backend: "vps", ready: true, container: "running" });
 
       // turn settled → the claim is gone: the alias may change again
-      const released = await api("PUT", "/api/config", { vps: { sshAlias: "other-vps" } });
+      const released = await desktopApi("PUT", "/api/config", { vps: { sshAlias: "other-vps" } });
       expect(released.status).toBe(200);
-      expect((await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
+      expect((await desktopApi("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
     },
     60_000,
   );

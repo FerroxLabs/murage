@@ -1,4 +1,4 @@
-import { chmod, lstat, readFile, readdir } from "node:fs/promises";
+import { chmod, lstat, open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { LICENSE_FILES } from "./cua-linux-release.mjs";
 import {
@@ -100,7 +100,7 @@ async function validateFuigo(resources, platform, required) {
   if (!allowed?.has(target)) {
     throw new Error(`Packaged ${platform} app contains the wrong fuigo target: ${target}`);
   }
-  // Byte-for-byte against the pinned 1.0.1 digest, before macOS signing
+  // Byte-for-byte against the pinned digest, before platform signing
   // rewrites the signature — this is the last point the upstream bytes exist
   // unmodified inside the app.
   verifyFuigoExecutable(executable, target);
@@ -111,6 +111,58 @@ async function validateFuigo(resources, platform, required) {
     await requireRegularFile(path.join(licenses, license), platform === "win32" ? undefined : 0o644);
   }
   console.log(`packaged fuigo ${FUIGO_VERSION} verified for ${target}`);
+}
+
+/** Target identity is established from packaged bytes, never the staging host.
+ * Intel absence is explicit metadata only; this does not implement a fallback or
+ * approve publishing an artifact without that native capability.
+ */
+export async function validatePackagedMemoryRuntime(resources, platform, archValue, required = true) {
+  const server = path.join(resources, "server");
+  const manifestFile = path.join(server, "memory-runtime-manifest.json");
+  try { await lstat(manifestFile); }
+  catch (error) { if (error?.code === "ENOENT" && !required) return; throw error; }
+  const arch = typeof archValue === "string" ? archValue : ({ 1: "x64", 3: "arm64" })[archValue];
+  const target = `${platform}-${arch}`;
+  if (!["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].includes(target)) throw new Error(`Unsupported packaged memory target: ${target}`);
+  for (const file of [manifestFile, path.join(server, "memory-model-manifest.json"), path.join(server, "memory/worker.js")]) await requireRegularFile(file);
+  const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+  const model = JSON.parse(await readFile(path.join(server, "memory-model-manifest.json"), "utf8"));
+  const runtimes = manifest.packages?.filter(entry => entry.name === "onnxruntime-node");
+  if (!Array.isArray(runtimes) || runtimes.length !== 1 || !manifest.packages.some(entry => entry.name === "@huggingface/transformers" && entry.version === model.runtimeVersion)) throw new Error("Packaged memory runtime manifest is incomplete or mismatched");
+  const runtime = runtimes[0];
+  if (typeof runtime.path !== "string" || path.isAbsolute(runtime.path)) throw new Error("Invalid packaged memory runtime path");
+  const packageRoot = path.resolve(server, runtime.path), relative = path.relative(server, packageRoot);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Packaged memory runtime path escapes server resources");
+  await requireRealDirectory(packageRoot, platform === "win32" ? undefined : 0o755);
+  const packageFile = path.join(packageRoot, "package.json"); await requireRegularFile(packageFile);
+  const pkg = JSON.parse(await readFile(packageFile, "utf8"));
+  if (pkg.name !== "onnxruntime-node" || pkg.version !== runtime.version) throw new Error("Packaged ONNX Runtime version differs from manifest");
+  const nativeRoot = path.join(packageRoot, "bin/napi-v6", platform, arch);
+  const libraries = platform === "darwin" ? [`libonnxruntime.${pkg.version}.dylib`]
+    : platform === "linux" ? ["libonnxruntime.so.1"]
+    : ["onnxruntime.dll", "DirectML.dll", "dxcompiler.dll", "dxil.dll"];
+  const files = [], missingFiles = [];
+  for (const name of ["onnxruntime_binding.node", ...libraries]) {
+    const file = path.join(nativeRoot, name), recordPath = path.relative(server, file).split(path.sep).join("/");
+    try { await requireRegularFile(file); }
+    catch (error) { if (error?.code === "ENOENT") { missingFiles.push(recordPath); continue; } throw error; }
+    const handle = await open(file, "r");
+    try {
+      const bytes = Buffer.alloc(65536), { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+      const actual = executableTarget(bytes.subarray(0, bytesRead));
+      if (actual !== target) throw new Error(`Packaged memory architecture mismatch: ${recordPath} is ${actual}, expected ${target}`);
+    } finally { await handle.close(); }
+    files.push(recordPath);
+  }
+  const nativeBackendAvailable = missingFiles.length === 0;
+  if (!nativeBackendAvailable && target !== "darwin-x64") throw new Error(`Packaged memory native runtime is missing for ${target}: ${missingFiles.join(", ")}`);
+  const stagingHost = manifest.stagingHost ?? { platform: manifest.platform, arch: manifest.arch };
+  if (typeof stagingHost.platform !== "string" || typeof stagingHost.arch !== "string") throw new Error("Packaged memory staging identity is missing");
+  const verified = { ...manifest, platform, arch, stagingHost, nativeBackendAvailable,
+    nativeBackend: { package: pkg.name, version: pkg.version, files, missingFiles } };
+  await writeFile(manifestFile, JSON.stringify(verified, null, 2) + "\n");
+  return verified;
 }
 
 // electron-builder normalizes copied resource directories to 0775. That is
@@ -125,6 +177,17 @@ export default async function afterPack(context) {
   );
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
+  await validatePackagedMemoryRuntime(resources, context.electronPlatformName, context.arch, Boolean(context.packager));
+
+  // electron-builder's single-file extraResources copier does not run its
+  // Windows signing transformer. Sign only the verified packaged copy, using
+  // the same configured signer as the app and installer, before archiving it.
+  if (context.electronPlatformName === "win32" && context.packager) {
+    const executable = path.join(resources, HARNESS_RESOURCE_DIRECTORIES.MURAGE_FUIGO_DIR, FUIGO_EXECUTABLE_NAMES.win32);
+    if (await context.packager.signIf(executable) !== true) {
+      throw new Error("Packaged Fuigo Windows signing did not complete");
+    }
+  }
 
   if (context.electronPlatformName !== "linux") return;
 

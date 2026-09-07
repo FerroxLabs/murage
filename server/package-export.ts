@@ -24,15 +24,34 @@ function samePlaybook(a: InstalledPlaybook, b: BotPackagePlaybook): boolean {
 /** Export a workspace definition, never its runtime state. Connected-app
  * labels are retained as setup intent, but grants, credentials, approvals,
  * transcripts, memory, paths, engines, and schedules' active state are not. */
-export function createBotPackageExport(input: {
+export interface BotPackageExportSelection {
+  botIds: string[];
+  playbookKeys: string[];
+  routineIds: string[];
+}
+export interface BotPackageExportInput {
   name: string;
   authorName?: string;
   bots: BotRecord[];
   groups: GroupRecord[];
   routines: Routine[];
-}): ParsedBotPackage {
+  selection?: BotPackageExportSelection;
+}
+
+function buildBotPackageExport(input: BotPackageExportInput) {
   const bots = input.bots.filter((bot) => !bot.hidden);
   if (!bots.length) throw new Error("Create a bot before exporting your package");
+  const selection = input.selection;
+  const selected = (field: keyof BotPackageExportSelection): Set<string> | undefined => {
+    if (selection === undefined) return undefined;
+    const values = selection?.[field];
+    if (!Array.isArray(values) || values.some(value => typeof value !== "string") || new Set(values).size !== values.length) throw new Error("Package selection must contain distinct botIds, playbookKeys and routineIds lists");
+    return new Set(values);
+  };
+  const botIds = selected("botIds"), selectedPlaybooks = selected("playbookKeys"), routineIds = selected("routineIds");
+  if (botIds && [...botIds].some(id => !bots.some(bot => bot.id === id))) throw new Error("Selected bot is unavailable");
+  const selectedBots = bots.filter(bot => !botIds || botIds.has(bot.id));
+  if (!selectedBots.length) throw new Error("Select at least one bot for the package");
 
   const packageKeys = new Set<string>();
   const idToKey = new Map<string, string>();
@@ -60,9 +79,17 @@ export function createBotPackageExport(input: {
     }
     agentPlaybooks.set(bot.id, assigned);
   }
+  const availablePlaybooks = new Set(selectedBots.flatMap(bot => agentPlaybooks.get(bot.id) ?? []));
+  if (selectedPlaybooks && [...selectedPlaybooks].some(key => !availablePlaybooks.has(key))) throw new Error("Selected playbook is unavailable for the selected bots");
+  if (routineIds) for (const id of routineIds) {
+    const routine = input.routines.find(routine => routine.id === id);
+    if (!routine) throw new Error("Selected routine is unavailable");
+    if (routine.target === "room-goal") throw new Error("Room-goal routines are not supported by package export");
+    if (!selectedBots.some(bot => bot.id === routine.botId)) throw new Error("Selected routine requires its bot to be selected");
+  }
 
   const requirements = new Map<string, { slug: string; label: string; reason: string; optional?: boolean }>();
-  for (const bot of bots) {
+  for (const bot of selectedBots) {
     for (const app of bot.installedPackage?.requiredApps ?? []) {
       if (!requirements.has(app.slug)) requirements.set(app.slug, { ...app });
     }
@@ -71,15 +98,18 @@ export function createBotPackageExport(input: {
   const roomKeys = new Set<string>();
   const rooms: NonNullable<BotPackageDefinition["rooms"]> = [];
   for (const [index, group] of input.groups.filter((group) => !group.dm).entries()) {
-    const members = group.memberIds.flatMap((id) => idToKey.has(id) ? [idToKey.get(id)!] : []);
+    const allMembers = group.memberIds.filter(id => idToKey.has(id));
+    if (!allMembers.length) continue;
+    const key = portableKey(group.name, `room-${index + 1}`, roomKeys);
+    const members = allMembers.flatMap(id => !botIds || botIds.has(id) ? [idToKey.get(id)!] : []);
     if (!members.length) continue;
-    const defaultResponder = group.defaultResponder.kind === "member" && idToKey.has(group.defaultResponder.botId)
+    const defaultResponder = group.defaultResponder.kind === "member" && idToKey.has(group.defaultResponder.botId) && (!botIds || botIds.has(group.defaultResponder.botId))
       ? { kind: "agent" as const, agent: idToKey.get(group.defaultResponder.botId)! }
       : group.defaultResponder.kind === "everyone"
         ? { kind: "everyone" as const }
         : { kind: "mentions" as const };
     rooms.push({
-      key: portableKey(group.name, `room-${index + 1}`, roomKeys),
+      key,
       name: group.name,
       members,
       bulletin: group.bulletin,
@@ -88,25 +118,42 @@ export function createBotPackageExport(input: {
   }
 
   const routineKeys = new Set<string>();
+  const routineCandidates: Array<{ id: string; key: string | null; name: string; botId: string; supported: boolean }> = [];
   const routines: NonNullable<BotPackageDefinition["routines"]> = input.routines.flatMap((routine, index) => {
+    // Package v1 only has a single-agent routine shape. Silently exporting a
+    // room goal as a bot task would change what it does after import, so keep
+    // it out until the portable format can name a package-local room.
     const agent = idToKey.get(routine.botId);
-    if (!agent) return [];
+    if (routine.target === "room-goal" || !agent) {
+      routineCandidates.push({ id: routine.id, key: null, name: routine.name, botId: routine.botId, supported: false });
+      return [];
+    }
+    const key = portableKey(routine.name, `routine-${index + 1}`, routineKeys);
+    routineCandidates.push({ id: routine.id, key, name: routine.name, botId: routine.botId, supported: true });
+    if ((routineIds && !routineIds.has(routine.id)) || (botIds && !botIds.has(routine.botId))) return [];
     return [{
-      key: portableKey(routine.name, `routine-${index + 1}`, routineKeys),
+      key,
       name: routine.name,
       agent,
       prompt: routine.prompt,
       runOn: routine.runOn,
       schedule: routine.schedule.type === "once"
         ? { type: "once", at: routine.schedule.at }
-        : { type: "daily", time: routine.schedule.time, weekdays: [...routine.schedule.weekdays] },
+        : routine.schedule.type === "interval"
+          ? {
+              type: "interval",
+              everyMinutes: routine.schedule.everyMinutes,
+              anchorAt: routine.schedule.anchorAt,
+            }
+          : { type: "daily", time: routine.schedule.time, weekdays: [...routine.schedule.weekdays] },
       durationMinutes: routine.durationMinutes,
+      ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
       enabledAfterInstall: false as const,
     }];
   });
 
   const id = portableKey(input.name, "murage-package", new Set());
-  const agents: BotPackageDefinition["agents"] = bots.map((bot) => {
+  const agents: BotPackageDefinition["agents"] = selectedBots.map((bot) => {
     const appearance: BotPackageDefinition["agents"][number]["appearance"] = { color: bot.color };
     if (bot.mascotExpression) appearance.mascotExpression = bot.mascotExpression;
     const agent: BotPackageDefinition["agents"][number] = {
@@ -116,7 +163,7 @@ export function createBotPackageExport(input: {
       description: bot.description,
       appearance,
     };
-    const assigned = agentPlaybooks.get(bot.id);
+    const assigned = agentPlaybooks.get(bot.id)?.filter(key => !selectedPlaybooks || selectedPlaybooks.has(key));
     if (assigned?.length) agent.playbooks = assigned;
     return agent;
   });
@@ -124,24 +171,39 @@ export function createBotPackageExport(input: {
     id,
     release: "1.0.0",
     name: input.name,
-    tagline: `A portable Murage setup with ${bots.length} ${bots.length === 1 ? "bot" : "bots"}.`,
+    tagline: `A portable Murage setup with ${selectedBots.length} ${selectedBots.length === 1 ? "bot" : "bots"}.`,
     summary: "Exported from Murage. Review the roles, rooms, playbooks, connector requirements, and paused routines before sharing or publishing.",
     category: "Community",
     author: { name: input.authorName?.trim() || "Murage user" },
     license: "Unspecified",
     outcomes: ["Recreate this bot setup without copying private runtime state."],
-    setupMinutes: Math.min(240, Math.max(2, bots.length + requirements.size * 2)),
+    setupMinutes: Math.min(240, Math.max(2, selectedBots.length + requirements.size * 2)),
     requirements: { apps: [...requirements.values()], capabilities: [] },
     agents,
   };
-  const chief = bots.find((bot) => bot.chiefOfStaff);
+  const chief = selectedBots.find((bot) => bot.chiefOfStaff);
   if (chief) definition.chiefOfStaff = idToKey.get(chief.id)!;
   if (rooms.length) definition.rooms = rooms;
   if (routines.length) definition.routines = routines;
-  if (playbooks.length) definition.playbooks = playbooks;
-  return parseBotPackage({
+  const exportedPlaybooks = playbooks.filter(playbook => availablePlaybooks.has(playbook.key) && (!selectedPlaybooks || selectedPlaybooks.has(playbook.key)));
+  if (exportedPlaybooks.length) definition.playbooks = exportedPlaybooks;
+  const parsed = parseBotPackage({
     format: "murage.package",
     version: 1,
     package: definition,
   });
+  return { parsed, candidates: {
+    bots: bots.map(bot => ({ id: bot.id, key: idToKey.get(bot.id)!, name: bot.name, playbookKeys: agentPlaybooks.get(bot.id) ?? [] })),
+    playbooks: playbooks.map(playbook => ({ key: playbook.key, name: playbook.name })),
+    routines: routineCandidates,
+  } };
+}
+
+export function createBotPackageExport(input: BotPackageExportInput): ParsedBotPackage {
+  return buildBotPackageExport(input).parsed;
+}
+
+/** Keys come from the exact default-export mapping, before any selection. */
+export function getBotPackageExportSelectionCandidates(input: BotPackageExportInput) {
+  return buildBotPackageExport({ ...input, selection: undefined }).candidates;
 }

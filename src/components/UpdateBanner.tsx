@@ -83,8 +83,8 @@ export function UpdateBanner() {
               : "Murage will reopen in a moment."
             : s.status === "handed-off"
               ? s.terminalOpened
-                ? "Command copied — paste it in the terminal that opened."
-                : "Command copied — paste it in a terminal to finish."
+                ? "Command copied. Paste it in the terminal that opened."
+                : "Command copied. Paste it in a terminal to finish."
               : friendlyError(s.message);
 
   return (

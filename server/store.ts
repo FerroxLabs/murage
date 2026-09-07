@@ -3,13 +3,18 @@
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
+import type { ProviderErrorInfo } from "../shared/provider-error.ts";
+import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
+import { persistMemoryRoster, reconcileMemoryRoster } from "./memory/policy.ts";
+import { transaction } from "./database.ts";
+import { recordMemorySettlement, type MemoryTurnOutcome } from "./memory/settlement.ts";
 import { workspaceDir } from "./workspace.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
@@ -63,6 +68,12 @@ export interface OptionCardData {
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: RoutineRequestCardData;
+  /** Hash of what this routine proposal SAID when it was rendered — the
+   * operation together with the title and subtitle the person actually read.
+   * Checked on confirmation so an approval cannot apply an operation other
+   * than the one displayed. Absent on cards proposed before this existed;
+   * those skip the check rather than becoming unconfirmable. */
+  routineProposalDigest?: string;
   /** A durable learned-skill proposal. The skill stays staged until the
    * user confirms this card — it never rides the prompt before that. */
   skillRequest?: SkillRequestCardData;
@@ -77,6 +88,7 @@ export interface OptionCardData {
 export interface ConnectorCardData {
   /** Composio toolkit slug. It is validated server-side before every action. */
   slug: string;
+  alias?: string;
   label: string;
   description: string;
   status: "required" | "authorizing" | "connected" | "failed";
@@ -106,6 +118,10 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
   text?: string;
+  /** Durable provider output stored by the harness. Paths always point into
+   * Murage's private attachment directory; renderers receive only the
+   * existing allowlisted /api/attachments URL. */
+  attachments?: Array<{ kind: "image"; path: string; mime: string }>;
   card?: OptionCardData;
   connector?: ConnectorCardData;
   secret?: SecretRequestCardData;
@@ -120,7 +136,7 @@ export interface Message {
    * for chips not worth interrupting the ear for. */
   /** `setup` marks an error the user fixes by installing or configuring
    * something — the UI offers setup instead of a retry that cannot work. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; providerError?: ProviderErrorInfo };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
@@ -228,6 +244,8 @@ export interface GroupRecord {
  * session. Sharing resume cursors between tasks would resume the other
  * task's session and quietly undo the whole thing. */
 export interface TaskRecord {
+  /** Server-owned automation root; retained for reviewed card resumptions. */
+  automationEventId?: string;
   threadId: ThreadId;
   title: string;
   createdAt: number;
@@ -434,9 +452,14 @@ export interface BotRecord {
   modelSelection: ModelSelection;
   /** provider-native continuation per instance (e.g. claude session id) */
   resumeCursors: Record<string, unknown>;
+  /** Presentation only; never excludes the bot from authority or routing. */
+  sidebarHidden?: boolean;
+  /** Durable replay refusal for the exact reviewed package import. */
+  packageImportReceipt?: { reviewHash: string; archiveSha256: string; importId: string; selectionHash?: string;
+    baseline?: ReturnType<typeof import("./package-import-comparison.ts").createPackageImportBaseline> };
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
-  computer?: "cloud" | "vm" | "local" | "off";
+  computer?: "cloud" | "vm" | "local" | "browser" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
   cloudBackend?: CloudBackend;
   /** Auto mode may prepare/start this bot's managed VPS container. Off by
@@ -714,16 +737,10 @@ export class Store {
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true });
-    try {
-      this.bots = JSON.parse(readFileSync(BOTS_FILE, "utf8"));
-    } catch {
-      this.bots = [];
-    }
-    try {
-      this.groups = JSON.parse(readFileSync(GROUPS_FILE, "utf8"));
-    } catch {
-      this.groups = [];
-    }
+    // Validate both inputs before any migration can save either collection.
+    // Only an absent file is a fresh install; damaged state needs recovery.
+    this.bots = readPersistedRecords<BotRecord>(BOTS_FILE);
+    this.groups = readPersistedRecords<GroupRecord>(GROUPS_FILE);
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
@@ -911,14 +928,48 @@ export class Store {
       const legacyFile = messagesFile(threadId);
       if (existsSync(legacyFile)) mdb.readThread(threadId, legacyFile);
     }
+    reconcileMemoryRoster(this);
   }
 
   private saveBots(bots: BotRecord[] = this.bots) {
-    writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2));
+    persistMemoryRoster({ bots, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2)));
+  }
+
+  /** Prepare an additive import without changing memory or emitting events.
+   * The caller durably commits all returned files before calling publish. */
+  preparePackageAddition(bots: BotRecord[], groups: GroupRecord[]) {
+    const ids = new Set(this.bots.map(bot => bot.id));
+    const threads = new Set(this.bots.flatMap(bot => [bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]));
+    for (const bot of bots) {
+      if (ids.has(bot.id) || threads.has(bot.threadId) || bot.chiefOfStaff || bot.chiefScope || bot.autoApprove
+        || bot.alwaysAllow?.length || Object.keys(bot.resumeCursors).length || bot.tasks?.some(task => task.threadId !== bot.threadId || Object.keys(task.resumeCursors).length)
+        || bot.composio !== false || bot.browser !== false || bot.computer !== "off") throw new Error("Unsafe package bot addition");
+      ids.add(bot.id); threads.add(bot.threadId);
+    }
+    const groupIds = new Set(this.groups.map(group => group.id));
+    const newBotIds = new Set(bots.map(bot => bot.id));
+    for (const group of groups) {
+      if (groupIds.has(group.id) || threads.has(group.threadId) || group.memberIds.some(id => !newBotIds.has(id))) throw new Error("Unsafe package group addition");
+      groupIds.add(group.id); threads.add(group.threadId);
+    }
+    const nextBots = [...this.bots, ...bots];
+    const nextGroups = [...this.groups, ...groups];
+    return {
+      files: new Map([
+        ["bots.json", Buffer.from(JSON.stringify(nextBots, null, 2))],
+        ["groups.json", Buffer.from(JSON.stringify(nextGroups.map(({ busyBotId: _busy, ...group }) => group), null, 2))],
+      ]),
+      publish: () => {
+        this.bots = nextBots; this.groups = nextGroups;
+        reconcileMemoryRoster(this);
+        for (const bot of bots) this.emit({ type: "bot", botId: bot.id });
+        for (const group of groups) this.emit({ type: "group", groupId: group.id });
+      },
+    };
   }
 
   private saveGroups() {
-    writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, ...g }) => g), null, 2));
+    persistMemoryRoster(this, () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, ...g }) => g), null, 2)));
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -1078,6 +1129,55 @@ export class Store {
     return true;
   }
 
+  /** A process restart cannot preserve an in-flight room orchestrator. Close
+   * every durable working receipt before clients load it, including manual
+   * goals that do not have a RoutineRun record to reconcile separately. */
+  reconcileInterruptedGroupGoals(
+    resolve?: (
+      runId: string,
+      threadId: string,
+    ) => {
+      status: Exclude<GroupGoalRunCardData["status"], "working">;
+      detail: string;
+      finishedAt: number;
+    } | null,
+    fallbackDetail = "Murage restarted before this goal finished.",
+    fallbackFinishedAt = Date.now(),
+  ): number {
+    const ownedThreadIds = new Set<string>();
+    for (const group of this.groups) {
+      ownedThreadIds.add(group.threadId);
+      for (const task of group.tasks ?? []) ownedThreadIds.add(task.threadId);
+    }
+    // load() already migrated every legacy transcript file into SQLite, so
+    // this recovery query is proportional to unfinished goals, not history.
+    let recovered = 0;
+    for (const hit of mdb.workingGoalRunMessages()) {
+      if (!ownedThreadIds.has(hit.threadId) || !hit.message.goalRun) continue;
+      const resolution = resolve?.(hit.message.goalRun.runId, hit.threadId) ?? {
+        status: "failed" as const,
+        detail: fallbackDetail,
+        finishedAt: fallbackFinishedAt,
+      };
+      const state = resolution.status === "needs-input"
+        ? "needs your input"
+        : resolution.status === "limit-reached"
+          ? "reached its turn limit"
+          : resolution.status;
+      this.patchMessage(hit.threadId, hit.message.id, {
+        text: `Goal ${state}: ${resolution.detail}`,
+        goalRun: {
+          ...hit.message.goalRun,
+          status: resolution.status,
+          detail: resolution.detail,
+          finishedAt: resolution.finishedAt,
+        },
+      });
+      recovered += 1;
+    }
+    return recovered;
+  }
+
   // ── channel tasks ────────────────────────────────────────────────────
   groupTasks(groupId: string): GroupTaskRecord[] {
     const group = this.group(groupId);
@@ -1095,7 +1195,7 @@ export class Store {
     return group.tasks?.find((task) => task.threadId === threadId);
   }
 
-  createGroupTask(groupId: string, title?: string): GroupTaskRecord | null {
+  createGroupTask(groupId: string, title?: string, activate = true): GroupTaskRecord | null {
     const group = this.group(groupId);
     if (!group || group.dm) return null;
     const task: GroupTaskRecord = {
@@ -1104,9 +1204,11 @@ export class Store {
       createdAt: Date.now(),
     };
     group.tasks = [task, ...(group.tasks ?? [])];
-    group.threadId = task.threadId;
-    group.pinnedCwd = undefined;
-    group.pinnedMessageId = undefined;
+    if (activate) {
+      group.threadId = task.threadId;
+      group.pinnedCwd = undefined;
+      group.pinnedMessageId = undefined;
+    }
     this.saveGroups();
     this.emit({ type: "group", groupId });
     return task;
@@ -1211,24 +1313,27 @@ export class Store {
   /** Mark the last assistant text on the active branch as this turn's final
    * visible answer. If a provider ends after commentary without emitting a
    * separate answer, that commentary remains visible as the safe fallback. */
-  markTerminalAssistantMessage(threadId: string, turnId: string): Message | null {
-    const path = this.activePath(threadId);
-    for (let i = path.length - 1; i >= 0; i -= 1) {
-      const message = path[i];
-      if (message.role === "bot" && message.kind === "text" && message.turnId === turnId) {
-        if (message.turnTerminal) return message;
-        return this.patchMessage(threadId, message.id, { turnTerminal: true });
-      }
+  markTerminalAssistantMessage(threadId: string, turnId: string, outcome: MemoryTurnOutcome = "completed"): Message | null {
+    const t = this.thread(threadId);
+    const message = [...this.activePath(threadId)].reverse().find(m => m.role === "bot" && m.kind === "text" && m.turnId === turnId);
+    const next = message ? { ...message, turnTerminal: true } : null;
+    transaction(() => {
+      if (next) mdb.updateMessage(threadId,next);
+      recordMemorySettlement(threadId,turnId,outcome);
+    });
+    if (next) {
+      t.messages[t.messages.findIndex(m => m.id === next.id)] = next;
+      this.emit({type:"message.patch",threadId,message:next});
     }
-    return null;
+    return next;
   }
 
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const t = this.thread(threadId);
     const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
+    mdb.appendMessage(threadId, full);
     t.messages.push(full);
     t.activeLeafId = full.id;
-    mdb.appendMessage(threadId, full);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames(t)) {
         mdb.updateMessage(threadId, pruned);
@@ -1257,8 +1362,8 @@ export class Store {
     if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
     const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
     const children = t.messages.filter((m) => m.parentId === anchorId);
-    t.messages.push(full);
     mdb.appendMessage(threadId, full);
+    t.messages.push(full);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames(t)) {
         mdb.updateMessage(threadId, pruned);
@@ -1331,9 +1436,9 @@ export class Store {
       parentId: source.parentId ?? null,
       replyToId: source.replyToId,
     };
+    mdb.appendMessage(threadId, full);
     t.messages.push(full);
     t.activeLeafId = full.id;
-    mdb.appendMessage(threadId, full);
     this.emit({ type: "message", threadId, message: full });
     return full;
   }
@@ -1349,8 +1454,8 @@ export class Store {
       if (!children.length) break;
       cur = children.reduce((a, b) => (b.at >= a.at ? b : a)).id;
     }
-    t.activeLeafId = cur;
     mdb.setActiveLeaf(threadId, cur);
+    t.activeLeafId = cur;
     this.emit({ type: "thread", threadId, activeLeafId: cur });
     return cur;
   }
@@ -1658,6 +1763,21 @@ export class Store {
     if (!task || task.lastInstanceId === instanceId) return;
     task.lastInstanceId = instanceId;
     this.saveBots();
+  }
+
+  setTaskAutomationEvent(botId: string, threadId: string, eventId?: string): void {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) throw new Error("Automation task is unavailable");
+    if (task.automationEventId === eventId) return;
+    const previous = task.automationEventId;
+    if (eventId === undefined) delete task.automationEventId;
+    else task.automationEventId = eventId;
+    try { this.saveBots(); }
+    catch (error) {
+      if (previous === undefined) delete task.automationEventId;
+      else task.automationEventId = previous;
+      throw error;
+    }
   }
 
   /** Bank one settled turn onto its task. Called once per turn.completed;

@@ -3,7 +3,7 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Coins, FlaskConical, Globe, KeyRound, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
+import { Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
@@ -20,6 +20,10 @@ import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
+import { SearchSettings } from "./SearchSettings";
+import { NotificationSettings } from "./NotificationSettings";
+import { TelegramSettings } from "./TelegramSettings";
+import { StarterProfiles } from "./StarterProfiles";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
 import {
@@ -35,8 +39,8 @@ const SECTIONS: Array<{
   desktopOnly?: boolean;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls"] },
-  { id: "experimental", label: "Experimental", icon: FlaskConical, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews"] },
+  { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and
   // execution surface of the app: API keys for xAI, Box, Composio and the
   // OpenCode gateway, the VPS connection, the engine CLI installers, and the
@@ -47,8 +51,9 @@ const SECTIONS: Array<{
   //
   // Phone is here for a different reason: on a phone it is an offer to do the
   // thing you have already done.
-  { id: "connections", label: "Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "flux", "flux router", "models", "router", "paste", "env"] },
-  { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli"] },
+  { id: "engines", label: "Models & Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys"] },
+  { id: "connections", label: "Tools & Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "paste", "env", "search", "tavily", "exa", "transcription"] },
+  { id: "channels", label: "Channels", icon: MessageCircle, desktopOnly: true, keywords: ["telegram", "botfather", "pair", "slack", "discord", "whatsapp", "messaging"] },
   { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
   { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
   { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
@@ -75,6 +80,10 @@ export function sectionsForSurface(
 /** Name + email, persisted to /api/config {profile} on blur. */
 function ProfileFields() {
   const { state, dispatch } = useStore();
+  const desktop = useDesktopSurface();
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState("");
+  const saving = useRef(false);
   const [name, setName] = useState(state.config?.profile?.name ?? "");
   const [email, setEmail] = useState(state.config?.profile?.email ?? "");
   useEffect(() => {
@@ -82,30 +91,47 @@ function ProfileFields() {
     setEmail(state.config?.profile?.email ?? "");
   }, [state.config?.profile?.name, state.config?.profile?.email]);
 
-  const save = () => {
-    void fetch("/api/config", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
-    })
-      .then((r) => r.json())
-      .then((config) => dispatch({ type: "configStatus", config }))
-      .catch(() => {});
+  const save = async () => {
+    if (desktop !== true || saving.current) return;
+    const profile = { name: name.trim(), email: email.trim().toLowerCase() };
+    if (profile.name === state.config?.profile?.name && profile.email === state.config?.profile?.email) return;
+    saving.current = true;
+    setStatus("saving");
+    setError("");
+    try {
+      const config: ConfigStatus = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
+      if (!config.profile || typeof config.profile.name !== "string" || typeof config.profile.email !== "string") {
+        throw new Error("The profile save could not be confirmed. Please retry.");
+      }
+      dispatch({ type: "configStatus", config });
+      setStatus("saved");
+    } catch (cause) {
+      setStatus("error");
+      setError(cause instanceof Error ? cause.message : "Could not save your profile. Please retry.");
+    } finally {
+      saving.current = false;
+    }
   };
 
   const inputClass =
     "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
   return (
     <div className="flex flex-col gap-3">
-      <input value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder="Your name" className={inputClass} />
+      <input aria-label="Your name" value={name} readOnly={desktop !== true} disabled={status === "saving"} onChange={(e) => { setName(e.target.value); setStatus("idle"); }} onBlur={() => void save()} placeholder="Your name" className={inputClass} />
       <input
         type="email"
         value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        onBlur={save}
+        aria-label="Your email"
+        readOnly={desktop !== true}
+        disabled={status === "saving"}
+        onChange={(e) => { setEmail(e.target.value); setStatus("idle"); }}
+        onBlur={() => void save()}
         placeholder="you@example.com"
         className={inputClass}
       />
+      {desktop !== true && <p className="text-[12px] text-ink-secondary">Change your profile in the desktop app.</p>}
+      {(status === "saving" || status === "saved") && <p role="status" className="text-[12px] text-ink-secondary">{status === "saving" ? "Saving…" : "Saved"}</p>}
+      {status === "error" && <div role="alert" className="text-[12px] text-danger">{error} <button type="button" onClick={() => void save()} className="rounded px-1 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Retry save</button></div>}
     </div>
   );
 }
@@ -156,7 +182,7 @@ function AnalyticsRow() {
   return (
     <Card
       title="Usage analytics"
-      subtitle="Anonymous product events — app opened, which features get used. Never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup."
+      subtitle="Anonymous product events: app opened, which features get used. Never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup."
     >
       <Switch
         checked={on}
@@ -197,7 +223,7 @@ function LanguageRow() {
   return (
     <Card
       title="Language"
-      subtitle="The app follows your system language unless you pick one here. Only part of the interface is translated so far — untranslated text stays in English."
+      subtitle="The app follows your system language unless you pick one here. Only part of the interface is translated so far; untranslated text stays in English."
     >
       <select
         value={current}
@@ -244,7 +270,7 @@ function ToolCallsRow() {
   return (
     <Card
       title="Tool calls"
-      subtitle="Show each tool a bot runs in the transcript. Off by default — the mascot already shows that work is happening."
+      subtitle="Show each tool a bot runs in the transcript. Off by default; the mascot already shows that work is happening."
     >
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
@@ -426,7 +452,7 @@ function BrowserProfilesRow() {
       subtitle="Named sign-in sessions any bot can use. Create one from a bot's Browser tab; sign in once and it stays."
     >
       {profiles.length === 0 ? (
-        <div className="text-[13px] text-ink-secondary">No profiles yet — pick "+ Add profile…" under a bot's browser.</div>
+        <div className="text-[13px] text-ink-secondary">No profiles yet. Pick "+ Add profile…" under a bot's browser.</div>
       ) : (
         <div className="flex flex-col divide-y divide-hairline/30">
           {profiles.map((profile) => {
@@ -693,24 +719,27 @@ export function SettingsModal() {
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5">
             {section === "general" && (
               <>
-                <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
+                <Card title="Profile" subtitle={desktop === true ? "Shown in the sidebar. Saved as you go." : "Shown in the sidebar."}>
                   <ProfileFields />
                 </Card>
+                {desktop === true && <StarterProfiles />}
                 <Card title="Appearance" subtitle="Applies instantly and is remembered on this machine.">
                   <SkinPicker />
                 </Card>
-                <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
+                {desktop === true && <NotificationSettings />}
+                {desktop === true && <><Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
                 <LanguageRow />
-          <ToolCallsRow />
+                <ToolCallsRow /></>}
+                {desktop !== true && <p className="text-[12px] text-ink-secondary">Language, tool-call display and channel settings are managed in the desktop app.</p>}
                 <UpdatesRow />
                 <DiagnosticsRow />
                 <AnalyticsRow />
               </>
             )}
 
-            {section === "experimental" && (
+            {desktop === true && section === "experimental" && (
               <>
                 <ExperimentalFeaturesRow />
                 <BrowserProfilesRow />
@@ -719,7 +748,7 @@ export function SettingsModal() {
 
             {desktop === true && section === "connections" && (
               <Card
-                title="Connections"
+                title="Tools & Connections"
                 subtitle="Connect your apps with your own Composio project key. Every key here stays on this computer."
               >
                 <div className="flex flex-col gap-4">
@@ -735,10 +764,7 @@ export function SettingsModal() {
                       is never React state so it cannot reach a render tree. */}
                   <PasteKeys />
                   <TranscriptionSettings />
-                  {/* Flux Router. Sits with the other optional keys because
-                      that is what it is: nothing here is required for the app
-                      to work, and every engine is authenticated on its own. */}
-                  <FluxKeyCard />
+                  <SearchSettings />
                   {/* Composio sits with the other keys rather than folded into
                       a "Self-host connected apps" disclosure, which is where it
                       used to live. That disclosure made sense while Ferrox's
@@ -750,16 +776,23 @@ export function SettingsModal() {
                   <ApiKeyRow section="composio" />
                   <ApiKeyRow section="box" />
                   <VpsConnection />
-                  <ApiKeyRow section="opencodeGo" />
                 </div>
               </Card>
             )}
 
             {desktop === true && section === "engines" && (
-              <Card title="Engine CLIs" subtitle="Which binary each engine runs. Saved as you go.">
-                <EnginesSettings />
-              </Card>
+              <>
+                <FluxKeyCard />
+                <Card title="Model provider" subtitle="Connect your OpenCode model provider.">
+                  <ApiKeyRow section="opencodeGo" />
+                </Card>
+                <Card title="Engine CLIs" subtitle="Which binary each engine runs. Saved as you go.">
+                  <EnginesSettings />
+                </Card>
+              </>
             )}
+
+            {desktop === true && section === "channels" && <TelegramSettings />}
 
             {desktop === true && section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
 

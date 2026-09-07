@@ -1,10 +1,11 @@
 // End-to-end proof that an AppImage update lands on the path the user
-// launches, run against the real release feed.
+// launches. Default: real release feed; --candidate-feed: isolated first-release
+// full-download proof using the actual candidate, without publishing anything.
 //
 // The unit tests drive AppImageUpdater.doInstall with hand-made files. This
-// drives the whole thing: the shipped bundle, extracted from the packaged
-// AppImage, checking the real FerroxLabs/murage-releases feed, downloading the real
-// asset, and installing it over a copy that carries a version in its name —
+// drives the shipped bundle from the packaged resources, checking either the
+// real FerroxLabs/murage-releases feed or an explicit local candidate feed,
+// downloading the asset, and installing it over a copy with a version in its name —
 // the exact shape that used to orphan the launcher.
 //
 // The current version is reported by the app adapter, not read from the file,
@@ -14,14 +15,19 @@
 // Runs under Electron (electron-updater needs its net stack):
 //   xvfb-run -a pnpm exec electron scripts/smoke-linux-update.mjs
 import { createHash } from "node:crypto";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import {
+  appendFileSync,
   copyFileSync,
+  createReadStream,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -38,6 +44,11 @@ const releaseDir = path.join(root, "release");
 // A version older than the oldest release we would ever test against, so the
 // published feed is always an upgrade regardless of what is packaged here.
 const PRETEND_VERSION = "0.0.1";
+const candidateFeed = process.argv.includes("--candidate-feed");
+const expectedVersion = process.argv.find((argument) => argument.startsWith("--expected-version="))?.slice("--expected-version=".length);
+if (expectedVersion !== undefined && !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(expectedVersion)) {
+  throw new Error("expected-version must be stable X.Y.Z");
+}
 
 function fail(message) {
   console.error(`[smoke-linux-update] ${message}`);
@@ -71,6 +82,9 @@ async function main() {
   // The bug shape: a version in the filename, and a launcher pinned to it.
   const launched = path.join(installDir, "Murage-0.0.1-x86_64.AppImage");
   copyFileSync(packaged, launched);
+  // Make the old bytes observably different; this isolated copy is never run.
+  if (candidateFeed) appendFileSync(launched, "\nMurage old-version update fixture\n");
+  const originalHash = sha512(launched);
   const desktopEntry = path.join(applications, "com.murage.app.desktop");
   writeFileSync(
     desktopEntry,
@@ -94,7 +108,37 @@ async function main() {
   const { AppImageUpdater } = require(bundle);
 
   const updateConfig = path.join(workspace, "app-update.yml");
-  copyFileSync(path.join(root, "release/linux-unpacked/resources/app-update.yml"), updateConfig);
+  const bakedConfig = path.join(root, "release/linux-unpacked/resources/app-update.yml");
+  const baked = readFileSync(bakedConfig, "utf8");
+  for (const [key, value] of [["provider", "github"], ["owner", "FerroxLabs"], ["repo", "murage-releases"]]) {
+    assert.match(baked, new RegExp(`^${key}: ${value}\\s*$`, "m"), `wrong baked updater ${key}`);
+  }
+  copyFileSync(bakedConfig, updateConfig);
+
+  let feedServer;
+  if (candidateFeed) {
+    const name = path.basename(packaged);
+    const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+    const metadata = JSON.stringify({ version, files: [{ url: name, sha512: sha512(packaged), size: statSync(packaged).size }], path: name, sha512: sha512(packaged) });
+    feedServer = createServer((request, response) => {
+      const requested = decodeURIComponent(new URL(request.url, "http://127.0.0.1").pathname);
+      if (requested === "/latest-linux.yml") {
+        response.writeHead(200, { "Content-Type": "application/yaml" });
+        response.end(metadata);
+      } else if (requested === `/${name}`) {
+        response.writeHead(200, { "Content-Length": statSync(packaged).size });
+        createReadStream(packaged).pipe(response);
+      } else {
+        response.writeHead(404).end();
+      }
+    });
+    await new Promise((resolve, reject) => {
+      feedServer.once("error", reject);
+      feedServer.listen(0, "127.0.0.1", resolve);
+    });
+    // Override only this disposable configuration; shipped GitHub config is untouched.
+    writeFileSync(updateConfig, `provider: generic\nurl: http://127.0.0.1:${feedServer.address().port}\nupdaterCacheDirName: murage-candidate-smoke\n`);
+  }
 
   // The constructor parses the current version once, so this has to be in
   // place before the updater exists. Without it the comparison runs against
@@ -105,13 +149,28 @@ async function main() {
   updater.updateConfigPath = updateConfig;
   updater.forceDevUpdateConfig = true;
   updater.autoDownload = false;
+  // The first release has no prior blockmap. Live-feed mode retains differential download.
+  if (candidateFeed) updater.disableDifferentialDownload = true;
   updater.logger = { info: log, warn: log, error: log, debug: () => {} };
 
   function log(...values) {
     console.log("   ", ...values.map(String));
   }
 
-  console.log("[smoke-linux-update] checking the real release feed…");
+  // A failed staging move must preserve the user's original app and launcher.
+  // Exercise the shipped installer implementation, as in the existing unit regression.
+  assert.throws(() => AppImageUpdater.prototype.doInstall.call({
+    installerPath: path.join(workspace, "never-downloaded.AppImage"),
+    _logger: { info: log, warn: log, error: log, debug() {} },
+    dispatchError: (error) => { throw error; },
+    emit() {},
+    spawnLog: () => assert.fail("failed install must not relaunch"),
+  }, { isForceRunAfter: true }));
+  assert.equal(sha512(launched), originalHash, "failed install must preserve original bytes");
+  assert.deepEqual(readdirSync(installDir), [path.basename(launched)], "failed install must leave no staged file");
+  console.log("[smoke-linux-update] failed-install preservation passed");
+
+  console.log(`[smoke-linux-update] checking ${candidateFeed ? "isolated candidate" : "real GitHub release"} feed…`);
   const result = await updater.checkForUpdates();
   if (!result?.updateInfo?.version) throw new Error("the feed returned no update");
   // A feed response alone is not an offer: a version comparison that decided
@@ -123,6 +182,7 @@ async function main() {
     );
   }
   const offered = result.updateInfo.version;
+  if (expectedVersion !== undefined) assert.equal(offered, expectedVersion, "live feed offered a different release");
   console.log(`[smoke-linux-update] feed offers ${offered}`);
 
   const expected = result.updateInfo.files?.find((file) => file.url.endsWith(".AppImage"));
@@ -151,7 +211,8 @@ async function main() {
       "the launcher still points at a real file",
       execTarget === launched && existsSync(launched),
     ],
-    ["the file now holds the published build", sha512(launched) === expected.sha512],
+    ["the file now holds the offered build", sha512(launched) === expected.sha512],
+    ["candidate replaced distinct old bytes", !candidateFeed || sha512(launched) !== originalHash],
     ["the relaunch uses the launched path", relaunched === launched],
   ];
 
@@ -167,7 +228,9 @@ async function main() {
   }
 
   rmSync(workspace, { recursive: true, force: true });
+  if (feedServer) await new Promise((resolve) => feedServer.close(resolve));
   console.log(`[smoke-linux-update] OK — updated 0.0.1 → ${offered} in place`);
+  if (candidateFeed) console.log("[smoke-linux-update] POST-PUBLICATION REQUIRED: rerun without --candidate-feed to prove the live GitHub feed and download path; candidate proof does not cover differential downloads.");
   app.exit(0);
 }
 

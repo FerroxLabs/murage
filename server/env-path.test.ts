@@ -2,9 +2,9 @@
 // well-known install dir — or an nvm bin dir — must be findable even
 // when the process itself started with a bare GUI PATH.
 import { execFile } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -17,6 +17,14 @@ import {
 } from "./env-path.ts";
 import { resolveCli } from "./procs.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+
+// Forward real filesystem behavior by default. The Fuigo resource tests below
+// restrict only existsSync's view of the machine, without replacing candidate
+// lookup or changing the production preference for user-installed engines.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, existsSync: vi.fn(actual.existsSync) };
+});
 
 const posixIt = it.skipIf(process.platform === "win32");
 
@@ -326,13 +334,27 @@ describe("resolveCli with wrapper commands", () => {
 // unrunnable bundle has to be a named error, never a quiet "no engine here".
 describe("resolveFuigoCli", () => {
   let bundleDirectory: string;
+  let realExistsSync: typeof existsSync;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     bundleDirectory = mkdtempSync(join(tmpdir(), "murage-fuigo-"));
+    realExistsSync = (await vi.importActual<typeof import("node:fs")>("node:fs")).existsSync;
+    // The temporary home does not isolate inherited PATH or fixed locations
+    // such as /usr/local/bin. A developer's installed Fuigo correctly wins in
+    // production, but must not satisfy a fixture's "no installed engine" case.
+    // Keep real checks for every fixture file, including bundle permissions.
+    const roots = [homedir(), bundleDirectory];
+    vi.mocked(existsSync).mockImplementation((path) =>
+      typeof path === "string" && roots.some((root) => path === root || path.startsWith(root + sep))
+        ? realExistsSync(path)
+        : false,
+    );
     resetPathCacheForTests();
   });
 
   afterEach(() => {
+    vi.mocked(existsSync).mockImplementation(realExistsSync);
+    vi.unstubAllEnvs();
     delete process.env.MURAGE_FUIGO_DIR;
     delete process.env.MURAGE_EXTRA_PATH;
     rmSync(bundleDirectory, { recursive: true, force: true });
@@ -350,8 +372,8 @@ describe("resolveFuigoCli", () => {
   }
 
   it("points at the executable inside the packaged resource directory", () => {
-    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "darwin")).toBe("/R/fuigo/fuigo");
-    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "win32")).toBe("/R/fuigo/fuigo.exe");
+    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "darwin")).toBe(join("/R/fuigo", "fuigo"));
+    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "win32")).toBe(join("/R/fuigo", "fuigo.exe"));
     // Not "empty" — simply undeclared, which resolveFuigoCli turns into an error.
     expect(bundledFuigoPath({}, "darwin")).toBeNull();
     expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "  " }, "darwin")).toBeNull();
@@ -377,6 +399,23 @@ describe("resolveFuigoCli", () => {
     resetPathCacheForTests();
 
     expect(resolveFuigoCli()).toEqual({ command: own, source: "path" });
+  });
+
+  it("prefers an inherited PATH install over a known-directory install and the bundle", () => {
+    bundle();
+    process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+    const executable = process.platform === "win32" ? "fuigo.exe" : "fuigo";
+    const pathDirectory = join(bundleDirectory, "user-path-bin");
+    const knownDirectory = join(homedir(), ".fuigo", "bin");
+    for (const directory of [pathDirectory, knownDirectory]) {
+      mkdirSync(directory, { recursive: true });
+      const binary = join(directory, executable);
+      writeFileSync(binary, "fixture engine\n");
+      chmodSync(binary, 0o755);
+    }
+    vi.stubEnv("PATH", pathDirectory);
+    resetPathCacheForTests();
+    expect(resolveFuigoCli()).toEqual({ command: join(pathDirectory, executable), source: "path" });
   });
 
   it("names the missing declaration rather than silently reporting no engine", () => {

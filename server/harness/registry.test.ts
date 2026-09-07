@@ -3,10 +3,26 @@
 // unavailable shadow, never crash the fleet. These tests pin that.
 import { describe, expect, it } from "vitest";
 
+import type { ModelCatalog } from "../contracts.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { ProviderRegistry } from "./registry.ts";
 
 describe("ProviderRegistry", () => {
+  it("disabled instances never reach driver configuration, creation or discovery", async () => {
+    const fake = makeFakeDriver();
+    let defaults = 0, decoded = 0, created = 0;
+    fake.driver.defaultConfig = () => { defaults++; return {}; };
+    fake.driver.decodeConfig = () => { decoded++; return {}; };
+    fake.driver.create = async () => { created++; throw new Error("disabled provider ran"); };
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ disabled: { driver: "fake", enabled: false, config: { cli: "/must-not-run" } } });
+    const [description] = await registry.describe();
+    expect({ defaults, decoded, created }).toEqual({ defaults: 0, decoded: 0, created: 0 });
+    expect(registry.get("disabled")).toBeNull();
+    expect(registry.instances()).toEqual([]);
+    expect(description.snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("disabled") });
+    expect(description.cliCandidates).toEqual([]);
+  });
   it("creates live instances for known drivers", async () => {
     const fake = makeFakeDriver();
     const registry = new ProviderRegistry([fake.driver]);
@@ -131,6 +147,38 @@ describe("ProviderRegistry", () => {
     expect((await registry.describe())[0].capabilities.approvalReview).toBe(false);
     Object.assign(registry.get("a")!, { reviewPermission: async () => "ok" });
     expect((await registry.describe())[0].capabilities.approvalReview).toBe(true);
+  });
+
+  // describe() is the one choke point every catalog crosses on its way to the
+  // picker, so the refresh has to happen HERE, per call and per instance --
+  // otherwise the picker's new refresh button re-renders the same stale list.
+  it("refreshes every live model catalog before returning each description", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ a: { driver: "fake" }, b: { driver: "fake" } });
+    const refreshes = { a: 0, b: 0 };
+    for (const instanceId of ["a", "b"] as const) {
+      const instance = registry.get(instanceId)!;
+      const models: ModelCatalog = { default: "", options: [] };
+      Object.assign(instance, {
+        models,
+        refreshModels: async () => {
+          refreshes[instanceId] += 1;
+          const id = `${instanceId}-${refreshes[instanceId]}`;
+          models.default = id;
+          models.options = [{ id, label: `Dynamic ${id}` }];
+        },
+      });
+    }
+
+    const first = Object.fromEntries((await registry.describe()).map((row) => [row.instanceId, row.models]));
+    expect(first.a.default).toBe("a-1");
+    expect(first.b.default).toBe("b-1");
+
+    const second = Object.fromEntries((await registry.describe()).map((row) => [row.instanceId, row.models]));
+    expect(second.a.default).toBe("a-2");
+    expect(second.b.default).toBe("b-2");
+    expect(refreshes).toEqual({ a: 2, b: 2 });
   });
 
   it("disposeAll disposes every live instance and empties the registry", async () => {

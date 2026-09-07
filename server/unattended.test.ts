@@ -17,25 +17,34 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { freePortBlock } from "./testing/ports.ts";
+import { openSse } from "./testing/sse.ts";
 
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const PORT = 18800 + Math.floor(Math.random() * 10_000);
-const BASE = `http://127.0.0.1:${PORT}`;
+let base: string;
+let desktopHeaders: Record<string, string>;
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
-  const res = await fetch(`${BASE}${path}`, {
+const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+  const res = await fetch(`${base}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
+};
+const api = (method: string, path: string, body?: unknown) => request(method, path, body);
+const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
+const makeBot = async (instanceId: string) => {
+  const created = await api("POST", "/api/bots", { modelSelection: { instanceId, model: "fake-model" } });
+  expect(created.status).toBe(201);
+  return created.body.bot;
 };
 
 /** Poll a THREAD for a live permission card. A webhook runs in its own
@@ -68,6 +77,8 @@ async function waitForRunThread(runId: string, ms = 20_000) {
 
 posixOnly("unattended turns keep asking", () => {
   beforeAll(async () => {
+    const port = await freePortBlock([0, 1]);
+    base = `http://127.0.0.1:${port}`;
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-unattended-"));
     mkdirSync(join(home, ".murage"), { recursive: true });
@@ -105,7 +116,9 @@ posixOnly("unattended turns keep asking", () => {
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,
         USERPROFILE: home,
-        MURAGE_PORT: String(PORT),
+        MURAGE_PORT: String(port),
+        MURAGE_WEBHOOK_PORT: String(port + 1),
+        MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -113,19 +126,68 @@ posixOnly("unattended turns keep asking", () => {
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
-        if ((await fetch(`${BASE}/api/health`)).ok) break;
+        if ((await fetch(`${base}/api/health`)).ok) break;
       } catch {
         /* not up yet */
       }
       if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
+    const proof = await api("GET", "/api/desktop-secret");
+    expect(proof.status).toBe(200);
+    expect(proof.body.secret).toMatch(/^[a-f0-9]{64}$/);
+    desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+    expect((await api("GET", "/api/config")).body.surface).toBe("remote");
   }, 40_000);
 
   afterAll(async () => {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
+
+  it("keeps approval cards while applying private or disabled attention notifications", async () => {
+    const events = await openSse(`${base}/api/events`);
+    const bots: string[] = [], hooks: string[] = [];
+    try {
+      expect((await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: false } })).status).toBe(200);
+      const first = await makeBot("grok"); bots.push(first.id);
+      await desktopApi("PATCH", `/api/bots/${first.id}`, { name: "Private identity canary", notifications: true, autoApprove: false });
+      const trigger = async (botId: string) => {
+        const hook = await desktopApi("POST", "/api/webhooks", { name: "Notification fixture", prompt: "Request permission", botId });
+        expect(hook.status).toBe(201); hooks.push(hook.body.webhook.id);
+        const delivered = await fetch(hook.body.credential.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "notification-check" }) });
+        expect(delivered.status).toBe(202);
+        const result = await delivered.json() as { runId: string };
+        const threadId = await waitForRunThread(result.runId);
+        expect(threadId).toBeTruthy();
+        const card = await waitForCard(threadId!);
+        expect(card?.card?.answered).toBeUndefined();
+        expect(card?.card?.requestId).toBeTruthy();
+        return threadId;
+      };
+      const firstThread = await trigger(first.id);
+      const notice = await events.until(frame => frame.kind === "notify" && frame.notification.botId === first.id);
+      expect(notice.notification).toMatchObject({ title: "Murage", botName: "", privatePreview: true, threadId: firstThread });
+      expect(JSON.stringify(notice.notification)).not.toContain("Private identity canary");
+      expect(notice.notification.avatarUrl).toBeUndefined();
+      expect((await desktopApi("PATCH", "/api/config", { notifications: { attention: false } })).status).toBe(200);
+      const second = await makeBot("grok"); bots.push(second.id);
+      await desktopApi("PATCH", `/api/bots/${second.id}`, { notifications: true, autoApprove: false });
+      await trigger(second.id);
+      // A later frame on the same ordered SSE stream is a deterministic barrier
+      // for any notification emitted while the permission card was produced.
+      await desktopApi("PATCH", "/api/config", { profile: { name: "notification-delivery-barrier" } });
+      await events.until(frame => frame.kind === "config" && frame.profile?.name === "notification-delivery-barrier");
+      expect(events.frames.filter(frame => frame.kind === "notify" && frame.notification.botId === second.id)).toEqual([]);
+      expect((await api("GET", "/api/config")).body.notifications).toMatchObject({ attention: false, previewContent: false });
+    } finally {
+      events.close();
+      for (const id of bots) await api("POST", `/api/bots/${id}/interrupt`);
+      for (const id of hooks) await desktopApi("DELETE", `/api/webhooks/${id}`);
+      for (const id of bots) await desktopApi("DELETE", `/api/bots/${id}`);
+      await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: true }, profile: { name: "" } });
+    }
+  }, 60_000);
 
   it(
     "still asks a human when a webhook starts the turn, even with auto mode on",
@@ -135,14 +197,14 @@ posixOnly("unattended turns keep asking", () => {
       // auto mode ON: an attended turn would sail straight through
       expect(
         (
-          await api("PATCH", `/api/bots/${bot.id}`, {
+          await desktopApi("PATCH", `/api/bots/${bot.id}`, {
             autoApprove: true,
             modelSelection: { instanceId: "grok", model: "fake-model" },
           })
         ).status,
       ).toBe(200);
 
-      const hook = await api("POST", "/api/webhooks", {
+      const hook = await desktopApi("POST", "/api/webhooks", {
         name: "Nightly build",
         prompt: "Handle the incoming build event",
         botId: bot.id,
@@ -177,18 +239,17 @@ posixOnly("unattended turns keep asking", () => {
       // A runs the webhook and delegates; B does the acting. Without the
       // mark crossing the hop, the gate protects the bot that READ the
       // payload and releases the bot that ACTS on it.
-      const created = await api("POST", "/api/bots");
-      const teammate = created.body.bot;
-      await api("PATCH", `/api/bots/${teammate.id}`, { name: "Teammate", autoApprove: true });
+      const teammate = await makeBot("grok");
+      expect((await desktopApi("PATCH", `/api/bots/${teammate.id}`, { name: "Teammate", autoApprove: true })).status).toBe(200);
 
-      const delegator = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${delegator.id}`, {
+      const delegator = await makeBot("delegator");
+      expect((await desktopApi("PATCH", `/api/bots/${delegator.id}`, {
         name: "Delegator",
         autoApprove: true,
         modelSelection: { instanceId: "delegator", model: "fake-model" },
-      });
+      })).status).toBe(200);
 
-      const hook = await api("POST", "/api/webhooks", {
+      const hook = await desktopApi("POST", "/api/webhooks", {
         name: "Handoff",
         prompt: "Ask the Teammate to handle this",
         botId: delegator.id,
@@ -229,24 +290,24 @@ posixOnly("unattended turns keep asking", () => {
       // mid-turn. The fake asks whichever peer list_bots returns first, so
       // everything else is hidden to make the target deterministic.
       const existing = await api("GET", "/api/bots");
-      for (const b of existing.body.bots) await api("PATCH", `/api/bots/${b.id}`, { hidden: true });
+      for (const b of existing.body.bots) expect((await desktopApi("PATCH", `/api/bots/${b.id}`, { hidden: true })).status).toBe(200);
 
-      const target = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${target.id}`, {
+      const target = await makeBot("grok");
+      expect((await desktopApi("PATCH", `/api/bots/${target.id}`, {
         name: "Answerer",
         autoApprove: true,
         modelSelection: { instanceId: "grok", model: "fake-model" },
-      });
+      })).status).toBe(200);
 
-      const asker = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${asker.id}`, {
+      const asker = await makeBot("asker");
+      expect((await desktopApi("PATCH", `/api/bots/${asker.id}`, {
         name: "Asker",
         autoApprove: true,
         hidden: true, // keep it out of its own peer list's way
         modelSelection: { instanceId: "asker", model: "fake-model" },
-      });
+      })).status).toBe(200);
 
-      const hook = await api("POST", "/api/webhooks", {
+      const hook = await desktopApi("POST", "/api/webhooks", {
         name: "Ask a teammate",
         prompt: "Ask the Answerer what to do about this",
         botId: asker.id,

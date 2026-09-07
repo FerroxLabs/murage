@@ -2,6 +2,7 @@
 // staged file per BUILD TARGET rather than per build host, and a staged file
 // name that cannot drift from the electron-builder `to:` basename.
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
@@ -27,33 +28,33 @@ import {
 const PINNED_ASSETS = {
   "darwin-arm64": {
     package: "@fuigo/darwin-arm64",
-    tarballSha256: "07702f9ec1319e16da5453be005180466b5eadb6dbe4946a2958491413d590d7",
-    binarySha256: "689127774818e541141863b3d770e4d8a31e953a944ae5a668b7597b4cf45753",
+    tarballSha256: "15a2b8f4cfae2cde5139edb9851a0fa0c2a0a2294efb6750ce2ba4d4d24f2645",
+    binarySha256: "41a8bd3697ea28624d7c94e784bdccae09ac7e5343d064b6accee5a2ad8bddb4",
   },
   "darwin-x64": {
     package: "@fuigo/darwin-x64",
-    tarballSha256: "65b4bab03b40b1044b0a6c441bd1546864db6b9bfd0378fc06b99dba477b5ab4",
-    binarySha256: "2b9caccf0d77b4026d02c1e61a71850b44f6849574a7ae3c7ece6ead27054c0a",
+    tarballSha256: "29d5e898c5b13e497bbda1e63a334d6c5e82cfc9b3c174a1b791e01dd2446788",
+    binarySha256: "cc8a49c34722b1ec976fe3fa226899bffd435559464a3e1eaf7177648791c895",
   },
   "linux-arm64": {
     package: "@fuigo/linux-arm64",
-    tarballSha256: "f48b0e173fdb0ac0f796ca114f4488e2d3a0674314b0ea9a802ff31a77de721f",
-    binarySha256: "edba09a1071277f5723d151e2d7683285fe8ab2fb0516c5ab1125808e9a064ba",
+    tarballSha256: "dd6c574a54257501ac7bee64e8da69efca69f719193d76443750b7a7afcfb2d7",
+    binarySha256: "77af3b40226ae50546191e677532e27078c9cd279922eed4e126425232baea00",
   },
   "linux-x64": {
     package: "@fuigo/linux-x64",
-    tarballSha256: "e243883e149f6bacbf689e92b2ec4c40630080412eb690d7609a9f3c81de72a1",
-    binarySha256: "686a35b59566ae5176083757a9dd962d954729be6c5f30adf862dc28e0fa60bb",
+    tarballSha256: "fb3cfcc3467bd5f7f5e0fdf5828bc0a2f3f16606e9e592c2153384cbf94f0341",
+    binarySha256: "ffc5d96357bbcab19dfc5025905c999dc6b7a9a1b815bc606dfe7325a6f64a7d",
   },
   "win32-arm64": {
     package: "@fuigo/win32-arm64",
-    tarballSha256: "034c5f4f527180fb55169bc261fff3e35d53c593c4c7e14a000800d549450248",
-    binarySha256: "22e03c0f3cfee84efd86488d18614cfddcddf039e69f6493ae50e41cc7698956",
+    tarballSha256: "4c9be39f227fd9ce7b71cc84492c61a775b40638a3012c9a43e7461df6da8a77",
+    binarySha256: "add0bdb737572e521ebd6d0e25f92ec0e64e723d94592e380d61cf8d4419cf6e",
   },
   "win32-x64": {
     package: "@fuigo/win32-x64",
-    tarballSha256: "8175bce5860ff200a52e6cd6fbf3e6a6333ab31ff85eaa152df0f4ec1c5c2b70",
-    binarySha256: "29a7a341175abbaf49bd903e08b5c49e733f34fc4c07e98b4810e74b9ecc4d8b",
+    tarballSha256: "32f2aab3dde7eb8ad69407e013031ef435bebaef187bf952a0f1295a7dd4a0f7",
+    binarySha256: "af26c191f89bb3c61785f8e927561f615ea2bda804187d25b3e2589dd985bdd3",
   },
 };
 
@@ -70,7 +71,7 @@ function executableFixture(target) {
     bytes.writeUInt32LE(target === "darwin-arm64" ? 0x0100000c : 0x01000007, 4);
   } else if (target === "linux-x64" || target === "linux-arm64") {
     // ELF64 little-endian; e_machine at offset 18 is 0x3e for x86-64 and 0xb7
-    // for aarch64 — the values read off the real published 1.0.4 engines.
+    // for aarch64 — the values read off the real published 1.0.7 engines.
     Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(bytes);
     bytes.writeUInt16LE(target === "linux-arm64" ? 0xb7 : 0x3e, 18);
   } else if (target === "win32-x64" || target === "win32-arm64") {
@@ -88,23 +89,23 @@ function executableFixture(target) {
 
 describe("pinned fuigo packaging", () => {
   it("pins the exact shipped version and a complete digest pair per target", () => {
-    expect(FUIGO_VERSION).toBe("1.0.4");
+    expect(FUIGO_VERSION).toBe("1.0.7");
     expect(FUIGO_ASSETS).toEqual(PINNED_ASSETS);
     for (const target of Object.keys(PINNED_ASSETS)) {
       // npm names a scoped package's tarball after the UNSCOPED half, so the
-      // basename is `<target>-1.0.4.tgz`, never `@fuigo/<target>-1.0.4.tgz`.
-      expect(tarballName(target)).toBe(`${target}-1.0.4.tgz`);
+      // basename is `<target>-1.0.7.tgz`, never `@fuigo/<target>-1.0.7.tgz`.
+      expect(tarballName(target)).toBe(`${target}-1.0.7.tgz`);
       expect(tarballName(target)).not.toContain("/");
       expect(tarballUrl(target)).toBe(
-        `https://registry.npmjs.org/@fuigo/${target}/-/${target}-1.0.4.tgz`,
+        `https://registry.npmjs.org/@fuigo/${target}/-/${target}-1.0.7.tgz`,
       );
       // The URL carries the pin, so a staged binary can never come from
       // whatever `latest` happens to be on the registry that day.
-      expect(tarballUrl(target)).toContain("-1.0.4.tgz");
+      expect(tarballUrl(target)).toContain("-1.0.7.tgz");
     }
   });
 
-  it("pins every target fuigo@1.0.4 publishes, including ones it does not stage", () => {
+  it("pins every target fuigo@1.0.7 publishes, including ones it does not stage", () => {
     // The pin list is the reviewed-digest list; targetsForHost is the
     // packaged-target list. They are allowed to differ, and do.
     expect(Object.keys(FUIGO_ASSETS).sort()).toEqual([
@@ -196,16 +197,16 @@ describe("pinned fuigo packaging", () => {
 
   it("stages each target where electron-builder's per-platform `from:` looks", () => {
     for (const target of Object.keys(PINNED_ASSETS)) {
-      expect(stagedDirectory("/repo", target)).toBe(`/repo/dist-native/fuigo/${target}`);
+      expect(stagedDirectory("/repo", target)).toBe(join("/repo", "dist-native", "fuigo", target));
     }
   });
 
   it("records the pin in the staged manifest so a stale tree is restaged", () => {
     expect(expectedManifest("darwin-arm64")).toEqual({
-      version: "1.0.4",
+      version: "1.0.7",
       target: "darwin-arm64",
-      registryPackage: "@fuigo/darwin-arm64@1.0.4",
-      tarball: "darwin-arm64-1.0.4.tgz",
+      registryPackage: "@fuigo/darwin-arm64@1.0.7",
+      tarball: "darwin-arm64-1.0.7.tgz",
       tarballSha256: PINNED_ASSETS["darwin-arm64"].tarballSha256,
       binarySha256: PINNED_ASSETS["darwin-arm64"].binarySha256,
     });

@@ -17,6 +17,7 @@ import {
 import { botRole } from "@/lib/bot-role";
 import { RoleIcon } from "./RoleBadge";
 import { cn } from "@/lib/cn";
+import { MemorySettings } from "./MemorySettings";
 
 const statusTone = {
   success: "bg-success",
@@ -349,6 +350,7 @@ export function TeamMapPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contextEditor, setContextEditor] = useState<{ section: string; label: string } | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const bots = useMemo(() => state.bots.filter((bot) => !bot.hidden), [state.bots]);
   const org = useMemo(() => buildTeamMapOrg(bots), [bots]);
   const edges = useMemo(() => buildTeamMapEdges(bots, snapshot), [bots, snapshot]);
@@ -392,7 +394,7 @@ export function TeamMapPage() {
               <span className="text-[11px] tabular-nums text-ink-secondary">{org.individuals.length}</span>
             </div>
             <p className="mb-3 text-[11.5px] leading-relaxed text-ink-secondary">
-              No team leader — each one reports to the Chief of Staff directly.
+              No team leader; each one reports to the Chief of Staff directly.
             </p>
             <div className="space-y-2">
               {org.individuals.map((bot) => (
@@ -406,7 +408,7 @@ export function TeamMapPage() {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline/40 px-4 py-5 sm:px-7 max-md:pl-12">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-hairline/40 px-4 py-5 sm:px-7 max-md:pl-12">
         <div>
           <div className="flex items-center gap-2.5">
             <Network size={20} className="text-accent" />
@@ -416,10 +418,10 @@ export function TeamMapPage() {
             </span>
           </div>
           <p className="mt-1 text-[12.5px] text-ink-secondary">
-            The whole org chart — who leads what, who is working, and where tasks are moving.
+            The whole org chart: who leads what, who is working, and where tasks are moving.
           </p>
         </div>
-        <button
+        <div className="flex shrink-0 items-center gap-2"><button type="button" aria-expanded={memoryOpen} onClick={() => setMemoryOpen(open => !open)} className="min-h-10 rounded-lg border border-hairline/50 bg-card px-3 py-2 text-[12px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">{memoryOpen ? "Close memory" : "Manage memory"}</button><button
           onClick={() => void refresh(true)}
           disabled={refreshing}
           className="rounded-lg border border-hairline/50 bg-card p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
@@ -427,10 +429,11 @@ export function TeamMapPage() {
           title="Refresh"
         >
           <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />
-        </button>
+        </button></div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7 sm:py-6">
+        {memoryOpen && <div className="mb-5 max-w-3xl"><MemorySettings /></div>}
         <div className="mb-5 grid max-w-[620px] grid-cols-3 gap-2">
           {[
             [bots.length, "Bots"],
@@ -468,7 +471,7 @@ export function TeamMapPage() {
             <div className="mt-2.5 space-y-3">
               <div className="rounded-xl border border-dashed border-hairline bg-panel px-4 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
                 No Chief of Staff yet. Open an agent's profile, set its Role to Chief of Staff, and it takes the
-                top of this chart — team leaders and individual assistants report to it.
+                top of this chart; team leaders and individual assistants report to it.
               </div>
               <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] items-start gap-4">{branches}</div>
             </div>

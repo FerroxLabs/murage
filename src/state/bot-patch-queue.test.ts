@@ -43,7 +43,7 @@ describe("bot patch queue", () => {
     const queue = createBotPatchQueue({
       send: async (_botId, patch) => {
         sent.push(patch);
-        return bot({ ...patch });
+        return bot({ ...patch, computer: patch.computer ?? undefined });
       },
       reconcile: async () => bot(),
       onAuthoritative: authoritative,
@@ -220,6 +220,19 @@ describe("bot patch queue", () => {
 
     expect(sent).toEqual([{ computer: "local", acknowledgeLocalAuto: true, title: "Ops" }]);
     for (const overlay of overlays) expect(overlay).not.toHaveProperty("acknowledgeLocalAuto");
+  });
+
+  it("sends Auto as null but clears the persisted destination in optimistic state", async () => {
+    const sent: BotUpdatePatch[] = [];
+    const queue = createBotPatchQueue({
+      send: async (_id, patch) => { sent.push(patch); return bot(); },
+      reconcile: async () => bot(), onAuthoritative: vi.fn(), onError: vi.fn(),
+    });
+    queue.enqueue("bot-1", { computer: null, acknowledgeLocalAuto: true }, bot({ computer: "browser" }));
+    expect(queue.overlayFor("bot-1")).toEqual({ computer: undefined });
+    await vi.advanceTimersByTimeAsync(400);
+    await queue.flush("bot-1");
+    expect(sent).toEqual([{ computer: null, acknowledgeLocalAuto: true }]);
   });
 
   it("carries the Chief's tier to the wire but never into a state overlay", async () => {

@@ -106,8 +106,9 @@ describe("there is exactly one key field in the app", () => {
 
   it("is reachable by searching Settings for flux", () => {
     const settings = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.meta.url)), "utf8");
-    const connections = settings.match(/\{ id: "connections",[^\n]*\}/)?.[0] ?? "";
-    expect(connections).toContain('"flux"');
+    const engines = settings.match(/\{ id: "engines",[^\n]*\}/)?.[0] ?? "";
+    expect(engines).toContain('"Models & Engines"');
+    expect(engines).toContain('"flux"');
   });
 
   it("does not grow a second one inside the invitation", () => {
