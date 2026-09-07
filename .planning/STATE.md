@@ -1,5 +1,18 @@
 # Murage takeover state
 
+Frozencombinedsource e9320c2b locallycommitted. FullVitest99684 STILLRUNNING,
+do notrestart; outputquiet expected. Frontend68029/server81838 PASS;
+electron4284 190PASS1platformskip; contrast37pairsperthemePASS; docs4430 PASS
+withprivateGitHubreleasefeed404warning (expectedprivateaccess, notpublicsiteproof).
+SignedMacprivate.6 packaging18850 STILLRUNNING; firstcommand25066 rejectedcert
+prefix, correctedname and actualDeveloperIDselected. Livecodesignchild observed,
+do notrestartquietjob. Appoutput release-private-e9320c2b/mac-arm64/Murage.app.
+Linuxownedcheckout /var/tmp/murage-private-20260907-muiMMr exactsourceoverlay
+e9320c2b; workerpipeline36900 EXIT0 AppImage+DEB private.6, metadata/nativechecks
+inprogress (workeractualhandles). No sharedhost dpkg/optwrites, no publicfeedtest.
+Native harness script only expanded guard to allow release-private- artifactpath;
+not packagedappsourcechange. UserAGENTS/.ijfw edits remainuncommitteduntouched.
+
 Combinedprivatebuild sourcefreeze now: Fuigo1.0.6 pins/stage11PASS; sidebar53unit
 andfocuseddesktop/phoneinteractionPASS; library26unit+2browserPASS; Settings
 authorized90s continuation17222 PASS37s (copy/expiry/renew/paired/pollstop/revoke/

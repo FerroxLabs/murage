@@ -33,4 +33,31 @@ The CI workflow's `smoke-deb-upgrade.mjs`, install-command proof, `/opt` permiss
 
 ## Current disposition
 
-Dependencies ready. Await final source overlay/SHA and parent's frozen package check set before building. No live job remains from preparation. No source edits or external resources were created by this worker beyond dependency contents in the already owned checkout. Parent retains cleanup ownership of that checkout and evidence.
+Dependencies ready. Parent supplied final source `e9320c2b` via completed overlay session 38700, exit 0, and authorized Linux packaging plus uninstalled package lifecycle and isolated candidate-feed checks. Build session `36900` runs `corepack pnpm package:prepare`, `corepack pnpm build:cua:linux`, then `corepack pnpm exec electron-builder --linux --x64 --publish never -c.extraMetadata.version=0.1.47-private.6` using the exact Node24 runtime PATH above. Generated output stays in the task checkout. Parent retains cleanup ownership; export evidence/artifacts before any cleanup.
+
+## Candidate results
+
+| Work item | Status | Progress / pending work |
+|---|---|---|
+| Linux private artifacts | ✅ Done | Build session 36900 exit 0. Produced private.6 x64 AppImage and amd64 DEB. Frontend/types/server/companion/updater and Android/cloudflared/Fuigo/CUA helper staging completed. Existing generated-CSS/chunk warnings remain. |
+| Package contents and metadata | ✅ Done | Session 22444 exit 0; existing verify-linux-package script accepted both artifacts. |
+| Actual packaged server | ✅ Done | Session 42588 exit 0; actual linux-unpacked resources copied into isolated fixture, health plus all 11 spawned proxy paths and MCP final-frame drain passed without node_modules in reach. |
+| Uninstalled native lifecycle | ✅ Done | Confirmation session 26434 exit 0 as existing user sean, unchanged run-linux-package-smoke script, private mount namespace. Five existing lanes passed: unpacked bundled CUA, AppImage bundled CUA, AppImage SIGTERM cleanup, X11 crash/retry, Wayland fail-closed/first paint. This is headless native Linux evidence, not installed-DEB or interactive customer desktop proof. |
+| Candidate-feed update | ⬜ Pending | Session 21777 exit 1 before updater script execution: development Electron lazy installation could not create its dist directory under root-owned node_modules as sean. No update behavior verified; no extra correction after confirmation. |
+| Installed DEB upgrade | ⬜ Pending | Excluded on shared host under the frozen contract. Need authorized disposable system if required for release. |
+| Overall execution goal | ⬜ Pending | Artifacts and native lifecycle passed; candidate-feed gate blocked on development runtime prerequisite. Parent must decide disposition before additional correction. |
+
+The first native attempt failed before launch because the host `/tmp` is root:root 0700 and the session bus hardcodes `/tmp` despite TMPDIR. Parent authorized one targeted confirmation using `unshare --mount --propagation private`, binding only the task's `private-tmp` directory over `/tmp` inside that namespace, then launching as sean. The host `/tmp` was rechecked afterward and remains root:root 0700. No host mount or shared permission changed. Only the task checkout root and its private-tmp changed ownership to sean; dependency files were not recursively chowned. The task unpacked chrome-sandbox was configured root:root 4755 for the existing native check.
+
+The candidate-feed command used the same private namespace and `xvfb-run -a node_modules/.bin/electron --no-sandbox scripts/smoke-linux-update.mjs --candidate-feed`. Electron itself was missing its downloaded development runtime and exited before any updater assertion. Do not call this an update regression or a passed update test.
+
+Local export destination: `.planning/linux-private-e9320c2b/`. Export session `44640` finished exit 0, retaining the two artifacts and `private-evidence/` logs/checksums. Local `shasum -a 256` finished exit 0 and matches both remote hashes below exactly.
+
+Parent confirmed accepted export and authorized removal. Read-only process checks found no command line, process working directory, or mount namespace referencing the task checkout/private-tmp. Cleanup session `37631` exited 0: removed only `/var/tmp/murage-private-20260907-muiMMr` and verified its absence. The shared `/var/tmp/murage-build-20260905-9OpA4Y/runtime/node-v24.20.0-linux-x64/bin/node` remains executable; host `/tmp` remains root:root 0700. Local artifacts, checksums and logs above are preserved. Generated remote checkout/dependency files can be recreated from source; the kept local artifacts preserve the built bytes. No updater retry was performed.
+
+SHA256 from remote artifacts:
+
+```text
+71438198a8df40eb0efbaf329db4f3b89c260570be54607c3e0a517bc4d01544  Murage-0.1.47-private.6-x86_64.AppImage
+8d06812a59f7f414c72295524c6592ebf49c7b4bc4a1d62c732e16f76bcc4380  Murage-0.1.47-private.6-amd64.deb
+```
