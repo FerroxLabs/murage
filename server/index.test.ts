@@ -1366,6 +1366,35 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("refuses leadership on an incapable engine without persisting other changes", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Capability fixture", modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    try {
+      for (const scope of ["section", "workspace"]) {
+        const denied = await desktopApi("PATCH", `/api/bots/${bot.id}`, { name: "Must not save", chiefOfStaff: true, chiefScope: scope, individual: false });
+        expect(denied.status).toBe(409);
+        expect(denied.body.error).toMatch(/coordinate bots|already Chief/);
+        const current = (await api("GET", "/api/bots")).body.bots.find((row: any) => row.id === bot.id);
+        expect(current.name).toBe("Capability fixture"); expect(current.chiefOfStaff).toBe(bot.chiefOfStaff);
+        expect(current.modelSelection).toEqual(STATE_ONLY_SELECTION);
+      }
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
+  it("permits capable leadership and explicit demotion but blocks an incapable engine switch", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Capable leader fixture" })).body.bot;
+    try {
+      const promoted = await desktopApi("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: true, chiefScope: "section", individual: false, section: "Capability fixture team" });
+      expect(promoted.status).toBe(200);
+      expect(promoted.body.bot.chiefOfStaff).toBe(true);
+      const denied = await desktopApi("PATCH", `/api/bots/${bot.id}`, { name: "Must not switch", modelSelection: STATE_ONLY_SELECTION });
+      expect(denied.status).toBe(409); expect(denied.body.error).toContain("coordinate bots");
+      const current = (await api("GET", "/api/bots")).body.bots.find((row: any) => row.id === bot.id);
+      expect(current.name).toBe("Capable leader fixture"); expect(current.modelSelection).toEqual(bot.modelSelection);
+      const demoted = await desktopApi("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: false, chiefScope: null, individual: false, modelSelection: STATE_ONLY_SELECTION });
+      expect(demoted.status).toBe(200); expect(demoted.body.bot.chiefOfStaff).toBe(false);
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
   it("routes scoped native search without exposing credentials or allowing retired turns", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const requestFile = join(home, "search-fixture-calls.json");
@@ -1739,11 +1768,11 @@ describe("harness HTTP API", () => {
   });
 
   it("files a sidebar section atomically, trims and dedupes, and preserves its Chief", async () => {
-    const incumbent = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
+    const incumbent = (await api("POST", "/api/bots")).body.bot;
     const incoming = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
     const teammate = (await api("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
     try {
-      await desktopApi("PATCH", `/api/bots/${incumbent.id}`, { section: "Launch", chiefOfStaff: true });
+      expect((await desktopApi("PATCH", `/api/bots/${incumbent.id}`, { section: "Launch", chiefOfStaff: true })).status).toBe(200);
       await desktopApi("PATCH", `/api/bots/${incoming.id}`, { section: "Research" });
       await desktopApi("PATCH", `/api/bots/${teammate.id}`, { section: "Personal" });
 

@@ -774,6 +774,10 @@ function SectionPicker({
   );
 }
 
+export function leadershipPromotionBlocked(role: ReturnType<typeof botRole>, canCoordinate: boolean): boolean {
+  return role !== "chief" && role !== "leader" && !canCoordinate;
+}
+
 export function sidebarBotVisible(bot: Pick<Bot, "hidden" | "sidebarHidden">, showHidden: boolean): boolean {
   return !bot.hidden && (showHidden || !bot.sidebarHidden);
 }
@@ -901,8 +905,8 @@ export function BotContextMenu({
                   : botRolePatch("leader"),
             }),
           {
-            disabled: role === "member" && !canCoordinate,
-            hint: role === "member" && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
+            disabled: leadershipPromotionBlocked(role, canCoordinate),
+            hint: leadershipPromotionBlocked(role, canCoordinate) ? "Choose an engine with Murage delegation support first" : undefined,
           },
         ),
         item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to section", () => {
