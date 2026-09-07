@@ -147,16 +147,34 @@ describe("CodexDriver turns (fake app-server)", () => {
       .toEqual(["done from fake codex"]);
   });
 
-  it("reports shutdown timeout without releasing the live process or listeners", async () => {
+  it(process.platform === "win32"
+    ? "confirms native Windows termination despite the fixture's POSIX shutdown delay"
+    : "reports shutdown timeout without releasing the live process or listeners", async () => {
+    const dump = join(scratch, "shutdown-timeout.json");
+    process.env.FAKE_CODEX_DUMP = dump;
     await create({ mode: "late-output", environment: { FAKE_CODEX_SHUTDOWN_DELAY_MS: "5500" } });
     await instance.adapter.sendTurn({ threadId: "t-timeout", text: "go" });
     await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
-    await expect(instance.adapter.interruptTurn("t-timeout")).rejects.toThrow("shutdown is still pending");
-    expect(instance.adapter.hasSession?.("t-timeout")).toBe(true);
-    await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
-    await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+    const { pid } = JSON.parse(readFileSync(dump, "utf8"));
+    if (process.platform === "win32") {
+      // killCliTree uses taskkill /F on Windows, and its libuv SIGTERM
+      // fallback also forces termination. Neither runs the POSIX delay handler.
+      await expect(instance.adapter.interruptTurn("t-timeout")).resolves.toBeUndefined();
+      await recorder.until(event => event.type === "turn.completed");
+      await expect(instance.adapter.stopAll()).resolves.toBeUndefined();
+      await expect(instance.dispose()).resolves.toBeUndefined();
+    } else {
+      await expect(instance.adapter.interruptTurn("t-timeout")).rejects.toThrow("shutdown is still pending");
+      expect(instance.adapter.hasSession?.("t-timeout")).toBe(true);
+      await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
+      await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+    }
     await recorder.until(event => event.type === "turn.completed");
+    expect(() => process.kill(pid, 0)).toThrow();
     expect(instance.adapter.hasSession?.("t-timeout")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.filter(event => event.type === "content.delta").map(event => event.delta))
+      .toEqual(["done from fake codex"]);
   }, 10000);
 
   it("strips ambient routing switches from the codex child env", async () => {

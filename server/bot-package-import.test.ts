@@ -113,7 +113,7 @@ it("stages fresh inert identities, disabled skills and paused routines for the r
     expect(skillState.research.enabled).toBe(false);
     expect(readFileSync(join(stagingDirectory, "workspaces", bot.id, "SOUL.md"), "utf8")).toBe(bot.description);
     expect(readFileSync(join(stagingDirectory, "workspaces", bot.id, "skills", "research", "SKILL.md"), "utf8")).toBe(f.payloads.get("skills/research/SKILL.md"));
-    expect(readdirSync(join(stagingDirectory, "workspaces", bot.id))).toEqual(["SOUL.md", "skills"]);
+    expect(readdirSync(join(stagingDirectory, "workspaces", bot.id)).sort()).toEqual(["SOUL.md", "skills"]);
   });
   const imported = await importBotPackageArchive({ ...f.options, atomicCommit });
   expect(atomicCommit).toHaveBeenCalledTimes(1);

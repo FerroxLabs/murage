@@ -208,10 +208,10 @@ describe("published Linux artifact verification", () => {
   });
 });
 
-describe("scoped Windows CI confirmation", () => {
+describe("scoped CI confirmation", () => {
   const workflow = load("ci.yml");
   const steps = workflow.jobs.test.steps;
-  const guard = steps.find(step => step.name === "Validate scoped Windows confirmation input");
+  const guard = steps.find(step => step.name === "Validate scoped CI confirmation input");
   const javascript = guard.run.split("<<'EOF'\n")[1].split("\nEOF")[0];
   const validate = (env) => spawnSync(process.execPath, ["--input-type=module", "-"], {
     input: javascript, encoding: "utf8", cwd: join(workflows, "../.."),
@@ -219,16 +219,16 @@ describe("scoped Windows CI confirmation", () => {
       VITEST_FILE: "scripts/release-workflows.test.mjs", ...env },
   });
 
-  it("accepts one real file only for an explicit Windows dispatch", () => {
+  it("accepts real files for explicit all-platform or Windows-only dispatches", () => {
     const valid = validate({});
     expect(valid.status).toBe(0);
+    expect(validate({ WINDOWS_ONLY: "false" }).status).toBe(0);
     expect(valid.stdout).toContain("unaffected Vitest results are reused, not rerun");
     expect(validate({ VITEST_FILE: "server/drivers/acp\nscripts/release-workflows.test.mjs" }).status).toBe(0);
     expect(validate({ VITEST_FILE: "", WINDOWS_ONLY: "false", GITHUB_EVENT_NAME: "push" }).status).toBe(0);
   });
 
   it.each([
-    [{ WINDOWS_ONLY: "false" }, "windows_only=true"],
     [{ GITHUB_EVENT_NAME: "pull_request" }, "manual dispatch"],
     [{ VITEST_FILE: "server/../index.test.ts" }, "repository-relative test file"],
     [{ VITEST_FILE: "server/*.test.ts" }, "repository-relative test file"],
@@ -250,11 +250,12 @@ describe("scoped Windows CI confirmation", () => {
     const scoped = steps.find(step => step.name === "Scoped Vitest confirmation and required downstream suites");
     expect(scoped.if).toBe("inputs.vitest_file != ''");
     expect(scoped.env.VITEST_FILE).toBe("${{ inputs.vitest_file }}");
+    expect(scoped.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
     expect(scoped.run.trim().split("\n").slice(1)).toEqual([
-      'mapfile -t test_paths <<< "$VITEST_FILE"', "pnpm check:contrast", 'pnpm exec vitest run "${test_paths[@]}"', "pnpm broker:test",
+      'test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"', "pnpm check:contrast", 'pnpm exec vitest run "${test_paths[@]}"', "pnpm broker:test",
       "pnpm test:electron", "pnpm test:packaged-server",
     ]);
-    expect(workflow.jobs.test.name).toContain("Scoped Windows confirmation");
+    expect(workflow.jobs.test.name).toContain("Scoped CI confirmation");
     expect(steps.some(step => step.run === "pnpm typecheck")).toBe(true);
     expect(steps.some(step => step.run === "pnpm check:electron")).toBe(true);
   });

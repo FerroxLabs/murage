@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { closeHeadlessAuthority, createHeadlessAuthorityReader, createHeadlessBrowserProxy, startHeadlessEngine } from "./headless-browser-proxy.ts";
 
@@ -98,17 +100,41 @@ describe("headless authority transport", () => {
 describe("real isolated engine subprocess", () => {
   it("uses exact environment, joins fragmented frames and confirms child close", async () => {
     const script = `let buf='';process.stdin.on('data',c=>{buf+=c;let n;while((n=buf.indexOf('\\n'))>=0){let m=JSON.parse(buf.slice(0,n));buf=buf.slice(n+1);let s=JSON.stringify({id:m.id,result:{session:process.env.AGENT_BROWSER_SESSION,keys:Object.keys(process.env).sort()}});process.stdout.write(s.slice(0,8));process.stdout.write(s.slice(8)+'\\n');}});`;
-    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: { AGENT_BROWSER_SESSION: "isolated-fixture" } });
+    const forbiddenParent = {
+      AGENT_BROWSER_CDP: "http://parent-browser.invalid",
+      AGENT_BROWSER_PROFILE: "parent-private-profile",
+      MURAGE_CONTROL_TOKEN: "parent-private-token",
+      HEADLESS_PARENT_ONLY: "must-not-be-inherited",
+    };
+    const saved = Object.fromEntries(Object.keys(forbiddenParent).map(key => [key, process.env[key]]));
+    Object.assign(process.env, forbiddenParent);
     try {
-      const result = await client.request("tools/list") as { session: string; keys: string[] };
-      expect(result.session).toBe("isolated-fixture");
-      // macOS adds this locale variable inside the runtime even when spawn
-      // receives an exact env. It is not a leaked parent browser setting.
-      expect(result.keys.filter((key) => process.platform !== "darwin" || key !== "__CF_USER_TEXT_ENCODING")).toEqual(["AGENT_BROWSER_SESSION"]);
-      expect(result.keys).not.toContain("AGENT_BROWSER_CDP");
-      expect(result.keys).not.toContain("AGENT_BROWSER_PROFILE");
-      expect(result.keys).not.toContain("MURAGE_CONTROL_TOKEN");
-    } finally { await client.close(); }
-    await expect(client.request("tools/list")).rejects.toThrow(/refused/u);
+      // libuv supplies these required Windows variables even for env:{}:
+      // https://github.com/libuv/libuv/blob/v1.51.0/src/win/process.c#L47-L59
+      // An independent empty-env child establishes the exact subset added by
+      // THIS runtime. Unknown variables are still rejected, never filtered away.
+      const runtimeKeys = new Set(process.platform === "win32"
+        ? ["HOMEDRIVE", "HOMEPATH", "LOGONSERVER", "PATH", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "USERDOMAIN", "USERNAME", "USERPROFILE", "WINDIR"]
+        : process.platform === "darwin" ? ["__CF_USER_TEXT_ENCODING"] : []);
+      const { stdout } = await promisify(execFile)(process.execPath, ["-e", "process.stdout.write(JSON.stringify({keys:Object.keys(process.env).sort(),uv:process.versions.uv}))"], {
+        env: {}, windowsHide: true, encoding: "utf8", timeout: 5000,
+      });
+      const control = JSON.parse(stdout) as { keys: string[]; uv: string };
+      expect(control.uv).toBe(process.versions.uv);
+      expect(control.keys.filter(key => !runtimeKeys.has(key))).toEqual([]);
+      const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: { AGENT_BROWSER_SESSION: "isolated-fixture" } });
+      try {
+        const result = await client.request("tools/list") as { session: string; keys: string[] };
+        expect(result.session).toBe("isolated-fixture");
+        expect(result.keys).toEqual([...control.keys, "AGENT_BROWSER_SESSION"].sort());
+        for (const key of Object.keys(forbiddenParent)) expect(result.keys).not.toContain(key);
+      } finally { await client.close(); }
+      await expect(client.request("tools/list")).rejects.toThrow(/refused/u);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });

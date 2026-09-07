@@ -257,6 +257,16 @@ async function run() {
     }
     process.stdout.write("rich-nested-name-source-redacted\n");
 
+    // The following actions exercise native compositor dispatch. A hidden
+    // owner can accept CDP clicks while never presenting the wheel target on
+    // macOS. Match the visible production surface without taking user focus.
+    if (process.platform === "darwin") {
+      const ownerShown = waitForLifecycleEvent(owner, "show", "compositor owner BrowserWindow");
+      owner.showInactive();
+      await ownerShown;
+      if (!owner.isVisible()) throw new Error("native compositor fixture owner is not visible");
+    }
+
     const actionHtml = `<!doctype html><html><head><style>
       html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
       #scroller { width: 100vw; height: 100vh; overflow: auto; }
@@ -286,6 +296,22 @@ async function run() {
     // failed silently before page coordinates were converted for the current
     // presentation scale.
     await waitForFixedViewport(browserView, "compact action");
+    if (process.platform === "darwin") {
+      const compositorReady = await browserView.webContents.executeJavaScript(`new Promise(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const scroller = document.getElementById("scroller");
+          resolve({
+            visibility: document.visibilityState,
+            scrollablePixels: scroller.scrollHeight - scroller.clientHeight,
+            centerTargetsScroller: scroller.contains(document.elementFromPoint(innerWidth / 2, innerHeight / 2)),
+          });
+        }));
+      })`);
+      if (compositorReady.visibility !== "visible" || compositorReady.scrollablePixels < 600 || !compositorReady.centerTargetsScroller) {
+        throw new Error(`native compositor fixture is not ready: ${JSON.stringify(compositorReady)}`);
+      }
+      process.stdout.write("native-compositor-ready\n");
+    }
     await manager.click("fixture-bot", reviewedRef, { profile: "" });
     let actionEvents = await browserView.webContents.executeJavaScript(`window.actionEvents`);
     if (JSON.stringify(actionEvents) !== JSON.stringify([{ type: "click", detail: 1, x: 130, y: 70 }])) {
