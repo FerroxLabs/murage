@@ -4,8 +4,9 @@
 // chat app must not run dpkg itself. Everything before the install is shared.
 // It receives the staged paths and resolves with an optional state patch
 // describing what is left to do, which the card renders.
-export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null } = {}) {
+export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null } = {}) {
   let checkOperation = null;
+  let retryAction = "check";
   // Set from downloadUpdate's resolution: the paths electron-updater staged.
   // Only the hand-off needs them; quitAndInstall reads its own copy.
   let downloadedFiles = null;
@@ -17,6 +18,11 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   const routedErrors = new WeakSet();
 
   const routeError = (manual, error) => {
+    const message = installOperation?.prepared
+      ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${String(error?.message ?? error)}`
+      : String(error?.message ?? error);
+    if (installOperation) retryAction = "install";
+    else if (downloadOperation) retryAction = "download";
     actionOwnsState = manual;
     if (error instanceof Error) routedErrors.add(error);
     if (downloadOperation) downloadOperation.failed = true;
@@ -30,7 +36,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       setState({ status: "idle" });
       return;
     }
-    setState({ status: "error", message: String(error?.message ?? error) });
+    setState({ status: "error", message });
   };
 
   function handleRejectedOperation(manual, error) {
@@ -69,9 +75,11 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     const manual = Boolean(installOperation || downloadOperation || checkOperation?.manual);
     routeError(manual, error);
   });
-  updater.on("download-progress", (progress) =>
-    setState({ status: "downloading", percent: Math.round(progress?.percent ?? 0) }),
-  );
+  updater.on("download-progress", (progress) => {
+    if (!downloadOperation || downloadOperation.failed || installOperation) return;
+    const percent = Number(progress?.percent);
+    if (Number.isFinite(percent)) setState({ status: "downloading", percent: Math.min(100, Math.max(0, Math.round(percent))) });
+  });
   updater.on("update-downloaded", (info) => {
     // On macOS electron-updater emits this before Squirrel.Mac has finished
     // staging the ZIP. Keep the UI in downloading until both the transfer
@@ -80,12 +88,13 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       downloadOperation.downloadedInfo = info;
       return;
     }
-    actionOwnsState = true;
-    setState({ status: "downloaded", version: info?.version });
+    // An event arriving after a failed/cancelled operation cannot restore
+    // a ready state without its matching validated download result.
   });
 
   function check(manual = false) {
     if (installOperation || (!manual && actionOwnsState)) return Promise.resolve();
+    if (manual) retryAction = "check";
     if (checkOperation) {
       // A manual caller upgrades the shared operation; a timer never downgrades it.
       if (manual) checkOperation.manual = true;
@@ -112,6 +121,8 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   function download() {
+    if (installOperation) return Promise.resolve();
+    retryAction = "download";
     if (checkOperation) checkOperation.supersededByDownload = true;
     if (downloadOperation) return downloadOperation.promise;
 
@@ -180,7 +191,14 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   function install() {
-    if (installOperation) return;
+    if (installOperation) return installOperation.promise;
+    if (downloadOperation) return downloadOperation.promise;
+    retryAction = "install";
+    if (!downloadedFiles?.length) {
+      retryAction = "download";
+      routeError(true, new Error("Download the update before installing it."));
+      return;
+    }
     actionOwnsState = true;
     if (handOffInstall) {
       handOff();
@@ -189,22 +207,25 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     const operation = { failed: false, timer: null };
     installOperation = operation;
     setState({ status: "installing" });
-    try {
-      updater.quitAndInstall(true, true);
-    } catch (error) {
-      routeError(true, error);
-      return;
+    const launch = () => {
+      if (installOperation !== operation || operation.failed) return;
+      operation.prepared = Boolean(beforeInstall);
+      try { updater.quitAndInstall(true, true); }
+      catch (error) { routeError(true, error); return; }
+      // Start this bound only after readiness and owned shutdown have completed.
+      if (installOperation === operation) {
+        operation.timer = setTimeout(() => {
+          if (installOperation !== operation) return;
+          routeError(true, new Error("The update could not be installed. Try restarting the update again."));
+        }, 2 * 60 * 1000);
+        operation.timer.unref?.();
+      }
+    };
+    if (beforeInstall) {
+      operation.promise = Promise.resolve().then(beforeInstall).then(launch).catch((error) => routeError(true, error));
+      return operation.promise;
     }
-    // quitAndInstall is void. If neither a quit nor an updater error arrives,
-    // recover the UI instead of spinning for the lifetime of the process.
-    if (installOperation === operation) {
-      operation.timer = setTimeout(() => {
-        if (installOperation !== operation) return;
-        installOperation = null;
-        setState({ status: "error", message: "The update could not be staged. Quit the app and try again." });
-      }, 2 * 60 * 1000);
-      operation.timer.unref?.();
-    }
+    launch();
   }
 
   // The platform owns the install from here: a terminal opens with the
@@ -227,5 +248,6 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       });
   }
 
-  return { check, download, install };
+  const retry = () => retryAction === "download" ? download() : retryAction === "install" ? install() : check(true);
+  return { check, download, install, retry };
 }

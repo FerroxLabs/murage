@@ -159,26 +159,28 @@ test("downloaded waits for native staging to finish before becoming actionable",
   assert.deepEqual(getState(), { status: "downloaded", version: "2.0.0" });
 });
 
-test("an asynchronous native install error escapes the restarting spinner", () => {
+test("an asynchronous native install error escapes the restarting spinner", async () => {
   const { updater, coordinator, getState, states } = harness();
   const error = new Error("native staging failed");
   updater.quitAndInstall = () => updater.emit("error", error);
 
+  await downloadInto({ updater, coordinator });
   coordinator.install();
 
-  assert.deepEqual(getState(), { status: "error", message: "native staging failed" });
+  assert.deepEqual(getState(), { status: "error", version: "2.0.0", message: "native staging failed" });
   assert.equal(errorStates(states).length, 1);
 });
 
-test("a synchronous install failure becomes a user-visible error", () => {
+test("a synchronous install failure becomes a user-visible error", async () => {
   const { updater, coordinator, getState } = harness();
   updater.quitAndInstall = () => {
     throw new Error("install threw");
   };
 
+  await downloadInto({ updater, coordinator });
   coordinator.install();
 
-  assert.deepEqual(getState(), { status: "error", message: "install threw" });
+  assert.deepEqual(getState(), { status: "error", version: "2.0.0", message: "install threw" });
 });
 
 test("an active download state survives a later background check failure", async () => {
@@ -374,7 +376,7 @@ test("a failed hand-off is reported instead of leaving the card spinning", async
   assert.equal(h.getState().message, "no handler for .deb");
 });
 
-test("the hand-off sees no staged file when nothing downloaded", async () => {
+test("the hand-off cannot run before a validated download", async () => {
   const received = [];
   const h = harness({
     handOffInstall: (files) => {
@@ -386,7 +388,9 @@ test("the hand-off sees no staged file when nothing downloaded", async () => {
   h.coordinator.install();
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(received, [null]);
+  assert.deepEqual(received, []);
+  assert.equal(h.getState().status, "error");
+  assert.match(h.getState().message, /Download the update before installing/);
 });
 
 test("without a hand-off the install still quits and installs", async () => {
@@ -537,3 +541,86 @@ for (const outcome of ["ready", "error"]) {
     assert.equal(nativeUpdater.listenerCount("error"), 0);
   });
 }
+
+
+test("late progress/downloaded events cannot resurrect a failed or staged download", async () => {
+  const h = harness();
+  h.updater.downloadUpdate = async () => { throw new Error("offline"); };
+  await h.coordinator.download();
+  const failed = h.getState();
+  h.updater.emit("download-progress", { percent: 91 });
+  h.updater.emit("update-downloaded", { version: "unowned" });
+  assert.deepEqual(h.getState(), failed);
+  await downloadInto(h);
+  const ready = h.getState();
+  h.updater.emit("download-progress", { percent: 10 });
+  assert.deepEqual(h.getState(), ready);
+});
+
+test("Retry repeats the failed download instead of checking the feed again", async () => {
+  const h = harness();
+  let downloads = 0;
+  h.updater.checkForUpdates = () => assert.fail("retry must not discard the selected update");
+  h.updater.downloadUpdate = async () => {
+    downloads++;
+    if (downloads === 1) throw new Error("network interrupted");
+    h.updater.emit("update-downloaded", { version: "2.0.0" });
+    return ["update.zip"];
+  };
+  await h.coordinator.download();
+  await h.coordinator.retry();
+  assert.equal(downloads, 2);
+  assert.equal(h.getState().status, "downloaded");
+});
+
+test("install waits for owned cleanup and deduplicates restart clicks", async () => {
+  const cleanup = deferred();
+  const order = [];
+  const h = harness({ beforeInstall: () => { order.push("cleanup"); return cleanup.promise; } });
+  h.updater.quitAndInstall = () => order.push("installer");
+  await downloadInto(h);
+  const first = h.coordinator.install();
+  assert.equal(h.coordinator.install(), first);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ["cleanup"]);
+  cleanup.resolve();
+  await first;
+  assert.deepEqual(order, ["cleanup", "installer"]);
+});
+
+test("busy or failed cleanup preserves the staged update for an explicit retry", async () => {
+  let busy = true;
+  let installs = 0;
+  const h = harness({ beforeInstall: () => { if (busy) throw new Error("Finish current work first."); } });
+  h.updater.quitAndInstall = () => installs++;
+  await downloadInto(h);
+  await h.coordinator.install();
+  assert.equal(installs, 0);
+  assert.equal(h.getState().status, "error");
+  busy = false;
+  await h.coordinator.retry();
+  assert.equal(installs, 1);
+});
+
+test("an install click during download cannot fail the active transfer", async () => {
+  const pending = deferred();
+  const h = harness();
+  h.updater.downloadUpdate = () => pending.promise;
+  const transfer = h.coordinator.download();
+  assert.equal(h.coordinator.install(), transfer);
+  h.updater.emit("update-downloaded", { version: "2.0.0" });
+  pending.resolve(["update.zip"]);
+  await transfer;
+  assert.equal(h.getState().status, "downloaded");
+});
+
+test("downloads are not started while installation is preparing", async () => {
+  const pending = deferred();
+  const h = harness({ beforeInstall: () => pending.promise });
+  await downloadInto(h);
+  const install = h.coordinator.install();
+  h.updater.downloadUpdate = () => assert.fail("installer owns the staged package");
+  await h.coordinator.download();
+  pending.reject(new Error("cleanup unavailable"));
+  await install;
+});

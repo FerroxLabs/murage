@@ -239,6 +239,7 @@ contextBridge.exposeInMainWorld("muragebox", {
     check: () => ipcRenderer.invoke("update:check"),
     download: () => ipcRenderer.invoke("update:download"),
     install: () => ipcRenderer.invoke("update:install"),
+    retry: () => ipcRenderer.invoke("update:retry"),
     onState: (cb) => {
       ipcRenderer
         .invoke("update:get-state")

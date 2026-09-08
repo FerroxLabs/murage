@@ -19,6 +19,7 @@ import {
 import { harnessResourceEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { attachUpdaterWindow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
+import { prepareUpdaterRestart } from "./updater-restart.mjs";
 import {
   buildDiagnosticsReport,
   diagnosticsFileName,
@@ -2542,7 +2543,21 @@ const desktopStartup = app.whenReady().then(async () => {
   }
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"
-  startUpdater();
+  startUpdater({ beforeInstall: () => prepareUpdaterRestart({
+    environment: process.env,
+    isClosing: () => desktopShutdownStarted,
+    isCleanedUp: () => cuaCleanedUp,
+    readActivity: async () => {
+      if (!serverReady || !desktopSurfaceSecret) throw new Error("Updater activity check unavailable");
+      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`, {
+        headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error("Updater activity check unavailable");
+      return response.json();
+    },
+    cleanup: cleanupDesktopForExit,
+  }) });
   app.on("activate", () => {
     if (!desktopShutdownStarted && BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -2595,14 +2610,13 @@ const requestSignalQuit = () => {
 process.once("SIGINT", requestSignalQuit);
 process.once("SIGTERM", requestSignalQuit);
 
-app.on("before-quit", (e) => {
+function cleanupDesktopForExit() {
   desktopShutdownStarted = true;
   // Optional hosted registration must not hold the credential queue open for
   // its network timeout. Cancel the request, then drain actual writes below.
   managedComposioShutdown.abort();
-  if (cuaCleanedUp) return;
-  e.preventDefault();
-  if (desktopCleanup) return;
+  if (cuaCleanedUp) return Promise.resolve();
+  if (desktopCleanup) return desktopCleanup;
   // Release the sleep blocker synchronously; child shutdown is awaited below.
   syncCompanionKeepAwake(false, false);
   // a live dictation session runs its own helper child that holds the mic —
@@ -2639,10 +2653,20 @@ app.on("before-quit", (e) => {
       desktopDataOwner = null;
     }
     cuaCleanedUp = true;
-    app.quit();
   })();
-  void desktopCleanup.catch(() => {
+  const operation = desktopCleanup;
+  void operation.finally(() => { if (desktopCleanup === operation) desktopCleanup = null; }).catch(() => {});
+  return operation;
+}
+
+app.on("before-quit", (e) => {
+  if (cuaCleanedUp) return;
+  e.preventDefault();
+  const alreadyClosing = Boolean(desktopCleanup);
+  const operation = cleanupDesktopForExit();
+  if (alreadyClosing) return;
+  void operation.then(() => app.quit()).catch(() => {
     slog(`desktop cleanup incomplete (${desktopCleanupStage}); installation ownership retained`);
     dialog.showErrorBox("Murage is still closing", `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`);
-  }).finally(() => { desktopCleanup = null; });
+  });
 });
