@@ -18,6 +18,7 @@ import {
 } from "./package-install-command.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
+import { hasCustomUpdaterProfile } from "./updater-restart.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -63,7 +64,13 @@ export function handOffDownloadedPackage(packageType) {
 }
 
 function setState(patch) {
+  const previousStatus = state.status;
   state = { ...state, ...patch };
+  if (patch.status === "downloading" && previousStatus !== "downloading") {
+    if (patch.percent === undefined) delete state.percent;
+    delete state.message;
+  }
+  if (patch.status && patch.status !== "error" && patch.message === undefined) delete state.message;
   try {
     win?.webContents?.send("update:state", state);
   } catch {
@@ -76,6 +83,7 @@ export function registerUpdaterIpc() {
   ipcMain.handle("update:check", () => updaterCoordinator?.check(true));
   ipcMain.handle("update:download", () => updaterCoordinator?.download());
   ipcMain.handle("update:install", () => updaterCoordinator?.install());
+  ipcMain.handle("update:retry", () => updaterCoordinator?.retry());
 }
 
 // Windows come and go while the process-owned updater remains alive.
@@ -84,7 +92,7 @@ export function attachUpdaterWindow(mainWindow) {
   win = mainWindow;
 }
 
-export function startUpdater() {
+export function startUpdater({ beforeInstall = null } = {}) {
   if (updaterCoordinator) return;
   // dev / unsigned builds can't auto-update — leave the banner dormant
   if (!app.isPackaged) {
@@ -103,7 +111,7 @@ export function startUpdater() {
   // Squirrel.Mac has a second, native staging pass after the ZIP download.
   // Start it immediately so "Restart to update" never has to begin that slow
   // pass and wait indefinitely. Windows keeps the explicit installer click.
-  autoUpdater.autoInstallOnAppQuit = process.platform === "darwin";
+  autoUpdater.autoInstallOnAppQuit = process.platform === "darwin" && !hasCustomUpdaterProfile(process.env);
   autoUpdater.logger = updaterLogger();
 
   // Broadcast the install flavour before the first check so the banner never
@@ -112,8 +120,9 @@ export function startUpdater() {
   const handOff = HAND_OFF_TYPES.has(packageType);
   setState({ installMode: handOff ? "handoff" : "restart" });
   updaterCoordinator = createUpdaterCoordinator(autoUpdater, setState, {
-    nativeUpdater: process.platform === "darwin" ? autoUpdater.nativeUpdater : null,
+    nativeUpdater: autoUpdater.autoInstallOnAppQuit ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
+    beforeInstall,
   });
 
   // first check ~15s after launch (let the app settle), then hourly — both

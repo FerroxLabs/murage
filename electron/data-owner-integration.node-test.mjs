@@ -214,7 +214,7 @@ test("actual canonical root resolver rejects empty override without acquiring or
 });
 
 function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController()}={}) {
-  const text=source.slice(source.indexOf('app.on("before-quit", (e) => {'));
+  const text=source.slice(source.indexOf("function cleanupDesktopForExit() {"));
   const messages=[];let quit=0;let trigger;
   const scope={
     app:{on:(_event,handler)=>{trigger=handler;},quit:()=>{quit++;}},
@@ -229,7 +229,7 @@ function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";
     let desktopDataOwner={release};const CUA_STOP_TIMEOUT_MS=25;
     const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),companionStarts=new Set();
-    ${text};return {get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
+    ${text};return {cleanupWithoutQuit:cleanupDesktopForExit,get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
   `)(...Object.values(scope),stop,writes,release);
   return {state,messages,quit:()=>quit,trigger:()=>trigger({preventDefault(){}})};
 }
@@ -374,4 +374,16 @@ test("actual startup rejection is handled visibly without echoing arbitrary priv
   await new Function(...Object.keys(scope),`${text};return desktopStartup.catch(()=>{});`)(...Object.values(scope));
   assert.equal(quits,1);assert.equal(visible.length,1);
   assert.doesNotMatch(JSON.stringify([visible,logs]),/private supplied credential/);
+});
+
+
+test("updater cleanup awaits the actual owned barriers without quitting early", async () => {
+  const child=deferred(),write=deferred();let released=0;
+  const f=shutdownFixture({stop:()=>child.promise,writes:[write.promise],release:()=>{released++;return true;}});
+  const cleanup=f.state.cleanupWithoutQuit();
+  assert.equal(f.state.cleanupWithoutQuit(),cleanup);
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);assert.equal(f.quit(),0);
+  child.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
+  write.resolve();await cleanup;
+  assert.equal(released,1);assert.equal(f.state.owned,false);assert.equal(f.quit(),0);
 });

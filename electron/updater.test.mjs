@@ -129,3 +129,26 @@ it("the actual main createWindow and activate wiring retargets the process updat
   vm.runInContext(`(${activate.arguments[1].getText(file)})()`, context);
   expect(liveWindows).toHaveLength(0);
 });
+
+
+it("a retry clears the old percentage before the next progress event", async () => {
+  const api = await import("./updater.mjs");
+  api.registerUpdaterIpc();
+  api.startUpdater();
+  updater.downloadUpdate.mockImplementationOnce(async () => {
+    emit("download-progress", { percent: 87 });
+    throw new Error("connection reset");
+  });
+  await handlers.get("update:download")();
+  expect(handlers.get("update:get-state")()).toMatchObject({ status: "error", percent: 87 });
+  let resolve;
+  updater.downloadUpdate.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  const retry = handlers.get("update:retry")();
+  expect(handlers.get("update:get-state")()).toMatchObject({ status: "downloading" });
+  expect(handlers.get("update:get-state")().percent).toBeUndefined();
+  expect(handlers.get("update:get-state")().message).toBeUndefined();
+  emit("update-downloaded", { version: "2.0.0" });
+  resolve(["/unused-staged-update.zip"]);
+  await retry;
+  expect(handlers.get("update:get-state")().status).toBe("downloaded");
+});
