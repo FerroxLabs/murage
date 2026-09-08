@@ -1718,7 +1718,10 @@ function createBrowserSurfaceManager({
   // Load completion does not imply client-rendered content is present. Only
   // initially empty navigation observations get this bounded extra wait.
   const observeNavigation = async (entry, lease, source) => {
-    await settle(entry);
+    // loadSafe already awaits navigation completion. Observe first content
+    // immediately; initially empty pages still receive the bounded wait below.
+    // Keep the normal action-settle delay for clicks/typing via observe().
+    await settle(entry, 0);
     assertAgentLease(entry, lease, source);
     let page = await snapshot(entry);
     assertAgentLease(entry, lease, source);
