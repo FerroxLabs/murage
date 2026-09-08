@@ -310,14 +310,16 @@ export function MessageActionSheet({
  * Once the engine reports itself fixed the card flips back to Retry, which
  * (with the on-focus re-probe) happens by itself when the user returns from
  * the terminal. */
-function ErrorRow({ message, details, onRetry, setupInstance, providerError, onOpenProviderSettings }: {
+export function ErrorRow({ message, details, onRetry, setupInstance, authRequired = false, providerError, onOpenProviderSettings }: {
   message: string; details?: string; onRetry?: () => void; setupInstance?: InstanceInfo;
-  providerError?: ProviderErrorInfo; onOpenProviderSettings: () => void;
+  authRequired?: boolean; providerError?: ProviderErrorInfo; onOpenProviderSettings: () => void;
 }) {
+  const [authRecovered, setAuthRecovered] = useState(false);
   if (providerError) return <ProviderErrorCard info={providerError} details={details} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
-  const needsSetup = setupInstance && !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false);
+  const forceSignIn = authRequired && !authRecovered;
+  const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false));
   return <RuntimeErrorCard message={message} details={details} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
-    setup={needsSetup ? <EngineSetup instance={setupInstance} className="mt-3 text-ink-secondary" /> : undefined} />;
+    setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
 /** One bad markdown node must not white-screen the app — the transcript
@@ -981,9 +983,10 @@ const MessagesList = memo(function MessagesList({
                     message={m.tool.name.slice(6).trim()}
                     onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
                     setupInstance={m.tool.setup ? engine : undefined}
+                    authRequired={m.tool.authRequired}
                     details={m.tool.errorDetails}
                     providerError={m.tool.providerError}
-                    onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}
+                    onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: bot.modelSelection.connectionId ? "models" : "engines" })}
                   />
                 );
               }

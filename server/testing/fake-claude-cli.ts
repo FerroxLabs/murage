@@ -226,6 +226,15 @@ const playTurn = (prompt: JsonValue) => {
     process.stdout.write("this is not json\n{broken\n");
   }
 
+  // Upstream signed-out protocol capture; the success-result variant ensures
+  // a flagged auth failure cannot be mislabeled as successful completion.
+  if (mode === "not-logged-in" || mode === "not-logged-in-success-result") {
+    out({ type: "assistant", error: "authentication_failed", is_api_error_message: true,
+      message: { model: "<synthetic>", content: [{ type: "text", text: "Not logged in · Please run /login" }] } });
+    out({ type: "result", is_error: mode === "not-logged-in", stop_reason: "stop_sequence", terminal_reason: "api_error" });
+    turnRunning = false; finishIfDone(); return;
+  }
+
   if (mode === "stream") {
     const delta = (d: unknown) => out({ type: "stream_event", event: { type: "content_block_delta", delta: d } });
     delta({ type: "thinking_delta", thinking: "hmm" });
