@@ -4,7 +4,7 @@
 // chat app must not run dpkg itself. Everything before the install is shared.
 // It receives the staged paths and resolves with an optional state patch
 // describing what is left to do, which the card renders.
-export function createUpdaterCoordinator(updater, setState, { handOffInstall = null } = {}) {
+export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null } = {}) {
   let checkOperation = null;
   // Set from downloadUpdate's resolution: the paths electron-updater staged.
   // Only the hand-off needs them; quitAndInstall reads its own copy.
@@ -74,8 +74,8 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   );
   updater.on("update-downloaded", (info) => {
     // On macOS electron-updater emits this before Squirrel.Mac has finished
-    // staging the ZIP. Keep the UI in downloading until downloadUpdate's
-    // promise resolves, which is the point the native updater is ready.
+    // staging the ZIP. Keep the UI in downloading until both the transfer
+    // promise and (on macOS) the native staging event have completed.
     if (downloadOperation) {
       downloadOperation.downloadedInfo = info;
       return;
@@ -117,6 +117,34 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
 
     const operation = { downloadedInfo: null, failed: false, promise: null };
     downloadOperation = operation;
+    // macOS finishes serving the ZIP before Squirrel validates and stages it.
+    // Subscribe before the download starts so a fast native event is retained.
+    let finishNativeStage = null;
+    let startNativeStageTimeout = null;
+    const nativeStage = nativeUpdater ? new Promise((resolve) => {
+      let timer;
+      let settled = false;
+      const ready = () => finish(true);
+      const failed = (error) => {
+        if (!operation.failed) routeError(true, error);
+        finish(false);
+      };
+      const finish = (ok) => {
+        settled = true;
+        clearTimeout(timer);
+        nativeUpdater.removeListener("update-downloaded", ready);
+        nativeUpdater.removeListener("error", failed);
+        resolve(ok);
+      };
+      finishNativeStage = finish;
+      nativeUpdater.once("update-downloaded", ready);
+      nativeUpdater.once("error", failed);
+      startNativeStageTimeout = () => {
+        if (settled) return;
+        timer = setTimeout(() => failed(new Error("The update could not be staged. Try downloading it again.")), 2 * 60 * 1000);
+        timer.unref?.();
+      };
+    }) : Promise.resolve(true);
     // Own the state before the request goes out: the first "download-progress"
     // can be seconds away (connection setup, redirects), and until then the
     // renderer would still show an untouched "Download" button. No percent yet
@@ -124,7 +152,10 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     setState({ status: "downloading" });
     try {
       operation.promise = Promise.resolve(updater.downloadUpdate())
-        .then((result) => {
+        .then(async (result) => {
+          if (operation.failed) return result;
+          startNativeStageTimeout?.();
+          if (!(await nativeStage)) return result;
           if (!operation.failed) {
             downloadedFiles = Array.isArray(result) ? result.filter((file) => typeof file === "string") : null;
           }
@@ -136,10 +167,12 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
         })
         .catch((error) => handleRejectedOperation(true, error))
         .finally(() => {
+          finishNativeStage?.(false);
           if (downloadOperation === operation) downloadOperation = null;
         });
     } catch (error) {
       handleRejectedOperation(true, error);
+      finishNativeStage?.(false);
       downloadOperation = null;
       operation.promise = Promise.resolve();
     }

@@ -149,7 +149,7 @@ const finishIfDone = () => {
 const playTurn = (prompt: JsonValue) => {
   turnRunning = true;
   steered = [];
-  if (!dumped && process.env.FAKE_CLAUDE_DUMP) {
+  if ((!dumped || process.env.FAKE_CLAUDE_DUMP_EACH_TURN === "1") && process.env.FAKE_CLAUDE_DUMP) {
     dumped = true;
     const configPath = argAfter("--mcp-config");
     let mcpConfig: unknown = null;

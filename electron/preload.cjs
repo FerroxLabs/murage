@@ -147,6 +147,7 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** Copies an engine install command and opens a blank terminal. Resolves
    * false if no terminal could be launched; the clipboard still has it. */
   openInstallTerminal: (command) => ipcRenderer.invoke("engine:open-terminal", command),
+  openEngineSetupTerminal: (input) => ipcRenderer.invoke("engine:open-setup-terminal", input),
   /** Open a web link in the default browser. Unlike renderer window.open,
    * this remains reliable after an asynchronous API request. */
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
@@ -227,6 +228,7 @@ contextBridge.exposeInMainWorld("muragebox", {
       throw new Error(message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, ""));
     }),
   /** Store a provider credential with OS-backed encryption. */
+  mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 
   /** In-app auto-update. State object:

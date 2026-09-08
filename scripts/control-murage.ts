@@ -313,7 +313,7 @@ export async function launchVerificationServer(
   // their previous launch; no preload path or source enters a live app config.
   const instrumentationPath = join(dataDir, ".verification-instrumentation.mjs");
   if (options.instrumentationSource !== undefined) writeFileSync(instrumentationPath, options.instrumentationSource, { mode: 0o600 });
-  const child = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", instrumentationPath]), join(ROOT, "server", "index.ts")], {
+  const child = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: childEnv,
     stdio: ["ignore", log, log],

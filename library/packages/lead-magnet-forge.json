@@ -5,8 +5,8 @@
     "id": "lead-magnet-forge",
     "release": "1.0.0",
     "name": "Lead Magnet Forge",
-    "tagline": "Team launcher - pick me to auto-assemble an opt-in crew (Research + Brand + Copy + Channels) and ship a branded lead magnet with landing copy and a delivery em…",
-    "summary": "Team launcher - pick me to auto-assemble an opt-in crew (Research + Brand + Copy + Channels) and ship a branded lead magnet with landing copy and a delivery email.",
+    "tagline": "Develop a useful lead magnet, branded presentation, landing-page copy, and a delivery email.",
+    "summary": "For businesses turning audience interest into email signups. Develop a useful lead magnet, branded presentation, landing-page copy, and a delivery email.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble an opt-in crew (Research + Brand + Copy + Channels) and ship a branded lead magnet with landing copy and a delivery email."
+      "Develop a useful lead magnet, branded presentation, landing-page copy, and a delivery email."
     ],
     "setupMinutes": 2,
     "requirements": {

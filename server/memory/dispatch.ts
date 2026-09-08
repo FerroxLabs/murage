@@ -1,7 +1,8 @@
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { database } from "../database.ts";
-import type { MemoryAccess } from "./policy.ts";
-import { assertMemoryBundle } from "./bundle.ts";
+import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
+import type { MemorySearchBridge } from "./search.ts";
+import { assertMemoryBundle, buildMemoryBundle } from "./bundle.ts";
 import { bindMemoryDisclosureSession, deliverMemoryDisclosure, linkMemoryDisclosureOutput, prepareMemoryDisclosure } from "./disclosures.ts";
 
 /** Changed references replace a native context through fresh authorized replay.
@@ -39,4 +40,16 @@ export class MemoryDispatchReceipt {
   /** Event subscribers cannot throw out of the shared bus or skip capability cleanup. */
   completed(ok:boolean) { if(ok||this.observedOutput)try { this.accepted(); } catch(error) { this.failure=error; } }
   output(messageId:string) { this.observedOutput=true; linkMemoryDisclosureOutput(this.bundle.bundleId,messageId); }
+}
+
+/** Session shutdown can overlap checkpoint publication. Build only after that
+ * await, keeping the original authority snapshot so revocation still fails. */
+export async function buildMemoryBundleAfterReset(
+  query: string, access: MemoryAccess, bridge: MemorySearchBridge,
+  reset: () => Promise<void>, options: Parameters<typeof buildMemoryBundle>[3] = {},
+) {
+  assertMemoryAccess(access);
+  await reset();
+  assertMemoryAccess(access);
+  return buildMemoryBundle(query, access, bridge, options);
 }

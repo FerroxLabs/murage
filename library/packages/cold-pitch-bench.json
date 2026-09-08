@@ -5,8 +5,8 @@
     "id": "cold-pitch-bench",
     "release": "1.0.0",
     "name": "Cold-Pitch Bench",
-    "tagline": "Team launcher - pick me to assemble a framework crew (Closer + Researcher + Skeptic + Buyer Voice) and ship a non-generic, send-ready outbound sequence for one…",
-    "summary": "Team launcher - pick me to assemble a framework crew (Closer + Researcher + Skeptic + Buyer Voice) and ship a non-generic, send-ready outbound sequence for one prospect.",
+    "tagline": "Research the buyer, challenge a generic pitch, and draft an outreach sequence tailored to that prospect's situation.",
+    "summary": "For sellers pursuing one specific prospect. Research the buyer, challenge a generic pitch, and draft an outreach sequence tailored to that prospect's situation.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to assemble a framework crew (Closer + Researcher + Skeptic + Buyer Voice) and ship a non-generic, send-ready outbound sequence for one prospect."
+      "Research the buyer, challenge a generic pitch, and draft an outreach sequence tailored to that prospect's situation."
     ],
     "setupMinutes": 2,
     "requirements": {

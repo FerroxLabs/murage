@@ -63,7 +63,7 @@ describe("what it recognises without being asked twice", () => {
   it("puts every recognisable prefix where it belongs", () => {
     const table: Array<[string, string[]]> = [
       [FLUX, ["flux"]],
-      [OPENROUTER, ["openaiCompat"]],
+      [OPENROUTER, ["openrouter"]],
       [XAI, ["xai"]],
       [COMPOSIO, ["composio"]],
       [ELEVEN, ["tts"]],
@@ -78,36 +78,36 @@ describe("the ambiguous sk- family, which is the whole problem", () => {
   it("never picks a provider for a bare sk-", () => {
     const found = only(`my key is ${OPENAI_BARE}`);
     expect(found.providers.length).toBeGreaterThan(1);
-    expect(found.providers).toEqual(["openaiCompat", "imageGen", "flux"]);
+    expect(found.providers).toEqual(["openai", "openrouter", "deepseek", "mistral", "flux", "imageGen"]);
     // POSITIVE control: a qualified sk- in the same family IS decided, so the
     // assertion above is the ambiguity rule and not the matcher shrugging.
     expect(only(`my key is ${FLUX}`).providers).toEqual(["flux"]);
   });
 
-  it("calls an sk-proj- key ambiguous because Murage has two OpenAI homes", () => {
+  it("identifies an OpenAI project key for Models without sending it anywhere", () => {
     const found = only(OPENAI_PROJ);
-    expect(found.providers).toEqual(["openaiCompat", "imageGen"]);
+    expect(found.providers).toEqual(["openai"]);
   });
 
   it("lets a variable name settle which OpenAI home is meant", () => {
     expect(only(`MURAGE_OPENAI_IMAGE_KEY=${OPENAI_PROJ}`).providers).toEqual(["imageGen"]);
-    expect(only(`OPENAI_COMPAT_API_KEY=${OPENAI_PROJ}`).providers).toEqual(["openaiCompat"]);
+    expect(only(`OPENAI_COMPAT_API_KEY=${OPENAI_PROJ}`).providers).toEqual(["openai"]);
     // OPENAI_API_KEY names the issuer, not the destination. Still ambiguous.
-    expect(only(`OPENAI_API_KEY=${OPENAI_PROJ}`).providers).toEqual(["openaiCompat", "imageGen"]);
+    expect(only(`OPENAI_API_KEY=${OPENAI_PROJ}`).providers).toEqual(["openai"]);
   });
 
   it("widens rather than takes a side when name and shape disagree", () => {
     // Somebody's .env has the wrong key under the wrong name. Either could be
     // the mistake, so this asks instead of writing.
     const found = only(`XAI_API_KEY=${OPENAI_PROJ}`);
-    expect(found.providers).toEqual(["xai", "openaiCompat", "imageGen"]);
+    expect(found.providers).toEqual(["xai", "openai"]);
     expect(found.providers.length).toBeGreaterThan(1);
   });
 
   it("never lets an sk-ant- key fall through into the bare sk- bucket", () => {
     const found = only(`ANTHROPIC_API_KEY=${ANTHROPIC}`);
-    expect(found.providers).toEqual([]);
-    expect(found.unsupported?.id).toBe("anthropic");
+    expect(found.providers).toEqual(["anthropic"]);
+    expect(found.unsupported).toBeUndefined();
     // The one that matters: it is not offered as an OpenAI key.
     expect(found.providers).not.toContain("imageGen");
     expect(found.providers).not.toContain("openaiCompat");
@@ -128,11 +128,10 @@ describe("the ambiguous sk- family, which is the whole problem", () => {
 });
 
 describe("keys Murage cannot store", () => {
-  it("names an Anthropic key and offers nowhere to put it", () => {
+  it("offers an Anthropic model connection for an Anthropic key", () => {
     const found = only(ANTHROPIC);
-    expect(found.providers).toEqual([]);
-    expect(found.unsupported?.label).toBe("Anthropic key");
-    expect(found.unsupported?.reason).toContain("Claude CLI's own login");
+    expect(found.providers).toEqual(["anthropic"]);
+    expect(found.unsupported).toBeUndefined();
   });
 
   it("names a Google key and offers nowhere to put it", () => {
@@ -143,8 +142,8 @@ describe("keys Murage cannot store", () => {
 
   it("refuses on either channel alone, so a disagreement resolves safely", () => {
     // A supported name over an unstorable value, and the reverse. Both refuse.
-    expect(only(`FLUX_API_KEY=${ANTHROPIC}`).providers).toEqual([]);
-    expect(only(`ANTHROPIC_API_KEY=${FLUX}`).providers).toEqual([]);
+    expect(only(`FLUX_API_KEY=${GOOGLE}`).providers).toEqual([]);
+    expect(only(`GOOGLE_API_KEY=${FLUX}`).providers).toEqual([]);
   });
 });
 
@@ -301,7 +300,7 @@ describe("the save table agrees with the rest of the app", () => {
 describe("an already-saved key is shown as saved, not silently replaced", () => {
   it("reads the presence flag GET /api/config actually returns", () => {
     const flags = { flux: { configured: true }, box: { configured: false } };
-    expect(providerConfigured("flux", flags)).toBe(true);
+    expect(providerConfigured("flux", flags)).toBe(false); // named connections do not overwrite the legacy flag
     expect(providerConfigured("box", flags)).toBe(false);
   });
 
@@ -315,4 +314,16 @@ describe("an already-saved key is shown as saved, not silently replaced", () => 
     // truthfully say a key is already there.
     expect(providerConfigured("openaiCompat", { flux: { configured: true } })).toBe(false);
   });
+});
+
+describe("C22 provider-bound key destinations",()=>{
+ it("binds legacy qualified compatible keys to their issuer endpoint and refuses unknown keys",()=>{
+  expect(PROVIDERS.openaiCompat.body(OPENAI_PROJ)).toEqual({openaiCompat:{key:OPENAI_PROJ,url:"https://api.openai.com/v1"}});
+  expect(PROVIDERS.openaiCompat.body(OPENROUTER)).toEqual({openaiCompat:{key:OPENROUTER,url:"https://openrouter.ai/api/v1"}});
+  expect(()=>PROVIDERS.openaiCompat.body(OPENAI_BARE)).toThrow("exact model provider");
+ });
+ it("uses variable context for opaque DeepSeek and Mistral keys without a host probe",()=>{
+  expect(only('MISTRAL_API_KEY=opaque-mistral-fixture-key').providers).toEqual(['mistral']);
+  expect(only('DEEPSEEK_API_KEY=opaque-deepseek-fixture-key').providers).toEqual(['deepseek']);
+ });
 });

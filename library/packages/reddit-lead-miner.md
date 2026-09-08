@@ -3,8 +3,8 @@ botmrr: 1
 id: reddit-lead-miner
 release: 1.0.0
 name: Find Qualified Reddit Leads
-tagline: Surface high-intent conversations, explain why they matter, and prepare a useful next step every morning.
-summary: A careful two-bot lead desk that searches the communities you choose, separates genuine buying signals from noise, scores each opportunity against your ICP, and prepares context-first outreach without spamming or pretending to be a customer.
+tagline: "Research approved communities, score opportunities against your customer criteria, and draft helpful replies with source context."
+summary: "For businesses finding relevant buying conversations on Reddit. Research approved communities, score opportunities against your customer criteria, and draft helpful replies with source context."
 category: Sales
 author:
   name: BotMRR

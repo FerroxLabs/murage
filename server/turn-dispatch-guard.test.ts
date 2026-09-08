@@ -142,3 +142,29 @@ describe("turn dispatch cancellation boundary", () => {
     expect(admitted).toBe(true);
   });
 });
+
+it("waits for exact accepted-turn cleanup before propagating an acceptance failure",async()=>{
+  const retired=new RetiredTurnRegistry();
+  let finishStop!:()=>void;
+  const stopped=new Promise<void>(resolve=>{finishStop=resolve;});
+  let busy=true,queued=false;
+  const error=new Error("MEMORY_CONTEXT_REVOKED");
+  const guarded=guardTurnDispatch(Promise.resolve({turnId:"accepted-old"}),()=>false,async accepted=>{
+    retired.retire(accepted.turnId);
+    await stopped;
+  },()=>{throw error;}).catch(cause=>{busy=false;queued=true;throw cause;});
+  const rejected=expect(guarded).rejects.toBe(error);
+  await Promise.resolve();await Promise.resolve();
+  expect(retired.has("accepted-old")).toBe(true);
+  expect(busy).toBe(true);expect(queued).toBe(false);
+  finishStop();await rejected;
+  expect(busy).toBe(false);expect(queued).toBe(true);
+  expect(retired.has("accepted-old")).toBe(true);
+});
+
+it("validates acceptance once and does not stop an unchanged provider",async()=>{
+  const stop=vi.fn(async()=>{}),accept=vi.fn();
+  await expect(guardTurnDispatch(Promise.resolve({turnId:"valid"}),()=>false,stop,accept))
+    .resolves.toEqual({value:{turnId:"valid"},cancelled:false});
+  expect(accept).toHaveBeenCalledExactlyOnceWith({turnId:"valid"});expect(stop).not.toHaveBeenCalled();
+});

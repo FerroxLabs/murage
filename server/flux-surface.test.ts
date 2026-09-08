@@ -351,14 +351,17 @@ describe("the gate is actually wired into the spawn path", () => {
 
   it("calls fluxSelectionRefusal with the instance's driverKind", () => {
     expect(indexSource).toContain('import { fluxSelectionRefusal } from "./flux-surface.ts";');
-    expect(indexSource).toContain("const fluxRefusal = fluxSelectionRefusal(model, instance.driverKind);");
+    expect(indexSource).toContain("const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);");
   });
 
   it("throws it as a 409, beside the effort re-check", () => {
     const effortAt = indexSource.indexOf("is not offered by this bot's engine — choose another level in settings");
-    const fluxAt = indexSource.indexOf("const fluxRefusal = fluxSelectionRefusal(");
+    const fluxAt = indexSource.indexOf("const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(");
     expect(effortAt).toBeGreaterThan(-1);
     expect(fluxAt).toBeGreaterThan(effortAt);
+    const routeAt = indexSource.lastIndexOf("selectedProviderRoute(bot.modelSelection, instance.driverKind)", fluxAt);
+    expect(routeAt).toBeGreaterThan(-1);
+    expect(routeAt).toBeLessThan(fluxAt);
     expect(indexSource.slice(fluxAt, fluxAt + 200)).toContain(
       "throw Object.assign(new Error(fluxRefusal), { status: 409 })",
     );

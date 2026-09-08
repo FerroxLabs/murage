@@ -350,7 +350,7 @@ export function TeamMapPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contextEditor, setContextEditor] = useState<{ section: string; label: string } | null>(null);
-  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(Boolean(state.teamMapMemoryOpen));
   const bots = useMemo(() => state.bots.filter((bot) => !bot.hidden), [state.bots]);
   const org = useMemo(() => buildTeamMapOrg(bots), [bots]);
   const edges = useMemo(() => buildTeamMapEdges(bots, snapshot), [bots, snapshot]);

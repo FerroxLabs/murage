@@ -5,8 +5,8 @@
     "id": "repurpose-engine",
     "release": "1.0.0",
     "name": "Repurpose Engine",
-    "tagline": "Team launcher - pick me to auto-assemble a repurposing crew (Copy + Research + Channels + Humanizer) and ship a week of platform-native posts from one recordin…",
-    "summary": "Team launcher - pick me to auto-assemble a repurposing crew (Copy + Research + Channels + Humanizer) and ship a week of platform-native posts from one recording.",
+    "tagline": "Turn the source material into a week's worth of platform-appropriate posts, with a clear plan for what to extract and publish.",
+    "summary": "For creators getting more use from a recording. Turn the source material into a week's worth of platform-appropriate posts, with a clear plan for what to extract and publish.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a repurposing crew (Copy + Research + Channels + Humanizer) and ship a week of platform-native posts from one recording."
+      "Turn the source material into a week's worth of platform-appropriate posts, with a clear plan for what to extract and publish."
     ],
     "setupMinutes": 2,
     "requirements": {

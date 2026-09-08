@@ -5,8 +5,8 @@
     "id": "fine-print-guard",
     "release": "1.0.0",
     "name": "Fine-Print Guard",
-    "tagline": "Team launcher - pick me to convene a contract-audit crew (Adversarial Counterparty + Payment-Risk + Lock-In/IP + Redline Writer) and return a clause threat map…",
-    "summary": "Team launcher - pick me to convene a contract-audit crew (Adversarial Counterparty + Payment-Risk + Lock-In/IP + Redline Writer) and return a clause threat map with redlines.",
+    "tagline": "Get a clause-by-clause risk map and suggested redlines covering payment, ownership, and lock-in for professional review.",
+    "summary": "For business owners reviewing a contract before signing. Get a clause-by-clause risk map and suggested redlines covering payment, ownership, and lock-in for professional review.",
     "category": "Office",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to convene a contract-audit crew (Adversarial Counterparty + Payment-Risk + Lock-In/IP + Redline Writer) and return a clause threat map with redlines."
+      "Get a clause-by-clause risk map and suggested redlines covering payment, ownership, and lock-in for professional review."
     ],
     "setupMinutes": 2,
     "requirements": {

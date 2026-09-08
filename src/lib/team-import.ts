@@ -23,7 +23,7 @@ export function teamImportPreview(manifest: unknown): PendingTeamImport {
   }
   const root = manifest as Record<string, unknown>;
   if (root.format === "murage.package") return packagePreview(root, manifest);
-  if (root.format !== "murage.team") throw new Error("This is not a BotMRR playbook or legacy Murage team.");
+  if (root.format !== "murage.team") throw new Error("This is not a EmberBot playbook or legacy Murage team.");
   if (root.version !== 1 && root.version !== 2) throw new Error(`Team file version ${String(root.version)} is not supported.`);
   if (!root.team || typeof root.team !== "object" || Array.isArray(root.team)) {
     throw new Error("This team file is missing its team definition.");
@@ -61,7 +61,7 @@ export function teamImportPreview(manifest: unknown): PendingTeamImport {
 
 function markdownPackage(markdown: string): unknown {
   const frontmatter = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!frontmatter) throw new Error("This Markdown is missing its BotMRR frontmatter.");
+  if (!frontmatter) throw new Error("This Markdown is missing its EmberBot frontmatter.");
   let metadata: unknown;
   try {
     metadata = parseYaml(frontmatter[1]);
@@ -69,15 +69,16 @@ function markdownPackage(markdown: string): unknown {
     throw new Error("This Markdown has invalid YAML frontmatter.");
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    throw new Error("This Markdown is missing its BotMRR blueprint.");
+    throw new Error("This Markdown is missing its EmberBot blueprint.");
   }
-  const { botmrr, ...pkg } = metadata as Record<string, unknown>;
-  if (botmrr !== 1) throw new Error("This BotMRR Markdown version is not supported.");
+  const { emberbot, botmrr, ...pkg } = metadata as Record<string, unknown>;
+  if (emberbot !== undefined && botmrr !== undefined) throw new Error("Use one Markdown format marker, not both.");
+  if ((emberbot ?? botmrr) !== 1) throw new Error("This EmberBot Markdown version is not supported.");
   return { format: "murage.package", version: 1, package: pkg };
 }
 
 function packagePreview(root: Record<string, unknown>, manifest: unknown): PendingTeamImport {
-  if (root.version !== 1) throw new Error(`BotMRR playbook version ${String(root.version)} is not supported.`);
+  if (root.version !== 1) throw new Error(`EmberBot playbook version ${String(root.version)} is not supported.`);
   if (!root.package || typeof root.package !== "object" || Array.isArray(root.package)) {
     throw new Error("This playbook is missing its team definition.");
   }

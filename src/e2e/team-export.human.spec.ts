@@ -47,7 +47,7 @@ test('selection review gates downloads and stale previews require another review
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('export-reviewed-mobile.png')});
   const downloaded=page.waitForEvent('download');await page.getByRole('button',{name:'Download package'}).click();
-  expect((await downloaded).suggestedFilename()).toBe('selected.md');
+  expect((await downloaded).suggestedFilename()).toBe('selected.emberbot.md');
   expect(requests.filter(item=>item.action==='download').at(-1)).toMatchObject({selection:{botIds:['a'],playbookKeys:['research'],routineIds:[]},previewHash:'review-hash',acknowledgeWarnings:true});
 });
 test('blocked scan never renders payload content or enables download',async({page})=>{

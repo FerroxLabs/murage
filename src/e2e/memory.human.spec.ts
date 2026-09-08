@@ -8,7 +8,7 @@ import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createHash } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -56,7 +56,13 @@ function seed(id:string,scopeId:string,text:string,threadId:string) {
 }
 
 test.beforeAll(async()=>{
-  fixture=await launchVerificationServer();
+  fixture=await launchVerificationServer(process.env, undefined, {
+    instrumentationSource: `process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (input, init) => String(input).startsWith("https://api.fluxrouter.ai/")
+        ? Promise.resolve(new Response(JSON.stringify({choices:[{finish_reason:"stop",message:{content:"[]"}}]})))
+        : originalFetch(input, init);`,
+  });
   try {
     desktop={};
     const deniedStatus=await fetch(`${fixture.info.url}/api/memory/status`);
@@ -69,7 +75,7 @@ test.beforeAll(async()=>{
     const other=(await api("POST","/api/bots",{name:"Other private fixture",section:"Memory Browser"})).bot;
     const room=(await api("POST","/api/groups",{name:"Reviewed audience",memberIds:[bot.id,other.id],setup:{bulletin:"Synthetic review audience",defaultResponder:{kind:"member",botId:bot.id}}})).group;
     database=new DatabaseSync(join(fixture.info.dataDir,"messages.db"));
-    expect(database.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode).toBe("off");
+    expect(database.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode).toBe("active");
     database.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
     botScope=scope("bot",bot.id);roomScope=scope("room",room.id);
     seed("browser-candidate",botScope,ORIGINAL,bot.threadId);
@@ -193,4 +199,72 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   expect(after).not.toContain(CORRECTED);expect(after).not.toContain(ORIGINAL);expect(after).not.toContain(PRIVATE);
   await fitsViewport(page);
   await screenshot("memory-forgotten");
+});
+
+
+test("bot memory keeps workspace settings out of the narrow profile panel", async ({page}, info) => {
+  await action({action:"configure",mode:"off"});
+  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
+  await page.goto(origin);
+  const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
+  if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
+  const sidebar=await openSidebar(page);
+  await sidebar.getByText("Memory browser fixture",{exact:true}).click();
+  await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
+  const memory=page.getByRole("region",{name:"Bot memory",exact:true});
+  await expect(memory.getByRole("combobox",{name:"Audience",exact:true})).toBeVisible();
+  await expect(memory.getByRole("combobox",{name:"Memory mode",exact:true})).toHaveCount(0);
+  await expect(memory.getByText("Workspace mode: Off",{exact:false})).toBeVisible();
+  expect(await memory.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+  await memory.scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("bot-memory-profile.png")});
+  await memory.getByRole("button",{name:"Open workspace memory settings",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Workspace memory",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Enable capture and recall",exact:true}).click();
+  await expect(page.getByText("Capture and recall enabled. Existing notebooks can now be imported below.",{exact:true})).toBeVisible();
+  expect((await api("GET","/api/memory/status")).mode).toBe("active");
+  expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBeNull();
+  await page.screenshot({path:info.outputPath("workspace-memory-settings.png")});
+});
+
+test("owner imports full notebooks, tracks changes, and selects existing Flux extraction", async ({page}, info) => {
+  const root=join(fixture.info.dataDir,"workspaces",bot.id);
+  mkdirSync(join(root,"memory"),{recursive:true});
+  const original=Array.from({length:230},(_,n)=>`Line ${n}: notebook context.`).join("\n")+"\nFULL_NOTEBOOK_TAIL";
+  writeFileSync(join(root,"MEMORY.md"),original);
+  writeFileSync(join(root,"memory","detail.md"),"TOPIC_NOTE_CANARY");
+  await api("PUT","/api/config",{flux:{apiKey:"isolated-memory-ui-fixture-key"}});
+  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
+  await page.goto(origin);
+  await expect(page.getByRole("button",{name:/^Open .+'s profile$/}).first()).toBeVisible();
+  const sidebar=await openSidebar(page);
+  await sidebar.getByRole("button",{name:"More",exact:true}).click();
+  await sidebar.getByRole("menuitem",{name:"Team map",exact:true}).click();
+  await page.getByRole("button",{name:"Manage memory",exact:true}).click();
+  await page.getByText("Workspace settings and processing",{exact:true}).click();
+  await page.getByRole("combobox",{name:"Extractor preference",exact:true}).selectOption("@murage/flux-fast");
+  await clickAction(page,"Save memory settings","configure");
+  expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBe("@murage/flux-fast");
+  await page.screenshot({path:info.outputPath("flux-memory-choice.png")});
+  await page.getByText("Import existing notes",{exact:true}).click();
+  await clickAction(page,"Find existing notebooks","import-inventory");
+  await page.getByRole("checkbox",{name:"Memory browser fixture · MEMORY.md",exact:true}).check();
+  await page.getByRole("checkbox",{name:"Memory browser fixture · detail.md",exact:true}).check();
+  await page.getByRole("checkbox",{name:/Keep imported notebooks updated/}).check();
+  await clickAction(page,"Preview selected notebooks","import-preview");
+  const preview=page.getByRole("region",{name:"Import preview",exact:true});
+  await expect(preview.getByText(original,{exact:true})).toBeVisible();
+  await expect(preview.getByText("TOPIC_NOTE_CANARY",{exact:true})).toBeVisible();
+  await clickAction(page,"Import selected notes","import-commit");
+  expect(readFileSync(join(root,"MEMORY.md"),"utf8")).toBe(original);
+  writeFileSync(join(root,"MEMORY.md"),"CHANGED_NOTEBOOK_CANARY");
+  await expect.poll(async()=> (await action({action:"list",botId:bot.id,state:"active",query:"CHANGED_NOTEBOOK_CANARY"})).records.length,{timeout:30000}).toBeGreaterThan(0);
+  await clickAction(page,"Find existing notebooks","import-inventory");
+  const tracked=page.getByRole("group",{name:"Tracked notebook: Memory browser fixture · MEMORY.md",exact:true});
+  await expect(tracked).toBeVisible();
+  await tracked.scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("tracked-notebook.png")});
+  await tracked.getByRole("button",{name:"Stop tracking",exact:true}).click();
+  await expect(tracked).toHaveCount(0);
+  await fitsViewport(page);
 });

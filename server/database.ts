@@ -12,6 +12,7 @@ export function database(): DatabaseSync {
   const file = join(DATA_DIR, "messages.db");
   if (handle && handlePath === file && existsSync(file)) return handle;
   closeDatabase();
+  const freshInstallation = !existsSync(file);
   closeSync(openSync(file, "a", 0o600));
   try { chmodSync(file, 0o600); } catch { /* matches existing platform behavior */ }
   const db = new DatabaseSync(file);
@@ -22,7 +23,7 @@ export function database(): DatabaseSync {
       kind TEXT NOT NULL, text TEXT, json TEXT NOT NULL, PRIMARY KEY(thread_id,id));
       CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
       CREATE TABLE IF NOT EXISTS thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);`);
-    migrateMemorySchema(db);
+    migrateMemorySchema(db, freshInstallation ? "active" : "off");
   } catch (error) { db.close(); throw error; }
   handle = db; handlePath = file;
   return db;

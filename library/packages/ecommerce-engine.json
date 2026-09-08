@@ -5,8 +5,8 @@
     "id": "ecommerce-engine",
     "release": "1.0.0",
     "name": "Ecommerce Engine",
-    "tagline": "Team launcher - Storefront + Copy + Channels + Brand + Support optimize a DTC or marketplace operation.",
-    "summary": "Team launcher - Storefront + Copy + Channels + Brand + Support optimize a DTC or marketplace operation.",
+    "tagline": "Review product positioning and customer friction, then prepare listing, campaign, and support improvements.",
+    "summary": "For owners of online stores and marketplace businesses. Review product positioning and customer friction, then prepare listing, campaign, and support improvements.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Storefront + Copy + Channels + Brand + Support optimize a DTC or marketplace operation."
+      "Review product positioning and customer friction, then prepare listing, campaign, and support improvements."
     ],
     "setupMinutes": 2,
     "requirements": {

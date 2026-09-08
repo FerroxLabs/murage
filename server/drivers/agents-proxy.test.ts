@@ -16,6 +16,7 @@ const TOKEN = "test-comms-token";
 let stub: Server;
 let stubPort = 0;
 let lastAuth: string | undefined;
+let disconnectAgents = false;
 let lastAskBody: any = null;
 let searchRequests: unknown[] = [];
 let searchStatus = 200;
@@ -98,6 +99,7 @@ beforeAll(async () => {
       }); return;
     }
     if (req.method === "GET" && req.url?.startsWith("/api/internal/agents")) {
+      if (disconnectAgents) { req.socket.destroy(); return; }
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(
         JSON.stringify({
@@ -225,12 +227,22 @@ describe("agents-proxy MCP surface", () => {
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
+      "list_image_models",
+      "generate_image",
       "web_search",
       "list_bots",
       "ask_bot",
       "delegate_bot",
       "check_delegation",
       "wait_delegation",
+      "get_permission_status",
+      "request_bot_access",
+      "get_bot",
+      "update_bot",
+      "archive_bot",
+      "restore_bot",
+      "move_bot",
+      "set_team_lead",
       "create_bot",
       "request_credential",
       "list_routines",
@@ -264,6 +276,21 @@ describe("agents-proxy MCP surface", () => {
     const data = JSON.parse(result.result.content[0].text);
     expect(data.untrusted).toBe(true); expect(data.results[0].url).toBe("https://example.com/source");
     expect(data.results[0].snippet).toContain("untrusted source text");
+  });
+
+  it("reports a forced control disconnect and keeps the MCP tool surface usable", async () => {
+    disconnectAgents = true;
+    try {
+      const failed = await callTool("list_bots", {});
+      expect(failed.result.isError).toBe(true);
+      expect(failed.result.content[0].text).toContain("MURAGE_AGENTS_UNAVAILABLE");
+      expect(failed.result.content[0].text).not.toContain(TOKEN);
+    } finally { disconnectAgents = false; }
+    const tools = await rpc("tools/list");
+    expect(tools.result.tools.some((tool: { name: string }) => tool.name === "list_bots")).toBe(true);
+    const recovered = await callTool("list_bots", {});
+    expect(recovered.result.isError).toBe(false);
+    expect(recovered.result.content[0].text).toContain("bot-helper");
   });
 
   it("rejects malformed search arguments and provider/sender overrides before contacting the harness", async () => {
@@ -421,6 +448,7 @@ describe("agents-proxy MCP surface", () => {
       name: "Pixel",
       role: "Product designer",
       instructions: "Design and review the user experience.",
+      model_selection: { instanceId: "fixture", model: "model", connectionId: "provider-account" },
     });
     expect(res.result.content[0].text).toContain("Created @Pixel in Work");
     expect(lastCreateBody).toEqual({
@@ -429,6 +457,7 @@ describe("agents-proxy MCP surface", () => {
       name: "Pixel",
       role: "Product designer",
       instructions: "Design and review the user experience.",
+      modelSelection: { instanceId: "fixture", model: "model", connectionId: "provider-account" },
     });
   });
 

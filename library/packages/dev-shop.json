@@ -5,8 +5,8 @@
     "id": "dev-shop",
     "release": "1.0.0",
     "name": "Dev Shop",
-    "tagline": "Standing Company - Ship (CTO) + Smith + Patch + Verdict + Sentry run daily weekday standups, ship features, audit code health, plan releases. Persists across s…",
-    "summary": "Standing Company - Ship (CTO) + Smith + Patch + Verdict + Sentry run daily weekday standups, ship features, audit code health, plan releases. Persists across sessions. Inspired by Garry Tan's GStack workflow, adapted for solo founders and indie hackers.",
+    "tagline": "Turn requests into technical plans, review quality and operational risks, and organize implementation handoffs and release priorities.",
+    "summary": "For solo founders coordinating software delivery. Turn requests into technical plans, review quality and operational risks, and organize implementation handoffs and release priorities.",
     "category": "Build",
     "author": {
       "name": "Ferrox Labs",
@@ -15,7 +15,7 @@
     "license": "Apache-2.0",
     "featured": true,
     "outcomes": [
-      "Standing Company - Ship (CTO) + Smith + Patch + Verdict + Sentry run daily weekday standups, ship features, audit code health, plan releases. Persists across sessions. Inspired by Garry Tan's GStack workflow, adapted for solo founders and…"
+      "Turn requests into technical plans, review quality and operational risks, and organize implementation handoffs and release priorities."
     ],
     "setupMinutes": 2,
     "requirements": {

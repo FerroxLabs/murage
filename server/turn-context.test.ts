@@ -110,3 +110,12 @@ describe("engineIsFresh", () => {
     ).toBe(true);
   });
 });
+
+// Memory refresh must preserve authorized replay without inventing an owner edit.
+it("replays refreshed memory without claiming a user rewind", () => {
+  const result = buildTurnContext({ text: "continue", transcript: [{role: "user", text: "prior request"}], rewound: false, fresh: false, externallyUpdated: false, replaysNatively: false, memoryRefreshed: true });
+  expect(result.resume).toBe(false);
+  expect(result.turnText).toContain("authorized memory context was refreshed");
+  expect(result.turnText).toContain("User: prior request");
+  expect(result.turnText).not.toContain("The user rewound");
+});

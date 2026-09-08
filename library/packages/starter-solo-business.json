@@ -1,22 +1,100 @@
 {
-  "format": "murage.package", "version": 1,
+  "format": "murage.package",
+  "version": 1,
   "package": {
-    "id": "starter-solo-business", "release": "1.0.0", "name": "Solo Business",
-    "tagline": "Move one business priority forward from the information you already have.",
-    "summary": "A two-role starting setup for a solo operator: decide the next deliverable and draft it. Business Planner is a suggested coordinator; importing does not authorize a Chief replacement, outreach or spending.",
-    "category": "Starter", "author": { "name": "Ferrox Labs" }, "license": "Apache-2.0",
-    "outcomes": ["One concrete priority with a finish condition", "A draft deliverable based on supplied facts", "Assumptions and decisions that need your approval"],
-    "setupMinutes": 3, "requirements": { "apps": [], "capabilities": [] },
+    "id": "starter-solo-business",
+    "release": "1.0.0",
+    "name": "Solo Business",
+    "tagline": "Define the next deliverable, draft it from your supplied facts, and identify decisions needing your approval.",
+    "summary": "For solo operators who need to turn a priority into something concrete. Define the next deliverable, draft it from your supplied facts, and identify decisions needing your approval. Business Planner is a suggested coordinator; importing does not authorize a Chief replacement, outreach or spending.",
+    "category": "Starter",
+    "author": {
+      "name": "Ferrox Labs"
+    },
+    "license": "Apache-2.0",
+    "outcomes": [
+      "One concrete priority with a finish condition",
+      "A draft deliverable based on supplied facts",
+      "Assumptions and decisions that need your approval"
+    ],
+    "setupMinutes": 3,
+    "requirements": {
+      "apps": [],
+      "capabilities": []
+    },
     "agents": [
-      { "key": "business-planner", "name": "Business Planner", "title": "Priorities and scope", "description": "Turns your goal, workload and constraints into one bounded next deliverable.", "appearance": { "color": "blue" }, "playbooks": ["business-next-step"] },
-      { "key": "draft-partner", "name": "Draft Partner", "title": "Drafts and review", "description": "Creates a first draft using the facts and examples you provide.", "appearance": { "color": "orange" }, "playbooks": ["business-draft"] }
+      {
+        "key": "business-planner",
+        "name": "Business Planner",
+        "title": "Priorities and scope",
+        "description": "Turns your goal, workload and constraints into one bounded next deliverable.",
+        "appearance": {
+          "color": "blue"
+        },
+        "playbooks": [
+          "business-next-step"
+        ]
+      },
+      {
+        "key": "draft-partner",
+        "name": "Draft Partner",
+        "title": "Drafts and review",
+        "description": "Creates a first draft using the facts and examples you provide.",
+        "appearance": {
+          "color": "orange"
+        },
+        "playbooks": [
+          "business-draft"
+        ]
+      }
     ],
     "chiefOfStaff": "business-planner",
     "playbooks": [
-      { "key": "business-next-step", "name": "Choose the next deliverable", "summary": "Prioritize from a supplied goal, task list and available time.", "triggers": ["Plan my business day", "Choose my next deliverable"], "instructions": "Use the user's supplied goal, current workload and time budget. If these are missing, ask only for what is needed to choose a first deliverable. Recommend one priority, define what finished means and list dependencies. Do not invent revenue, customer behavior or inbox contents. Keep the existing Chief and permissions intact. Never contact customers, publish, spend or enable routines without explicit approval." },
-      { "key": "business-draft", "name": "Draft from supplied facts", "summary": "Create a reviewable draft without publishing it.", "triggers": ["Draft this offer", "Turn these notes into a draft"], "instructions": "Produce a draft from the user's notes and stated audience. Identify missing claims, evidence and pricing decisions instead of filling them with invented facts. Label illustrative text clearly. End with a short review checklist. Do not send, publish or access external accounts without explicit permission and available tools." }
+      {
+        "key": "business-next-step",
+        "name": "Choose the next deliverable",
+        "summary": "Prioritize from a supplied goal, task list and available time.",
+        "triggers": [
+          "Plan my business day",
+          "Choose my next deliverable"
+        ],
+        "instructions": "Use the user's supplied goal, current workload and time budget. If these are missing, ask only for what is needed to choose a first deliverable. Recommend one priority, define what finished means and list dependencies. Do not invent revenue, customer behavior or inbox contents. Keep the existing Chief and permissions intact. Never contact customers, publish, spend or enable routines without explicit approval."
+      },
+      {
+        "key": "business-draft",
+        "name": "Draft from supplied facts",
+        "summary": "Create a reviewable draft without publishing it.",
+        "triggers": [
+          "Draft this offer",
+          "Turn these notes into a draft"
+        ],
+        "instructions": "Produce a draft from the user's notes and stated audience. Identify missing claims, evidence and pricing decisions instead of filling them with invented facts. Label illustrative text clearly. End with a short review checklist. Do not send, publish or access external accounts without explicit permission and available tools."
+      }
     ],
-    "routines": [{ "key": "weekly-business-review", "name": "Weekly business review (suggested)", "agent": "business-planner", "prompt": "Review the user's supplied progress notes against their stated priority. Identify one next deliverable and unresolved decisions. Ask for missing notes instead of assuming access to business accounts.", "runOn": "ember", "schedule": { "type": "daily", "time": "09:00", "weekdays": [1] }, "durationMinutes": 15, "enabledAfterInstall": false }],
-    "examples": [{ "title": "A useful first business task", "input": "I have 45 minutes. My new bookkeeping service is for independent designers. Help me draft a short introduction; I have no testimonials yet.", "output": "Draft a short introduction describing the service and intended audience, leave pricing and proof claims for review, and suggest one question for prospective clients. Do not invent testimonials or send the draft." }]
+    "routines": [
+      {
+        "key": "weekly-business-review",
+        "name": "Weekly business review (suggested)",
+        "agent": "business-planner",
+        "prompt": "Review the user's supplied progress notes against their stated priority. Identify one next deliverable and unresolved decisions. Ask for missing notes instead of assuming access to business accounts.",
+        "runOn": "ember",
+        "schedule": {
+          "type": "daily",
+          "time": "09:00",
+          "weekdays": [
+            1
+          ]
+        },
+        "durationMinutes": 15,
+        "enabledAfterInstall": false
+      }
+    ],
+    "examples": [
+      {
+        "title": "A useful first business task",
+        "input": "I have 45 minutes. My new bookkeeping service is for independent designers. Help me draft a short introduction; I have no testimonials yet.",
+        "output": "Draft a short introduction describing the service and intended audience, leave pricing and proof claims for review, and suggest one question for prospective clients. Do not invent testimonials or send the draft."
+      }
+    ]
   }
 }

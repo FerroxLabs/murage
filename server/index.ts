@@ -1,8 +1,20 @@
+import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
+import { providerEngineProtocol } from "../shared/provider-engine.ts";
+import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
+import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
 import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
+import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
+import { syncTrackedMemoryImports } from "./memory/import.ts";
+import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
+import { hasPendingBotDelegations } from "./delegations.ts";
+import { accessOwnerView, assertConnectedAppCall, requestBotAccess, restrictedConnectorTools, reviewBotAccess } from "./bot-access.ts";
+import { botAccessPolicy } from "./bot-access-role.ts";
+import { permissionStatus, type PendingPermissionInput } from "./permission-status.ts";
+import { EngineManager } from "./engine-management.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
-import { MemoryDispatchReceipt, memoryContinuationChanged } from "./memory/dispatch.ts";
+import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset } from "./memory/dispatch.ts";
 import { memoryAccess, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./memory/disclosures.ts";
@@ -12,7 +24,7 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memor
 // Murage server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -98,7 +110,9 @@ import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from 
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
-import { browserEngineStatus, browserEngineEncryptionKey, browserSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { UnifiedBrowserController } from "./browser-control.ts";
+import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
+import { UNIFIED_BROWSER_SYSTEM_PROMPT, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { parseConnectorRequests, connectorRequestKey, connectorRequestStatus } from "./connector-requests.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
@@ -228,7 +242,7 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
-import { fluxConfigured } from "./flux-config.ts";
+import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
 import {
   ensureWorkspace,
@@ -279,18 +293,16 @@ import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import {
-  BUILT_IN_BROWSER_SYSTEM_PROMPT,
   applyDesktopBrowserConnectionMessage,
-  availableBrowserConnection,
-  browserScreenshot,
   clearBrowserCapabilities,
-  registerBrowserCapability,
   revokeBrowserCapability,
   type BrowserCapability,
   type BrowserConnection,
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
+import { ImageGenerationService, type ImageConnection } from "./image-generation.ts";
+import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
@@ -378,6 +390,50 @@ process.once("exit", () => {
 ensureDirs();
 assertRestoreReviewed(DATA_DIR);
 const cfg = loadConfig();
+const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), legacyConnections: () => {
+  const rows: LegacyProviderConnection[] = [];
+  const add = (id: string, preset: LegacyProviderConnection["preset"], label: string, key: string | null | undefined, managedIn: LegacyProviderConnection["managedIn"], legacyError?: string) => {
+    if (!key?.trim()) return;
+    rows.push({ id, preset, label, key: key.trim(), enabled: !legacyError, revision: createHash("sha256").update(JSON.stringify([id, key, legacyError ?? "", PROVIDER_PRESETS[preset].baseUrl])).digest("hex"), legacy: true, managedIn, ...(legacyError ? { legacyError } : {}) });
+  };
+  add("legacy-flux", "flux", "Flux Router · existing workspace key", fluxKey(), "engines");
+  add("legacy-openai-image", "openai", "OpenAI · existing image key", cfg.imageGen?.key, "images");
+  add("legacy-xai", "xai", "xAI · existing workspace key", cfg.xai?.key, "engines");
+  if (cfg.openaiCompat?.key?.trim()) {
+    const configuredUrl = (cfg.openaiCompat.url ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+    const preset = Object.keys(PROVIDER_PRESETS).find(id => PROVIDER_PRESETS[id as keyof typeof PROVIDER_PRESETS].baseUrl === configuredUrl) as keyof typeof PROVIDER_PRESETS | undefined;
+    let problem = preset ? undefined : "This existing compatible endpoint is not a named provider preset. Manage it in existing engine settings; no key has been copied.";
+    if (preset && /^(sk-ant-|sk-flux-|sk-(?:proj|svcacct|admin)-|xai-|gsk_)/.test(cfg.openaiCompat.key)) {
+      try { assertProviderKey(preset, cfg.openaiCompat.key); } catch { problem = "This saved key does not match its configured endpoint. Choose the correct provider before using it."; }
+    }
+    add("legacy-openai-compatible", preset ?? "openrouter", problem ? "Existing compatible key · needs review" : `${PROVIDER_PRESETS[preset!].label} · existing compatible key`, cfg.openaiCompat.key, "engines", problem);
+  }
+  return rows;
+} });
+let providerConnectionsBusy = false;
+const activeProviderSelections = new Map<string, { botId: string; instanceId: string; route: ProviderTurnRoute }>();
+function selectedProviderRoute(selection: ModelSelection, driverKind: string): ProviderTurnRoute | undefined {
+  if (!selection.connectionId) return undefined;
+  const connection = providerConnections.resolve(selection.connectionId);
+  if (!connection?.enabled) throw Object.assign(new Error("Selected provider connection is disabled or unavailable"), { status: 409 });
+  const model = providerConnections.getCatalog(connection.id).models.find(row => row.id === selection.model);
+  if (!model?.enabled || !model.chatEligible || model.capabilities.chat !== true) throw Object.assign(new Error("Selected model is unavailable or not a chat model in this provider catalog"), { status: 409 });
+  const protocol = providerEngineProtocol(driverKind, connection.preset, connection.protocol);
+  if (!protocol) throw Object.assign(new Error("Selected engine does not support this provider connection"), { status: 409 });
+  const route = { connectionId: connection.id, preset: connection.preset, protocol, baseUrl: connection.baseUrl, apiKey: connection.key, model: selection.model, revision: connection.revision };
+  validateProviderTurnRoute(driverKind, route); return route;
+}
+function providerRouteIsCurrent(route: ProviderTurnRoute | undefined): boolean { return !route || providerConnections.isCurrent(route.connectionId, route.revision); }
+providerConnections.subscribe(changedIds => {
+  for (const [threadId, active] of activeProviderSelections) if (changedIds.includes(active.route.connectionId) && !providerRouteIsCurrent(active.route)) {
+    cancelDirectTurnDispatch(active.botId, threadId); revokeInternalThread(threadId);
+    void registry.get(active.instanceId)?.adapter.interruptTurn(threadId).catch(() => {});
+    activeProviderSelections.delete(threadId);
+  }
+});
+
+let providerConfigBusy = false;
+let providerFleetReady = true;
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
@@ -447,18 +503,59 @@ bus.attach(registry.instances());
 
 // ── peer-agent comms wiring ────────────────────────────────────────────
 import { InternalCapabilities, type InternalCapabilityKind } from "./internal-capabilities.ts";
+import { resolveCoordinationTarget } from "./coordination-target.ts";
+import { CoordinationBudget, MAX_COORDINATION_DEPTH, MAX_HANDOFFS_PER_TURN, MAX_CONCURRENT_HANDOFFS, type CoordinationTrace } from "./coordination-budget.ts";
+const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-roots.json"));
 const internalCapabilities = new InternalCapabilities();
+const coordinationSlots = new Map<string, () => void>();
+function coordinationHasCapacity(): boolean {
+  return !providerConfigBusy && providerFleetReady && coordinationSlots.size < MAX_CONCURRENT_HANDOFFS;
+}
+let coordinationDrainScheduled = false;
+function scheduleCoordinationDrain(): void {
+  if (coordinationDrainScheduled) return;
+  coordinationDrainScheduled = true;
+  queueMicrotask(() => {
+    coordinationDrainScheduled = false;
+    for (const source of pendingThreads()) {
+      if (!coordinationHasCapacity()) break;
+      if (!internalTurnOwners.has(source)) drainDelegations(commsBus, approvalBus, source, runDelegatedTurn);
+    }
+  });
+}
+function finishProviderConfigMutation(): void {
+  providerConfigBusy = false;
+  // Reload/rollback may have released idle targets while admission was closed.
+  // Drain only after the final fleet is attached and the mutation guard clears.
+  if (providerFleetReady) scheduleCoordinationDrain();
+}
+function holdCoordinationSlot(threadId: string): () => void {
+  if (coordinationSlots.has(threadId) || !coordinationHasCapacity()) throw new Error("COORDINATION_CAPACITY: wait for a running handoff");
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true; unsubscribe(); coordinationSlots.delete(threadId);
+    scheduleCoordinationDrain();
+  };
+  const unsubscribe = bus.subscribe((event: RuntimeEvent) => {
+    if (event.type === "turn.completed" && event.threadId === threadId && !shouldIgnoreProviderEvent(event)) release();
+  });
+  coordinationSlots.set(threadId, release);
+  return release;
+}
 const projectTurnLeases = new ProjectTurnLeases();
 const internalTurnOwners = new Map<string, {
   botId: string; generation: string; depth: number; skillAuthoring: boolean;
   eventId?: string;
   memorySkillSource?: string;
+  coordination?: CoordinationTrace;
   tokens: Partial<Record<InternalCapabilityKind, string>>;
 }>();
-function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string): void {
+function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string, coordination?: CoordinationTrace): void {
   internalCapabilities.begin(botId, threadId, generation);
   memoryDispatches.delete(threadId);
-  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId, tokens: {} });
+  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId,
+    coordination: coordination ?? (depth === 0 ? coordinationBudget.begin(botId, generation) : undefined), tokens: {} });
 }
 function internalToken(botId: string, threadId: string, generation: string, kind: InternalCapabilityKind): string {
   const owner = internalTurnOwners.get(threadId);
@@ -497,7 +594,7 @@ function revokeAllInternalTurns(): void {
 // Cap message chains: depth 0 = a user-initiated turn (may ask a peer);
 // a peer invoked via ask_bot runs at depth 1 and gets NO agents tool, so
 // A→B is allowed but B→C (and A→B→A loops) never start.
-const MAX_COMMS_DEPTH = 1;
+const MAX_COMMS_DEPTH = MAX_COORDINATION_DEPTH;
 const MAX_WORKSPACE_BOTS = 100;
 /** One assignment is the common case and a profile's whole set is the largest
  *  honest one — the biggest bundled profile declares eleven. A bound exists so
@@ -546,6 +643,39 @@ type ActiveBrowserCapability = {
   capability: BrowserCapability;
 };
 
+const unifiedBrowser = new UnifiedBrowserController({ stateFile: join(DATA_DIR, "browser-control.json") });
+const unifiedBrowserThreads = new Map<string, { botId: string; ownerId: string; profileKey: string; profile: string | undefined }>();
+const unifiedBrowserBindings = new Map<string, { key: string; spec: AgentBrowserSpec }>();
+const guestBrowserBindings = new Map<string, string>();
+async function unifiedBrowserBinding(botId: string, profile: string | undefined) {
+  const realmId = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+  const partition = profile === "guest" ? "guest" : (profile ? browserProfilePartitionTarget(cfg, profile)?.partitionId ?? "" : "");
+  const identity = JSON.stringify([realmId, partition && partition !== "guest" ? partition : botId, partition === "guest"]);
+  const existing = unifiedBrowserBindings.get(identity);
+  if (existing) return existing;
+  const engine = browserEngineStatus();
+  if (engine.kind !== "ready") throw new Error(engine.reason);
+  const session = partition === "guest" ? guestBrowserBindings.get(botId) ?? browserSessionId(botId, partition, realmId) : browserSessionId(botId, partition, realmId);
+  if (partition === "guest") guestBrowserBindings.set(botId, session);
+  const spec = agentBrowserIntegration({ binaryPath: engine.binaryPath, session, encryptionKey: browserEngineEncryptionKey(DATA_DIR), dataDir: DATA_DIR, realmId, persistent: partition !== "guest" });
+  await verifyAgentBrowserBinary(engine.binaryPath, spec.env);
+  unifiedBrowser.register(session, spec);
+  const binding = { key: session, spec }; unifiedBrowserBindings.set(identity, binding); return binding;
+}
+function unifiedBrowserKey(bot: BotRecord): string | null {
+  const realm = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+  const partition = bot.browserProfile === "guest" ? "guest" : (bot.browserProfile ? browserProfilePartitionTarget(cfg, bot.browserProfile)?.partitionId ?? "" : "");
+  return partition === "guest" ? guestBrowserBindings.get(bot.id) ?? null : browserSessionId(bot.id, partition, realm);
+}
+function unifiedBrowserHeld(bot: BotRecord): boolean {
+  const key = unifiedBrowserKey(bot); if (!key) return false;
+  try { return unifiedBrowser.status(key).held; } catch { return false; }
+}
+async function forgetGuestBrowser(botId: string) {
+  const key = guestBrowserBindings.get(botId); if (!key) return;
+  await unifiedBrowser.forget(key); guestBrowserBindings.delete(botId);
+  for (const [identity, binding] of unifiedBrowserBindings) if (binding.key === key) unifiedBrowserBindings.delete(identity);
+}
 const browserCapabilitiesByThread = new Map<string, ActiveBrowserCapability>();
 const headlessBrowsersByThread = new Map<string, { botId: string; ownerId: string; spec: AgentBrowserSpec }>();
 const closingHeadlessBrowsers = new Map<string, Promise<void>>();
@@ -588,6 +718,8 @@ async function revokeReleasedBrowserCapability(active: ActiveBrowserCapability, 
 }
 
 async function releaseBrowserCapabilityForThread(threadId: string, expectedOwnerId?: string): Promise<void> {
+  const unified = unifiedBrowserThreads.get(threadId);
+  if (unified && (expectedOwnerId === undefined || unified.ownerId === expectedOwnerId)) unifiedBrowserThreads.delete(threadId);
   const headless = headlessBrowsersByThread.get(threadId);
   if (headless && (expectedOwnerId === undefined || headless.ownerId === expectedOwnerId)) {
     headlessBrowsersByThread.delete(threadId);
@@ -620,6 +752,8 @@ async function releaseBrowserCapabilitiesForBot(botId: string): Promise<void> {
 
 async function releaseAllBrowserCapabilities(): Promise<void> {
   revokeAllInternalTurns();
+  unifiedBrowserThreads.clear();
+  await unifiedBrowser.close();
   await Promise.all([...headlessBrowsersByThread.keys()].map(threadId => releaseBrowserCapabilityForThread(threadId)));
   await Promise.all(closingHeadlessBrowsers.values());
   const active = [...browserCapabilitiesByThread.values()];
@@ -771,80 +905,18 @@ function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): Dir
   return claim;
 }
 
-async function browserIntegration(
-  botId: string,
-  profile: string | undefined,
-  threadId: string,
-  stillValid: () => boolean = () => true,
-  ownerId = randomUUID(),
-) {
-  const connection = availableBrowserConnection();
-  if (!connection) {
-    // Keep Windows unavailable until native ACL/runtime support is proven.
-    if (process.platform === "win32") return null;
-    const engine = browserEngineStatus();
-    if (engine.kind !== "ready") return null;
-    const key = browserEngineEncryptionKey(DATA_DIR);
-    const realmId = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
-    const partition = profile === "guest" ? "guest" : (profile ? browserProfilePartitionTarget(cfg, profile)?.partitionId ?? "" : "");
-    const spec = agentBrowserIntegration({ binaryPath: engine.binaryPath,
-      session: browserSessionId(botId, partition, realmId), encryptionKey: key, dataDir: DATA_DIR,
-      realmId, persistent: profile !== "guest" });
-    await verifyAgentBrowserBinary(engine.binaryPath, spec.env);
-    if (!stillValid()) return null;
-    await releaseBrowserCapabilityForThread(threadId);
-    const closing = closingHeadlessBrowsers.get(threadId);
-    if (closing) await closing;
-    if (!stillValid()) return null;
-    const control = controlIntegration(botId, threadId, ownerId);
-    headlessBrowsersByThread.set(threadId, { botId, ownerId, spec });
-    return { connection: null, capability: null, profile: partition, integration: {
-      command: process.execPath, args: [SPAWNED_PROXIES.headlessBrowser], env: {
-        ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
-        MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
-        MURAGE_HEADLESS_BROWSER_URL: `http://127.0.0.1:${PORT}/api/internal/headless-browser?botId=${encodeURIComponent(botId)}&threadId=${encodeURIComponent(threadId)}`,
-      },
-    } };
-  }
-  const control = controlIntegration(botId, threadId, ownerId);
-  // A profile that no longer exists falls back to the bot's own session.
-  // Canonical ids belong to config/bot references; Electron must receive the
-  // exact immutable partition inherited from #567 so an upgrade cannot move
-  // a bot into another account. Guest remains a throwaway partition.
-  const profileTarget = profile && profile !== "guest"
-    ? browserProfilePartitionTarget(cfg, profile)
-    : null;
-  const partitionId = profile === "guest" ? "guest" : (profileTarget?.partitionId ?? "");
+async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId = randomUUID()) {
+  if (browserEngineStatus().kind !== "ready") return null;
+  const binding = await unifiedBrowserBinding(botId, profile);
+  if (!stillValid()) return null;
   await releaseBrowserCapabilityForThread(threadId);
-  const capability = await registerBrowserCapability(connection, botId, partitionId);
-  const active = { botId, ownerId, connection, capability };
-  // Registration crosses a process boundary. Stop/delete/config changes can
-  // land while the desktop host is minting the token; revalidate in the same
-  // event-loop turn that publishes it. If ownership was lost, no agent ever
-  // receives the bearer and the just-created token is revoked immediately.
-  if (!stillValid()) {
-    await revokeReleasedBrowserCapability(active);
-    return null;
-  }
-  browserCapabilitiesByThread.set(threadId, active);
-  return {
-    connection,
-    capability,
-    profile: partitionId,
-    integration: {
-      command: process.execPath,
-      args: [SPAWNED_PROXIES.browser],
-      env: {
-        ...AGENTS_NODE_FLAG,
-        MURAGE_BROWSER_URL: connection.url,
-        MURAGE_BROWSER_TOKEN: capability.token,
-        MURAGE_BROWSER_PROFILE: partitionId,
-        MURAGE_BOT_ID: botId,
-        MURAGE_CONTROL_URL: control.url,
-        MURAGE_CONTROL_TOKEN: control.token,
-      },
-    },
-  };
+  if (!stillValid()) return null;
+  const control = controlIntegration(botId, threadId, ownerId);
+  unifiedBrowserThreads.set(threadId, { botId, ownerId, profileKey: binding.key, profile });
+  return { profileKey: binding.key, integration: { command: process.execPath, args: [SPAWNED_PROXIES.unifiedBrowser], env: {
+    ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
+    MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
+  } } };
 }
 
 function phoneIntegration() {
@@ -916,10 +988,11 @@ type AskBotOutcome = {
   stopReason?: string | null;
 };
 
-function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string, eventId?: string): Promise<AskBotOutcome> {
+function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string, eventId?: string, coordination?: CoordinationTrace): Promise<AskBotOutcome> {
   const target = store.bot(targetBotId);
   if (!target) return Promise.resolve({ status: "error", text: "(no such bot)" });
   const threadId = target.threadId;
+  const releaseSlot = holdCoordinationSlot(threadId);
   return new Promise((resolve) => {
     let text = "";
     let done = false;
@@ -949,11 +1022,12 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
     startTurn(targetBotId, message, {
       commsDepth: depth + 1,
       eventId,
+      coordination,
       unattended: isUnattended(fromBotId),
-      onDispatchError: (reason) => finish({ status: "error", text: `(couldn't start that bot: ${reason})` }),
-    }).catch((err) =>
-      finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` }),
-    );
+      onDispatchError: (reason) => { releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${reason})` }); },
+    }).catch((err) => {
+      releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` });
+    });
   });
 }
 
@@ -1000,7 +1074,7 @@ function checkedModelSelection(
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, status: 400, error: "modelSelection must be an object" };
   }
-  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown };
+  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown; connectionId?: unknown };
   if (typeof value.instanceId !== "string" || !value.instanceId.trim()) {
     return { ok: false, status: 400, error: "modelSelection.instanceId is required" };
   }
@@ -1011,6 +1085,10 @@ function checkedModelSelection(
     instanceId: value.instanceId.trim(),
     model: value.model.trim(),
   };
+  if (value.connectionId !== undefined) {
+    if (typeof value.connectionId !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(value.connectionId)) return { ok: false, status: 400, error: "modelSelection.connectionId is invalid" };
+    selection.connectionId = value.connectionId;
+  }
   if (value.effort !== undefined) {
     if (!isEffortLevel(value.effort)) {
       return { ok: false, status: 400, error: `effort "${String(value.effort)}" is not recognized` };
@@ -1020,7 +1098,7 @@ function checkedModelSelection(
   const changed = current && (
     selection.instanceId !== current.selection.instanceId ||
     selection.model !== current.selection.model ||
-    selection.effort !== current.selection.effort
+    selection.effort !== current.selection.effort || selection.connectionId !== current.selection.connectionId
   );
   if (current?.busy && changed) {
     return { ok: false, status: 409, error: "the bot is working — stop it before changing models" };
@@ -1030,7 +1108,11 @@ function checkedModelSelection(
   // engines can accept IDs that are not in their discovery catalog, and
   // several drivers only learn the final catalog when a turn starts. The
   // MCP tool applies a stricter discovered-model policy for its own calls.
-  if (requireAvailableModel) {
+  if (selection.connectionId) {
+    try { if (!target) throw new Error("Selected engine is unavailable"); selectedProviderRoute(selection, target.driverKind); }
+    catch (error) { return { ok: false, status: 409, error: (error as Error).message }; }
+  }
+  if (requireAvailableModel && !selection.connectionId) {
     if (!target) {
       return { ok: false, status: 400, error: `model instance "${selection.instanceId}" is unavailable` };
     }
@@ -1102,14 +1184,15 @@ function memoryIntegration(botId: string, threadId: string, generation: string) 
 const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,signal)=>{
   const selected=memoryExtractorInstanceId();
   if(!selected)return;
-  const instance=registry.get(String(selected));
-  return consolidateMemorySource(jobId,instance?.extractMemory?.bind(instance)??null,signal);
+  const extractor=resolveMemoryExtractor(selected,registry.instances());
+  return consolidateMemorySource(jobId,extractor,signal);
 },onIdleConsolidation:async(signal)=>{
+  syncTrackedMemoryImports({bots:store.bots,groups:store.groups});
   const selected=memoryExtractorInstanceId();
-  const instance=selected?registry.get(selected):null;
-  if(!instance?.extractMemory)return;
+  const extractor=resolveMemoryExtractor(selected,registry.instances());
+  if(!extractor)return;
   const [jobId]=pendingMemoryConsolidationJobs(1);
-  if(jobId)return consolidateMemorySource(jobId,instance.extractMemory.bind(instance),signal);
+  if(jobId)return consolidateMemorySource(jobId,extractor,signal);
 }});
 memoryWorker.start();
 const sendSequencer = new SendSequencer();
@@ -1154,7 +1237,7 @@ const INDIVIDUAL_CHIEF_CONFLICT =
   "An Individual Assistant works alone under the Chief of Staff and leads no team. Remove this bot's Chief of Staff role first, then make it an Individual Assistant.";
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
-  const { resumeCursors: _resumeCursors, tasks, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, connectedAppAccess: _connectedAppAccess, accessRoleEpoch: _accessRoleEpoch, tasks, ...rest } = bot;
   return { ...rest, avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
 };
 
@@ -1729,6 +1812,68 @@ function broadcast(payload: Record<string, unknown>) {
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+const imageOperations = new ImageOperations({ store, waiting: (threadId, waiting, requestId, messageId) => {
+  if (waiting && messageId) askMessageByRequest.set(`${threadId}:${requestId}`, messageId);
+  else askMessageByRequest.delete(`${threadId}:${requestId}`);
+  watchdog.setWaitingOnHuman(threadId, waiting);
+} });
+function imageConnection(id: string): ImageConnection | null {
+  if (id.startsWith("model:")) {
+    const connection = providerConnections.resolve(id.slice(6));
+    if (!connection?.enabled || !["flux", "openai", "openrouter", "xai"].includes(connection.preset)) return null;
+    return { id, provider: connection.preset as ImageConnection["provider"], apiKey: connection.key, revision: connection.revision };
+  }
+  let key = "", provider: ImageConnection["provider"];
+  if (id === "flux") { provider = "flux"; key = fluxKey() ?? ""; }
+  else if (id === "openai") { provider = "openai"; key = cfg.imageGen?.key ?? ""; }
+  else if (id === "xai") { provider = "xai"; key = cfg.xai?.key ?? ""; }
+  else if (id === "openai-compatible") {
+    provider = "openai";
+    if (cfg.openaiCompat?.url !== "https://api.openai.com/v1") return null;
+    key = cfg.openaiCompat?.key ?? "";
+  } else if (id === "openrouter") {
+    provider = "openrouter";
+    if (cfg.openaiCompat?.url !== "https://openrouter.ai/api/v1" && !(cfg.openaiCompat?.url === undefined && cfg.openaiCompat?.key?.startsWith("sk-or-"))) return null;
+    key = cfg.openaiCompat?.key ?? "";
+  } else return null;
+  return key ? { id, provider, apiKey: key, revision: createHash("sha256").update(JSON.stringify([provider, key, cfg.openaiCompat?.url])).digest("hex") } : null;
+}
+const imageService = new ImageGenerationService({ resolveConnection: imageConnection,
+  connectionIds: () => [...providerConnections.list().filter(connection => connection.enabled && !connection.legacy).map(connection => `model:${connection.id}`), "flux", "openai", "openai-compatible", "openrouter", "xai"] });
+async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
+  const connections = imageService.listConnections().map(connection => ({ ...connection, label: connection.id.startsWith("model:")
+    ? providerConnections.resolve(connection.id.slice(6))?.label ?? connection.provider
+    : ({ flux: "Flux Router", openai: "OpenAI image key", "openai-compatible": "OpenAI", openrouter: "OpenRouter", xai: "xAI" } as Record<string,string>)[connection.id] ?? connection.provider }));
+  const chosen = connectionId ?? connections.find(connection => connection.provider === "flux")?.id ?? connections.find(connection => connection.provider === "openai")?.id;
+  const catalog = chosen && imageConnection(chosen) ? await imageService.getCatalog(chosen) : null;
+  const model = cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model ?? catalog?.defaultModel : catalog?.defaultModel;
+  const selected = chosen && model && catalog?.models.some(item => item.id === model && item.generate && !item.disabledReason) ? { connectionId: chosen, model } : null;
+  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog };
+}
+
+function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
+  const group = activeGroupTurnForBot(bot.id);
+  const threads = new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId), ...(group ? [group.threadId] : [])]);
+  const pending: PendingPermissionInput[] = [];
+  for (const threadId of threads) {
+    const liveIds = new Set([...askMessageByRequest].filter(([key]) => key.startsWith(`${threadId}:`)).map(([, id]) => id));
+    if (!liveIds.size) continue;
+    for (const message of store.messagesFor(threadId)) {
+      if (liveIds.has(message.id) && message.card && !message.card.answered && !message.card.dismissed) {
+        pending.push({ kind: message.card.tool ? "tool" : "question", createdAt: message.at });
+      }
+    }
+  }
+  return pending;
+}
+
+async function currentConnectedAccessAccounts() {
+  if (!composio.configured(cfg)) return [];
+  const services = await composio.connectedServices(cfg);
+  return Object.entries(services).flatMap(([toolkit, service]) => (service.accounts ?? [])
+    .filter(account => /^active$/i.test(account.status))
+    .map(account => ({ toolkit, accountId: account.id, label: `${toolkit} · ${account.alias || account.id.slice(-8)}` })));
+}
 
 /** Deliver a person's answer to the engine that asked, and tell the truth
  * about what happened. `unavailable` — the turn ended, the ask timed out,
@@ -1756,8 +1901,8 @@ async function answerRequest(
     : thread.find((m) => m.card?.requestId === requestId);
   const card = cardMessage?.card;
   const instance = registry.get(instanceId);
-  let outcome: RequestOutcome = "unavailable";
-  if (instance) {
+  let outcome: RequestOutcome = imageOperations.resolve(threadId, requestId, behavior) ?? "unavailable";
+  if (!requestId.startsWith("image-") && instance) {
     try {
       outcome = await instance.adapter.respondToRequest(threadId, requestId, { behavior, message });
     } catch {
@@ -1811,6 +1956,7 @@ function closeOpenApprovals(threadId: string): void {
   // Peer approvals also hold an in-memory promise. Resolve those first; merely
   // patching their cards would leave the delegation queue waiting 15 minutes.
   cancelPeerApprovalsForThread(threadId);
+  imageOperations.cancelThread(threadId);
   for (const message of store.messagesFor(threadId)) {
     const card = message.card;
     if (!card?.requestId || card.answered || card.dismissed) continue;
@@ -2521,7 +2667,7 @@ bus.subscribe((event: RuntimeEvent) => {
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup, ...(event.providerError ? { providerError: event.providerError } : {}) },
+        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, 160)}`, ok: false, setup: event.setup, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.providerError ? { providerError: event.providerError } : {}) },
       });
       // a setup error means the engine could not even start: the bot is
       // dead until something changes, not merely idle. The next successful
@@ -2534,7 +2680,8 @@ bus.subscribe((event: RuntimeEvent) => {
       // tally at turn.completed (below) so retries never double-count
       turnUsage.set(event.threadId, { input: event.input, output: event.output, cachedInput: event.cachedInput });
       break;
-    case "turn.completed": {
+    case "turn.completed":
+      activeProviderSelections.delete(event.threadId); {
       const generatedKey = generatedImageTurnKey(event.threadId, event.turnId);
       const generated = generatedImagesByTurn.get(generatedKey) ?? [];
       generatedImagesByTurn.delete(generatedKey);
@@ -2806,12 +2953,13 @@ bus.subscribe((event: RuntimeEvent) => {
 /** How a drained delegation becomes a real turn on the target. Shared by
  * the settle-time drain and the boot-time drain of what a previous process
  * left queued. */
-const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId, eventId) => {
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId, eventId, coordination) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
     const targetThreadId = store.bot(toBotId)?.threadId;
+    const releaseSlot = targetThreadId ? holdCoordinationSlot(targetThreadId) : () => {};
     const target = store.bot(toBotId);
     if (targetThreadId) {
       delegationWatch.set(targetThreadId, {
@@ -2827,6 +2975,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     const reportStartFailure = (error: unknown) => {
       if (failureReported) return;
       failureReported = true;
+      releaseSlot();
       const bot = store.bot(toBotId);
       const why = error instanceof Error ? error.message : String(error);
       if (targetThreadId) {
@@ -2855,6 +3004,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     return startTurn(toBotId, text, {
       commsDepth,
       eventId,
+      coordination,
       // The delegating bot is the one whose unattended state matters, and a
       // room thread has no owner to look it up from.
       unattended: isUnattended(fromBotId || store.botByThread(sourceThreadId)?.id),
@@ -2879,6 +3029,9 @@ function retryDelegationsWaitingOn(botId: string): void {
   queueMicrotask(() => {
     delegationRetryBots.delete(botId);
     if (store.bot(botId)?.busy) return;
+    const threadId = store.bot(botId)?.threadId;
+    if (threadId) coordinationSlots.get(threadId)?.();
+    if (providerConfigBusy || !providerFleetReady) return;
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
@@ -3085,11 +3238,19 @@ async function finalScreenFrame(botId: string, threadId: string): Promise<Frame 
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
+function unavailableModelMessage(instanceId: string): string {
+  return instanceId.trim()
+    ? "This bot's AI connection is unavailable. Choose another model, or reconnect your provider in App Settings."
+    : "Choose a model for this bot to get started. If you haven't connected a provider yet, add your Flux Router key or connect another provider in App Settings.";
+}
+
 async function startTurn(
   botId: string,
   text: string,
   opts?: {
     commsDepth?: number;
+    /** Authenticated server ancestry; never accepted from ordinary request bodies. */
+    coordination?: CoordinationTrace;
     /** Server-owned source ticket for explicit memory-to-skill review. */
     memorySkillSource?: string;
     userMessage?: Message;
@@ -3121,6 +3282,7 @@ async function startTurn(
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (providerConfigBusy) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   if (checkpointRestoreLeases.has(botId)) {
     throw Object.assign(new Error("this bot's project files are being restored — wait for the restore to finish"), {
       status: 409,
@@ -3154,13 +3316,15 @@ async function startTurn(
       new Error(
         opts?.runOn === "cloud"
           ? "the Cloud VM runner is unavailable — configure Box in App Settings"
-          : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+          : unavailableModelMessage(bot.modelSelection.instanceId),
       ),
       { status: 409 },
     );
   }
   const instanceId = instance.instanceId;
   const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
+  const providerRoute = opts?.runOn === "cloud" ? undefined : selectedProviderRoute(bot.modelSelection, instance.driverKind);
+  activeProviderSelections.delete(threadId);
   // a cloud routine borrows the instance default model, so it borrows no
   // per-bot effort either
   const effort = opts?.runOn === "cloud" ? undefined : bot.modelSelection.effort;
@@ -3177,7 +3341,7 @@ async function startTurn(
   // ever being re-checked against the catalog (checkedModelSelection only
   // validates ids when requireAvailableModel is set). Unrefused, it is posted
   // to the ENGINE'S own host — api.openai.com for codex — and 400s there.
-  const fluxRefusal = fluxSelectionRefusal(model, instance.driverKind);
+  const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);
   if (fluxRefusal) throw Object.assign(new Error(fluxRefusal), { status: 409 });
 
   // an edit hands us its already-branched user message; a plain send appends
@@ -3260,7 +3424,7 @@ async function startTurn(
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
   const dispatchClaimId = randomUUID();
-  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId);
+  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination);
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnGenerationByBot.set(bot.id, dispatchClaimId);
   directTurnDispatchClaims.set(bot.id, { id: dispatchClaimId, threadId, phase: "setup" });
@@ -3269,6 +3433,7 @@ async function startTurn(
   turnUsage.delete(threadId);
 
   void (async () => {
+    let acceptedTurnCleanupFailed=false;
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       let browser: Awaited<ReturnType<typeof browserIntegration>> = null;
@@ -3492,9 +3657,10 @@ async function startTurn(
           : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
         throw new Error(`${autoVpsProblem}. ${hint}`);
       }
-      // Agent control tools include peer comms and the secure credential
-      // request card. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
-      // stop, so the user's tokens can't be burned by a bot-to-bot loop.
+      // Keep management/status tools available on delegated turns. Handoff
+      // depth and shared chain allowances are enforced at action admission;
+      // removing the whole integration strands leads and encourages native
+      // provider tools to route into an unrelated agent directory.
       // Only drivers that mount the tools get the integration (and, via the
       // integrations.agents gate below, the prompt hint) — a bot on a driver
       // without it must not be told about tools it cannot call. Any bot can
@@ -3505,10 +3671,7 @@ async function startTurn(
           !candidate.hidden &&
           canReach(bot, candidate),
       );
-      if (
-        commsDepth < MAX_COMMS_DEPTH &&
-        instance.adapter.capabilities.agentsMcp === true
-      ) {
+      if (instance.adapter.capabilities.agentsMcp === true) {
         integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring, dispatchClaimId);
       }
       // @mentions in the user's message (the composer's tagging UI) become
@@ -3594,27 +3757,39 @@ async function startTurn(
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
           const rebuilt=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
-            rewound:rewound||revoked,fresh,externallyUpdated:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"});
+            rewound,memoryRefreshed:revoked,fresh,externallyUpdated:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"});
           turnText=rebuilt.turnText;
           if(revoked)resumeCursor=undefined;
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
-        const bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        let bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
+          memoryRefreshed=true;
           const allowed=filterMemoryReplay(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
           turnText=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
-            rewound:true,fresh:false,externallyUpdated:false,replaysNatively:instance.driverKind==="grok"}).turnText;
+            rewound,memoryRefreshed:true,fresh:false,externallyUpdated:false,replaysNatively:instance.driverKind==="grok"}).turnText;
           resumeCursor=undefined;
         }
         if(!resumeCursor) {
           // Claude's idle retained process is not reported by hasSession; its
           // explicit per-thread reset must run even when no active turn exists.
-          if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
-          else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+          bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
+            if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+            else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+          },{availableContextTokens});
+          // The same await can invalidate disclosed history; re-filter with the
+          // original authority rather than replaying a pre-reset snapshot.
+          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowedById=new Map(allowed.map(message=>[message.id,message]));
+          transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
+            .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
+          turnText=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
+            rewound,memoryRefreshed,fresh:memoryRefreshed?false:fresh,externallyUpdated:memoryRefreshed?false:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"}).turnText;
         }
         memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId);
         memoryDispatches.set(threadId,memoryReceipt);
@@ -3626,7 +3801,10 @@ async function startTurn(
       watchdog.watch(threadId, bot.id);
       projectTurnLeases.markDispatched(dispatchClaimId);
       memoryReceipt?.assertCurrent();
+      if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
+      if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId, route: providerRoute });
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
+        providerRoute,
         memoryContext:memoryReceipt?.bundle,
         threadId,
         text: turnText,
@@ -3674,7 +3852,7 @@ async function startTurn(
           // its other reader (package-export.ts) merely round-trips the
           // field back out into a blueprint.
           composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
-          (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
+          (integrations.browser ? UNIFIED_BROWSER_SYSTEM_PROMPT : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           credentialPrompt +
           (integrations.agents && (cfg.webSearch?.provider ?? "engine") === "engine"
@@ -3697,10 +3875,13 @@ async function startTurn(
             : ""),
         integrations,
         cwd,
-      }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
-        await instance.adapter.interruptTurn(threadId).catch(() => {});
-      });
-      if(!dispatch.cancelled)memoryReceipt?.accepted();
+      }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
+        retireProviderTurn(accepted.turnId);
+        try {
+          await instance.adapter.interruptTurn(threadId);
+          if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+        } catch(error) { acceptedTurnCleanupFailed=true;throw error; }
+      },()=>memoryReceipt?.accepted());
       if (!internalCapabilities.bindProviderTurn(threadId, dispatchClaimId, dispatch.value.turnId)) {
         revokeInternalGeneration(threadId, dispatchClaimId);
       }
@@ -3723,15 +3904,27 @@ async function startTurn(
       // after its own turn.completed would never be torn down — it would
       // keep polling the box forever, carrying dead per-turn state. busy
       // is flipped false in the fold, so it is the honest "still running".
-      if (!previewCapture && browser?.connection && browser.capability) {
-        const { connection } = browser;
-        const capability = browser.capability;
-        previewCapture = () => browserScreenshot(connection, capability, fetch);
+      if (!previewCapture && browser) {
+        const profileKey = browser.profileKey;
+        previewCapture = async () => {
+          const result = await unifiedBrowser.dispatch(profileKey, "tools/call", { name: "agent_browser_screenshot", arguments: { format: "png" } }, () => directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) as { content?: { type: string; data?: string }[] };
+          const image = result.content?.find(item => item.type === "image" && item.data);
+          if (!image?.data) throw new Error("Browser picture is unavailable");
+          return { png: image.data, format: "png" };
+        };
       }
       if (previewCapture && store.bot(bot.id)?.busy) {
         startScreenPoller(bot.id, previewCapture, { screenIsTheWork: instance.driverKind === "boxAgent" });
       }
     } catch (e) {
+      if(acceptedTurnCleanupFailed) {
+        // Termination is unconfirmed; hold ownership until application restart.
+        // Retired provider events cannot clear this bot or admit queued work.
+        revokeInternalGeneration(threadId,dispatchClaimId);
+        store.appendMessage(threadId,{role:"bot",kind:"activity",tool:{name:"error: provider termination is unconfirmed after access changed — restart Murage before continuing",ok:false}});
+        return;
+      }
+      if (activeProviderSelections.get(threadId)?.route === providerRoute) activeProviderSelections.delete(threadId);
       revokeInternalGeneration(threadId, dispatchClaimId);
       clearCancelledProviderHandshake(threadId, `direct:${dispatchClaimId}`);
       clearDirectTurnDispatch(bot.id, dispatchClaimId);
@@ -4030,6 +4223,7 @@ if (recoveryOwners.length > 0) {
 }
 routines.start();
 const telegram = new TelegramService({ dataDir: DATA_DIR,
+  isCurrentTarget: targetBotId => cfg.telegram?.targetBotId === targetBotId && Boolean(store.bot(targetBotId) && !store.bot(targetBotId)!.hidden),
   approvals: targetBotId => {
     const pending = () => {
       const bot = store.bot(targetBotId);
@@ -4072,6 +4266,12 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
     }
   },
 });
+// A saved token never selects a replacement Chief: restore only the exact
+// previously paired target after Telegram identity/provenance verification.
+if (cfg.telegram?.botToken && cfg.telegram.targetBotId) {
+  void telegram.resume(cfg.telegram.botToken, cfg.telegram.targetBotId);
+}
+
 
 // Chat tools can prepare routine changes, but the harness applies them only
 // after the user confirms a durable card. Keeping this beside the scheduler
@@ -4302,7 +4502,7 @@ function serializeRoomContext(threadId: string, userName: string, permitted?: Me
 // comms bus: passed into the visibility helpers in comms-visibility.ts so
 // they can mirror messages + chips without re-deriving SSE plumbing. Same
 // shape every comms entry point uses (ask_bot, delegate_bot).
-const commsBus: CommsBus = { store, broadcast };
+const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapacity };
 
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
@@ -4394,7 +4594,7 @@ async function runGroupMemberTurn(
   const internalGeneration = randomUUID();
   beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring);
   try {
-  if (hop < MAX_COMMS_DEPTH && instance.adapter.capabilities.agentsMcp === true) {
+  if (instance.adapter.capabilities.agentsMcp === true) {
     integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration);
   }
   const latestUser = [...store.activePath(threadId)].reverse().find(
@@ -4584,7 +4784,7 @@ async function runGroupMemberTurn(
     // What the profile said this assistant's job needs. A packaged bot does
     // not stop needing Gmail because it is answering in a room.
     composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
-    (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
+    (integrations.browser ? UNIFIED_BROWSER_SYSTEM_PROMPT : "") +
     (workspace ? skillsSystemPrompt(bot.id) : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, bot.playbooks);
@@ -4636,19 +4836,21 @@ async function runGroupMemberTurn(
   const prepareRoomMemory=async()=>{
     if(memoryState().mode!=="active")return;
     const access=turnMemoryAccess(bot.id,threadId,internalGeneration);
-    const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
-    text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     const selection=memberTurnSelection(bot.modelSelection);
     const availableContextTokens=instance.models.options.find(option=>option.id===(selection.model??instance.models.default))?.contextWindow??20480;
     const query=Buffer.from(latestUser?.text??"").subarray(0,4093).toString("utf8").replace(/�+$/,"");
-    const bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
-    if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
-    else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+    const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
+      if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+      else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+    },{availableContextTokens});
+    const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
+    text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
     memoryDispatches.set(threadId,memoryReceipt);
     if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,internalGeneration);
   };
   let providerTurnId: string | undefined;
+  let acceptedRoomCleanupFailed=false;
   let abandoned = false;
   const retirementOwner = `room-abandoned:${randomUUID()}`;
   const abandonProviderTurn = () => {
@@ -4715,7 +4917,11 @@ async function runGroupMemberTurn(
       await prepareRoomMemory();
       if(abandoned||isCancelled?.()||internalTurnOwners.get(threadId)?.generation!==internalGeneration)throw new Error("turn stopped before memory dispatch");
       memoryReceipt?.assertCurrent();
+      const providerRoute = selectedProviderRoute(bot.modelSelection, instance.driverKind);
+      activeProviderSelections.delete(threadId);
+      if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId: instance.instanceId, route: providerRoute });
       return guardTurnDispatch(instance.adapter.sendTurn({
+        providerRoute,
         memoryContext:memoryReceipt?.bundle,
         threadId,
         text,
@@ -4723,16 +4929,19 @@ async function runGroupMemberTurn(
         cwd,
         integrations,
         ...memberTurnSelection(bot.modelSelection),
-      }), () => abandoned || Boolean(isCancelled?.()), async () => {
-        // Stop may have landed while the adapter was authenticating, before
-        // it had an active process for the first interrupt to reach. Now that
-        // sendTurn completed setup, revoke again and interrupt the real turn.
-        await releaseBrowserCapabilityForThread(threadId);
-        await instance.adapter.interruptTurn(threadId).catch(() => {});
-      });
+      }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
+        // Retire before teardown so synchronous/late output cannot settle this
+        // room or a replacement while accepted authority is being withdrawn.
+        providerTurnId=accepted.turnId;
+        retireProviderTurn(accepted.turnId);
+        try {
+          await releaseBrowserCapabilityForThread(threadId);
+          await instance.adapter.interruptTurn(threadId);
+          if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+        } catch(error) { acceptedRoomCleanupFailed=true;throw error; }
+      },()=>memoryReceipt?.accepted());
     })()
       .then((dispatch) => {
-        if(!dispatch.cancelled)memoryReceipt?.accepted();
         if (!internalCapabilities.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId)) {
           revokeInternalGeneration(threadId, internalGeneration);
         }
@@ -4752,6 +4961,14 @@ async function runGroupMemberTurn(
         onProviderHandshakeSettled?.();
       })
       .catch((err) => {
+        if(acceptedRoomCleanupFailed) {
+          deadline.stop();unregisterStall();unsub();
+          revokeInternalGeneration(threadId,internalGeneration);
+          store.appendMessage(threadId,{role:"bot",kind:"activity",from:{botId:bot.id,name:bot.name,color:bot.color},tool:{name:"error: provider termination is unconfirmed after access changed — restart Murage before continuing",ok:false}});
+          // Restart is required; do not report a settled room or
+          // release its leases while the provider's termination is unknown.
+          return;
+        }
         onProviderHandshakeSettled?.();
         clearCancelledProviderHandshake(threadId, retirementOwner);
         if (abandoned) return;
@@ -5211,6 +5428,7 @@ function startGroupTurn(
   queueId?: string,
   options: StartGroupTurnOptions = {},
 ) {
+  if (providerConfigBusy) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
   if (roomSetupPending(group)) {
@@ -6172,6 +6390,7 @@ function persistMcpServers(next: Record<string, unknown>): void {
 /** Rebuild the provider fleet after a config change so new keys take
  * effect without a server restart (kills any in-flight turns). */
 async function reloadProviders() {
+  providerFleetReady = false;
   const retiringProjects = projectTurnLeases.generations();
   revokeAllInternalTurns();
   await releaseAllBrowserCapabilities();
@@ -6180,6 +6399,7 @@ async function reloadProviders() {
   projectTurnLeases.disposed(retiringProjects);
   await registry.load(instanceConfigs(cfg));
   bus.attach(registry.instances());
+  providerFleetReady = true;
   // A killed turn's terminal events can die with the old fleet (dispose is
   // async under the hood), stranding the bot busy — and its screen poller —
   // forever. Settle anything still marked busy.
@@ -6215,7 +6435,39 @@ async function reloadProviders() {
 // Config writes rebuild the whole provider registry. Keep the read-modify-write
 // and reload sequence single-flight so two settings requests cannot drop one
 // another's changes or dispose a fleet while another reload is creating it.
-let providerConfigBusy = false;
+const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
+const engineManager = new EngineManager({
+  root: join(DATA_DIR, "managed-engines"),
+  get envPath() { return augmentedPath(); },
+  getInstance: async id => {
+    resetPathCache();
+    const instance = (await registry.describe()).find(item => item.instanceId === id);
+    return instance ? { instanceId: id, driverKind: instance.driverKind === "fuigoAgent" ? "fuigo" : instance.driverKind, snapshot: instance.snapshot } : undefined;
+  },
+  isBusy: () => providerConfigBusy || engineWorkActive(),
+  activate: async (id, cli) => {
+    if (providerConfigBusy || engineWorkActive()) throw new Error("Tasks are still running.");
+    providerConfigBusy = true;
+    const current = instanceConfigs(cfg)[id]?.config;
+    const previousCli = current && typeof current === "object" && !Array.isArray(current) && "cli" in current && typeof current.cli === "string" ? current.cli : "";
+    try {
+      const candidate = withInstanceCli(cfg, id, cli);
+      if (!candidate.ok) throw new Error("Engine not found.");
+      saveConfig({ instances: candidate.config.instances });
+      Object.assign(cfg, loadConfig());
+      try { await reloadProviders(); }
+      catch (cause) {
+        const rollback = withInstanceCli(loadConfig(), id, previousCli);
+        if (!rollback.ok) throw new Error("The engine could not be restored. Review its path in Settings.");
+        const entry = rollback.config.instances![id];
+        saveConfig({ instances: { [id]: { ...entry, config: entry.config ?? {} } } });
+        Object.assign(cfg, loadConfig());
+        await reloadProviders();
+        throw cause;
+      }
+    } finally { finishProviderConfigMutation(); }
+  },
+});
 
 // The custom MCP registry is read-modify-written the same way, and a probe
 // spawns a process, so both are bounded.
@@ -6849,8 +7101,7 @@ const server = createServer(async (req, res) => {
             return {botId,threadId:target.threadId,messageId:message.id};
           },
 
-          extractors:()=>registry.instances().filter(instance=>instance.enabled && ["openai-compat","grok","minimax"].includes(instance.driverKind))
-            .map(instance=>({instanceId:instance.instanceId,label:instance.displayName??instance.driverKind,eligible:typeof instance.extractMemory==="function",...(typeof instance.extractMemory!=="function"?{reason:"A tool-free capped extractor is unavailable for this engine."}:{})})),
+          extractors:()=>memoryExtractorConnections(registry.instances()),
         });
         if(path==="/api/memory/action" && body && typeof body==="object" && "action" in body && body.action==="configure") {
           if(["off","paused"].includes(memoryState().mode))await memoryWorker.stop();
@@ -6862,6 +7113,39 @@ const server = createServer(async (req, res) => {
         return json(res,status,{error:error instanceof Error?error.message:"MEMORY_ACTION_FAILED"});
       }
     }
+    if ((m = path.match(/^\/api\/bots\/([^/]+)\/browser(\/frame)?$/))) {
+      const desktop = requestSurface(req.headers, url.searchParams) === "desktop";
+      const paired = companionAuthorized(req.headers);
+      if (!desktop && !paired) return json(res, 401, { error: "browser owner authentication required" });
+      const bot = store.bot(m[1]);
+      if (!bot || (!desktop && !visibleToCompanion(store, { scope: "bot", botId: bot.id }))) return json(res, 404, { error: "no such browser" });
+      if (!builtInBrowserEnabled(cfg) || bot.browser === false) return json(res, 403, { error: "browser is disabled" });
+      if (method === "POST" && !String(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "JSON required" });
+      const profile = bot.browserProfile, binding = await unifiedBrowserBinding(bot.id, profile);
+      const realm = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+      const authority = { owner: browserOwnerId(desktop ? "desktop" : "companion", realm), profileKey: binding.key, canReclaim: desktop,
+        active: () => builtInBrowserEnabled(cfg) && !!store.bot(bot.id) && store.bot(bot.id)?.browser !== false && store.bot(bot.id)?.browserProfile === profile };
+      const body = method === "POST" ? await readBody(req) : {};
+      const result = await browserOwnerRequest(unifiedBrowser, authority, method, body, m[2] ? Number(url.searchParams.get("generation")) : undefined);
+      res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
+    }
+
+    if (path === "/api/images/settings" && (method === "GET" || method === "POST")) {
+      if (method === "GET") return json(res, 200, await imageSettings());
+      const patch = z.object({ enabled: z.boolean().optional(), connectionId: z.string().max(160).optional(), model: z.string().max(180).optional() }).strict().parse(await readBody(req));
+      const next = { ...cfg.imageGen, ...patch };
+      if (patch.connectionId && patch.connectionId !== cfg.imageGen?.connectionId) delete next.model;
+      if (patch.connectionId || patch.model || patch.enabled === true) {
+        const state = await imageSettings(next.connectionId);
+        if (!state.catalog) return json(res, 409, { error: "Connect an image provider first." });
+        const model = patch.model ?? next.model ?? state.catalog.defaultModel;
+        if (model && !state.catalog.models.some(item => item.id === model && item.generate && !item.disabledReason)) return json(res, 400, { error: "Choose a supported image model from this connection." });
+        if (model) next.model = model; else { delete next.model; next.enabled = false; }
+      }
+      const { key: _imageKey, ...preferences } = next;
+      saveConfig({ imageGen: preferences }); cfg.imageGen = next;
+      return json(res, 200, await imageSettings());
+    }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
@@ -6871,7 +7155,7 @@ const server = createServer(async (req, res) => {
         return json(res, 401, { error: "unauthorized" });
       }
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith("/api/internal/connectors/")
-        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser"].includes(path) ? "computer" : "agents";
+        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       const requireActiveInternal = () => {
         if (!internalCapabilities.isActive(internalClaim) || !store.bot(internalClaim.botId)
@@ -6910,6 +7194,32 @@ const server = createServer(async (req, res) => {
       };
       assertInternalIdentity(Object.fromEntries(url.searchParams));
       requireActiveInternal();
+
+      if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }
+      if (path === "/api/internal/generate-image" && method === "POST") {
+        const body = z.object({ requestId: z.string().regex(/^[\w-]{1,80}$/), prompt: z.string().min(1).max(4000), operation: z.enum(["generate", "edit"]).optional(),
+          connectionId: z.string().max(160).optional(), model: z.string().max(180).optional(), quality: z.enum(["low", "medium", "high"]).optional(),
+          size: z.enum(["1024x1024", "1536x1024", "1024x1536"]).optional(), referenceIds: z.array(z.string().max(180)).max(4).optional() }).strict().parse(await readBody(req));
+        requireActiveInternal();
+        const settingIdentity = JSON.stringify(cfg.imageGen ?? {});
+        const state = await imageSettings(body.connectionId);
+        requireActiveInternal();
+        const chosen = body.connectionId ?? state.selected?.connectionId;
+        if (cfg.imageGen?.enabled === false || !chosen) return json(res, 409, { error: "Choose an image connection and model in Settings → Tools & Connections → Image generation." });
+        const controller = new AbortController();
+        const disconnected = () => controller.abort(); res.once("close", disconnected);
+        const active = () => { requireActiveInternal(); if (controller.signal.aborted || cfg.imageGen?.enabled === false || JSON.stringify(cfg.imageGen ?? {}) !== settingIdentity) throw Object.assign(new Error("Image operation was cancelled or its settings changed."), { status: 409 }); };
+        const revoked = setInterval(() => { try { active(); } catch { controller.abort(); } }, 100);
+        try {
+          const actor = { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation, signal: controller.signal, assertActive: active };
+          const refs = imageReferences(store, actor.threadId, body.referenceIds);
+          const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined, prompt: body.prompt,
+            operation: body.operation ?? (refs.length ? "edit" : "generate"), quality: body.quality, size: body.size };
+          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, reserve =>
+            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish: async (image, meta) => publishImage(store, actor, image, meta) }, refs));
+          active(); return json(res, 200, result);
+        } finally { clearInterval(revoked); res.off("close", disconnected); }
+      }
       if (method === "POST" && path === "/api/internal/web-search") {
         const body = await readBody(req);
         assertInternalIdentity(body);
@@ -6935,6 +7245,20 @@ const server = createServer(async (req, res) => {
             { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status });
           throw error;
         } finally { clearInterval(revoked); res.off("close", disconnected); }
+      }
+      if (path === "/api/internal/unified-browser") {
+        requireActiveInternal();
+        if (method !== "POST") return json(res, 405, { error: "browser RPC requires POST" });
+        const entry = unifiedBrowserThreads.get(internalClaim.threadId);
+        const authorized = () => !!entry && internalCapabilities.isActive(internalClaim)
+          && unifiedBrowserThreads.get(internalClaim.threadId) === entry
+          && entry.botId === internalClaim.botId && entry.ownerId === internalClaim.generation
+          && builtInBrowserEnabled(cfg) && store.bot(entry.botId)?.browser !== false
+          && store.bot(entry.botId)?.browserProfile === entry.profile;
+        if (!authorized()) return json(res, 403, { error: "browser turn is no longer authorized" });
+        const body = await readBody(req); requireActiveInternal();
+        const result = await unifiedBrowser.dispatch(entry!.profileKey, body.method, body.params ?? {}, authorized);
+        res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
       }
       if (path === "/api/internal/headless-browser") {
         if (method !== "GET" && method !== "DELETE") return json(res, 405, { error: "method not allowed" });
@@ -6976,12 +7300,13 @@ const server = createServer(async (req, res) => {
         // title/description included so a "chief of staff"-style bot can
         // judge the team (who does what, who has no job description yet)
         const bots = store.bots
-          .filter((b) => b.id !== self && !b.hidden && canReach(sender, b))
+          .filter((b) => b.id !== self && !b.hidden && mayInspectBot(sender, b))
           .map((b) => ({
             id: b.id,
             name: b.name,
             model: b.modelSelection.model,
             busy: !!b.busy,
+            reachable: canReach(sender, b),
             title: b.title || undefined,
             description: b.description || undefined,
             // section + chiefOfStaff so a workspace Chief can tell a lead
@@ -6992,7 +7317,38 @@ const server = createServer(async (req, res) => {
             // never rendered as a team leader it is not.
             individual: isIndividualAssistant(b) ? true : undefined,
           }));
-        return json(res, 200, { bots });
+        return json(res, 200, { bots, organizationRevision: organizationRevision(store, sender) });
+      }
+      if (method === "POST" && path === "/api/internal/bot-management") {
+        const { fromBotId, fromThreadId: _thread, depth: _depth, targetBotId, ...body } = await readInternalBody();
+        const sender = store.bot(String(fromBotId));
+        if (!sender) return json(res, 403, { error: "unknown sender" });
+        const result = manageBot(store, sender, { ...body, botId: targetBotId }, {
+          pendingWork: bot => hasPendingBotDelegations(bot) || Boolean(activeGroupTurnForBot(bot.id)) || Boolean(routines?.activeRunForBot(bot.id)),
+          validateSelection: (input, bot) => {
+            const checked = checkedModelSelection(input, { selection: bot.modelSelection, busy: Boolean(bot.busy) }, true);
+            if (!checked.ok) throw Object.assign(new Error(checked.error), { status: checked.status });
+            return checked.selection;
+          },
+          validateLeader: selection => {
+            const error = leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId);
+            if (error) throw Object.assign(new Error(error), { status: 409 });
+          },
+          revoke: revokeInternalBot,
+        });
+        return json(res, 200, result);
+      }
+      if (method === "POST" && ["/api/internal/access-request", "/api/internal/permission-status"].includes(path)) {
+        const { fromBotId, fromThreadId, depth: _depth, targetBotId, ...body } = await readInternalBody();
+        const sender = store.bot(String(fromBotId)), target = store.bot(String(targetBotId));
+        if (!sender || !target) return json(res, 404, { error: "Bot not found." });
+        if (path.endsWith("permission-status")) {
+          if (Object.keys(body).length) return json(res, 400, { error: "Only the target bot is needed." });
+          return json(res, 200, permissionStatus(store, sender, target.id, pendingPermissionStatus(target)));
+        }
+        const result = requestBotAccess(store, sender, { ...body, botId: target.id });
+        store.appendMessage(String(fromThreadId), { role: "bot", kind: "text", text: `Connected-app access is waiting for your review for @${target.name}. Open that bot's profile → Connected apps access. No access has been granted yet.` });
+        return json(res, 201, result);
       }
       if (method === "GET" && path === "/api/internal/routines") {
         const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
@@ -7160,12 +7516,14 @@ const server = createServer(async (req, res) => {
       if (method === "POST" && path === "/api/internal/ask-bot") {
         const body = await readInternalBody();
         const fromBotId = String(body.fromBotId ?? "");
-        const toBotId = String(body.toBotId ?? "");
+        const senderForResolution = store.bot(fromBotId);
+        if (!senderForResolution) return json(res, 403, { error: "unknown sender" });
+        const toBotId = resolveCoordinationTarget(senderForResolution, store.bots, String(body.toBotId ?? "")).id;
         const message = String(body.message ?? "").trim();
         const depth = Number(body.depth ?? 0) || 0;
         if (!toBotId || !message) return json(res, 400, { error: "toBotId and message required" });
         if (toBotId === fromBotId) return json(res, 400, { error: "a bot cannot message itself" });
-        if (depth >= MAX_COMMS_DEPTH) return json(res, 200, { error: "message chains are limited to one hop" });
+        if (depth >= MAX_COMMS_DEPTH) return json(res, 200, { error: "the Chief-to-lead-to-specialist handoff depth is exhausted" });
         const target = store.bot(toBotId);
         if (!target) return json(res, 404, { error: "no such bot" });
         // An unknown sender used to fall through: no mirroring AND no
@@ -7192,17 +7550,19 @@ const server = createServer(async (req, res) => {
         // retries, receipts, restart-safe) and the asker gets a task id it
         // can check next turn. If the ledger refuses (cap/depth), fall back
         // to the plain busy bounce rather than dropping the refusal reason.
-        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff");
-        if (!handoffSlot) return json(res, 429, { error: "at most four peer handoffs are allowed per turn" });
+        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
+        if (!handoffSlot) return json(res, 429, { error: `at most ${MAX_HANDOFFS_PER_TURN} peer handoffs are allowed per turn` });
         try {
         const eventAdmissionId = randomUUID();
+        let childCoordination: CoordinationTrace | undefined;
+        const nextCoordination = () => childCoordination ??= coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId);
         const queueBusyFallback = (approvalAlreadyGranted = false) => {
           requireActiveInternal();
           admitEventAction("handoff", eventAdmissionId);
           const queued = queueDelegation(
             commsBus,
             from,
-            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, eventId: internalEventId },
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, eventId: internalEventId, coordination: nextCoordination() },
             MAX_COMMS_DEPTH,
             fromThreadId,
           );
@@ -7210,7 +7570,7 @@ const server = createServer(async (req, res) => {
           handoffSlot.commit();
           return json(res, 200, { busy: true, taskId: queued.id, toBotName: target.name });
         };
-        if (target.busy) return queueBusyFallback();
+        if (target.busy || !coordinationHasCapacity()) return queueBusyFallback();
         let currentFrom = from;
         let currentTarget = target;
 
@@ -7259,7 +7619,7 @@ const server = createServer(async (req, res) => {
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this Murage workspace. Reply to them.]\n\n${message}`;
         admitEventAction("handoff", eventAdmissionId);
-        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId);
+        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId, nextCoordination());
         if (store.bot(toBotId)?.busy) handoffSlot.commit();
         const outcome = await waiting;
         requireActiveInternal();
@@ -7364,7 +7724,9 @@ const server = createServer(async (req, res) => {
       if (method === "POST" && path === "/api/internal/delegate-bot") {
         const body = await readInternalBody();
         const fromBotId = String(body.fromBotId ?? "");
-        const toBotId = String(body.toBotId ?? "");
+        const senderForResolution = store.bot(fromBotId);
+        if (!senderForResolution) return json(res, 403, { error: "unknown sender" });
+        const toBotId = resolveCoordinationTarget(senderForResolution, store.bots, String(body.toBotId ?? "")).id;
         const message = String(body.message ?? "").trim();
         const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : undefined;
         const depth = Number(body.depth ?? 0) || 0;
@@ -7380,14 +7742,14 @@ const server = createServer(async (req, res) => {
         if (!connectorThread(from.id, fromThreadId)) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
-        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff");
-        if (!handoffSlot) return json(res, 429, { error: "at most four peer handoffs are allowed per turn" });
+        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
+        if (!handoffSlot) return json(res, 429, { error: `at most ${MAX_HANDOFFS_PER_TURN} peer handoffs are allowed per turn` });
         try {
         admitEventAction("handoff", randomUUID());
         const queued = queueDelegation(
           commsBus,
           from,
-          { toBotId, message, reason, depth, eventId: internalEventId },
+          { toBotId, message, reason, depth, eventId: internalEventId, coordination: coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId) },
           MAX_COMMS_DEPTH,
           fromThreadId,
         );
@@ -7396,7 +7758,7 @@ const server = createServer(async (req, res) => {
           // nothing about what to do instead
           const said: Record<Exclude<QueueResult, "ok">, string> = {
             self: "a bot cannot delegate to itself",
-            too_deep: "delegation chains are limited to one hop — do this one yourself",
+            too_deep: "the Chief-to-lead-to-specialist handoff depth is exhausted — complete this work without another handoff",
             no_target: "no such bot",
             too_many: "too many delegations queued on this turn — finish some first",
           };
@@ -7502,9 +7864,12 @@ const server = createServer(async (req, res) => {
         }
         if (name.length > 80) return json(res, 400, { error: "name must be at most 80 characters" });
         if (role.length > 120) return json(res, 400, { error: "role must be at most 120 characters" });
-        if (instructions.length > 1_000) {
-          return json(res, 400, { error: "instructions must be at most 1000 characters" });
+        if (instructions.length > 8_000) {
+          return json(res, 400, { error: "instructions must be at most 8000 characters" });
         }
+        const selectedModel = body.modelSelection === undefined ? chief.modelSelection : checkedModelSelection(body.modelSelection, undefined, true);
+        if ("ok" in selectedModel && !selectedModel.ok) return json(res, selectedModel.status, { error: selectedModel.error });
+        const modelSelection = "ok" in selectedModel ? selectedModel.selection : selectedModel;
         const duplicate = store.bots.find(
           (candidate) =>
             !candidate.hidden &&
@@ -7515,7 +7880,7 @@ const server = createServer(async (req, res) => {
           return json(res, 409, { error: `@${duplicate.name} already exists in this section; use list_bots` });
         }
         if (wantsLead) {
-          const error = leadershipAdmissionError(registry.get(chief.modelSelection.instanceId), chief.modelSelection.instanceId);
+          const error = leadershipAdmissionError(registry.get(modelSelection.instanceId), modelSelection.instanceId);
           if (error) return json(res, 409, { error });
         }
         const createSlot = internalCapabilities.reserve(internalClaim, "create");
@@ -7527,7 +7892,7 @@ const server = createServer(async (req, res) => {
             name,
             title: role,
             description: instructions,
-            modelSelection: { ...chief.modelSelection },
+            modelSelection: { ...modelSelection },
             section: targetSection,
           },
           { seedMessages: false },
@@ -7594,14 +7959,27 @@ const server = createServer(async (req, res) => {
       }
       if (method === "POST" && path === "/api/internal/connectors/mcp") {
         const body = await readInternalBody();
+        const authorize = () => {
+          requireActiveInternal();
+          const bot = store.bot(internalClaim.botId);
+          if (!bot) throw Object.assign(new Error("Bot unavailable."), { status: 403 });
+          assertConnectedAppCall(bot, body);
+        };
+        authorize();
+        const ownerBot = store.bot(internalClaim.botId)!;
+        if (!Array.isArray(body) && body.method === "tools/list") {
+          const localTools = restrictedConnectorTools(ownerBot, body.id);
+          if (localTools) return json(res, 200, localTools);
+        }
         const upstream = await composio.relayMcp(
           cfg,
           body,
           Array.isArray(req.headers["mcp-session-id"])
             ? req.headers["mcp-session-id"][0]
             : req.headers["mcp-session-id"],
+          authorize,
         );
-        requireActiveInternal();
+        authorize();
         const headers: Record<string, string> = {
           "content-type": upstream.contentType,
           "cache-control": "no-store",
@@ -7645,6 +8023,7 @@ const server = createServer(async (req, res) => {
         const slugs = [...new Set(items.map(item => item.slug))];
         const owner = connectorThread(botId, threadId);
         if (!owner) return json(res, 403, { error: "conversation does not belong to this bot" });
+        if (botAccessPolicy(owner.bot).mode === "restricted") return json(res, 403, { error: "Ask the owner to review connected-app access; restricted bots cannot add accounts." });
         if (!/^[\w-]{8,100}$/.test(resumeKey)) return json(res, 400, { error: "invalid resume key" });
         if (!items.length || items.length > 12) return json(res, 400, { error: "one to twelve valid app accounts are required" });
         if (!composio.configured(cfg) || owner.bot.composio === false) {
@@ -8332,6 +8711,13 @@ const server = createServer(async (req, res) => {
       try { saveConfig({ telegram: { targetBotId: target.id } }); cfg.telegram.targetBotId = target.id; }
       catch (error) { await telegram.revoke(); throw error; }
       return json(res, 200, pairing);
+    }
+    if (path === "/api/telegram/resume" && method === "POST") {
+      if (telegram.status().resumeState !== "retry") return json(res, 409, { error: "Reconnect retry is not available for this connection." });
+      const token = cfg.telegram?.botToken, targetBotId = cfg.telegram?.targetBotId;
+      if (!token || !targetBotId) return json(res, 409, { error: "Save and pair your Telegram bot first." });
+      await telegram.resume(token, targetBotId);
+      return json(res, 200, telegram.status());
     }
     if (path === "/api/telegram/revoke" && method === "POST") { await telegram.revoke(); return json(res, 200, telegram.status()); }
     if (method === "POST" && (path === "/api/packages/import" || path === "/api/starter-profiles")) {
@@ -9549,6 +9935,8 @@ const server = createServer(async (req, res) => {
         const requestedProfile = body.browserProfile === null || body.browserProfile === ""
           ? undefined
           : body.browserProfile;
+        if (existingBot && requestedProfile !== existingBot.browserProfile && unifiedBrowserHeld(existingBot)) return json(res, 409, { error: "Return browser control before changing profiles" });
+        if (existingBot?.browserProfile === "guest" && requestedProfile !== "guest" && !existingBot.busy) await forgetGuestBrowser(existingBot.id);
         if (existingBot?.busy && requestedProfile !== existingBot.browserProfile) {
           return json(res, 409, { error: "stop this bot's turn before changing its browser profile" });
         }
@@ -10455,7 +10843,7 @@ const server = createServer(async (req, res) => {
       }
       if (!registry.get(bot.modelSelection.instanceId)) {
         return json(res, 409, {
-          error: `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+          error: unavailableModelMessage(bot.modelSelection.instanceId),
         });
       }
       const message = store.branchMessage(bot.threadId, messageId, text);
@@ -10900,6 +11288,44 @@ const server = createServer(async (req, res) => {
     }
 
     // ── provider instances (model picker) ──
+    if (path === "/api/provider-connections" && method === "GET") {
+      return json(res, 200, { connections: providerConnections.list(), storage: utilityParentPort ? "encrypted" : "local-config" });
+    }
+    const providerCatalogRoute = /^\/api\/provider-connections\/([A-Za-z0-9_-]+)\/(catalog|refresh)$/.exec(path);
+    if (providerCatalogRoute && (method === "GET" && providerCatalogRoute[2] === "catalog" || method === "POST" && providerCatalogRoute[2] === "refresh")) {
+      return json(res, 200, providerCatalogRoute[2] === "refresh" ? await providerConnections.refresh(providerCatalogRoute[1]) : providerConnections.getCatalog(providerCatalogRoute[1]));
+    }
+    if (["/api/provider-connections/mutate", "/api/provider-connections/replace"].includes(path) && method === "POST") {
+      if (path.endsWith("/replace")) {
+        const expected = process.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN ?? "";
+        const supplied = /^Bearer ([a-f0-9]{64})$/.exec(String(req.headers.authorization ?? ""))?.[1] ?? "";
+        if (!expected || supplied.length !== expected.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(supplied))) return json(res, 404, { error: "no such route" });
+      }
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      if (providerConnectionsBusy) return json(res, 409, { error: "Model connections are already being changed. Try again." });
+      if (path.endsWith("/mutate") && utilityParentPort) return json(res, 409, { error: "Use the desktop Models connection control to preserve encrypted key storage." });
+      providerConnectionsBusy = true;
+      try {
+        const body = await readBody(req);
+        const previous = cfg.modelProviders?.bank ?? "[]";
+        let next: string;
+        if (path.endsWith("/replace")) {
+          const parsed = z.object({ bank: z.string().max(200000), expectedRevision: z.string().max(20000) }).strict().safeParse(body);
+          if (!parsed.success) return json(res, 400, { error: "Invalid model connection update." });
+          if (providerBankRevision(previous) !== parsed.data.expectedRevision) return json(res, 409, { error: "Model connections changed. Refresh before saving." });
+          next = JSON.stringify(parseProviderBank(parsed.data.bank));
+        } else next = JSON.stringify(mutateProviderBank(previous, body, randomUUID));
+        // Secret bank lives only in credentials.bin for packaged desktops.
+        // The explicit dev fallback follows the app's established local config behavior.
+        const external = path.endsWith("/replace");
+        saveConfig({ modelProviders: { bank: external ? "" : next } });
+        syncCredentialEnv({ modelProviders: { bank: next } }); cfg.modelProviders = { bank: next };
+        try { await providerConnections.changed(previous, next); }
+        catch (error) { saveConfig({ modelProviders: { bank: external ? "" : previous } }); syncCredentialEnv({ modelProviders: { bank: previous } }); cfg.modelProviders = { bank: previous }; throw error; }
+        return json(res, 200, { connections: providerConnections.list(), storage: external ? "encrypted" : "local-config" });
+      } finally { providerConnectionsBusy = false; }
+    }
+
     if (method === "GET" && path === "/api/instances") {
       // Rescan PATH first: this endpoint is how the app answers "what can I
       // run?", and the interesting case is a CLI installed since launch.
@@ -10951,6 +11377,45 @@ const server = createServer(async (req, res) => {
     }
 
     // ── per-instance CLI path override (custom builds / versioned bins) ──
+    const engineManagementRoute = /^\/api\/engine-management\/([\w.-]+)$/.exec(path);
+    if (engineManagementRoute && (method === "GET" || method === "POST")) {
+      if (method === "GET") return json(res, 200, await engineManager.status(engineManagementRoute[1]));
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ action: z.enum(["check", "install", "update"]) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose check, install, or update." });
+      return json(res, 200, await (parsed.data.action === "check" ? engineManager.check(engineManagementRoute[1]) : engineManager.install(engineManagementRoute[1])));
+    }
+
+    const accessRoute = /^\/api\/bots\/([\w-]+)\/access$/.exec(path);
+    if (accessRoute && (method === "GET" || method === "PUT")) {
+      const bot = store.bot(accessRoute[1]);
+      if (!bot) return json(res, 404, { error: "Bot not found." });
+      if (method === "PUT" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const body = method === "PUT" ? await readBody(req) : undefined;
+      const accounts = await currentConnectedAccessAccounts();
+      if (method === "PUT") {
+        reviewBotAccess(store, bot.id, body, accounts);
+        revokeInternalBot(bot.id);
+      }
+      const current = store.bot(bot.id);
+      if (!current) return json(res, 404, { error: "Bot not found." });
+      return json(res, 200, { ...accessOwnerView(current), accounts,
+        pending: current.hidden ? [] : permissionStatus(store, current, current.id, pendingPermissionStatus(current)).pending });
+    }
+
+    if (method === "POST" && path === "/api/engine-setup-command") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180), action: z.enum(["install", "connect"]) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine and setup action." });
+      const instance = registry.get(parsed.data.instanceId);
+      if (!instance) return json(res, 404, { error: "Engine not found." });
+      const install = BUILT_IN_DRIVERS.find(driver => driver.driverKind === instance.driverKind)?.install;
+      const command = parsed.data.action === "connect" ? install?.signInCommand
+        : install?.command?.[process.platform as "darwin" | "win32" | "linux"];
+      if (!command) return json(res, 409, { error: "Use this engine's setup guide for your platform." });
+      return json(res, 200, { command });
+    }
+
     // PATCH /api/instances/:id {cli: "/path/to/cli" | ""} — "" reverts to the
     // driver default. Kills in-flight turns like any provider reload.
     const instancePatch = /^\/api\/instances\/([\w.-]+)$/.exec(path);
@@ -10989,7 +11454,7 @@ const server = createServer(async (req, res) => {
         resetPathCache();
         return json(res, 200, { instances: await registry.describe() });
       } finally {
-        providerConfigBusy = false;
+        finishProviderConfigMutation();
       }
     }
 
@@ -11132,7 +11597,7 @@ const server = createServer(async (req, res) => {
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch = parseConfigPatch(body);
-      if (patch.telegram && (telegram.status().enabled || telegram.status().connecting)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
+      if (patch.telegram && (telegram.status().enabled || telegram.status().connecting || telegram.status().requiresRevoke)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
       const disablingBuiltInBrowser = patch.features?.browser === false && builtInBrowserEnabled(cfg);
@@ -11386,7 +11851,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, finalized.value);
       } finally {
         if (changingLocalVmMode) localVmModeChangeBusy = false;
-        providerConfigBusy = false;
+        finishProviderConfigMutation();
       }
     }
 

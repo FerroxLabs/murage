@@ -5,8 +5,8 @@
     "id": "growth-loop",
     "release": "1.0.0",
     "name": "Growth Loop",
-    "tagline": "Team launcher - Analyst + Research + Channels diagnose and double the highest-impact funnel point.",
-    "summary": "Team launcher - Analyst + Research + Channels diagnose and double the highest-impact funnel point.",
+    "tagline": "Diagnose the biggest constraint using customer and performance evidence, then prioritize a growth experiment.",
+    "summary": "For businesses with a funnel that is not performing as expected. Diagnose the biggest constraint using customer and performance evidence, then prioritize a growth experiment.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Analyst + Research + Channels diagnose and double the highest-impact funnel point."
+      "Diagnose the biggest constraint using customer and performance evidence, then prioritize a growth experiment."
     ],
     "setupMinutes": 2,
     "requirements": {

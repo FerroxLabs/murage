@@ -5,8 +5,8 @@
     "id": "cohort-ops-control-tower",
     "release": "1.0.0",
     "name": "Cohort Ops Control Tower",
-    "tagline": "Team launcher - pick me to auto-assemble a cohort-ops crew (Ops + Channels + Copy + Analyst) and ship the schedule, comms, reminders, and at-risk flags.",
-    "summary": "Team launcher - pick me to auto-assemble a cohort-ops crew (Ops + Channels + Copy + Analyst) and ship the schedule, comms, reminders, and at-risk flags.",
+    "tagline": "Prepare the schedule, participant messages, and reminders, with flags for students who may need attention.",
+    "summary": "For instructors running a cohort or live programme. Prepare the schedule, participant messages, and reminders, with flags for students who may need attention.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a cohort-ops crew (Ops + Channels + Copy + Analyst) and ship the schedule, comms, reminders, and at-risk flags."
+      "Prepare the schedule, participant messages, and reminders, with flags for students who may need attention."
     ],
     "setupMinutes": 2,
     "requirements": {

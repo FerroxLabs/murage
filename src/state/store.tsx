@@ -137,7 +137,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; providerError?: ProviderErrorInfo };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** Provider turn that produced this message. */
@@ -222,6 +222,7 @@ export interface GroupTask {
 export interface ModelSelection {
   instanceId: string;
   model: string;
+  connectionId?: string;
   effort?: EffortLevel;
 }
 
@@ -468,6 +469,7 @@ export interface InstanceInfo {
 }
 
 export type AppSettingsSection =
+  | "models"
   | "general"
   | "experimental"
   | "connections"
@@ -485,6 +487,7 @@ export interface AppState {
   /** selected chat — a bot id OR a group id */
   selectedId: string;
   activeView: "chat" | "team-map" | "routines" | "skill-recorder";
+  teamMapMemoryOpen?: boolean;
   routines: Routine[];
   routineRuns: RoutineRun[];
   webhooks: WebhookTrigger[];
@@ -599,7 +602,7 @@ export type Action =
       computerControl: Record<string, { held: boolean; helpReason: string | null }>;
     }
   | { type: "showRoutines" }
-  | { type: "showTeamMap" }
+  | { type: "showTeamMap"; memory?: boolean }
   | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView }
   | { type: "hideTeamLibrary" }
   | { type: "showSkillRecorder" }
@@ -875,6 +878,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "team-map",
+        teamMapMemoryOpen: Boolean(action.memory),
         settingsOpen: false,
         computerOpen: false,
         inspectorOpen: false,

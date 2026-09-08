@@ -5,8 +5,8 @@
     "id": "pricing-tribunal",
     "release": "1.0.0",
     "name": "Pricing Tribunal",
-    "tagline": "Team launcher - pick me to convene an adversarial pricing review (Discount Hunter + Churn Forecaster + Anchor Breaker + Value-Gap Prosecutor + Packaging Engine…",
-    "summary": "Team launcher - pick me to convene an adversarial pricing review (Discount Hunter + Churn Forecaster + Anchor Breaker + Value-Gap Prosecutor + Packaging Engineer) and return a rewritten offer.",
+    "tagline": "Challenge discount pressure, churn risk, and perceived value, then get a revised offer with the trade-offs explained.",
+    "summary": "For businesses reconsidering pricing or packaging. Challenge discount pressure, churn risk, and perceived value, then get a revised offer with the trade-offs explained.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to convene an adversarial pricing review (Discount Hunter + Churn Forecaster + Anchor Breaker + Value-Gap Prosecutor + Packaging Engineer) and return a rewritten offer."
+      "Challenge discount pressure, churn risk, and perceived value, then get a revised offer with the trade-offs explained."
     ],
     "setupMinutes": 2,
     "requirements": {

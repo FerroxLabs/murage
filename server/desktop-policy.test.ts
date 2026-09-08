@@ -10,3 +10,7 @@ it("guards owner memory inspection and mutations, including future nested routes
   expect(requiresDesktopAuthority("POST","/api/internal/memory/save")).toBe(false);
   expect(requiresDesktopAuthority("POST","/api/memory-other")).toBe(false);
 });
+
+it("requires desktop owner authority for Telegram reconnect retries", () => {
+  expect(requiresDesktopAuthority("POST", "/api/telegram/resume")).toBe(true);
+});

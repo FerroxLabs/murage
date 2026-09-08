@@ -7,6 +7,9 @@ import {
 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES, HARNESS_RESOURCE_DIRECTORIES } from "../electron/harness-resources.mjs";
 import { FUIGO_VERSION, verifyFuigoExecutable } from "./prepare-fuigo.mjs";
+import { verifyBrowserBundle } from "./prepare-browser.mjs";
+import { browserBundlePaths } from "../server/browser-bundle-release.ts";
+import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
 
 async function requireRealDirectory(directory, mode = 0o755) {
   const details = await lstat(directory);
@@ -178,15 +181,31 @@ export default async function afterPack(context) {
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
   await validatePackagedMemoryRuntime(resources, context.electronPlatformName, context.arch, Boolean(context.packager));
+  // Resource copying only warns about missing sources. Validate the exact target
+  // and complete pinned inventory before signing can change executable bytes.
+  if (context.packager) {
+    const arch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
+    verifyBrowserBundle(path.join(resources, "browser-engine"), `${context.electronPlatformName}-${arch}`);
+  }
 
   // electron-builder's single-file extraResources copier does not run its
   // Windows signing transformer. Sign only the verified packaged copy, using
   // the same configured signer as the app and installer, before archiving it.
   if (context.electronPlatformName === "win32" && context.packager) {
-    const executable = path.join(resources, HARNESS_RESOURCE_DIRECTORIES.MURAGE_FUIGO_DIR, FUIGO_EXECUTABLE_NAMES.win32);
-    if (await context.packager.signIf(executable) !== true) {
-      throw new Error("Packaged Fuigo Windows signing did not complete");
+    const browser = browserBundlePaths(path.join(resources, "browser-engine"), "win32-x64");
+    const executables = [
+      path.join(resources, HARNESS_RESOURCE_DIRECTORIES.MURAGE_FUIGO_DIR, FUIGO_EXECUTABLE_NAMES.win32),
+      browser.engine, browser.chrome,
+    ];
+    for (const executable of executables) {
+      if (await context.packager.signIf(executable) !== true) {
+        throw new Error(`Packaged Windows signing did not complete: ${path.basename(executable)}`);
+      }
     }
+    for (const [file, pin] of [[browser.engine, WINDOWS_BROWSER_IMAGE_PINS.engine], [browser.chrome, WINDOWS_BROWSER_IMAGE_PINS.chrome]]) {
+      if (!verifyWindowsBrowserImage(await readFile(file), pin).signed) throw new Error("Packaged Windows browser signing left an unsigned image");
+    }
+    await verifyWindowsBrowserSignatures([browser.engine, browser.chrome], process.env.SystemRoot);
   }
 
   if (context.electronPlatformName !== "linux") return;

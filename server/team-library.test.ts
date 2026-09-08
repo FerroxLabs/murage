@@ -103,9 +103,11 @@ describe("team library", () => {
 
   it("normalizes public GitHub repository, blob, and raw links", () => {
     expect(githubManifestUrls("https://github.com/acme/team")).toEqual([
+      "https://raw.githubusercontent.com/acme/team/main/EmberBot.md",
       "https://raw.githubusercontent.com/acme/team/main/botmrr.md",
       "https://raw.githubusercontent.com/acme/team/main/team.md",
       "https://raw.githubusercontent.com/acme/team/main/team.emberteam.json",
+      "https://raw.githubusercontent.com/acme/team/master/EmberBot.md",
       "https://raw.githubusercontent.com/acme/team/master/botmrr.md",
       "https://raw.githubusercontent.com/acme/team/master/team.md",
       "https://raw.githubusercontent.com/acme/team/master/team.emberteam.json",
@@ -130,6 +132,6 @@ describe("team library", () => {
     const loaded = await fetchGithubTeam("https://github.com/acme/team", fetcher);
     if (loaded.format !== "murage.team") throw new Error("expected a legacy team");
     expect(loaded.team.members[0]?.name).toBe("Ada");
-    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(fetcher).toHaveBeenCalledTimes(8);
   });
 });

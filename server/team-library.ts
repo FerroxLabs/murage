@@ -437,9 +437,11 @@ export function githubManifestUrls(input: string): string[] {
     if (parts.length === 2) {
       const [owner, repo] = parts;
       return [
+        `https://raw.githubusercontent.com/${owner}/${repo}/main/EmberBot.md`,
         `https://raw.githubusercontent.com/${owner}/${repo}/main/botmrr.md`,
         `https://raw.githubusercontent.com/${owner}/${repo}/main/team.md`,
         `https://raw.githubusercontent.com/${owner}/${repo}/main/team.emberteam.json`,
+        `https://raw.githubusercontent.com/${owner}/${repo}/master/EmberBot.md`,
         `https://raw.githubusercontent.com/${owner}/${repo}/master/botmrr.md`,
         `https://raw.githubusercontent.com/${owner}/${repo}/master/team.md`,
         `https://raw.githubusercontent.com/${owner}/${repo}/master/team.emberteam.json`,
@@ -471,5 +473,5 @@ export async function fetchGithubTeam(input: string, fetcher: Fetcher = fetch): 
       if ((error as { status?: number }).status !== 404) throw error;
     }
   }
-  throw lastError ?? new Error("No botmrr.md, team.md, or legacy team file was found in that repository");
+  throw lastError ?? new Error("No EmberBot.md, compatible Markdown playbook, or legacy team file was found in that repository");
 }

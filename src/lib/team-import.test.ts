@@ -69,9 +69,9 @@ describe("team import preview", () => {
     });
   });
 
-  it("previews a portable Markdown playbook", () => {
+  it.each(["emberbot", "botmrr"])("previews a portable %s Markdown playbook", (marker) => {
     const preview = teamImportPreview(`---
-botmrr: 1
+${marker}: 1
 name: Lead Desk
 summary: Find qualified conversations.
 agents:

@@ -79,7 +79,7 @@ export const FUIGO_ASSETS = Object.freeze({
     binarySha256: "feb099cfd51d5d18bd946add779fdf3a64b95d1f736795701eeb7cc0e722efec",
   }),
   // The old note here said fuigo-win32-arm64 was declared but unpublished.
-  // That is no longer true: under the scope, @fuigo/win32-arm64@1.0.7 publishes
+  // That is no longer true: under the scope, @fuigo/win32-arm64@1.0.8 publishes
   // and resolves normally, re-checked against the live registry at this bump.
   // The remaining obstacle is on our side, not upstream — see
   // UNSTAGEABLE_TARGETS.
@@ -98,7 +98,7 @@ export const FUIGO_ASSETS = Object.freeze({
 // Pinned and digest-reviewed above, but NOT stageable yet. verifyPinnedBinary()
 // parses the real executable header through the shared executableTarget() in
 // prepare-cloudflared.mjs, and that parser classifies only ELF x86-64
-// (e_machine 0x3e) and PE AMD64 (0x8664). The published 1.0.7 arm64 engines are
+// (e_machine 0x3e) and PE AMD64 (0x8664). The published 1.0.8 arm64 engines are
 // ELF aarch64 (0xb7) and PE ARM64 (0xaa64) — read off the real downloaded bytes,
 // not assumed — so staging either one would download ~40MB, pass the tarball
 // digest, then die inside a cloudflared-worded "unsupported executable format"
@@ -136,8 +136,8 @@ function vendorEntry(target) {
 
 /** npm names a scoped package's tarball after the UNSCOPED half of the name:
  * `@fuigo/darwin-arm64` publishes at
- * `@fuigo/darwin-arm64/-/darwin-arm64-1.0.7.tgz`. Building the basename from
- * the full package id would request `@fuigo/darwin-arm64-1.0.7.tgz`, which
+ * `@fuigo/darwin-arm64/-/darwin-arm64-1.0.8.tgz`. Building the basename from
+ * the full package id would request `@fuigo/darwin-arm64-1.0.8.tgz`, which
  * 404s, and would also push a `/` into the MURAGE_FUIGO_ARCHIVE_DIR cache
  * path. */
 function unscopedPackageName(packageName) {

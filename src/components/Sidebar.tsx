@@ -1735,6 +1735,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
             aria-label="New or share"
+            aria-expanded={plusOpen}
+            aria-controls="sidebar-create-options"
             className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
             title="New or share"
           >
@@ -1743,11 +1745,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           {plusOpen && (
             <>
               <div className="fixed inset-0 z-30" onMouseDown={() => setPlusOpen(false)} />
-              <div className={cn(
+              <div id="sidebar-create-options" onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setPlusOpen(false);
+                  importReturnRef.current?.focus();
+                }
+              }} className={cn(
                 "absolute top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
                 density === "icons" ? "left-0" : "right-0",
               )}>
                 <button
+                  autoFocus
                   onClick={() => {
                     setPlusOpen(false);
                     track("bot_created");
@@ -1756,7 +1765,17 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <BotIcon size={16} className="text-ink-secondary" />
-                  New Bot
+                  Blank Bot
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    dispatch({ type: "showTeamLibrary", view: "bots" });
+                  }}
+                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                >
+                  <Library size={16} className="text-ink-secondary" />
+                  From Template
                 </button>
                 <button
                   onClick={() => {
@@ -1777,16 +1796,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 >
                   <ArrowDownToLine size={16} className="text-ink-secondary" />
                   Export selected contents
-                </button>
-                <button
-                  onClick={() => {
-                    setPlusOpen(false);
-                    dispatch({ type: "showTeamLibrary" });
-                  }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                >
-                  <Library size={16} className="text-ink-secondary" />
-                  Teams
                 </button>
                 {archivedBots.length > 0 && (
                   <button

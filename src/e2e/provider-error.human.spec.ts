@@ -10,14 +10,15 @@ test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   cache = mkdtempSync(join(tmpdir(), "murage-provider-error-ui-"));
   server = await createServer({
-    configFile: false, root, cacheDir: cache, envFile: false, resolve: { alias: { "@": root + "/src" } },
+    configFile: false, root, cacheDir: cache, envFile: false, optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] }, resolve: { alias: { "@": root + "/src" } },
     server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [tailwindcss(), {
       name: "provider-error-fixture",
       resolveId(id) { if (id === "/__provider.js") return "\0provider-error-fixture"; },
       load(id) {
+        if (id.endsWith("/src/styles.css")) return readFileSync(id, "utf8").replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source "./components";');
         if (id !== "\0provider-error-fixture") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {ProviderErrorCard} from '/src/components/ProviderErrorCard.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const q=new URLSearchParams(location.search);setLocale(q.get('lang')||'en');document.documentElement.dataset.skin=q.get('skin')||'dark';window.retryCalls=0;window.settingsCalls=0;createRoot(document.getElementById('root')).render(React.createElement(ProviderErrorCard,{info:{kind:q.get('kind')||'credits',httpStatus:Number(q.get('status')||402),...(q.get('provider')==='flux-router'?{provider:'flux-router'}:{})},onRetry:q.has('noRetry')?undefined:()=>window.retryCalls++,onOpenProviderSettings:()=>window.settingsCalls++}));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {ProviderErrorCard} from '/src/components/ProviderErrorCard.tsx';import {RuntimeErrorCard} from '/src/components/RuntimeErrorCard.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const q=new URLSearchParams(location.search);setLocale(q.get('lang')||'en');document.documentElement.dataset.skin=q.get('skin')||'dark';window.retryCalls=0;window.settingsCalls=0;createRoot(document.getElementById('root')).render(React.createElement(q.has('runtime')?RuntimeErrorCard:ProviderErrorCard,{message:'Internal error',details:q.has('detail')?'Internal error — diagnostic text beyond a short badge. Provider response: HTTP 500. Engine error code: -32603. <script>window.injected=true</script>':undefined,info:{kind:q.get('kind')||'credits',httpStatus:Number(q.get('status')||402),...(q.get('provider')==='flux-router'?{provider:'flux-router'}:{})},onRetry:q.has('noRetry')?undefined:()=>window.retryCalls++,onOpenProviderSettings:()=>window.settingsCalls++}));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/__provider?") && req.url !== "/__provider") return next();
@@ -100,4 +101,23 @@ test("other provider failures use fixed recovery categories and never gain a bil
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => (window as any).retryCalls)).toBe(0);
   }
+});
+
+for (const width of [390, 1000]) test(`runtime errors explain missing context and expand received details at ${width}px`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto(origin + "/__provider?runtime=1");
+  await expect(page.getByRole("heading", { name: "This request hit a problem" })).toBeVisible();
+  await page.getByText("Technical details", { exact: true }).click();
+  await expect(page.getByText("No additional error details were supplied by the engine.")).toBeVisible();
+  expect(await page.evaluate(() => (window as any).retryCalls)).toBe(0);
+  await page.goto(origin + "/__provider?runtime=1&detail=1");
+  await page.getByText("Technical details", { exact: true }).click();
+  await expect(page.locator("pre")).toContainText("Engine error code: -32603");
+  await expect(page.locator("pre")).toContainText("<script>");
+  expect(await page.evaluate(() => (window as any).injected)).toBeUndefined();
+  await page.getByRole("button", { name: "Provider settings", exact: true }).click();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  expect(await page.evaluate(() => [(window as any).settingsCalls, (window as any).retryCalls])).toEqual([1, 1]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath(`runtime-error-${width}.png`), fullPage: true });
 });

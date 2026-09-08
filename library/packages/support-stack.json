@@ -5,8 +5,8 @@
     "id": "support-stack",
     "release": "1.0.0",
     "name": "Support Stack",
-    "tagline": "Team launcher - Support + Ops + Copy install triage, onboarding, churn-prevention, and voice-consistent macros.",
-    "summary": "Team launcher - Support + Ops + Copy install triage, onboarding, churn-prevention, and voice-consistent macros.",
+    "tagline": "Prepare ticket triage, onboarding guidance, retention follow-ups, and reusable responses in your brand voice.",
+    "summary": "For businesses setting up a more consistent support operation. Prepare ticket triage, onboarding guidance, retention follow-ups, and reusable responses in your brand voice.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Support + Ops + Copy install triage, onboarding, churn-prevention, and voice-consistent macros."
+      "Prepare ticket triage, onboarding guidance, retention follow-ups, and reusable responses in your brand voice."
     ],
     "setupMinutes": 2,
     "requirements": {

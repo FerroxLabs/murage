@@ -7,6 +7,8 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   path: RegExp;
   purpose: string;
 }> = [
+  { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/provider-connections(?:\/|$)/, purpose: "model provider connection custody and catalogs" },
+  { methods: ["GET", "POST"], path: /^\/api\/images\/settings$/, purpose: "image provider and billing selection" },
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/memory(?:\/|$)/, purpose: "memory authority, sharing, retention and configuration" },
   { methods: ["PATCH", "PUT"], path: /^\/api\/config$/, purpose: "application, credentials, browser and computer configuration" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+$/, purpose: "bot authority, engine, working folder and deletion" },
@@ -17,7 +19,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["POST"], path: /^\/api\/packages\/import$/, purpose: "review and commit a local package archive" },
   { methods: ["POST"], path: /^\/api\/packages\/export$/, purpose: "review and export selected local skill files" },
   { methods: ["POST"], path: /^\/api\/starter-profiles$/, purpose: "review and install a local starter profile" },
-  { methods: ["GET", "POST"], path: /^\/api\/telegram\/(status|pair|revoke)$/, purpose: "pair and revoke the Telegram owner channel" },
+  { methods: ["GET", "POST"], path: /^\/api\/telegram\/(status|pair|resume|revoke)$/, purpose: "pair and revoke the Telegram owner channel" },
   { methods: ["POST"], path: /^\/api\/team-library\/github$/, purpose: "download team packages to disk" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/(assistant-profile|skills(?:\/library)?)$/, purpose: "install executable instructions" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+\/skills\/[^/]+$/, purpose: "enable, change or delete installed skills" },
@@ -27,6 +29,9 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/local-computer\/(run|stop|remove|screenshot)$/, purpose: "per-bot host computer lifecycle and capture" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/computer\/(provision|sleep|exec|screenshot|remove|control|viewer-close)$/, purpose: "cloud computer provisioning and control" },
   { methods: ["POST"], path: /^\/api\/cli-test$/, purpose: "execute a supplied engine binary" },
+  { methods: ["POST"], path: /^\/api\/engine-setup-command$/, purpose: "resolve a trusted engine setup recipe" },
+  { methods: ["GET", "POST"], path: /^\/api\/engine-management\/[\w.-]+$/, purpose: "inspect and install managed engines" },
+  { methods: ["GET", "PUT"], path: /^\/api\/bots\/[\w-]+\/access$/, purpose: "review scoped connected-app authority" },
   { methods: ["PATCH"], path: /^\/api\/instances\/[\w.-]+$/, purpose: "change engine launch configuration" },
   { methods: ["POST"], path: /^\/api\/mcp\/servers(?:\/[a-z][a-z0-9_-]{0,31}\/test)?$/, purpose: "install and probe MCP servers" },
   { methods: ["PUT", "PATCH", "DELETE"], path: /^\/api\/mcp\/servers\/[a-z][a-z0-9_-]{0,31}$/, purpose: "change MCP launch configuration" },

@@ -3,8 +3,8 @@ botmrr: 1
 id: inbox-follow-up
 release: 1.0.0
 name: Recover Unanswered Sales Emails
-tagline: Find genuine sales conversations that went quiet and prepare the right follow-up without sending anything automatically.
-summary: A two-bot sales operations desk that reviews the mailbox and CRM scope you approve, identifies conversations where your team owes the next step, removes duplicates and closed threads, and drafts a concise follow-up grounded in the actual exchange.
+tagline: "Review approved mailbox and CRM data, filter out closed or opted-out conversations, and draft relevant follow-ups without sending them."
+summary: "For sales teams losing track of promised next steps. Review approved mailbox and CRM data, filter out closed or opted-out conversations, and draft relevant follow-ups without sending them."
 category: Sales
 author:
   name: BotMRR

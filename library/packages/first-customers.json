@@ -5,8 +5,8 @@
     "id": "first-customers",
     "release": "1.0.0",
     "name": "First Customers",
-    "tagline": "Team launcher - Research + Sales + Copy + Channels working toward your first five paying customers.",
-    "summary": "Team launcher - Research + Sales + Copy + Channels working toward your first five paying customers.",
+    "tagline": "Sharpen your target audience, prepare outreach and sales copy, and choose practical channels for initial conversations.",
+    "summary": "For founders seeking their first paying customers. Sharpen your target audience, prepare outreach and sales copy, and choose practical channels for initial conversations.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Research + Sales + Copy + Channels working toward your first five paying customers."
+      "Sharpen your target audience, prepare outreach and sales copy, and choose practical channels for initial conversations."
     ],
     "setupMinutes": 2,
     "requirements": {

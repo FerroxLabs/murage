@@ -13,6 +13,7 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
+import { applyProviderRoute, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { homedir } from "node:os";
 
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
@@ -32,6 +33,18 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
     return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
   }
   return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
+}
+
+/** Preserve diagnostic facts without copying response bodies, requests or URLs. */
+export function acpRpcErrorDetails(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return;
+  const { code, data } = error as { code?: unknown; data?: unknown };
+  const status = data && typeof data === "object" && !Array.isArray(data)
+    ? (data as { http_status?: unknown }).http_status : undefined;
+  const facts: string[] = [];
+  if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) facts.push(`Provider response: HTTP ${status}`);
+  if (typeof code === "number" && Number.isSafeInteger(code)) facts.push(`Engine error code: ${code}`);
+  return facts.length ? facts.join("\n") : undefined;
 }
 
 /**
@@ -366,6 +379,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const env = childEnv();
         if (
           support.requireAuthenticationBeforeSpawn
+          && !turn.providerRoute
           && !skipSubscriptionAuthForLocalInject(turn.model)
           && !(await support.isAuthenticated(env, config))
         ) {
@@ -374,8 +388,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
           return { turnId };
         }
-        const resolvedModel = support.resolveTurnModel?.(turn.model, env);
-        support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model });
+        if (turn.providerRoute) validateProviderTurnRoute(support.driverKind, turn.providerRoute);
+        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute) : null;
+        const resolvedModel = providerBinding?.model ?? support.resolveTurnModel?.(turn.model, env);
+        if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model });
         const cliTurn =
           resolvedModel !== undefined && resolvedModel !== turn.model
             ? { ...turn, model: resolvedModel }
@@ -388,6 +404,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           stdio: ["pipe", "pipe", "pipe"],
         });
 
+        child.once("close", () => providerBinding?.cleanup());
         const state = { settled: false, promptSent: false, text: "" };
         const asks = new Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>();
         let nextId = 1;
@@ -800,6 +817,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "runtime.error",
                 message,
+                details: acpRpcErrorDetails(e),
                 ...(providerError ? { providerError } : {}),
                 ...(needsAuth ? { setup: true } : {}),
               });

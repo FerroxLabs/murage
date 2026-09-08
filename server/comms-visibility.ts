@@ -9,6 +9,8 @@ import { sectionKey, type BotRecord, type GroupRecord, type Message, type Store 
  * so chat clients see the change without waiting for a refresh. */
 export interface CommsBus {
   store: Store;
+  /** Admission capacity, independent of how many handoffs are queued. */
+  canDispatch?: () => boolean;
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
   /** SSE broadcast (kind: "group" envelope) for a single group. */

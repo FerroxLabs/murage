@@ -5,8 +5,8 @@
     "id": "hook-lab",
     "release": "1.0.0",
     "name": "Hook Lab",
-    "tagline": "Team launcher - pick me to auto-assemble a hooks crew (Copy + Research + Quality Gate + Brand) and ship 15-20 ranked, ready-to-film hooks per video.",
-    "summary": "Team launcher - pick me to auto-assemble a hooks crew (Copy + Research + Quality Gate + Brand) and ship 15-20 ranked, ready-to-film hooks per video.",
+    "tagline": "Produce and rank 15 to 20 hook options using audience research, brand fit, and a quality review.",
+    "summary": "For video creators who need a stronger opening. Produce and rank 15 to 20 hook options using audience research, brand fit, and a quality review.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a hooks crew (Copy + Research + Quality Gate + Brand) and ship 15-20 ranked, ready-to-film hooks per video."
+      "Produce and rank 15 to 20 hook options using audience research, brand fit, and a quality review."
     ],
     "setupMinutes": 2,
     "requirements": {
