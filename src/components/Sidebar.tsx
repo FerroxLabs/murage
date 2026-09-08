@@ -987,7 +987,7 @@ function BotListItem({
       ? "justify-center px-1 py-1.5"
       : density === "compact"
         ? "gap-2 px-2 py-1.5"
-        : "gap-3 px-3 py-2.5",
+        : "gap-2 px-3 py-2.5",
     !iconOnly && "group-hover:pr-[5.25rem] group-focus-within:pr-[5.25rem] max-md:pr-[5.25rem] [@media(hover:none)]:pr-[5.25rem]",
     // ONLY the Chief of Staff, not every bot that leads something.
     //
