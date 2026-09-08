@@ -13,7 +13,7 @@ import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemory
 import { forgetMemory, memoryDeletionStatus } from "./forget.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
-import { previewMemoryImport, commitMemoryImport } from "./import.ts";
+import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook } from "./import.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
 
@@ -46,7 +46,9 @@ const actions=z.discriminatedUnion("action",[
     z.object({kind:z.literal("bot"),botId:id,topic:z.string().max(220).optional()}).strict(),
     z.object({kind:z.literal("section"),section:z.string().max(60)}).strict(),
   ])).min(1).max(20)}).strict(),
-  z.object({action:z.literal("import-commit"),previewId:id}).strict(),
+  z.object({action:z.literal("import-commit"),previewId:id,track:z.boolean().optional()}).strict(),
+  z.object({action:z.literal("import-inventory")}).strict(),
+  z.object({action:z.literal("import-stop-tracking"),id}).strict(),
   z.object({action:z.literal("model-download"),confirm:z.literal(true)}).strict(),
 ]);
 export function memoryExtractorInstanceId(){return configuration().extractorInstanceId;}
@@ -201,7 +203,9 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
     });return memoryOwnerStatus(ticket,roster,options);
   }
   if(input.action==="import-preview")return previewMemoryImport(ticket,input.selections,roster);
-  if(input.action==="import-commit")return commitMemoryImport(ticket,input.previewId,roster);
+  if(input.action==="import-commit")return commitMemoryImport(ticket,input.previewId,roster,input.track);
+  if(input.action==="import-inventory")return {...availableMemoryNotebooks(ticket,roster),links:memoryNotebookLinks()};
+  if(input.action==="import-stop-tracking")return stopTrackingMemoryNotebook(ticket,input.id);
   if(input.action==="model-download"){if(!supportsNativeMemoryModel())throw Object.assign(new Error("Intel Mac builds use keyword memory; a semantic model download is not available in this release."),{status:409});if(download?.state!=="downloading")void downloadModel(options);return {model:modelStatus()};}
   throw new Error("MEMORY_ROUTE_UNAVAILABLE");
 }

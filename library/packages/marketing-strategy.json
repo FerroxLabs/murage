@@ -5,8 +5,8 @@
     "id": "marketing-strategy",
     "release": "1.0.0",
     "name": "Marketing Plan",
-    "tagline": "Chained pipeline - Research + Brand + Offer + Channels + Numbers + Copy + Analyst + Quality Gate produce a one-page marketing plan, scored (8 stages).",
-    "summary": "Chained pipeline - Research + Brand + Offer + Channels + Numbers + Copy + Analyst + Quality Gate produce a one-page marketing plan, scored (8 stages).",
+    "tagline": "Combine audience research, positioning, offer economics, and channel choices into a reviewed one-page marketing plan.",
+    "summary": "For businesses that need a clear marketing direction. Combine audience research, positioning, offer economics, and channel choices into a reviewed one-page marketing plan.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Chained pipeline - Research + Brand + Offer + Channels + Numbers + Copy + Analyst + Quality Gate produce a one-page marketing plan, scored (8 stages)."
+      "Combine audience research, positioning, offer economics, and channel choices into a reviewed one-page marketing plan."
     ],
     "setupMinutes": 2,
     "requirements": {

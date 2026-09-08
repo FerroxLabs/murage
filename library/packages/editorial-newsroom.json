@@ -5,8 +5,8 @@
     "id": "editorial-newsroom",
     "release": "1.0.0",
     "name": "Editorial Newsroom",
-    "tagline": "Standing Company - Editor (Editor-in-Chief) + Quill + Scout + Mira + Beacon + Lens run weekly Sunday editorial planning, ship issues and series, audit content…",
-    "summary": "Standing Company - Editor (Editor-in-Chief) + Quill + Scout + Mira + Beacon + Lens run weekly Sunday editorial planning, ship issues and series, audit content performance. Persists across sessions.",
+    "tagline": "Plan issues and series, research and draft content, and review performance to decide what to publish next.",
+    "summary": "For publishers managing an ongoing editorial calendar. Plan issues and series, research and draft content, and review performance to decide what to publish next.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -15,7 +15,7 @@
     "license": "Apache-2.0",
     "featured": true,
     "outcomes": [
-      "Standing Company - Editor (Editor-in-Chief) + Quill + Scout + Mira + Beacon + Lens run weekly Sunday editorial planning, ship issues and series, audit content performance. Persists across sessions."
+      "Plan issues and series, research and draft content, and review performance to decide what to publish next."
     ],
     "setupMinutes": 2,
     "requirements": {

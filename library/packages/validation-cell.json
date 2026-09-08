@@ -5,8 +5,8 @@
     "id": "validation-cell",
     "release": "1.0.0",
     "name": "Validation Cell",
-    "tagline": "Team launcher - pick me to auto-assemble a validation crew (Validator + Research + Copy + Analyst) and ship a smoke-test with a build/kill/pivot verdict.",
-    "summary": "Team launcher - pick me to auto-assemble a validation crew (Validator + Research + Copy + Analyst) and ship a smoke-test with a build/kill/pivot verdict.",
+    "tagline": "Prepare test copy and measurement criteria, then assess the results to recommend building, stopping, or changing direction.",
+    "summary": "For founders ready to run a small demand test. Prepare test copy and measurement criteria, then assess the results to recommend building, stopping, or changing direction.",
     "category": "Research",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a validation crew (Validator + Research + Copy + Analyst) and ship a smoke-test with a build/kill/pivot verdict."
+      "Prepare test copy and measurement criteria, then assess the results to recommend building, stopping, or changing direction."
     ],
     "setupMinutes": 2,
     "requirements": {

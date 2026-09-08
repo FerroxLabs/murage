@@ -5,8 +5,8 @@
     "id": "beacon",
     "release": "1.0.0",
     "name": "Channels",
-    "tagline": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
-    "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.\n\nJob-to-be-done: **answer \"how do buyers find me?\"** — the channel mix, the stage each channel serves, the cadence, the platform mechanics, and the budget split between brand-building and direct response.",
+    "tagline": "For businesses planning website SEO, paid acquisition and social channels. Compare channel options using your supplied audience, business stage and budget.",
+    "summary": "For businesses planning website SEO, paid acquisition and social channels. Compare channel options using your supplied audience, business stage and budget.\n\nJob-to-be-done: **answer \"how do buyers find me?\"** — the channel mix, the stage each channel serves, the cadence, the platform mechanics, and the budget split between brand-building and direct response.",
     "category": "Run",
     "author": {
       "name": "Wayland"
@@ -32,7 +32,7 @@
         "key": "beacon",
         "name": "Channels",
         "title": "Channels specialist",
-        "description": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.\n\nJob-to-be-done: **answer \"how do buyers find me?\"** — the channel mix, the stage each channel serves, the cadence, the platform mechanics, and the budget split between brand-building and direct response.",
+        "description": "For businesses planning website SEO, paid acquisition and social channels. Compare channel options using your supplied audience, business stage and budget.\n\nJob-to-be-done: **answer \"how do buyers find me?\"** — the channel mix, the stage each channel serves, the cadence, the platform mechanics, and the budget split between brand-building and direct response.",
         "appearance": {
           "color": "green",
           "mascotExpression": "working"

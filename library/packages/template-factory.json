@@ -5,8 +5,8 @@
     "id": "template-factory",
     "release": "1.0.0",
     "name": "Template Factory",
-    "tagline": "Team launcher - pick me to auto-assemble a template crew (Build + Copy + Brand + Sales) and ship a ready-to-sell template package with listing copy.",
-    "summary": "Team launcher - pick me to auto-assemble a template crew (Build + Copy + Brand + Sales) and ship a ready-to-sell template package with listing copy.",
+    "tagline": "Define and assemble the package, give it a consistent presentation, and prepare listing and sales copy.",
+    "summary": "For creators developing a template product to sell. Define and assemble the package, give it a consistent presentation, and prepare listing and sales copy.",
     "category": "Build",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a template crew (Build + Copy + Brand + Sales) and ship a ready-to-sell template package with listing copy."
+      "Define and assemble the package, give it a consistent presentation, and prepare listing and sales copy."
     ],
     "setupMinutes": 2,
     "requirements": {

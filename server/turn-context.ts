@@ -11,6 +11,8 @@ export interface TurnContextInput {
   transcript: Array<{ role: "user" | "assistant"; text: string }>;
   /** the visible branch changed (edit / version switch) */
   rewound: boolean;
+  /** Authorized memory changed; rebuild without claiming the user edited history. */
+  memoryRefreshed?: boolean;
   /** this driver instance has no session cursor for this thread */
   fresh: boolean;
   /** a message was appended outside the provider's own turn (for example,
@@ -55,13 +57,13 @@ export function buildTurnContext(input: TurnContextInput): {
   /** false when the native session must not be resumed */
   resume: boolean;
 } {
-  const { text, transcript, rewound, fresh, externallyUpdated, replaysNatively } = input;
-  const resume = !rewound && !fresh && !externallyUpdated;
+  const { text, transcript, rewound, fresh, externallyUpdated, replaysNatively, memoryRefreshed } = input;
+  const resume = !rewound && !fresh && !externallyUpdated && !memoryRefreshed;
   const replay = !resume && !replaysNatively && transcript.length > 0;
   if (!replay) return { turnText: text, resume };
   return {
     turnText: [
-      rewound ? REWOUND_PREAMBLE : externallyUpdated ? EXTERNAL_UPDATE_PREAMBLE : FRESH_PREAMBLE,
+      rewound ? REWOUND_PREAMBLE : memoryRefreshed ? "[Your authorized memory context was refreshed. Continue using only the current memory and conversation history below:]" : externallyUpdated ? EXTERNAL_UPDATE_PREAMBLE : FRESH_PREAMBLE,
       "",
       ...transcript.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`),
       "",

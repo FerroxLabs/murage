@@ -190,6 +190,8 @@ describe("nothing in the app is gated on a Flux key", () => {
   const OWNERS = new Set([
     "components/BotProfileAvatarCard.tsx",
     "components/FluxKeyCard.tsx",
+    // Displays saved-key status only; native engines remain usable without it.
+    "components/ModelsSettings.tsx",
     "components/FluxInvite.tsx",
     "lib/flux-invite.ts",
     "lib/use-flux-invite.ts",
@@ -213,7 +215,7 @@ describe("nothing in the app is gated on a Flux key", () => {
     return out;
   };
 
-  it("reads flux?.configured in the two places that own the offer, and nowhere else", () => {
+  it("reads flux?.configured only in explicit saved-state and offer owners", () => {
     const readers = sources()
       .filter((path) => /flux\?\.configured|flux\.configured/.test(readFileSync(path, "utf8")))
       .map((path) => path.slice(srcRoot.length + 1).replace(/\\/g, "/"))
@@ -224,6 +226,14 @@ describe("nothing in the app is gated on a Flux key", () => {
     // POSITIVE control: the scan does find real readers, so an empty result
     // cannot be mistaken for a clean one.
     expect(readers).toContain("lib/use-flux-invite.ts");
+  });
+
+  it("Models uses Flux configuration only as saved-key status", () => {
+    const models = readFileSync(join(srcRoot, "components/ModelsSettings.tsx"), "utf8");
+    const reads = models.split("\n").filter(line => /flux\?\.configured|flux\.configured/.test(line));
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toContain('<ExistingKey id="legacy-flux"');
+    expect(reads[0]).toContain('configured={state.config?.flux?.configured ?? false}');
   });
 
   it("offers the key without blocking anything: no overlay, no dialog", () => {

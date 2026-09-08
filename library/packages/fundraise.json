@@ -5,8 +5,8 @@
     "id": "fundraise",
     "release": "1.0.0",
     "name": "Fundraise",
-    "tagline": "Team launcher - Pitch + Numbers + Brand + Copy assembling deck, model, and investor narrative.",
-    "summary": "Team launcher - Pitch + Numbers + Brand + Copy assembling deck, model, and investor narrative.",
+    "tagline": "Develop your pitch deck, financial model, and investor narrative so the numbers and story support each other.",
+    "summary": "For founders preparing to approach investors. Develop your pitch deck, financial model, and investor narrative so the numbers and story support each other.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Pitch + Numbers + Brand + Copy assembling deck, model, and investor narrative."
+      "Develop your pitch deck, financial model, and investor narrative so the numbers and story support each other."
     ],
     "setupMinutes": 2,
     "requirements": {

@@ -22,6 +22,8 @@ export const CREDENTIAL_ENV_NAMES = [
   "OPENCODE_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
+  "MURAGE_MODEL_PROVIDER_CONNECTIONS",
+  "MURAGE_MODEL_PROVIDER_COMMIT_TOKEN",
   "MURAGE_TELEGRAM_BOT_TOKEN",
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
@@ -67,11 +69,16 @@ const VALUE_PART = String.raw`("[^"]*"|'[^']*'|[^\s"',;)\]}]+)`;
 
 export function redactSecretsInLine(line) {
   let out = String(line ?? "");
+  // The credential bank contains nested JSON and arbitrary opaque keys. A
+  // scalar token regex cannot safely delimit JSON; discard that line remainder.
+  // Plain scalar values retain the standard mask and surrounding log context.
+  out = out.replace(/\b(MURAGE_MODEL_PROVIDER_CONNECTIONS)["']?\s*[:=]\s*["']?\s*[\[{][^\r\n]*/gi,
+    (_match, name) => `${name}=«redacted provider credentials»`);
   const alreadyMasked = (value) => String(value).includes("«redacted");
   for (const name of CREDENTIAL_ENV_NAMES) {
     out = out.replace(
       new RegExp(`\\b(${name})\\s*[:=]\\s*${VALUE_PART}`, "gi"),
-      (_match, key, value) => `${key}=${mask(unquote(value))}`,
+      (_match, key, value) => alreadyMasked(value) ? _match : `${key}=${mask(unquote(value))}`,
     );
   }
   out = out.replace(AUTHORIZATION, (_match, key, value) => `${key}=${mask(value)}`);

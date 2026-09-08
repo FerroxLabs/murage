@@ -143,6 +143,8 @@ mac:
     # no Node, npm or npx on the machine. ${arch} selects the staged target,
     # never the build host. `to:` MUST stay <MURAGE_FUIGO_DIR>/fuigo — see
     # electron/harness-resources.mjs, which is what the server reads.
+    - from: dist-native/browser/darwin-${arch}
+      to: browser-engine
     - from: dist-native/fuigo/darwin-${arch}/fuigo
       to: fuigo/fuigo
   extendInfo:
@@ -171,6 +173,18 @@ win:
   extraResources:
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
+    # Directory copies sign EXEs before afterPack; defer these two files until
+    # the complete upstream inventory has passed its pinned-byte check.
+    - from: dist-native/browser/win32-${arch}
+      to: browser-engine
+      filter:
+        - "**/*"
+        - "!agent-browser.exe"
+        - "!chrome/chrome-headless-shell-win64/chrome-headless-shell.exe"
+    - from: dist-native/browser/win32-${arch}/agent-browser.exe
+      to: browser-engine/agent-browser.exe
+    - from: dist-native/browser/win32-${arch}/chrome/chrome-headless-shell-win64/chrome-headless-shell.exe
+      to: browser-engine/chrome/chrome-headless-shell-win64/chrome-headless-shell.exe
     - from: dist-native/fuigo/win32-x64/fuigo.exe
       to: fuigo/fuigo.exe
   # Signed with Azure Trusted Signing (Microsoft now calls the role "Artifact
@@ -224,6 +238,8 @@ linux:
       to: cua-linux-x64
     - from: dist-native/cloudflared/linux-x64/cloudflared
       to: cloudflared/cloudflared
+    - from: dist-native/browser/linux-${arch}
+      to: browser-engine
     - from: dist-native/fuigo/linux-x64/fuigo
       to: fuigo/fuigo
   desktop:

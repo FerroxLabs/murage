@@ -102,6 +102,13 @@ async function openSeeded(page: Page, target: "chat" | "channel"): Promise<void>
     await expect(menu).toHaveAttribute("aria-expanded", "true");
   }
   await expect(sidebar).toBeVisible();
+  // Dismiss the first-run offer through its normal control before selecting
+  // a row it can cover on a narrow viewport.
+  const invite = page.getByRole("complementary", { name: "Let your bots pick the right model" });
+  if (await invite.isVisible()) {
+    await invite.getByRole("button", { name: "Not now", exact: true }).last().click();
+    await expect(invite).toBeHidden();
+  }
   await sidebar.getByText(target === "chat" ? FIXTURES.blank.name : ROOM_NAME, { exact: true }).click();
   await expect(
     page.getByTestId("chat-scroll").getByText("Three calendars", { exact: false }),
@@ -169,6 +176,7 @@ test.describe("on a phone", () => {
     for (const row of heights) console.log(`  ${row.height.toFixed(1)}px  ${row.label}`);
     // 44px is Apple's minimum, and the number this whole design is for.
     expect(heights.filter((row) => row.height < 44)).toEqual([]);
+    await app.screenshot({ path: testInfo.outputPath("message-action-targets.png") });
   });
 
   test("the transcript is not one pixel narrower for having it", async ({ app }, testInfo) => {

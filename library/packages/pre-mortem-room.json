@@ -5,8 +5,8 @@
     "id": "pre-mortem-room",
     "release": "1.0.0",
     "name": "Pre-Mortem Room",
-    "tagline": "Team launcher - pick me to convene an adversarial launch audit (Saboteur + Skeptical Buyer + Channel Realist + Failure Historian + Fix Writer) and return a ran…",
-    "summary": "Team launcher - pick me to convene an adversarial launch audit (Saboteur + Skeptical Buyer + Channel Realist + Failure Historian + Fix Writer) and return a ranked kill-list.",
+    "tagline": "Challenge buyer appeal, channel assumptions, and potential failure points, then get a ranked list of fixes.",
+    "summary": "For teams checking a launch before committing resources. Challenge buyer appeal, channel assumptions, and potential failure points, then get a ranked list of fixes.",
     "category": "Build",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to convene an adversarial launch audit (Saboteur + Skeptical Buyer + Channel Realist + Failure Historian + Fix Writer) and return a ranked kill-list."
+      "Challenge buyer appeal, channel assumptions, and potential failure points, then get a ranked list of fixes."
     ],
     "setupMinutes": 2,
     "requirements": {

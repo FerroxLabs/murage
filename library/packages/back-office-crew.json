@@ -5,8 +5,8 @@
     "id": "back-office-crew",
     "release": "1.0.0",
     "name": "Back-Office Crew",
-    "tagline": "Team launcher - pick me to auto-assemble a store-ops crew (Support + Ops + Analyst + Numbers) and ship a triaged daily action list from inbox and inventory.",
-    "summary": "Team launcher - pick me to auto-assemble a store-ops crew (Support + Ops + Analyst + Numbers) and ship a triaged daily action list from inbox and inventory.",
+    "tagline": "Turn operational issues into a prioritized daily action list with financial context and clear follow-ups.",
+    "summary": "For store owners juggling support, inventory, and finances. Turn operational issues into a prioritized daily action list with financial context and clear follow-ups.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a store-ops crew (Support + Ops + Analyst + Numbers) and ship a triaged daily action list from inbox and inventory."
+      "Turn operational issues into a prioritized daily action list with financial context and clear follow-ups."
     ],
     "setupMinutes": 2,
     "requirements": {

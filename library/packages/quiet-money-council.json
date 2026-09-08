@@ -5,8 +5,8 @@
     "id": "quiet-money-council",
     "release": "1.0.0",
     "name": "The Quiet Money Council",
-    "tagline": "Team launcher - Position Auditor + Career Strategist + Spending Auditor + Windfall Navigator + Generational Planner + Time Coach assemble around your actual nu…",
-    "summary": "Team launcher - Position Auditor + Career Strategist + Spending Auditor + Windfall Navigator + Generational Planner + Time Coach assemble around your actual numbers. The leader orchestrates; the specialists run the layers.",
+    "tagline": "Review spending, career choices, windfalls, family goals, and time priorities to prepare informed next steps.",
+    "summary": "For people organizing financial and life-planning questions around their actual numbers. Review spending, career choices, windfalls, family goals, and time priorities to prepare informed next steps.",
     "category": "Office",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Position Auditor + Career Strategist + Spending Auditor + Windfall Navigator + Generational Planner + Time Coach assemble around your actual numbers. The leader orchestrates; the specialists run the layers."
+      "Review spending, career choices, windfalls, family goals, and time priorities to prepare informed next steps."
     ],
     "setupMinutes": 2,
     "requirements": {

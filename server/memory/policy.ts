@@ -24,10 +24,53 @@ export function ensureScope(kind: MemoryScopeKind, owner: string): string {
   return id;
 }
 
-function fingerprint(roster: MemoryRoster) {
-  const bots = roster.bots.map(b => ({id:b.id, section:b.section?.trim() || "", threads:[b.threadId,...(b.tasks??[]).map(t=>t.threadId)].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
-  const groups = roster.groups.map(g => ({id:g.id, section:g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[g.threadId,...(g.tasks??[]).map(t=>t.threadId)].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
-  return createHash("sha256").update(JSON.stringify({bots,groups})).digest("hex");
+function rosterSnapshot(roster: MemoryRoster) {
+  // Active-task selection changes presentation, not the authorized thread set.
+  // The active thread usually also appears in tasks; duplicate counts must not
+  // revoke running background turns when the owner opens another task.
+  const bots = roster.bots.map(b => ({id:b.id, section:b.section?.trim() || "", threads:[...new Set([b.threadId,...(b.tasks??[]).map(t=>t.threadId)])].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
+  const groups = roster.groups.map(g => ({id:g.id, section:g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[...new Set([g.threadId,...(g.tasks??[]).map(t=>t.threadId)])].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
+  return {bots,groups};
+}
+function snapshotHash(snapshot: ReturnType<typeof rosterSnapshot>) {
+  return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+}
+function fingerprint(roster: MemoryRoster) { return snapshotHash(rosterSnapshot(roster)); }
+function rosterIntent(roster: MemoryRoster) {
+  const snapshot = rosterSnapshot(roster);
+  return JSON.stringify({hash:snapshotHash(snapshot),snapshot});
+}
+/** New rooms or collision-free tasks with unchanged audiences cannot change
+ * access on existing threads. Unknown legacy snapshots still fail closed. */
+function onlyAddsIndependentRoomThreads(intent: string, roster: MemoryRoster): boolean {
+  try {
+    const previous = JSON.parse(intent) as {hash: string; snapshot?: ReturnType<typeof rosterSnapshot>};
+    const old = previous.snapshot, next = rosterSnapshot(roster);
+    if (!old || !Array.isArray(old.bots) || !Array.isArray(old.groups)
+      || snapshotHash(old) !== previous.hash || JSON.stringify(old.bots) !== JSON.stringify(next.bots)) return false;
+    const oldGroups = new Map(old.groups.map(group => [group.id, group]));
+    const nextGroups = new Map(next.groups.map(group => [group.id, group]));
+    if (oldGroups.size !== old.groups.length || nextGroups.size !== next.groups.length
+      || nextGroups.size < oldGroups.size) return false;
+    for (const [id, group] of oldGroups) {
+      const candidate=nextGroups.get(id);
+      if (!candidate || candidate.section!==group.section || JSON.stringify(candidate.members)!==JSON.stringify(group.members)
+        || group.threads.some(thread=>!candidate.threads.includes(thread))) return false;
+    }
+    // New tasks must not alias private or other-room authority. Existing
+    // mappings and audiences above are immutable throughout this exemption.
+    const occupied = new Set([...old.bots, ...old.groups].flatMap(item => item.threads));
+    let added=false;
+    for (const group of next.groups) {
+      const previousThreads=new Set(oldGroups.get(group.id)?.threads??[]);
+      for (const thread of new Set(group.threads)) {
+        if(previousThreads.has(thread))continue;
+        if (occupied.has(thread)) return false;
+        occupied.add(thread);added=true;
+      }
+    }
+    return added;
+  } catch { return false; }
 }
 function policyRow() { return database().prepare("SELECT state,intent FROM memory_scope_bindings WHERE id=?").get(POLICY_ID); }
 
@@ -36,11 +79,16 @@ export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
   const hash = fingerprint(roster);
   const previous = policyRow();
   if (previous?.state === "granted" && JSON.parse(String(previous.intent)).hash === hash) { persist(); return; }
+  if (previous?.state === "granted" && onlyAddsIndependentRoomThreads(String(previous.intent), roster)) {
+    persist();
+    reconcileMemoryRoster(roster);
+    return;
+  }
   transaction(db => {
     const scopeId = ensureScope("workspace", memoryState().installationId);
     db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
     db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES(?,?,'system','roster',?,'pending',?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,state='pending',intent=excluded.intent")
-      .run(POLICY_ID,scopeId,memoryState().policyRevision,JSON.stringify({hash}));
+      .run(POLICY_ID,scopeId,memoryState().policyRevision,rosterIntent(roster));
     db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
   });
   persist();
@@ -51,7 +99,8 @@ export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
 export function reconcileMemoryRoster(roster: MemoryRoster) {
   transaction(db => {
     const prior = policyRow();
-    if (prior && JSON.parse(String(prior.intent)).hash !== fingerprint(roster)) {
+    if (prior && JSON.parse(String(prior.intent)).hash !== fingerprint(roster)
+      && !(prior.state === "granted" && onlyAddsIndependentRoomThreads(String(prior.intent), roster))) {
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
       db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
     }
@@ -65,7 +114,7 @@ export function reconcileMemoryRoster(roster: MemoryRoster) {
       for (const id of new Set([group.threadId,...(group.tasks??[]).map(t=>t.threadId)])) ensureScope("conversation",id);
     }
     db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES(?,?,'system','roster',?,'granted',?) ON CONFLICT(id) DO UPDATE SET state='granted',intent=excluded.intent,revision=excluded.revision")
-      .run(POLICY_ID,scope,memoryState().policyRevision,JSON.stringify({hash:fingerprint(roster)}));
+      .run(POLICY_ID,scope,memoryState().policyRevision,rosterIntent(roster));
   });
 }
 

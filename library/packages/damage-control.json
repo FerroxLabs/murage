@@ -5,8 +5,8 @@
     "id": "damage-control",
     "release": "1.0.0",
     "name": "Damage Control",
-    "tagline": "Team launcher - crisis comms. Research + Counsel + Copy + Brand assess damage, gate legal exposure, draft the statement, protect the brand.",
-    "summary": "Team launcher - crisis comms. Research + Counsel + Copy + Brand assess damage, gate legal exposure, draft the statement, protect the brand.",
+    "tagline": "Assess the facts and potential exposure, then prepare a response statement and brand-consistent messaging for review.",
+    "summary": "For businesses responding to a reputational problem. Assess the facts and potential exposure, then prepare a response statement and brand-consistent messaging for review.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - crisis comms. Research + Counsel + Copy + Brand assess damage, gate legal exposure, draft the statement, protect the brand."
+      "Assess the facts and potential exposure, then prepare a response statement and brand-consistent messaging for review."
     ],
     "setupMinutes": 2,
     "requirements": {

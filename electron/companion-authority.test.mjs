@@ -6,6 +6,8 @@ it("the real main-process launch blocks share one fresh private token without mu
   const source = readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
   const declaration = source.match(/^const companionToken = .*;$/m)?.[0];
   expect(declaration).toBeTruthy();
+  const providerDeclaration = source.match(/^const modelProviderCommitToken = .*;$/m)?.[0];
+  expect(providerDeclaration).toBeTruthy();
   const optionsStart = source.indexOf("function companionLaunchOptions(");
   const optionsEnd = source.indexOf("function ensureManagedCompanionConnector",optionsStart);
   const serverStart = source.indexOf("async function startServerOn(port) {");
@@ -25,6 +27,7 @@ it("the real main-process launch blocks share one fresh private token without mu
     const managedComposioChildEnvironment=(_url,_credentials,env)=>env;
     const harnessResourceEnvironment=()=>({}), workspaceCredentialEnv=()=>({});
     ${declaration}
+    ${providerDeclaration}
     ${source.slice(optionsStart,optionsEnd)}
     const env=((port)=>{${source.slice(source.indexOf("{",serverStart)+1,serverEnd)}return childEnv;})(8799);
     return {env,options:companionLaunchOptions()};
@@ -35,6 +38,8 @@ it("the real main-process launch blocks share one fresh private token without mu
   const first = invoke();
   const second = invoke();
   expect(first.env.MURAGE_COMPANION_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+  expect(first.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+  expect(second.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN).not.toBe(first.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN);
   expect(first.options.companionToken).toBe(first.env.MURAGE_COMPANION_TOKEN);
   expect(first.env.MURAGE_INTERNAL_DATA_DIR_LEASE).toBe("private-lease-fixture");
   expect(first.env.MURAGE_DATA_DIR).toBe("/fixture/canonical-installation");

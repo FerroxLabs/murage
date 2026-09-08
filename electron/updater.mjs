@@ -112,6 +112,7 @@ export function startUpdater() {
   const handOff = HAND_OFF_TYPES.has(packageType);
   setState({ installMode: handOff ? "handoff" : "restart" });
   updaterCoordinator = createUpdaterCoordinator(autoUpdater, setState, {
+    nativeUpdater: process.platform === "darwin" ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
   });
 

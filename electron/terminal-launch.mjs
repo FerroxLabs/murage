@@ -35,7 +35,22 @@ export async function openBlankTerminal(platform = process.platform, run = execF
     );
   }
   if (platform === "win32") {
-    return launch("powershell.exe", ["-NoExit"], { windowsHide: false }, run);
+    // execFile uses pipes, so -NoExit alone can leave PowerShell without an
+    // interactive console. A short hidden bootstrap creates the real window;
+    // await its exit so a failed Start-Process cannot report success on spawn.
+    return new Promise((resolve) => {
+      try {
+        run(
+          "powershell.exe",
+          ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "$ErrorActionPreference = 'Stop'; Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList '-NoLogo','-NoProfile','-NoExit' -WindowStyle Normal -ErrorAction Stop"],
+          { windowsHide: true, timeout: 15_000 },
+          (error) => resolve(!error),
+        );
+      } catch {
+        resolve(false);
+      }
+    });
   }
   if (platform === "linux") {
     for (const terminal of ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"]) {

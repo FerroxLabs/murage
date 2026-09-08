@@ -311,6 +311,23 @@ jobs:
           }
           exit $script:fail
 
+      - name: Verify signed browser runtime admission
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { resolve } from 'node:path';
+          import { browserBundlePaths } from './server/browser-bundle-release.ts';
+          import { ensureBrowserSandboxAccess } from './server/browser-sandbox.ts';
+          const root = resolve('release/win-unpacked/resources/browser-engine');
+          const paths = browserBundlePaths(root, 'win32-x64');
+          await ensureBrowserSandboxAccess({ command: paths.engine, env: {
+            MURAGE_BROWSER_BUNDLE_DIR: root,
+            AGENT_BROWSER_EXECUTABLE_PATH: paths.chrome,
+            SystemRoot: process.env.SystemRoot,
+          }});
+          console.log('Signed browser original pins, publisher and sandbox access verified.');
+          NODE
+
       - name: Verify the packaged tree and start the packaged server
         shell: bash
         run: |

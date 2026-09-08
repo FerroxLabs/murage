@@ -249,7 +249,7 @@ export function ComputerPanel({
   const androidStatus = useAndroidUsbDevices();
   const androidConnected = androidStatus.devices.length > 0;
   // the built-in browser: a per-bot switch in Settings, and only the desktop app has one
-  const browserEnabled = builtInBrowserEnabled(state.config) && bot.browser !== false && Boolean(window.muragebox?.browser);
+  const browserEnabled = builtInBrowserEnabled(state.config) && bot.browser !== false;
   // bumped when a Box API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
   const vmReadinessAttempts = useRef(0);
@@ -1287,7 +1287,7 @@ export function ComputerPanel({
             ...(!cloudSupported ? { cloud: "This engine cannot use cloud computer tools" } : {}),
             ...(!vmSupported ? { vm: "This engine cannot use the Local VM" } : {}),
             ...(!localSelectable ? { local: localDisabledReason ?? "Local control is not ready" } : {}),
-            ...(!builtInBrowserEnabled(state.config) || !window.muragebox?.browser
+            ...(!builtInBrowserEnabled(state.config)
               ? { browser: !builtInBrowserEnabled(state.config) ? "Enable Browser in Settings" : "Browser setup required on this host" } : {}),
           }} onSelect={(mode) => {
             if (mode === (bot.computer ?? "auto")) return;

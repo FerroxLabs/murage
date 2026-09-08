@@ -8,10 +8,11 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
 import { api, useStore, type InstanceInfo } from "@/state/store";
+import { EngineManagement } from "./EngineManagement";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
-import { splitEngineRail } from "@/lib/engine-rail";
+import { engineFamilies } from "@/lib/provider-model-picker";
 import { cn } from "@/lib/cn";
 
 interface ProbeResult {
@@ -253,10 +254,10 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 text-[13px]">
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className={cn("size-1.5 shrink-0 rounded-full", instance.cli ? "bg-accent" : "bg-raised-hover")} />
         <ProviderMark driverKind={instance.driverKind} size={14} />
-        <span className="shrink-0 text-ink">{instance.displayName}</span>
+        <span className="min-w-0 max-w-full truncate text-ink" title={instance.displayName}>{instance.displayName}</span>
         {instance.cli ? (
           <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>
             {instance.cli}
@@ -301,12 +302,15 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       <p className="mt-1 text-[12px] text-ink-secondary">
         {instance.enabled === false ? "Disabled" : needsCli(instance)
           ? instance.snapshot.reason ?? "Not detected"
+          : instance.driverKind === "fuigoAgent"
+            ? needsSignIn(instance) ? "Included · connect an AI provider" : instance.snapshot.authenticated === true ? "Included · connected" : "Included · connection not verified"
           : needsSignIn(instance) ? "Detected · sign-in required"
             : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
       </p>
       {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
         <EngineSetup instance={instance} className="mt-2" />
       )}
+      {instance.enabled !== false && !(instance.driverKind === "codex" && needsCli(instance)) && <EngineManagement instance={instance} />}
       {confirmationOpen && (
         <div className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
           <p>Changing engine availability reloads providers and interrupts running turns. Enabling an engine may probe its CLI and inherited configuration; it does not resume restored work.</p>
@@ -342,21 +346,11 @@ export function EnginesSettings() {
       {rows.length === 0 && (
         <div className="text-[13px] text-ink-secondary">No CLI engines detected yet.</div>
       )}
-      {(() => {
-        const { subscription, custom } = splitEngineRail(rows);
-        return (
-          <>
-            {subscription.length > 0 && <EngineGroupLabel>Cloud</EngineGroupLabel>}
-            {subscription.map((i) => (
-              <EngineRow key={i.instanceId} instance={i} />
-            ))}
-            {custom.length > 0 && <EngineGroupLabel className="pt-1">Local</EngineGroupLabel>}
-            {custom.map((i) => (
-              <EngineRow key={i.instanceId} instance={i} />
-            ))}
-          </>
-        );
-      })()}
+      {engineFamilies(rows).map(({primary,members})=><section key={primary.driverKind} className="rounded-xl border border-hairline/40 bg-card p-4">
+        <EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>
+        <EngineRow instance={primary}/>
+        {members.length>1&&<details className="mt-3 border-t border-hairline/30 pt-2"><summary className="cursor-pointer text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</summary><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">Uses the same executable; this configured account is preserved separately.</p>}</div>)}</div></details>}
+      </section>)}
       <div className="text-[12px] leading-relaxed text-ink-secondary">
         Set CLI points an engine at a specific binary: a versioned build, a wrapper script, or an
         absolute path. Saving reloads providers and interrupts any running turns.

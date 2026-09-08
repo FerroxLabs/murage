@@ -5,8 +5,8 @@
     "id": "caption-carousel-studio",
     "release": "1.0.0",
     "name": "Caption & Carousel Studio",
-    "tagline": "Team launcher - pick me to auto-assemble a static-post crew (Copy + Brand + Sales + Research) and ship carousel slides, a caption, a fitted CTA, and discovery…",
-    "summary": "Team launcher - pick me to auto-assemble a static-post crew (Copy + Brand + Sales + Research) and ship carousel slides, a caption, a fitted CTA, and discovery terms.",
+    "tagline": "Get carousel slide copy, a matching caption, a relevant call to action, and discovery terms in your brand voice.",
+    "summary": "For creators turning an idea into a social post. Get carousel slide copy, a matching caption, a relevant call to action, and discovery terms in your brand voice.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a static-post crew (Copy + Brand + Sales + Research) and ship carousel slides, a caption, a fitted CTA, and discovery terms."
+      "Get carousel slide copy, a matching caption, a relevant call to action, and discovery terms in your brand voice."
     ],
     "setupMinutes": 2,
     "requirements": {

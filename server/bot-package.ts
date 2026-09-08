@@ -7,7 +7,9 @@ import type { TeamManifestMember } from "./team-manifest.ts";
 
 export const BOT_PACKAGE_FORMAT = "murage.package" as const;
 export const BOT_PACKAGE_VERSION = 1 as const;
-export const BOTMRR_MARKDOWN_VERSION = 1 as const;
+export const EMBERBOT_MARKDOWN_VERSION = 1 as const;
+/** Compatibility for existing integrations; new exports use emberbot. */
+export const BOTMRR_MARKDOWN_VERSION = EMBERBOT_MARKDOWN_VERSION;
 
 const COLORS = [
   "green",
@@ -131,7 +133,7 @@ export type BotPackageAgent = BotPackageDefinition["agents"][number];
 export type BotPackagePlaybook = NonNullable<BotPackageDefinition["playbooks"]>[number];
 
 export function isBotPackage(value: unknown): boolean {
-  if (typeof value === "string") return /^---\r?\n[\s\S]*?\bbotmrr:\s*1\b/m.test(value);
+  if (typeof value === "string") return /^---\r?\n[\s\S]*?\b(?:emberbot|botmrr):\s*1\b/m.test(value);
   return Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
     (value as { format?: unknown }).format === BOT_PACKAGE_FORMAT;
 }
@@ -147,10 +149,11 @@ function markdownDocument(markdown: string): ParsedBotPackage {
     throw new Error("This Markdown has invalid YAML frontmatter");
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    throw new Error("This Markdown is missing its BotMRR blueprint");
+    throw new Error("This Markdown is missing its EmberBot blueprint");
   }
-  const { botmrr, ...definition } = metadata as Record<string, unknown>;
-  if (botmrr !== BOTMRR_MARKDOWN_VERSION) throw new Error("BotMRR Markdown version is not supported");
+  const { emberbot, botmrr, ...definition } = metadata as Record<string, unknown>;
+  if (emberbot !== undefined && botmrr !== undefined) throw new Error("Use one Markdown format marker, not both");
+  if ((emberbot ?? botmrr) !== EMBERBOT_MARKDOWN_VERSION) throw new Error("EmberBot Markdown version is not supported");
   for (const heading of ["Activation", "Mission", "Outcomes", "Connections", "Team", "Chief of Staff", "Completion rule"]) {
     if (!markdown.includes(`## ${heading}`)) throw new Error(`This Markdown is missing its ${heading} section`);
   }
@@ -213,7 +216,7 @@ const list = (values: string[]) => values.map((value) => `- ${value}`).join("\n"
  * run without Murage or another proprietary parser. */
 export function renderBotPackageMarkdown(document: ParsedBotPackage): string {
   const pkg = parseBotPackage(document).package;
-  const frontmatter = stringifyYaml({ botmrr: BOTMRR_MARKDOWN_VERSION, ...pkg }, { lineWidth: 0 }).trim();
+  const frontmatter = stringifyYaml({ emberbot: EMBERBOT_MARKDOWN_VERSION, ...pkg }, { lineWidth: 0 }).trim();
   const agents = pkg.agents.map((agent) => [
     `### ${agent.name} — ${agent.title || "Specialist"}`,
     `**Role key:** \`${agent.key}\``,

@@ -48,6 +48,8 @@ export function isEffortLevel(value: unknown): value is EffortLevel {
 export interface ModelSelection {
   instanceId: InstanceId;
   model: string;
+  /** Explicit provider account; absent preserves the engine's native route. */
+  connectionId?: string;
   /** Optional: no effort means no flag, and the CLI keeps its own default. */
   effort?: EffortLevel;
 }
@@ -139,7 +141,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; setup?: boolean; providerError?: ProviderErrorInfo }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; providerError?: ProviderErrorInfo }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -161,6 +163,8 @@ export interface SendTurnInput {
   threadId: ThreadId;
   text: string;
   model?: string;
+  /** Server custody only; never serialized into bot settings or the renderer. */
+  providerRoute?: import("./provider-routing.ts").ProviderTurnRoute;
   effort?: EffortLevel;
   resumeCursor?: unknown;
   /** Prior turns for transcript-replay providers (API-backed drivers). */

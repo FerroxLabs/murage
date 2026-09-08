@@ -1,8 +1,8 @@
 // The pinned agent-browser release the harness downloads for the bots'
 // browser (docs/plans/browser-engine.md). Digests were computed from the
-// GitHub release assets on 2026-09-06; bump the version and every digest
-// together, through a pull request whose end-to-end run exercises the binary.
-// The Dockerfile pins the same version.
+// official GitHub assets on 2026-09-06, except the explicitly versioned Windows
+// vendor build below. Update pins through a reviewed native end-to-end run.
+// The Dockerfile retains the official Linux version.
 export const AGENT_BROWSER_VERSION = "0.36.0";
 
 export interface AgentBrowserReleaseAsset {
@@ -12,6 +12,10 @@ export interface AgentBrowserReleaseAsset {
   asset: string;
   sha256: string;
   bytes: number;
+  /** A reviewed platform-specific vendor revision; other assets use the upstream version. */
+  version?: string;
+  /** Exact release URL for a reviewed vendor build, never a mutable latest URL. */
+  url?: string;
 }
 
 const RELEASES = new Map<string, AgentBrowserReleaseAsset>([
@@ -41,12 +45,21 @@ const RELEASES = new Map<string, AgentBrowserReleaseAsset>([
   ],
   [
     "win32-x64",
-    { target: "win32-x64", asset: "agent-browser-win32-x64.exe", sha256: "412ff72737a109e93f5304b0ff76c988fb6f1f451d0fc7e010577922bcc20ff3", bytes: 13837312 },
+    {
+      target: "win32-x64", version: "0.36.0-omb.1",
+      asset: "agent-browser-win32-x64-0.36.0-omb.1.exe",
+      url: "https://github.com/milind-soni/OpenMausBot/releases/download/browser-engine-v0.36.0-omb.1/agent-browser-win32-x64-0.36.0-omb.1.exe",
+      sha256: "33bee834f6a6072ec8688b0914726e0262874d758f69f27e8baf7eaac6b5ed15", bytes: 13806080,
+    },
   ],
 ]);
 
 export function agentBrowserReleaseUrl(asset: AgentBrowserReleaseAsset): string {
-  return `https://github.com/vercel-labs/agent-browser/releases/download/v${AGENT_BROWSER_VERSION}/${asset.asset}`;
+  return asset.url ?? `https://github.com/vercel-labs/agent-browser/releases/download/v${AGENT_BROWSER_VERSION}/${asset.asset}`;
+}
+
+export function agentBrowserReleaseVersion(asset: AgentBrowserReleaseAsset | null): string {
+  return asset?.version ?? AGENT_BROWSER_VERSION;
 }
 
 /** The asset for this machine, or null where Vercel publishes none. */
@@ -58,4 +71,3 @@ export function resolveAgentBrowserReleaseAsset(
   const key = platform === "linux" && musl ? `linux-musl-${arch}` : `${platform}-${arch}`;
   return RELEASES.get(key) ?? null;
 }
-

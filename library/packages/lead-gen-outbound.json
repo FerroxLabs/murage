@@ -5,8 +5,8 @@
     "id": "lead-gen-outbound",
     "release": "1.0.0",
     "name": "Lead-Gen Outbound Squad",
-    "tagline": "Team launcher - pick me to auto-assemble an outbound crew (Sales + Research + Copy + Support) and ship an ICP, a prospect list, and a personalized multi-touch…",
-    "summary": "Team launcher - pick me to auto-assemble an outbound crew (Sales + Research + Copy + Support) and ship an ICP, a prospect list, and a personalized multi-touch sequence.",
+    "tagline": "Define your ideal customer, research a prospect list, and prepare a personalized sequence with a plan for handling replies.",
+    "summary": "For businesses building a prospecting campaign. Define your ideal customer, research a prospect list, and prepare a personalized sequence with a plan for handling replies.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble an outbound crew (Sales + Research + Copy + Support) and ship an ICP, a prospect list, and a personalized multi-touch sequence."
+      "Define your ideal customer, research a prospect list, and prepare a personalized sequence with a plan for handling replies."
     ],
     "setupMinutes": 2,
     "requirements": {

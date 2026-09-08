@@ -5,8 +5,8 @@
     "id": "daily-briefing",
     "release": "1.0.0",
     "name": "Daily Briefing",
-    "tagline": "Team launcher - pick me to auto-assemble a chief-of-staff crew (Coach + Numbers + Counsel + Sales) and turn a 40-loop brain-dump into the one thing that matter…",
-    "summary": "Team launcher - pick me to auto-assemble a chief-of-staff crew (Coach + Numbers + Counsel + Sales) and turn a 40-loop brain-dump into the one thing that matters today.",
+    "tagline": "Sort your concerns through operational, financial, sales, and risk perspectives to identify today's most important next step.",
+    "summary": "For founders with too many open decisions. Sort your concerns through operational, financial, sales, and risk perspectives to identify today's most important next step.",
     "category": "Office",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a chief-of-staff crew (Coach + Numbers + Counsel + Sales) and turn a 40-loop brain-dump into the one thing that matters today."
+      "Sort your concerns through operational, financial, sales, and risk perspectives to identify today's most important next step."
     ],
     "setupMinutes": 2,
     "requirements": {

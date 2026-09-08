@@ -10,7 +10,7 @@
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,6 +86,7 @@ describe("comms e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let gateFile = "";
+  let helperHangRpc = "";
   let stderr = "";
 
   const waitUntil = async (predicate: () => Promise<boolean>, timeout: number, what: string): Promise<void> => {
@@ -122,6 +123,7 @@ describe("comms e2e (fake ACP fleet)", () => {
     chmodSync(FAKE_AGY_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-comms-test-"));
     gateFile = join(home, "helper-gate");
+    helperHangRpc = join(home, "helper-hang-rpc.json");
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(
       join(home, ".murage", "config.json"),
@@ -130,6 +132,11 @@ describe("comms e2e (fake ACP fleet)", () => {
           // the ask-peer fleet: both bots run "ask-peer" so A can ask B
           // synchronously (existing ask_bot e2e + the approval-gate e2e,
           // which uses the same sync path under a human card).
+          batchChief: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "batch-delegate" },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
           grok: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "ask-peer" },
@@ -182,7 +189,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           // a turn that remains busy until provider reload disposes it.
           helperHang: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "hang" },
+            environment: { FAKE_ACP_MODE: "hang", FAKE_ACP_RPC_DUMP: helperHangRpc },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // a deterministic busy window: turns hold open until the gate
@@ -757,61 +764,97 @@ describe("comms e2e (fake ACP fleet)", () => {
         approvePeerComms: true,
       });
 
-      // Start the ask while B is idle so the normal ask_bot approval card is
-      // the first and only human decision for this exact peer message.
-      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "ask @ReloadHelper something" })).status).toBe(202);
-      let approvalCard: any;
-      await waitUntil(async () => {
-        const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
-        approvalCard = current.messages.find(
-          (m: any) => m.kind === "options" && m.card?.tool === "ask_bot" && !m.card?.answered,
-        );
-        return Boolean(approvalCard);
-      }, 20_000, "initial ask_bot approval card never appeared");
+      const diagnosticStartedAt = Date.now();
+      let reloadStartedAt: number | undefined, reloadFinishedAt: number | undefined;
+      let lastState: any[] = [];
+      let failure: unknown;
+      try {
+        // Start the ask while B is idle so the normal ask_bot approval card is
+        // the first and only human decision for this exact peer message.
+        expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "ask @ReloadHelper something" })).status).toBe(202);
+        let approvalCard: any;
+        await waitUntil(async () => {
+          const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+          approvalCard = current.messages.find(
+            (m: any) => m.kind === "options" && m.card?.tool === "ask_bot" && !m.card?.answered,
+          );
+          return Boolean(approvalCard);
+        }, 20_000, "initial ask_bot approval card never appeared");
 
-      // B becomes busy while the approval is open. After Allow, ask_bot has
-      // to fall back to the durable queue, but that queue inherits Allow.
-      expect((await api("POST", `/api/bots/${helper.id}/messages`, { text: "hold until reload" })).status).toBe(202);
-      await waitUntil(async () => {
-        const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
-        return Boolean(current?.busy);
-      }, 10_000, "helper never became busy behind the approval card");
-      expect((await api("POST", `/api/bots/${asker.id}/respond`, {
-        requestId: approvalCard.card.requestId,
-        behavior: "allow",
-      })).status).toBe(200);
+        // B becomes busy while the approval is open. After Allow, ask_bot has
+        // to fall back to the durable queue, but that queue inherits Allow.
+        expect((await api("POST", `/api/bots/${helper.id}/messages`, { text: "hold until reload" })).status).toBe(202);
+        await waitUntil(async () => {
+          const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+          return Boolean(current?.busy);
+        }, 10_000, "helper never became busy behind the approval card");
+        expect((await api("POST", `/api/bots/${asker.id}/respond`, {
+          requestId: approvalCard.card.requestId,
+          behavior: "allow",
+        })).status).toBe(200);
 
-      await waitUntil(async () => {
-        const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
-        const queued = current.messages.some(
-          (m: any) => m.kind === "text" && m.text?.includes("queued as a delegation"),
-        );
-        const waiting = current.messages.some(
-          (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy"),
-        );
-        return queued && waiting && !current.busy;
-      }, 25_000, "approved ask was not retained as a waiting delegation");
+        await waitUntil(async () => {
+          const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+          const queued = current.messages.some(
+            (m: any) => m.kind === "text" && m.text?.includes("queued as a delegation"),
+          );
+          const waiting = current.messages.some(
+            (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy"),
+          );
+          return queued && waiting && !current.busy;
+        }, 25_000, "approved ask was not retained as a waiting delegation");
 
-      // Provider reload releases B without turn.completed. The explicit idle
-      // retry must still pick up the waiting handoff on the rebuilt fleet.
-      expect((await api("PUT", "/api/config", { xai: { key: `xai_retry_${Date.now()}` } })).status).toBe(200);
-      writeFileSync(gateFile, "go");
+        // Provider reload releases B without turn.completed. The explicit idle
+        // retry must still pick up the waiting handoff on the rebuilt fleet.
+        reloadStartedAt = Date.now();
+        expect((await api("PUT", "/api/config", { xai: { key: `xai_retry_${Date.now()}` } })).status).toBe(200);
+        reloadFinishedAt = Date.now();
+        writeFileSync(gateFile, "go");
 
-      let finalAsker: any;
-      await waitUntil(async () => {
-        finalAsker = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
-        return finalAsker.messages.some(
-          (m: any) =>
-            m.kind === "text"
-            && m.from?.botId === helper.id
-            && m.text?.includes("replied to the delegated task")
-            && m.text?.includes("ping from fake"),
-        );
-      }, 30_000, "provider reload left the waiting delegation stranded");
+        let finalAsker: any;
+        await waitUntil(async () => {
+          lastState = (await api("GET", "/api/bots")).body.bots;
+          finalAsker = lastState.find((b: any) => b.id === asker.id);
+          return finalAsker.messages.some(
+            (m: any) =>
+              m.kind === "text"
+              && m.from?.botId === helper.id
+              && m.text?.includes("replied to the delegated task")
+              && m.text?.includes("ping from fake"),
+          );
+        }, 30_000, "provider reload left the waiting delegation stranded");
 
-      const approvalCards = finalAsker.messages.filter((m: any) => m.kind === "options");
-      expect(approvalCards.filter((m: any) => m.card?.tool === "ask_bot")).toHaveLength(1);
-      expect(approvalCards.some((m: any) => m.card?.tool === "delegate_bot")).toBe(false);
+        const approvalCards = finalAsker.messages.filter((m: any) => m.kind === "options");
+        expect(approvalCards.filter((m: any) => m.card?.tool === "ask_bot")).toHaveLength(1);
+        expect(approvalCards.some((m: any) => m.card?.tool === "delegate_bot")).toBe(false);
+      } catch (error) {
+        failure = error;
+        throw error;
+      } finally {
+        try {
+          const bounded = (value: unknown, limit: number) => String(value ?? "").replaceAll(DESKTOP_SECRET, "[fixture-secret]").slice(0, limit);
+          const readReceipt = (name: string) => {
+            try { return bounded(readFileSync(join(home, ".murage", name), "utf8"), 24000); }
+            catch { return null; }
+          };
+          const directory = join(SERVER_DIR, "..", ".planning", "chief-capability-evidence", "C02", "E1");
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, `reload-${process.pid}-${diagnosticStartedAt}.json`), JSON.stringify({
+            startedAt: diagnosticStartedAt, reloadStartedAt, reloadFinishedAt, endedAt: Date.now(),
+            childPid: child.pid, childExitCode: child.exitCode, gateExists: existsSync(gateFile), fixtureHome: home,
+            failure: failure ? bounded(failure instanceof Error ? failure.message : failure, 1000) : null,
+            bots: lastState.filter(bot => bot.id === asker.id || bot.id === helper.id).map(bot => ({
+              id: bot.id, name: bot.name, threadId: bot.threadId, busy: bot.busy, activity: bot.activity,
+              messages: (bot.messages ?? []).slice(-12).map((message: any) => ({
+                at: message.at, role: message.role, kind: message.kind, from: message.from,
+                text: bounded(message.text, 1500), tool: message.tool,
+              })),
+            })),
+            pending: readReceipt("delegations.json"), receipts: readReceipt("delegation-receipts.json"),
+            stderr: bounded(stderr.slice(-8000), 8000),
+          }, null, 2), { mode: 0o600 });
+        } catch { console.warn("Could not save bounded reload fixture diagnostics"); }
+      }
     },
     90_000,
   );
@@ -957,9 +1000,13 @@ describe("comms e2e (fake ACP fleet)", () => {
         channelId = askerBot.messages.find(
           (m: any) => m.kind === "activity" && m.tool?.name === "Messaged @Helper",
         )?.comm?.groupId;
-        if (channelId && helperBot.busy) break;
+        // Busy includes asynchronous memory/permission setup. This test
+        // reloads an actual hanging provider, so wait for its accepted prompt.
+        let methods: string[] = [];
+        try { methods = JSON.parse(readFileSync(helperHangRpc, "utf8")); } catch {}
+        if (channelId && helperBot.busy && methods.includes("session/prompt")) break;
         if (Date.now() > busyDeadline) {
-          throw new Error(`delegated hanging turn never started. stderr: ${stderr.slice(-2000)}`);
+          throw new Error(`delegated hanging prompt never started; RPC methods: ${JSON.stringify(methods)}. stderr: ${stderr.slice(-2000)}`);
         }
         await new Promise((r) => setTimeout(r, 250));
       }
@@ -1277,16 +1324,9 @@ describe("comms e2e (fake ACP fleet)", () => {
     ).toBe(false);
   }, 50_000);
 
-  // ── depth guard regression ───────────────────────────────────────────
-  // A bot invoked via ask_bot or delegate_bot runs at depth=1, which equals
-  // MAX_COMMS_DEPTH. The depth guard in startTurn must refuse to inject
-  // the agents integration, so B's CLI sees no agents mcpServer and falls
-  // through to its plain happy text — NOT a "one hop" error from a depth-1
-  // ask_bot. If the guard were removed, B's fake (also in ask-peer mode)
-  // would call ask_bot, the harness would refuse recursion, and B's reply
-  // would contain "peer error: ... one hop". The absence of that error is
-  // the regression signal.
-  it("does not inject the agents integration into a depth-1 turn", async () => {
+  // Delegated helpers keep their MCP directory; budgets constrain actions,
+  // not the existence of the management tool server.
+  it("retains the scoped agents directory on a delegated depth-1 turn", async () => {
     const seeded = (await api("GET", "/api/bots")).body.bots[0];
     await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
     // A runs delegate-peer and hands off to B, which runs ask-peer. If the
@@ -1326,11 +1366,114 @@ describe("comms e2e (fake ACP fleet)", () => {
     const reply = helperBot.messages.findLast(
       (m: any) => m.role === "bot" && m.kind === "text" && m.text?.includes("hello from fake acp"),
     );
-    // If the guard were broken, B would have called ask_bot at depth=1 and
-    // received "message chains are limited to one hop" back from the
-    // harness. That error text would surface here as `peer error: ... one hop`.
     expect(reply.text).toContain("hello from fake acp");
-    expect(reply.text).not.toContain("one hop");
+    expect(reply.text).toContain("agents tools available at depth 1");
+    expect(reply.text).toContain(asker.id);
     expect(reply.text).not.toContain("peer error");
   }, 45_000);
+  it("queues eight helpers in one turn and runs no more than four together", async () => {
+    await (async () => {
+    rmSync(gateFile, { force: true });
+    const helpers: Array<{ id: string }> = [];
+    for (let i = 0; i < 8; i++) {
+      const bot = (await api("POST", "/api/bots", { name: `Batch helper ${i}`, section: "Batch team", modelSelection: { instanceId: "helperGate", model: "fake-model" } })).body.bot;
+      helpers.push(bot);
+    }
+    const chief = (await api("POST", "/api/bots", { name: "Batch lead", section: "Batch team", modelSelection: { instanceId: "batchChief", model: "fake-model" } })).body.bot;
+    // Keep bounded fixture evidence before afterAll removes its isolated HOME.
+    // Diagnostics do not add requests, retries, or time to the deadline.
+    const startedAt = Date.now();
+    const receiptPrefix = `batch-${process.pid}-${startedAt}`;
+    let latestState: any[] = [chief, ...helpers];
+    let gateReleasedAt: number | null = null;
+    const capture = (phase: "gate" | "failure", failure?: unknown) => {
+      try {
+        const helperIds = new Set(helpers.map(helper => helper.id));
+        const redact = (value: unknown, limit: number) => String(value ?? "")
+          .replaceAll(DESKTOP_SECRET, "[fixture-secret]")
+          .replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]").slice(0, limit);
+        const relevantBots = latestState.filter(bot => bot.id === chief.id || helperIds.has(bot.id));
+        const readFixtureJson = (name: string): any => {
+          try { return JSON.parse(readFileSync(join(home, ".murage", name), "utf8")); }
+          catch { return null; }
+        };
+        const pending = readFixtureJson("delegations.json");
+        const receipts = readFixtureJson("delegation-receipts.json");
+        const pendingItems = pending && typeof pending === "object"
+          ? Object.entries(pending).flatMap(([sourceThreadId, items]) => Array.isArray(items)
+            ? items.filter(item => helperIds.has(item.toBotId)).slice(0, 8).map(item => ({
+              id: item.id, sourceThreadId, toBotId: item.toBotId, fromBotId: item.fromBotId,
+              attempts: item.attempts, waitingOnBusy: item.waitingOnBusy, depth: item.depth,
+              message: redact(item.message, 500),
+            })) : []) : null;
+        const directory = join(SERVER_DIR, "..", ".planning", "chief-capability-evidence", "C02");
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(join(directory, `${receiptPrefix}-${phase}.json`), JSON.stringify({
+          phase, at: Date.now(), startedAt, gateReleasedAt,
+          elapsedMs: Date.now() - startedAt, gateElapsedMs: gateReleasedAt === null ? null : gateReleasedAt - startedAt,
+          childPid: child.pid, childExitCode: child.exitCode, fixtureHome: home, gateExists: existsSync(gateFile),
+          failure: failure ? redact(failure instanceof Error ? failure.message : failure, 1000) : undefined,
+          bots: relevantBots.map(bot => ({
+            id: bot.id, name: bot.name, threadId: bot.threadId, busy: bot.busy, activity: bot.activity,
+            messages: (bot.messages ?? []).slice(bot.id === chief.id ? -12 : -4).map((message: any) => ({
+              at: message.at, role: message.role, kind: message.kind, turnId: message.turnId,
+              text: redact(message.text, 1500),
+              tool: message.tool ? { name: redact(message.tool.name, 500), ok: message.tool.ok } : undefined,
+            })),
+          })),
+          pending: pendingItems,
+          receipts: Array.isArray(receipts) ? receipts.filter(receipt => helperIds.has(receipt.toBotId)).slice(0, 16).map(receipt => ({
+            id: receipt.id, sourceThreadId: receipt.sourceThreadId, toBotId: receipt.toBotId,
+            status: receipt.status, finishedAt: receipt.finishedAt, result: redact(receipt.result, 1500),
+          })) : null,
+          stderr: redact(stderr.slice(-8000), 8000),
+        }, null, 2), { mode: 0o600 });
+      } catch {
+        // Evidence failure must not replace the original acceptance failure.
+        console.warn("Could not save bounded batch fixture diagnostics");
+      }
+    };
+    try {
+      expect((await api("POST", `/api/bots/${chief.id}/messages`, { text: "Assign the eight helpers" })).status).toBe(202);
+      const deadline = Date.now() + 30000;
+      let busy = 0;
+      while (Date.now() < deadline) {
+        const state = (await api("GET", "/api/bots")).body.bots;
+        latestState = state;
+        busy = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && bot.busy).length;
+        expect(busy).toBeLessThanOrEqual(4);
+        const lead = state.find((bot: any) => bot.id === chief.id);
+        if (!lead.busy && busy === 4) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      expect(busy).toBe(4);
+      writeFileSync(gateFile, "continue");
+      gateReleasedAt = Date.now();
+      capture("gate");
+      let completed = 0;
+      while (Date.now() < deadline) {
+        const state = (await api("GET", "/api/bots")).body.bots;
+        latestState = state;
+        completed = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && !bot.busy && bot.messages.some((message: any) => message.role === "bot" && message.kind === "text" && message.text?.includes("batch work"))).length;
+        if (completed === 8) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      expect(completed).toBe(8);
+    } catch (error) {
+      capture("failure", error);
+      throw error;
+    }
+    })().catch(async (error: unknown) => {
+      await new Promise(resolve => setImmediate(resolve));
+      const safe = (value: unknown) => String(value ?? "").replaceAll(DESKTOP_SECRET, "[fixture-secret]").replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]");
+      console.error("Bounded Windows batch failure: " + JSON.stringify({
+        childPid: child.pid, childExitCode: child.exitCode, childSignal: child.signalCode,
+        failure: safe(error instanceof Error ? error.stack : error).slice(0, 2500),
+        cause: error instanceof Error ? safe(error.cause).slice(0, 500) : undefined,
+        stderr: safe(stderr).slice(-8000),
+      }));
+      throw error;
+    });
+  }, 45000);
+
 });

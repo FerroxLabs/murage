@@ -5,8 +5,8 @@
     "id": "reply-desk",
     "release": "1.0.0",
     "name": "Reply Desk",
-    "tagline": "Team launcher - pick me to auto-assemble an engagement crew (Support + Copy + Sales + Research) and ship a send-ready reply queue plus flagged warm leads.",
-    "summary": "Team launcher - pick me to auto-assemble an engagement crew (Support + Copy + Sales + Research) and ship a send-ready reply queue plus flagged warm leads.",
+    "tagline": "Sort the queue, prepare replies in your voice, and flag promising sales conversations for follow-up.",
+    "summary": "For businesses with a backlog of comments or customer messages. Sort the queue, prepare replies in your voice, and flag promising sales conversations for follow-up.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble an engagement crew (Support + Copy + Sales + Research) and ship a send-ready reply queue plus flagged warm leads."
+      "Sort the queue, prepare replies in your voice, and flag promising sales conversations for follow-up."
     ],
     "setupMinutes": 2,
     "requirements": {

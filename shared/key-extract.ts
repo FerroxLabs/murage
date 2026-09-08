@@ -19,16 +19,9 @@
 // 3. The value is the secret; the name is not. `name` and `hint` are safe to
 //    render. `value` is not, ever. Use `maskKey`.
 //
-// WHAT MURAGE CAN ACTUALLY STORE, read off the code rather than off a list of
-// famous providers. `appConfigSchema` (server/config.ts) has exactly eight
-// credential-bearing sections a renderer can write: xai, openaiCompat,
-// composio, box, opencodeGo, tts, imageGen and flux. There is deliberately no
-// anthropic or google section: ANTHROPIC_API_KEY, GEMINI_API_KEY and
-// GOOGLE_API_KEY appear in this repo only inside PROVIDER_CREDENTIAL_ENV
-// (server/config.ts), which is a list of names to DELETE from a spawned
-// engine's environment. Claude and Gemini run on their CLI's own login here.
-// Recognising an `sk-ant-` key and offering to save it would therefore be a
-// lie, so those shapes get a row that explains itself and no save button.
+// Model keys are saved as named, endpoint-bound provider connections. Other
+// tool credentials retain their existing custody path. Detection is local only.
+import type { ProviderPreset } from "./provider-connections";
 
 /** A Murage config section that holds a secret a renderer may write. */
 export type ProviderId =
@@ -39,10 +32,11 @@ export type ProviderId =
   | "opencodeGo"
   | "tts"
   | "imageGen"
-  | "openaiCompat";
+  | "openaiCompat"
+  | "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "groq";
 
 /** Something we can name but cannot store. Row explains, offers no save. */
-export type UnsupportedId = "anthropic" | "google" | "stripe";
+export type UnsupportedId = "google" | "stripe" | "openai-admin";
 
 /** Names accepted by `window.muragebox.setCredential` (src/types/muragebox.d.ts),
  * which is the packaged app's door into the OS-encrypted store. `null` means
@@ -64,6 +58,7 @@ export interface ProviderRow {
   readonly blurb: string;
   /** OS-store name, or null when only the config route works. */
   readonly credential: ElectronCredential | null;
+  readonly modelPreset?: ProviderPreset;
   /** The `PUT /api/config` body that saves it. Mirrors AppConfig exactly. */
   readonly body: (value: string) => unknown;
 }
@@ -72,6 +67,7 @@ export interface ProviderRow {
 export const PROVIDER_ORDER: readonly ProviderId[] = [
   "flux",
   "xai",
+  "anthropic", "openai", "openrouter", "deepseek", "mistral", "groq",
   "openaiCompat",
   "imageGen",
   "tts",
@@ -84,9 +80,17 @@ export const PROVIDER_ORDER: readonly ProviderId[] = [
  * (server/config.ts) and `credential` names from CREDENTIAL_PATCH
  * (electron/main.mjs); key-extract.test.ts asserts the three sections
  * ApiKeys.tsx also knows about still agree with it. */
+const modelRow = (id: ProviderPreset, label: string): ProviderRow => ({ id, label, blurb: `Save a named ${label} connection for compatible models.`, credential: null, modelPreset: id, body: () => { throw new Error("Model keys must be saved with their selected provider connection."); } });
 export const PROVIDERS: Readonly<Record<ProviderId, ProviderRow>> = {
+  anthropic: modelRow("anthropic", "Anthropic key"),
+  openai: modelRow("openai", "OpenAI key"),
+  openrouter: modelRow("openrouter", "OpenRouter key"),
+  deepseek: modelRow("deepseek", "DeepSeek key"),
+  mistral: modelRow("mistral", "Mistral key"),
+  groq: modelRow("groq", "Groq key"),
   xai: {
     id: "xai",
+    modelPreset: "xai",
     label: "xAI (Grok) key",
     blurb: "Runs Grok bots on your own xAI account.",
     credential: "xaiApiKey",
@@ -94,6 +98,7 @@ export const PROVIDERS: Readonly<Record<ProviderId, ProviderRow>> = {
   },
   flux: {
     id: "flux",
+    modelPreset: "flux",
     label: "Flux Router key",
     blurb: "Adds the Flux model rows to the picker for Claude, Codex and Qwen bots.",
     credential: null,
@@ -139,7 +144,12 @@ export const PROVIDERS: Readonly<Record<ProviderId, ProviderRow>> = {
     label: "OpenAI-compatible engine key",
     blurb: "Runs the OpenAI-compatible engine (OpenAI, OpenRouter, and friends).",
     credential: null,
-    body: (v) => ({ openaiCompat: { key: v } }),
+    body: (v) => {
+      const url = /^sk-or-/.test(v) ? "https://openrouter.ai/api/v1"
+        : /^sk-(?:proj|svcacct)-/.test(v) ? "https://api.openai.com/v1" : null;
+      if (!url) throw new Error("Choose the exact model provider before saving this key.");
+      return { openaiCompat: { key: v, url } };
+    },
   },
 };
 
@@ -151,12 +161,7 @@ export interface UnsupportedRow {
 }
 
 export const UNSUPPORTED: Readonly<Record<UnsupportedId, UnsupportedRow>> = {
-  anthropic: {
-    id: "anthropic",
-    label: "Anthropic key",
-    reason:
-      "Murage has nowhere to keep this. Claude bots run on the Claude CLI's own login, and the harness deletes ANTHROPIC_API_KEY from every engine it starts.",
-  },
+  "openai-admin": { id: "openai-admin", label: "OpenAI admin key", reason: "Use an inference API key for models; organization admin keys are not supported here." },
   google: {
     id: "google",
     label: "Google AI key",
@@ -238,16 +243,19 @@ const NAMES: Readonly<Record<string, Target>> = {
   MURAGE_OPENAI_IMAGE_KEY: ["imageGen"],
   IMAGEGEN_KEY: ["imageGen"],
   // openai-compatible engine — env OPENAI_COMPAT_API_KEY, config openaiCompat.key
-  OPENAI_COMPAT_API_KEY: ["openaiCompat"],
-  OPENAICOMPAT_KEY: ["openaiCompat"],
-  OPENROUTER_API_KEY: ["openaiCompat"],
+  OPENAI_COMPAT_API_KEY: ["openai", "openrouter", "deepseek", "mistral", "flux", "groq", "xai"],
+  OPENAICOMPAT_KEY: ["openai", "openrouter", "deepseek", "mistral", "flux", "groq", "xai"],
+  OPENROUTER_API_KEY: ["openrouter"],
   // A plain OPENAI_API_KEY names the issuer, not the destination: Murage has
   // TWO places an OpenAI key can live. Ambiguous on purpose.
-  OPENAI_API_KEY: ["openaiCompat", "imageGen"],
+  OPENAI_API_KEY: ["openai"],
+  DEEPSEEK_API_KEY: ["deepseek"],
+  MISTRAL_API_KEY: ["mistral"],
+  GROQ_API_KEY: ["groq"],
   // Recognisable, unstorable.
-  ANTHROPIC_API_KEY: "anthropic",
-  ANTHROPIC_AUTH_TOKEN: "anthropic",
-  CLAUDE_API_KEY: "anthropic",
+  ANTHROPIC_API_KEY: ["anthropic"],
+  ANTHROPIC_AUTH_TOKEN: ["anthropic"],
+  CLAUDE_API_KEY: ["anthropic"],
   GEMINI_API_KEY: "google",
   GOOGLE_API_KEY: "google",
   GOOGLE_GENERATIVE_AI_API_KEY: "google",
@@ -275,12 +283,14 @@ export function normalizeName(raw: string): string {
 const SHAPES: ReadonlyArray<readonly [RegExp, Target]> = [
   // Anthropic. Checked first so an sk-ant- key can never fall through to the
   // bare sk- bucket and be offered as an OpenAI key.
-  [/^sk-ant-[A-Za-z0-9_-]{16,}$/, "anthropic"],
+  [/^sk-ant-[A-Za-z0-9_-]{16,}$/, ["anthropic"]],
+  [/^sk-admin-[A-Za-z0-9_-]{16,}$/, "openai-admin"],
   // Flux Router. `sk-flux-…` is the spelling server/opencode-config.ts names
   // in prose and every Flux fixture in the suite uses.
   [/^sk-flux-[A-Za-z0-9_-]{16,}$/, ["flux"]],
   // OpenRouter, which is an openai-compatible upstream.
-  [/^sk-or-v1-[A-Za-z0-9_-]{16,}$/, ["openaiCompat"]],
+  [/^sk-or-v1-[A-Za-z0-9_-]{16,}$/, ["openrouter"]],
+  [/^gsk_[A-Za-z0-9_-]{16,}$/, ["groq"]],
   // xAI.
   [/^xai-[A-Za-z0-9_-]{16,}$/, ["xai"]],
   // Google AI Studio: AIza + exactly 35.
@@ -295,10 +305,10 @@ const SHAPES: ReadonlyArray<readonly [RegExp, Target]> = [
   [/^sk_[a-f0-9]{32,}$/, ["tts"]],
   // OpenAI project key. Certain about the ISSUER, ambiguous about the
   // DESTINATION: Murage has two OpenAI-shaped homes.
-  [/^sk-proj-[A-Za-z0-9_-]{20,}$/, ["openaiCompat", "imageGen"]],
+  [/^sk-(?:proj|svcacct)-[A-Za-z0-9_-]{20,}$/, ["openai"]],
   // A bare sk-. Shared by OpenAI, OpenRouter, Flux and a dozen resellers.
   // This is the row that must always ask.
-  [/^sk-[A-Za-z0-9_-]{16,}$/, ["openaiCompat", "imageGen", "flux"]],
+  [/^sk-[A-Za-z0-9_-]{16,}$/, ["openai", "openrouter", "deepseek", "mistral", "flux", "imageGen"]],
 ];
 
 function matchShape(value: string): Target | undefined {
@@ -319,6 +329,7 @@ const LOOSE = new RegExp(
       "sk_[A-Za-z0-9]{24,}",
       "xai-[A-Za-z0-9_-]{16,}",
       "ak_[A-Za-z0-9_-]{16,}",
+      "gsk_[A-Za-z0-9_-]{16,}",
       "AIza[A-Za-z0-9_-]{35}",
     ].join("|") +
     ")(?![A-Za-z0-9_-])",
@@ -445,7 +456,7 @@ function resolve(found: Found): KeyCandidate {
     const both = byName.filter((id) => byShape.includes(id));
     // Agreement narrows. A contradiction (XAI_API_KEY holding an sk-proj- key)
     // widens instead of picking a side — the user is asked.
-    providers = both.length > 0 ? both : [...new Set([...byName, ...byShape])];
+    providers = byName.length === 1 && byName[0] === "imageGen" && byShape.includes("openai") ? ["imageGen"] : both.length > 0 ? both : [...new Set([...byName, ...byShape])];
   } else {
     providers = [...(byName ?? byShape ?? [])];
   }
@@ -539,6 +550,11 @@ export interface ConfiguredFlags {
  * "already connected" is a claim, and an unloaded config cannot make it. */
 export function providerConfigured(id: ProviderId, flags: ConfiguredFlags | null | undefined): boolean {
   if (!flags) return false;
-  if (id === "openaiCompat") return false;
-  return flags[id]?.configured ?? false;
+  if (id === "openaiCompat" || PROVIDERS[id].modelPreset) return false;
+  return flags[id as keyof ConfiguredFlags]?.configured ?? false;
+}
+
+/** Local provider hints for a single-key Models form; no inference or HTTP. */
+export function modelProviderCandidates(blob: string): ProviderPreset[] {
+  return [...new Set(extractKeys(blob).flatMap(candidate => candidate.providers.flatMap(id => PROVIDERS[id].modelPreset ? [PROVIDERS[id].modelPreset!] : [])))];
 }

@@ -5,8 +5,8 @@
     "id": "review-article-factory",
     "release": "1.0.0",
     "name": "Review Article Factory",
-    "tagline": "Team launcher - pick me to auto-assemble a review crew (Research + Copy + Quality Gate + Counsel) and ship a publish-ready, hands-on-style product review with…",
-    "summary": "Team launcher - pick me to auto-assemble a review crew (Research + Copy + Quality Gate + Counsel) and ship a publish-ready, hands-on-style product review with links and disclosure placed.",
+    "tagline": "Research the product, draft the article, and review claims, links, and disclosure placement before publication.",
+    "summary": "For publishers preparing a product review from real evidence. Research the product, draft the article, and review claims, links, and disclosure placement before publication.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a review crew (Research + Copy + Quality Gate + Counsel) and ship a publish-ready, hands-on-style product review with links and disclosure placed."
+      "Research the product, draft the article, and review claims, links, and disclosure placement before publication."
     ],
     "setupMinutes": 2,
     "requirements": {

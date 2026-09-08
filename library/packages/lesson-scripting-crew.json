@@ -5,8 +5,8 @@
     "id": "lesson-scripting-crew",
     "release": "1.0.0",
     "name": "Lesson Scripting Crew",
-    "tagline": "Team launcher - pick me to auto-assemble a scripting crew (Build + Copy + Coach + Humanizer) and ship a camera-ready script per lesson timed to length.",
-    "summary": "Team launcher - pick me to auto-assemble a scripting crew (Build + Copy + Coach + Humanizer) and ship a camera-ready script per lesson timed to length.",
+    "tagline": "Turn the learning goal into a clear, natural-speaking script paced to the target lesson length.",
+    "summary": "For instructors preparing lessons to record. Turn the learning goal into a clear, natural-speaking script paced to the target lesson length.",
     "category": "Build",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a scripting crew (Build + Copy + Coach + Humanizer) and ship a camera-ready script per lesson timed to length."
+      "Turn the learning goal into a clear, natural-speaking script paced to the target lesson length."
     ],
     "setupMinutes": 2,
     "requirements": {

@@ -5,8 +5,8 @@
     "id": "seo-content-engine",
     "release": "1.0.0",
     "name": "SEO Content Engine Room",
-    "tagline": "Team launcher - pick me to auto-assemble an SEO content crew (Research + Build + Analyst + Quality Gate) and ship a keyword cluster calendar plus a publish-rea…",
-    "summary": "Team launcher - pick me to auto-assemble an SEO content crew (Research + Build + Analyst + Quality Gate) and ship a keyword cluster calendar plus a publish-ready optimized draft.",
+    "tagline": "Research keyword clusters, build an editorial calendar, and produce an optimized draft with a quality review.",
+    "summary": "For publishers planning search-focused content. Research keyword clusters, build an editorial calendar, and produce an optimized draft with a quality review.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble an SEO content crew (Research + Build + Analyst + Quality Gate) and ship a keyword cluster calendar plus a publish-ready optimized draft."
+      "Research keyword clusters, build an editorial calendar, and produce an optimized draft with a quality review."
     ],
     "setupMinutes": 2,
     "requirements": {

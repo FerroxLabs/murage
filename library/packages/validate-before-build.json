@@ -5,8 +5,8 @@
     "id": "validate-before-build",
     "release": "1.0.0",
     "name": "Validate Before Build",
-    "tagline": "Team launcher - runs Validator + Research + Offer to test a hypothesis before you build the thing.",
-    "summary": "Team launcher - runs Validator + Research + Offer to test a hypothesis before you build the thing.",
+    "tagline": "Turn your hypothesis into customer-research questions and an offer test with clear evidence to seek.",
+    "summary": "For founders testing an idea before building it. Turn your hypothesis into customer-research questions and an offer test with clear evidence to seek.",
     "category": "Research",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - runs Validator + Research + Offer to test a hypothesis before you build the thing."
+      "Turn your hypothesis into customer-research questions and an offer test with clear evidence to seek."
     ],
     "setupMinutes": 2,
     "requirements": {

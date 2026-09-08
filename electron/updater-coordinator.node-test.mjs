@@ -516,3 +516,24 @@ for (const action of ["check", "download", "install"]) {
     assert.equal(h.getState().message, `${action} failed`);
   });
 }
+
+for (const outcome of ["ready", "error"]) {
+  test(`macOS ZIP transfer waits for native staging: ${outcome}`, async () => {
+    const nativeUpdater = new EventEmitter();
+    const h = harness({ nativeUpdater });
+    h.updater.downloadUpdate = async () => {
+      h.updater.emit("update-downloaded", { version: "2.0.0" });
+      return ["update.zip"];
+    };
+    const download = h.coordinator.download();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(h.getState().status, "downloading");
+    if (outcome === "ready") nativeUpdater.emit("update-downloaded");
+    else nativeUpdater.emit("error", new Error("signature staging failed"));
+    await download;
+    assert.equal(h.getState().status, outcome === "ready" ? "downloaded" : "error");
+    if (outcome === "error") assert.match(h.getState().message, /signature staging failed/);
+    assert.equal(nativeUpdater.listenerCount("update-downloaded"), 0);
+    assert.equal(nativeUpdater.listenerCount("error"), 0);
+  });
+}

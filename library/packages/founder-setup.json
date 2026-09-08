@@ -5,8 +5,8 @@
     "id": "founder-setup",
     "release": "1.0.0",
     "name": "Founder Setup",
-    "tagline": "Team launcher - Counsel + Numbers + Brand + Ops install the legal, financial, brand, and operational foundation.",
-    "summary": "Team launcher - Counsel + Numbers + Brand + Ops install the legal, financial, brand, and operational foundation.",
+    "tagline": "Organize formation questions, financial planning, brand positioning, and operating processes into a practical setup plan.",
+    "summary": "For founders establishing a new business. Organize formation questions, financial planning, brand positioning, and operating processes into a practical setup plan.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Counsel + Numbers + Brand + Ops install the legal, financial, brand, and operational foundation."
+      "Organize formation questions, financial planning, brand positioning, and operating processes into a practical setup plan."
     ],
     "setupMinutes": 2,
     "requirements": {

@@ -5,8 +5,8 @@
     "id": "product-launch",
     "release": "1.0.0",
     "name": "Product Launch",
-    "tagline": "Team launcher - assembles Research + Brand + Copy + Channels + Sales to ship a coordinated product launch in one session.",
-    "summary": "Team launcher - assembles Research + Brand + Copy + Channels + Sales to ship a coordinated product launch in one session.",
+    "tagline": "Coordinate audience research, positioning, launch copy, channels, and sales preparation into one launch plan.",
+    "summary": "For businesses bringing a product to market. Coordinate audience research, positioning, launch copy, channels, and sales preparation into one launch plan.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - assembles Research + Brand + Copy + Channels + Sales to ship a coordinated product launch in one session."
+      "Coordinate audience research, positioning, launch copy, channels, and sales preparation into one launch plan."
     ],
     "setupMinutes": 2,
     "requirements": {

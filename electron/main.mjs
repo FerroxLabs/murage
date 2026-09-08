@@ -1,3 +1,4 @@
+import { mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -351,6 +352,7 @@ function configureRestoredDesktopConnections() {
  * the same as the user having saved nothing. Everything downstream — the
  * server's view of "configured", and whether we may register a fresh
  * installation — keys off this rather than off an empty object. */
+const modelProviderCommitToken = randomBytes(32).toString("hex");
 let credentialStoreUnavailable = false;
 
 async function loadSecureCredentials() {
@@ -1140,6 +1142,7 @@ async function startServerOn(port) {
       : {}),
     // "we could not read your keys" must not reach the UI as "you have none"
     MURAGE_CREDENTIAL_STORE: credentialStoreUnavailable ? "unavailable" : "ok",
+    MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: modelProviderCommitToken,
     // one env var per stored workspace secret (xai/box/voice/OpenCode Go);
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
@@ -1774,7 +1777,7 @@ function createWindow() {
   });
   mainWindow = win;
   attachUpdaterWindow(win);
-  void startBrowserSurface(win);
+  // Browser execution and viewing are owned by the unified harness engine.
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
   if (restored.maximized) win.maximize();
@@ -1995,6 +1998,24 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
   if (typeof command !== "string" || !command.trim()) return false;
   clipboard.writeText(command);
   return openBlankTerminal();
+});
+
+ipcMain.handle("engine:open-setup-terminal", async (event, input) => {
+  if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame
+    || !input || typeof input !== "object" || Array.isArray(input)
+    || Object.keys(input).some(key => !["instanceId", "action"].includes(key))
+    || typeof input.instanceId !== "string" || input.instanceId.length > 180
+    || !["install", "connect"].includes(input.action) || !desktopSurfaceSecret) return false;
+  try {
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/engine-setup-command`, {
+      method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
+      body: JSON.stringify(input), signal: AbortSignal.timeout(10000),
+    });
+    const result = await response.json();
+    if (!response.ok || typeof result.command !== "string" || !result.command.trim() || result.command.length > 2000) return false;
+    clipboard.writeText(result.command);
+    return openBlankTerminal();
+  } catch { return false; }
 });
 
 // OAuth/connect links are returned asynchronously, after Chromium's direct
@@ -2283,6 +2304,22 @@ const CREDENTIAL_PATCH = {
   firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
 };
+
+ipcMain.handle("model-provider:mutate", async (_event, input) => {
+  if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
+  if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("The operating-system credential store is unavailable");
+  return mutateProviderCredentials(input, {
+    packaged: app.isPackaged, updateDocument: updateSecureCredentialDocument, createId: randomUUID,
+    post: async (route, body) => {
+      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, {
+        method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` }, body: JSON.stringify(body),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Could not save model connection.");
+      return result;
+    },
+  });
+});
 
 ipcMain.handle("credential:set", async (_event, name, value) => {
   const patchFor = CREDENTIAL_PATCH[name];

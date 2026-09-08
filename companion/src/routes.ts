@@ -263,6 +263,9 @@ export const BROWSER_DENIED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * visible transcript dressed as a search. Adding it wants the query bound
  * from plan-security §5 first. */
 const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  // Authenticated owner relay; the harness checks bot visibility and profile ownership.
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/browser(?:\/frame)?$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/browser$/ },
   ...BROWSER_STATIC,
 
   // configured-or-not booleans, and the live stream the whole app hangs off.

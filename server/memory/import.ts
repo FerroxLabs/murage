@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, openSync, closeSync, fstatSync, readFileSync, lstatSync, realpathSync } from "node:fs";
+import { constants, openSync, closeSync, fstatSync, readFileSync, lstatSync, realpathSync, readdirSync, existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { DATA_DIR } from "../config.ts";
 import { transaction, database } from "../database.ts";
@@ -66,19 +66,27 @@ export function previewMemoryImport(ticket:object,selections:ImportSelection[],r
   previews.set(preview.previewId,structuredClone(preview));return preview;
 }
 
-export function commitMemoryImport(ticket:object,previewId:string,roster:MemoryRoster){
+export function commitMemoryImport(ticket:object,previewId:string,roster:MemoryRoster,track=false){
   requireMemoryOwner(ticket);
   const preview=previews.get(previewId);
   if(!preview||preview.expiresAt<Date.now())throw new Error("MEMORY_IMPORT_PREVIEW_EXPIRED");
   if(Number(database().prepare("SELECT policy_revision FROM memory_meta WHERE id=1").get()!.policy_revision)!==preview.policyRevision)throw new Error("MEMORY_IMPORT_POLICY_CHANGED");
   // File changes require another review; commit cannot silently import new bytes.
   for(const item of preview.items){const current=selectionItem(item.selection,roster);if(current.hash!==item.hash||current.scopeId!==item.scopeId||current.text!==item.text)throw new Error("MEMORY_IMPORT_CHANGED");}
+  return commitImportItems(preview.items, track);
+}
+
+function commitImportItems(items:ImportItem[], track=false){
   return transaction(db=>{
     let imported=0,skipped=0;const recordIds:string[]=[];
-    for(const item of preview.items){
+    for(const item of items){
       const id=`legacy:${hash(JSON.stringify([item.scopeId,item.path]))}`;
       if(db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=?) OR (target_type='import' AND target_id=? AND content_hash=?)").get(id,item.scopeId,item.hash))throw new Error("MEMORY_IMPORT_FORGOTTEN");
-      const prior=db.prepare("SELECT revision,content_hash FROM memory_sources WHERE id=?").get(id);
+      const prior=db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(id);
+      if(prior && prior.state!=="active")throw new Error("MEMORY_IMPORT_SOURCE_RETIRED");
+      if(prior && prior.content_hash!==item.hash && db.prepare("SELECT 1 FROM memory_records r JOIN memory_evidence e ON e.record_id=r.id AND e.record_version=r.version WHERE e.source_id=? AND (r.owner_pinned=1 OR r.state IN ('archived','deleted') OR r.assertion!='unverified-import') LIMIT 1").get(id))throw new Error("MEMORY_IMPORT_REVIEW_CONFLICT");
+      if(track)db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','notebook-link',0,'granted',?) ON CONFLICT(id) DO UPDATE SET state='granted',intent=excluded.intent")
+        .run(`notebook-link:${id}`,item.scopeId,JSON.stringify({selection:item.selection,hash:item.hash,status:"current",checkedAt:Date.now()}));
       if(prior?.content_hash===item.hash){skipped++;continue;}
       const revision=prior?Number(prior.revision)+1:1;
       db.prepare("UPDATE memory_records SET state='superseded' WHERE id IN (SELECT record_id FROM memory_evidence WHERE source_id=?) AND state!='deleted'").run(id);
@@ -95,4 +103,57 @@ export function commitMemoryImport(ticket:object,previewId:string,roster:MemoryR
     if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();}
     return {imported,skipped,recordIds,originals:"preserved" as const};
   });
+}
+
+/** Owner-selected links are polled in small batches; no whole-profile file watcher. */
+export function syncTrackedMemoryImports(roster:MemoryRoster){
+  const db=database();
+  const mode=db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode;
+  if(mode!=="active"&&mode!=="capture")return;
+  const links=db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='notebook-link' AND state='granted' ORDER BY COALESCE(json_extract(intent,'$.checkedAt'),0) LIMIT 4").all();
+  for(const row of links){
+    let link: {selection:ImportSelection;hash:string;status:string;checkedAt:number;error?:string};
+    try{link=JSON.parse(String(row.intent));}catch{continue;}
+    if(Date.now()-link.checkedAt<10000)continue;
+    try{
+      const item=selectionItem(link.selection,roster);
+      commitImportItems([item]);
+      link={selection:link.selection,hash:item.hash,status:"current",checkedAt:Date.now()};
+    }catch(error){
+      const code=error instanceof Error?error.message:"MEMORY_IMPORT_SYNC_FAILED";
+      link={...link,status:"needs-review",checkedAt:Date.now(),error:code.startsWith("MEMORY_IMPORT_")?code:"MEMORY_IMPORT_FILE_UNREADABLE"};
+    }
+    db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=? AND state='granted'").run(JSON.stringify(link),row.id);
+  }
+}
+
+export function memoryNotebookLinks(){
+  return database().prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='notebook-link' AND state='granted'").all()
+    .map(row=>({id:String(row.id),...JSON.parse(String(row.intent))}));
+}
+
+export function stopTrackingMemoryNotebook(ticket:object,id:string){
+  requireMemoryOwner(ticket);
+  database().prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE id=? AND subject_type='system' AND subject_id='notebook-link'").run(id);
+  return {stopped:true};
+}
+
+export function availableMemoryNotebooks(ticket:object,roster:MemoryRoster){
+  requireMemoryOwner(ticket);
+  const selections:ImportSelection[]=[];
+  const issues:{label:string;error:string}[]=[];
+  for(const bot of roster.bots){
+    if(existsSync(join(DATA_DIR,"workspaces",bot.id,"MEMORY.md")))selections.push({kind:"bot",botId:bot.id});
+    const topics=join(DATA_DIR,"workspaces",bot.id,"memory");
+    try{
+      if(existsSync(topics)){
+        if(lstatSync(topics).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");
+        for(const name of readdirSync(topics).slice(0,100))if(isMemoryTopicName(name))selections.push({kind:"bot",botId:bot.id,topic:name});
+      }
+    }catch{issues.push({label:bot.id,error:"Topic directory could not be safely read."});}
+    if(selections.length>=1000)break;
+  }
+  const sections=[...new Set([...roster.bots,...roster.groups].map(item=>item.section?.trim()||""))];
+  for(const section of sections){try{selectionItem({kind:"section",section},roster);selections.push({kind:"section",section});}catch{/* Missing briefs are not notebook files. */}}
+  return {selections:selections.slice(0,1000),issues};
 }

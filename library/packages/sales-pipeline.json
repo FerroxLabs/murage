@@ -5,8 +5,8 @@
     "id": "sales-pipeline",
     "release": "1.0.0",
     "name": "Sales Pipeline",
-    "tagline": "Team launcher - sharpens an existing sales pipeline with Research + Sales + Offer focused on the current bottleneck.",
-    "summary": "Team launcher - sharpens an existing sales pipeline with Research + Sales + Offer focused on the current bottleneck.",
+    "tagline": "Investigate buyer needs, sales conversations, and offer fit to recommend the next changes.",
+    "summary": "For businesses with an existing sales pipeline and a specific bottleneck. Investigate buyer needs, sales conversations, and offer fit to recommend the next changes.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - sharpens an existing sales pipeline with Research + Sales + Offer focused on the current bottleneck."
+      "Investigate buyer needs, sales conversations, and offer fit to recommend the next changes."
     ],
     "setupMinutes": 2,
     "requirements": {

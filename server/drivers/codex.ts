@@ -9,6 +9,7 @@
 //
 // resumeCursor is the codex thread id; a later turn tries thread/resume
 // and falls back to a fresh thread/start.
+import { applyProviderRoute } from "../provider-routing.ts";
 import { homedir } from "node:os";
 
 import { stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
@@ -180,13 +181,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // `flux-auto` decodes to OFFICIAL_CODEX_PROVIDER (codex-catalog.ts:57)
         // and is refused at spawn (index.ts:2508); it must not half-apply a
         // provider table here that thread/start would never select.
-        const flux = fluxIdIsRoutable(turn.model, DRIVER_KIND)
+        const flux = !turn.providerRoute && fluxIdIsRoutable(turn.model, DRIVER_KIND)
           ? applyFluxSurface(DRIVER_KIND, env, turn.model, fluxKey())
           : null;
+        const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
         const appServerArgs = [
           "app-server",
-          ...codexLocalProviderArgs(env, turn.model),
+          ...(providerBinding ? [] : codexLocalProviderArgs(env, turn.model)),
           ...(flux?.args ?? []),
+          ...(providerBinding?.args ?? []),
           // Codex has no metadata for a `flux-*` id and falls back to a
           // 258400-token window (probed: `modelContextWindow` in
           // thread/tokenUsage/updated). Flux advertises the real window only
@@ -640,7 +643,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
         }
         if (!codexThreadId) {
-          const selection = decodeCodexSelection(turn.model);
+          const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
           const started = await request("thread/start", {
             cwd: turn.cwd ?? homedir(),
             model: selection.model,

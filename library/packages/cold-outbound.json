@@ -5,8 +5,8 @@
     "id": "cold-outbound",
     "release": "1.0.0",
     "name": "Cold Outbound",
-    "tagline": "Team launcher - pick me to auto-assemble a cold-outbound team (Research + Copy + Sales) and run a one-question intake.",
-    "summary": "Team launcher - pick me to auto-assemble a cold-outbound team (Research + Copy + Sales) and run a one-question intake.",
+    "tagline": "Define your audience and offer, then prepare personalized messages and follow-ups for your review.",
+    "summary": "For businesses starting direct outreach to prospective customers. Define your audience and offer, then prepare personalized messages and follow-ups for your review.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a cold-outbound team (Research + Copy + Sales) and run a one-question intake."
+      "Define your audience and offer, then prepare personalized messages and follow-ups for your review."
     ],
     "setupMinutes": 2,
     "requirements": {

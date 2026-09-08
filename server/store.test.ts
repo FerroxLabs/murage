@@ -1031,6 +1031,19 @@ describe("Store redacts bot-authored secrets on write", () => {
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
+  it("preserves bounded runtime details across reload and redacts credentials", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const key = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    const detail = "Internal error\n" + "Diagnostic context. ".repeat(20) + `HTTP 500 token=${key} END-OF-DETAIL`;
+    const message = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: "error: Internal error", ok: false, errorDetails: detail } });
+    expect(message.tool?.errorDetails).toContain("END-OF-DETAIL");
+    expect(message.tool?.errorDetails).not.toContain(key);
+    expect(new Store(selection).messagesFor(bot.threadId).find(item => item.id === message.id)?.tool?.errorDetails).toBe(message.tool?.errorDetails);
+    const long = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: "error: failure", errorDetails: "x".repeat(9000) } });
+    expect(long.tool?.errorDetails?.length).toBe(4096);
+  });
+
   it("masks a key in bot text, tools and cards — but never in what the user typed", () => {
     const store = new Store(selection);
     const bot = store.createBot();

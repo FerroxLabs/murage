@@ -13,12 +13,12 @@ function downloadPlaybook(playbook: ExportedPlaybook): { name: string; members: 
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || "botmrr-team";
+      .replace(/^-|-$/g, "") || "team";
   const blob = new Blob([playbook.markdown], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${slug}.md`;
+  link.download = `${slug}.emberbot.md`;
   document.body.appendChild(link);
   link.click();
   link.remove();

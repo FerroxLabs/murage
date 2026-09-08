@@ -5,8 +5,8 @@
     "id": "service-studio",
     "release": "1.0.0",
     "name": "Service Studio",
-    "tagline": "Team launcher - Research + Sales + Offer + Ops for B2B agencies, consultancies, and professional services.",
-    "summary": "Team launcher - Research + Sales + Offer + Ops for B2B agencies, consultancies, and professional services.",
+    "tagline": "Clarify your audience and offer, prepare the sales approach, and organize delivery processes.",
+    "summary": "For agencies, consultants, and professional-service businesses. Clarify your audience and offer, prepare the sales approach, and organize delivery processes.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Research + Sales + Offer + Ops for B2B agencies, consultancies, and professional services."
+      "Clarify your audience and offer, prepare the sales approach, and organize delivery processes."
     ],
     "setupMinutes": 2,
     "requirements": {

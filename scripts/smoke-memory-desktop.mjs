@@ -128,7 +128,8 @@ async function main(){
     // the visible title button explicitly; both dispatch toggleSettings(open:true).
     const profile=page.getByRole("main").getByRole("button",{name:`Open ${bot.name}'s profile`,exact:true}).filter({hasText:bot.name});
     await expect(profile).toHaveCount(1);await expect(profile).toBeVisible();await profile.click();
-    await page.locator("summary").filter({hasText:/^Managed memory$/}).click();
+    const managedMemory = page.locator("details").filter({ has: page.locator("summary").filter({hasText:/^Managed memory$/}) });
+    if (await managedMemory.getAttribute("open") === null) await managedMemory.locator("summary").click();
     await expect(page.getByRole("heading",{name:"Bot memory",exact:true})).toBeVisible();
     await page.screenshot({path:join(out,"bot-memory-settings.png"),fullPage:true});checks.push("actual-packaged-bot-managed-memory-settings");
     await page.getByRole("button",{name:"Close agent profile",exact:true}).click();
@@ -157,6 +158,21 @@ async function main(){
     assert.equal(db.prepare("SELECT count(*) AS n FROM memory_records WHERE id=? AND state='active'").get(record).n,0);
     assert.equal(db.prepare("SELECT count(*) AS n FROM memory_records WHERE scope_id=? AND state='active' AND text=?").get(roomScope,corrected).n,0);
     await page.screenshot({path:join(out,"forgotten.png"),fullPage:true});checks.push("native-forget-revokes-source-and-shared-derivative");
+    await sidebar.getByTitle("App settings",{exact:true}).click();
+    const settings = page.getByRole("dialog").filter({has:page.locator("#app-settings-title")});
+    await expect(settings).toBeVisible();
+    await settings.getByRole("button",{name:"Models",exact:true}).click();
+    await settings.getByRole("heading",{name:"Model connections",exact:true}).scrollIntoViewIfNeeded();
+    await expect(settings.getByLabel("Model API key",{exact:true})).toBeVisible();
+    await page.screenshot({path:join(out,"models-settings.png"),fullPage:true});
+    await settings.getByRole("button",{name:"Engines",exact:true}).click();
+    await expect(settings.getByText("Your engines",{exact:true})).toBeVisible();
+    await settings.getByRole("button",{name:"Tools & Connections",exact:true}).click();
+    await settings.getByRole("heading",{name:"Image generation",exact:true}).scrollIntoViewIfNeeded();
+    await expect(settings.getByRole("heading",{name:"Image generation",exact:true})).toBeVisible();
+    await page.screenshot({path:join(out,"image-settings.png"),fullPage:true});
+    await settings.getByRole("button",{name:"Close settings",exact:true}).click();
+    checks.push("native-separated-models-engines-and-image-settings-owner-routes");
     assert.equal(providerCalls,0,"UI-only proof unexpectedly attempted a model request");
     outcome={ok:true,platform:process.platform,arch:process.arch,node:process.version,appPath,appArchiveSha256:digest(archive),serverSha256:digest(join(resources,"server/index.js")),checks,providerCalls,
       roots:{data,userData,home},identity,protectedProfile,protectedFiles:Object.keys(beforeHashes),originalMuragePids:originalMurage.map(process=>process.pid),
@@ -181,8 +197,9 @@ async function main(){
     if(fake){fake.closeAllConnections();await new Promise(done=>fake.close(done));}
     try{await restoreFrontmost(originalFront);foregroundRestored=true;}catch(error){outcome={...outcome,ok:false,foregroundError:String(error)};}
     const after=await processes();const originalProcessesAlive=originalMurage.every(original=>after.some(process=>process.pid===original.pid&&process.command===original.command));
-    const protectedFilesUnchanged=JSON.stringify(protectedHashes(protectedProfile))===JSON.stringify(beforeHashes);
-    outcome={...outcome,ok:Boolean(outcome?.ok&&cleanupVerified&&foregroundRestored&&originalProcessesAlive&&protectedFilesUnchanged),cleanupVerified,foregroundRestored,originalProcessesAlive,protectedFilesUnchanged,ownedPids:[...owned.keys()]};
+    const afterHashes=protectedHashes(protectedProfile);
+    const protectedFilesUnchanged=JSON.stringify(afterHashes)===JSON.stringify(beforeHashes);
+    outcome={...outcome,ok:Boolean(outcome?.ok&&cleanupVerified&&foregroundRestored&&originalProcessesAlive&&protectedFilesUnchanged),cleanupVerified,foregroundRestored,originalProcessesAlive,protectedFilesUnchanged,protectedProfileHashes:{before:beforeHashes,after:afterHashes},ownedPids:[...owned.keys()]};
     if(cleanupVerified)rmSync(root,{recursive:true,force:true});else outcome.preservedFixtureRoot=root;
     writeFileSync(join(out,"result.json"),JSON.stringify(outcome,null,2));
   }

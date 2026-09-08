@@ -11,8 +11,8 @@ import { memoryState } from "./repository.ts";
 
 beforeEach(() => mkdirSync(DATA_DIR, {recursive: true}));
 
-it("creates private off-by-default memory in the authoritative database", () => {
-  expect(memoryState().mode).toBe("off");
+it("creates local capture-and-recall memory for a new installation", () => {
+  expect(memoryState().mode).toBe("active");
   expect(memoryState().installationId).toMatch(/^[a-f0-9-]{36}$/);
   expect(database().prepare("PRAGMA synchronous").get()?.synchronous).toBe(2);
   expect(() => inspectInstallationDatabase(database())).not.toThrow();

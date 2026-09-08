@@ -66,6 +66,8 @@ describe("bot packages", () => {
 
   it("round-trips one Chief-of-Staff-readable Markdown playbook", () => {
     const markdown = renderBotPackageMarkdown(parseBotPackage(validPackage));
+    expect(markdown).toContain("emberbot: 1");
+    expect(markdown).not.toContain("botmrr: 1");
     expect(markdown).toContain("## Activation");
     expect(markdown).toContain("Give this file to your Chief of Staff");
     expect(markdown).not.toContain("autoApprove");
@@ -74,6 +76,8 @@ describe("bot packages", () => {
       chiefOfStaff: "lead",
       agents: [{ key: "lead", name: "Ada" }],
     });
+    expect(parseBotPackage(markdown.replace("emberbot: 1", "botmrr: 1"))).toEqual(parseBotPackage(markdown));
+    expect(() => parseBotPackage(markdown.replace("emberbot: 1", "emberbot: 1\nbotmrr: 1"))).toThrow("one Markdown format marker");
   });
 
   it("carries the library skill ids an agent uses, through parse and Markdown", () => {

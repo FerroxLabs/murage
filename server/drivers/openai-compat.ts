@@ -1,5 +1,6 @@
 // Transcript-replay driver for OpenRouter, Groq, Together, llama.cpp, and
 // other endpoints that speak the OpenAI chat-completions contract.
+import { assertProviderKey } from "../../electron/provider-connections.mjs";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { requestMemoryExtraction } from "../memory/extract.ts";
@@ -75,13 +76,20 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
 
   async create(input) {
     const { config } = input;
-    const apiKey =
+    let apiKey =
       config.key ??
       input.environment[config.apiKeyEnv] ??
       input.environment.OPENAI_COMPAT_API_KEY ??
       process.env[config.apiKeyEnv] ??
       process.env.OPENAI_COMPAT_API_KEY ??
       "";
+    let credentialMismatch = false;
+    // Do not send recognizable vendor keys to the legacy OpenRouter default.
+    // Repair requires an explicit provider connection; never rewrite native config.
+    if (isOpenRouterUrl(config.url) && /^(sk-ant-|sk-flux-|sk-(?:proj|svcacct|admin)-|xai-|gsk_)/.test(apiKey)) {
+      try { assertProviderKey("openrouter", apiKey); }
+      catch { credentialMismatch = true; apiKey = ""; }
+    }
     let catalog: ModelCatalog = config.model
       ? {
           default: config.model,
@@ -140,8 +148,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           : {}),
       }),
       httpErrorLabel: "upstream",
-      missingKeyError: `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
-      unavailableReason: `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
+      missingKeyError: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
+      unavailableReason: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
       timeoutMs: 120_000,
       reasoning: true,
       billing: "metered",
