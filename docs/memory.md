@@ -1,52 +1,64 @@
-# Murage memory
+# Memory in Murage
 
-This describes the memory candidate in this source tree. It is not a release notice. Current acceptance, native-engine and packaging gates are recorded in `.planning/STATE.md` and `.planning/memory-evidence/`.
+Murage 0.1.47 includes opt-in managed memory: durable records, source history, scoped retrieval and owner controls. It belongs to the application rather than to a particular engine.
 
-## Owner controls
+## Enable it
 
-Open **More → Team map → Manage memory** for workspace management. Bot settings also expose a bot-filtered view. These controls require the local desktop authority proof; remote sessions cannot inspect or administer workspace memory through the owner API.
+Open **More → Team map → Manage memory**. A bot's settings also provide a filtered memory view. Workspace administration is available to the local desktop owner; a remote session does not gain those controls.
 
-Search by audience and status, then inspect a record to see its exact version and source excerpts. Approve candidates explicitly. Corrections create new versions. Sharing creates a separate approved copy for the selected audience. Pin important constraints manually; pinned records are not silently truncated to fit a prompt. Unpin before archiving. Archived records retain their sources and remain available to historical retrieval. Forgetting invalidates dependent records and future recall; text already delivered to an external provider cannot be withdrawn.
-
-**Review as skill** starts the existing `/learn` workflow for an eligible bot that already has access to the source. It does not activate a skill. The existing review card still controls installation, and staging/approval revalidate the exact memory source ticket. That explicit owner action can use the selected bot's model.
-
-## Modes and local model
-
-| Mode | Behavior |
+| Mode | What happens |
 |---|---|
-| Off | No new capture or service-provided recall; retained data stays on disk. |
-| Capture only | Capture and local processing run; memory is not injected into turns. |
-| Capture and recall | Capture, processing, scoped bundles and memory tools are enabled. |
+| Off (default) | No new capture or Murage-provided recall. Retained data stays on disk. |
+| Capture only | Capture and local processing run, but memory is not added to agent turns. |
+| Capture and recall | Capture, processing, scoped context and supported memory tools are enabled. |
 | Paused | Retain data and incoming source capture; stop the worker and injection. |
 
-Mode and exclusion restrictions invalidate prepared access. Excluding a conversation retires its existing eligible sources. Removing that exclusion does not silently restore retired history.
+Start with the conversations and audiences you want to retain. Excluding a conversation retires its eligible sources; removing that exclusion does not silently bring retired history back.
 
-The local embedding model is pinned by `shared/memory-model-manifest.json`. The owner can request its download from the Local model section. Size and SHA-256 checks precede use; inference never silently downloads assets. Missing or unusable embeddings are reported as degraded lexical recall. Required pinned constraints still require valid authoritative sources; failure or overflow blocks dispatch.
+## Choose local retrieval
 
-Optional extraction is off by default. Only a configured instance exposing a tool-free capped extractor is selectable. The current adapter is OpenAI-compatible. Requests have no tools or retries, one extraction runs at a time, and input/output reservations are durable. Limits are six calls/minute, 100,000 conservatively estimated input tokens/day and 20,000 output tokens/day, with at most 2,000 output tokens per call. Extraction creates review candidates, not authoritative facts.
+Keyword retrieval searches the local index. On Apple Silicon, Windows x64 and Linux x64, you can also download the pinned local embedding model from **Local model** to enable semantic retrieval. Murage checks its size and hashes before use; inference does not silently download model files.
 
-## Existing notebooks
+Intel Macs use keyword retrieval in 0.1.47. The pinned semantic runtime does not ship an Intel Mac binding, so unsupported downloads are refused. Review, corrections, sharing, pins, forgetting and source recovery remain available.
 
-Use **Import existing notes** to preview selected bot notebooks/topic files or a team brief. Imports retain reviewed bytes, path/hash provenance and an unverified-import label. Bot imports start private. Symlinks, changed review policy and forgotten hashes are rejected. Atomic retry avoids duplicate imports. Original Markdown files remain intact; the new service does not resume legacy private notebook injection into rooms.
+Missing or unusable embeddings are reported as degraded keyword recall. An invalid or oversized required pin can block dispatch rather than silently lose an important owner constraint.
 
-## Storage and scope
+## Review what is remembered
 
-`messages.db` contains authoritative sources, versions, jobs, records, evidence, disclosures and deletion history. `memory-index.db` is derived and rebuildable. One owned worker performs local indexing and embedding work. Scopes cover bots, conversations, rooms, teams, projects, workspace knowledge and preferences; sharing requires owner authority.
+Search by audience and status, then **Inspect memory** to see its text, exact version and source excerpts.
 
-These are application access boundaries. They do not sandbox a hostile process running as the same OS user. An engine's independent filesystem access remains governed by its existing tools and permissions.
+- **Approve** a candidate after reviewing it.
+- **Correct** a record to create a new version.
+- **Pin** an important constraint. Unpin it before archiving.
+- **Share** by creating an approved copy for the selected audience.
+- **Archive** material you no longer want active. Sources remain available for historical retrieval.
+- **Forget** a source or record to invalidate dependent material and exclude it from future recall.
 
-## Recovery and rollback
+Scopes cover bots, conversations, rooms, teams, projects, workspace knowledge and selected preferences. A folder path or matching name is not automatically permission to access another audience. Sharing requires an owner decision; separate installations do not automatically synchronize memory.
 
-Preserve the original installation and a verified backup before any separately authorized live rollout. The current memory candidate has not been authorized to migrate the running private.7 profile.
+**Review as skill** starts the existing `/learn` review workflow for an eligible bot with access to the source. It does not automatically install a skill. This explicit action can use the selected bot's model.
 
-Use the existing installation backup, inspection, restore-review and rollback flow with a compatible candidate binary. Backups retain authoritative memory and deletion history; derived indexes can be rebuilt. Restoring into an existing installation merges its destination deletion ledger before activation. A new installation cannot know deletions absent from its backup and requires owner review. Restored memory remains paused until reviewed.
+## Import existing notes
 
-Feature rollback means selecting Off or Paused with the compatible binary. Do not open a migrated memory database with private.7, remove recovery markers, or delete retained recovery copies to bypass review. See [memory verification](verification/memory.md) for evidence boundaries and fixture commands.
+Use **Import existing notes** to preview selected bot notebooks, topic files or a team brief. Confirm the reviewed contents before importing. Bot imports begin private and are labelled as unverified imports; original Markdown files remain intact. Changed files and disallowed links are rejected instead of importing different contents from the preview.
 
+## Local storage and provider processing
 
-## Intel macOS
+Authoritative records and source history live in the installation's SQLite database; the search index is derived and rebuildable. Local indexing and embeddings do not require a paid extraction model.
 
-Intel Macs use keyword retrieval in this release because the pinned native semantic runtime does not provide an Intel macOS binding. Owner review, corrections, sharing, pins, forgetting and source recovery remain available. Unavailable semantic-model downloads are refused on Intel Macs; no semantic inference is claimed there. Apple Silicon, Windows x64 and Linux x64 retain the native local-model path.
+Optional model-based extraction is **off by default**. It requires an explicitly selected eligible API instance and runs with bounded requests and no tools. It produces candidates for review, not automatically authoritative facts.
+
+When recalled context is sent to a hosted engine, that provider processes it. Optional hosted extraction also sends its selected input to the configured provider. **Forgetting cannot retract content already delivered to an external provider.** Model usage remains subject to your account and provider charges.
+
+Memory scope controls govern Murage's own disclosure. They do not sandbox an independently running process with filesystem access under your operating-system account, and they do not grant an agent new tool permissions.
+
+## Backups and recovery
+
+Use Murage's installation backup and reviewed restore flow. Backups retain authoritative memory and deletion history; indexes can be rebuilt. Restoring into an existing installation merges its destination deletion ledger before activation. A fresh installation cannot infer deletions absent from its backup and requires owner review. Restored memory remains paused until reviewed.
+
+Preserve a verified backup before migration or recovery. Do not open a migrated memory database with an older incompatible build or delete recovery markers to bypass review. For a reversible feature change, select Off or Paused in the compatible version.
+
+Memory is verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred; it is not a promise of unlimited recall capacity or perfect model answers.
 
 ### Fuigo memory ownership
 
