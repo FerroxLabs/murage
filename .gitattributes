@@ -2,3 +2,6 @@
 /scripts/build-local-catalog.mjs text eol=lf
 # The catalog regression compares these bytes with the generator's LF output.
 /library/catalog.json text eol=lf
+
+# This reviewed vendor patch is verified against its exact pinned SHA-256.
+/third_party/browser/agent-browser-windows-stdio.patch text eol=lf

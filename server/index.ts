@@ -14,7 +14,7 @@ import { permissionStatus, type PendingPermissionInput } from "./permission-stat
 import { EngineManager } from "./engine-management.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
-import { MemoryDispatchReceipt, memoryContinuationChanged } from "./memory/dispatch.ts";
+import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset } from "./memory/dispatch.ts";
 import { memoryAccess, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./memory/disclosures.ts";
@@ -3762,8 +3762,10 @@ async function startTurn(
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
-        const bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        let bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
+          memoryRefreshed=true;
           const allowed=filterMemoryReplay(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
@@ -3775,8 +3777,18 @@ async function startTurn(
         if(!resumeCursor) {
           // Claude's idle retained process is not reported by hasSession; its
           // explicit per-thread reset must run even when no active turn exists.
-          if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
-          else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+          bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
+            if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+            else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+          },{availableContextTokens});
+          // The same await can invalidate disclosed history; re-filter with the
+          // original authority rather than replaying a pre-reset snapshot.
+          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowedById=new Map(allowed.map(message=>[message.id,message]));
+          transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
+            .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
+          turnText=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
+            rewound,memoryRefreshed,fresh:memoryRefreshed?false:fresh,externallyUpdated:memoryRefreshed?false:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"}).turnText;
         }
         memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId);
         memoryDispatches.set(threadId,memoryReceipt);
@@ -4813,14 +4825,15 @@ async function runGroupMemberTurn(
   const prepareRoomMemory=async()=>{
     if(memoryState().mode!=="active")return;
     const access=turnMemoryAccess(bot.id,threadId,internalGeneration);
-    const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
-    text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     const selection=memberTurnSelection(bot.modelSelection);
     const availableContextTokens=instance.models.options.find(option=>option.id===(selection.model??instance.models.default))?.contextWindow??20480;
     const query=Buffer.from(latestUser?.text??"").subarray(0,4093).toString("utf8").replace(/�+$/,"");
-    const bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
-    if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
-    else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+    const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
+      if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+      else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+    },{availableContextTokens});
+    const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
+    text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
     memoryDispatches.set(threadId,memoryReceipt);
     if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,internalGeneration);

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -100,6 +101,26 @@ describe("control-murage command mapping", () => {
 });
 
 describe("control-murage isolated verification loop", () => {
+  it("loads fixture instrumentation through a file URL before server startup", async () => {
+    const session = await launchVerificationServer(process.env, undefined, {
+      instrumentationSource: `
+        import { writeFileSync } from "node:fs";
+        writeFileSync(new URL("./instrumentation-loaded.txt", import.meta.url), "loaded");
+      `,
+    });
+    try {
+      const importIndex = session.child.spawnargs.indexOf("--import");
+      expect(importIndex).toBeGreaterThan(0);
+      const specifier = session.child.spawnargs[importIndex + 1];
+      expect(new URL(specifier).protocol).toBe("file:");
+      expect(fileURLToPath(specifier)).toBe(join(session.info.dataDir, ".verification-instrumentation.mjs"));
+      expect(readFileSync(join(session.info.dataDir, "instrumentation-loaded.txt"), "utf8")).toBe("loaded");
+    } finally {
+      await session.close();
+    }
+    expect(existsSync(session.info.dataDir)).toBe(false);
+  }, 30_000);
+
   it("launches, drives a real fake-engine turn, and removes only its test data", async () => {
     const session = await launchVerificationServer({
       ...process.env,
