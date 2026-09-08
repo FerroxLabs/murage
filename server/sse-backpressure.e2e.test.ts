@@ -28,10 +28,10 @@ function closeConnections() {
 
 async function failureDiagnostics() {
   // Never print environment, credentials, message contents or raw stderr.
-  const read = async (path: string) => {
+  const read = async (path: string): Promise<Record<string, any>> => {
     try {
       const response = await fetch(`${base}${path}`, { headers: desktop, signal: AbortSignal.timeout(2000) });
-      return response.ok ? await response.json() : { httpStatus: response.status };
+      return response.ok ? await response.json() as Record<string, any> : { httpStatus: response.status };
     } catch { return { unavailable: true }; }
   };
   const health = await read("/api/health");
