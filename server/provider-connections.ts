@@ -2,10 +2,11 @@ import { z } from "zod";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PROVIDER_PRESETS, parseProviderBank } from "../electron/provider-connections.mjs";
+import { MODEL_CATALOG_REFRESH_MS } from "./model-catalog-refresh.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import type { ProviderCatalog, ProviderCatalogError, ProviderConnectionRecord, ProviderModel, ProviderPreset, PublicProviderConnection } from "../shared/provider-connections.ts";
 
-const MAX_BYTES = 4 * 1024 * 1024, MAX_MODELS = 5000, CACHE_TTL = 5 * 60_000;
+const MAX_BYTES = 4 * 1024 * 1024, MAX_MODELS = 5000, CACHE_TTL = MODEL_CATALOG_REFRESH_MS;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const finite = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -59,6 +60,8 @@ export interface LegacyProviderConnection extends ProviderConnectionRecord { leg
 interface Cached { revision: string; catalog: ProviderCatalog }
 export class ProviderConnectionsService {
  private readonly cache=new Map<string,Cached>();
+ private readonly pending=new Map<string,{revision:string;promise:Promise<ProviderCatalog>}>();
+ private readonly attempted=new Map<string,{revision:string;at:number}>();
  private readonly listeners=new Set<(changedIds:string[])=>void|Promise<void>>();
  private readonly fetcher:typeof fetch;
  private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[]};
@@ -83,7 +86,26 @@ export class ProviderConnectionsService {
  }
  getCatalog(id:string):ProviderCatalog {const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});return this.readCache(connection);}
  list():PublicProviderConnection[]{return this.records().map(connection=>{const preset=PROVIDER_PRESETS[connection.preset],catalog=this.readCache(connection);return{id:connection.id,preset:connection.preset,label:connection.label,enabled:connection.enabled,revision:connection.revision,baseUrl:preset.baseUrl,protocol:preset.protocol,configured:true,...("legacy" in connection?{legacy:true,managedIn:connection.managedIn}:{}),state:catalog.error?"needs-attention":catalog.fetchedAt?"catalog-ready":"saved",catalog};});}
+ async refreshDue(signal?:AbortSignal):Promise<void>{
+  for(const connection of this.records()){
+   if(signal?.aborted)return;
+   if(!connection.enabled)continue;
+   const catalog=this.readCache(connection),attempt=this.attempted.get(connection.id);
+   const attemptedAt=attempt?.revision===connection.revision?attempt.at:-Infinity;
+   if(this.now()-Math.max(catalog.fetchedAt??-Infinity,attemptedAt)<MODEL_CATALOG_REFRESH_MS)continue;
+   await this.refresh(connection.id,signal).catch(()=>{});
+  }
+ }
  async refresh(id:string,signal?:AbortSignal):Promise<ProviderCatalog>{
+  const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});
+  if(!connection.enabled)throw Object.assign(new Error("Enable this connection before refreshing models."),{status:409});
+  const current=this.pending.get(id);if(current?.revision===connection.revision)return current.promise;
+  this.attempted.set(id,{revision:connection.revision,at:this.now()});
+  const entry={revision:connection.revision,promise:Promise.resolve(undefined as unknown as ProviderCatalog)};
+  entry.promise=this.refreshCatalog(id,signal).finally(()=>{if(this.pending.get(id)===entry)this.pending.delete(id);});
+  this.pending.set(id,entry);return entry.promise;
+ }
+ private async refreshCatalog(id:string,signal?:AbortSignal):Promise<ProviderCatalog>{
   const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});
   if(!connection.enabled)throw Object.assign(new Error("Enable this connection before refreshing models."),{status:409});
   const previous=this.readCache(connection),controllerSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000);

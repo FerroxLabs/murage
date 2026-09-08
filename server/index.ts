@@ -1,5 +1,6 @@
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
+import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
 import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
 import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
@@ -12185,6 +12186,10 @@ const server = createServer(async (req, res) => {
   }
 });
 
+const stopModelCatalogRefresh = startModelCatalogRefresh(async signal => {
+  await Promise.all([registry.refreshModelCatalogs(), providerConnections.refreshDue(signal)]);
+});
+
 calendarCalls.start();
 
 server.listen(PORT, "127.0.0.1", () => {
@@ -12215,6 +12220,7 @@ server.listen(PORT, "127.0.0.1", () => {
 
 const gracefulShutdown = createGracefulShutdown({
   cleanup: [
+    () => stopModelCatalogRefresh(),
     () => {
       revokeAllInternalTurns();
       server.close();

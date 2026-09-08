@@ -5,6 +5,7 @@
 // compatible — do not remove it); dispose tears an instance down without
 // touching its siblings.
 import { findCliCandidates } from "../env-path.ts";
+import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
 import { filterFluxRows } from "../flux-surface.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
 import type {
@@ -56,7 +57,9 @@ export class ProviderRegistry {
   private cliByInstance = new Map<InstanceId, string>();
   private driversByKind: Map<string, AnyProviderDriver>;
 
-  constructor(drivers: readonly AnyProviderDriver[]) {
+  private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void> }>();
+
+  constructor(drivers: readonly AnyProviderDriver[], private readonly now: () => number = Date.now) {
     this.driversByKind = new Map(drivers.map((d) => [d.driverKind, d]));
   }
 
@@ -104,7 +107,9 @@ export class ProviderRegistry {
           enabled: entry.enabled ?? true,
           config,
         });
-        this.byId.set(instanceId, { instanceId, live: decorateMemoryInstance(live) });
+        const decorated = decorateMemoryInstance(live);
+        this.byId.set(instanceId, { instanceId, live: decorated });
+        this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
       } catch (e) {
         this.byId.set(instanceId, {
           instanceId,
@@ -131,6 +136,23 @@ export class ProviderRegistry {
 
   instances(): ProviderInstance[] {
     return [...this.byId.values()].flatMap((e) => (e.live ? [e.live] : []));
+  }
+
+  private refreshCatalog(instance: ProviderInstance, dueOnly = false): Promise<void> {
+    if (!instance.refreshModels || instance.enabled === false) return Promise.resolve();
+    const state = this.catalogRefreshes.get(instance) ?? { attemptedAt: -Infinity };
+    if (state.pending) return state.pending;
+    if (dueOnly && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
+    state.attemptedAt = this.now();
+    state.pending = Promise.resolve().then(async () => {
+      if (this.get(instance.instanceId) === instance) await instance.refreshModels!();
+    }).finally(() => { state.pending = undefined; });
+    this.catalogRefreshes.set(instance, state);
+    return state.pending;
+  }
+
+  async refreshModelCatalogs(dueOnly = true): Promise<void> {
+    await Promise.allSettled(this.instances().map(instance => this.refreshCatalog(instance, dueOnly)));
   }
 
   /** instance snapshots for the model picker: id, driver, models, health */
@@ -172,7 +194,7 @@ export class ProviderRegistry {
         const inst = entry.live;
         let snapshot: ProviderSnapshot;
         try {
-          await inst.refreshModels?.();
+          await this.refreshCatalog(inst);
           snapshot = await inst.snapshot();
         } catch (e) {
           snapshot = { state: "unavailable", reason: e instanceof Error ? e.message : String(e) };
@@ -216,6 +238,7 @@ export class ProviderRegistry {
   }
 
   async disposeAll() {
+    await Promise.allSettled(this.instances().map(instance => this.catalogRefreshes.get(instance)?.pending));
     await Promise.allSettled(this.instances().map((i) => i.dispose()));
     this.byId.clear();
     this.cliByInstance.clear();

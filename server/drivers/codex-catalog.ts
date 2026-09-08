@@ -365,13 +365,14 @@ async function probeProviderModels(
   }
 }
 
-/** Local slugs Codex already knows, plus the three official cloud rows. */
+/** Local slugs Codex already knows, plus the authoritative visible CLI rows. */
 export async function readCodexModelCatalog(
   env: Record<string, string | undefined> = process.env,
   fetchImpl: typeof fetch = fetch,
   cli?: string,
+  officialFallback: ModelCatalog = STATIC_CODEX_MODELS,
 ): Promise<ModelCatalog> {
-  const official = (cli ? await readCodexAppServerModelCatalog(cli, env) : null) ?? STATIC_CODEX_MODELS;
+  const official = (cli ? await readCodexAppServerModelCatalog(cli, env) : null) ?? officialFallback;
   const home = codexHome(env);
   const mainText = readText(join(home, "config.toml"));
   // Flux rows are gated per engine and are emitted `flux::flux-auto` style —

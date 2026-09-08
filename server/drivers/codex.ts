@@ -131,7 +131,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     let models = STATIC_CODEX_MODELS;
     const refreshModels = async () => {
       try {
-        const resolved = await readCodexModelCatalog(catalogEnv, fetch, config.cli);
+        const officialOptions = models.options.filter(option => !option.custom && !option.id.includes("::"));
+        const officialFallback = officialOptions.length ? {
+          default: officialOptions.some(option => option.id === models.default) ? models.default : officialOptions[0].id,
+          options: officialOptions,
+        } : STATIC_CODEX_MODELS;
+        const resolved = await readCodexModelCatalog(catalogEnv, fetch, config.cli, officialFallback);
         if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when a local provider is down.
