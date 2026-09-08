@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 const hook=readFileSync(new URL("../build/windows-sandbox-acl.nsh",import.meta.url),"utf8");
 const builder=readFileSync(new URL("../electron-builder.yml",import.meta.url),"utf8");
-it("runs the package permission hook for NSIS install and upgrade",()=>{
- expect(builder).toMatch(/nsis:\n  include: build\/windows-sandbox-acl\.nsh/);
+it.each(["\n", "\r\n"])("runs the package permission hook with %j line endings",(lineEnding)=>{
+ expect(builder.replace(/\r?\n/g,lineEnding)).toMatch(/nsis:\r?\n  include: build\/windows-sandbox-acl\.nsh/);
  expect(hook).toContain("!macro customInstall");
  expect(hook).not.toMatch(/isUpdated|isNotUpdated|isReinstall/);
 });
