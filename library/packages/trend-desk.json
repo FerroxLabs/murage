@@ -5,8 +5,8 @@
     "id": "trend-desk",
     "release": "1.0.0",
     "name": "Trend Desk",
-    "tagline": "Team launcher - pick me to auto-assemble a trends crew (Research + Brand + Copy + Quality Gate) and ship a same-day shoot brief on trends worth jumping on.",
-    "summary": "Team launcher - pick me to auto-assemble a trends crew (Research + Brand + Copy + Quality Gate) and ship a same-day shoot brief on trends worth jumping on.",
+    "tagline": "Research the opportunity, check brand fit, and prepare a filming brief with a clear content angle.",
+    "summary": "For creators deciding which current trends suit their audience. Research the opportunity, check brand fit, and prepare a filming brief with a clear content angle.",
     "category": "Research",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a trends crew (Research + Brand + Copy + Quality Gate) and ship a same-day shoot brief on trends worth jumping on."
+      "Research the opportunity, check brand fit, and prepare a filming brief with a clear content angle."
     ],
     "setupMinutes": 2,
     "requirements": {

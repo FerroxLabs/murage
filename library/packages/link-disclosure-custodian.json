@@ -5,8 +5,8 @@
     "id": "link-disclosure-custodian",
     "release": "1.0.0",
     "name": "Link & Disclosure Custodian",
-    "tagline": "Team launcher - pick me to auto-assemble a compliance crew (Analyst + Counsel + Quality Gate + Code) and ship a site-wide dead-link and disclosure fix list.",
-    "summary": "Team launcher - pick me to auto-assemble a compliance crew (Analyst + Counsel + Quality Gate + Code) and ship a site-wide dead-link and disclosure fix list.",
+    "tagline": "Review broken links and disclosure gaps, then get a prioritized fix list with implementation guidance.",
+    "summary": "For publishers maintaining affiliate or commercial content. Review broken links and disclosure gaps, then get a prioritized fix list with implementation guidance.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a compliance crew (Analyst + Counsel + Quality Gate + Code) and ship a site-wide dead-link and disclosure fix list."
+      "Review broken links and disclosure gaps, then get a prioritized fix list with implementation guidance."
     ],
     "setupMinutes": 2,
     "requirements": {

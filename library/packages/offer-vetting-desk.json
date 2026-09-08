@@ -5,8 +5,8 @@
     "id": "offer-vetting-desk",
     "release": "1.0.0",
     "name": "Offer Vetting Desk",
-    "tagline": "Team launcher - pick me to auto-assemble an offer-vetting crew (Research + Numbers + Offer + Quality Gate) and ship a scored go/no-go shortlist of affiliate pr…",
-    "summary": "Team launcher - pick me to auto-assemble an offer-vetting crew (Research + Numbers + Offer + Quality Gate) and ship a scored go/no-go shortlist of affiliate programs.",
+    "tagline": "Review audience fit, offer value, and economics to produce a scored shortlist and reasons to accept or reject each option.",
+    "summary": "For affiliate publishers deciding which programmes to promote. Review audience fit, offer value, and economics to produce a scored shortlist and reasons to accept or reject each option.",
     "category": "Research",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble an offer-vetting crew (Research + Numbers + Offer + Quality Gate) and ship a scored go/no-go shortlist of affiliate programs."
+      "Review audience fit, offer value, and economics to produce a scored shortlist and reasons to accept or reject each option."
     ],
     "setupMinutes": 2,
     "requirements": {

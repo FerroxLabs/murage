@@ -5,8 +5,8 @@
     "id": "paid-ads-war-room",
     "release": "1.0.0",
     "name": "Paid Ads War Room",
-    "tagline": "Team launcher - pick me to auto-assemble a paid-ads crew (Offer + Copy + Analyst + Channels) and ship a launch-ready campaign kit plus a kill/keep/scale call.",
-    "summary": "Team launcher - pick me to auto-assemble a paid-ads crew (Offer + Copy + Analyst + Channels) and ship a launch-ready campaign kit plus a kill/keep/scale call.",
+    "tagline": "Develop the offer, creative copy, channel structure, and measurement plan, then review whether to stop, keep, or scale after results arrive.",
+    "summary": "For advertisers preparing a new campaign. Develop the offer, creative copy, channel structure, and measurement plan, then review whether to stop, keep, or scale after results arrive.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a paid-ads crew (Offer + Copy + Analyst + Channels) and ship a launch-ready campaign kit plus a kill/keep/scale call."
+      "Develop the offer, creative copy, channel structure, and measurement plan, then review whether to stop, keep, or scale after results arrive."
     ],
     "setupMinutes": 2,
     "requirements": {

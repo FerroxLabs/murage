@@ -5,8 +5,8 @@
     "id": "email-lifecycle-crew",
     "release": "1.0.0",
     "name": "Email & Lifecycle Crew",
-    "tagline": "Team launcher - pick me to auto-assemble an email lifecycle crew (Channels + Copy + Analyst + Research) and ship written flows plus a weekly broadcast calendar.",
-    "summary": "Team launcher - pick me to auto-assemble an email lifecycle crew (Channels + Copy + Analyst + Research) and ship written flows plus a weekly broadcast calendar.",
+    "tagline": "Draft lifecycle email flows and a broadcast calendar grounded in audience needs and performance evidence.",
+    "summary": "For businesses improving customer email journeys. Draft lifecycle email flows and a broadcast calendar grounded in audience needs and performance evidence.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble an email lifecycle crew (Channels + Copy + Analyst + Research) and ship written flows plus a weekly broadcast calendar."
+      "Draft lifecycle email flows and a broadcast calendar grounded in audience needs and performance evidence."
     ],
     "setupMinutes": 2,
     "requirements": {

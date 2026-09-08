@@ -5,8 +5,8 @@
     "id": "comparison-roundup-builder",
     "release": "1.0.0",
     "name": "Comparison & Roundup Builder",
-    "tagline": "Team launcher - pick me to auto-assemble a roundup crew (Research + Copy + Quality Gate + Code) and ship a 'best X for Y' / 'A vs B' money page with schema.",
-    "summary": "Team launcher - pick me to auto-assemble a roundup crew (Research + Copy + Quality Gate + Code) and ship a 'best X for Y' / 'A vs B' money page with schema.",
+    "tagline": "Get a researched comparison draft, clear selection criteria, and structured-data recommendations for review.",
+    "summary": "For publishers creating product comparisons and buying guides. Get a researched comparison draft, clear selection criteria, and structured-data recommendations for review.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a roundup crew (Research + Copy + Quality Gate + Code) and ship a 'best X for Y' / 'A vs B' money page with schema."
+      "Get a researched comparison draft, clear selection criteria, and structured-data recommendations for review."
     ],
     "setupMinutes": 2,
     "requirements": {

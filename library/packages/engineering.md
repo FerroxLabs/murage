@@ -3,8 +3,8 @@ botmrr: 1
 id: engineering
 release: 1.0.0
 name: Ship Software Safely
-tagline: Turn a product change into a scoped plan, reviewed implementation, and release decision.
-summary: A four-agent product engineering crew that inspects the existing system, separates ownership, protects backend and interface boundaries, and verifies the result before calling it shipped.
+tagline: "Get a scoped implementation plan, coordinated engineering work, and a release-readiness review backed by verification evidence."
+summary: "For product teams delivering a software change. Get a scoped implementation plan, coordinated engineering work, and a release-readiness review backed by verification evidence."
 category: Engineering
 author:
   name: OpenMausBot

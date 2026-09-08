@@ -5,8 +5,8 @@
     "id": "ad-account-mechanic",
     "release": "1.0.0",
     "name": "Ad Account Mechanic",
-    "tagline": "Team launcher - pick me to auto-assemble an ad-ops crew (Analyst + Copy + Offer + Channels) and ship a weekly kill/scale call plus fresh creative.",
-    "summary": "Team launcher - pick me to auto-assemble an ad-ops crew (Analyst + Copy + Offer + Channels) and ship a weekly kill/scale call plus fresh creative.",
+    "tagline": "Find weak spots in the funnel, assess spend and offers, and get a weekly action plan with fresh creative ideas.",
+    "summary": "For advertisers reviewing an existing ad account. Find weak spots in the funnel, assess spend and offers, and get a weekly action plan with fresh creative ideas.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble an ad-ops crew (Analyst + Copy + Offer + Channels) and ship a weekly kill/scale call plus fresh creative."
+      "Find weak spots in the funnel, assess spend and offers, and get a weekly action plan with fresh creative ideas."
     ],
     "setupMinutes": 2,
     "requirements": {

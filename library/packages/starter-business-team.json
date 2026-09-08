@@ -1,24 +1,122 @@
 {
-  "format": "murage.package", "version": 1,
+  "format": "murage.package",
+  "version": 1,
   "package": {
-    "id": "starter-business-team", "release": "1.0.0", "name": "Business / Team",
-    "tagline": "Turn shared notes into a clear plan, working draft and review.",
-    "summary": "Three complementary roles for a small team starting from user-provided project notes. Team Coordinator is a suggested primary contact, not a grant of authority or an instruction to replace an existing Chief.",
-    "category": "Starter", "author": { "name": "Ferrox Labs" }, "license": "Apache-2.0",
-    "outcomes": ["A project brief with owners and open decisions", "A first deliverable from the supplied material", "A review that separates verified facts from assumptions"],
-    "setupMinutes": 3, "requirements": { "apps": [], "capabilities": [] },
+    "id": "starter-business-team",
+    "release": "1.0.0",
+    "name": "Business / Team",
+    "tagline": "Get a scoped brief, a working draft, and a review that separates evidence from assumptions and open decisions.",
+    "summary": "For small teams turning project notes into a first deliverable. Get a scoped brief, a working draft, and a review that separates evidence from assumptions and open decisions.",
+    "category": "Starter",
+    "author": {
+      "name": "Ferrox Labs"
+    },
+    "license": "Apache-2.0",
+    "outcomes": [
+      "A project brief with owners and open decisions",
+      "A first deliverable from the supplied material",
+      "A review that separates verified facts from assumptions"
+    ],
+    "setupMinutes": 3,
+    "requirements": {
+      "apps": [],
+      "capabilities": []
+    },
     "agents": [
-      { "key": "team-coordinator", "name": "Team Coordinator", "title": "Scope and coordination", "description": "Organizes the user's project notes, responsibilities and next decisions.", "appearance": { "color": "purple" }, "playbooks": ["team-brief"] },
-      { "key": "delivery-partner", "name": "Delivery Partner", "title": "Working drafts", "description": "Produces a reviewable first deliverable within the agreed scope.", "appearance": { "color": "green" }, "playbooks": ["team-delivery"] },
-      { "key": "review-partner", "name": "Review Partner", "title": "Evidence and gaps", "description": "Checks the draft against the user's stated requirements and source notes.", "appearance": { "color": "blue" }, "playbooks": ["team-review"] }
+      {
+        "key": "team-coordinator",
+        "name": "Team Coordinator",
+        "title": "Scope and coordination",
+        "description": "Organizes the user's project notes, responsibilities and next decisions.",
+        "appearance": {
+          "color": "purple"
+        },
+        "playbooks": [
+          "team-brief"
+        ]
+      },
+      {
+        "key": "delivery-partner",
+        "name": "Delivery Partner",
+        "title": "Working drafts",
+        "description": "Produces a reviewable first deliverable within the agreed scope.",
+        "appearance": {
+          "color": "green"
+        },
+        "playbooks": [
+          "team-delivery"
+        ]
+      },
+      {
+        "key": "review-partner",
+        "name": "Review Partner",
+        "title": "Evidence and gaps",
+        "description": "Checks the draft against the user's stated requirements and source notes.",
+        "appearance": {
+          "color": "blue"
+        },
+        "playbooks": [
+          "team-review"
+        ]
+      }
     ],
     "chiefOfStaff": "team-coordinator",
     "playbooks": [
-      { "key": "team-brief", "name": "Turn notes into a brief", "summary": "Define a shared outcome without assuming access to team systems.", "triggers": ["Organize this project", "Make a team brief"], "instructions": "Use supplied notes to state the outcome, scope, known owners, dependencies and finish conditions. Unknown owners remain unassigned until the user decides. Suggest the next deliverable and ask only for blocking inputs. Preserve the current Chief, roles and permissions. Do not create external tasks, message teammates or enable routines without explicit approval." },
-      { "key": "team-delivery", "name": "Build the first draft", "summary": "Create one bounded deliverable from the agreed brief.", "triggers": ["Draft the deliverable", "Work from this brief"], "instructions": "Create the requested draft using the brief and user-provided material. Mark assumptions and missing evidence. Keep work inside the agreed deliverable. Do not claim you read shared drives, chat, issue trackers or email without an authorized tool result. Leave publication and external updates for explicit user approval." },
-      { "key": "team-review", "name": "Review against the brief", "summary": "Check requirements and evidence before handoff.", "triggers": ["Review this draft", "Check against the brief"], "instructions": "Compare the supplied draft to the agreed outcome and source notes. Report concrete omissions, unsupported claims and conflicting requirements. Distinguish verified facts from inference. Return a short correction list; do not silently expand scope or claim live-system verification from a document review." }
+      {
+        "key": "team-brief",
+        "name": "Turn notes into a brief",
+        "summary": "Define a shared outcome without assuming access to team systems.",
+        "triggers": [
+          "Organize this project",
+          "Make a team brief"
+        ],
+        "instructions": "Use supplied notes to state the outcome, scope, known owners, dependencies and finish conditions. Unknown owners remain unassigned until the user decides. Suggest the next deliverable and ask only for blocking inputs. Preserve the current Chief, roles and permissions. Do not create external tasks, message teammates or enable routines without explicit approval."
+      },
+      {
+        "key": "team-delivery",
+        "name": "Build the first draft",
+        "summary": "Create one bounded deliverable from the agreed brief.",
+        "triggers": [
+          "Draft the deliverable",
+          "Work from this brief"
+        ],
+        "instructions": "Create the requested draft using the brief and user-provided material. Mark assumptions and missing evidence. Keep work inside the agreed deliverable. Do not claim you read shared drives, chat, issue trackers or email without an authorized tool result. Leave publication and external updates for explicit user approval."
+      },
+      {
+        "key": "team-review",
+        "name": "Review against the brief",
+        "summary": "Check requirements and evidence before handoff.",
+        "triggers": [
+          "Review this draft",
+          "Check against the brief"
+        ],
+        "instructions": "Compare the supplied draft to the agreed outcome and source notes. Report concrete omissions, unsupported claims and conflicting requirements. Distinguish verified facts from inference. Return a short correction list; do not silently expand scope or claim live-system verification from a document review."
+      }
     ],
-    "routines": [{ "key": "weekly-team-review", "name": "Weekly team review (suggested)", "agent": "team-coordinator", "prompt": "Summarize progress using notes the user supplied, list unresolved ownership and evidence gaps, and propose the next reviewable deliverable. If current notes are absent, ask for them. Do not contact teammates or assume access to shared tools.", "runOn": "ember", "schedule": { "type": "daily", "time": "09:00", "weekdays": [1] }, "durationMinutes": 20, "enabledAfterInstall": false }],
-    "examples": [{ "title": "Start from meeting notes", "input": "Our team wants an onboarding checklist by Friday. Morgan can review it Thursday. Here are the five steps we currently use: welcome, account setup, product tour, first task, feedback.", "output": "Draft a checklist from the five supplied steps, mark missing owners and acceptance details, and plan the Thursday review before Friday delivery. No external task has been created and no teammate has been contacted." }]
+    "routines": [
+      {
+        "key": "weekly-team-review",
+        "name": "Weekly team review (suggested)",
+        "agent": "team-coordinator",
+        "prompt": "Summarize progress using notes the user supplied, list unresolved ownership and evidence gaps, and propose the next reviewable deliverable. If current notes are absent, ask for them. Do not contact teammates or assume access to shared tools.",
+        "runOn": "ember",
+        "schedule": {
+          "type": "daily",
+          "time": "09:00",
+          "weekdays": [
+            1
+          ]
+        },
+        "durationMinutes": 20,
+        "enabledAfterInstall": false
+      }
+    ],
+    "examples": [
+      {
+        "title": "Start from meeting notes",
+        "input": "Our team wants an onboarding checklist by Friday. Morgan can review it Thursday. Here are the five steps we currently use: welcome, account setup, product tour, first task, feedback.",
+        "output": "Draft a checklist from the five supplied steps, mark missing owners and acceptance details, and plan the Thursday review before Friday delivery. No external task has been created and no teammate has been contacted."
+      }
+    ]
   }
 }

@@ -5,8 +5,8 @@
     "id": "content-studio",
     "release": "1.0.0",
     "name": "Content Pipeline",
-    "tagline": "Chained pipeline - Channels + Copy (through 7 lens passes) + Brand + Quality Gate ship three publish-ready content variants in your voice (10 stages).",
-    "summary": "Chained pipeline - Channels + Copy (through 7 lens passes) + Brand + Quality Gate ship three publish-ready content variants in your voice (10 stages).",
+    "tagline": "Produce three channel-appropriate versions through copy, brand, and quality review.",
+    "summary": "For businesses turning one brief into content in their own voice. Produce three channel-appropriate versions through copy, brand, and quality review.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Chained pipeline - Channels + Copy (through 7 lens passes) + Brand + Quality Gate ship three publish-ready content variants in your voice (10 stages)."
+      "Produce three channel-appropriate versions through copy, brand, and quality review."
     ],
     "setupMinutes": 2,
     "requirements": {

@@ -5,8 +5,8 @@
     "id": "creator-studio",
     "release": "1.0.0",
     "name": "Creator Studio",
-    "tagline": "Team launcher - Copy + Brand + Channels + Build for creators ready to monetize their audience.",
-    "summary": "Team launcher - Copy + Brand + Channels + Build for creators ready to monetize their audience.",
+    "tagline": "Develop the offer and product structure, then prepare brand messaging, promotional copy, and a distribution plan.",
+    "summary": "For creators planning to earn from their audience. Develop the offer and product structure, then prepare brand messaging, promotional copy, and a distribution plan.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Copy + Brand + Channels + Build for creators ready to monetize their audience."
+      "Develop the offer and product structure, then prepare brand messaging, promotional copy, and a distribution plan."
     ],
     "setupMinutes": 2,
     "requirements": {
