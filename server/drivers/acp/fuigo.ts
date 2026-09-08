@@ -303,6 +303,9 @@ const support: AcpSupport = {
   spawnArgs: (config, turn) => [
     "--permission-mode",
     config.fullAuto ? "bypassPermissions" : "default",
+    // Murage owns persistent memory. Override ambient Fuigo config without
+    // changing the user's standalone memory policy or touching their store.
+    "--no-memory",
     "agent",
     // `[cli] use_leader = true` in the user's own ~/.fuigo/config.toml makes
     // `fuigo agent` ATTACH to a running leader on ~/.fuigo/leader.sock instead

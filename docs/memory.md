@@ -47,3 +47,7 @@ Feature rollback means selecting Off or Paused with the compatible binary. Do no
 ## Intel macOS
 
 Intel Macs use keyword retrieval in this release because the pinned native semantic runtime does not provide an Intel macOS binding. Owner review, corrections, sharing, pins, forgetting and source recovery remain available. Unavailable semantic-model downloads are refused on Intel Macs; no semantic inference is claimed there. Apple Silicon, Windows x64 and Linux x64 retain the native local-model path.
+
+### Fuigo memory ownership
+
+Murage owns persistent memory for Fuigo turns and always launches its private ACP process with `--no-memory`. Murage memory being off does not activate a second engine store. This does not change standalone Fuigo defaults, edit user configuration, delete existing memories, or disable ordinary conversation history.
