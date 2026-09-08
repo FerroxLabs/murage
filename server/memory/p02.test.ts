@@ -7,6 +7,7 @@ import { assertMemoryAccess, ensureScope, memoryAccess, persistMemoryRoster, rec
 import { correctMemory, ownerMemoryTicket, pinMemory, saveMemoryCandidate, renameMemoryTeam } from "./authority.ts";
 import { buildMemoryBundle, assertMemoryBundle } from "./bundle.ts";
 import { memoryState } from "./repository.ts";
+import { prepareMemoryDisclosure, deliverMemoryDisclosure } from "./disclosures.ts";
 import { requiresDesktopAuthority } from "../desktop-policy.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
@@ -142,4 +143,43 @@ it("does not publish new room scopes when an additive roster write fails", () =>
   expect(memoryState().policyRevision).toBe(before);
   expect(() => assertMemoryAccess(f.access)).not.toThrow();
   expect(database().prepare("SELECT id FROM memory_scopes WHERE kind='room' AND owner_key='new-room'").get()).toBeUndefined();
+});
+
+function taskNavigationFixture(kind: "bot" | "room") {
+  const f=fixture(kind==="room"?"room-thread":"private-a");
+  const subject=kind==="room"?f.roster.groups[0]:f.roster.bots[0];
+  const background=subject.threadId;
+  subject.tasks=[{threadId:background},{threadId:`${background}-second`}];
+  reconcileMemoryRoster(f.roster);
+  const registry=new InternalCapabilities(),generation=registry.begin("a",background);
+  const token=registry.mint({botId:"a",threadId:background,generation,depth:0,kind:"memory",skillAuthoring:false});
+  return {roster:f.roster,subject,background,access:memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>f.roster)};
+}
+
+it.each(["bot", "room"] as const)("opening another existing %s task preserves background authority and disclosures",async kind=>{
+  const f=taskNavigationFixture(kind),before=memoryState().policyRevision;
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})});
+  prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
+  const next=structuredClone(f.roster),subject=kind==="room"?next.groups[0]:next.bots[0];
+  subject.threadId=subject.tasks![1].threadId;
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBe(before);
+  expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+  expect(()=>assertMemoryBundle(bundle,f.access)).not.toThrow();
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
+  // Durable reconciliation uses the same set regardless of the selected task.
+  closeDatabase();reconcileMemoryRoster(f.roster);
+  expect(memoryState().policyRevision).toBe(before);
+  expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+});
+
+it.each(["membership", "task-removal", "team"])("task navigation still revokes a real %s restriction",change=>{
+  const f=taskNavigationFixture("room"),before=memoryState().policyRevision,next=structuredClone(f.roster);
+  next.groups[0].threadId=next.groups[0].tasks![1].threadId;
+  if(change==="membership")next.groups[0].memberIds=["b"];
+  if(change==="task-removal")next.groups[0].tasks=next.groups[0].tasks!.filter(task=>task.threadId!==f.background);
+  if(change==="team")next.bots[0].section="beta";
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBeGreaterThan(before);
+  expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
 });
