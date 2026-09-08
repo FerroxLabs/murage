@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
 import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
@@ -32,11 +33,11 @@ export interface DelegationItem {
   /** Trusted originating event identity. Survives handoff/retry/restart so
    * the harness can retain the event's budget and provenance boundary. */
   eventId?: string;
-  /** The source bot's comms depth (0 for a user-initiated turn). The
-   * delegated-to bot runs at `depth + 1`, which equals MAX_COMMS_DEPTH
-   * (= 1) for a user turn — so the peer has no agents integration, and
-   * recursive delegation is structurally impossible. */
+  /** Source depth; the child runs at depth+1. Tools stay available while
+   * the server enforces depth, lineage and root allowances at admission. */
   depth: number;
+  /** Durable server-issued ancestry, never model-supplied. */
+  coordination?: CoordinationTrace;
 }
 
 interface PendingDelegationItem extends DelegationItem {
@@ -145,6 +146,12 @@ export function pendingDelegationInfo(id: string): { sourceThreadId: string; toB
   return null;
 }
 
+export function hasPendingBotDelegations(bot: BotRecord): boolean {
+  const threads = new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]);
+  return [...pendingDelegations].some(([threadId, items]) => items.some(item =>
+    item.toBotId === bot.id || item.fromBotId === bot.id || !item.fromBotId && threads.has(threadId)));
+}
+
 /** Source threads currently waiting for this busy bot — the set its idle
  * transition re-drains. Fresh items are excluded: they run when their SOURCE
  * turn settles, and draining them early would start the peer too soon. */
@@ -169,10 +176,11 @@ export function releaseDelegationsWaitingOn(toBotId: string): string[] {
   return threads;
 }
 
-function savePending(): void {
+function savePending(strict = false): void {
   try {
     writeFileAtomic(DELEGATIONS_FILE, JSON.stringify(Object.fromEntries(pendingDelegations), null, 2), { mode: 0o600 });
   } catch (error) {
+    if (strict) throw new Error("DELEGATION_PERSISTENCE_FAILED: the handoff was not accepted");
     console.error("delegations: could not persist queue", error);
   }
 }
@@ -194,6 +202,7 @@ export function _loadPending(): void {
         ) return [];
         // A malformed present marker must never become an unmarked turn.
         if (Object.hasOwn(item, "eventId") && !validEventId(item.eventId)) return [];
+        if (item.coordination !== undefined && !coordinationTraceSchema.safeParse(item.coordination).success) return [];
         const loaded: PendingDelegationItem = {
           id: typeof item.id === "string" && item.id ? item.id : newId(),
           toBotId: item.toBotId,
@@ -203,6 +212,7 @@ export function _loadPending(): void {
           attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
           ...(typeof item.fromBotId === "string" && item.fromBotId ? { fromBotId: item.fromBotId } : {}),
           ...(item.eventId !== undefined ? { eventId: item.eventId } : {}),
+          ...(item.coordination ? { coordination: coordinationTraceSchema.parse(item.coordination) } : {}),
         };
         if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
         if (item.waitingOnBusy === true) loaded.waitingOnBusy = true;
@@ -264,7 +274,7 @@ export function pendingDelegationSnapshot(): Array<{
 
 /** How many handoffs one turn may queue. Small on purpose: this is the only
  * thing standing between a confused bot and a fan-out of real turns. */
-const MAX_QUEUED_PER_THREAD = 4;
+const MAX_QUEUED_PER_THREAD = MAX_HANDOFFS_PER_TURN;
 
 /** Validate and enqueue a delegation. Pushes a "Delegated to @B: reason"
  * chip to the source thread so the user can see what was queued. */
@@ -280,7 +290,8 @@ export function queueDelegation(
   if (item.depth >= maxDepth) return { result: "too_deep" };
   const target = bus.store.bot(item.toBotId);
   if (!target) return { result: "no_target" };
-  const list = pendingDelegations.get(sourceThreadId) ?? [];
+  const previous = pendingDelegations.get(sourceThreadId);
+  const list = [...(previous ?? [])];
   // Async handoff removes the backpressure that ask_bot got for free by
   // making the caller wait. Without a cap, one turn can queue unboundedly
   // and fan out into as many real turns on the next settle.
@@ -288,7 +299,11 @@ export function queueDelegation(
   const id = newId();
   list.push({ ...item, id, attempts: 0, fromBotId: from.id });
   pendingDelegations.set(sourceThreadId, list);
-  savePending();
+  try { savePending(true); } catch (error) {
+    if (previous) pendingDelegations.set(sourceThreadId, previous);
+    else pendingDelegations.delete(sourceThreadId);
+    throw error;
+  }
   const label = `Delegated to @${target.name}${item.reason ? `: ${item.reason}` : ""}`;
   bus.store.appendMessage(sourceThreadId, {
     role: "bot",
@@ -317,6 +332,7 @@ export function drainDelegations(
     taskId: string,
     fromBotId: string,
     eventId?: string,
+    coordination?: CoordinationTrace,
   ) => void | Promise<void>,
 ): void {
   if (drainingThreads.has(threadId)) {
@@ -471,6 +487,7 @@ async function processOne(
     taskId: string,
     fromBotId: string,
     eventId?: string,
+    coordination?: CoordinationTrace,
   ) => void | Promise<void>,
 ): Promise<"settled" | "requeued"> {
   let sender = from;
@@ -616,11 +633,14 @@ async function processOne(
     sender = currentSender;
     target = current;
   }
+  // Capacity waits are not failed attempts against a busy teammate. The
+  // server redrains pending queues when an active handoff releases its slot.
+  if (bus.canDispatch && !bus.canDispatch()) return "requeued";
   const channel = getOrCreateChannel(bus.store, sender, target);
   mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
   const prefixed = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
-  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.eventId);
+  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.eventId, item.coordination);
   return "settled";
 }
 

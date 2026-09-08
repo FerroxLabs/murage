@@ -246,6 +246,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               One desktop, every AI engine doing REAL work on their OWN computer.
               Tell us who you are and we&rsquo;ll let you know when big things ship.
             </p>
+            <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">New workspaces capture and recall local memory by default. You can pause or disable it in workspace memory settings. Recalled context follows your chosen engine; optional model-based extraction requires a separate choice. Existing workspace settings are preserved.</p>
             <input
               autoFocus
               type="text"

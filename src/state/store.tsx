@@ -485,6 +485,7 @@ export interface AppState {
   /** selected chat — a bot id OR a group id */
   selectedId: string;
   activeView: "chat" | "team-map" | "routines" | "skill-recorder";
+  teamMapMemoryOpen?: boolean;
   routines: Routine[];
   routineRuns: RoutineRun[];
   webhooks: WebhookTrigger[];
@@ -599,7 +600,7 @@ export type Action =
       computerControl: Record<string, { held: boolean; helpReason: string | null }>;
     }
   | { type: "showRoutines" }
-  | { type: "showTeamMap" }
+  | { type: "showTeamMap"; memory?: boolean }
   | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView }
   | { type: "hideTeamLibrary" }
   | { type: "showSkillRecorder" }
@@ -875,6 +876,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "team-map",
+        teamMapMemoryOpen: Boolean(action.memory),
         settingsOpen: false,
         computerOpen: false,
         inspectorOpen: false,

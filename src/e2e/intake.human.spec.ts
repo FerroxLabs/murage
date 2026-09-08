@@ -28,6 +28,54 @@ const api = async (method: string, path: string, body?: unknown) => {
 
 const QUESTION = "What do you mostly want help with?";
 
+test("team descriptions explain the customer outcome in cards and previews", async ({ app }, testInfo) => {
+  await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  await openSidebar(app);
+  await app.getByRole("button", { name: "New or share", exact: true }).click();
+  await app.getByRole("button", { name: "From Template", exact: true }).click();
+  const library = app.getByRole("dialog", { name: "Library", exact: true });
+  await library.getByRole("tab", { name: "Teams", exact: true }).click();
+  await expect(library.getByText("66 teams", { exact: true })).toBeVisible();
+  await library.getByRole("textbox", { name: "Search teams", exact: true }).fill("Cold Outbound");
+  const description = "For businesses starting direct outreach to prospective customers. Define your audience and offer, then prepare personalized messages and follow-ups for your review.";
+  const card = library.getByRole("article").filter({ has: app.getByRole("heading", { name: "Cold Outbound", exact: true }) });
+  await expect(card.getByText(description, { exact: true })).toBeVisible();
+  await app.screenshot({ path: testInfo.outputPath("team-description-card.png") });
+  await card.getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(app.getByRole("heading", { name: "Cold Outbound", exact: true })).toBeVisible();
+  await expect(app.getByText(description, { exact: true })).toBeVisible();
+  expect(await app.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await app.screenshot({ path: testInfo.outputPath("team-description-preview.png") });
+});
+
+test("plus menu separates blank bots from specialist templates", async ({ app }, testInfo) => {
+  await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  const before = (await api("GET", "/api/bots")).bots.length;
+  await openSidebar(app);
+  const trigger = app.getByRole("button", { name: "New or share", exact: true });
+  await trigger.click();
+  await expect(app.getByRole("button", { name: "Blank Bot", exact: true })).toBeVisible();
+  await expect(app.getByRole("button", { name: "From Template", exact: true })).toBeVisible();
+  await app.screenshot({ path: testInfo.outputPath("bot-creation-options.png") });
+  await app.getByRole("button", { name: "Blank Bot", exact: true }).press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.click();
+  await app.getByRole("button", { name: "From Template", exact: true }).click();
+  const library = app.getByRole("dialog", { name: "Library", exact: true });
+  await expect(library).toBeVisible();
+  await expect(library.getByRole("tab", { name: "Bots", exact: true })).toHaveAttribute("aria-selected", "true");
+  expect((await api("GET", "/api/bots")).bots.length).toBe(before);
+  await app.screenshot({ path: testInfo.outputPath("specialist-templates.png") });
+  await library.getByRole("button", { name: "Close teams", exact: true }).click();
+  if (await app.getByRole("button", { name: "Open bot list" }).getAttribute("aria-expanded") !== "true") {
+    await openSidebar(app);
+  }
+  await trigger.click();
+  await app.getByRole("button", { name: "Blank Bot", exact: true }).click();
+  await expect.poll(async () => (await api("GET", "/api/bots")).bots.length).toBe(before + 1);
+});
+
 const openBot = async (page: Page, name: string) => {
   // Wait for hydration to establish a selected conversation before opening
   // the drawer; its normal selection effect closes the drawer on hydration.
