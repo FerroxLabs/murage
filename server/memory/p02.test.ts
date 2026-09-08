@@ -183,3 +183,30 @@ it.each(["membership", "task-removal", "team"])("task navigation still revokes a
   expect(memoryState().policyRevision).toBeGreaterThan(before);
   expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
 });
+
+it("adding a collision-free room task preserves unrelated original access and durable receipts",async()=>{
+  const f=fixture(),before=memoryState().policyRevision;
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})});
+  prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
+  const next=structuredClone(f.roster);
+  next.groups[0].tasks=[{threadId:"room-thread"},{threadId:"new-scheduled-thread"}];
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBe(before);
+  expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
+  closeDatabase();reconcileMemoryRoster(f.roster);
+  expect(memoryState().policyRevision).toBe(before);
+  expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+});
+
+it.each(["private-alias","other-room-alias","membership","remove-thread"])("room task additions still revoke %s changes",change=>{
+  const f=fixture(),next=structuredClone(f.roster),before=memoryState().policyRevision;
+  next.groups[0].tasks=[{threadId:"new-scheduled-thread"}];
+  if(change==="private-alias")next.groups[0].tasks.push({threadId:"private-a"});
+  if(change==="other-room-alias")next.groups.push({id:"other",threadId:"new-scheduled-thread",memberIds:["a"]});
+  if(change==="membership")next.groups[0].memberIds=["a"];
+  if(change==="remove-thread")next.groups[0].threadId="new-scheduled-thread";
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBeGreaterThan(before);
+  expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+});

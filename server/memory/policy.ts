@@ -40,9 +40,9 @@ function rosterIntent(roster: MemoryRoster) {
   const snapshot = rosterSnapshot(roster);
   return JSON.stringify({hash:snapshotHash(snapshot),snapshot});
 }
-/** Creating a new peer channel cannot change access on an existing thread.
- * Only exempt that exact additive case; unknown legacy snapshots fail closed. */
-function onlyAddsIndependentRooms(intent: string, roster: MemoryRoster): boolean {
+/** New rooms or collision-free tasks with unchanged audiences cannot change
+ * access on existing threads. Unknown legacy snapshots still fail closed. */
+function onlyAddsIndependentRoomThreads(intent: string, roster: MemoryRoster): boolean {
   try {
     const previous = JSON.parse(intent) as {hash: string; snapshot?: ReturnType<typeof rosterSnapshot>};
     const old = previous.snapshot, next = rosterSnapshot(roster);
@@ -51,20 +51,25 @@ function onlyAddsIndependentRooms(intent: string, roster: MemoryRoster): boolean
     const oldGroups = new Map(old.groups.map(group => [group.id, group]));
     const nextGroups = new Map(next.groups.map(group => [group.id, group]));
     if (oldGroups.size !== old.groups.length || nextGroups.size !== next.groups.length
-      || nextGroups.size <= oldGroups.size) return false;
+      || nextGroups.size < oldGroups.size) return false;
     for (const [id, group] of oldGroups) {
-      if (JSON.stringify(nextGroups.get(id)) !== JSON.stringify(group)) return false;
+      const candidate=nextGroups.get(id);
+      if (!candidate || candidate.section!==group.section || JSON.stringify(candidate.members)!==JSON.stringify(group.members)
+        || group.threads.some(thread=>!candidate.threads.includes(thread))) return false;
     }
-    // A room/task aliasing a private or another room thread changes eligibleScopes.
+    // New tasks must not alias private or other-room authority. Existing
+    // mappings and audiences above are immutable throughout this exemption.
     const occupied = new Set([...old.bots, ...old.groups].flatMap(item => item.threads));
+    let added=false;
     for (const group of next.groups) {
-      if (oldGroups.has(group.id)) continue;
+      const previousThreads=new Set(oldGroups.get(group.id)?.threads??[]);
       for (const thread of new Set(group.threads)) {
+        if(previousThreads.has(thread))continue;
         if (occupied.has(thread)) return false;
-        occupied.add(thread);
+        occupied.add(thread);added=true;
       }
     }
-    return true;
+    return added;
   } catch { return false; }
 }
 function policyRow() { return database().prepare("SELECT state,intent FROM memory_scope_bindings WHERE id=?").get(POLICY_ID); }
@@ -74,7 +79,7 @@ export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
   const hash = fingerprint(roster);
   const previous = policyRow();
   if (previous?.state === "granted" && JSON.parse(String(previous.intent)).hash === hash) { persist(); return; }
-  if (previous?.state === "granted" && onlyAddsIndependentRooms(String(previous.intent), roster)) {
+  if (previous?.state === "granted" && onlyAddsIndependentRoomThreads(String(previous.intent), roster)) {
     persist();
     reconcileMemoryRoster(roster);
     return;
@@ -95,7 +100,7 @@ export function reconcileMemoryRoster(roster: MemoryRoster) {
   transaction(db => {
     const prior = policyRow();
     if (prior && JSON.parse(String(prior.intent)).hash !== fingerprint(roster)
-      && !(prior.state === "granted" && onlyAddsIndependentRooms(String(prior.intent), roster))) {
+      && !(prior.state === "granted" && onlyAddsIndependentRoomThreads(String(prior.intent), roster))) {
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
       db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
     }

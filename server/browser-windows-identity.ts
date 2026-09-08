@@ -7,6 +7,9 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { browserBundleSpec } from "./browser-bundle-release.ts";
 export const WINDOWS_BROWSER_PUBLISHER = "Ferrox Labs, LLC";
+// A pwsh parent may pass PowerShell 7 modules through Node to Windows
+// PowerShell 5.1. Load only this child shell's own trusted built-in modules.
+export const WINDOWS_BROWSER_POWERSHELL_SETUP = String.raw`$env:PSModulePath=$PSHOME+'\Modules'; $ErrorActionPreference='Stop'; `;
 export type UnsignedPePin = { bytes: number; sha256: string; checksum: number };
 const bundle = browserBundleSpec("win32-x64");
 export const WINDOWS_BROWSER_IMAGE_PINS = {
@@ -37,10 +40,13 @@ export function requireBrowserSignature(result: unknown): void {
   if (!result || typeof result !== "object" || !("status" in result) || !("publisher" in result)
     || result.status !== "Valid" || result.publisher !== WINDOWS_BROWSER_PUBLISHER) throw new Error("Windows browser requires a valid Ferrox Labs signature");
 }
-export async function verifyWindowsBrowserSignatures(files: string[], systemRoot = "C:\\Windows"): Promise<void> {
+export function windowsBrowserSignatureScript(files: string[]): string {
   const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const script = `$ErrorActionPreference='Stop'; $result=@(foreach($file in @(${files.map(quote).join(",")})){ $sig=Get-AuthenticodeSignature -LiteralPath $file; $publisher=if($sig.SignerCertificate){$sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}else{''}; @{status=[string]$sig.Status;publisher=$publisher} }); ConvertTo-Json -InputObject $result -Compress`;
-  const output = await new Promise<string>((done, fail) => execFile(join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 20_000, maxBuffer: 8192 }, (error, stdout) => error ? fail(new Error("Windows browser signature verification failed")) : done(stdout)));
+  return WINDOWS_BROWSER_POWERSHELL_SETUP + `$result=@(foreach($file in @(${files.map(quote).join(",")})){ $sig=Get-AuthenticodeSignature -LiteralPath $file; $publisher=if($sig.SignerCertificate){$sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}else{''}; @{status=[string]$sig.Status;publisher=$publisher} }); ConvertTo-Json -InputObject $result -Compress`;
+}
+export async function verifyWindowsBrowserSignatures(files: string[], systemRoot = "C:\\Windows"): Promise<void> {
+  const script = windowsBrowserSignatureScript(files);
+  const output = await new Promise<string>((done, fail) => execFile(join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 20_000, maxBuffer: 8192 }, (error, stdout, stderr) => error ? fail(new Error(`Windows browser signature verification failed (code ${error.code ?? "unknown"}, signal ${error.signal ?? "none"}): ${stderr.trim().slice(0, 2048)}`)) : done(stdout)));
   const results: unknown = JSON.parse(output.replace(/^\uFEFF/, ""));
   if (!Array.isArray(results) || results.length !== files.length) throw new Error("Windows browser signature receipt is incomplete");
   for (const result of results) requireBrowserSignature(result);

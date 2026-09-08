@@ -68,7 +68,8 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
   expect((await api("GET", "/api/bots")).bots.length).toBe(before);
   await app.screenshot({ path: testInfo.outputPath("specialist-templates.png") });
   await library.getByRole("button", { name: "Close teams", exact: true }).click();
-  if (await app.getByRole("button", { name: "Open bot list" }).getAttribute("aria-expanded") !== "true") {
+  const drawerToggle = app.getByRole("button", { name: "Open bot list" });
+  if (await drawerToggle.isVisible() && await drawerToggle.getAttribute("aria-expanded") !== "true") {
     await openSidebar(app);
   }
   await trigger.click();

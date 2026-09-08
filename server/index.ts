@@ -3433,6 +3433,7 @@ async function startTurn(
   turnUsage.delete(threadId);
 
   void (async () => {
+    let acceptedTurnCleanupFailed=false;
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       let browser: Awaited<ReturnType<typeof browserIntegration>> = null;
@@ -3874,10 +3875,13 @@ async function startTurn(
             : ""),
         integrations,
         cwd,
-      }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
-        await instance.adapter.interruptTurn(threadId).catch(() => {});
-      });
-      if(!dispatch.cancelled)memoryReceipt?.accepted();
+      }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
+        retireProviderTurn(accepted.turnId);
+        try {
+          await instance.adapter.interruptTurn(threadId);
+          if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+        } catch(error) { acceptedTurnCleanupFailed=true;throw error; }
+      },()=>memoryReceipt?.accepted());
       if (!internalCapabilities.bindProviderTurn(threadId, dispatchClaimId, dispatch.value.turnId)) {
         revokeInternalGeneration(threadId, dispatchClaimId);
       }
@@ -3913,6 +3917,13 @@ async function startTurn(
         startScreenPoller(bot.id, previewCapture, { screenIsTheWork: instance.driverKind === "boxAgent" });
       }
     } catch (e) {
+      if(acceptedTurnCleanupFailed) {
+        // Termination is unconfirmed; hold ownership until application restart.
+        // Retired provider events cannot clear this bot or admit queued work.
+        revokeInternalGeneration(threadId,dispatchClaimId);
+        store.appendMessage(threadId,{role:"bot",kind:"activity",tool:{name:"error: provider termination is unconfirmed after access changed — restart Murage before continuing",ok:false}});
+        return;
+      }
       if (activeProviderSelections.get(threadId)?.route === providerRoute) activeProviderSelections.delete(threadId);
       revokeInternalGeneration(threadId, dispatchClaimId);
       clearCancelledProviderHandshake(threadId, `direct:${dispatchClaimId}`);
@@ -4839,6 +4850,7 @@ async function runGroupMemberTurn(
     if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,internalGeneration);
   };
   let providerTurnId: string | undefined;
+  let acceptedRoomCleanupFailed=false;
   let abandoned = false;
   const retirementOwner = `room-abandoned:${randomUUID()}`;
   const abandonProviderTurn = () => {
@@ -4917,16 +4929,19 @@ async function runGroupMemberTurn(
         cwd,
         integrations,
         ...memberTurnSelection(bot.modelSelection),
-      }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async () => {
-        // Stop may have landed while the adapter was authenticating, before
-        // it had an active process for the first interrupt to reach. Now that
-        // sendTurn completed setup, revoke again and interrupt the real turn.
-        await releaseBrowserCapabilityForThread(threadId);
-        await instance.adapter.interruptTurn(threadId).catch(() => {});
-      });
+      }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
+        // Retire before teardown so synchronous/late output cannot settle this
+        // room or a replacement while accepted authority is being withdrawn.
+        providerTurnId=accepted.turnId;
+        retireProviderTurn(accepted.turnId);
+        try {
+          await releaseBrowserCapabilityForThread(threadId);
+          await instance.adapter.interruptTurn(threadId);
+          if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+        } catch(error) { acceptedRoomCleanupFailed=true;throw error; }
+      },()=>memoryReceipt?.accepted());
     })()
       .then((dispatch) => {
-        if(!dispatch.cancelled)memoryReceipt?.accepted();
         if (!internalCapabilities.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId)) {
           revokeInternalGeneration(threadId, internalGeneration);
         }
@@ -4946,6 +4961,14 @@ async function runGroupMemberTurn(
         onProviderHandshakeSettled?.();
       })
       .catch((err) => {
+        if(acceptedRoomCleanupFailed) {
+          deadline.stop();unregisterStall();unsub();
+          revokeInternalGeneration(threadId,internalGeneration);
+          store.appendMessage(threadId,{role:"bot",kind:"activity",from:{botId:bot.id,name:bot.name,color:bot.color},tool:{name:"error: provider termination is unconfirmed after access changed — restart Murage before continuing",ok:false}});
+          // Restart is required; do not report a settled room or
+          // release its leases while the provider's termination is unknown.
+          return;
+        }
         onProviderHandshakeSettled?.();
         clearCancelledProviderHandshake(threadId, retirementOwner);
         if (abandoned) return;
