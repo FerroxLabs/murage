@@ -59,7 +59,9 @@ export class ProviderRegistry {
 
   private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void> }>();
 
-  constructor(drivers: readonly AnyProviderDriver[], private readonly now: () => number = Date.now) {
+  private readonly now: () => number;
+  constructor(drivers: readonly AnyProviderDriver[], now: () => number = Date.now) {
+    this.now = now;
     this.driversByKind = new Map(drivers.map((d) => [d.driverKind, d]));
   }
 
