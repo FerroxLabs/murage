@@ -76,11 +76,15 @@ it("requires Chief authority and current organization revision for moves and lea
 
 it("checks model changes through the provider boundary and refuses them while busy", () => {
   const { store, chief, specialist, options, request } = setup();
-  const change = { modelSelection: { instanceId: "fixture", model: "other-model" } };
+  const change = { modelSelection: { instanceId: "fixture", model: "other-model", connectionId: "provider-account" } };
+  options.validateSelection = () => change.modelSelection;
+  store.setResumeCursor(specialist.id, "fixture", "old-provider-session", specialist.threadId);
   store.patchBot(specialist.id, { busy: true });
   expect(() => manageBot(store, chief, request("update", change), options)).toThrow("active or pending work");
   store.patchBot(specialist.id, { busy: false });
   manageBot(store, chief, request("update", change), options);
   expect(specialist.modelSelection.model).toBe("other-model");
+  expect(specialist.modelSelection.connectionId).toBe("provider-account");
+  expect(store.taskByThread(specialist.id, specialist.threadId)?.resumeCursors.fixture).toBeUndefined();
   expect(options.revoke).toHaveBeenCalledWith(specialist.id);
 });

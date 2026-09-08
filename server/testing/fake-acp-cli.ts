@@ -106,6 +106,9 @@ const dumpEnv = Object.fromEntries(
     "KIMI_MODEL_PROVIDER_TYPE",
     "KIMI_MODEL_DISPLAY_NAME",
     "TEST_TURN_MODEL",
+    "FUIGO_HOME",
+    "HERMES_HOME",
+    "MURAGE_PROVIDER_API_KEY",
     "MY_AGENT_TOKEN",
     // routing switches: stripped unconditionally, never allowlistable
     "ANTHROPIC_BASE_URL",

@@ -257,6 +257,7 @@ type SkillRecordingPayload = {
        * user cancelled the dialog. */
       saveFile?(filePath: string): Promise<string | null>;
       /** Save a provider credential through Electron's OS-backed store. */
+      mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
       setCredential?(
         name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken",
         value: string,

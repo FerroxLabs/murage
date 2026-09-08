@@ -222,6 +222,7 @@ export interface GroupTask {
 export interface ModelSelection {
   instanceId: string;
   model: string;
+  connectionId?: string;
   effort?: EffortLevel;
 }
 
@@ -468,6 +469,7 @@ export interface InstanceInfo {
 }
 
 export type AppSettingsSection =
+  | "models"
   | "general"
   | "experimental"
   | "connections"

@@ -9,7 +9,8 @@ import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
 import { localeChoices } from "@/locales";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
-import { FluxKeyCard } from "./FluxKeyCard";
+import { ImageSettings } from "./ImageSettings";
+import { ModelsSettings } from "./ModelsSettings";
 import { PasteKeys } from "./PasteKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
@@ -51,7 +52,8 @@ const SECTIONS: Array<{
   //
   // Phone is here for a different reason: on a phone it is an offer to do the
   // thing you have already done.
-  { id: "engines", label: "Models & Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys"] },
+  { id: "models", label: "Models", icon: Globe, desktopOnly: true, keywords: ["models", "providers", "keys", "catalog", "flux", "pricing", "openai", "anthropic"] },
+  { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys"] },
   { id: "connections", label: "Tools & Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "paste", "env", "search", "tavily", "exa", "transcription"] },
   { id: "channels", label: "Channels", icon: MessageCircle, desktopOnly: true, keywords: ["telegram", "botfather", "pair", "slack", "discord", "whatsapp", "messaging"] },
   { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
@@ -765,6 +767,7 @@ export function SettingsModal() {
                   <PasteKeys />
                   <TranscriptionSettings />
                   <SearchSettings />
+                  <ImageSettings />
                   {/* Composio sits with the other keys rather than folded into
                       a "Self-host connected apps" disclosure, which is where it
                       used to live. That disclosure made sense while Ferrox's
@@ -780,13 +783,11 @@ export function SettingsModal() {
               </Card>
             )}
 
+            {desktop === true && section === "models" && <ModelsSettings />}
+
             {desktop === true && section === "engines" && (
               <>
-                <FluxKeyCard />
-                <Card title="Model provider" subtitle="Connect your OpenCode model provider.">
-                  <ApiKeyRow section="opencodeGo" />
-                </Card>
-                <Card title="Engine CLIs" subtitle="Which binary each engine runs. Saved as you go.">
+                <Card title="Your engines" subtitle="Install, connect and update the software that runs your bots. Manage provider keys and model catalogs under Models.">
                   <EnginesSettings />
                 </Card>
               </>

@@ -158,6 +158,21 @@ async function main(){
     assert.equal(db.prepare("SELECT count(*) AS n FROM memory_records WHERE id=? AND state='active'").get(record).n,0);
     assert.equal(db.prepare("SELECT count(*) AS n FROM memory_records WHERE scope_id=? AND state='active' AND text=?").get(roomScope,corrected).n,0);
     await page.screenshot({path:join(out,"forgotten.png"),fullPage:true});checks.push("native-forget-revokes-source-and-shared-derivative");
+    await sidebar.getByTitle("App settings",{exact:true}).click();
+    const settings = page.getByRole("dialog").filter({has:page.locator("#app-settings-title")});
+    await expect(settings).toBeVisible();
+    await settings.getByRole("button",{name:"Models",exact:true}).click();
+    await settings.getByRole("heading",{name:"Model connections",exact:true}).scrollIntoViewIfNeeded();
+    await expect(settings.getByLabel("Model API key",{exact:true})).toBeVisible();
+    await page.screenshot({path:join(out,"models-settings.png"),fullPage:true});
+    await settings.getByRole("button",{name:"Engines",exact:true}).click();
+    await expect(settings.getByText("Your engines",{exact:true})).toBeVisible();
+    await settings.getByRole("button",{name:"Tools & Connections",exact:true}).click();
+    await settings.getByRole("heading",{name:"Image generation",exact:true}).scrollIntoViewIfNeeded();
+    await expect(settings.getByRole("heading",{name:"Image generation",exact:true})).toBeVisible();
+    await page.screenshot({path:join(out,"image-settings.png"),fullPage:true});
+    await settings.getByRole("button",{name:"Close settings",exact:true}).click();
+    checks.push("native-separated-models-engines-and-image-settings-owner-routes");
     assert.equal(providerCalls,0,"UI-only proof unexpectedly attempted a model request");
     outcome={ok:true,platform:process.platform,arch:process.arch,node:process.version,appPath,appArchiveSha256:digest(archive),serverSha256:digest(join(resources,"server/index.js")),checks,providerCalls,
       roots:{data,userData,home},identity,protectedProfile,protectedFiles:Object.keys(beforeHashes),originalMuragePids:originalMurage.map(process=>process.pid),

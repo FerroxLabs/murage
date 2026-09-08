@@ -31,6 +31,7 @@ const FLUX = `sk-flux-${"F".repeat(40)}`;
 const XAI = `xai-${"7".repeat(32)}`;
 const BARE = `sk-${"o".repeat(40)}`;
 const COMPOSIO = `ak_${"c".repeat(32)}`;
+const GOOGLE = `AIza${"g".repeat(35)}`;
 const ANTHROPIC = `sk-ant-api03-${"a".repeat(40)}`;
 
 const candidate = (blob: string): KeyCandidate => {
@@ -183,7 +184,7 @@ describe("extraction is a suggestion, never an action", () => {
 
   it("offers every possible provider and pre-selects none of them", () => {
     const html = render({ rows: [row(`my key is ${BARE}`)], scanned: true });
-    for (const label of ["OpenAI-compatible engine key", "OpenAI key for avatars", "Flux Router key"]) {
+    for (const label of ["OpenAI key", "OpenAI key for avatars", "Flux Router key"]) {
       expect(html).toContain(label);
     }
     expect(html).not.toContain('aria-pressed="true"');
@@ -200,9 +201,9 @@ describe("extraction is a suggestion, never an action", () => {
   });
 
   it("offers no save at all for a key Murage cannot store", () => {
-    const html = render({ rows: [row(`ANTHROPIC_API_KEY=${ANTHROPIC}`)], scanned: true });
-    expect(html).toContain("Anthropic key");
-    expect(html).toContain("Claude CLI&#x27;s own login");
+    const html = render({ rows: [row(`GOOGLE_API_KEY=${GOOGLE}`)], scanned: true });
+    expect(html).toContain("Google AI key");
+    expect(html).toContain("Google CLI&#x27;s own login");
     expect(html).not.toContain("Save this key");
     // Ignoring it is the only thing on offer.
     expect(html).toContain("Ignore");
@@ -212,7 +213,7 @@ describe("extraction is a suggestion, never an action", () => {
     expect(rowTarget(row(`FLUX_API_KEY=${FLUX}`))).toBe("flux");
     expect(rowTarget(row(`my key is ${BARE}`))).toBeNull();
     expect(rowTarget(row(`my key is ${BARE}`, { chosen: "flux" as ProviderId }))).toBe("flux");
-    expect(rowTarget(row(`ANTHROPIC_API_KEY=${ANTHROPIC}`))).toBeNull();
+    expect(rowTarget(row(`ANTHROPIC_API_KEY=${ANTHROPIC}`))).toBe("anthropic");
   });
 });
 
@@ -254,21 +255,21 @@ describe("each key is confirmed on its own", () => {
 describe("a key that is already saved is shown as saved", () => {
   it("says connected and offers to replace rather than silently re-saving", () => {
     const html = render({
-      rows: [row(`FLUX_API_KEY=${FLUX}`)],
+      rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)],
       scanned: true,
-      configured: { flux: { configured: true } },
+      configured: { composio: { configured: true } },
     });
     expect(html).toContain("Already connected");
     expect(html).toContain("Replace");
     expect(html).toContain("Saving replaces the key already there.");
     // POSITIVE control: with nothing saved it is a plain Save.
-    const empty = render({ rows: [row(`FLUX_API_KEY=${FLUX}`)], scanned: true, configured: { flux: { configured: false } } });
+    const empty = render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], scanned: true, configured: { composio: { configured: false } } });
     expect(empty).not.toContain("Already connected");
     expect(empty).toContain("Save");
   });
 
   it("never claims connected from a config that has not loaded", () => {
-    expect(render({ rows: [row(`FLUX_API_KEY=${FLUX}`)], scanned: true, configured: null })).not.toContain(
+    expect(render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], scanned: true, configured: null })).not.toContain(
       "Already connected",
     );
   });

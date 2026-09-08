@@ -1575,6 +1575,10 @@ export class Store {
   patchBot(id: string, patch: Partial<BotRecord>): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
+    if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
+      const tasks = patch.tasks ?? bot.tasks;
+      patch = { ...patch, resumeCursors: {}, ...(tasks ? { tasks: tasks.map(task => ({ ...task, resumeCursors: {} })) } : {}) };
+    }
     Object.assign(bot, patch);
     this.saveBots();
     this.emit({ type: "bot", botId: id });

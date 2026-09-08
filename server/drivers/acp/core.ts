@@ -13,6 +13,7 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
+import { applyProviderRoute, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { homedir } from "node:os";
 
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
@@ -378,6 +379,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const env = childEnv();
         if (
           support.requireAuthenticationBeforeSpawn
+          && !turn.providerRoute
           && !skipSubscriptionAuthForLocalInject(turn.model)
           && !(await support.isAuthenticated(env, config))
         ) {
@@ -386,8 +388,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
           return { turnId };
         }
-        const resolvedModel = support.resolveTurnModel?.(turn.model, env);
-        support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model });
+        if (turn.providerRoute) validateProviderTurnRoute(support.driverKind, turn.providerRoute);
+        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute) : null;
+        const resolvedModel = providerBinding?.model ?? support.resolveTurnModel?.(turn.model, env);
+        if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model });
         const cliTurn =
           resolvedModel !== undefined && resolvedModel !== turn.model
             ? { ...turn, model: resolvedModel }
@@ -400,6 +404,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           stdio: ["pipe", "pipe", "pipe"],
         });
 
+        child.once("close", () => providerBinding?.cleanup());
         const state = { settled: false, promptSent: false, text: "" };
         const asks = new Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>();
         let nextId = 1;
