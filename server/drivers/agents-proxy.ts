@@ -287,6 +287,21 @@ const TOOLS = [
     },
   },
   {
+    name: "get_permission_status",
+    description: "Inspect a permitted bot's pending approval categories, age and blocking reason, plus its access revision. No private commands or credentials are returned, and this never grants approval authority.",
+    inputSchema: { type: "object", properties: { bot_id: { type: "string" } }, required: ["bot_id"], additionalProperties: false },
+  },
+  {
+    name: "request_bot_access",
+    description: "Ask the owner to review a subordinate bot's connected-app access in one bundle. Read get_permission_status for its revision. Use exact account IDs already available to you and only supported tools. Nothing is granted until the owner approves in the bot profile. Never approve your own request.",
+    inputSchema: { type: "object", properties: {
+      bot_id: { type: "string" }, revision: { type: "integer", minimum: 0 }, allow_writes: { type: "boolean" },
+      grants: { type: "array", minItems: 1, maxItems: 12, items: { type: "object", properties: {
+        toolkit: { type: "string" }, accountId: { type: "string" }, tools: { type: "array", items: { type: "string" }, minItems: 1 },
+      }, required: ["toolkit", "accountId", "tools"], additionalProperties: false } },
+    }, required: ["bot_id", "revision", "grants"], additionalProperties: false },
+  },
+  {
     name: "get_bot",
     description: "Read a permitted bot's profile, instructions, model and role. Returns revision and organizationRevision for safe changes. Does not expose credentials or private conversations.",
     inputSchema: { type: "object", properties: { bot_id: { type: "string" } }, required: ["bot_id"], additionalProperties: false },
@@ -511,11 +526,18 @@ function confirmationResult(r: Json, fallback: string): { text: string } {
 }
 
 async function callTool(name: string, args: Json): Promise<{ text: string; isError?: boolean }> {
+  if (name === "get_permission_status" || name === "request_bot_access") {
+    const { bot_id, allow_writes, ...fields } = args;
+    const result = await api(name === "get_permission_status" ? "/api/internal/permission-status" : "/api/internal/access-request", {
+      method: "POST", body: JSON.stringify({ ...fields, targetBotId: bot_id, ...(allow_writes !== undefined ? { allowWrites: allow_writes } : {}) }),
+    });
+    return { text: JSON.stringify(result) };
+  }
   const managementAction = ({ get_bot: "get", update_bot: "update", archive_bot: "archive", restore_bot: "restore", move_bot: "move", set_team_lead: "set-lead" } as Record<string, string>)[name];
   if (managementAction) {
     const { bot_id, model_selection, organization_revision, ...fields } = args;
     const result = await api("/api/internal/bot-management", { method: "POST", body: JSON.stringify({
-      ...fields, action: managementAction, botId: bot_id,
+      ...fields, action: managementAction, targetBotId: bot_id,
       ...(model_selection !== undefined ? { modelSelection: model_selection } : {}),
       ...(organization_revision !== undefined ? { organizationRevision: organization_revision } : {}),
     }) });
@@ -550,7 +572,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${team}${rank}${b.busy ? ", busy" : ""}${b.reachable === false ? ", coordinate through its team lead" : ""}]`;
     });
     return {
-      text: `Bots you can inspect:\n${lines.join("\n")}\n\nAssign work with delegate_bot within your permitted roster; seeing a bot does not grant direct messaging access. Use get_bot to inspect or update a profile.`,
+      text: `Bots you can inspect:\n${lines.join("\n")}\n\nAssign work with delegate_bot within your permitted roster; seeing a bot does not grant direct messaging access. Use ask_bot only for a short answer you need inline. Use get_bot to inspect or update a profile.`,
     };
   }
   if (name === "ask_bot") {

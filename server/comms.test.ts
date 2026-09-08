@@ -10,7 +10,7 @@
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1337,27 +1337,89 @@ describe("comms e2e (fake ACP fleet)", () => {
       helpers.push(bot);
     }
     const chief = (await api("POST", "/api/bots", { name: "Batch lead", section: "Batch team", modelSelection: { instanceId: "batchChief", model: "fake-model" } })).body.bot;
-    expect((await api("POST", `/api/bots/${chief.id}/messages`, { text: "Assign the eight helpers" })).status).toBe(202);
-    const deadline = Date.now() + 30000;
-    let busy = 0;
-    while (Date.now() < deadline) {
-      const state = (await api("GET", "/api/bots")).body.bots;
-      busy = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && bot.busy).length;
-      expect(busy).toBeLessThanOrEqual(4);
-      const lead = state.find((bot: any) => bot.id === chief.id);
-      if (!lead.busy && busy === 4) break;
-      await new Promise(resolve => setTimeout(resolve, 100));
+    // Keep bounded fixture evidence before afterAll removes its isolated HOME.
+    // Diagnostics do not add requests, retries, or time to the deadline.
+    const startedAt = Date.now();
+    const receiptPrefix = `batch-${process.pid}-${startedAt}`;
+    let latestState: any[] = [chief, ...helpers];
+    let gateReleasedAt: number | null = null;
+    const capture = (phase: "gate" | "failure", failure?: unknown) => {
+      try {
+        const helperIds = new Set(helpers.map(helper => helper.id));
+        const redact = (value: unknown, limit: number) => String(value ?? "")
+          .replaceAll(DESKTOP_SECRET, "[fixture-secret]")
+          .replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]").slice(0, limit);
+        const relevantBots = latestState.filter(bot => bot.id === chief.id || helperIds.has(bot.id));
+        const readFixtureJson = (name: string): any => {
+          try { return JSON.parse(readFileSync(join(home, ".murage", name), "utf8")); }
+          catch { return null; }
+        };
+        const pending = readFixtureJson("delegations.json");
+        const receipts = readFixtureJson("delegation-receipts.json");
+        const pendingItems = pending && typeof pending === "object"
+          ? Object.entries(pending).flatMap(([sourceThreadId, items]) => Array.isArray(items)
+            ? items.filter(item => helperIds.has(item.toBotId)).slice(0, 8).map(item => ({
+              id: item.id, sourceThreadId, toBotId: item.toBotId, fromBotId: item.fromBotId,
+              attempts: item.attempts, waitingOnBusy: item.waitingOnBusy, depth: item.depth,
+              message: redact(item.message, 500),
+            })) : []) : null;
+        const directory = join(SERVER_DIR, "..", ".planning", "chief-capability-evidence", "C02");
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(join(directory, `${receiptPrefix}-${phase}.json`), JSON.stringify({
+          phase, at: Date.now(), startedAt, gateReleasedAt,
+          elapsedMs: Date.now() - startedAt, gateElapsedMs: gateReleasedAt === null ? null : gateReleasedAt - startedAt,
+          childPid: child.pid, childExitCode: child.exitCode, fixtureHome: home, gateExists: existsSync(gateFile),
+          failure: failure ? redact(failure instanceof Error ? failure.message : failure, 1000) : undefined,
+          bots: relevantBots.map(bot => ({
+            id: bot.id, name: bot.name, threadId: bot.threadId, busy: bot.busy, activity: bot.activity,
+            messages: (bot.messages ?? []).slice(bot.id === chief.id ? -12 : -4).map((message: any) => ({
+              at: message.at, role: message.role, kind: message.kind, turnId: message.turnId,
+              text: redact(message.text, 1500),
+              tool: message.tool ? { name: redact(message.tool.name, 500), ok: message.tool.ok } : undefined,
+            })),
+          })),
+          pending: pendingItems,
+          receipts: Array.isArray(receipts) ? receipts.filter(receipt => helperIds.has(receipt.toBotId)).slice(0, 16).map(receipt => ({
+            id: receipt.id, sourceThreadId: receipt.sourceThreadId, toBotId: receipt.toBotId,
+            status: receipt.status, finishedAt: receipt.finishedAt, result: redact(receipt.result, 1500),
+          })) : null,
+          stderr: redact(stderr.slice(-8000), 8000),
+        }, null, 2), { mode: 0o600 });
+      } catch {
+        // Evidence failure must not replace the original acceptance failure.
+        console.warn("Could not save bounded batch fixture diagnostics");
+      }
+    };
+    try {
+      expect((await api("POST", `/api/bots/${chief.id}/messages`, { text: "Assign the eight helpers" })).status).toBe(202);
+      const deadline = Date.now() + 30000;
+      let busy = 0;
+      while (Date.now() < deadline) {
+        const state = (await api("GET", "/api/bots")).body.bots;
+        latestState = state;
+        busy = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && bot.busy).length;
+        expect(busy).toBeLessThanOrEqual(4);
+        const lead = state.find((bot: any) => bot.id === chief.id);
+        if (!lead.busy && busy === 4) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      expect(busy).toBe(4);
+      writeFileSync(gateFile, "continue");
+      gateReleasedAt = Date.now();
+      capture("gate");
+      let completed = 0;
+      while (Date.now() < deadline) {
+        const state = (await api("GET", "/api/bots")).body.bots;
+        latestState = state;
+        completed = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && !bot.busy && bot.messages.some((message: any) => message.role === "bot" && message.kind === "text" && message.text?.includes("batch work"))).length;
+        if (completed === 8) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      expect(completed).toBe(8);
+    } catch (error) {
+      capture("failure", error);
+      throw error;
     }
-    expect(busy).toBe(4);
-    writeFileSync(gateFile, "continue");
-    let completed = 0;
-    while (Date.now() < deadline) {
-      const state = (await api("GET", "/api/bots")).body.bots;
-      completed = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && !bot.busy && bot.messages.some((message: any) => message.role === "bot" && message.kind === "text" && message.text?.includes("batch work"))).length;
-      if (completed === 8) break;
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    expect(completed).toBe(8);
   }, 45000);
 
 });

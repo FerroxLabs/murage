@@ -1997,6 +1997,24 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
   return openBlankTerminal();
 });
 
+ipcMain.handle("engine:open-setup-terminal", async (event, input) => {
+  if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame
+    || !input || typeof input !== "object" || Array.isArray(input)
+    || Object.keys(input).some(key => !["instanceId", "action"].includes(key))
+    || typeof input.instanceId !== "string" || input.instanceId.length > 180
+    || !["install", "connect"].includes(input.action) || !desktopSurfaceSecret) return false;
+  try {
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/engine-setup-command`, {
+      method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
+      body: JSON.stringify(input), signal: AbortSignal.timeout(10000),
+    });
+    const result = await response.json();
+    if (!response.ok || typeof result.command !== "string" || !result.command.trim() || result.command.length > 2000) return false;
+    clipboard.writeText(result.command);
+    return openBlankTerminal();
+  } catch { return false; }
+});
+
 // OAuth/connect links are returned asynchronously, after Chromium's direct
 // click gesture has ended. Opening them through window.open can therefore be
 // rejected as a popup before setWindowOpenHandler ever sees the URL. Keep the

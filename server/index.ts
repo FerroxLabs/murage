@@ -4,6 +4,10 @@ import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/ext
 import { syncTrackedMemoryImports } from "./memory/import.ts";
 import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
 import { hasPendingBotDelegations } from "./delegations.ts";
+import { accessOwnerView, assertConnectedAppCall, requestBotAccess, restrictedConnectorTools, reviewBotAccess } from "./bot-access.ts";
+import { botAccessPolicy } from "./bot-access-role.ts";
+import { permissionStatus, type PendingPermissionInput } from "./permission-status.ts";
+import { EngineManager } from "./engine-management.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged } from "./memory/dispatch.ts";
@@ -382,6 +386,7 @@ process.once("exit", () => {
 ensureDirs();
 assertRestoreReviewed(DATA_DIR);
 const cfg = loadConfig();
+let providerConfigBusy = false;
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
@@ -1187,7 +1192,7 @@ const INDIVIDUAL_CHIEF_CONFLICT =
   "An Individual Assistant works alone under the Chief of Staff and leads no team. Remove this bot's Chief of Staff role first, then make it an Individual Assistant.";
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
-  const { resumeCursors: _resumeCursors, tasks, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, connectedAppAccess: _connectedAppAccess, accessRoleEpoch: _accessRoleEpoch, tasks, ...rest } = bot;
   return { ...rest, avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
 };
 
@@ -1762,6 +1767,29 @@ function broadcast(payload: Record<string, unknown>) {
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
+  const group = activeGroupTurnForBot(bot.id);
+  const threads = new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId), ...(group ? [group.threadId] : [])]);
+  const pending: PendingPermissionInput[] = [];
+  for (const threadId of threads) {
+    const liveIds = new Set([...askMessageByRequest].filter(([key]) => key.startsWith(`${threadId}:`)).map(([, id]) => id));
+    if (!liveIds.size) continue;
+    for (const message of store.messagesFor(threadId)) {
+      if (liveIds.has(message.id) && message.card && !message.card.answered && !message.card.dismissed) {
+        pending.push({ kind: message.card.tool ? "tool" : "question", createdAt: message.at });
+      }
+    }
+  }
+  return pending;
+}
+
+async function currentConnectedAccessAccounts() {
+  if (!composio.configured(cfg)) return [];
+  const services = await composio.connectedServices(cfg);
+  return Object.entries(services).flatMap(([toolkit, service]) => (service.accounts ?? [])
+    .filter(account => /^active$/i.test(account.status))
+    .map(account => ({ toolkit, accountId: account.id, label: `${toolkit} · ${account.alias || account.id.slice(-8)}` })));
+}
 
 /** Deliver a person's answer to the engine that asked, and tell the truth
  * about what happened. `unavailable` — the turn ended, the ask timed out,
@@ -3167,6 +3195,7 @@ async function startTurn(
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (providerConfigBusy) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   if (checkpointRestoreLeases.has(botId)) {
     throw Object.assign(new Error("this bot's project files are being restored — wait for the restore to finish"), {
       status: 409,
@@ -5255,6 +5284,7 @@ function startGroupTurn(
   queueId?: string,
   options: StartGroupTurnOptions = {},
 ) {
+  if (providerConfigBusy) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
   if (roomSetupPending(group)) {
@@ -6259,7 +6289,39 @@ async function reloadProviders() {
 // Config writes rebuild the whole provider registry. Keep the read-modify-write
 // and reload sequence single-flight so two settings requests cannot drop one
 // another's changes or dispose a fleet while another reload is creating it.
-let providerConfigBusy = false;
+const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
+const engineManager = new EngineManager({
+  root: join(DATA_DIR, "managed-engines"),
+  get envPath() { return augmentedPath(); },
+  getInstance: async id => {
+    resetPathCache();
+    const instance = (await registry.describe()).find(item => item.instanceId === id);
+    return instance ? { instanceId: id, driverKind: instance.driverKind === "fuigoAgent" ? "fuigo" : instance.driverKind, snapshot: instance.snapshot } : undefined;
+  },
+  isBusy: () => providerConfigBusy || engineWorkActive(),
+  activate: async (id, cli) => {
+    if (providerConfigBusy || engineWorkActive()) throw new Error("Tasks are still running.");
+    providerConfigBusy = true;
+    const current = instanceConfigs(cfg)[id]?.config;
+    const previousCli = current && typeof current === "object" && !Array.isArray(current) && "cli" in current && typeof current.cli === "string" ? current.cli : "";
+    try {
+      const candidate = withInstanceCli(cfg, id, cli);
+      if (!candidate.ok) throw new Error("Engine not found.");
+      saveConfig({ instances: candidate.config.instances });
+      Object.assign(cfg, loadConfig());
+      try { await reloadProviders(); }
+      catch (cause) {
+        const rollback = withInstanceCli(loadConfig(), id, previousCli);
+        if (!rollback.ok) throw new Error("The engine could not be restored. Review its path in Settings.");
+        const entry = rollback.config.instances![id];
+        saveConfig({ instances: { [id]: { ...entry, config: entry.config ?? {} } } });
+        Object.assign(cfg, loadConfig());
+        await reloadProviders();
+        throw cause;
+      }
+    } finally { providerConfigBusy = false; }
+  },
+});
 
 // The custom MCP registry is read-modify-written the same way, and a probe
 // spawns a process, so both are bounded.
@@ -7039,10 +7101,10 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { bots, organizationRevision: organizationRevision(store, sender) });
       }
       if (method === "POST" && path === "/api/internal/bot-management") {
-        const { fromBotId, fromThreadId: _thread, depth: _depth, ...body } = await readInternalBody();
+        const { fromBotId, fromThreadId: _thread, depth: _depth, targetBotId, ...body } = await readInternalBody();
         const sender = store.bot(String(fromBotId));
         if (!sender) return json(res, 403, { error: "unknown sender" });
-        const result = manageBot(store, sender, body, {
+        const result = manageBot(store, sender, { ...body, botId: targetBotId }, {
           pendingWork: bot => hasPendingBotDelegations(bot) || Boolean(activeGroupTurnForBot(bot.id)) || Boolean(routines?.activeRunForBot(bot.id)),
           validateSelection: (input, bot) => {
             const checked = checkedModelSelection(input, { selection: bot.modelSelection, busy: Boolean(bot.busy) }, true);
@@ -7056,6 +7118,18 @@ const server = createServer(async (req, res) => {
           revoke: revokeInternalBot,
         });
         return json(res, 200, result);
+      }
+      if (method === "POST" && ["/api/internal/access-request", "/api/internal/permission-status"].includes(path)) {
+        const { fromBotId, fromThreadId, depth: _depth, targetBotId, ...body } = await readInternalBody();
+        const sender = store.bot(String(fromBotId)), target = store.bot(String(targetBotId));
+        if (!sender || !target) return json(res, 404, { error: "Bot not found." });
+        if (path.endsWith("permission-status")) {
+          if (Object.keys(body).length) return json(res, 400, { error: "Only the target bot is needed." });
+          return json(res, 200, permissionStatus(store, sender, target.id, pendingPermissionStatus(target)));
+        }
+        const result = requestBotAccess(store, sender, { ...body, botId: target.id });
+        store.appendMessage(String(fromThreadId), { role: "bot", kind: "text", text: `Connected-app access is waiting for your review for @${target.name}. Open that bot's profile → Connected apps access. No access has been granted yet.` });
+        return json(res, 201, result);
       }
       if (method === "GET" && path === "/api/internal/routines") {
         const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
@@ -7666,14 +7740,27 @@ const server = createServer(async (req, res) => {
       }
       if (method === "POST" && path === "/api/internal/connectors/mcp") {
         const body = await readInternalBody();
+        const authorize = () => {
+          requireActiveInternal();
+          const bot = store.bot(internalClaim.botId);
+          if (!bot) throw Object.assign(new Error("Bot unavailable."), { status: 403 });
+          assertConnectedAppCall(bot, body);
+        };
+        authorize();
+        const ownerBot = store.bot(internalClaim.botId)!;
+        if (!Array.isArray(body) && body.method === "tools/list") {
+          const localTools = restrictedConnectorTools(ownerBot, body.id);
+          if (localTools) return json(res, 200, localTools);
+        }
         const upstream = await composio.relayMcp(
           cfg,
           body,
           Array.isArray(req.headers["mcp-session-id"])
             ? req.headers["mcp-session-id"][0]
             : req.headers["mcp-session-id"],
+          authorize,
         );
-        requireActiveInternal();
+        authorize();
         const headers: Record<string, string> = {
           "content-type": upstream.contentType,
           "cache-control": "no-store",
@@ -7717,6 +7804,7 @@ const server = createServer(async (req, res) => {
         const slugs = [...new Set(items.map(item => item.slug))];
         const owner = connectorThread(botId, threadId);
         if (!owner) return json(res, 403, { error: "conversation does not belong to this bot" });
+        if (botAccessPolicy(owner.bot).mode === "restricted") return json(res, 403, { error: "Ask the owner to review connected-app access; restricted bots cannot add accounts." });
         if (!/^[\w-]{8,100}$/.test(resumeKey)) return json(res, 400, { error: "invalid resume key" });
         if (!items.length || items.length > 12) return json(res, 400, { error: "one to twelve valid app accounts are required" });
         if (!composio.configured(cfg) || owner.bot.composio === false) {
@@ -11023,6 +11111,45 @@ const server = createServer(async (req, res) => {
     }
 
     // ── per-instance CLI path override (custom builds / versioned bins) ──
+    const engineManagementRoute = /^\/api\/engine-management\/([\w.-]+)$/.exec(path);
+    if (engineManagementRoute && (method === "GET" || method === "POST")) {
+      if (method === "GET") return json(res, 200, await engineManager.status(engineManagementRoute[1]));
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ action: z.enum(["check", "install", "update"]) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose check, install, or update." });
+      return json(res, 200, await (parsed.data.action === "check" ? engineManager.check(engineManagementRoute[1]) : engineManager.install(engineManagementRoute[1])));
+    }
+
+    const accessRoute = /^\/api\/bots\/([\w-]+)\/access$/.exec(path);
+    if (accessRoute && (method === "GET" || method === "PUT")) {
+      const bot = store.bot(accessRoute[1]);
+      if (!bot) return json(res, 404, { error: "Bot not found." });
+      if (method === "PUT" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const body = method === "PUT" ? await readBody(req) : undefined;
+      const accounts = await currentConnectedAccessAccounts();
+      if (method === "PUT") {
+        reviewBotAccess(store, bot.id, body, accounts);
+        revokeInternalBot(bot.id);
+      }
+      const current = store.bot(bot.id);
+      if (!current) return json(res, 404, { error: "Bot not found." });
+      return json(res, 200, { ...accessOwnerView(current), accounts,
+        pending: current.hidden ? [] : permissionStatus(store, current, current.id, pendingPermissionStatus(current)).pending });
+    }
+
+    if (method === "POST" && path === "/api/engine-setup-command") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180), action: z.enum(["install", "connect"]) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine and setup action." });
+      const instance = registry.get(parsed.data.instanceId);
+      if (!instance) return json(res, 404, { error: "Engine not found." });
+      const install = BUILT_IN_DRIVERS.find(driver => driver.driverKind === instance.driverKind)?.install;
+      const command = parsed.data.action === "connect" ? install?.signInCommand
+        : install?.command?.[process.platform as "darwin" | "win32" | "linux"];
+      if (!command) return json(res, 409, { error: "Use this engine's setup guide for your platform." });
+      return json(res, 200, { command });
+    }
+
     // PATCH /api/instances/:id {cli: "/path/to/cli" | ""} — "" reverts to the
     // driver default. Kills in-flight turns like any provider reload.
     const instancePatch = /^\/api\/instances\/([\w.-]+)$/.exec(path);

@@ -3,6 +3,8 @@
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
 import { createHash } from "node:crypto";
+import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
+import type { ConnectedAppAccess } from "../shared/bot-access.ts";
 import type { ProviderErrorInfo } from "../shared/provider-error.ts";
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -529,6 +531,10 @@ export interface BotRecord {
    * start false — a shared persona must not reach the user's Gmail on
    * turn one. */
   composio?: boolean;
+  /** Owner-reviewed connected-account/tool limits; absent preserves legacy behavior. */
+  connectedAppAccess?: ConnectedAppAccess;
+  /** Monotonic identity fence; returning to an old role never revives requests. */
+  accessRoleEpoch?: number;
   /** Whether this bot gets the app's built-in browser (the Browser tab of
    * the computer panel). On unless switched off. */
   browser?: boolean;
@@ -733,6 +739,7 @@ export class Store {
   private threads = new Map<string, ThreadState>();
   private defaultSelection: () => ModelSelection;
   private listeners = new Set<(change: StoreChange) => void>();
+  private accessRoles = new Map<string, string>();
 
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
@@ -741,6 +748,7 @@ export class Store {
     // Only an absent file is a fresh install; damaged state needs recovery.
     this.bots = readPersistedRecords<BotRecord>(BOTS_FILE);
     this.groups = readPersistedRecords<GroupRecord>(GROUPS_FILE);
+    for (const bot of this.bots) this.accessRoles.set(bot.id, accessRoleBinding({ ...bot, accessRoleEpoch: 0 }));
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
@@ -932,7 +940,25 @@ export class Store {
   }
 
   private saveBots(bots: BotRecord[] = this.bots) {
-    persistMemoryRoster({ bots, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2)));
+    // Role/config changes permanently revoke scoped grants. Write the revoked
+    // candidate before publishing it so changing a role back cannot resurrect access.
+    const normalized = bots.map(bot => {
+      const identity = accessRoleBinding({ ...bot, accessRoleEpoch: 0 });
+      const prior = this.accessRoles.get(bot.id);
+      const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
+      return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
+    });
+    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, JSON.stringify(normalized, null, 2)));
+    for (const next of normalized) {
+      this.accessRoles.set(next.id, accessRoleBinding({ ...next, accessRoleEpoch: 0 }));
+      const supplied = bots.find(bot => bot.id === next.id);
+      const live = this.bots.find(bot => bot.id === next.id);
+      for (const target of [supplied, live]) {
+        if (!target) continue;
+        if (next.accessRoleEpoch !== undefined) target.accessRoleEpoch = next.accessRoleEpoch;
+        if (next.connectedAppAccess !== undefined) target.connectedAppAccess = next.connectedAppAccess;
+      }
+    }
   }
 
   /** Prepare an additive import without changing memory or emitting events.

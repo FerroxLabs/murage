@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,7 @@ test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   cache = mkdtempSync(join(tmpdir(), "murage-engine-setup-"));
   server = await createServer({ configFile: false, root, cacheDir: cache, envFile: false,
+    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client", "react/jsx-runtime", "lucide-react"] },
     resolve: { alias: { "@": `${root}/src` } }, server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [tailwindcss(), { name: "engine-setup-fixture", enforce: "pre",
       resolveId(id) {
@@ -20,8 +21,12 @@ test.beforeAll(async () => {
         if (id === "/__engine.js") return "\0fixture-engine";
       },
       load(id) {
+        if (id.endsWith("/src/styles.css")) return readFileSync(id, "utf8").replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source "./components";');
         if (id === "\0fixture-store") return `
-          export * from '/src/state/store.tsx?original';
+          export async function api(url, options = {}) {
+            const response = await fetch(url, { ...options, headers: { 'content-type': 'application/json' } });
+            const value = await response.json(); if (!response.ok) throw new Error(value.error || 'Request failed'); return value;
+          }
           import {useSyncExternalStore} from 'react';
           export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}
         `;
@@ -32,8 +37,8 @@ test.beforeAll(async () => {
           const listeners=new Set(); window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
           window.fixtureInstance={instanceId:'claude',driverKind:'claudeAgent',displayName:'Claude',enabled:true,cliDefault:'claude',models:{default:'',options:[]},snapshot:{state:'unavailable',reason:'CLI not detected'},install:{command:{darwin:'fixture install',linux:'fixture install',win32:'fixture install'},signInCommand:'fixture login'}};
           const state={instances:[window.fixtureInstance]};
-          const dispatch=action=>{if(action.type==='instances')state.instances=action.instances;window.fixtureStore={state:{...state},dispatch};listeners.forEach(fn=>fn());};dispatch({});
-          window.muragebox={platform:'darwin',openInstallTerminal:()=>new Promise((resolve,reject)=>{window.resolveTerminal=resolve;window.rejectTerminal=reject;})};
+          const dispatch=action=>{if(action.type==='instances')state.instances=action.instances;window.fixtureStore={state:{...state},dispatch,refreshInstances:async()=>{}};listeners.forEach(fn=>fn());};dispatch({});
+          window.muragebox={platform:'darwin',openEngineSetupTerminal:()=>new Promise((resolve,reject)=>{window.resolveTerminal=resolve;window.rejectTerminal=reject;})};
           createRoot(document.getElementById('root')).render(React.createElement(EnginesSettings));
         `;
       },
@@ -78,4 +83,51 @@ test("engine setup reports terminal and probe outcomes without claiming installa
   await expect(page.getByText('Ready',{exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath('engine-sign-in-mobile.png')});
+});
+
+
+test("bundled Fuigo connects inline and preserves a detected native account", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/engine-management/**', route => route.fulfill({ status: 404, json: { error: 'not available in fixture' } }));
+  await page.goto(`${origin}/__engine`);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.fixtureInstance = { ...w.fixtureInstance, instanceId: 'fuigo', driverKind: 'fuigo', displayName: 'Fuigo', cliDefault: 'fuigo', snapshot: { state: 'available', authenticated: false } };
+    w.fixtureStore.dispatch({ type: 'instances', instances: [w.fixtureInstance] });
+  });
+  await expect(page.getByText('Got a Flux Router key? Connect it here to get started.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open sign-in in Terminal' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('fuigo-inline-mobile.png') });
+  await page.route('**/api/config', async route => {
+    expect(route.request().method()).toBe('PUT');
+    await route.fulfill({ json: { flux: { configured: true } } });
+  });
+  await page.route('**/api/instances', async route => {
+    const instance = await page.evaluate(() => (window as any).fixtureInstance);
+    await route.fulfill({ json: { instances: [{ ...instance, snapshot: { state: 'available', authenticated: true } }] } });
+  });
+  await page.locator('input[type="password"]').fill('fixture-only-not-a-real-key');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Detected · signed in')).toBeVisible();
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("engine update is announced and waits for an explicit Update click", async ({ page }) => {
+  let updates = 0;
+  await page.route('**/api/engine-management/**', async route => {
+    const action = route.request().method() === 'POST' ? route.request().postDataJSON().action : 'status';
+    if (action === 'update') updates++;
+    await route.fulfill({ json: { supported: true, updateAvailable: action !== 'update', latestVersion: '1.2.0', busy: false, message: 'Your current version is preserved until verification.' } });
+  });
+  await page.route('**/api/instances', async route => route.fulfill({ json: { instances: [] } }));
+  await page.goto(`${origin}/__engine`);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.fixtureStore.dispatch({ type: 'instances', instances: [{ ...w.fixtureInstance, instanceId: 'codex', driverKind: 'codex', displayName: 'Codex', snapshot: { state: 'available', authenticated: true } }] });
+  });
+  await expect(page.getByText('Engine update available · 1.2.0')).toBeVisible();
+  expect(updates).toBe(0);
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect.poll(() => updates).toBe(1);
 });

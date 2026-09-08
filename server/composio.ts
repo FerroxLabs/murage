@@ -643,6 +643,7 @@ export async function relayMcp(
   cfg: AppConfig,
   payload: JsonValue,
   transportSessionId?: string,
+  beforeDispatch?: () => void,
 ): Promise<{ status: number; bytes: Uint8Array; contentType: string; transportSessionId?: string }> {
   const broker = activeBroker(cfg);
   const selectedIdentity = selectedBackendIdentity(cfg);
@@ -672,6 +673,7 @@ export async function relayMcp(
   }
   const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
   if (forwarded) headers.set("mcp-session-id", forwarded);
+  beforeDispatch?.();
   const response = await fetch(url, {
     method: "POST",
     headers,

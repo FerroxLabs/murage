@@ -49,7 +49,7 @@ it("rejects stale revisions, oversized instructions, and attempted security-fiel
   expect(() => manageBot(store, chief, stale, options)).toThrow("This bot changed");
   expect(() => manageBot(store, chief, request("update", { autoApprove: true }), options)).toThrow("Security settings");
   expect(() => manageBot(store, chief, request("update", { instructions: "x".repeat(8001) }), options)).toThrow("Invalid bot-management");
-  expect(() => manageBot(store, specialist, { action: "update", botId: chief.id, revision: managedBotProfile(chief).revision, role: "Overrule" }, options)).toThrow("owner controls");
+    expect(() => manageBot(store, specialist, { action: "update", botId: chief.id, revision: managedBotProfile(chief).revision, role: "Overrule" }, options)).toThrow("permitted organization");
 });
 
 it("archives and restores idle bots reversibly, preserving their history and access settings", () => {
