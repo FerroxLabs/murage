@@ -11,6 +11,7 @@ let holdMcp: (() => void) | null = null;
 let heldMcp: Promise<void> | null = null;
 let catalogArrived: (() => void) | null = null;
 let mcpArrived: (() => void) | null = null;
+let onProjectSession: (() => void) | null = null;
 beforeAll(async () => {
   server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://fixture");
@@ -25,6 +26,7 @@ beforeAll(async () => {
       return;
     }
     if (url.pathname.includes("/tool_router/session/")) {
+      onProjectSession?.();
       const id = url.pathname.split("/").at(-1);
       res.end(JSON.stringify({ session_id: id, mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/" + id + "/mcp" }, config: { user_id: "fixture-user", multi_account: { enable: true, max_accounts_per_toolkit: 5, require_explicit_selection: true } } }));
       return;
@@ -49,9 +51,22 @@ beforeAll(async () => {
   });
 });
 afterAll(async () => { vi.unstubAllGlobals(); setManagedBrokerAccess(null); delete process.env.MURAGE_COMPOSIO_API; delete process.env.MURAGE_COMPOSIO_TOOLKITS_API; server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
-beforeEach(() => { setManagedBrokerAccess(null); requests.length = 0; catalogueCalls = 0; heldCatalog = null; heldMcp = null; });
+beforeEach(() => { setManagedBrokerAccess(null); requests.length = 0; catalogueCalls = 0; heldCatalog = null; heldMcp = null; onProjectSession = null; });
 const project = (key: string, id = "session-a") => ({ composio: { apiKey: key, userId: "fixture-user", sessionId: id } });
 const payload = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+
+it("rechecks permission after asynchronous session setup and before tool transmission", async () => {
+  let allowed = true;
+  onProjectSession = () => { allowed = false; };
+  const authorize = vi.fn(() => { if (!allowed) throw new Error("owner revoked access"); });
+  await expect(relayMcp(project("fixture-c03-revoked", "session-c03-revoked"), payload, undefined, authorize)).rejects.toThrow("owner revoked access");
+  expect(authorize).toHaveBeenCalledOnce();
+  expect(requests.some(request => request.path.startsWith("/mcp/"))).toBe(false);
+  onProjectSession = null; allowed = true;
+  const result = await relayMcp(project("fixture-c03-allowed", "session-c03-allowed"), payload, undefined, authorize);
+  expect(result.status).toBe(200);
+  expect(requests.filter(request => request.path.startsWith("/mcp/"))).toHaveLength(1);
+});
 
 it("catalogue cache follows project key and endpoint, then disappears on disconnect", async () => {
   const cfg = project("fixture-a-cache");

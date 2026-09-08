@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
 import { api, useStore, type InstanceInfo } from "@/state/store";
+import { EngineManagement } from "./EngineManagement";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
@@ -307,6 +308,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
         <EngineSetup instance={instance} className="mt-2" />
       )}
+      {instance.enabled !== false && !(instance.driverKind === "codex" && needsCli(instance)) && <EngineManagement instance={instance} />}
       {confirmationOpen && (
         <div className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
           <p>Changing engine availability reloads providers and interrupts running turns. Enabling an engine may probe its CLI and inherited configuration; it does not resume restored work.</p>

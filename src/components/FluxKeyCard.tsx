@@ -98,7 +98,7 @@ export function FluxKeyCardBody({
 }
 
 /** The live card. Reads presence from config and writes through the harness. */
-export function FluxKeyCard() {
+export function FluxKeyCard({ onSaved }: { onSaved?: () => void | Promise<void> } = {}) {
   const { state, dispatch } = useStore();
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -116,6 +116,7 @@ export function FluxKeyCard() {
         // The typed key leaves the renderer the moment it is saved. Nothing
         // keeps a copy: config answers with a boolean, not the value.
         setValue("");
+        void onSaved?.();
       })
       .catch((e) => setError(e.message))
       .finally(() => setSaving(false));

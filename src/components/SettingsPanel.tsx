@@ -20,6 +20,7 @@ import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
+import { BotAccessSettings } from "./BotAccessSettings";
 import { MemorySettings } from "./MemorySettings";
 
 function Field({
@@ -556,6 +557,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               className="disabled:cursor-not-allowed"
             />
           </div>
+
+          <BotAccessSettings key={`access-${bot.id}`} botId={bot.id} />
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>

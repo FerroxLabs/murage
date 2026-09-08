@@ -233,6 +233,8 @@ describe("agents-proxy MCP surface", () => {
       "delegate_bot",
       "check_delegation",
       "wait_delegation",
+      "get_permission_status",
+      "request_bot_access",
       "get_bot",
       "update_bot",
       "archive_bot",

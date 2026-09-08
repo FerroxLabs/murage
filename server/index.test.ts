@@ -5639,6 +5639,84 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("resolves trusted engine setup recipes only for the desktop owner", async () => {
+    expect((await api("POST", "/api/engine-setup-command", { instanceId: "claude", action: "connect" })).status).toBe(404);
+    expect((await api("GET", "/api/engine-management/claude")).status).toBe(404);
+    expect((await desktopApi("POST", "/api/engine-setup-command", { instanceId: "claude", action: "connect", command: "UNTRUSTED_RENDERER_COMMAND" })).status).toBe(400);
+    const recipe = await desktopApi("POST", "/api/engine-setup-command", { instanceId: "claude", action: "connect" });
+    expect(recipe.status).toBe(200);
+    expect(recipe.body.command).toContain("claude");
+    expect(recipe.body.command).not.toContain("UNTRUSTED_RENDERER_COMMAND");
+    expect((await desktopApi("POST", "/api/engine-setup-command", { instanceId: "__proto__", action: "connect" })).status).toBe(404);
+  });
+
+  it("enforces owner connected-app limits at the real internal relay and revokes stale tokens", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Scoped access HTTP fixture" })).body.bot;
+    try {
+      expect((await desktopApi("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
+      expect((await api("GET", `/api/bots/${bot.id}/access`)).status).toBe(404);
+      const view = await desktopApi("GET", `/api/bots/${bot.id}/access`);
+      expect(view.status).toBe(200);
+      expect((await desktopApi("PUT", `/api/bots/${bot.id}/access`, {
+        action: "configure", revision: view.body.policy.revision, mode: "restricted", allowWrites: false, grants: [],
+      })).status).toBe(200);
+      const { dump } = await startInternalFixtureTurn(bot.id);
+      const token = dump.mcpConfig.mcpServers.composio.env.MURAGE_CONNECTORS_TOKEN;
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+      const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+      const listed = await fetch(`${BASE}/api/internal/connectors/mcp`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+      expect(listed.status).toBe(200);
+      expect(await listed.json()).toMatchObject({ result: { tools: [] } });
+      const denied = await fetch(`${BASE}/api/internal/connectors/mcp`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", account: "unapproved-fixture-account", arguments: {} }] } } }) });
+      expect(denied.status).toBe(403);
+      const current = await desktopApi("GET", `/api/bots/${bot.id}/access`);
+      expect(current.body.pending.length).toBeGreaterThan(0);
+      expect(current.body.pending[0]).not.toHaveProperty("command");
+      expect((await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === bot.id)).not.toHaveProperty("connectedAppAccess");
+      expect((await desktopApi("PUT", `/api/bots/${bot.id}/access`, { action: "configure", revision: current.body.policy.revision, mode: "unrestricted", allowWrites: true, grants: [] })).status).toBe(200);
+      const stale = await fetch(`${BASE}/api/internal/connectors/mcp`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }) });
+      expect(stale.status).toBe(401);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("PUT", "/api/config", { composio: { apiKey: "" } });
+    }
+  });
+
+  it("lets an active Chief inspect and update subordinate profiles without granting security settings", async () => {
+    const ids: string[] = [];
+    try {
+      const chief = (await api("POST", "/api/bots", { name: "Management Chief", section: "Management Leadership" })).body.bot;
+      ids.push(chief.id);
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+      const specialist = (await api("POST", "/api/bots", { name: "Management Specialist", section: "Management Studio" })).body.bot;
+      ids.push(specialist.id);
+      const { headers } = await startInternalFixtureTurn(chief.id);
+      const manage = async (body: unknown) => {
+        const response = await fetch(`${BASE}/api/internal/bot-management`, { method: "POST", headers, body: JSON.stringify(body) });
+        return { status: response.status, body: await response.json() as { bot: { revision: string; instructions: string } } };
+      };
+      const directory = await fetch(`${BASE}/api/internal/agents?self=${chief.id}`, { headers });
+      const roster = await directory.json() as { bots: Array<{ id: string; reachable: boolean }> };
+      expect(roster.bots.find((bot: { id: string }) => bot.id === specialist.id)).toMatchObject({ reachable: false });
+      const original = await manage({ action: "get", targetBotId: specialist.id });
+      expect(original.status).toBe(200);
+      const instructions = "Longer, specific working instructions. ".repeat(50).trim();
+      const changed = await manage({ action: "update", targetBotId: specialist.id, revision: original.body.bot.revision, instructions });
+      expect(changed.status).toBe(200);
+      expect(changed.body.bot.instructions).toBe(instructions);
+      expect((await manage({ action: "update", targetBotId: specialist.id, revision: original.body.bot.revision, role: "Stale" })).status).toBe(409);
+      expect((await manage({ action: "update", targetBotId: specialist.id, revision: changed.body.bot.revision, autoApprove: true })).status).toBe(400);
+      expect(changed.body.bot).not.toHaveProperty("composio");
+      expect(changed.body.bot).not.toHaveProperty("alwaysAllow");
+    } finally {
+      for (const id of ids) {
+        await api("POST", `/api/bots/${id}/interrupt`);
+        await desktopApi("DELETE", `/api/bots/${id}`);
+      }
+    }
+  });
+
   it("keeps chat-created routines inert until their durable card is confirmed", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     let routineId = "";
