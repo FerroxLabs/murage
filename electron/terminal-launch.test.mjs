@@ -5,7 +5,7 @@ import { openBlankTerminal } from "./terminal-launch.mjs";
 
 function launcher(outcomes) {
   const calls = [];
-  const run = (executable, args, options) => {
+  const run = (executable, args, options, callback) => {
     calls.push({ executable, args, options });
     const child = new EventEmitter();
     child.unref = () => {};
@@ -13,6 +13,7 @@ function launcher(outcomes) {
     queueMicrotask(() => {
       if (outcome === "throw") child.emit("error", new Error("missing terminal"));
       else child.emit("spawn");
+      callback?.(outcome === "throw" ? new Error("launch failed") : null);
     });
     return child;
   };
@@ -35,7 +36,25 @@ describe("blank terminal launcher", () => {
   it("opens a blank PowerShell window on Windows", async () => {
     const fake = launcher(["spawn"]);
     await expect(openBlankTerminal("win32", fake.run)).resolves.toBe(true);
-    expect(fake.calls[0]).toMatchObject({ executable: "powershell.exe", args: ["-NoExit"] });
+    expect(fake.calls[0]).toMatchObject({ executable: "powershell.exe", options: { windowsHide: true, timeout: 15_000 } });
+    expect(fake.calls[0].args.slice(0, 4)).toEqual(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
+    expect(fake.calls[0].args[4]).toContain("Start-Process");
+    expect(fake.calls[0].args[4]).toContain("-WindowStyle Normal -ErrorAction Stop");
+  });
+
+  it("waits for the Windows bootstrap result instead of its spawn event", async () => {
+    let finish;
+    let settled = false;
+    const child = new EventEmitter();
+    const result = openBlankTerminal("win32", (_exe, _args, _options, callback) => {
+      finish = callback;
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    }).then((ok) => { settled = true; return ok; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish(new Error("Start-Process failed"));
+    await expect(result).resolves.toBe(false);
   });
 
   it("tries the next Linux terminal after an asynchronous launch error", async () => {
