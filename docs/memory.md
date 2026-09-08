@@ -59,3 +59,7 @@ Use Murage's installation backup and reviewed restore flow. Backups retain autho
 Preserve a verified backup before migration or recovery. Do not open a migrated memory database with an older incompatible build or delete recovery markers to bypass review. For a reversible feature change, select Off or Paused in the compatible version.
 
 Memory is verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred; it is not a promise of unlimited recall capacity or perfect model answers.
+
+### Fuigo memory ownership
+
+Murage owns persistent memory for Fuigo turns and always launches its private ACP process with `--no-memory`. Murage memory being off does not activate a second engine store. This does not change standalone Fuigo defaults, edit user configuration, delete existing memories, or disable ordinary conversation history.

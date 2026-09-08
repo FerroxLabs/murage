@@ -31,12 +31,34 @@ function fixture() {
   for (const name of ["fuigo-LICENSE.txt", "fuigo-README.md", "fuigo-THIRD_PARTY_NOTICES.md", "cloudflared-LICENSE.txt", "cloudflared-README.md"]) {
     fs.writeFileSync(path.join(resources, "licenses", name), "fixture");
   }
+  // Supply the runtime preconditions enforced before signing. The dedicated
+  // after-pack-memory tests retain real architecture/absence negative coverage.
+  const server = path.join(resources, "server");
+  const runtimePath = "node_modules/onnxruntime-node";
+  const runtime = path.join(server, runtimePath);
+  const native = path.join(runtime, "bin/napi-v6/win32/x64");
+  fs.mkdirSync(native, { recursive: true });
+  fs.mkdirSync(path.join(server, "memory"), { recursive: true });
+  fs.writeFileSync(path.join(server, "memory/worker.js"), "// fixture worker");
+  fs.writeFileSync(path.join(server, "memory-model-manifest.json"), JSON.stringify({ runtimeVersion: "4.2.0" }));
+  fs.writeFileSync(path.join(runtime, "package.json"), JSON.stringify({ name: "onnxruntime-node", version: "1.24.3" }));
+  fs.writeFileSync(path.join(server, "memory-runtime-manifest.json"), JSON.stringify({
+    platform: "win32", arch: "x64", packages: [
+      { name: "@huggingface/transformers", version: "4.2.0", path: "node_modules/@huggingface/transformers" },
+      { name: "onnxruntime-node", version: "1.24.3", path: runtimePath },
+    ],
+  }));
+  const header = Buffer.alloc(128);
+  header.write("MZ", 0); header.writeUInt32LE(0x40, 0x3c);
+  header.write("PE\0\0", 0x40); header.writeUInt16LE(0x8664, 0x44);
+  for (const name of ["onnxruntime_binding.node", "onnxruntime.dll", "DirectML.dll", "dxcompiler.dll", "dxil.dll"])
+    fs.writeFileSync(path.join(native, name), header);
   const signIf = vi.fn(async file => {
     expect(verifyFuigoExecutable).toHaveBeenCalledWith(executable, "win32-x64");
     fs.appendFileSync(file, " signed fixture");
     return true;
   });
-  return { executable, signIf, context: { appOutDir, electronPlatformName: "win32", packager: { signIf } } };
+  return { executable, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf } } };
 }
 
 it("verifies the pinned bytes before signing only the packaged Windows engine", async () => {
