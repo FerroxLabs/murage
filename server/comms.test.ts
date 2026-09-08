@@ -1372,6 +1372,7 @@ describe("comms e2e (fake ACP fleet)", () => {
     expect(reply.text).not.toContain("peer error");
   }, 45_000);
   it("queues eight helpers in one turn and runs no more than four together", async () => {
+    await (async () => {
     rmSync(gateFile, { force: true });
     const helpers: Array<{ id: string }> = [];
     for (let i = 0; i < 8; i++) {
@@ -1462,6 +1463,17 @@ describe("comms e2e (fake ACP fleet)", () => {
       capture("failure", error);
       throw error;
     }
+    })().catch(async (error: unknown) => {
+      await new Promise(resolve => setImmediate(resolve));
+      const safe = (value: unknown) => String(value ?? "").replaceAll(DESKTOP_SECRET, "[fixture-secret]").replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]");
+      console.error("Bounded Windows batch failure: " + JSON.stringify({
+        childPid: child.pid, childExitCode: child.exitCode, childSignal: child.signalCode,
+        failure: safe(error instanceof Error ? error.stack : error).slice(0, 2500),
+        cause: error instanceof Error ? safe(error.cause).slice(0, 500) : undefined,
+        stderr: safe(stderr).slice(-8000),
+      }));
+      throw error;
+    });
   }, 45000);
 
 });
