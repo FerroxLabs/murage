@@ -449,7 +449,7 @@ function BrowserProfilesRow() {
   return (
     <Card
       title="Browser profiles"
-      subtitle="Named sign-in sessions any bot can use. Create one from a bot's Browser tab; sign in once and it stays."
+      subtitle="Save a browser sign-in and choose which bots share it. Create a profile from a bot's Browser tab."
     >
       {profiles.length === 0 ? (
         <div className="text-[13px] text-ink-secondary">No profiles yet. Pick "+ Add profile…" under a bot's browser.</div>
@@ -749,7 +749,7 @@ export function SettingsModal() {
             {desktop === true && section === "connections" && (
               <Card
                 title="Tools & Connections"
-                subtitle="Connect your apps with your own Composio project key. Every key here stays on this computer."
+                subtitle="Connect apps for your bots. If the connected apps service isn't ready, add your Composio key below."
               >
                 <div className="flex flex-col gap-4">
                   {state.config?.composio.mode === "managed" ? (
