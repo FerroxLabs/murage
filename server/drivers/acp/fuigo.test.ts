@@ -227,6 +227,7 @@ describe("fuigo argv — the ordering trap", () => {
     expect(argv).toEqual([
       "--permission-mode",
       "default",
+      "--no-memory",
       "agent",
       "--no-leader",
       "-m",
@@ -247,6 +248,14 @@ describe("fuigo argv — the ordering trap", () => {
     expect(argv.indexOf("--reasoning-effort")).toBeLessThan(stdioAt);
   });
 
+  it.each(["0", "1"])("Murage owns memory despite FUIGO_MEMORY=%s", async (value) => {
+    await runTurn({ environment: { FUIGO_MEMORY: value } });
+    const { argv, env } = dump("agent");
+    expect(argv.filter(arg => arg === "--no-memory")).toHaveLength(1);
+    expect(argv.indexOf("--no-memory")).toBeLessThan(argv.indexOf("agent"));
+    expect(env.FUIGO_MEMORY).toBe(value);
+  });
+
   it("keeps --permission-mode BEFORE `agent` — it is a top-level flag", async () => {
     await runTurn({ model: "flux-auto" });
     const { argv } = dump("agent");
@@ -265,7 +274,7 @@ describe("fuigo argv — the ordering trap", () => {
 
   it("omits -m entirely when the turn names no model", async () => {
     await runTurn({});
-    expect(dump("agent").argv).toEqual(["--permission-mode", "default", "agent", "--no-leader", "stdio"]);
+    expect(dump("agent").argv).toEqual(["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "stdio"]);
   });
 });
 

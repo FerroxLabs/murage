@@ -28,33 +28,33 @@ import {
 const PINNED_ASSETS = {
   "darwin-arm64": {
     package: "@fuigo/darwin-arm64",
-    tarballSha256: "15a2b8f4cfae2cde5139edb9851a0fa0c2a0a2294efb6750ce2ba4d4d24f2645",
-    binarySha256: "41a8bd3697ea28624d7c94e784bdccae09ac7e5343d064b6accee5a2ad8bddb4",
+    tarballSha256: "483c74705164738fd1b8f17f625e431b469c9ee07d5ee9085b92b45a4241680a",
+    binarySha256: "467a5f9995645a61ab557e2cdaded5eefe8e2a38c54adec570571d88594e9fe9",
   },
   "darwin-x64": {
     package: "@fuigo/darwin-x64",
-    tarballSha256: "29d5e898c5b13e497bbda1e63a334d6c5e82cfc9b3c174a1b791e01dd2446788",
-    binarySha256: "cc8a49c34722b1ec976fe3fa226899bffd435559464a3e1eaf7177648791c895",
+    tarballSha256: "94c3e85f00b0822cd596fdd516d634577f582edd7818ce59e97b0a94b3f049db",
+    binarySha256: "7f3838a05f0fcb2d0972d70a50d732101896bedabcdfb330b1697c607a0c2ad4",
   },
   "linux-arm64": {
     package: "@fuigo/linux-arm64",
-    tarballSha256: "dd6c574a54257501ac7bee64e8da69efca69f719193d76443750b7a7afcfb2d7",
-    binarySha256: "77af3b40226ae50546191e677532e27078c9cd279922eed4e126425232baea00",
+    tarballSha256: "5529f175192b2df9532fee3afa994928b7ff06ef20a1b1dc7a0ffce8875271b9",
+    binarySha256: "4dd3aafd479df74a592eb278ff2f79abee9d800cfe647ca0e31488b077f670af",
   },
   "linux-x64": {
     package: "@fuigo/linux-x64",
-    tarballSha256: "fb3cfcc3467bd5f7f5e0fdf5828bc0a2f3f16606e9e592c2153384cbf94f0341",
-    binarySha256: "ffc5d96357bbcab19dfc5025905c999dc6b7a9a1b815bc606dfe7325a6f64a7d",
+    tarballSha256: "0b914ba561ec4b769882645484d67fb86c6b03be9874d0be2268ea3398c2e175",
+    binarySha256: "feb099cfd51d5d18bd946add779fdf3a64b95d1f736795701eeb7cc0e722efec",
   },
   "win32-arm64": {
     package: "@fuigo/win32-arm64",
-    tarballSha256: "4c9be39f227fd9ce7b71cc84492c61a775b40638a3012c9a43e7461df6da8a77",
-    binarySha256: "add0bdb737572e521ebd6d0e25f92ec0e64e723d94592e380d61cf8d4419cf6e",
+    tarballSha256: "42f2fd9101f4200597cbf66ed51cc3813b7e6e6d8e3de03e657da89166082517",
+    binarySha256: "670e876a67b9aa6e5701274c1a324ea2dad5b2ae7594a82e4b1aac236c276e9c",
   },
   "win32-x64": {
     package: "@fuigo/win32-x64",
-    tarballSha256: "32f2aab3dde7eb8ad69407e013031ef435bebaef187bf952a0f1295a7dd4a0f7",
-    binarySha256: "af26c191f89bb3c61785f8e927561f615ea2bda804187d25b3e2589dd985bdd3",
+    tarballSha256: "adf3e657dd583018d76a57f8af24231a7aeb0041528415f45b32fa9abb35e972",
+    binarySha256: "c8fbd8a598e593fb0fdd486823f30189d424444b9241ed3ede80f1c6d4feada7",
   },
 };
 
@@ -71,7 +71,7 @@ function executableFixture(target) {
     bytes.writeUInt32LE(target === "darwin-arm64" ? 0x0100000c : 0x01000007, 4);
   } else if (target === "linux-x64" || target === "linux-arm64") {
     // ELF64 little-endian; e_machine at offset 18 is 0x3e for x86-64 and 0xb7
-    // for aarch64 — the values read off the real published 1.0.7 engines.
+    // for aarch64 — the values read off the real published 1.0.8 engines.
     Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(bytes);
     bytes.writeUInt16LE(target === "linux-arm64" ? 0xb7 : 0x3e, 18);
   } else if (target === "win32-x64" || target === "win32-arm64") {
@@ -89,23 +89,23 @@ function executableFixture(target) {
 
 describe("pinned fuigo packaging", () => {
   it("pins the exact shipped version and a complete digest pair per target", () => {
-    expect(FUIGO_VERSION).toBe("1.0.7");
+    expect(FUIGO_VERSION).toBe("1.0.8");
     expect(FUIGO_ASSETS).toEqual(PINNED_ASSETS);
     for (const target of Object.keys(PINNED_ASSETS)) {
       // npm names a scoped package's tarball after the UNSCOPED half, so the
-      // basename is `<target>-1.0.7.tgz`, never `@fuigo/<target>-1.0.7.tgz`.
-      expect(tarballName(target)).toBe(`${target}-1.0.7.tgz`);
+      // basename is `<target>-1.0.8.tgz`, never `@fuigo/<target>-1.0.8.tgz`.
+      expect(tarballName(target)).toBe(`${target}-1.0.8.tgz`);
       expect(tarballName(target)).not.toContain("/");
       expect(tarballUrl(target)).toBe(
-        `https://registry.npmjs.org/@fuigo/${target}/-/${target}-1.0.7.tgz`,
+        `https://registry.npmjs.org/@fuigo/${target}/-/${target}-1.0.8.tgz`,
       );
       // The URL carries the pin, so a staged binary can never come from
       // whatever `latest` happens to be on the registry that day.
-      expect(tarballUrl(target)).toContain("-1.0.7.tgz");
+      expect(tarballUrl(target)).toContain("-1.0.8.tgz");
     }
   });
 
-  it("pins every target fuigo@1.0.7 publishes, including ones it does not stage", () => {
+  it("pins every target fuigo@1.0.8 publishes, including ones it does not stage", () => {
     // The pin list is the reviewed-digest list; targetsForHost is the
     // packaged-target list. They are allowed to differ, and do.
     expect(Object.keys(FUIGO_ASSETS).sort()).toEqual([
@@ -203,10 +203,10 @@ describe("pinned fuigo packaging", () => {
 
   it("records the pin in the staged manifest so a stale tree is restaged", () => {
     expect(expectedManifest("darwin-arm64")).toEqual({
-      version: "1.0.7",
+      version: "1.0.8",
       target: "darwin-arm64",
-      registryPackage: "@fuigo/darwin-arm64@1.0.7",
-      tarball: "darwin-arm64-1.0.7.tgz",
+      registryPackage: "@fuigo/darwin-arm64@1.0.8",
+      tarball: "darwin-arm64-1.0.8.tgz",
       tarballSha256: PINNED_ASSETS["darwin-arm64"].tarballSha256,
       binarySha256: PINNED_ASSETS["darwin-arm64"].binarySha256,
     });
