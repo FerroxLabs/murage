@@ -63,6 +63,14 @@ describe("readCodexModelCatalog", () => {
     );
   });
 
+  it("retains the last discovered official catalog when a later CLI refresh fails", async () => {
+    const home = scratchHome({});
+    const previous = { default: "gpt-discovered-later", options: [{ id: "gpt-discovered-later", label: "Discovered later" }] };
+    const result = await readCodexModelCatalog({ HOME: home, PATH: process.env.PATH }, fetch, join(home, "missing-codex"), previous);
+    expect(result).toEqual(previous);
+    expect(result.options.some(option => option.id === "gpt-6-astra")).toBe(false);
+  });
+
   it("uses every visible page from the installed Codex app-server catalog", async () => {
     chmodSync(FAKE_CLI, 0o755);
     const catalog = await readCodexModelCatalog(

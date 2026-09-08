@@ -7,11 +7,11 @@ import { normalizeProviderModels, ProviderConnectionsService } from "./provider-
 import { parseConfigPatch, stripWorkspaceCredentialEnv } from "./config.ts";
 import type { ProviderPreset } from "../shared/provider-connections.ts";
 const roots:string[]=[];afterEach(()=>{roots.splice(0).forEach(root=>rmSync(root,{recursive:true,force:true}));});
-function fixture(preset:ProviderPreset="openai") {
+function fixture(preset:ProviderPreset="openai",now?:()=>number) {
  const cacheDir=mkdtempSync(join(tmpdir(),"provider-catalog-"));roots.push(cacheDir);let sequence=0;
  let bank=JSON.stringify(mutateProviderBank("[]",{action:"create",preset,key:"fixture-key-private"},()=>`record-${++sequence}`));
  const fetcher=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify({data:[{id:preset==="anthropic"?"claude-sonnet-test":"gpt-5-test",name:"Fixture model"}]})));
- const make=()=>new ProviderConnectionsService({readBank:()=>bank,cacheDir,fetch:fetcher});const service=make();const id=parseProviderBank(bank)[0]!.id;
+ const make=()=>new ProviderConnectionsService({readBank:()=>bank,cacheDir,fetch:fetcher,now});const service=make();const id=parseProviderBank(bank)[0]!.id;
  return{cacheDir,service,fetcher,id,make,bank:()=>bank,setBank:(next:string)=>{bank=next;},mutate:async(input:unknown)=>{const before=bank;bank=JSON.stringify(mutateProviderBank(bank,input,()=>`record-${++sequence}`));await service.changed(before,bank);}};
 }
 it("binds eight presets to fixed issuer endpoints, never arbitrary caller URLs",()=>{
@@ -67,4 +67,31 @@ it("does not leak the provider credential bank or commit bearer into engine envi
 it("lists legacy credentials virtually without copying them into the named bank",()=>{
  const f=fixture();const service=new ProviderConnectionsService({readBank:()=>"[]",cacheDir:f.cacheDir,legacyConnections:()=>[{id:"legacy-flux",preset:"flux",label:"Existing Flux",key:"FAKE_LEGACY_SECRET",enabled:true,revision:"legacy-revision",legacy:true,managedIn:"engines"}]});
  expect(service.list()[0]).toMatchObject({id:"legacy-flux",legacy:true,managedIn:"engines",configured:true});expect(JSON.stringify(service.list())).not.toContain("FAKE_LEGACY");expect(service.isCurrent("legacy-flux","legacy-revision")).toBe(true);
+});
+
+
+it("refreshes enabled provider catalogs once due at24hours and preserves keys and last-good rows", async () => {
+ let now=1000;const f=fixture("openai",()=>now),bank=f.bank();
+ await f.service.refreshDue();expect(f.fetcher).toHaveBeenCalledTimes(1);const first=f.service.getCatalog(f.id);
+ now+=24*60*60_000-1;await f.service.refreshDue();expect(f.fetcher).toHaveBeenCalledTimes(1);
+ now++;f.fetcher.mockResolvedValueOnce(new Response("private failure",{status:401}));await f.service.refreshDue();
+ expect(f.fetcher).toHaveBeenCalledTimes(2);expect(f.service.getCatalog(f.id)).toMatchObject({models:first.models,stale:true,error:{code:"unauthorized"}});
+ now+=60_000;await f.service.refreshDue();expect(f.fetcher).toHaveBeenCalledTimes(2);
+ await f.service.refresh(f.id);expect(f.fetcher).toHaveBeenCalledTimes(3);expect(f.bank()).toBe(bank);
+ expect(f.service.getCatalog(f.id).models[0].pricing).toBeUndefined();
+});
+it("shares scheduled/manual requests and refuses disabled connections without fetching",async()=>{
+ let now=1000;const f=fixture("openai",()=>now);let finish!:(response:Response)=>void;
+ f.fetcher.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ const scheduled=f.service.refreshDue(),manual=f.service.refresh(f.id);expect(f.fetcher).toHaveBeenCalledOnce();
+ finish(new Response(JSON.stringify({data:[{id:"gpt-6-new-catalog"},{id:"image-only"}]})));await Promise.all([scheduled,manual]);
+ expect(f.service.getCatalog(f.id).models.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["gpt-6-new-catalog"]);
+ const connection=f.service.list()[0];await f.mutate({action:"update",id:f.id,revision:connection.revision,enabled:false});
+ now+=24*60*60_000;await f.service.refreshDue();expect(f.fetcher).toHaveBeenCalledOnce();
+ await expect(f.service.refresh(f.id)).rejects.toThrow(/Enable/);
+});
+it("respects a fresh persisted catalog on restart before the daily boundary",async()=>{
+ let now=1000;const f=fixture("openai",()=>now);await f.service.refresh(f.id);now+=60_000;
+ await f.make().refreshDue();expect(f.fetcher).toHaveBeenCalledOnce();
+ now+=24*60*60_000;await f.make().refreshDue();expect(f.fetcher).toHaveBeenCalledTimes(2);
 });

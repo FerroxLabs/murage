@@ -181,6 +181,30 @@ describe("ProviderRegistry", () => {
     expect(refreshes).toEqual({ a: 2, b: 2 });
   });
 
+  it("refreshes due catalogs after24hours and manual describes bypass that age without replacing the instance", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    const instance = registry.get("a")!; let calls = 0;
+    Object.assign(instance, { refreshModels: async () => { calls++; } });
+    await registry.refreshModelCatalogs(); expect(calls).toBe(0);
+    now += 24 * 60 * 60_000 - 1; await registry.refreshModelCatalogs(); expect(calls).toBe(0);
+    now++; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
+    await registry.describe(); expect(calls).toBe(2);
+    expect(registry.get("a")).toBe(instance); expect(fake.disposed).toEqual([]);
+    await registry.disposeAll();
+  });
+
+  it("joins manual and scheduled catalog work and drains it before disposal", async () => {
+    const fake = makeFakeDriver(); const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ a: { driver: "fake" } }); let finish!: () => void, calls = 0;
+    Object.assign(registry.get("a")!, { refreshModels: () => { calls++; return new Promise<void>(resolve => { finish = resolve; }); } });
+    const first = registry.refreshModelCatalogs(false), second = registry.describe();
+    await Promise.resolve(); expect(calls).toBe(1);
+    const stopping = registry.disposeAll(); await Promise.resolve(); expect(fake.disposed).toEqual([]);
+    finish(); await Promise.all([first, second, stopping]); expect(fake.disposed).toEqual(["a"]);
+  });
+
   it("disposeAll disposes every live instance and empties the registry", async () => {
     const fake = makeFakeDriver();
     const registry = new ProviderRegistry([fake.driver]);
