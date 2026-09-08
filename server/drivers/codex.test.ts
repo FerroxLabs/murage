@@ -157,7 +157,13 @@ describe("CodexDriver turns (fake app-server)", () => {
     await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
     let windowsPid: number | undefined;
     if (process.platform === "win32") {
-      windowsPid = JSON.parse(readFileSync(dump, "utf8")).pid;
+      // The live fixture rewrites its receipt as protocol messages arrive.
+      // File existence does not mean a concurrent write has finished.
+      await expect.poll(() => {
+        try { windowsPid = JSON.parse(readFileSync(dump, "utf8")).pid; }
+        catch { windowsPid = undefined; }
+        return Number.isSafeInteger(windowsPid) && windowsPid! > 0;
+      }).toBe(true);
       // killCliTree uses taskkill /F on Windows, and its libuv SIGTERM
       // fallback also forces termination. Neither runs the POSIX delay handler.
       await expect(instance.adapter.interruptTurn("t-timeout")).resolves.toBeUndefined();
