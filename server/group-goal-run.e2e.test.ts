@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -158,6 +158,7 @@ beforeAll(async () => {
             "The scheduled analysis is now complete.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Scheduled goal survived the coordinator's direct Stop.\"}</murage-goal>",
           ]),
           FAKE_CLAUDE_REPLY_STATE: join(home, "stop-scoped-lead-replies.txt"),
+          FAKE_CLAUDE_REPLY_GATE: join(home, "release-stop-scoped-lead"),
         },
         config: { cli: FAKE_CLAUDE },
       },
@@ -171,6 +172,7 @@ beforeAll(async () => {
             "Scheduled analysis returned to the coordinator.",
           ]),
           FAKE_CLAUDE_REPLY_STATE: join(home, "stop-scoped-worker-replies.txt"),
+          FAKE_CLAUDE_REPLY_GATE: join(home, "release-stop-scoped-worker"),
           FAKE_CLAUDE_TRANSIENTS: "1",
           FAKE_CLAUDE_STATE: join(home, "stop-scoped-worker-launches.txt"),
         },
@@ -744,6 +746,11 @@ describe("goal-driven channel runs", () => {
 
   it("stops the coordinator's direct turn without cancelling a routine goal waiting on its worker", async () => {
     const diagnosticStartedAt = Date.now();
+    const leadGate = join(home, "release-stop-scoped-lead");
+    const workerGate = join(home, "release-stop-scoped-worker");
+    // Let the initial coordinator reply finish, but hold the unrelated worker
+    // until Stop is observed. Completion must not race an 800 ms fixture timer.
+    writeFileSync(leadGate, "release");
     const lead = (await api("POST", "/api/bots", {
       name: "Stop-scoped coordinator",
       modelSelection: { instanceId: "stopScopedLead", model: "claude-sonnet-5" },
@@ -865,6 +872,9 @@ describe("goal-driven channel runs", () => {
         throw error;
       });
 
+      // The first coordinator turn has settled; hold this exact direct turn
+      // until the test interrupts it, regardless of polling/runner latency.
+      unlinkSync(leadGate);
       expect((await api("POST", `/api/bots/${lead.id}/messages`, {
         text: "Start unrelated coordinator work",
       })).status).toBe(202);
@@ -899,6 +909,8 @@ describe("goal-driven channel runs", () => {
       expect(["running", "completed"]).toContain(afterStopRun.status);
       expect(["working", "completed"]).toContain(afterStopCard.goalRun.status);
       expect(afterStopCard.goalRun.status).not.toBe("stopped");
+      writeFileSync(leadGate, "release");
+      writeFileSync(workerGate, "release");
 
       await expect.poll(async () => {
         const calendar = (await api("GET", "/api/routines")).body;
@@ -925,6 +937,8 @@ describe("goal-driven channel runs", () => {
         turnCount: 3,
       });
     } finally {
+      writeFileSync(leadGate, "release");
+      writeFileSync(workerGate, "release");
       await api("POST", `/api/groups/${room.id}/interrupt`).catch(() => undefined);
       await api("POST", `/api/bots/${lead.id}/interrupt`).catch(() => undefined);
       await api("POST", `/api/bots/${worker.id}/interrupt`).catch(() => undefined);
