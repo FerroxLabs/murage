@@ -160,6 +160,7 @@ function serverLauncher({ proc, poll, track, environment = {} }) {
   const scope = {
     path, process:{env:environment,resourcesPath:"/fixture/resources"},restoredConnections:null,restoredHarnessEnvironment:env=>env,
     app:{isPackaged:true,getPath:()=>"/fixture/user-data"}, companionToken:"private-companion",
+    modelProviderCommitToken:"private-model-provider-commit",
     secureCredentials:{},credentialStoreUnavailable:false,desktopSurfaceSecret:"",browserHost:null,
     managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null,
     harnessResourceEnvironment:()=>({}),workspaceCredentialEnv:()=>({}),slog:()=>{},
@@ -180,6 +181,7 @@ test("actual utility launch overrides ambient root/delegation only in the owned 
   await launch(8799);
   assert.equal(proc.environment.MURAGE_DATA_DIR,"/canonical/installation");
   assert.equal(proc.environment.MURAGE_INTERNAL_DATA_DIR_LEASE,"private-fixture-capability");
+  assert.equal(proc.environment.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN,"private-model-provider-commit");
   assert.deepEqual(ambient,{MURAGE_DATA_DIR:"relative-alias",MURAGE_INTERNAL_DATA_DIR_LEASE:"ambient-forged"});
 });
 

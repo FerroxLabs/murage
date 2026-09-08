@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { redactSecrets } from "./redact.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -742,6 +743,7 @@ describe("goal-driven channel runs", () => {
   });
 
   it("stops the coordinator's direct turn without cancelling a routine goal waiting on its worker", async () => {
+    const diagnosticStartedAt = Date.now();
     const lead = (await api("POST", "/api/bots", {
       name: "Stop-scoped coordinator",
       modelSelection: { instanceId: "stopScopedLead", model: "claude-sonnet-5" },
@@ -813,6 +815,54 @@ describe("goal-driven channel runs", () => {
         turnCount: 1,
         leadBusy: false,
         workerBusy: true,
+      }).catch(async (error: unknown) => {
+        // Observe the failure before finally interrupts/deletes either bot.
+        // Keep the exact waiting-state assertion and its original deadline.
+        const diagnostics: Record<string, unknown> = { stderr: stderr.slice(-4000) };
+        try {
+          const state = (await api("GET", "/api/bots?messages=60")).body;
+          const current = state.groups.find((group: { id: string }) => group.id === room.id);
+          const messageMetadata = (message: any) => ({
+            at: message.at, kind: message.kind, from: message.from?.name,
+            goalRun: message.goalRun,
+            activity: message.kind === "activity" ? message.tool?.name : undefined,
+          });
+          diagnostics.room = { threadId: current?.threadId, working: current?.working,
+            messages: (current?.messages ?? []).slice(-30).map(messageMetadata) };
+          diagnostics.bots = state.bots.filter((bot: { id: string }) => [lead.id, worker.id].includes(bot.id))
+            .map((bot: any) => ({ id: bot.id, name: bot.name, threadId: bot.threadId, busy: bot.busy,
+              messages: (bot.messages ?? []).slice(-20).map(messageMetadata) }));
+        } catch { diagnostics.snapshotUnavailable = true; }
+        diagnostics.counters = Object.fromEntries([
+          "stop-scoped-lead-replies.txt", "stop-scoped-worker-replies.txt", "stop-scoped-worker-launches.txt",
+        ].map((name) => { try { return [name, readFileSync(join(home, name), "utf8").slice(0, 32)]; }
+          catch { return [name, null]; } }));
+        try {
+          const nativeDir = join(home, ".murage", "native");
+          const files = readdirSync(nativeDir).filter((name) => name.endsWith(".ndjson"))
+            .map((name) => ({ name, stat: statSync(join(nativeDir, name)) }))
+            .filter(({ stat }) => stat.isFile() && stat.mtimeMs >= diagnosticStartedAt)
+            .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs).slice(0, 12);
+          diagnostics.native = files.map(({ name, stat }) => {
+            const fd = openSync(join(nativeDir, name), "r");
+            const tail = Buffer.alloc(Math.min(stat.size, 64 * 1024));
+            let count: number;
+            try { count = readSync(fd, tail, 0, tail.length, Math.max(0, stat.size - tail.length)); }
+            finally { closeSync(fd); }
+            const records = tail.subarray(0, count).toString("utf8").split("\n").flatMap((line) => {
+              try {
+                const entry = JSON.parse(line);
+                if (entry.source !== "claude.session" && !["system", "result", "error"].includes(entry.msg?.type)) return [];
+                return [{ at: entry.at, source: entry.source, close: entry.msg?.close,
+                  type: entry.msg?.type, subtype: entry.msg?.subtype, isError: entry.msg?.is_error,
+                  stopReason: entry.msg?.stop_reason }];
+              } catch { return []; }
+            }).slice(-20);
+            return { file: name, records };
+          });
+        } catch { diagnostics.nativeUnavailable = true; }
+        if (error instanceof Error) error.message += `\nStop-scope fixture diagnostics: ${JSON.stringify(redactSecrets(diagnostics)).slice(0, 20000)}`;
+        throw error;
       });
 
       expect((await api("POST", `/api/bots/${lead.id}/messages`, {

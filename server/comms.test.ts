@@ -86,6 +86,7 @@ describe("comms e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let gateFile = "";
+  let helperHangRpc = "";
   let stderr = "";
 
   const waitUntil = async (predicate: () => Promise<boolean>, timeout: number, what: string): Promise<void> => {
@@ -122,6 +123,7 @@ describe("comms e2e (fake ACP fleet)", () => {
     chmodSync(FAKE_AGY_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-comms-test-"));
     gateFile = join(home, "helper-gate");
+    helperHangRpc = join(home, "helper-hang-rpc.json");
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(
       join(home, ".murage", "config.json"),
@@ -187,7 +189,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           // a turn that remains busy until provider reload disposes it.
           helperHang: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "hang" },
+            environment: { FAKE_ACP_MODE: "hang", FAKE_ACP_RPC_DUMP: helperHangRpc },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
           // a deterministic busy window: turns hold open until the gate
@@ -998,9 +1000,13 @@ describe("comms e2e (fake ACP fleet)", () => {
         channelId = askerBot.messages.find(
           (m: any) => m.kind === "activity" && m.tool?.name === "Messaged @Helper",
         )?.comm?.groupId;
-        if (channelId && helperBot.busy) break;
+        // Busy includes asynchronous memory/permission setup. This test
+        // reloads an actual hanging provider, so wait for its accepted prompt.
+        let methods: string[] = [];
+        try { methods = JSON.parse(readFileSync(helperHangRpc, "utf8")); } catch {}
+        if (channelId && helperBot.busy && methods.includes("session/prompt")) break;
         if (Date.now() > busyDeadline) {
-          throw new Error(`delegated hanging turn never started. stderr: ${stderr.slice(-2000)}`);
+          throw new Error(`delegated hanging prompt never started; RPC methods: ${JSON.stringify(methods)}. stderr: ${stderr.slice(-2000)}`);
         }
         await new Promise((r) => setTimeout(r, 250));
       }
