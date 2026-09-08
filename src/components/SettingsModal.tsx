@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // App settings, as a real modal with sections rather than one long panel.
 // Per-bot settings (persona, model, computer) stay in SettingsPanel — this
 // is the stuff shared by every bot: who you are, your keys, and the
@@ -159,7 +160,7 @@ export function UpdatesRow() {
               ? `Update could not finish: ${s.message ?? "unknown error"}`
               : "You're on the latest version we know of.";
   return (
-    <Card title="Updates" subtitle={label}>
+    <Card title={t("updates.title")} subtitle={label}>
       <button
         onClick={() => {
           if (s?.status === "available") return void updater.download();
@@ -171,12 +172,12 @@ export function UpdatesRow() {
         className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
       >
         {s?.status === "available"
-          ? "Download"
+          ? t("updates.download")
           : s?.status === "downloaded"
-            ? s.installMode === "handoff" ? "Install" : "Restart and install"
+            ? s.installMode === "handoff" ? "Install" : t("updates.restartInstall")
             : s?.status === "installing" ? "Preparing…"
-              : s?.status === "error" ? "Try again"
-            : "Check for updates"}
+              : s?.status === "error" ? t("updates.retry")
+            : t("updates.check")}
       </button>
     </Card>
   );

@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // A focused setup card shared by onboarding, the model picker, and runtime
 // errors. The command has one inline copy action and one primary next step;
 // unusable model lists stay out of the way until the engine is ready.
@@ -84,12 +85,12 @@ function CommandRow({ command, actionLabel, instanceId, action }: { command: str
             type="button"
             onClick={() => void copy()}
             disabled={status === "opening"}
-            aria-label="Copy command"
-            title="Copy command"
+            aria-label={t("setup.copyCommand")}
+            title={t("setup.copyCommand")}
             className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] font-medium text-ink-secondary hover:bg-control hover:text-ink"
           >
             {status === "copied" ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-            {status === "copied" ? "Copied" : "Copy"}
+            {status === "copied" ? t("common.copied") : t("common.copy")}
           </button>
         )}
       </div>
@@ -103,7 +104,7 @@ function CommandRow({ command, actionLabel, instanceId, action }: { command: str
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
           >
             {status === "opened" ? <Check size={14} /> : <TerminalSquare size={14} />}
-            {status === "opening" ? "Opening Terminal…" : status === "opened" ? "Terminal opened" : actionLabel}
+            {status === "opening" ? t("setup.openingTerminal") : status === "opened" ? t("setup.terminalOpened") : actionLabel}
           </button>
           <p aria-live="polite" className="mt-1.5 text-center text-[11px] text-ink-secondary/70">
             {status === "opened" ? "Paste the command and press Enter. Finish or cancel in Terminal, then check again below." : "Opening Terminal does not install or sign in for you."}
@@ -116,7 +117,7 @@ function CommandRow({ command, actionLabel, instanceId, action }: { command: str
           className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-control px-3 py-2 text-[12.5px] font-semibold text-ink hover:bg-raised-hover"
         >
           {status === "copied" ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-          {status === "copied" ? "Command copied" : "Copy command"}
+          {status === "copied" ? t("setup.commandCopied") : t("setup.copyCommand")}
         </button>
       )}
       {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
@@ -185,13 +186,13 @@ export function EngineSetup({
 
   if (instance.driverKind === "fuigoAgent" && signInOnly) {
     return <div className={cn("rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
-      <div className="text-[13px] font-semibold text-ink">Fuigo is included</div>
+      <div className="text-[13px] font-semibold text-ink">{t("setup.fuigoIncluded")}</div>
       <p className="mt-1 mb-3 text-[12px] text-ink-secondary">Got a Flux Router key? Connect it here to get started.</p>
       <FluxKeyCard onSaved={checkAgain} />
       {checking && <p role="status" className="mt-2 text-[12px] text-ink-secondary">Checking connection…</p>}
       {checkMessage && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{checkMessage}</p>}
       {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
-      <button type="button" disabled={checking} onClick={() => void checkAgain()} className="mt-2 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink">Check connection</button>
+      <button type="button" disabled={checking} onClick={() => void checkAgain()} className="mt-2 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink">{t("setup.checkConnection")}</button>
     </div>;
   }
 
@@ -222,7 +223,7 @@ export function EngineSetup({
 
       {instance.driverKind === "codex" && !signInOnly && <EngineManagement instance={instance} />}
       {command ? (
-        <CommandRow key={command} command={command} instanceId={instance.instanceId} action={signInOnly ? "connect" : "install"} actionLabel={signInOnly ? "Open sign-in in Terminal" : "Open install in Terminal"} />
+        <CommandRow key={command} command={command} instanceId={instance.instanceId} action={signInOnly ? "connect" : "install"} actionLabel={signInOnly ? t("setup.openSignIn") : t("setup.openInstall")} />
       ) : (
         <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
           There isn’t a one-line installer for this platform. Use the setup guide below.
@@ -231,7 +232,7 @@ export function EngineSetup({
 
       <button type="button" disabled={checking} onClick={() => void checkAgain()}
         className="mt-3 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] font-medium text-ink hover:bg-raised-hover disabled:opacity-50">
-        {checking ? "Checking engine…" : "Check again"}
+        {checking ? t("setup.checkingEngine") : t("common.checkAgain")}
       </button>
       {checkMessage && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{checkMessage}</p>}
       {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
