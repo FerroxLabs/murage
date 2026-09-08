@@ -5,8 +5,8 @@
     "id": "listing-forge",
     "release": "1.0.0",
     "name": "Listing Forge",
-    "tagline": "Team launcher - pick me to auto-assemble a listing crew (Storefront + Research + Copy + Quality Gate) and ship a platform-ready Shopify/Amazon/Etsy listing.",
-    "summary": "Team launcher - pick me to auto-assemble a listing crew (Storefront + Research + Copy + Quality Gate) and ship a platform-ready Shopify/Amazon/Etsy listing.",
+    "tagline": "Research the buyer and write a platform-appropriate listing, with a quality check before publication.",
+    "summary": "For sellers preparing a Shopify, Amazon, or Etsy product page. Research the buyer and write a platform-appropriate listing, with a quality check before publication.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a listing crew (Storefront + Research + Copy + Quality Gate) and ship a platform-ready Shopify/Amazon/Etsy listing."
+      "Research the buyer and write a platform-appropriate listing, with a quality check before publication."
     ],
     "setupMinutes": 2,
     "requirements": {

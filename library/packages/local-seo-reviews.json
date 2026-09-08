@@ -5,8 +5,8 @@
     "id": "local-seo-reviews",
     "release": "1.0.0",
     "name": "Local SEO & Reviews Desk",
-    "tagline": "Team launcher - pick me to auto-assemble a local-visibility crew (Research + Copy + Analyst + Support) and ship an optimized Google profile, 'near me' pages, a…",
-    "summary": "Team launcher - pick me to auto-assemble a local-visibility crew (Research + Copy + Analyst + Support) and ship an optimized Google profile, 'near me' pages, and a review engine.",
+    "tagline": "Prepare Google profile improvements, local service-page copy, and a process for requesting and responding to reviews.",
+    "summary": "For local businesses improving how nearby customers find them. Prepare Google profile improvements, local service-page copy, and a process for requesting and responding to reviews.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a local-visibility crew (Research + Copy + Analyst + Support) and ship an optimized Google profile, 'near me' pages, and a review engine."
+      "Prepare Google profile improvements, local service-page copy, and a process for requesting and responding to reviews."
     ],
     "setupMinutes": 2,
     "requirements": {

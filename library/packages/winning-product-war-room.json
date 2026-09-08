@@ -5,8 +5,8 @@
     "id": "winning-product-war-room",
     "release": "1.0.0",
     "name": "Winning Product War Room",
-    "tagline": "Team launcher - pick me to auto-assemble a product-validation crew (Research + Analyst + Numbers + Quality Gate) and ship a one-page go/no-go dossier before so…",
-    "summary": "Team launcher - pick me to auto-assemble a product-validation crew (Research + Analyst + Numbers + Quality Gate) and ship a one-page go/no-go dossier before sourcing.",
+    "tagline": "Review demand evidence, likely economics, and quality concerns in a one-page go/no-go assessment.",
+    "summary": "For ecommerce sellers assessing a product before sourcing it. Review demand evidence, likely economics, and quality concerns in a one-page go/no-go assessment.",
     "category": "Research",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a product-validation crew (Research + Analyst + Numbers + Quality Gate) and ship a one-page go/no-go dossier before sourcing."
+      "Review demand evidence, likely economics, and quality concerns in a one-page go/no-go assessment."
     ],
     "setupMinutes": 2,
     "requirements": {

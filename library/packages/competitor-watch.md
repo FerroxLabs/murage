@@ -3,8 +3,8 @@ botmrr: 1
 id: competitor-watch
 release: 1.0.0
 name: Watch Competitor Moves
-tagline: Monitor the competitors you choose and turn meaningful changes into a concise decision brief.
-summary: A two-bot intelligence desk that watches public pricing, positioning, product, and launch changes. It records dated evidence, ignores cosmetic noise, and explains what changed, why it may matter, and what—if anything—you should do next.
+tagline: "Review public pricing, product, and positioning changes, then get a dated evidence brief explaining what merits a response."
+summary: "For businesses keeping track of selected competitors. Review public pricing, product, and positioning changes, then get a dated evidence brief explaining what merits a response."
 category: Strategy
 author:
   name: BotMRR

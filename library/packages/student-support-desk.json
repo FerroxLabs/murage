@@ -5,8 +5,8 @@
     "id": "student-support-desk",
     "release": "1.0.0",
     "name": "Student Support Desk",
-    "tagline": "Team launcher - pick me to auto-assemble a student-support crew (Support + Research + Ops + Coach) and ship clustered replies, macros, and help docs.",
-    "summary": "Team launcher - pick me to auto-assemble a student-support crew (Support + Research + Ops + Coach) and ship clustered replies, macros, and help docs.",
+    "tagline": "Group requests, draft helpful responses and reusable replies, and prepare support documentation and escalation priorities.",
+    "summary": "For course creators handling student questions and recurring problems. Group requests, draft helpful responses and reusable replies, and prepare support documentation and escalation priorities.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a student-support crew (Support + Research + Ops + Coach) and ship clustered replies, macros, and help docs."
+      "Group requests, draft helpful responses and reusable replies, and prepare support documentation and escalation priorities."
     ],
     "setupMinutes": 2,
     "requirements": {

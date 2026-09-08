@@ -3,8 +3,8 @@ botmrr: 1
 id: 100x-marketing
 release: 1.0.0
 name: Launch a Measurable Campaign
-tagline: Find a sharp position, produce the launch assets, distribute them, and make a stop-or-scale decision.
-summary: A four-agent growth crew for turning one credible audience insight into a focused campaign with channel-ready assets, explicit ownership, clean measurement, and a decision date.
+tagline: "Turn audience evidence into campaign assets, a distribution plan, and a measured stop, improve, or scale decision."
+summary: "For businesses ready to test a focused marketing campaign. Turn audience evidence into campaign assets, a distribution plan, and a measured stop, improve, or scale decision."
 category: Marketing
 author:
   name: OpenMausBot

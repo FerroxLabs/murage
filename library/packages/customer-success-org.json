@@ -5,8 +5,8 @@
     "id": "customer-success-org",
     "release": "1.0.0",
     "name": "Customer Success Org",
-    "tagline": "Standing Company - Keeper (VP CS) + Mend + Anchor + Lens + Patch run weekly Monday renewal reviews, save churning accounts, audit health scores. Persists acros…",
-    "summary": "Standing Company - Keeper (VP CS) + Mend + Anchor + Lens + Patch run weekly Monday renewal reviews, save churning accounts, audit health scores. Persists across sessions.",
+    "tagline": "Review account health, identify customers needing attention, and prepare renewal priorities and support follow-ups.",
+    "summary": "For businesses managing customer renewals and retention. Review account health, identify customers needing attention, and prepare renewal priorities and support follow-ups.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -15,7 +15,7 @@
     "license": "Apache-2.0",
     "featured": true,
     "outcomes": [
-      "Standing Company - Keeper (VP CS) + Mend + Anchor + Lens + Patch run weekly Monday renewal reviews, save churning accounts, audit health scores. Persists across sessions."
+      "Review account health, identify customers needing attention, and prepare renewal priorities and support follow-ups."
     ],
     "setupMinutes": 2,
     "requirements": {

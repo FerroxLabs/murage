@@ -3,8 +3,8 @@ botmrr: 1
 id: seo-growth
 release: 1.0.0
 name: Find SEO Growth Opportunities
-tagline: Turn search evidence into prioritized fixes, content briefs, owners, and measurable next steps.
-summary: A four-agent search team that maps demand, diagnoses technical constraints, creates useful briefs, and consolidates the work into a practical roadmap grounded in the evidence you provide.
+tagline: "Assess demand and technical evidence, then get prioritized fixes, content briefs, and a practical SEO roadmap."
+summary: "For businesses deciding where to invest in search visibility. Assess demand and technical evidence, then get prioritized fixes, content briefs, and a practical SEO roadmap."
 category: Marketing
 author:
   name: OpenMausBot

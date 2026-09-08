@@ -5,8 +5,8 @@
     "id": "bootstrap-profit",
     "release": "1.0.0",
     "name": "Bootstrap Profit",
-    "tagline": "Team launcher - Numbers + Offer + Channels + Sales push toward ramen profitability via highest-impact levers.",
-    "summary": "Team launcher - Numbers + Offer + Channels + Sales push toward ramen profitability via highest-impact levers.",
+    "tagline": "Review your costs, pricing, sales, and acquisition channels to identify the most useful next actions.",
+    "summary": "For bootstrapped founders working toward profitability. Review your costs, pricing, sales, and acquisition channels to identify the most useful next actions.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Numbers + Offer + Channels + Sales push toward ramen profitability via highest-impact levers."
+      "Review your costs, pricing, sales, and acquisition channels to identify the most useful next actions."
     ],
     "setupMinutes": 2,
     "requirements": {

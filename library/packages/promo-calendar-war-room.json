@@ -5,8 +5,8 @@
     "id": "promo-calendar-war-room",
     "release": "1.0.0",
     "name": "Promo Calendar War-Room",
-    "tagline": "Team launcher - pick me to auto-assemble a promo crew (Channels + Research + Copy + Ops) and ship a dated promo calendar with deal copy and a swap-back checkli…",
-    "summary": "Team launcher - pick me to auto-assemble a promo crew (Channels + Research + Copy + Ops) and ship a dated promo calendar with deal copy and a swap-back checklist.",
+    "tagline": "Build a dated promotion calendar, deal copy, and a checklist for restoring normal offers afterward.",
+    "summary": "For businesses coordinating promotions across dates and channels. Build a dated promotion calendar, deal copy, and a checklist for restoring normal offers afterward.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a promo crew (Channels + Research + Copy + Ops) and ship a dated promo calendar with deal copy and a swap-back checklist."
+      "Build a dated promotion calendar, deal copy, and a checklist for restoring normal offers afterward."
     ],
     "setupMinutes": 2,
     "requirements": {

@@ -5,8 +5,8 @@
     "id": "marketing-agency",
     "release": "1.0.0",
     "name": "Marketing Agency",
-    "tagline": "Standing Company - Director (CMO) + Scout + Mira + Beacon + Quill + Lens run weekly Monday check-ins, plan campaigns, and audit channels. Persists across sessi…",
-    "summary": "Standing Company - Director (CMO) + Scout + Mira + Beacon + Quill + Lens run weekly Monday check-ins, plan campaigns, and audit channels. Persists across sessions, fires on its own heartbeat.",
+    "tagline": "Plan campaigns, prepare brand-consistent content, and review channel performance to set the next priorities.",
+    "summary": "For businesses coordinating marketing across multiple channels. Plan campaigns, prepare brand-consistent content, and review channel performance to set the next priorities.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -15,7 +15,7 @@
     "license": "Apache-2.0",
     "featured": true,
     "outcomes": [
-      "Standing Company - Director (CMO) + Scout + Mira + Beacon + Quill + Lens run weekly Monday check-ins, plan campaigns, and audit channels. Persists across sessions, fires on its own heartbeat."
+      "Plan campaigns, prepare brand-consistent content, and review channel performance to set the next priorities."
     ],
     "setupMinutes": 2,
     "requirements": {

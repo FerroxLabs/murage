@@ -5,8 +5,8 @@
     "id": "info-product-launch",
     "release": "1.0.0",
     "name": "Info-Product Launch",
-    "tagline": "Team launcher - assembles Build + Copy + Brand + Channels to ship a course, book, or info-product launch.",
-    "summary": "Team launcher - assembles Build + Copy + Brand + Channels to ship a course, book, or info-product launch.",
+    "tagline": "Develop the product structure, brand messaging, sales copy, and channel plan for the launch.",
+    "summary": "For creators launching a course, book, or digital information product. Develop the product structure, brand messaging, sales copy, and channel plan for the launch.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - assembles Build + Copy + Brand + Channels to ship a course, book, or info-product launch."
+      "Develop the product structure, brand messaging, sales copy, and channel plan for the launch."
     ],
     "setupMinutes": 2,
     "requirements": {

@@ -5,8 +5,8 @@
     "id": "war-room",
     "release": "1.0.0",
     "name": "War Room",
-    "tagline": "Team launcher - pick me to convene a virtual C-suite (Operator + CFO + Growth + Skeptic + Customer Voice) and return a GO / NO-GO / GO-IF verdict on a decision.",
-    "summary": "Team launcher - pick me to convene a virtual C-suite (Operator + CFO + Growth + Skeptic + Customer Voice) and return a GO / NO-GO / GO-IF verdict on a decision.",
+    "tagline": "Examine operational, financial, growth, risk, and customer perspectives, then get a go, no-go, or conditional recommendation.",
+    "summary": "For founders facing a consequential business decision. Examine operational, financial, growth, risk, and customer perspectives, then get a go, no-go, or conditional recommendation.",
     "category": "Office",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to convene a virtual C-suite (Operator + CFO + Growth + Skeptic + Customer Voice) and return a GO / NO-GO / GO-IF verdict on a decision."
+      "Examine operational, financial, growth, risk, and customer perspectives, then get a go, no-go, or conditional recommendation."
     ],
     "setupMinutes": 2,
     "requirements": {

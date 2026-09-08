@@ -5,8 +5,8 @@
     "id": "saas-mvp-sprint",
     "release": "1.0.0",
     "name": "SaaS MVP Sprint",
-    "tagline": "Chained pipeline - Code + Validator + Copy + Brand ship a shaped MVP spec, validation plan, landing page, and visual direction (4 stages).",
-    "summary": "Chained pipeline - Code + Validator + Copy + Brand ship a shaped MVP spec, validation plan, landing page, and visual direction (4 stages).",
+    "tagline": "Get an MVP specification, validation plan, landing-page copy, and visual direction.",
+    "summary": "For founders shaping a small software product before committing to a build. Get an MVP specification, validation plan, landing-page copy, and visual direction.",
     "category": "Build",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Chained pipeline - Code + Validator + Copy + Brand ship a shaped MVP spec, validation plan, landing page, and visual direction (4 stages)."
+      "Get an MVP specification, validation plan, landing-page copy, and visual direction."
     ],
     "setupMinutes": 2,
     "requirements": {

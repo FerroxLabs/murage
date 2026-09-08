@@ -5,8 +5,8 @@
     "id": "affiliate-site-engine",
     "release": "1.0.0",
     "name": "Affiliate Site Engine",
-    "tagline": "Team launcher - Research + Copy + Channels + Analyst build an SEO-driven affiliate or content site.",
-    "summary": "Team launcher - Research + Copy + Channels + Analyst build an SEO-driven affiliate or content site.",
+    "tagline": "Research the audience, shape the content and channel strategy, and prepare copy with a plan for measuring results.",
+    "summary": "For publishers building an affiliate or content site. Research the audience, shape the content and channel strategy, and prepare copy with a plan for measuring results.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - Research + Copy + Channels + Analyst build an SEO-driven affiliate or content site."
+      "Research the audience, shape the content and channel strategy, and prepare copy with a plan for measuring results."
     ],
     "setupMinutes": 2,
     "requirements": {

@@ -5,8 +5,8 @@
     "id": "content-refresh-crew",
     "release": "1.0.0",
     "name": "Content Refresh Crew",
-    "tagline": "Team launcher - pick me to auto-assemble a refresh crew (Analyst + Research + Copy + Quality Gate) and ship a prioritized refresh queue with rewritten sections.",
-    "summary": "Team launcher - pick me to auto-assemble a refresh crew (Analyst + Research + Copy + Quality Gate) and ship a prioritized refresh queue with rewritten sections.",
+    "tagline": "Identify what to update first and get researched replacement sections with an editorial quality review.",
+    "summary": "For publishers with ageing or underperforming content. Identify what to update first and get researched replacement sections with an editorial quality review.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a refresh crew (Analyst + Research + Copy + Quality Gate) and ship a prioritized refresh queue with rewritten sections."
+      "Identify what to update first and get researched replacement sections with an editorial quality review."
     ],
     "setupMinutes": 2,
     "requirements": {

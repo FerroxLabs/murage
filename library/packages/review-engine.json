@@ -5,8 +5,8 @@
     "id": "review-engine",
     "release": "1.0.0",
     "name": "Review Engine",
-    "tagline": "Team launcher - pick me to auto-assemble a reviews crew (Support + Copy + Analyst + Quality Gate) and ship review replies, a solicitation sequence, and a fix d…",
-    "summary": "Team launcher - pick me to auto-assemble a reviews crew (Support + Copy + Analyst + Quality Gate) and ship review replies, a solicitation sequence, and a fix digest.",
+    "tagline": "Prepare response drafts and review-request messages, then turn recurring feedback into a prioritized improvement digest.",
+    "summary": "For businesses managing customer reviews. Prepare response drafts and review-request messages, then turn recurring feedback into a prioritized improvement digest.",
     "category": "Run",
     "author": {
       "name": "Ferrox Labs",
@@ -14,7 +14,7 @@
     },
     "license": "Apache-2.0",
     "outcomes": [
-      "Team launcher - pick me to auto-assemble a reviews crew (Support + Copy + Analyst + Quality Gate) and ship review replies, a solicitation sequence, and a fix digest."
+      "Prepare response drafts and review-request messages, then turn recurring feedback into a prioritized improvement digest."
     ],
     "setupMinutes": 2,
     "requirements": {

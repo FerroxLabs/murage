@@ -5,8 +5,8 @@
     "id": "sales-org",
     "release": "1.0.0",
     "name": "Sales Org",
-    "tagline": "Standing Company - Pace (VP Sales) + Anchor + Scout + Forge + Lens run weekly Monday pipeline reviews, plan outbound sequences, audit stalled deals. Persists a…",
-    "summary": "Standing Company - Pace (VP Sales) + Anchor + Scout + Forge + Lens run weekly Monday pipeline reviews, plan outbound sequences, audit stalled deals. Persists across sessions.",
+    "tagline": "Review the pipeline, investigate stalled deals, and prepare outbound priorities using buyer research and offer analysis.",
+    "summary": "For businesses managing an ongoing sales operation. Review the pipeline, investigate stalled deals, and prepare outbound priorities using buyer research and offer analysis.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -15,7 +15,7 @@
     "license": "Apache-2.0",
     "featured": true,
     "outcomes": [
-      "Standing Company - Pace (VP Sales) + Anchor + Scout + Forge + Lens run weekly Monday pipeline reviews, plan outbound sequences, audit stalled deals. Persists across sessions."
+      "Review the pipeline, investigate stalled deals, and prepare outbound priorities using buyer research and offer analysis."
     ],
     "setupMinutes": 2,
     "requirements": {
