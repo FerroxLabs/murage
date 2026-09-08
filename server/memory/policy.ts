@@ -25,8 +25,11 @@ export function ensureScope(kind: MemoryScopeKind, owner: string): string {
 }
 
 function rosterSnapshot(roster: MemoryRoster) {
-  const bots = roster.bots.map(b => ({id:b.id, section:b.section?.trim() || "", threads:[b.threadId,...(b.tasks??[]).map(t=>t.threadId)].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
-  const groups = roster.groups.map(g => ({id:g.id, section:g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[g.threadId,...(g.tasks??[]).map(t=>t.threadId)].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
+  // Active-task selection changes presentation, not the authorized thread set.
+  // The active thread usually also appears in tasks; duplicate counts must not
+  // revoke running background turns when the owner opens another task.
+  const bots = roster.bots.map(b => ({id:b.id, section:b.section?.trim() || "", threads:[...new Set([b.threadId,...(b.tasks??[]).map(t=>t.threadId)])].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
+  const groups = roster.groups.map(g => ({id:g.id, section:g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[...new Set([g.threadId,...(g.tasks??[]).map(t=>t.threadId)])].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
   return {bots,groups};
 }
 function snapshotHash(snapshot: ReturnType<typeof rosterSnapshot>) {
