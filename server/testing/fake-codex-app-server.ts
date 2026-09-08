@@ -10,6 +10,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileAtomic } from "../atomic.ts";
 
 const mode = process.env.FAKE_CODEX_MODE ?? "happy";
 
@@ -36,7 +37,7 @@ const notify = (method: string, params: unknown) => out({ jsonrpc: "2.0", method
 
 const dump = () => {
   if (process.env.FAKE_CODEX_DUMP) {
-    writeFileSync(
+    writeFileAtomic(
       process.env.FAKE_CODEX_DUMP,
       JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: process.env, calls, decision }, null, 2),
     );
