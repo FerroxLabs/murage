@@ -222,7 +222,7 @@ export function browserProfileChangesDisabled(
   return bot.busy === true || pending.browserAction === true || pending.controlTransition === true;
 }
 
-export function BrowserPanel({
+export function LegacyBrowserPanel({
   bot,
   control,
   controlPending,
@@ -836,3 +836,6 @@ export function BrowserPanel({
     </div>
   );
 }
+
+// One harness-owned engine and viewer on every desktop and companion surface.
+export { UnifiedBrowserPanel as BrowserPanel } from "./UnifiedBrowserPanel";

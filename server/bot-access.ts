@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CONNECTED_APP_TOOLS, accessGrantSchema, type AccessGrant } from "../shared/bot-access.ts";
+import { ACCESS_REQUEST_TTL_MS, accessRequestExpired, CONNECTED_APP_TOOLS, accessGrantSchema, type AccessGrant } from "../shared/bot-access.ts";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import { isWorkspaceChief, sectionKey, type BotRecord, type Store } from "./store.ts";
 const fail=(message:string,status=403):never=>{throw Object.assign(new Error(message),{status});};
@@ -23,19 +23,20 @@ export function accessOwnerView(bot:BotRecord) {
  return {enabled:bot.composio!==false,policy:botAccessPolicy(bot),catalog:CONNECTED_APP_TOOLS};
 }
 /** Agent identity comes from the server turn claim. This only queues owner review. */
-export function requestBotAccess(store:Store,sender:BotRecord,input:unknown) {
+export function requestBotAccess(store:Store,sender:BotRecord,input:unknown,now=Date.now()) {
  const parsed=managerRequest.safeParse(input);if(!parsed.success)fail("Invalid connected-app access request.",400);
  const request=parsed.data!;const target=store.bot(request.botId);
  if(!target||!sender.chiefOfStaff||!mayReviewAccessStatus(sender,target))fail("Only the responsible manager can request this bot’s access.");
  const policy=botAccessPolicy(target!);if(policy.revision!==request.revision)fail("Access changed. Read the current status and request again.",409);
  validateTools(request.grants);
- if(policy.requests.length>=12)fail("Review existing access requests before adding another.",409);
- const pending={id:randomUUID(),requestedBy:sender.id,requesterBinding:accessRoleBinding(sender),targetBinding:accessRoleBinding(target!),createdAt:Date.now(),grants:request.grants,allowWrites:request.allowWrites};
- store.patchBot(target!.id,{connectedAppAccess:{...policy,revision:policy.revision+1,requests:[...policy.requests,pending]}});
- return {requestId:pending.id,status:"Waiting for owner review",revision:botAccessPolicy(target!).revision};
+ const liveRequests=policy.requests.filter(item=>!accessRequestExpired(item,now));
+ if(liveRequests.length>=12)fail("Review existing access requests before adding another.",409);
+ const pending={id:randomUUID(),requestedBy:sender.id,requesterBinding:accessRoleBinding(sender),targetBinding:accessRoleBinding(target!),createdAt:now,expiresAt:now+ACCESS_REQUEST_TTL_MS,grants:request.grants,allowWrites:request.allowWrites};
+ store.patchBot(target!.id,{connectedAppAccess:{...policy,revision:policy.revision+1,requests:[...liveRequests,pending]}});
+ return {requestId:pending.id,expiresAt:pending.expiresAt,status:"Waiting for owner review",revision:botAccessPolicy(target!).revision};
 }
 /** Only desktop owner routes may call this. Accounts must be current server inventory. */
-export function reviewBotAccess(store:Store,botId:string,input:unknown,accounts:ReadonlyArray<{toolkit:string;accountId:string}>) {
+export function reviewBotAccess(store:Store,botId:string,input:unknown,accounts:ReadonlyArray<{toolkit:string;accountId:string}>,now=Date.now()) {
  const parsed=ownerAction.safeParse(input);if(!parsed.success)fail("Invalid owner access decision.",400);
  const action=parsed.data!;const bot=store.bot(botId);if(!bot)fail("Bot not found.",404);
  const policy=botAccessPolicy(bot!);if(action.revision!==policy.revision)fail("Access changed. Review the latest settings before saving.",409);
@@ -44,6 +45,7 @@ export function reviewBotAccess(store:Store,botId:string,input:unknown,accounts:
  else {
   const request=policy.requests.find(item=>item.id===action.requestId);if(!request)fail("This access request is no longer pending.",409);
   if(action.action==="approve"){
+   if(accessRequestExpired(request!,now))fail("This access request expired. Ask the manager to submit a fresh request.",409);
    const requester=store.bot(request!.requestedBy);
    if(!requester||!requester.chiefOfStaff||!mayReviewAccessStatus(requester,bot!)||accessRoleBinding(requester)!==request!.requesterBinding||accessRoleBinding(bot!)!==request!.targetBinding)fail("This access request is stale because the bot or manager changed.",409);
    next={...next,mode:"restricted",allowWrites:request!.allowWrites,grants:request!.grants,requests:[]};enable=true;

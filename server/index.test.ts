@@ -648,12 +648,14 @@ describe("harness HTTP API", () => {
       }, { timeout: 10000 }).toBe(true);
       expect(errorMessage).toMatchObject({ role: "bot", kind: "activity", tool: { ok: false, providerError: { kind: "credits", httpStatus: 402 } } });
       expect(errorMessage.tool.name).toContain("credit balance is exhausted");
+      expect(errorMessage.tool.errorDetails).toContain("Provider response: HTTP 402");
       expect(errorMessage.tool.name.length).toBeLessThanOrEqual(167);
       expect(JSON.stringify(errorMessage)).not.toMatch(/fake-secret-canary|billing\.invalid|Internal error/);
       const db = new DatabaseSync(join(data, "messages.db"), { readOnly: true });
       try {
         const persisted = JSON.parse(String(db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(bot.threadId, errorMessage.id)?.json));
         expect(persisted.tool.providerError).toEqual(errorMessage.tool.providerError);
+        expect(persisted.tool.errorDetails).toBe(errorMessage.tool.errorDetails);
         expect(JSON.stringify(persisted)).not.toMatch(/fake-secret-canary|billing\.invalid/);
       } finally { db.close(); }
     } finally {
@@ -5652,6 +5654,7 @@ describe("harness HTTP API", () => {
 
   it("enforces owner connected-app limits at the real internal relay and revokes stale tokens", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Scoped access HTTP fixture" })).body.bot;
+    let permissionClient: import("node:net").Socket | undefined;
     try {
       expect((await desktopApi("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
       expect((await api("GET", `/api/bots/${bot.id}/access`)).status).toBe(404);
@@ -5660,7 +5663,18 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PUT", `/api/bots/${bot.id}/access`, {
         action: "configure", revision: view.body.policy.revision, mode: "restricted", allowWrites: false, grants: [],
       })).status).toBe(200);
-      const { dump } = await startInternalFixtureTurn(bot.id);
+      const { dump, headers: agentHeaders } = await startInternalFixtureTurn(bot.id);
+      // A held turn mounts the broker but does not itself ask permission.
+      // Speak the actual permission-proxy protocol to that mounted broker;
+      // the synthetic command is only card input and is never executed.
+      const socketPath = dump.mcpConfig.mcpServers.muragebox?.args.at(-1);
+      expect(socketPath).toBeTruthy();
+      const { connect } = await import("node:net");
+      permissionClient = connect(socketPath!);
+      permissionClient.on("error", () => {});
+      await once(permissionClient, "connect");
+      permissionClient.write(JSON.stringify({ t: "ask", id: "c03-private-request-canary", tool: "Bash", input: { command: "rm -rf ./C03_SYNTHETIC_PRIVATE_COMMAND_NEVER_RUN" } }) + "\n");
+      await expect.poll(async () => (await desktopApi("GET", `/api/bots/${bot.id}/access`)).body.pending.length, { timeout: 5_000 }).toBe(1);
       const token = dump.mcpConfig.mcpServers.composio.env.MURAGE_CONNECTORS_TOKEN;
       expect(token).toMatch(/^[a-f0-9]{48}$/);
       const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
@@ -5672,11 +5686,20 @@ describe("harness HTTP API", () => {
       const current = await desktopApi("GET", `/api/bots/${bot.id}/access`);
       expect(current.body.pending.length).toBeGreaterThan(0);
       expect(current.body.pending[0]).not.toHaveProperty("command");
+      const statusResponse = await fetch(`${BASE}/api/internal/permission-status`, { method: "POST", headers: agentHeaders, body: JSON.stringify({ targetBotId: bot.id }) });
+      expect(statusResponse.status).toBe(200);
+      const status = await statusResponse.json() as { pending: Array<{ kind: string; blockedReason: string; ageSeconds: number }> };
+      expect(status).toMatchObject({ botId: bot.id, canApprove: false, pending: [{ kind: "tool", blockedReason: "Waiting for owner review" }] });
+      expect(Object.keys(status.pending[0]).sort()).toEqual(["ageSeconds", "blockedReason", "kind"]);
+      expect(status.pending[0].ageSeconds).toBeGreaterThanOrEqual(0);
+      expect(JSON.stringify(status)).not.toMatch(/C03_SYNTHETIC_PRIVATE_COMMAND|c03-private-request-canary|Bash/);
+      expect(JSON.stringify(status)).not.toContain(token);
       expect((await api("GET", "/api/bots?messages=0")).body.bots.find((item: { id: string }) => item.id === bot.id)).not.toHaveProperty("connectedAppAccess");
       expect((await desktopApi("PUT", `/api/bots/${bot.id}/access`, { action: "configure", revision: current.body.policy.revision, mode: "unrestricted", allowWrites: true, grants: [] })).status).toBe(200);
       const stale = await fetch(`${BASE}/api/internal/connectors/mcp`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }) });
       expect(stale.status).toBe(401);
     } finally {
+      permissionClient?.destroy();
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
       await desktopApi("PUT", "/api/config", { composio: { apiKey: "" } });

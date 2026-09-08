@@ -6,6 +6,7 @@ import { Store } from "./store.ts";
 import { accessOwnerView,assertConnectedAppCall,requestBotAccess,reviewBotAccess,restrictedConnectorTools } from "./bot-access.ts";
 import { botAccessPolicy } from "./bot-access-role.ts";
 import { permissionStatus } from "./permission-status.ts";
+import { ACCESS_REQUEST_TTL_MS, accessRequestExpiresAt } from "../shared/bot-access.ts";
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 const account={toolkit:"gmail",accountId:"ca_fixture_owned"};
 const grant={...account,tools:["GMAIL_SEND_EMAIL","GMAIL_FETCH_EMAILS"]};
@@ -28,3 +29,40 @@ it("preserves unconfigured existing access and fails closed on corrupted policy"
 it("restricted tool listing exposes only approved concrete accounts and actions",()=>{const f=setup();enable(f,false);const result=restrictedConnectorTools(f.bot,7)!;expect(result.id).toBe(7);const schema=JSON.stringify(result);expect(schema).toContain("ca_fixture_owned");expect(schema).not.toContain("COMPOSIO_SEARCH_TOOLS");expect(result.result.tools[0]?.inputSchema.properties.tools.items.properties.tool_slug.enum).toEqual(["GMAIL_FETCH_EMAILS"]);});
 
 it("does not revive a queued request when its manager returns to the old role",()=>{const f=setup();const request=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant]});f.store.setChiefOfStaff(null,"Studio");f.store.setChiefOfStaff(f.lead.id,undefined,"section");expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account])).toThrow("stale");const restored=new Store(()=>f.bot.modelSelection);expect(()=>reviewBotAccess(restored,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account])).toThrow("stale");});
+
+it("binds a server-chosen expiry and allows owner review only before its deadline",()=>{
+ const f=setup(),now=1_700_000_000_000;
+ const request=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant],allowWrites:true},now);
+ expect(request.expiresAt).toBe(now+ACCESS_REQUEST_TTL_MS);
+ expect(botAccessPolicy(f.bot).requests[0]?.expiresAt).toBe(request.expiresAt);
+ reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account],request.expiresAt-1);
+ expect(()=>assertConnectedAppCall(f.bot,call())).not.toThrow();
+});
+it("rejects expired requests after restart and reports only redacted expiry status",()=>{
+ const f=setup(),now=1_700_000_000_000;
+ const request=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant],allowWrites:true},now);
+ const restored=new Store(()=>f.bot.modelSelection);
+ expect(()=>reviewBotAccess(restored,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account],request.expiresAt)).toThrow("expired");
+ expect(restored.bot(f.bot.id)?.composio).toBe(false);
+ const status=permissionStatus(restored,restored.bot(f.chief.id)!,f.bot.id,[],request.expiresAt);
+ expect(status.pending).toEqual([{kind:"access",ageSeconds:ACCESS_REQUEST_TTL_MS/1000,blockedReason:"Access request expired"}]);
+ expect(status.canApprove).toBe(false);
+ expect(JSON.stringify(status)).not.toContain(account.accountId);
+});
+it("bounds legacy request expiry and rejects attempts to supply a longer review window",()=>{
+ const f=setup(),now=1_700_000_000_000;
+ expect(()=>requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant],expiresAt:now+2*ACCESS_REQUEST_TTL_MS},now)).toThrow("Invalid");
+ const request=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant]},now);
+ const policy=botAccessPolicy(f.bot);delete policy.requests[0]!.expiresAt;
+ f.store.patchBot(f.bot.id,{connectedAppAccess:policy});
+ const restored=new Store(()=>f.bot.modelSelection);
+ expect(()=>reviewBotAccess(restored,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account],now+ACCESS_REQUEST_TTL_MS)).toThrow("expired");
+ expect(accessRequestExpiresAt({createdAt:now,expiresAt:now+2*ACCESS_REQUEST_TTL_MS})).toBe(now+ACCESS_REQUEST_TTL_MS);
+});
+it("replaces expired queue entries without reviving them or consuming the request limit",()=>{
+ const f=setup(),now=1_700_000_000_000;let first="";
+ for(let index=0;index<12;index++){const queued=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:botAccessPolicy(f.bot).revision,grants:[grant]},now);if(!index)first=queued.requestId;}
+ const fresh=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:botAccessPolicy(f.bot).revision,grants:[grant]},now+ACCESS_REQUEST_TTL_MS);
+ expect(botAccessPolicy(f.bot).requests.map(item=>item.id)).toEqual([fresh.requestId]);
+ expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:first,revision:fresh.revision},[account],now+ACCESS_REQUEST_TTL_MS)).toThrow("no longer pending");
+});

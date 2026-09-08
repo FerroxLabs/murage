@@ -15,7 +15,7 @@ export function EngineManagement({ instance }: { instance: InstanceInfo }) {
     setError(null);
     api(url).then(async (value: Status) => {
       if (active) setStatus(value);
-      if (value.supported || instance.driverKind === "fuigo") {
+      if (value.supported || instance.driverKind === "fuigoAgent") {
         const checked: Status = await api(url, { method: "POST", body: JSON.stringify({ action: "check" }) });
         if (active) setStatus(checked);
       }
@@ -40,9 +40,9 @@ export function EngineManagement({ instance }: { instance: InstanceInfo }) {
     <p>{status.message}</p>
     {status.updateAvailable && <p role="status" className="mt-2 font-medium text-ink">Engine update available · {status.latestVersion}</p>}
     <div className="mt-2 flex flex-wrap gap-2">
-      {(status.supported || instance.driverKind === "fuigo") && <button type="button" disabled={busy || status.busy} onClick={() => void perform("check")} className="rounded-lg border border-hairline/40 px-3 py-2 text-ink disabled:opacity-50">{busy ? "Working…" : "Check for engine updates"}</button>}
+      {(status.supported || instance.driverKind === "fuigoAgent") && <button type="button" disabled={busy || status.busy} onClick={() => void perform("check")} className="rounded-lg border border-hairline/40 px-3 py-2 text-ink disabled:opacity-50">{busy ? "Working…" : "Check for engine updates"}</button>}
       {status.supported && (missing || status.updateAvailable) && <button type="button" disabled={busy || status.busy} onClick={() => void perform(missing ? "install" : "update")} className="rounded-lg bg-accent px-3 py-2 font-medium text-white disabled:opacity-50">{missing ? "Install engine" : "Update"}</button>}
-      {instance.driverKind === "fuigo" && status.updateAvailable && <button type="button" onClick={() => dispatch({type:"toggleAppSettings",open:true,section:"general"})} className="rounded-lg bg-accent px-3 py-2 font-medium text-white">Update Murage</button>}
+      {instance.driverKind === "fuigoAgent" && status.updateAvailable && <button type="button" onClick={() => dispatch({type:"toggleAppSettings",open:true,section:"general"})} className="rounded-lg bg-accent px-3 py-2 font-medium text-white">Update Murage</button>}
     </div>
     {error && <p role="alert" className="mt-2 text-danger">{error}</p>}
   </div>;

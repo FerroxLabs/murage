@@ -13,7 +13,7 @@ test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   cache = mkdtempSync(join(tmpdir(), "murage-engine-setup-"));
   server = await createServer({ configFile: false, root, cacheDir: cache, envFile: false,
-    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client", "react/jsx-runtime", "lucide-react"] },
+    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] },
     resolve: { alias: { "@": `${root}/src` } }, server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [tailwindcss(), { name: "engine-setup-fixture", enforce: "pre",
       resolveId(id) {
@@ -56,6 +56,7 @@ test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force
 
 test("engine setup reports terminal and probe outcomes without claiming installation",async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
+  await page.route('**/api/engine-management/**', route => route.fulfill({ json: { supported: false, updateAvailable: false, busy: false, message: 'Use the setup instructions for this engine.' } }));
   await page.goto(`${origin}/__engine`);
   await page.getByRole('button',{name:'Open install in Terminal'}).click();
   await expect(page.getByRole('button',{name:'Opening Terminal…'})).toBeDisabled();
@@ -92,7 +93,7 @@ test("bundled Fuigo connects inline and preserves a detected native account", as
   await page.goto(`${origin}/__engine`);
   await page.evaluate(() => {
     const w = window as any;
-    w.fixtureInstance = { ...w.fixtureInstance, instanceId: 'fuigo', driverKind: 'fuigo', displayName: 'Fuigo', cliDefault: 'fuigo', snapshot: { state: 'available', authenticated: false } };
+    w.fixtureInstance = { ...w.fixtureInstance, instanceId: 'fuigo', driverKind: 'fuigoAgent', displayName: 'Fuigo', cliDefault: 'fuigo', snapshot: { state: 'available', authenticated: false } };
     w.fixtureStore.dispatch({ type: 'instances', instances: [w.fixtureInstance] });
   });
   await expect(page.getByText('Got a Flux Router key? Connect it here to get started.')).toBeVisible();
@@ -108,7 +109,7 @@ test("bundled Fuigo connects inline and preserves a detected native account", as
   });
   await page.locator('input[type="password"]').fill('fixture-only-not-a-real-key');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByText('Detected · signed in')).toBeVisible();
+  await expect(page.getByText('Included · connected')).toBeVisible();
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

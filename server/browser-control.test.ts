@@ -38,6 +38,23 @@ describe("unified browser ownership boundary",()=>{
     finish({content:[{type:"text",text:"stale secret"}]});
     await expect(action).rejects.toThrow();await taking;
   });
+  it("discards results when takeover lands during the final guard disarm",async()=>{
+    const f=fixture();let release!:()=>void;let entered!:()=>void;
+    const disarming=new Promise<void>(resolve=>{entered=resolve;});
+    f.native.protected=async(armed=true)=>{if(!armed){entered();await new Promise<void>(resolve=>{release=resolve;});}return false;};
+    const action=f.controller.dispatch("shared","tools/call",{name:"agent_browser_snapshot"},()=>true);
+    await disarming;
+    const taking=f.controller.take("shared","owner");
+    release();
+    await expect(action).rejects.toThrow();await taking;
+  });
+  it("allows an explicitly authorized desktop reclaim without clearing protected-document state",async()=>{
+    const f=fixture();const first=await f.controller.take("shared","phone");
+    f.controller.input("shared","phone",first.generation,{type:"input_keyboard",eventType:"char",text:"fake"});
+    const next=await f.controller.reclaim("shared","desktop");
+    expect(next).toMatchObject({held:true,owner:"desktop",protectedDocument:true});
+    expect(()=>f.controller.input("shared","phone",first.generation,{type:"input_keyboard",eventType:"char",text:"old"})).toThrow();
+  });
   it("refuses stale frames and input across ownership changes",async()=>{
     const f=fixture();await f.controller.connect("shared");f.frame(1);
     const previous=f.controller.status("shared");const held=await f.controller.take("shared","owner");

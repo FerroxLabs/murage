@@ -1774,7 +1774,7 @@ function createWindow() {
   });
   mainWindow = win;
   attachUpdaterWindow(win);
-  void startBrowserSurface(win);
+  // Browser execution and viewing are owned by the unified harness engine.
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
   if (restored.maximized) win.maximize();

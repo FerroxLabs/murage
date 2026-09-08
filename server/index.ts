@@ -106,7 +106,9 @@ import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from 
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
-import { browserEngineStatus, browserEngineEncryptionKey, browserSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { UnifiedBrowserController } from "./browser-control.ts";
+import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
+import { UNIFIED_BROWSER_SYSTEM_PROMPT, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { parseConnectorRequests, connectorRequestKey, connectorRequestStatus } from "./connector-requests.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
@@ -287,12 +289,8 @@ import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import {
-  BUILT_IN_BROWSER_SYSTEM_PROMPT,
   applyDesktopBrowserConnectionMessage,
-  availableBrowserConnection,
-  browserScreenshot,
   clearBrowserCapabilities,
-  registerBrowserCapability,
   revokeBrowserCapability,
   type BrowserCapability,
   type BrowserConnection,
@@ -387,6 +385,7 @@ ensureDirs();
 assertRestoreReviewed(DATA_DIR);
 const cfg = loadConfig();
 let providerConfigBusy = false;
+let providerFleetReady = true;
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
@@ -461,19 +460,34 @@ import { CoordinationBudget, MAX_COORDINATION_DEPTH, MAX_HANDOFFS_PER_TURN, MAX_
 const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-roots.json"));
 const internalCapabilities = new InternalCapabilities();
 const coordinationSlots = new Map<string, () => void>();
-function coordinationHasCapacity(): boolean { return coordinationSlots.size < MAX_CONCURRENT_HANDOFFS; }
+function coordinationHasCapacity(): boolean {
+  return !providerConfigBusy && providerFleetReady && coordinationSlots.size < MAX_CONCURRENT_HANDOFFS;
+}
+let coordinationDrainScheduled = false;
+function scheduleCoordinationDrain(): void {
+  if (coordinationDrainScheduled) return;
+  coordinationDrainScheduled = true;
+  queueMicrotask(() => {
+    coordinationDrainScheduled = false;
+    for (const source of pendingThreads()) {
+      if (!coordinationHasCapacity()) break;
+      if (!internalTurnOwners.has(source)) drainDelegations(commsBus, approvalBus, source, runDelegatedTurn);
+    }
+  });
+}
+function finishProviderConfigMutation(): void {
+  providerConfigBusy = false;
+  // Reload/rollback may have released idle targets while admission was closed.
+  // Drain only after the final fleet is attached and the mutation guard clears.
+  if (providerFleetReady) scheduleCoordinationDrain();
+}
 function holdCoordinationSlot(threadId: string): () => void {
   if (coordinationSlots.has(threadId) || !coordinationHasCapacity()) throw new Error("COORDINATION_CAPACITY: wait for a running handoff");
   let released = false;
   const release = () => {
     if (released) return;
     released = true; unsubscribe(); coordinationSlots.delete(threadId);
-    queueMicrotask(() => {
-      for (const source of pendingThreads()) {
-        if (!coordinationHasCapacity()) break;
-        if (!internalTurnOwners.has(source)) drainDelegations(commsBus, approvalBus, source, runDelegatedTurn);
-      }
-    });
+    scheduleCoordinationDrain();
   };
   const unsubscribe = bus.subscribe((event: RuntimeEvent) => {
     if (event.type === "turn.completed" && event.threadId === threadId && !shouldIgnoreProviderEvent(event)) release();
@@ -581,6 +595,39 @@ type ActiveBrowserCapability = {
   capability: BrowserCapability;
 };
 
+const unifiedBrowser = new UnifiedBrowserController({ stateFile: join(DATA_DIR, "browser-control.json") });
+const unifiedBrowserThreads = new Map<string, { botId: string; ownerId: string; profileKey: string; profile: string | undefined }>();
+const unifiedBrowserBindings = new Map<string, { key: string; spec: AgentBrowserSpec }>();
+const guestBrowserBindings = new Map<string, string>();
+async function unifiedBrowserBinding(botId: string, profile: string | undefined) {
+  const realmId = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+  const partition = profile === "guest" ? "guest" : (profile ? browserProfilePartitionTarget(cfg, profile)?.partitionId ?? "" : "");
+  const identity = JSON.stringify([realmId, partition && partition !== "guest" ? partition : botId, partition === "guest"]);
+  const existing = unifiedBrowserBindings.get(identity);
+  if (existing) return existing;
+  const engine = browserEngineStatus();
+  if (engine.kind !== "ready") throw new Error(engine.reason);
+  const session = partition === "guest" ? guestBrowserBindings.get(botId) ?? browserSessionId(botId, partition, realmId) : browserSessionId(botId, partition, realmId);
+  if (partition === "guest") guestBrowserBindings.set(botId, session);
+  const spec = agentBrowserIntegration({ binaryPath: engine.binaryPath, session, encryptionKey: browserEngineEncryptionKey(DATA_DIR), dataDir: DATA_DIR, realmId, persistent: partition !== "guest" });
+  await verifyAgentBrowserBinary(engine.binaryPath, spec.env);
+  unifiedBrowser.register(session, spec);
+  const binding = { key: session, spec }; unifiedBrowserBindings.set(identity, binding); return binding;
+}
+function unifiedBrowserKey(bot: BotRecord): string | null {
+  const realm = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+  const partition = bot.browserProfile === "guest" ? "guest" : (bot.browserProfile ? browserProfilePartitionTarget(cfg, bot.browserProfile)?.partitionId ?? "" : "");
+  return partition === "guest" ? guestBrowserBindings.get(bot.id) ?? null : browserSessionId(bot.id, partition, realm);
+}
+function unifiedBrowserHeld(bot: BotRecord): boolean {
+  const key = unifiedBrowserKey(bot); if (!key) return false;
+  try { return unifiedBrowser.status(key).held; } catch { return false; }
+}
+async function forgetGuestBrowser(botId: string) {
+  const key = guestBrowserBindings.get(botId); if (!key) return;
+  await unifiedBrowser.forget(key); guestBrowserBindings.delete(botId);
+  for (const [identity, binding] of unifiedBrowserBindings) if (binding.key === key) unifiedBrowserBindings.delete(identity);
+}
 const browserCapabilitiesByThread = new Map<string, ActiveBrowserCapability>();
 const headlessBrowsersByThread = new Map<string, { botId: string; ownerId: string; spec: AgentBrowserSpec }>();
 const closingHeadlessBrowsers = new Map<string, Promise<void>>();
@@ -623,6 +670,8 @@ async function revokeReleasedBrowserCapability(active: ActiveBrowserCapability, 
 }
 
 async function releaseBrowserCapabilityForThread(threadId: string, expectedOwnerId?: string): Promise<void> {
+  const unified = unifiedBrowserThreads.get(threadId);
+  if (unified && (expectedOwnerId === undefined || unified.ownerId === expectedOwnerId)) unifiedBrowserThreads.delete(threadId);
   const headless = headlessBrowsersByThread.get(threadId);
   if (headless && (expectedOwnerId === undefined || headless.ownerId === expectedOwnerId)) {
     headlessBrowsersByThread.delete(threadId);
@@ -655,6 +704,8 @@ async function releaseBrowserCapabilitiesForBot(botId: string): Promise<void> {
 
 async function releaseAllBrowserCapabilities(): Promise<void> {
   revokeAllInternalTurns();
+  unifiedBrowserThreads.clear();
+  await unifiedBrowser.close();
   await Promise.all([...headlessBrowsersByThread.keys()].map(threadId => releaseBrowserCapabilityForThread(threadId)));
   await Promise.all(closingHeadlessBrowsers.values());
   const active = [...browserCapabilitiesByThread.values()];
@@ -806,80 +857,18 @@ function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): Dir
   return claim;
 }
 
-async function browserIntegration(
-  botId: string,
-  profile: string | undefined,
-  threadId: string,
-  stillValid: () => boolean = () => true,
-  ownerId = randomUUID(),
-) {
-  const connection = availableBrowserConnection();
-  if (!connection) {
-    // Keep Windows unavailable until native ACL/runtime support is proven.
-    if (process.platform === "win32") return null;
-    const engine = browserEngineStatus();
-    if (engine.kind !== "ready") return null;
-    const key = browserEngineEncryptionKey(DATA_DIR);
-    const realmId = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
-    const partition = profile === "guest" ? "guest" : (profile ? browserProfilePartitionTarget(cfg, profile)?.partitionId ?? "" : "");
-    const spec = agentBrowserIntegration({ binaryPath: engine.binaryPath,
-      session: browserSessionId(botId, partition, realmId), encryptionKey: key, dataDir: DATA_DIR,
-      realmId, persistent: profile !== "guest" });
-    await verifyAgentBrowserBinary(engine.binaryPath, spec.env);
-    if (!stillValid()) return null;
-    await releaseBrowserCapabilityForThread(threadId);
-    const closing = closingHeadlessBrowsers.get(threadId);
-    if (closing) await closing;
-    if (!stillValid()) return null;
-    const control = controlIntegration(botId, threadId, ownerId);
-    headlessBrowsersByThread.set(threadId, { botId, ownerId, spec });
-    return { connection: null, capability: null, profile: partition, integration: {
-      command: process.execPath, args: [SPAWNED_PROXIES.headlessBrowser], env: {
-        ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
-        MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
-        MURAGE_HEADLESS_BROWSER_URL: `http://127.0.0.1:${PORT}/api/internal/headless-browser?botId=${encodeURIComponent(botId)}&threadId=${encodeURIComponent(threadId)}`,
-      },
-    } };
-  }
-  const control = controlIntegration(botId, threadId, ownerId);
-  // A profile that no longer exists falls back to the bot's own session.
-  // Canonical ids belong to config/bot references; Electron must receive the
-  // exact immutable partition inherited from #567 so an upgrade cannot move
-  // a bot into another account. Guest remains a throwaway partition.
-  const profileTarget = profile && profile !== "guest"
-    ? browserProfilePartitionTarget(cfg, profile)
-    : null;
-  const partitionId = profile === "guest" ? "guest" : (profileTarget?.partitionId ?? "");
+async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId = randomUUID()) {
+  if (browserEngineStatus().kind !== "ready") return null;
+  const binding = await unifiedBrowserBinding(botId, profile);
+  if (!stillValid()) return null;
   await releaseBrowserCapabilityForThread(threadId);
-  const capability = await registerBrowserCapability(connection, botId, partitionId);
-  const active = { botId, ownerId, connection, capability };
-  // Registration crosses a process boundary. Stop/delete/config changes can
-  // land while the desktop host is minting the token; revalidate in the same
-  // event-loop turn that publishes it. If ownership was lost, no agent ever
-  // receives the bearer and the just-created token is revoked immediately.
-  if (!stillValid()) {
-    await revokeReleasedBrowserCapability(active);
-    return null;
-  }
-  browserCapabilitiesByThread.set(threadId, active);
-  return {
-    connection,
-    capability,
-    profile: partitionId,
-    integration: {
-      command: process.execPath,
-      args: [SPAWNED_PROXIES.browser],
-      env: {
-        ...AGENTS_NODE_FLAG,
-        MURAGE_BROWSER_URL: connection.url,
-        MURAGE_BROWSER_TOKEN: capability.token,
-        MURAGE_BROWSER_PROFILE: partitionId,
-        MURAGE_BOT_ID: botId,
-        MURAGE_CONTROL_URL: control.url,
-        MURAGE_CONTROL_TOKEN: control.token,
-      },
-    },
-  };
+  if (!stillValid()) return null;
+  const control = controlIntegration(botId, threadId, ownerId);
+  unifiedBrowserThreads.set(threadId, { botId, ownerId, profileKey: binding.key, profile });
+  return { profileKey: binding.key, integration: { command: process.execPath, args: [SPAWNED_PROXIES.unifiedBrowser], env: {
+    ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
+    MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
+  } } };
 }
 
 function phoneIntegration() {
@@ -2582,7 +2571,7 @@ bus.subscribe((event: RuntimeEvent) => {
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup, ...(event.providerError ? { providerError: event.providerError } : {}) },
+        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, 160)}`, ok: false, setup: event.setup, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.providerError ? { providerError: event.providerError } : {}) },
       });
       // a setup error means the engine could not even start: the bot is
       // dead until something changes, not merely idle. The next successful
@@ -2945,6 +2934,7 @@ function retryDelegationsWaitingOn(botId: string): void {
     if (store.bot(botId)?.busy) return;
     const threadId = store.bot(botId)?.threadId;
     if (threadId) coordinationSlots.get(threadId)?.();
+    if (providerConfigBusy || !providerFleetReady) return;
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
@@ -3747,7 +3737,7 @@ async function startTurn(
           // its other reader (package-export.ts) merely round-trips the
           // field back out into a blueprint.
           composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
-          (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
+          (integrations.browser ? UNIFIED_BROWSER_SYSTEM_PROMPT : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           credentialPrompt +
           (integrations.agents && (cfg.webSearch?.provider ?? "engine") === "engine"
@@ -3796,10 +3786,14 @@ async function startTurn(
       // after its own turn.completed would never be torn down — it would
       // keep polling the box forever, carrying dead per-turn state. busy
       // is flipped false in the fold, so it is the honest "still running".
-      if (!previewCapture && browser?.connection && browser.capability) {
-        const { connection } = browser;
-        const capability = browser.capability;
-        previewCapture = () => browserScreenshot(connection, capability, fetch);
+      if (!previewCapture && browser) {
+        const profileKey = browser.profileKey;
+        previewCapture = async () => {
+          const result = await unifiedBrowser.dispatch(profileKey, "tools/call", { name: "agent_browser_screenshot", arguments: { format: "png" } }, () => directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) as { content?: { type: string; data?: string }[] };
+          const image = result.content?.find(item => item.type === "image" && item.data);
+          if (!image?.data) throw new Error("Browser picture is unavailable");
+          return { png: image.data, format: "png" };
+        };
       }
       if (previewCapture && store.bot(bot.id)?.busy) {
         startScreenPoller(bot.id, previewCapture, { screenIsTheWork: instance.driverKind === "boxAgent" });
@@ -4103,6 +4097,7 @@ if (recoveryOwners.length > 0) {
 }
 routines.start();
 const telegram = new TelegramService({ dataDir: DATA_DIR,
+  isCurrentTarget: targetBotId => cfg.telegram?.targetBotId === targetBotId && Boolean(store.bot(targetBotId) && !store.bot(targetBotId)!.hidden),
   approvals: targetBotId => {
     const pending = () => {
       const bot = store.bot(targetBotId);
@@ -4145,6 +4140,12 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
     }
   },
 });
+// A saved token never selects a replacement Chief: restore only the exact
+// previously paired target after Telegram identity/provenance verification.
+if (cfg.telegram?.botToken && cfg.telegram.targetBotId) {
+  void telegram.resume(cfg.telegram.botToken, cfg.telegram.targetBotId);
+}
+
 
 // Chat tools can prepare routine changes, but the harness applies them only
 // after the user confirms a durable card. Keeping this beside the scheduler
@@ -4657,7 +4658,7 @@ async function runGroupMemberTurn(
     // What the profile said this assistant's job needs. A packaged bot does
     // not stop needing Gmail because it is answering in a room.
     composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps) +
-    (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
+    (integrations.browser ? UNIFIED_BROWSER_SYSTEM_PROMPT : "") +
     (workspace ? skillsSystemPrompt(bot.id) : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, bot.playbooks);
@@ -6246,6 +6247,7 @@ function persistMcpServers(next: Record<string, unknown>): void {
 /** Rebuild the provider fleet after a config change so new keys take
  * effect without a server restart (kills any in-flight turns). */
 async function reloadProviders() {
+  providerFleetReady = false;
   const retiringProjects = projectTurnLeases.generations();
   revokeAllInternalTurns();
   await releaseAllBrowserCapabilities();
@@ -6254,6 +6256,7 @@ async function reloadProviders() {
   projectTurnLeases.disposed(retiringProjects);
   await registry.load(instanceConfigs(cfg));
   bus.attach(registry.instances());
+  providerFleetReady = true;
   // A killed turn's terminal events can die with the old fleet (dispose is
   // async under the hood), stranding the bot busy — and its screen poller —
   // forever. Settle anything still marked busy.
@@ -6319,7 +6322,7 @@ const engineManager = new EngineManager({
         await reloadProviders();
         throw cause;
       }
-    } finally { providerConfigBusy = false; }
+    } finally { finishProviderConfigMutation(); }
   },
 });
 
@@ -6967,6 +6970,22 @@ const server = createServer(async (req, res) => {
         return json(res,status,{error:error instanceof Error?error.message:"MEMORY_ACTION_FAILED"});
       }
     }
+    if ((m = path.match(/^\/api\/bots\/([^/]+)\/browser(\/frame)?$/))) {
+      const desktop = requestSurface(req.headers, url.searchParams) === "desktop";
+      const paired = companionAuthorized(req.headers);
+      if (!desktop && !paired) return json(res, 401, { error: "browser owner authentication required" });
+      const bot = store.bot(m[1]);
+      if (!bot || (!desktop && !visibleToCompanion(store, { scope: "bot", botId: bot.id }))) return json(res, 404, { error: "no such browser" });
+      if (!builtInBrowserEnabled(cfg) || bot.browser === false) return json(res, 403, { error: "browser is disabled" });
+      if (method === "POST" && !String(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "JSON required" });
+      const profile = bot.browserProfile, binding = await unifiedBrowserBinding(bot.id, profile);
+      const realm = restoredConnectionProfile(DATA_DIR)?.id ?? "original-installation";
+      const authority = { owner: browserOwnerId(desktop ? "desktop" : "companion", realm), profileKey: binding.key, canReclaim: desktop,
+        active: () => builtInBrowserEnabled(cfg) && !!store.bot(bot.id) && store.bot(bot.id)?.browser !== false && store.bot(bot.id)?.browserProfile === profile };
+      const body = method === "POST" ? await readBody(req) : {};
+      const result = await browserOwnerRequest(unifiedBrowser, authority, method, body, m[2] ? Number(url.searchParams.get("generation")) : undefined);
+      res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
+    }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
@@ -6976,7 +6995,7 @@ const server = createServer(async (req, res) => {
         return json(res, 401, { error: "unauthorized" });
       }
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith("/api/internal/connectors/")
-        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser"].includes(path) ? "computer" : "agents";
+        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       const requireActiveInternal = () => {
         if (!internalCapabilities.isActive(internalClaim) || !store.bot(internalClaim.botId)
@@ -7040,6 +7059,20 @@ const server = createServer(async (req, res) => {
             { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status });
           throw error;
         } finally { clearInterval(revoked); res.off("close", disconnected); }
+      }
+      if (path === "/api/internal/unified-browser") {
+        requireActiveInternal();
+        if (method !== "POST") return json(res, 405, { error: "browser RPC requires POST" });
+        const entry = unifiedBrowserThreads.get(internalClaim.threadId);
+        const authorized = () => !!entry && internalCapabilities.isActive(internalClaim)
+          && unifiedBrowserThreads.get(internalClaim.threadId) === entry
+          && entry.botId === internalClaim.botId && entry.ownerId === internalClaim.generation
+          && builtInBrowserEnabled(cfg) && store.bot(entry.botId)?.browser !== false
+          && store.bot(entry.botId)?.browserProfile === entry.profile;
+        if (!authorized()) return json(res, 403, { error: "browser turn is no longer authorized" });
+        const body = await readBody(req); requireActiveInternal();
+        const result = await unifiedBrowser.dispatch(entry!.profileKey, body.method, body.params ?? {}, authorized);
+        res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
       }
       if (path === "/api/internal/headless-browser") {
         if (method !== "GET" && method !== "DELETE") return json(res, 405, { error: "method not allowed" });
@@ -8493,6 +8526,13 @@ const server = createServer(async (req, res) => {
       catch (error) { await telegram.revoke(); throw error; }
       return json(res, 200, pairing);
     }
+    if (path === "/api/telegram/resume" && method === "POST") {
+      if (telegram.status().resumeState !== "retry") return json(res, 409, { error: "Reconnect retry is not available for this connection." });
+      const token = cfg.telegram?.botToken, targetBotId = cfg.telegram?.targetBotId;
+      if (!token || !targetBotId) return json(res, 409, { error: "Save and pair your Telegram bot first." });
+      await telegram.resume(token, targetBotId);
+      return json(res, 200, telegram.status());
+    }
     if (path === "/api/telegram/revoke" && method === "POST") { await telegram.revoke(); return json(res, 200, telegram.status()); }
     if (method === "POST" && (path === "/api/packages/import" || path === "/api/starter-profiles")) {
       const body = await readBody(req);
@@ -9709,6 +9749,8 @@ const server = createServer(async (req, res) => {
         const requestedProfile = body.browserProfile === null || body.browserProfile === ""
           ? undefined
           : body.browserProfile;
+        if (existingBot && requestedProfile !== existingBot.browserProfile && unifiedBrowserHeld(existingBot)) return json(res, 409, { error: "Return browser control before changing profiles" });
+        if (existingBot?.browserProfile === "guest" && requestedProfile !== "guest" && !existingBot.busy) await forgetGuestBrowser(existingBot.id);
         if (existingBot?.busy && requestedProfile !== existingBot.browserProfile) {
           return json(res, 409, { error: "stop this bot's turn before changing its browser profile" });
         }
@@ -11188,7 +11230,7 @@ const server = createServer(async (req, res) => {
         resetPathCache();
         return json(res, 200, { instances: await registry.describe() });
       } finally {
-        providerConfigBusy = false;
+        finishProviderConfigMutation();
       }
     }
 
@@ -11331,7 +11373,7 @@ const server = createServer(async (req, res) => {
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch = parseConfigPatch(body);
-      if (patch.telegram && (telegram.status().enabled || telegram.status().connecting)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
+      if (patch.telegram && (telegram.status().enabled || telegram.status().connecting || telegram.status().requiresRevoke)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
       const disablingBuiltInBrowser = patch.features?.browser === false && builtInBrowserEnabled(cfg);
@@ -11585,7 +11627,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, finalized.value);
       } finally {
         if (changingLocalVmMode) localVmModeChangeBusy = false;
-        providerConfigBusy = false;
+        finishProviderConfigMutation();
       }
     }
 

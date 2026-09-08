@@ -17,7 +17,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["POST"], path: /^\/api\/packages\/import$/, purpose: "review and commit a local package archive" },
   { methods: ["POST"], path: /^\/api\/packages\/export$/, purpose: "review and export selected local skill files" },
   { methods: ["POST"], path: /^\/api\/starter-profiles$/, purpose: "review and install a local starter profile" },
-  { methods: ["GET", "POST"], path: /^\/api\/telegram\/(status|pair|revoke)$/, purpose: "pair and revoke the Telegram owner channel" },
+  { methods: ["GET", "POST"], path: /^\/api\/telegram\/(status|pair|resume|revoke)$/, purpose: "pair and revoke the Telegram owner channel" },
   { methods: ["POST"], path: /^\/api\/team-library\/github$/, purpose: "download team packages to disk" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/(assistant-profile|skills(?:\/library)?)$/, purpose: "install executable instructions" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+\/skills\/[^/]+$/, purpose: "enable, change or delete installed skills" },

@@ -762,61 +762,97 @@ describe("comms e2e (fake ACP fleet)", () => {
         approvePeerComms: true,
       });
 
-      // Start the ask while B is idle so the normal ask_bot approval card is
-      // the first and only human decision for this exact peer message.
-      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "ask @ReloadHelper something" })).status).toBe(202);
-      let approvalCard: any;
-      await waitUntil(async () => {
-        const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
-        approvalCard = current.messages.find(
-          (m: any) => m.kind === "options" && m.card?.tool === "ask_bot" && !m.card?.answered,
-        );
-        return Boolean(approvalCard);
-      }, 20_000, "initial ask_bot approval card never appeared");
+      const diagnosticStartedAt = Date.now();
+      let reloadStartedAt: number | undefined, reloadFinishedAt: number | undefined;
+      let lastState: any[] = [];
+      let failure: unknown;
+      try {
+        // Start the ask while B is idle so the normal ask_bot approval card is
+        // the first and only human decision for this exact peer message.
+        expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "ask @ReloadHelper something" })).status).toBe(202);
+        let approvalCard: any;
+        await waitUntil(async () => {
+          const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+          approvalCard = current.messages.find(
+            (m: any) => m.kind === "options" && m.card?.tool === "ask_bot" && !m.card?.answered,
+          );
+          return Boolean(approvalCard);
+        }, 20_000, "initial ask_bot approval card never appeared");
 
-      // B becomes busy while the approval is open. After Allow, ask_bot has
-      // to fall back to the durable queue, but that queue inherits Allow.
-      expect((await api("POST", `/api/bots/${helper.id}/messages`, { text: "hold until reload" })).status).toBe(202);
-      await waitUntil(async () => {
-        const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
-        return Boolean(current?.busy);
-      }, 10_000, "helper never became busy behind the approval card");
-      expect((await api("POST", `/api/bots/${asker.id}/respond`, {
-        requestId: approvalCard.card.requestId,
-        behavior: "allow",
-      })).status).toBe(200);
+        // B becomes busy while the approval is open. After Allow, ask_bot has
+        // to fall back to the durable queue, but that queue inherits Allow.
+        expect((await api("POST", `/api/bots/${helper.id}/messages`, { text: "hold until reload" })).status).toBe(202);
+        await waitUntil(async () => {
+          const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+          return Boolean(current?.busy);
+        }, 10_000, "helper never became busy behind the approval card");
+        expect((await api("POST", `/api/bots/${asker.id}/respond`, {
+          requestId: approvalCard.card.requestId,
+          behavior: "allow",
+        })).status).toBe(200);
 
-      await waitUntil(async () => {
-        const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
-        const queued = current.messages.some(
-          (m: any) => m.kind === "text" && m.text?.includes("queued as a delegation"),
-        );
-        const waiting = current.messages.some(
-          (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy"),
-        );
-        return queued && waiting && !current.busy;
-      }, 25_000, "approved ask was not retained as a waiting delegation");
+        await waitUntil(async () => {
+          const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+          const queued = current.messages.some(
+            (m: any) => m.kind === "text" && m.text?.includes("queued as a delegation"),
+          );
+          const waiting = current.messages.some(
+            (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy"),
+          );
+          return queued && waiting && !current.busy;
+        }, 25_000, "approved ask was not retained as a waiting delegation");
 
-      // Provider reload releases B without turn.completed. The explicit idle
-      // retry must still pick up the waiting handoff on the rebuilt fleet.
-      expect((await api("PUT", "/api/config", { xai: { key: `xai_retry_${Date.now()}` } })).status).toBe(200);
-      writeFileSync(gateFile, "go");
+        // Provider reload releases B without turn.completed. The explicit idle
+        // retry must still pick up the waiting handoff on the rebuilt fleet.
+        reloadStartedAt = Date.now();
+        expect((await api("PUT", "/api/config", { xai: { key: `xai_retry_${Date.now()}` } })).status).toBe(200);
+        reloadFinishedAt = Date.now();
+        writeFileSync(gateFile, "go");
 
-      let finalAsker: any;
-      await waitUntil(async () => {
-        finalAsker = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
-        return finalAsker.messages.some(
-          (m: any) =>
-            m.kind === "text"
-            && m.from?.botId === helper.id
-            && m.text?.includes("replied to the delegated task")
-            && m.text?.includes("ping from fake"),
-        );
-      }, 30_000, "provider reload left the waiting delegation stranded");
+        let finalAsker: any;
+        await waitUntil(async () => {
+          lastState = (await api("GET", "/api/bots")).body.bots;
+          finalAsker = lastState.find((b: any) => b.id === asker.id);
+          return finalAsker.messages.some(
+            (m: any) =>
+              m.kind === "text"
+              && m.from?.botId === helper.id
+              && m.text?.includes("replied to the delegated task")
+              && m.text?.includes("ping from fake"),
+          );
+        }, 30_000, "provider reload left the waiting delegation stranded");
 
-      const approvalCards = finalAsker.messages.filter((m: any) => m.kind === "options");
-      expect(approvalCards.filter((m: any) => m.card?.tool === "ask_bot")).toHaveLength(1);
-      expect(approvalCards.some((m: any) => m.card?.tool === "delegate_bot")).toBe(false);
+        const approvalCards = finalAsker.messages.filter((m: any) => m.kind === "options");
+        expect(approvalCards.filter((m: any) => m.card?.tool === "ask_bot")).toHaveLength(1);
+        expect(approvalCards.some((m: any) => m.card?.tool === "delegate_bot")).toBe(false);
+      } catch (error) {
+        failure = error;
+        throw error;
+      } finally {
+        try {
+          const bounded = (value: unknown, limit: number) => String(value ?? "").replaceAll(DESKTOP_SECRET, "[fixture-secret]").slice(0, limit);
+          const readReceipt = (name: string) => {
+            try { return bounded(readFileSync(join(home, ".murage", name), "utf8"), 24000); }
+            catch { return null; }
+          };
+          const directory = join(SERVER_DIR, "..", ".planning", "chief-capability-evidence", "C02", "E1");
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(join(directory, `reload-${process.pid}-${diagnosticStartedAt}.json`), JSON.stringify({
+            startedAt: diagnosticStartedAt, reloadStartedAt, reloadFinishedAt, endedAt: Date.now(),
+            childPid: child.pid, childExitCode: child.exitCode, gateExists: existsSync(gateFile), fixtureHome: home,
+            failure: failure ? bounded(failure instanceof Error ? failure.message : failure, 1000) : null,
+            bots: lastState.filter(bot => bot.id === asker.id || bot.id === helper.id).map(bot => ({
+              id: bot.id, name: bot.name, threadId: bot.threadId, busy: bot.busy, activity: bot.activity,
+              messages: (bot.messages ?? []).slice(-12).map((message: any) => ({
+                at: message.at, role: message.role, kind: message.kind, from: message.from,
+                text: bounded(message.text, 1500), tool: message.tool,
+              })),
+            })),
+            pending: readReceipt("delegations.json"), receipts: readReceipt("delegation-receipts.json"),
+            stderr: bounded(stderr.slice(-8000), 8000),
+          }, null, 2), { mode: 0o600 });
+        } catch { console.warn("Could not save bounded reload fixture diagnostics"); }
+      }
     },
     90_000,
   );
