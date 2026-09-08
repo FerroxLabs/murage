@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { browserSessionId } from "./browser-engine.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
@@ -97,6 +98,21 @@ let stderr = "";
 const browserCapabilityCalls: Array<{ operation: string; authorization?: string; body: any }> = [];
 let browserRevokeFailuresRemaining = 0;
 let browserRegisterDelayMs = 0;
+const browserNativeEvents: Array<{ operation: string; session: string }> = [];
+const browserFixturePrelude = pathToFileURL(join(SERVER_DIR, "testing", "unified-browser-fixture.mjs")).href;
+const browserSession = (botId: string, profile = "") => browserSessionId(botId, profile, "original-installation");
+const browserRpc = (token: string, base = BASE) => fetch(`${base}/api/internal/unified-browser`, {
+  method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ method: "tools/list" }),
+});
+const browserMount = async (file = fakeClaudeDump, base = BASE) => {
+  const dump = await readJsonFileWhenReady<{ mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> } }>(file);
+  const mounted = dump.mcpConfig.mcpServers.browser!;
+  expect(mounted.args[0]).toMatch(/unified-browser-proxy/);
+  expect(mounted.env.MURAGE_CONTROL_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+  expect(mounted.env).not.toHaveProperty("AGENT_BROWSER_ENCRYPTION_KEY");
+  expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN, base)).status).toBe(200);
+  return mounted;
+};
 
 const expectStoppedTestServerCleanly = (serverChild: ChildProcess, capturedStderr: string): void => {
   // POSIX delivers SIGTERM to the server's graceful-shutdown handler, which
@@ -432,6 +448,13 @@ beforeAll(async () => {
   );
 
   boxStub = createServer(async (req, res) => {
+    if (req.url === "/fixture-browser-event") {
+      let raw = ""; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw);
+      browserNativeEvents.push(body);
+      if (body.operation === "verify" && browserRegisterDelayMs) await new Promise(resolve => setTimeout(resolve, browserRegisterDelayMs));
+      res.writeHead(200, { "content-type": "application/json" }); return res.end("{}");
+    }
     if (connectorAliasFixture && req.url?.startsWith("/api/v3.1/")) {
       connectorAliasFixture.calls += 1;
       if (req.url.startsWith("/api/v3.1/connected_accounts")) {
@@ -503,7 +526,7 @@ beforeAll(async () => {
 
   // The isolated negative control selects a preserved pre-change harness;
   // production never gains an authorization bypass or test mint endpoint.
-  child = spawn(process.execPath, ["--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -516,8 +539,9 @@ beforeAll(async () => {
       MURAGE_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       MURAGE_COMPOSIO_TOOLKITS_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       MURAGE_STATIC_DIR: staticDir,
-      // Exists only during the headless authority fixture below.
-      MURAGE_AGENT_BROWSER_PATH: join(home, "fake-agent-browser"),
+      // The preload isolates only native execution; authority uses the real harness.
+      MURAGE_AGENT_BROWSER_PATH: process.execPath,
+      MURAGE_BROWSER_FIXTURE_URL: `http://127.0.0.1:${boxStubPort}/fixture-browser-event`,
       // Created only by the browser integration test. Keeping an explicit
       // path prevents that test from ever discovering a developer app's live
       // descriptor on the host running the suite.
@@ -4669,86 +4693,36 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("mounts a scoped browser capability and the safety prompt in room turns", async () => {
-    const descriptorFile = join(home, "browser-test-connection.json");
-    const masterToken = "c".repeat(64);
-    writeFileSync(descriptorFile, JSON.stringify({
-      version: 1,
-      url: `http://127.0.0.1:${boxStubPort}`,
-      token: masterToken,
-      pid: process.pid,
-    }));
+  it("mounts a scoped unified browser capability and the safety prompt in room turns", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     let room: any;
     try {
-      expect((await desktopApi("PATCH", "/api/config", {
-        features: { browser: true },
-        browserProfiles: [{ id: "work", name: "Work" }],
-      })).status).toBe(200);
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
-        browserProfile: "work",
-        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
-      })).status).toBe(200);
+      expect((await desktopApi("PATCH", "/api/config", { features: { browser: true }, browserProfiles: [{ id: "work", name: "Work" }] })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { browserProfile: "work", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
       room = (await api("POST", "/api/groups", { name: "Browser safety", memberIds: [bot.id] })).body.group;
       expect((await desktopApi("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" })).status).toBe(200);
-
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Check the website" })).status).toBe(202);
-      const dump = z.object({
-        argv: z.array(z.string()),
-        env: z.record(z.string(), z.string()),
-        systemPrompt: z.string(),
-        mcpConfig: z.object({
-          mcpServers: z.object({
-            browser: z.object({
-              env: z.object({
-                MURAGE_BROWSER_TOKEN: z.string(),
-                MURAGE_BOT_ID: z.string(),
-                MURAGE_BROWSER_PROFILE: z.string(),
-              }),
-            }),
-          }),
-        }),
-      }).parse(await readJsonFileWhenReady(fakeClaudeDump));
-      const browserEnv = dump.mcpConfig.mcpServers.browser.env;
-      expect(browserEnv).toMatchObject({ MURAGE_BOT_ID: bot.id, MURAGE_BROWSER_PROFILE: "work" });
-      const registration = browserCapabilityCalls.find(
-        (call) => call.operation === "register" && call.body.botId === bot.id && call.body.profile === "work",
-      );
-      expect(registration?.authorization).toBe(`Bearer ${masterToken}`);
-      expect(registration?.body.token).toMatch(/^[0-9a-f]{64}$/);
-      expect(browserEnv.MURAGE_BROWSER_TOKEN).toBe(registration?.body.token);
-      expect(browserEnv.MURAGE_BROWSER_TOKEN).not.toBe(masterToken);
+      const mounted = await browserMount();
+      expect(mounted.env).toMatchObject({ MURAGE_BOT_ID: bot.id, MURAGE_THREAD_ID: room.threadId });
+      const dump = await readJsonFileWhenReady<{ env: Record<string, string>; systemPrompt: string }>(fakeClaudeDump);
       expect(dump.env.MURAGE_BROWSER_CONNECTION).toBeUndefined();
       expect(dump.env.MURAGE_USER_DATA).toBeUndefined();
-      expect(JSON.stringify(dump)).not.toContain(masterToken);
-
-      const system = dump.systemPrompt;
-      expect(system).toMatch(/page instructions as untrusted content/i);
-      expect(system).toMatch(/consequential action.*confirmation/i);
-      expect(system).toMatch(/browser_request_takeover/i);
-
-      browserRevokeFailuresRemaining = 1;
+      expect(mounted.env).not.toHaveProperty("MURAGE_BROWSER_TOKEN");
+      expect(dump.systemPrompt).toMatch(/instructions as untrusted content/i);
+      expect(dump.systemPrompt).toMatch(/consequential actions.*confirmation/i);
+      expect(dump.systemPrompt).toMatch(/Take control/);
+      expect(dump.systemPrompt).toMatch(/reopen a blank page/);
       expect((await api("POST", `/api/groups/${room.id}/interrupt`, {})).status).toBe(200);
-      await expect.poll(() => browserCapabilityCalls.filter(
-        (call) => call.operation === "revoke" && call.body.token === registration?.body.token,
-      ).length, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
+      expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN)).status).toBe(401);
     } finally {
-      browserRevokeFailuresRemaining = 0;
-      if (room) {
-        await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
-        await expect.poll(() => browserCapabilityCalls.some(
-          (call) => call.operation === "revoke" && call.body.token && call.body.token !== masterToken,
-        ), { timeout: 5_000 }).toBe(true);
-        await desktopApi("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
-      }
+      if (room) { await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined); await desktopApi("DELETE", `/api/groups/${room.id}`).catch(() => undefined); }
       await desktopApi("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
       await desktopApi("PATCH", "/api/config", { features: { browser: false }, browserProfiles: [] }).catch(() => undefined);
-      rmSync(descriptorFile, { force: true });
     }
   });
 
-  it("revokes an in-flight browser registration and never dispatches after its bot is deleted", async () => {
+  it("retires an in-flight unified browser binding and never dispatches after its bot is deleted", async () => {
     const descriptorFile = join(home, "browser-test-connection.json");
     writeFileSync(descriptorFile, JSON.stringify({
       version: 1,
@@ -4763,21 +4737,15 @@ describe("harness HTTP API", () => {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
       rmSync(fakeClaudeDump, { force: true });
-      const callOffset = browserCapabilityCalls.length;
+      const callOffset = browserNativeEvents.length;
       browserRegisterDelayMs = 250;
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "do not outlive deletion" })).status).toBe(202);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
+      await expect.poll(() => browserNativeEvents.slice(callOffset).some(
+        (call) => call.operation === "verify" && call.session === browserSession(bot.id),
       ), { timeout: 5_000 }).toBe(true);
-      const registration = browserCapabilityCalls.slice(callOffset).find(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
-      );
 
       expect((await desktopApi("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "revoke" && call.body.token === registration?.body.token,
-      ), { timeout: 5_000 }).toBe(true);
-      // Registration is intentionally held by the stub. Wait beyond that
+      // Native verification is intentionally held by the fixture. Wait beyond that
       // entire window so a late provider dispatch cannot escape the check.
       await new Promise((resolve) => setTimeout(resolve, browserRegisterDelayMs + 250));
       expect(existsSync(fakeClaudeDump)).toBe(false);
@@ -4804,11 +4772,11 @@ describe("harness HTTP API", () => {
     try {
       expect((await desktopApi("PATCH", "/api/config", { features: { browser: true } })).status).toBe(200);
       rmSync(fakeClaudeDump, { force: true });
-      const callOffset = browserCapabilityCalls.length;
+      const callOffset = browserNativeEvents.length;
       browserRegisterDelayMs = 1_000;
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "first setup" })).status).toBe(202);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
+      await expect.poll(() => browserNativeEvents.slice(callOffset).some(
+        (call) => call.operation === "verify" && call.session === browserSession(bot.id),
       ), { timeout: 5_000 }).toBe(true);
 
       expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
@@ -4831,7 +4799,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("does not dispatch a room turn stopped through its bot during browser registration", async () => {
+  it("does not dispatch a room turn stopped through its bot during unified browser binding", async () => {
     const descriptorFile = join(home, "browser-test-connection.json");
     writeFileSync(descriptorFile, JSON.stringify({
       version: 1,
@@ -4850,19 +4818,13 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" })).status).toBe(200);
 
       rmSync(fakeClaudeDump, { force: true });
-      const callOffset = browserCapabilityCalls.length;
+      const callOffset = browserNativeEvents.length;
       browserRegisterDelayMs = 250;
       expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "stop before launch" })).status).toBe(202);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
+      await expect.poll(() => browserNativeEvents.slice(callOffset).some(
+        (call) => call.operation === "verify" && call.session === browserSession(bot.id),
       ), { timeout: 5_000 }).toBe(true);
-      const registration = browserCapabilityCalls.slice(callOffset).find(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
-      );
       expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "revoke" && call.body.token === registration?.body.token,
-      ), { timeout: 5_000 }).toBe(true);
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots")).body;
         return {
@@ -4897,21 +4859,18 @@ describe("harness HTTP API", () => {
     })).body.bot;
     try {
       expect((await desktopApi("PATCH", "/api/config", { features: { browser: true } })).status).toBe(200);
-      const callOffset = browserCapabilityCalls.length;
+      const callOffset = browserNativeEvents.length;
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "browse until disabled" })).status).toBe(202);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).find(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
-      ), { timeout: 5_000 }).toBeTruthy();
+      const mounted = await browserMount();
 
       const perBot = await desktopApi("PATCH", `/api/bots/${bot.id}`, { browser: false });
       expect(perBot.status).toBe(409);
       expect(perBot.body.error).toMatch(/stop.*turn/i);
 
       expect((await desktopApi("PATCH", "/api/config", { features: { browser: false } })).status).toBe(200);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "clear",
-      ), { timeout: 5_000 }).toBe(true);
+      expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN)).status).toBe(401);
+      expect(browserNativeEvents.slice(callOffset)).toContainEqual({ operation: "close", session: browserSession(bot.id) });
     } finally {
       await api("POST", `/api/bots/${bot.id}/interrupt`, {}).catch(() => undefined);
       await desktopApi("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
@@ -4974,12 +4933,14 @@ describe("harness HTTP API", () => {
       MURAGE_WEBHOOK_PORT: String(isolatedPort + 1),
       MURAGE_STATIC_DIR: isolatedStatic,
       MURAGE_BROWSER_CONNECTION: descriptorFile,
+      MURAGE_AGENT_BROWSER_PATH: process.execPath,
+      MURAGE_BROWSER_FIXTURE_URL: `http://127.0.0.1:${boxStubPort}/fixture-browser-event`,
       FAKE_CLAUDE_MODE: "hang",
       FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
     };
     if (process.env.PATH) isolatedEnv.PATH = process.env.PATH;
     if (process.env.SystemRoot) isolatedEnv.SystemRoot = process.env.SystemRoot;
-    const isolatedChild = spawn(process.execPath, ["--import", noAckDesktopPrelude, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", noAckDesktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: isolatedEnv,
       stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -5009,17 +4970,12 @@ describe("harness HTTP API", () => {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
         requireAvailableModel: true,
       })).body.bot;
-      const callOffset = browserCapabilityCalls.length;
+      const callOffset = browserNativeEvents.length;
       expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep browser access live" })).status)
         .toBe(202);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
-      ), { timeout: 5_000 }).toBe(true);
+      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
 
-      // Seeing the host receive registration does not mean the child has
-      // adopted its response yet. Wait until the fake engine receives the
-      // browser capability; disabling during registration correctly takes a
-      // different path (revoke the pending token, with no active master clear).
+      // Wait for the mounted provider turn before the post-commit cleanup failure.
       const dispatch = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: Record<string, unknown> };
       }>(join(isolatedHome, "fake-claude-dump.json"));
@@ -5032,8 +4988,9 @@ describe("harness HTTP API", () => {
       expect(patched.status).toBe(503);
       expect(patched.body.error).toMatch(/could not confirm.*browser data was erased/i);
       // The negative cleanup ACK must not short-circuit the already-committed
-      // feature disable. The master clear revokes every live two-hour bearer.
-      expect(browserCapabilityCalls.slice(callOffset).some((call) => call.operation === "clear")).toBe(true);
+      // feature disable. The unified controller closes and retires the live claim.
+      expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN, `http://127.0.0.1:${isolatedPort}`)).status).toBe(401);
+      expect(browserNativeEvents.slice(callOffset).some(call => call.operation === "close")).toBe(true);
       const config = await isolatedApi("GET", "/api/config");
       expect(config.body.features.browser).toBe(false);
       expect(config.body.browserProfiles).toEqual([]);
@@ -5186,7 +5143,7 @@ describe("harness HTTP API", () => {
       });
     `)}`;
     let isolatedStderr = "";
-    const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -5197,6 +5154,8 @@ describe("harness HTTP API", () => {
         MURAGE_WEBHOOK_PORT: String(isolatedPort + 1),
         MURAGE_STATIC_DIR: isolatedStatic,
         MURAGE_BROWSER_CONNECTION: descriptorFile,
+      MURAGE_AGENT_BROWSER_PATH: process.execPath,
+      MURAGE_BROWSER_FIXTURE_URL: `http://127.0.0.1:${boxStubPort}/fixture-browser-event`,
         FAKE_CLAUDE_MODE: "hang",
         FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
       },
@@ -5225,12 +5184,10 @@ describe("harness HTTP API", () => {
       })).body.bot;
       expect((await isolatedApi("PATCH", `/api/bots/${idleBot.id}`, { browserProfile: "unused" }, isolatedDesktopHeaders)).status).toBe(200);
 
-      const callOffset = browserCapabilityCalls.length;
+      const callOffset = browserNativeEvents.length;
       expect((await isolatedApi("POST", `/api/bots/${activeBot.id}/messages`, { text: "keep browser access live" })).status)
         .toBe(202);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "register" && call.body.botId === activeBot.id,
-      ), { timeout: 5_000 }).toBe(true);
+      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
       // Registration happens before the provider's init frame is persisted.
       // Wait for that final startup write before sabotaging the store;
       // otherwise slower Windows runners can reset the next HTTP request when
@@ -5265,7 +5222,8 @@ describe("harness HTTP API", () => {
         browserProfiles: [],
       }, isolatedDesktopHeaders);
       expect(patched.status).toBe(500);
-      expect(browserCapabilityCalls.slice(callOffset).some((call) => call.operation === "clear")).toBe(true);
+      expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN, `http://127.0.0.1:${isolatedPort}`)).status).toBe(401);
+      expect(browserNativeEvents.slice(callOffset).some(call => call.operation === "close")).toBe(true);
       const config = await isolatedApi("GET", "/api/config");
       expect(config.body.features.browser).toBe(false);
       expect(config.body.browserProfiles).toEqual([]);
@@ -5310,7 +5268,7 @@ describe("harness HTTP API", () => {
       });
     `)}`;
     let isolatedStderr = "";
-    const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
+    const isolatedChild = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -5321,6 +5279,8 @@ describe("harness HTTP API", () => {
         MURAGE_WEBHOOK_PORT: String(isolatedPort + 1),
         MURAGE_STATIC_DIR: isolatedStatic,
         MURAGE_BROWSER_CONNECTION: descriptorFile,
+      MURAGE_AGENT_BROWSER_PATH: process.execPath,
+      MURAGE_BROWSER_FIXTURE_URL: `http://127.0.0.1:${boxStubPort}/fixture-browser-event`,
         FAKE_CLAUDE_MODE: "hang",
         FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
       },
@@ -5345,23 +5305,17 @@ describe("harness HTTP API", () => {
         requireAvailableModel: true,
       })).body.bot;
       createdBotId = bot.id;
-      const callOffset = browserCapabilityCalls.length;
+      const callOffset = browserNativeEvents.length;
       expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "do not tear this down" })).status)
         .toBe(202);
-      await expect.poll(() => browserCapabilityCalls.slice(callOffset).find(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
-      ), { timeout: 5_000 }).toBeTruthy();
-      const registration = browserCapabilityCalls.slice(callOffset).find(
-        (call) => call.operation === "register" && call.body.botId === bot.id,
-      );
+      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
 
       const deletion = await isolatedApi("DELETE", `/api/bots/${bot.id}`, undefined, isolatedDesktopHeaders);
       expect(deletion.status).toBe(503);
       expect(deletion.body.error).toMatch(/cleanup journal could not be read safely/i);
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(browserCapabilityCalls.slice(callOffset).some(
-        (call) => call.operation === "revoke" && call.body.token === registration?.body.token,
-      )).toBe(false);
+      expect(browserNativeEvents.slice(callOffset).some(call => call.operation === "close")).toBe(false);
+      expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN, `http://127.0.0.1:${isolatedPort}`)).status).toBe(200);
       const state = await isolatedApi("GET", "/api/bots?messages=0");
       expect(state.body.bots.find((candidate: { id: string }) => candidate.id === bot.id)).toMatchObject({ busy: true });
     } finally {
@@ -5425,7 +5379,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("rechecks profile use after awaited provider validation before deleting it", async () => {
+  it("blocks new profile claims while provider validation commits a profile removal", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
       expect((await desktopApi("PATCH", "/api/config", {
@@ -5436,29 +5390,20 @@ describe("harness HTTP API", () => {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
 
-      // The Box stub deliberately holds this credential check for 150 ms.
-      // The profile is idle at the route's first check, then becomes active
-      // while validation is in flight.
-      const removing = desktopApi("PATCH", "/api/config", {
-        box: { token: "box_slow" },
-        browserProfiles: [],
-      });
+      // Provider validation holds admission, so an idle profile cannot become
+      // active during the awaited configuration transaction.
+      const removing = desktopApi("PATCH", "/api/config", { box: { token: "box_slow" }, browserProfiles: [] });
       await new Promise((resolve) => setTimeout(resolve, 30));
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "start during validation" })).status).toBe(202);
-      await expect.poll(async () => {
-        const state = (await api("GET", "/api/bots")).body;
-        return state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
-      }, { timeout: 5_000 }).toBe(true);
-
-      const blocked = await removing;
+      const blocked = await api("POST", `/api/bots/${bot.id}/messages`, { text: "start during validation" });
       expect(blocked.status).toBe(409);
-      expect(blocked.body.error).toMatch(/stop .* turn/i);
+      expect(blocked.body.error).toMatch(/Engine setup is finishing/i);
+      expect((await removing).status).toBe(200);
       const state = (await api("GET", "/api/bots")).body;
-      expect(state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.browserProfile).toBe("late-claim");
-      expect((await api("GET", "/api/config")).body.browserProfiles).toContainEqual({
-        id: "late-claim",
-        name: "Late claim",
-      });
+      const idleBot = state.bots.find((candidate: { id: string }) => candidate.id === bot.id);
+      expect(idleBot).toBeDefined();
+      expect(idleBot.busy).toBeFalsy();
+      expect(state.bots.find((candidate: { id: string }) => candidate.id === bot.id)).not.toHaveProperty("browserProfile");
+      expect((await api("GET", "/api/config")).body.browserProfiles).toEqual([]);
     } finally {
       await api("POST", `/api/bots/${bot.id}/interrupt`, {}).catch(() => undefined);
       await expect.poll(async () => {
@@ -7512,72 +7457,48 @@ describe("internal capability authority", () => {
     }
   });
 
-  it(process.platform === "win32"
-    ? "keeps unsupported Windows headless browser sessions unmounted and rejects peer claims"
-    : "binds a headless browser mount and exact-session cleanup to its live computer claim", async () => {
-    const binary = join(home, "fake-agent-browser");
-    const closeLog = join(home, "fake-agent-browser-close.jsonl");
-    const engineKey = join(home, ".murage", "browser-engine-key");
-    const hadEngineKey = existsSync(engineKey);
-    writeFileSync(binary, `#!${process.execPath}\nconst fs=require('node:fs');\nconst args=process.argv.slice(2);\nif(args[0]==='--version'){console.log('agent-browser 0.36.0');process.exit(0);}\nif(args[2]==='close'){fs.appendFileSync(${JSON.stringify(closeLog)},JSON.stringify({args,session:process.env.AGENT_BROWSER_SESSION})+'\\n');process.exit(0);}\nprocess.exit(1);\n`, { mode: 0o700 });
+  it("binds the unified browser relay and exact-profile cleanup to its live computer claim on every platform", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
+    const offset = browserNativeEvents.length;
     try {
       expect((await desktopApi("PATCH", "/api/config", { features: { browser: true } })).status).toBe(200);
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { browser: true })).status).toBe(200);
       const turn = await startInternalFixtureTurn(bot.id);
-      const mounted = turn.dump.mcpConfig.mcpServers.browser;
-      if (process.platform === "win32") {
-        // browserIntegration deliberately returns before native headless setup
-        // on Windows. Assert that policy through a real turn, not a skipped or
-        // platform-spoofed mount/cleanup test for an unsupported engine path.
-        expect(mounted).toBeUndefined();
-        expect(existsSync(engineKey)).toBe(hadEngineKey);
-        expect(existsSync(closeLog)).toBe(false);
-        const endpoint = new URL("/api/internal/headless-browser", BASE);
-        endpoint.searchParams.set("botId", bot.id);
-        endpoint.searchParams.set("threadId", turn.env.MURAGE_THREAD_ID);
-        expect((await fetch(endpoint, { headers: turn.headers })).status).toBe(403);
-        await api("POST", `/api/bots/${bot.id}/interrupt`);
-        expect((await fetch(endpoint, { headers: turn.headers })).status).toBe(401);
-        return;
-      }
-      expect(mounted.args[0]).toMatch(/headless-browser-proxy/);
+      const mounted = await browserMount();
+      expect(mounted.env).toMatchObject({ MURAGE_BOT_ID: bot.id, MURAGE_THREAD_ID: turn.env.MURAGE_THREAD_ID });
+      expect(mounted.env).not.toHaveProperty("MURAGE_HEADLESS_BROWSER_URL");
+      expect(mounted.env).not.toHaveProperty("AGENT_BROWSER_SESSION");
       const token = mounted.env.MURAGE_CONTROL_TOKEN;
-      const endpoint = mounted.env.MURAGE_HEADLESS_BROWSER_URL;
-      expect(token).toMatch(/^[a-f0-9]{48}$/);
-      const headers = { authorization: `Bearer ${token}` };
-      const response = await fetch(endpoint, { headers });
+      const endpoint = `${BASE}/api/internal/unified-browser`;
+      const request = (url = endpoint, bearer = token) => fetch(url, { method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" }, body: JSON.stringify({ method: "tools/list" }) });
+      const response = await request();
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      const result = z.object({ held: z.boolean(), spec: z.object({ command: z.string(), args: z.array(z.string()), env: z.record(z.string(), z.string()) }) }).parse(await response.json());
-      expect(result.held).toBe(false);
-      expect(result.spec.command).toBe(binary);
-      expect(result.spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
-      expect(result.spec.env.AGENT_BROWSER_SESSION).toMatch(/^[A-Za-z0-9_-]{1,80}$/);
-      expect(result.spec.env.HOME).toContain(join(home, ".murage", "browser-engine"));
-      expect(mounted.env).not.toHaveProperty("AGENT_BROWSER_ENCRYPTION_KEY");
-      expect((await fetch(endpoint, { headers: turn.headers })).status).toBe(403);
+      expect(await response.json()).toMatchObject({ tools: [expect.objectContaining({ name: "agent_browser_snapshot" })] });
+      expect((await request(endpoint, turn.env.MURAGE_COMMS_TOKEN)).status).toBe(403);
       for (const key of ["botId", "threadId"]) {
         const mismatch = new URL(endpoint); mismatch.searchParams.set(key, "different-owner");
-        expect((await fetch(mismatch, { headers })).status).toBe(403);
+        expect((await request(mismatch.href)).status).toBe(403);
       }
-      expect((await desktopApi("POST", `/api/bots/${bot.id}/computer/control`, { action: "take" })).status).toBe(200);
-      expect(z.object({ held: z.boolean() }).parse(await (await fetch(endpoint, { headers })).json()).held).toBe(true);
-      const closed = await fetch(endpoint, { method: "DELETE", headers });
-      expect(closed.status).toBe(200);
-      expect(await closed.json()).toEqual({ closed: true });
-      expect(readFileSync(closeLog, "utf8").trim().split("\n").map(line => JSON.parse(line))).toEqual([
-        { args: ["--session", result.spec.env.AGENT_BROWSER_SESSION, "close"], session: result.spec.env.AGENT_BROWSER_SESSION },
-      ]);
-      expect((await fetch(endpoint, { headers })).status).toBe(403);
+      const taken = await desktopApi("POST", `/api/bots/${bot.id}/browser`, { action: "take" });
+      expect(taken.status).toBe(200);
+      expect(taken.body.held).toBe(true);
+      expect((await request()).status).toBe(409);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/browser`, { action: "release", generation: taken.body.generation })).status).toBe(200);
+      expect((await request()).status).toBe(200);
       await api("POST", `/api/bots/${bot.id}/interrupt`);
-      expect((await fetch(endpoint, { headers })).status).toBe(401);
+      expect((await request()).status).toBe(401);
+      // Turn retirement revokes only its claim; the owner can still view the
+      // profile. Feature disable owns closing that exact native session.
+      expect(browserNativeEvents.slice(offset).filter(event => event.operation === "close")).toEqual([]);
+      expect((await desktopApi("PATCH", "/api/config", { features: { browser: false } })).status).toBe(200);
+      expect(browserNativeEvents.slice(offset).filter(event => event.operation === "close")).toEqual([
+        { operation: "close", session: browserSession(bot.id) },
+      ]);
     } finally {
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
       await desktopApi("PATCH", "/api/config", { features: { browser: false } });
-      rmSync(binary, { force: true });
-      rmSync(closeLog, { force: true });
     }
   });
 
@@ -7901,7 +7822,7 @@ describe("internal capability authority", () => {
     const target = (await api("POST", "/api/bots")).body.bot;
     try {
       const first = await startInternalFixtureTurn(source.id);
-      const results = await Promise.all(Array.from({ length: 6 }, async (_, index) => {
+      const results = await Promise.all(Array.from({ length: 18 }, async (_, index) => {
         const response = await fetch(`${BASE}/api/internal/delegate-bot`, {
           method: "POST", headers: first.headers,
           body: JSON.stringify({ fromBotId: source.id, fromThreadId: source.threadId,
@@ -7909,7 +7830,7 @@ describe("internal capability authority", () => {
         });
         return { status: response.status, body: await response.json() as { taskId?: string } };
       }));
-      expect(results.filter((result) => result.body.taskId)).toHaveLength(4);
+      expect(results.filter((result) => result.body.taskId)).toHaveLength(16);
       expect(results.filter((result) => result.status === 429)).toHaveLength(2);
       const receipt = results.find((result) => result.body.taskId)!.body.taskId!;
       expect((await api("POST", `/api/bots/${source.id}/interrupt`)).status).toBe(200);

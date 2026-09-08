@@ -97,18 +97,20 @@ describe("what the field offers", () => {
   });
 });
 
-describe("there is exactly one key field in the app", () => {
-  it("is this one, and Settings renders it", () => {
+describe("Flux setup is reachable without duplicating the invitation field", () => {
+  it("Settings renders Models with the existing Flux key control", () => {
     const settings = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.meta.url)), "utf8");
-    expect(settings).toContain("<FluxKeyCard />");
-    expect(settings).toContain('import { FluxKeyCard } from "./FluxKeyCard";');
+    expect(settings).toContain('<ModelsSettings />');
+    const models = readFileSync(fileURLToPath(new URL("./ModelsSettings.tsx", import.meta.url)), "utf8");
+    expect(models).toContain('<ExistingKey id="legacy-flux" label="Flux Router default"');
+    expect(models).toContain('configured={state.config?.flux?.configured ?? false}');
   });
 
   it("is reachable by searching Settings for flux", () => {
     const settings = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.meta.url)), "utf8");
-    const engines = settings.match(/\{ id: "engines",[^\n]*\}/)?.[0] ?? "";
-    expect(engines).toContain('"Models & Engines"');
-    expect(engines).toContain('"flux"');
+    const models = settings.match(/\{ id: "models",[^\n]*\}/)?.[0] ?? "";
+    expect(models).toContain('"Models"');
+    expect(models).toContain('"flux"');
   });
 
   it("does not grow a second one inside the invitation", () => {

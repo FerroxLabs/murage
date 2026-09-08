@@ -337,7 +337,7 @@ const TOOLS = [
   {
     name: "create_bot",
     description:
-      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the Chief's engine; connected apps and automatic approvals start disabled. A section's Chief creates into its own section. The workspace Chief must name the destination team; create a missing team's lead first with lead: true. Create only the smallest useful team (maximum four per turn).",
+      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the Chief's engine; connected apps and automatic approvals start disabled. A section's Chief creates into its own section. The workspace Chief must name the destination team; pass lead: true to create its lead first if the team is missing. Create only the smallest useful team (maximum four per turn).",
     inputSchema: {
       type: "object",
       properties: {

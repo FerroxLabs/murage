@@ -72,6 +72,8 @@ extraResources:
     to: licenses/fuigo-README.md
   - from: third_party/fuigo/THIRD_PARTY_NOTICES.md
     to: licenses/fuigo-THIRD_PARTY_NOTICES.md
+  - from: third_party/fuigo
+    to: licenses/fuigo
   - from: dist
     to: ui
   - from: dist-server

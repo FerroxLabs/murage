@@ -31,6 +31,20 @@ describe("credential env parity with server/config.ts", () => {
   });
 });
 
+it("redacts nested provider banks and private commit credentials", () => {
+  const bank = JSON.stringify([{ id: "fixture", key: "opaque-provider-value" }]);
+  for (const line of [
+    `MURAGE_MODEL_PROVIDER_CONNECTIONS=${bank}`,
+    `MURAGE_MODEL_PROVIDER_CONNECTIONS='${bank}' trailing metadata`,
+    JSON.stringify({ MURAGE_MODEL_PROVIDER_CONNECTIONS: bank }),
+  ]) {
+    expect(redactSecretsInLine(line)).not.toContain("opaque-provider-value");
+    expect(redactSecretsInLine(line)).toContain("redacted");
+  }
+  expect(redactSecretsInLine("MURAGE_MODEL_PROVIDER_COMMIT_TOKEN=opaque-private-commit-value"))
+    .not.toContain("opaque-private-commit-value");
+});
+
 describe("buildDiagnosticsReport", () => {
   const appInfo = {
     version: "0.1.27",
