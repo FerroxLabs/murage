@@ -7,6 +7,7 @@ import {
 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES, HARNESS_RESOURCE_DIRECTORIES } from "../electron/harness-resources.mjs";
 import { FUIGO_VERSION, verifyFuigoExecutable } from "./prepare-fuigo.mjs";
+import { verifyBrowserBundle } from "./prepare-browser.mjs";
 
 async function requireRealDirectory(directory, mode = 0o755) {
   const details = await lstat(directory);
@@ -178,6 +179,12 @@ export default async function afterPack(context) {
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
   await validatePackagedMemoryRuntime(resources, context.electronPlatformName, context.arch, Boolean(context.packager));
+  // Resource copying only warns about missing sources. Validate the exact target
+  // and complete pinned inventory before signing can change executable bytes.
+  if (context.packager) {
+    const arch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
+    verifyBrowserBundle(path.join(resources, "browser-engine"), `${context.electronPlatformName}-${arch}`);
+  }
 
   // electron-builder's single-file extraResources copier does not run its
   // Windows signing transformer. Sign only the verified packaged copy, using

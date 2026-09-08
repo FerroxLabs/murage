@@ -10,6 +10,7 @@ const chromeDir={'darwin-arm64':'mac-arm64','darwin-x64':'mac-x64','win32-x64':'
 const root=mkdtempSync(join(tmpdir(),'murage-c11-guard-'));
 const evidence=resolve(process.argv[2]??'.planning/chief-capability-evidence/C11/native');mkdirSync(evidence,{recursive:true});
 const spec=agentBrowserIntegration({binaryPath:resolve(`dist-native/browser/${target}/agent-browser${suffix}`),session:'guard-proof',encryptionKey:'b'.repeat(64),dataDir:root,realmId:'guard-proof',persistent:false,env:{...process.env,AGENT_BROWSER_EXECUTABLE_PATH:resolve(`dist-native/browser/${target}/chrome/chrome-headless-shell-${chromeDir}/chrome-headless-shell${suffix}`)}});
+spec.env.MURAGE_BROWSER_BUNDLE_DIR=resolve(`dist-native/browser/${target}`);
 const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(req.url==='/protected'?'<input type="password" value="FAKE-C11-SECRET"><p>Protected fixture</p>':'<input id="ordinary"><p>Ordinary fixture</p><button id="mutate">Mutate</button><script>document.querySelector("#mutate").onmousedown=()=>{document.querySelector("#ordinary").type="password"}; document.querySelector("#ordinary").addEventListener("input",e=>{document.body.dataset.leak=e.target.value;e.target.type="text"});</script>');});await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const native=createNativeBrowser(spec), controller=new UnifiedBrowserController({stateFile:join(root,'control.json'),createNative:()=>native});controller.register('fixture',spec);
 const checks=[];let cleanupError;

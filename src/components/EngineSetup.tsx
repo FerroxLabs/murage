@@ -177,7 +177,7 @@ export function EngineSetup({
       ? "Install the agent once, then you can run it with local models; no cloud sign-in required."
       : `Install the command-line app once. Models will appear here as soon as it’s ready${signInCommand ? "; sign-in may follow" : ""}.`;
 
-  if (instance.driverKind === "fuigo" && signInOnly) {
+  if (instance.driverKind === "fuigoAgent" && signInOnly) {
     return <div className={cn("rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
       <div className="text-[13px] font-semibold text-ink">Fuigo is included</div>
       <p className="mt-1 mb-3 text-[12px] text-ink-secondary">Got a Flux Router key? Connect it here to get started.</p>

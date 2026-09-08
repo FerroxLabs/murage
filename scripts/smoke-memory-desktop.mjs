@@ -128,7 +128,8 @@ async function main(){
     // the visible title button explicitly; both dispatch toggleSettings(open:true).
     const profile=page.getByRole("main").getByRole("button",{name:`Open ${bot.name}'s profile`,exact:true}).filter({hasText:bot.name});
     await expect(profile).toHaveCount(1);await expect(profile).toBeVisible();await profile.click();
-    await page.locator("summary").filter({hasText:/^Managed memory$/}).click();
+    const managedMemory = page.locator("details").filter({ has: page.locator("summary").filter({hasText:/^Managed memory$/}) });
+    if (await managedMemory.getAttribute("open") === null) await managedMemory.locator("summary").click();
     await expect(page.getByRole("heading",{name:"Bot memory",exact:true})).toBeVisible();
     await page.screenshot({path:join(out,"bot-memory-settings.png"),fullPage:true});checks.push("actual-packaged-bot-managed-memory-settings");
     await page.getByRole("button",{name:"Close agent profile",exact:true}).click();
@@ -181,8 +182,9 @@ async function main(){
     if(fake){fake.closeAllConnections();await new Promise(done=>fake.close(done));}
     try{await restoreFrontmost(originalFront);foregroundRestored=true;}catch(error){outcome={...outcome,ok:false,foregroundError:String(error)};}
     const after=await processes();const originalProcessesAlive=originalMurage.every(original=>after.some(process=>process.pid===original.pid&&process.command===original.command));
-    const protectedFilesUnchanged=JSON.stringify(protectedHashes(protectedProfile))===JSON.stringify(beforeHashes);
-    outcome={...outcome,ok:Boolean(outcome?.ok&&cleanupVerified&&foregroundRestored&&originalProcessesAlive&&protectedFilesUnchanged),cleanupVerified,foregroundRestored,originalProcessesAlive,protectedFilesUnchanged,ownedPids:[...owned.keys()]};
+    const afterHashes=protectedHashes(protectedProfile);
+    const protectedFilesUnchanged=JSON.stringify(afterHashes)===JSON.stringify(beforeHashes);
+    outcome={...outcome,ok:Boolean(outcome?.ok&&cleanupVerified&&foregroundRestored&&originalProcessesAlive&&protectedFilesUnchanged),cleanupVerified,foregroundRestored,originalProcessesAlive,protectedFilesUnchanged,protectedProfileHashes:{before:beforeHashes,after:afterHashes},ownedPids:[...owned.keys()]};
     if(cleanupVerified)rmSync(root,{recursive:true,force:true});else outcome.preservedFixtureRoot=root;
     writeFileSync(join(out,"result.json"),JSON.stringify(outcome,null,2));
   }

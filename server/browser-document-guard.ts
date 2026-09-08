@@ -70,6 +70,10 @@ export class BrowserDocumentGuard {
         await this.send("Page.addScriptToEvaluateOnNewDocument",{source:SOURCE,worldName:WORLD,runImmediately:true},session);
         this.sessions.set(page.targetId,session!);
       }
+      await this.send("DOM.enable",{},session);
+      const dom=await this.send("DOM.getDocument",{depth:-1,pierce:true},session);
+      const hiddenRoot=(node:any):boolean=>node.shadowRootType==="closed"||(node.shadowRoots??[]).some(hiddenRoot)||(node.children??[]).some(hiddenRoot);
+      if(hiddenRoot(dom.root))protectedDocument=true;
       const tree=await this.send("Page.getFrameTree",{},session);
       if(tree.frameTree.childFrames?.length)protectedDocument=true;
       const world=await this.send("Page.createIsolatedWorld",{frameId:tree.frameTree.frame.id,worldName:WORLD},session);

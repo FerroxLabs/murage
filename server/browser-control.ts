@@ -69,6 +69,10 @@ export class UnifiedBrowserController {
     await this.connect(key);
     return this.status(key);
   }
+  async reclaim(key: string, owner: string) {
+    const e = this.entry(key); e.held = true; e.owner = owner; this.fence(e);
+    await e.pending?.catch(() => {}); await this.connect(key); return this.status(key);
+  }
   private human(e: Entry, owner: string, generation: number) {
     if (!e.held || e.owner !== owner || e.generation !== generation || e.pending) throw refusal();
   }
@@ -85,8 +89,10 @@ export class UnifiedBrowserController {
     const e = this.entry(key); this.human(e, owner, generation);
     const url = new URL(address);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || address.length > 8192) throw new Error("Enter an HTTP or HTTPS address without embedded credentials");
+    this.fence(e); const nextGeneration = e.generation;
     await this.native(e).command(["open", url.toString()]);
-    this.human(e, owner, generation); e.url = url.toString(); return this.status(key);
+    this.human(e, owner, nextGeneration); e.url = url.toString();
+    await this.connect(key); return this.status(key);
   }
   input(key: string, owner: string, generation: number, event: Record<string, unknown>) {
     const e = this.entry(key); this.human(e, owner, generation);
@@ -124,7 +130,8 @@ export class UnifiedBrowserController {
       allowed(); await this.connect(key); allowed(); return result;
     };
     const pending = run().finally(async () => { try { await e.native?.protected(false); } catch { e.protectedDocument = true; this.save(); } }); e.pending = pending;
-    try { return await pending; } finally { if (e.pending === pending) e.pending = undefined; }
+    try { const result = await pending; allowed(); return result; } finally { if (e.pending === pending) e.pending = undefined; }
   }
+  async forget(key: string) { const e = this.entry(key); this.fence(e); await e.pending?.catch(() => {}); await e.native?.close(); this.entries.delete(key); this.save(); }
   async close() { await Promise.all([...this.entries.values()].map(async e => { this.fence(e); await e.native?.close(); e.native = undefined; })); }
 }

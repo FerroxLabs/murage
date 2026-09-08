@@ -11,7 +11,7 @@ function fixture() {
   let updates: any[] = [];
   const transport = { getUpdates: vi.fn(async () => updates), sendMessage: vi.fn(async () => ({ chatId: "7", messageId: 1 })) };
   const enqueue = vi.fn(() => ({ id: "run" }));
-  const options = { file: join(root, "channel.json"), transport, botIdentityId: "123", enqueue, runResult: () => ({ status: "completed", output: "Done" }) };
+  const options = { file: join(root, "channel.json"), transport, botIdentityId: "123", targetBotId: "fixture-bot", enqueue, runResult: () => ({ status: "completed", output: "Done" }) };
   return { options, transport, enqueue, updates: (value: any[]) => { updates = value; } };
 }
 it("explains exact expired pairing once without binding or enqueueing", async () => {

@@ -138,7 +138,7 @@ export interface Message {
    * for chips not worth interrupting the ear for. */
   /** `setup` marks an error the user fixes by installing or configuring
    * something — the UI offers setup instead of a retry that cannot work. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; providerError?: ProviderErrorInfo };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
@@ -292,7 +292,7 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
   if (message.role !== "bot") return message;
   const out = { ...message };
   if (typeof out.text === "string") out.text = redactSecretsInText(out.text);
-  if (out.tool?.name) out.tool = { ...out.tool, name: redactSecretsInText(out.tool.name) };
+  if (out.tool?.name) out.tool = { ...out.tool, name: redactSecretsInText(out.tool.name), ...(out.tool.errorDetails ? { errorDetails: redactSecretsInText(out.tool.errorDetails).slice(0, 4096) } : {}) };
   if (out.routineRun) {
     const routineRun = { ...out.routineRun };
     routineRun.routineName = redactSecretsInText(routineRun.routineName);

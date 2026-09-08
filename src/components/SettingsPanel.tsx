@@ -380,8 +380,6 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
   const canUseBrowser = engine?.capabilities?.browserMcp === true;
-  const desktopBrowser = Boolean(window.muragebox?.browser);
-  const browserBlockedOnWindows = window.muragebox?.platform === "win32" && !desktopBrowser;
   const browserFeature = builtInBrowserEnabled(state.config);
   const browserAllowed = bot.browser !== false;
   const browserEnabled = browserFeature && browserAllowed;
@@ -564,11 +562,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <div>
               <div className="text-[15px] font-medium text-ink">Browser</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {!desktopBrowser
-                  ? browserBlockedOnWindows
-                    ? "The built-in browser is temporarily unavailable on Windows while Electron's production sandbox support is being verified."
-                    : "The built-in browser needs the Murage desktop app."
-                  : !browserFeature
+                {!browserFeature
                     ? "The built-in browser is switched off under App Settings → Experimental."
                     : !canUseBrowser
                       ? "This bot's current engine cannot use the built-in browser."
@@ -580,7 +574,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <Switch
               checked={browserEnabled}
               aria-label="Give this bot a built-in browser"
-              disabled={!browserEnabled && (!desktopBrowser || !browserFeature || !canUseBrowser)}
+              disabled={!browserEnabled && (!browserFeature || !canUseBrowser)}
               onClick={() => patch({ browser: !browserAllowed })}
               className="disabled:cursor-not-allowed"
             />

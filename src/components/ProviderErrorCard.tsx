@@ -5,8 +5,9 @@ import { t } from "@/lib/i18n";
 
 /** Structured provider errors use reviewed copy, never backend HTML/JSON or
  * a URL supplied in an error message. Retry remains an explicit user action. */
-export function ProviderErrorCard({ info, onRetry, onOpenProviderSettings }: {
+export function ProviderErrorCard({ info, details, onRetry, onOpenProviderSettings }: {
   info: ProviderErrorInfo;
+  details?: string;
   onRetry?: () => void;
   onOpenProviderSettings: () => void;
 }) {
@@ -44,9 +45,10 @@ export function ProviderErrorCard({ info, onRetry, onOpenProviderSettings }: {
           <RefreshCw size={14} aria-hidden="true" /> {t("providerError.retry")}
         </button>}
       </div>
-      {hasHttpStatus && <details className="mt-3 text-[11px] text-ink-secondary">
+      {(hasHttpStatus || details) && <details className="mt-3 text-[11px] text-ink-secondary">
         <summary className={"w-fit cursor-pointer rounded py-1 " + focus}>{t("providerError.details")}</summary>
-        <p className="mt-1">{t("providerError.status", { status: info.httpStatus })}</p>
+        {hasHttpStatus && <p className="mt-1">{t("providerError.status", { status: info.httpStatus })}</p>}
+        {details && <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px]">{details}</pre>}
       </details>}
     </section>
   </div>;

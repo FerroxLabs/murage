@@ -18,6 +18,7 @@ await new Promise(done => server.listen(0,'127.0.0.1',done));
 const spec = agentBrowserIntegration({ binaryPath:binary, session:'murage-c11-proof', encryptionKey:'a'.repeat(64), dataDir:root, realmId:'native-fixture', persistent:false, env:{ ...process.env, AGENT_BROWSER_EXECUTABLE_PATH:chrome } });
 const native = createNativeBrowser(spec);
 const controller = new UnifiedBrowserController({ stateFile:join(root,'control.json'), createNative:()=>native });
+spec.env.MURAGE_BROWSER_BUNDLE_DIR=resolve(`dist-native/browser/${target}`);
 const results = { target, binary, chrome, profile:root, checks:[] };
 try {
   controller.register('fixture',spec);

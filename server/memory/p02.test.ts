@@ -5,6 +5,7 @@ import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { assertMemoryAccess, ensureScope, memoryAccess, persistMemoryRoster, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { correctMemory, ownerMemoryTicket, pinMemory, saveMemoryCandidate, renameMemoryTeam } from "./authority.ts";
+import { buildMemoryBundle, assertMemoryBundle } from "./bundle.ts";
 import { memoryState } from "./repository.ts";
 import { requiresDesktopAuthority } from "../desktop-policy.ts";
 
@@ -65,4 +66,80 @@ it("preserves explicit team identity on rename without merging another team", ()
   renameMemoryTeam(ticket,"alpha","renamed");
   expect(ensureScope("team","renamed")).toBe(original);
   expect(() => renameMemoryTeam(ticket,"renamed","beta")).toThrow("MEMORY_TEAM_EXISTS");
+});
+
+it("keeps an in-flight private bundle authorized when new peer rooms are added", async () => {
+  const f = fixture();
+  const before = memoryState().policyRevision;
+  const scopes = [...f.access.scopeIds];
+  const bundle = await buildMemoryBundle("delegated work", f.access, {
+    async search() {
+      // The real worker await allows another helper's new channel to persist.
+      for (let index = 0; index < 8; index++) {
+        const next = structuredClone(f.roster);
+        next.groups.push({id:`peer-${index}`,threadId:`peer-thread-${index}`,memberIds:["a","b"]});
+        persistMemoryRoster(next, () => { f.roster.groups = next.groups; });
+      }
+      return {hits:[],vectorRows:0};
+    },
+  });
+  expect(memoryState().policyRevision).toBe(before);
+  expect(f.access.scopeIds).toEqual(scopes);
+  expect(() => assertMemoryBundle(bundle, f.access)).not.toThrow();
+  expect(() => assertMemoryAccess(f.access, ensureScope("room", "peer-0"))).toThrow("MEMORY_SCOPE_DENIED");
+});
+
+it.each(["private-thread", "bot-task", "room-thread", "room-task", "new-room-task"])(
+  "revokes when an added room aliases a %s", alias => {
+    const f = fixture();
+    f.roster.bots[0].tasks = [{threadId:"private-task"}];
+    f.roster.groups[0].tasks = [{threadId:"room-task"}];
+    reconcileMemoryRoster(f.roster);
+    const registry = new InternalCapabilities(); registry.begin("a", "private-a", "alias-generation");
+    const token = registry.mint({botId:"a",threadId:"private-a",generation:"alias-generation",depth:0,kind:"memory",skillAuthoring:false});
+    const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => f.roster);
+    const before = memoryState().policyRevision;
+    const next = structuredClone(f.roster);
+    const aliasedThread = alias === "private-thread" ? "private-a" : alias === "bot-task" ? "private-task"
+      : alias === "room-thread" ? "room-thread" : alias === "room-task" ? "room-task" : "new-task";
+    next.groups.push({id:"new-room",threadId:"new-thread",memberIds:["a"],tasks:[{threadId:aliasedThread}]});
+    if (alias === "new-room-task") next.groups.push({id:"other-new-room",threadId:"new-task",memberIds:["b"]});
+    persistMemoryRoster(next, () => { f.roster.groups = next.groups; });
+    expect(memoryState().policyRevision).toBeGreaterThan(before);
+    expect(() => assertMemoryAccess(access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  },
+);
+
+it.each(["membership", "removal", "team", "existing-task"])(
+  "still revokes a %s change bundled with an independent room addition", change => {
+    const f = fixture(), next = structuredClone(f.roster), before = memoryState().policyRevision;
+    next.groups.push({id:"new-room",threadId:"new-thread",memberIds:["a","b"]});
+    if (change === "membership") next.groups[0].memberIds = ["b"];
+    if (change === "removal") next.groups.shift();
+    if (change === "team") next.bots[0].section = "beta";
+    if (change === "existing-task") next.bots[0].tasks = [{threadId:"added-private-task"}];
+    persistMemoryRoster(next, () => { Object.assign(f.roster, next); });
+    expect(memoryState().policyRevision).toBeGreaterThan(before);
+    expect(() => assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  },
+);
+
+it("fails closed for a legacy hash-only roster snapshot", () => {
+  const f = fixture(), db = database(), before = memoryState().policyRevision;
+  const intent = JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id='memory-roster-policy'").get()!.intent));
+  db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id='memory-roster-policy'").run(JSON.stringify({hash:intent.hash}));
+  const next = structuredClone(f.roster);
+  next.groups.push({id:"new-room",threadId:"new-thread",memberIds:["a","b"]});
+  persistMemoryRoster(next, () => { f.roster.groups = next.groups; });
+  expect(memoryState().policyRevision).toBeGreaterThan(before);
+  expect(() => assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+});
+
+it("does not publish new room scopes when an additive roster write fails", () => {
+  const f = fixture(), next = structuredClone(f.roster), before = memoryState().policyRevision;
+  next.groups.push({id:"new-room",threadId:"new-thread",memberIds:["a","b"]});
+  expect(() => persistMemoryRoster(next, () => { throw new Error("disk failure"); })).toThrow("disk failure");
+  expect(memoryState().policyRevision).toBe(before);
+  expect(() => assertMemoryAccess(f.access)).not.toThrow();
+  expect(database().prepare("SELECT id FROM memory_scopes WHERE kind='room' AND owner_key='new-room'").get()).toBeUndefined();
 });

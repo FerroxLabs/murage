@@ -34,6 +34,18 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
   return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
 }
 
+/** Preserve diagnostic facts without copying response bodies, requests or URLs. */
+export function acpRpcErrorDetails(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return;
+  const { code, data } = error as { code?: unknown; data?: unknown };
+  const status = data && typeof data === "object" && !Array.isArray(data)
+    ? (data as { http_status?: unknown }).http_status : undefined;
+  const facts: string[] = [];
+  if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) facts.push(`Provider response: HTTP ${status}`);
+  if (typeof code === "number" && Number.isSafeInteger(code)) facts.push(`Engine error code: ${code}`);
+  return facts.length ? facts.join("\n") : undefined;
+}
+
 /**
  * A `host::model` pick talks to a loopback server with its own key.
  * Subscription ACP login (grok.com cached_token) must not fail that turn.
@@ -800,6 +812,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "runtime.error",
                 message,
+                details: acpRpcErrorDetails(e),
                 ...(providerError ? { providerError } : {}),
                 ...(needsAuth ? { setup: true } : {}),
               });

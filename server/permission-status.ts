@@ -1,4 +1,4 @@
-import type { PendingPermissionStatus } from "../shared/bot-access.ts";
+import { accessRequestExpired, type PendingPermissionStatus } from "../shared/bot-access.ts";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import { mayReviewAccessStatus } from "./bot-access.ts";
 import type { BotRecord, Store } from "./store.ts";
@@ -13,7 +13,7 @@ export function permissionStatus(store:Store,sender:BotRecord,targetId:string,pe
  for(const item of policy.requests){
   const requester=store.bot(item.requestedBy);
   const stale=!requester||!requester.chiefOfStaff||!mayReviewAccessStatus(requester,target)||accessRoleBinding(requester)!==item.requesterBinding||accessRoleBinding(target)!==item.targetBinding;
-  requests.push({kind:"access",ageSeconds:Math.max(0,Math.floor((now-item.createdAt)/1000)),blockedReason:stale?"Access request is stale":"Waiting for owner review"});
+  requests.push({kind:"access",ageSeconds:Math.max(0,Math.floor((now-item.createdAt)/1000)),blockedReason:accessRequestExpired(item,now)?"Access request expired":stale?"Access request is stale":"Waiting for owner review"});
  }
  return {botId:target.id,revision:policy.revision,connectedApps:target.composio===false?"disabled":policy.mode,pending:requests,canApprove:false as const};
 }

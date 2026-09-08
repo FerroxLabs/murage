@@ -1,7 +1,6 @@
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  AlertTriangle,
   ArrowDown,
   Check,
   ChevronDown,
@@ -40,6 +39,7 @@ import {
 } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
 import { ProviderErrorCard } from "./ProviderErrorCard";
+import { RuntimeErrorCard } from "./RuntimeErrorCard";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
 import { BotAvatar, EmberAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
@@ -310,43 +310,14 @@ export function MessageActionSheet({
  * Once the engine reports itself fixed the card flips back to Retry, which
  * (with the on-focus re-probe) happens by itself when the user returns from
  * the terminal. */
-function ErrorRow({
-  message,
-  onRetry,
-  setupInstance,
-  providerError,
-  onOpenProviderSettings,
-}: {
-  message: string;
-  onRetry?: () => void;
-  setupInstance?: InstanceInfo;
-  providerError?: ProviderErrorInfo;
-  onOpenProviderSettings: () => void;
+function ErrorRow({ message, details, onRetry, setupInstance, providerError, onOpenProviderSettings }: {
+  message: string; details?: string; onRetry?: () => void; setupInstance?: InstanceInfo;
+  providerError?: ProviderErrorInfo; onOpenProviderSettings: () => void;
 }) {
-  if (providerError) return <ProviderErrorCard info={providerError} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
-  return (
-    <div className="flex justify-start">
-      <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
-        <div className="flex items-start gap-2">
-          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{message}</span>
-        </div>
-        {setupInstance &&
-        !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false) ? (
-          <EngineSetup instance={setupInstance} className="mt-2 text-ink-secondary" />
-        ) : (
-          onRetry && (
-            <button
-              onClick={onRetry}
-              className="mt-1.5 flex items-center gap-1.5 rounded-full border border-danger/30 px-2.5 py-1 text-[12.5px] hover:bg-danger/15"
-            >
-              <RefreshCw size={12} /> Retry
-            </button>
-          )
-        )}
-      </div>
-    </div>
-  );
+  if (providerError) return <ProviderErrorCard info={providerError} details={details} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
+  const needsSetup = setupInstance && !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false);
+  return <RuntimeErrorCard message={message} details={details} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
+    setup={needsSetup ? <EngineSetup instance={setupInstance} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
 /** One bad markdown node must not white-screen the app — the transcript
@@ -1010,6 +981,7 @@ const MessagesList = memo(function MessagesList({
                     message={m.tool.name.slice(6).trim()}
                     onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
                     setupInstance={m.tool.setup ? engine : undefined}
+                    details={m.tool.errorDetails}
                     providerError={m.tool.providerError}
                     onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}
                   />

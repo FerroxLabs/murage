@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
@@ -702,8 +702,14 @@ describe("ACP turns (fake CLI)", () => {
     await create(GrokAgentDriver, "credit-exhausted");
     await instance.adapter.sendTurn({ threadId: "t-credit-exhausted", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
-    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.", providerError: { kind: "credits", httpStatus: 402 } });
+    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.", providerError: { kind: "credits", httpStatus: 402 }, details: expect.stringContaining("Provider response: HTTP 402") });
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid/);
+  });
+
+  it("retains only safe ACP diagnostic facts for customer error details", () => {
+    expect(acpRpcErrorDetails({ code: -32603, data: { http_status: 500, message: "fake-private-response", token: "fake-secret-canary" } })).toBe("Provider response: HTTP 500\nEngine error code: -32603");
+    expect(acpRpcErrorDetails({ code: "fake-secret-canary", data: { http_status: "500", message: "private" } })).toBeUndefined();
+    expect(acpRpcErrorDetails({ code: Infinity, data: { http_status: 999 } })).toBeUndefined();
   });
 
   it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {

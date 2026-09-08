@@ -139,7 +139,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; setup?: boolean; providerError?: ProviderErrorInfo }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; providerError?: ProviderErrorInfo }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;

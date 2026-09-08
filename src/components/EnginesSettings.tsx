@@ -302,6 +302,8 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       <p className="mt-1 text-[12px] text-ink-secondary">
         {instance.enabled === false ? "Disabled" : needsCli(instance)
           ? instance.snapshot.reason ?? "Not detected"
+          : instance.driverKind === "fuigoAgent"
+            ? needsSignIn(instance) ? "Included · connect an AI provider" : instance.snapshot.authenticated === true ? "Included · connected" : "Included · connection not verified"
           : needsSignIn(instance) ? "Detected · sign-in required"
             : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
       </p>
