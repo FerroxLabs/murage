@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { ManagedNpmUnavailable, verifiedWindowsCodexPath, windowsNpmCommand } from "./codex-managed-windows.ts";
 
 export interface ManagedEngineInstance {
   instanceId: string; driverKind: string; cli?: string;
@@ -18,6 +19,7 @@ interface Dependencies {
   /** Persist the verified path and reload providers. Must atomically refuse active turns. */
   activate: (id: string, cli: string) => Promise<void>;
   platform?: NodeJS.Platform;
+  arch?: string;
   envPath?: string;
   fetch?: typeof fetch;
   run?: (command: string, args: string[], cwd: string) => Promise<string>;
@@ -47,7 +49,9 @@ export class EngineManager {
     return instance;
   }
   private supported(instance: ManagedEngineInstance) {
-    return instance.driverKind === "codex" && ["darwin", "linux"].includes(this.deps.platform ?? process.platform);
+    const platform=this.deps.platform??process.platform;
+    return instance.driverKind === "codex" && (["darwin", "linux"].includes(platform)
+      ||platform==="win32"&&(this.deps.arch??process.arch)==="x64");
   }
   async status(id: string): Promise<EngineManagementStatus> {
     const instance = await this.instance(id);
@@ -82,24 +86,31 @@ export class EngineManager {
       await mkdir(this.deps.root, { recursive: true });
       const candidate = await mkdtemp(join(this.deps.root, "codex-" + version + "-"));
       await mkdir(join(candidate, "home"));
+      for(const directory of ["appdata","localappdata","codex-home"])await mkdir(join(candidate,"home",directory));
       await writeFile(join(candidate, "package.json"), JSON.stringify({ private: true }));
       const run = this.deps.run ?? (async (command: string, args: string[], cwd: string) => {
         const env: NodeJS.ProcessEnv = { PATH: this.deps.envPath ?? process.env.PATH, HOME: join(candidate, "home"),
-          TMPDIR: candidate, npm_config_cache: join(candidate, "cache"), npm_config_userconfig: join(candidate, "empty-npmrc"),
+          USERPROFILE:join(candidate,"home"),APPDATA:join(candidate,"home","appdata"),LOCALAPPDATA:join(candidate,"home","localappdata"),CODEX_HOME:join(candidate,"home","codex-home"),
+          TMPDIR: candidate,TMP:candidate,TEMP:candidate, npm_config_cache: join(candidate, "cache"), npm_config_userconfig: join(candidate, "empty-npmrc"),
           npm_config_globalconfig: join(candidate, "empty-global-npmrc"), CI: "1" };
-        const result = await exec(command, args, { cwd, env, timeout: 180_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024 });
+        if((this.deps.platform??process.platform)==="win32" && process.env.SystemRoot)env.SystemRoot=process.env.SystemRoot;
+        const invocation=(this.deps.platform??process.platform)==="win32"&&command==="npm"?await windowsNpmCommand(args):{command,args};
+        const result = await exec(invocation.command, invocation.args, { cwd, env, timeout: 180_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024,windowsHide:true });
         return result.stdout;
       });
       let activationAttempted = false;
       try {
-        await run("npm", ["install", "--prefix", candidate, "--registry=https://registry.npmjs.org", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", "@openai/codex@" + version], candidate);
-        const cli = join(candidate, "node_modules", ".bin", "codex");
+        await run("npm", ["install", "--prefix", candidate, "--registry=https://registry.npmjs.org", "--ignore-scripts", "--include=optional", "--no-audit", "--no-fund", "--save-exact", "@openai/codex@" + version], candidate);
+        const cli = (this.deps.platform??process.platform)==="win32"
+          ?await verifiedWindowsCodexPath(candidate,version)
+          :join(candidate, "node_modules", ".bin", "codex");
         const reported = await run(cli, ["--version"], candidate);
         if (versionFrom(reported) !== version) throw new Error("version mismatch");
         if (this.deps.isBusy()) throw new Error("active tasks");
         activationAttempted = true;
         await this.deps.activate(id, cli);
-      } catch {
+      } catch (error) {
+        if(error instanceof ManagedNpmUnavailable)throw error;
         // Never forward npm output, environment paths or credential-bearing config.
         throw new Error(activationAttempted
           ? "Engine activation did not complete. Check the selected engine in Settings before retrying."
