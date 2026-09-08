@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
+import { guardTurnDispatch, RetiredTurnRegistry } from "../turn-dispatch-guard.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { captureSource } from "./capture.ts";
 import { captureWork } from "./chunks.ts";
@@ -92,4 +93,24 @@ it("uses post-reset bundle preparation in both real dispatch paths before receip
     expect(block.lastIndexOf("filterMemoryReplay(")).toBeGreaterThan(reset);
     expect(block.indexOf("new MemoryDispatchReceipt(")).toBeGreaterThan(reset);
   }
+});
+
+it("retires an accepted provider and awaits interruption when true forgetting invalidates its memory receipt",async()=>{
+  const f=fixture(),source=checkpoint("Evidence that the owner may forget.");
+  const bundle=await buildMemoryBundle("result",f.access,bridge),receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");
+  let acceptProvider!:(value:{turnId:string})=>void;
+  const provider=new Promise<{turnId:string}>(resolve=>{acceptProvider=resolve;});
+  let finishStop!:()=>void;
+  const stop=new Promise<void>(resolve=>{finishStop=resolve;});
+  const retired=new RetiredTurnRegistry();let released=false;
+  const guarded=guardTurnDispatch(provider,()=>false,async accepted=>{
+    retired.retire(accepted.turnId);await stop;
+  },()=>receipt.accepted()).catch(error=>{released=true;throw error;});
+  const failure=expect(guarded).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+  forgetMemory(ownerMemoryTicket(),{kind:"source",id:source.sourceId,revision:1});
+  acceptProvider({turnId:"accepted-provider"});
+  await Promise.resolve();await Promise.resolve();
+  expect(retired.has("accepted-provider")).toBe(true);expect(released).toBe(false);
+  finishStop();await failure;expect(released).toBe(true);
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).not.toBe("delivered");
 });

@@ -5,11 +5,21 @@
 export async function guardTurnDispatch<T>(
   started: Promise<T>,
   cancelled: () => boolean,
-  stopAfterSetup: () => Promise<void>,
+  stopAfterSetup: (value: T) => Promise<void>,
+  accepted?: (value: T) => void,
 ): Promise<{ value: T; cancelled: boolean }> {
   const value = await started;
-  if (!cancelled()) return { value, cancelled: false };
-  await stopAfterSetup();
+  if (!cancelled()) {
+    try { accepted?.(value); }
+    catch (error) {
+      // A provider may already own a process/retry. Validation failure must
+      // not release its caller's busy/lease state before exact-turn teardown.
+      await stopAfterSetup(value);
+      throw error;
+    }
+    return { value, cancelled: false };
+  }
+  await stopAfterSetup(value);
   return { value, cancelled: true };
 }
 

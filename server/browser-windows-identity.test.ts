@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { requireBrowserSignature, verifyWindowsBrowserImage, WINDOWS_BROWSER_PUBLISHER, type UnsignedPePin } from "./browser-windows-identity.ts";
+import { requireBrowserSignature, verifyWindowsBrowserImage, WINDOWS_BROWSER_PUBLISHER, windowsBrowserSignatureScript, type UnsignedPePin } from "./browser-windows-identity.ts";
 
 function fixture() {
   const original = Buffer.alloc(512, 0x41), pe = 64, optional = pe + 24, security = optional + 144;
@@ -43,6 +43,12 @@ describe("Windows browser original-byte binding", () => {
     if (kind === "invalid-certificate") bytes.writeUInt32LE(100, pin.bytes);
     if (kind === "trailing-data") bytes = Buffer.concat([bytes, Buffer.alloc(8)]);
     expect(() => verifyWindowsBrowserImage(bytes, pin)).toThrow(/pinned original/);
+  });
+  it("binds the signature command to the child Windows PowerShell module set before loading cmdlets", () => {
+    const script = windowsBrowserSignatureScript(["C:\\fixture\\browser's.exe"]);
+    expect(script.startsWith(String.raw`$env:PSModulePath=$PSHOME+'\Modules';`)).toBe(true);
+    expect(script).toContain("Get-AuthenticodeSignature -LiteralPath $file");
+    expect(script).toContain("browser''s.exe");
   });
   it("requires OS-valid signature and the exact configured Azure publisher", () => {
     const config = parse(readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));

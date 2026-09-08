@@ -5,7 +5,7 @@ import { readFileSync, lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
 import type { AgentBrowserSpec } from "./browser-engine.ts";
-import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "./browser-windows-identity.ts";
+import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS, WINDOWS_BROWSER_POWERSHELL_SETUP } from "./browser-windows-identity.ts";
 const prepared = new Map<string, Promise<void>>();
 export async function ensureBrowserSandboxAccess(spec: AgentBrowserSpec): Promise<void> {
   if (process.platform !== "win32") return;
@@ -29,7 +29,7 @@ export async function ensureBrowserSandboxAccess(spec: AgentBrowserSpec): Promis
     const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
     // Check existing permissions first: Program Files may already grant RX,
     // and a standard user should not need elevation to use a correct install.
-    const script = `$ErrorActionPreference='Stop'; $root=${quote(chromeDirectory)}; $sid='S-1-15-2-1'; $rx=[System.Security.AccessControl.FileSystemRights]::ReadAndExecute; $needs=$false; foreach($item in @((Get-Item -LiteralPath $root))+(Get-ChildItem -LiteralPath $root -Recurse -Force)){ $ok=$false; foreach($rule in (Get-Acl -LiteralPath $item.FullName).Access){try{$id=$rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value}catch{continue}; if($id -eq $sid -and $rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $rx) -eq $rx){$ok=$true}}; if(-not $ok){$needs=$true;break}}; if($needs){ & (Join-Path $env:SystemRoot 'System32\\icacls.exe') $root /grant '*S-1-15-2-1:(OI)(CI)(RX)' /T /C | Out-Null; if($LASTEXITCODE -ne 0){throw 'Browser sandbox file access could not be prepared'}}`;
+    const script = WINDOWS_BROWSER_POWERSHELL_SETUP + `$root=${quote(chromeDirectory)}; $sid='S-1-15-2-1'; $rx=[System.Security.AccessControl.FileSystemRights]::ReadAndExecute; $needs=$false; foreach($item in @((Get-Item -LiteralPath $root))+(Get-ChildItem -LiteralPath $root -Recurse -Force)){ $ok=$false; foreach($rule in (Get-Acl -LiteralPath $item.FullName).Access){try{$id=$rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value}catch{continue}; if($id -eq $sid -and $rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $rx) -eq $rx){$ok=$true}}; if(-not $ok){$needs=$true;break}}; if($needs){ & (Join-Path $env:SystemRoot 'System32\\icacls.exe') $root /grant '*S-1-15-2-1:(OI)(CI)(RX)' /T /C | Out-Null; if($LASTEXITCODE -ne 0){throw 'Browser sandbox file access could not be prepared'}}`;
     await new Promise<void>((done, fail) => execFile(join(spec.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 20_000, maxBuffer: 8192 }, error => error ? fail(new Error("Windows browser sandbox file access needs repair. Reinstall Murage or repair its bundled browser permissions.")) : done()));
   })();
   prepared.set(root, operation);
