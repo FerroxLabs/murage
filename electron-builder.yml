@@ -234,6 +234,8 @@ linux:
   # The reviewed x64 CLI runtime is staged before packaging and remains
   # outside ASAR so executable modes and adjacent sidecars are preserved.
   extraResources:
+    - from: build/linux-murage-browser.apparmor
+      to: murage-browser.apparmor
     - from: dist-native/cua-linux-x64
       to: cua-linux-x64
     - from: dist-native/cloudflared/linux-x64/cloudflared
@@ -254,6 +256,7 @@ deb:
   # dpkg can preserve legacy directory modes during an upgrade. This
   # idempotent hook repairs only the exact package-owned CUA path.
   afterInstall: build/linux-after-install.sh
+  afterRemove: build/linux-after-remove.sh
 
 # Static AppImage runtime: Ubuntu 24.04 can launch it without legacy FUSE 2.
 toolsets:
