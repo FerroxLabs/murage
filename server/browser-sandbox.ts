@@ -1,11 +1,11 @@
 // Chromium's Windows AppContainer needs RX on the shipped browser binaries.
 // This grants no write access and never changes the sandbox or a user profile.
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync, lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
 import type { AgentBrowserSpec } from "./browser-engine.ts";
+import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "./browser-windows-identity.ts";
 const prepared = new Map<string, Promise<void>>();
 export async function ensureBrowserSandboxAccess(spec: AgentBrowserSpec): Promise<void> {
   if (process.platform !== "win32") return;
@@ -15,8 +15,13 @@ export async function ensureBrowserSandboxAccess(spec: AgentBrowserSpec): Promis
   if (resolve(spec.command) !== paths.engine || resolve(spec.env.AGENT_BROWSER_EXECUTABLE_PATH ?? "") !== paths.chrome) throw new Error("Browser bundle identity does not match its launch configuration");
   if (prepared.has(root)) return prepared.get(root)!;
   const operation = (async () => {
-    const hash = (file: string) => { if (!lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) throw new Error("Browser bundle file is invalid"); return createHash("sha256").update(readFileSync(file)).digest("hex"); };
-    if (hash(paths.engine) !== pin.engine.sha256 || hash(paths.chrome) !== pin.chrome.executableSha256 || !lstatSync(paths.licenses).isDirectory()) throw new Error("Browser bundle failed identity verification");
+    const signed: string[] = [];
+    for (const [file, original] of [[paths.engine, WINDOWS_BROWSER_IMAGE_PINS.engine], [paths.chrome, WINDOWS_BROWSER_IMAGE_PINS.chrome]] as const) {
+      if (!lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) throw new Error("Browser bundle file is invalid");
+      if (verifyWindowsBrowserImage(readFileSync(file), original).signed) signed.push(file);
+    }
+    if (!lstatSync(paths.licenses).isDirectory()) throw new Error("Browser bundle failed identity verification");
+    if (signed.length) await verifyWindowsBrowserSignatures(signed, spec.env.SystemRoot);
     const manifest = JSON.parse(readFileSync(paths.manifest, "utf8"));
     if (manifest.engine?.sha256 !== pin.engine.sha256 || manifest.chrome?.executableSha256 !== pin.chrome.executableSha256) throw new Error("Browser bundle manifest is invalid");
     const chromeDirectory = dirname(paths.chrome);

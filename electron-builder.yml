@@ -173,8 +173,18 @@ win:
   extraResources:
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
+    # Directory copies sign EXEs before afterPack; defer these two files until
+    # the complete upstream inventory has passed its pinned-byte check.
     - from: dist-native/browser/win32-${arch}
       to: browser-engine
+      filter:
+        - "**/*"
+        - "!agent-browser.exe"
+        - "!chrome/chrome-headless-shell-win64/chrome-headless-shell.exe"
+    - from: dist-native/browser/win32-${arch}/agent-browser.exe
+      to: browser-engine/agent-browser.exe
+    - from: dist-native/browser/win32-${arch}/chrome/chrome-headless-shell-win64/chrome-headless-shell.exe
+      to: browser-engine/chrome/chrome-headless-shell-win64/chrome-headless-shell.exe
     - from: dist-native/fuigo/win32-x64/fuigo.exe
       to: fuigo/fuigo.exe
   # Signed with Azure Trusted Signing (Microsoft now calls the role "Artifact
