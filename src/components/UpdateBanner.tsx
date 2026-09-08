@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // Auto-update popup — a small card floating bottom-left, driven by the
 // preload's updater bridge. Renders nothing in the browser/dev (no bridge)
 // and while idle/checking; appears only when actionable: an update to
@@ -158,7 +159,7 @@ export function UpdateBanner() {
                 </>
               ) : (
                 <>
-                  <ArrowDownToLine size={13} /> Download
+                  <ArrowDownToLine size={13} /> {t("updates.download")}
                 </>
               )}
             </button>
@@ -182,7 +183,7 @@ export function UpdateBanner() {
                 </>
               ) : (
                 <>
-                  <RefreshCw size={13} /> Restart to update
+                  <RefreshCw size={13} /> {t("updates.restart")}
                 </>
               )}
             </button>
@@ -201,7 +202,7 @@ export function UpdateBanner() {
                   <Loader2 size={13} className="animate-spin" /> Trying again…
                 </>
               ) : (
-                "Try again"
+                t("updates.retry")
               )}
             </button>
           )}
@@ -211,7 +212,7 @@ export function UpdateBanner() {
             className="rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-50 disabled:hover:bg-transparent"
           >
             {/* after a hand-off there is nothing left to postpone */}
-            {s.status === "handed-off" ? "Done" : "Later"}
+            {s.status === "handed-off" ? "Done" : t("updates.later")}
           </button>
         </div>
       )}
