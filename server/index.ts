@@ -1,5 +1,9 @@
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
 import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
+import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
+import { syncTrackedMemoryImports } from "./memory/import.ts";
+import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
+import { hasPendingBotDelegations } from "./delegations.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged } from "./memory/dispatch.ts";
@@ -447,18 +451,44 @@ bus.attach(registry.instances());
 
 // ── peer-agent comms wiring ────────────────────────────────────────────
 import { InternalCapabilities, type InternalCapabilityKind } from "./internal-capabilities.ts";
+import { resolveCoordinationTarget } from "./coordination-target.ts";
+import { CoordinationBudget, MAX_COORDINATION_DEPTH, MAX_HANDOFFS_PER_TURN, MAX_CONCURRENT_HANDOFFS, type CoordinationTrace } from "./coordination-budget.ts";
+const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-roots.json"));
 const internalCapabilities = new InternalCapabilities();
+const coordinationSlots = new Map<string, () => void>();
+function coordinationHasCapacity(): boolean { return coordinationSlots.size < MAX_CONCURRENT_HANDOFFS; }
+function holdCoordinationSlot(threadId: string): () => void {
+  if (coordinationSlots.has(threadId) || !coordinationHasCapacity()) throw new Error("COORDINATION_CAPACITY: wait for a running handoff");
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true; unsubscribe(); coordinationSlots.delete(threadId);
+    queueMicrotask(() => {
+      for (const source of pendingThreads()) {
+        if (!coordinationHasCapacity()) break;
+        if (!internalTurnOwners.has(source)) drainDelegations(commsBus, approvalBus, source, runDelegatedTurn);
+      }
+    });
+  };
+  const unsubscribe = bus.subscribe((event: RuntimeEvent) => {
+    if (event.type === "turn.completed" && event.threadId === threadId && !shouldIgnoreProviderEvent(event)) release();
+  });
+  coordinationSlots.set(threadId, release);
+  return release;
+}
 const projectTurnLeases = new ProjectTurnLeases();
 const internalTurnOwners = new Map<string, {
   botId: string; generation: string; depth: number; skillAuthoring: boolean;
   eventId?: string;
   memorySkillSource?: string;
+  coordination?: CoordinationTrace;
   tokens: Partial<Record<InternalCapabilityKind, string>>;
 }>();
-function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string): void {
+function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string, coordination?: CoordinationTrace): void {
   internalCapabilities.begin(botId, threadId, generation);
   memoryDispatches.delete(threadId);
-  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId, tokens: {} });
+  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId,
+    coordination: coordination ?? (depth === 0 ? coordinationBudget.begin(botId, generation) : undefined), tokens: {} });
 }
 function internalToken(botId: string, threadId: string, generation: string, kind: InternalCapabilityKind): string {
   const owner = internalTurnOwners.get(threadId);
@@ -497,7 +527,7 @@ function revokeAllInternalTurns(): void {
 // Cap message chains: depth 0 = a user-initiated turn (may ask a peer);
 // a peer invoked via ask_bot runs at depth 1 and gets NO agents tool, so
 // A→B is allowed but B→C (and A→B→A loops) never start.
-const MAX_COMMS_DEPTH = 1;
+const MAX_COMMS_DEPTH = MAX_COORDINATION_DEPTH;
 const MAX_WORKSPACE_BOTS = 100;
 /** One assignment is the common case and a profile's whole set is the largest
  *  honest one — the biggest bundled profile declares eleven. A bound exists so
@@ -916,10 +946,11 @@ type AskBotOutcome = {
   stopReason?: string | null;
 };
 
-function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string, eventId?: string): Promise<AskBotOutcome> {
+function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string, eventId?: string, coordination?: CoordinationTrace): Promise<AskBotOutcome> {
   const target = store.bot(targetBotId);
   if (!target) return Promise.resolve({ status: "error", text: "(no such bot)" });
   const threadId = target.threadId;
+  const releaseSlot = holdCoordinationSlot(threadId);
   return new Promise((resolve) => {
     let text = "";
     let done = false;
@@ -949,11 +980,12 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
     startTurn(targetBotId, message, {
       commsDepth: depth + 1,
       eventId,
+      coordination,
       unattended: isUnattended(fromBotId),
-      onDispatchError: (reason) => finish({ status: "error", text: `(couldn't start that bot: ${reason})` }),
-    }).catch((err) =>
-      finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` }),
-    );
+      onDispatchError: (reason) => { releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${reason})` }); },
+    }).catch((err) => {
+      releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` });
+    });
   });
 }
 
@@ -1102,14 +1134,15 @@ function memoryIntegration(botId: string, threadId: string, generation: string) 
 const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,signal)=>{
   const selected=memoryExtractorInstanceId();
   if(!selected)return;
-  const instance=registry.get(String(selected));
-  return consolidateMemorySource(jobId,instance?.extractMemory?.bind(instance)??null,signal);
+  const extractor=resolveMemoryExtractor(selected,registry.instances());
+  return consolidateMemorySource(jobId,extractor,signal);
 },onIdleConsolidation:async(signal)=>{
+  syncTrackedMemoryImports({bots:store.bots,groups:store.groups});
   const selected=memoryExtractorInstanceId();
-  const instance=selected?registry.get(selected):null;
-  if(!instance?.extractMemory)return;
+  const extractor=resolveMemoryExtractor(selected,registry.instances());
+  if(!extractor)return;
   const [jobId]=pendingMemoryConsolidationJobs(1);
-  if(jobId)return consolidateMemorySource(jobId,instance.extractMemory.bind(instance),signal);
+  if(jobId)return consolidateMemorySource(jobId,extractor,signal);
 }});
 memoryWorker.start();
 const sendSequencer = new SendSequencer();
@@ -2806,12 +2839,13 @@ bus.subscribe((event: RuntimeEvent) => {
 /** How a drained delegation becomes a real turn on the target. Shared by
  * the settle-time drain and the boot-time drain of what a previous process
  * left queued. */
-const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId, eventId) => {
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId, eventId, coordination) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
     const targetThreadId = store.bot(toBotId)?.threadId;
+    const releaseSlot = targetThreadId ? holdCoordinationSlot(targetThreadId) : () => {};
     const target = store.bot(toBotId);
     if (targetThreadId) {
       delegationWatch.set(targetThreadId, {
@@ -2827,6 +2861,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     const reportStartFailure = (error: unknown) => {
       if (failureReported) return;
       failureReported = true;
+      releaseSlot();
       const bot = store.bot(toBotId);
       const why = error instanceof Error ? error.message : String(error);
       if (targetThreadId) {
@@ -2855,6 +2890,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     return startTurn(toBotId, text, {
       commsDepth,
       eventId,
+      coordination,
       // The delegating bot is the one whose unattended state matters, and a
       // room thread has no owner to look it up from.
       unattended: isUnattended(fromBotId || store.botByThread(sourceThreadId)?.id),
@@ -2879,6 +2915,8 @@ function retryDelegationsWaitingOn(botId: string): void {
   queueMicrotask(() => {
     delegationRetryBots.delete(botId);
     if (store.bot(botId)?.busy) return;
+    const threadId = store.bot(botId)?.threadId;
+    if (threadId) coordinationSlots.get(threadId)?.();
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
@@ -3085,11 +3123,19 @@ async function finalScreenFrame(botId: string, threadId: string): Promise<Frame 
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
+function unavailableModelMessage(instanceId: string): string {
+  return instanceId.trim()
+    ? "This bot's AI connection is unavailable. Choose another model, or reconnect your provider in App Settings."
+    : "Choose a model for this bot to get started. If you haven't connected a provider yet, add your Flux Router key or connect another provider in App Settings.";
+}
+
 async function startTurn(
   botId: string,
   text: string,
   opts?: {
     commsDepth?: number;
+    /** Authenticated server ancestry; never accepted from ordinary request bodies. */
+    coordination?: CoordinationTrace;
     /** Server-owned source ticket for explicit memory-to-skill review. */
     memorySkillSource?: string;
     userMessage?: Message;
@@ -3154,7 +3200,7 @@ async function startTurn(
       new Error(
         opts?.runOn === "cloud"
           ? "the Cloud VM runner is unavailable — configure Box in App Settings"
-          : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+          : unavailableModelMessage(bot.modelSelection.instanceId),
       ),
       { status: 409 },
     );
@@ -3260,7 +3306,7 @@ async function startTurn(
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
   const dispatchClaimId = randomUUID();
-  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId);
+  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination);
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnGenerationByBot.set(bot.id, dispatchClaimId);
   directTurnDispatchClaims.set(bot.id, { id: dispatchClaimId, threadId, phase: "setup" });
@@ -3492,9 +3538,10 @@ async function startTurn(
           : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
         throw new Error(`${autoVpsProblem}. ${hint}`);
       }
-      // Agent control tools include peer comms and the secure credential
-      // request card. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
-      // stop, so the user's tokens can't be burned by a bot-to-bot loop.
+      // Keep management/status tools available on delegated turns. Handoff
+      // depth and shared chain allowances are enforced at action admission;
+      // removing the whole integration strands leads and encourages native
+      // provider tools to route into an unrelated agent directory.
       // Only drivers that mount the tools get the integration (and, via the
       // integrations.agents gate below, the prompt hint) — a bot on a driver
       // without it must not be told about tools it cannot call. Any bot can
@@ -3505,10 +3552,7 @@ async function startTurn(
           !candidate.hidden &&
           canReach(bot, candidate),
       );
-      if (
-        commsDepth < MAX_COMMS_DEPTH &&
-        instance.adapter.capabilities.agentsMcp === true
-      ) {
+      if (instance.adapter.capabilities.agentsMcp === true) {
         integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring, dispatchClaimId);
       }
       // @mentions in the user's message (the composer's tagging UI) become
@@ -4302,7 +4346,7 @@ function serializeRoomContext(threadId: string, userName: string, permitted?: Me
 // comms bus: passed into the visibility helpers in comms-visibility.ts so
 // they can mirror messages + chips without re-deriving SSE plumbing. Same
 // shape every comms entry point uses (ask_bot, delegate_bot).
-const commsBus: CommsBus = { store, broadcast };
+const commsBus: CommsBus = { store, broadcast, canDispatch: coordinationHasCapacity };
 
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
@@ -4394,7 +4438,7 @@ async function runGroupMemberTurn(
   const internalGeneration = randomUUID();
   beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring);
   try {
-  if (hop < MAX_COMMS_DEPTH && instance.adapter.capabilities.agentsMcp === true) {
+  if (instance.adapter.capabilities.agentsMcp === true) {
     integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration);
   }
   const latestUser = [...store.activePath(threadId)].reverse().find(
@@ -6849,8 +6893,7 @@ const server = createServer(async (req, res) => {
             return {botId,threadId:target.threadId,messageId:message.id};
           },
 
-          extractors:()=>registry.instances().filter(instance=>instance.enabled && ["openai-compat","grok","minimax"].includes(instance.driverKind))
-            .map(instance=>({instanceId:instance.instanceId,label:instance.displayName??instance.driverKind,eligible:typeof instance.extractMemory==="function",...(typeof instance.extractMemory!=="function"?{reason:"A tool-free capped extractor is unavailable for this engine."}:{})})),
+          extractors:()=>memoryExtractorConnections(registry.instances()),
         });
         if(path==="/api/memory/action" && body && typeof body==="object" && "action" in body && body.action==="configure") {
           if(["off","paused"].includes(memoryState().mode))await memoryWorker.stop();
@@ -6976,12 +7019,13 @@ const server = createServer(async (req, res) => {
         // title/description included so a "chief of staff"-style bot can
         // judge the team (who does what, who has no job description yet)
         const bots = store.bots
-          .filter((b) => b.id !== self && !b.hidden && canReach(sender, b))
+          .filter((b) => b.id !== self && !b.hidden && mayInspectBot(sender, b))
           .map((b) => ({
             id: b.id,
             name: b.name,
             model: b.modelSelection.model,
             busy: !!b.busy,
+            reachable: canReach(sender, b),
             title: b.title || undefined,
             description: b.description || undefined,
             // section + chiefOfStaff so a workspace Chief can tell a lead
@@ -6992,7 +7036,26 @@ const server = createServer(async (req, res) => {
             // never rendered as a team leader it is not.
             individual: isIndividualAssistant(b) ? true : undefined,
           }));
-        return json(res, 200, { bots });
+        return json(res, 200, { bots, organizationRevision: organizationRevision(store, sender) });
+      }
+      if (method === "POST" && path === "/api/internal/bot-management") {
+        const { fromBotId, fromThreadId: _thread, depth: _depth, ...body } = await readInternalBody();
+        const sender = store.bot(String(fromBotId));
+        if (!sender) return json(res, 403, { error: "unknown sender" });
+        const result = manageBot(store, sender, body, {
+          pendingWork: bot => hasPendingBotDelegations(bot) || Boolean(activeGroupTurnForBot(bot.id)) || Boolean(routines?.activeRunForBot(bot.id)),
+          validateSelection: (input, bot) => {
+            const checked = checkedModelSelection(input, { selection: bot.modelSelection, busy: Boolean(bot.busy) }, true);
+            if (!checked.ok) throw Object.assign(new Error(checked.error), { status: checked.status });
+            return checked.selection;
+          },
+          validateLeader: selection => {
+            const error = leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId);
+            if (error) throw Object.assign(new Error(error), { status: 409 });
+          },
+          revoke: revokeInternalBot,
+        });
+        return json(res, 200, result);
       }
       if (method === "GET" && path === "/api/internal/routines") {
         const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
@@ -7160,12 +7223,14 @@ const server = createServer(async (req, res) => {
       if (method === "POST" && path === "/api/internal/ask-bot") {
         const body = await readInternalBody();
         const fromBotId = String(body.fromBotId ?? "");
-        const toBotId = String(body.toBotId ?? "");
+        const senderForResolution = store.bot(fromBotId);
+        if (!senderForResolution) return json(res, 403, { error: "unknown sender" });
+        const toBotId = resolveCoordinationTarget(senderForResolution, store.bots, String(body.toBotId ?? "")).id;
         const message = String(body.message ?? "").trim();
         const depth = Number(body.depth ?? 0) || 0;
         if (!toBotId || !message) return json(res, 400, { error: "toBotId and message required" });
         if (toBotId === fromBotId) return json(res, 400, { error: "a bot cannot message itself" });
-        if (depth >= MAX_COMMS_DEPTH) return json(res, 200, { error: "message chains are limited to one hop" });
+        if (depth >= MAX_COMMS_DEPTH) return json(res, 200, { error: "the Chief-to-lead-to-specialist handoff depth is exhausted" });
         const target = store.bot(toBotId);
         if (!target) return json(res, 404, { error: "no such bot" });
         // An unknown sender used to fall through: no mirroring AND no
@@ -7192,17 +7257,19 @@ const server = createServer(async (req, res) => {
         // retries, receipts, restart-safe) and the asker gets a task id it
         // can check next turn. If the ledger refuses (cap/depth), fall back
         // to the plain busy bounce rather than dropping the refusal reason.
-        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff");
-        if (!handoffSlot) return json(res, 429, { error: "at most four peer handoffs are allowed per turn" });
+        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
+        if (!handoffSlot) return json(res, 429, { error: `at most ${MAX_HANDOFFS_PER_TURN} peer handoffs are allowed per turn` });
         try {
         const eventAdmissionId = randomUUID();
+        let childCoordination: CoordinationTrace | undefined;
+        const nextCoordination = () => childCoordination ??= coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId);
         const queueBusyFallback = (approvalAlreadyGranted = false) => {
           requireActiveInternal();
           admitEventAction("handoff", eventAdmissionId);
           const queued = queueDelegation(
             commsBus,
             from,
-            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, eventId: internalEventId },
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, eventId: internalEventId, coordination: nextCoordination() },
             MAX_COMMS_DEPTH,
             fromThreadId,
           );
@@ -7210,7 +7277,7 @@ const server = createServer(async (req, res) => {
           handoffSlot.commit();
           return json(res, 200, { busy: true, taskId: queued.id, toBotName: target.name });
         };
-        if (target.busy) return queueBusyFallback();
+        if (target.busy || !coordinationHasCapacity()) return queueBusyFallback();
         let currentFrom = from;
         let currentTarget = target;
 
@@ -7259,7 +7326,7 @@ const server = createServer(async (req, res) => {
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this Murage workspace. Reply to them.]\n\n${message}`;
         admitEventAction("handoff", eventAdmissionId);
-        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId);
+        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId, nextCoordination());
         if (store.bot(toBotId)?.busy) handoffSlot.commit();
         const outcome = await waiting;
         requireActiveInternal();
@@ -7364,7 +7431,9 @@ const server = createServer(async (req, res) => {
       if (method === "POST" && path === "/api/internal/delegate-bot") {
         const body = await readInternalBody();
         const fromBotId = String(body.fromBotId ?? "");
-        const toBotId = String(body.toBotId ?? "");
+        const senderForResolution = store.bot(fromBotId);
+        if (!senderForResolution) return json(res, 403, { error: "unknown sender" });
+        const toBotId = resolveCoordinationTarget(senderForResolution, store.bots, String(body.toBotId ?? "")).id;
         const message = String(body.message ?? "").trim();
         const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : undefined;
         const depth = Number(body.depth ?? 0) || 0;
@@ -7380,14 +7449,14 @@ const server = createServer(async (req, res) => {
         if (!connectorThread(from.id, fromThreadId)) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
-        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff");
-        if (!handoffSlot) return json(res, 429, { error: "at most four peer handoffs are allowed per turn" });
+        const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
+        if (!handoffSlot) return json(res, 429, { error: `at most ${MAX_HANDOFFS_PER_TURN} peer handoffs are allowed per turn` });
         try {
         admitEventAction("handoff", randomUUID());
         const queued = queueDelegation(
           commsBus,
           from,
-          { toBotId, message, reason, depth, eventId: internalEventId },
+          { toBotId, message, reason, depth, eventId: internalEventId, coordination: coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId) },
           MAX_COMMS_DEPTH,
           fromThreadId,
         );
@@ -7396,7 +7465,7 @@ const server = createServer(async (req, res) => {
           // nothing about what to do instead
           const said: Record<Exclude<QueueResult, "ok">, string> = {
             self: "a bot cannot delegate to itself",
-            too_deep: "delegation chains are limited to one hop — do this one yourself",
+            too_deep: "the Chief-to-lead-to-specialist handoff depth is exhausted — complete this work without another handoff",
             no_target: "no such bot",
             too_many: "too many delegations queued on this turn — finish some first",
           };
@@ -7502,9 +7571,12 @@ const server = createServer(async (req, res) => {
         }
         if (name.length > 80) return json(res, 400, { error: "name must be at most 80 characters" });
         if (role.length > 120) return json(res, 400, { error: "role must be at most 120 characters" });
-        if (instructions.length > 1_000) {
-          return json(res, 400, { error: "instructions must be at most 1000 characters" });
+        if (instructions.length > 8_000) {
+          return json(res, 400, { error: "instructions must be at most 8000 characters" });
         }
+        const selectedModel = body.modelSelection === undefined ? chief.modelSelection : checkedModelSelection(body.modelSelection, undefined, true);
+        if ("ok" in selectedModel && !selectedModel.ok) return json(res, selectedModel.status, { error: selectedModel.error });
+        const modelSelection = "ok" in selectedModel ? selectedModel.selection : selectedModel;
         const duplicate = store.bots.find(
           (candidate) =>
             !candidate.hidden &&
@@ -7515,7 +7587,7 @@ const server = createServer(async (req, res) => {
           return json(res, 409, { error: `@${duplicate.name} already exists in this section; use list_bots` });
         }
         if (wantsLead) {
-          const error = leadershipAdmissionError(registry.get(chief.modelSelection.instanceId), chief.modelSelection.instanceId);
+          const error = leadershipAdmissionError(registry.get(modelSelection.instanceId), modelSelection.instanceId);
           if (error) return json(res, 409, { error });
         }
         const createSlot = internalCapabilities.reserve(internalClaim, "create");
@@ -7527,7 +7599,7 @@ const server = createServer(async (req, res) => {
             name,
             title: role,
             description: instructions,
-            modelSelection: { ...chief.modelSelection },
+            modelSelection: { ...modelSelection },
             section: targetSection,
           },
           { seedMessages: false },
@@ -10455,7 +10527,7 @@ const server = createServer(async (req, res) => {
       }
       if (!registry.get(bot.modelSelection.instanceId)) {
         return json(res, 409, {
-          error: `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+          error: unavailableModelMessage(bot.modelSelection.instanceId),
         });
       }
       const message = store.branchMessage(bot.threadId, messageId, text);

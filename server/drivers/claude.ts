@@ -720,9 +720,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         "--permission-mode", config.permissionMode === "auto" ? "acceptEdits" : config.permissionMode,
       ];
       if (config.tools !== undefined) args.push("--tools", config.tools.join(","));
-      if (config.disallowedTools?.length) {
-        args.push("--disallowedTools", config.disallowedTools.join(","));
-      }
+      const disallowedTools = [...new Set([
+        ...(config.disallowedTools ?? []),
+        // These native tools address provider sessions, not Murage's roster.
+        ...(turn.integrations?.agents ? ["ListAgents", "SendMessage"] : []),
+      ])];
+      if (disallowedTools.length) args.push("--disallowedTools", disallowedTools.join(","));
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
       const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
       // argv and the process-reuse key below must come from the SAME routing

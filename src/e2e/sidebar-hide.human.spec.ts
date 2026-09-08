@@ -54,6 +54,7 @@ test('sidebar roster readability',async({page},testInfo)=>{
   const name=page.getByText('Market Research Analyst',{exact:true});
   if(canHover){
     const metrics=await name.evaluate(element=>{const style=getComputedStyle(element);return {scrollWidth:element.scrollWidth,clientWidth:element.clientWidth,width:element.getBoundingClientRect().width,fontFamily:style.fontFamily,fontSize:style.fontSize,fontWeight:style.fontWeight};});
+    await testInfo.attach('desktop-name-metrics',{body:JSON.stringify(metrics),contentType:'application/json'});
     // Keep the real desktop clipping gate; do not substitute a narrower font
     // or allow ellipsis merely because another platform's font is wider.
     expect(metrics.scrollWidth,JSON.stringify(metrics)).toBeLessThanOrEqual(metrics.clientWidth);

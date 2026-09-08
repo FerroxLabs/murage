@@ -265,7 +265,7 @@ function TeamRow({
       <TeamGlyph index={index} />
       <div className="min-w-0 flex-1">
         <h3 className="truncate text-[14px] font-medium text-ink">{entry.name}</h3>
-        <p className="mt-0.5 line-clamp-3 text-[12.5px] leading-relaxed text-ink-secondary">{plainText(entry.outcome ?? entry.summary)}</p>
+        <p className="mt-0.5 line-clamp-3 text-[12.5px] leading-relaxed text-ink-secondary">{plainText(entry.summary)}</p>
         <p className="mt-1 truncate text-[11.5px] text-ink-secondary/80">{facts.join(" · ")}</p>
       </div>
       <button
@@ -1387,7 +1387,7 @@ export function TeamLibraryPanel({
                     >
                       <UploadCloud size={27} className="text-accent" />
                       <span className="mt-3 text-[14px] font-medium text-ink">Choose a team file</span>
-                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a package .zip, BotMRR .md or legacy .emberteam.json here</span>
+                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a package .zip, EmberBot.md playbook or legacy .emberteam.json here</span>
                     </button>
 
                     <div className="flex min-h-56 flex-col justify-center rounded-2xl bg-raised/25 px-6">

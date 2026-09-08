@@ -241,9 +241,9 @@ function MemoryCard({ bot }: { bot: Bot }) {
         }}
       >
         <div>
-          <div className="text-[15px] font-medium text-ink">Memory</div>
+          <div className="text-[15px] font-medium text-ink">Legacy notebook</div>
           <div className="mt-0.5 text-[13px] text-ink-secondary">
-            Notes this bot keeps between tasks: plain files you can edit.
+            Editable Markdown notes. Import them into managed memory to make them available for recall.
           </div>
         </div>
         <ChevronDown size={16} className={cn("shrink-0 text-ink-secondary transition-transform", open && "rotate-180")} />
@@ -273,8 +273,8 @@ function MemoryCard({ bot }: { bot: Bot }) {
           <textarea
             className={cn(inputCls, "min-h-[160px] resize-y font-mono text-[12.5px] leading-relaxed")}
             value={text}
-            placeholder="Nothing remembered yet. The bot writes durable notes here — or add your own."
-            aria-label="Bot memory"
+            placeholder="Optional Markdown notes for this bot."
+            aria-label="Legacy bot notebook"
             onChange={(e) => {
               setText(e.target.value);
               setDirty(true);
@@ -290,7 +290,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
             </button>
             {truncated && (
               <span className="text-[11.5px] text-ink-secondary">
-                Over the budget; only the top of this file loads each turn.
+                This exceeds the old notebook prompt limit. The full file is still saved and can be imported into managed memory.
               </span>
             )}
           </div>
@@ -333,7 +333,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
-  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(true);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (
     p: Partial<
@@ -703,11 +703,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           <WorkingFolder bot={bot} />
 
           {/* keyed so switching bots never shows one bot's notes under another's name */}
-          <MemoryCard key={bot.id} bot={bot} />
-          <details className="rounded-xl bg-card p-4" onToggle={event => setMemoryOpen(event.currentTarget.open)}>
+          <details open={memoryOpen} className="rounded-xl bg-card p-4" onToggle={event => setMemoryOpen(event.currentTarget.open)}>
             <summary className="cursor-pointer text-[15px] font-medium text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">Managed memory</summary>
             {memoryOpen && <div className="mt-3"><MemorySettings key={`memory-${bot.id}`} botId={bot.id} /></div>}
           </details>
+          <MemoryCard key={bot.id} bot={bot} />
 
           {/* "Add a skill" is the other end of assignment: it opens the
               library with THIS agent already chosen, so the person never has

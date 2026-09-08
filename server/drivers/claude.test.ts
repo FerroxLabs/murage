@@ -613,6 +613,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(JSON.stringify(seen.argv)).not.toContain("tok");
     const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
     expect(allowed).toContain("mcp__agents");
+    const blockedNative = seen.argv[seen.argv.indexOf("--disallowedTools") + 1].split(",");
+    expect(blockedNative).toContain("ListAgents");
+    expect(blockedNative).toContain("SendMessage");
   });
 
   it("skips custom MCP entries with reserved env names while preserving built-ins and ordinary approval behavior", async () => {

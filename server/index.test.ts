@@ -5895,7 +5895,7 @@ describe("harness HTTP API", () => {
           status: "failed",
           startedAt: expect.any(String),
           finishedAt: expect.any(String),
-          error: expect.stringMatching(/provider instance "ghost" is unavailable/i),
+          error: expect.stringMatching(/This bot's AI connection is unavailable.*App Settings/i),
           executionThreadId: runCards[0].routineRun.executionThreadId,
         });
         expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);

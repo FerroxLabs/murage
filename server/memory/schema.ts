@@ -111,13 +111,13 @@ export function validateMemorySchema(db: DatabaseSync): Set<string> {
   return new Set(memoryRows.map(row => row.name));
 }
 
-export function migrateMemorySchema(db: DatabaseSync) {
+export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "active" = "off") {
   const exists = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get();
   if (exists) { validateMemorySchema(db); return; }
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(MEMORY_SCHEMA);
-    db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id) VALUES(1,1,?)").run(randomUUID());
+    db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,1,?,?)").run(randomUUID(),initialMode);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }

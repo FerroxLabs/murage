@@ -513,6 +513,29 @@ function handle(msg: any) {
           });
         return;
       }
+      if ((mode === "ask-peer" || mode === "create-peer") && agentsMcp && Number(agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "0") > 0) {
+        // A nested helper answers its assignment, while proving that the
+        // actual injected MCP server still supplies its scoped directory.
+        const depth = agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value;
+        void driveMcp(agentsMcp, [{ name: "list_bots", args: () => ({}) }]).then(list => {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `hello from fake acp; agents tools available at depth ${depth}\n${list}` } } } });
+          complete();
+        }).catch(error => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `peer error: ${error.message}` } } } }); complete(); });
+        return;
+      }
+      if (mode === "batch-delegate" && agentsMcp) {
+        let targets: string[] = [];
+        void driveMcp(agentsMcp, [
+          { name: "list_bots", args: () => ({}) },
+          ...Array.from({ length: 8 }, (_, index) => ({ name: "delegate_bot", args: (previous: string) => {
+            if (index === 0) targets = previous.split("\n").filter(line => line.startsWith("- Batch helper ")).map(line => /id: ([\w-]+)/.exec(line)?.[1] ?? "");
+            if (targets.length !== 8) throw new Error("batch fixture requires exactly eight helpers");
+            return { bot_id: targets[index], message: `batch work ${index}` };
+          } })),
+        ]).then(reply => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `eight assignments queued: ${reply}` } } } }); complete(); })
+          .catch(error => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `batch error: ${error.message}` } } } }); complete(); });
+        return;
+      }
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy

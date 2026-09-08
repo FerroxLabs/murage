@@ -130,6 +130,11 @@ describe("comms e2e (fake ACP fleet)", () => {
           // the ask-peer fleet: both bots run "ask-peer" so A can ask B
           // synchronously (existing ask_bot e2e + the approval-gate e2e,
           // which uses the same sync path under a human card).
+          batchChief: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "batch-delegate" },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
           grok: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "ask-peer" },
@@ -1277,16 +1282,9 @@ describe("comms e2e (fake ACP fleet)", () => {
     ).toBe(false);
   }, 50_000);
 
-  // ── depth guard regression ───────────────────────────────────────────
-  // A bot invoked via ask_bot or delegate_bot runs at depth=1, which equals
-  // MAX_COMMS_DEPTH. The depth guard in startTurn must refuse to inject
-  // the agents integration, so B's CLI sees no agents mcpServer and falls
-  // through to its plain happy text — NOT a "one hop" error from a depth-1
-  // ask_bot. If the guard were removed, B's fake (also in ask-peer mode)
-  // would call ask_bot, the harness would refuse recursion, and B's reply
-  // would contain "peer error: ... one hop". The absence of that error is
-  // the regression signal.
-  it("does not inject the agents integration into a depth-1 turn", async () => {
+  // Delegated helpers keep their MCP directory; budgets constrain actions,
+  // not the existence of the management tool server.
+  it("retains the scoped agents directory on a delegated depth-1 turn", async () => {
     const seeded = (await api("GET", "/api/bots")).body.bots[0];
     await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
     // A runs delegate-peer and hands off to B, which runs ask-peer. If the
@@ -1326,11 +1324,40 @@ describe("comms e2e (fake ACP fleet)", () => {
     const reply = helperBot.messages.findLast(
       (m: any) => m.role === "bot" && m.kind === "text" && m.text?.includes("hello from fake acp"),
     );
-    // If the guard were broken, B would have called ask_bot at depth=1 and
-    // received "message chains are limited to one hop" back from the
-    // harness. That error text would surface here as `peer error: ... one hop`.
     expect(reply.text).toContain("hello from fake acp");
-    expect(reply.text).not.toContain("one hop");
+    expect(reply.text).toContain("agents tools available at depth 1");
+    expect(reply.text).toContain(asker.id);
     expect(reply.text).not.toContain("peer error");
   }, 45_000);
+  it("queues eight helpers in one turn and runs no more than four together", async () => {
+    rmSync(gateFile, { force: true });
+    const helpers: Array<{ id: string }> = [];
+    for (let i = 0; i < 8; i++) {
+      const bot = (await api("POST", "/api/bots", { name: `Batch helper ${i}`, section: "Batch team", modelSelection: { instanceId: "helperGate", model: "fake-model" } })).body.bot;
+      helpers.push(bot);
+    }
+    const chief = (await api("POST", "/api/bots", { name: "Batch lead", section: "Batch team", modelSelection: { instanceId: "batchChief", model: "fake-model" } })).body.bot;
+    expect((await api("POST", `/api/bots/${chief.id}/messages`, { text: "Assign the eight helpers" })).status).toBe(202);
+    const deadline = Date.now() + 30000;
+    let busy = 0;
+    while (Date.now() < deadline) {
+      const state = (await api("GET", "/api/bots")).body.bots;
+      busy = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && bot.busy).length;
+      expect(busy).toBeLessThanOrEqual(4);
+      const lead = state.find((bot: any) => bot.id === chief.id);
+      if (!lead.busy && busy === 4) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(busy).toBe(4);
+    writeFileSync(gateFile, "continue");
+    let completed = 0;
+    while (Date.now() < deadline) {
+      const state = (await api("GET", "/api/bots")).body.bots;
+      completed = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && !bot.busy && bot.messages.some((message: any) => message.role === "bot" && message.kind === "text" && message.text?.includes("batch work"))).length;
+      if (completed === 8) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(completed).toBe(8);
+  }, 45000);
+
 });
