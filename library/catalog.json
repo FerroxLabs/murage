@@ -6,7 +6,7 @@
     {
       "slug": "beacon",
       "name": "Channels",
-      "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
+      "summary": "For businesses planning website SEO, paid acquisition and social channels. Compare channel options using your supplied audience, business stage and budget.",
       "category": "Run",
       "outcome": "Pick the right channel mix for a [budget/stage] business.",
       "setupMinutes": 5,
@@ -3653,7 +3653,7 @@
     {
       "slug": "starter-business-team",
       "name": "Business / Team",
-      "summary": "For small teams turning project notes into a first deliverable. Get a scoped brief, a working draft, and a review that separates evidence from assumptions and open decisions.",
+      "summary": "For small teams turning project notes into a first deliverable. Get a scoped brief, a working draft, and a review that separates evidence from assumptions and open decisions. Team Coordinator is a suggested primary contact, not a grant of authority or an instruction to replace an existing Chief.",
       "category": "Starter",
       "outcome": "A project brief with owners and open decisions",
       "setupMinutes": 3,
@@ -3683,7 +3683,7 @@
     {
       "slug": "starter-solo-business",
       "name": "Solo Business",
-      "summary": "For solo operators who need to turn a priority into something concrete. Define the next deliverable, draft it from your supplied facts, and identify decisions needing your approval.",
+      "summary": "For solo operators who need to turn a priority into something concrete. Define the next deliverable, draft it from your supplied facts, and identify decisions needing your approval. Business Planner is a suggested coordinator; importing does not authorize a Chief replacement, outreach or spending.",
       "category": "Starter",
       "outcome": "One concrete priority with a finish condition",
       "setupMinutes": 3,

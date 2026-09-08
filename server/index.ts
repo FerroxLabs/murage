@@ -3756,7 +3756,7 @@ async function startTurn(
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
           const rebuilt=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
-            rewound:rewound||revoked,fresh,externallyUpdated:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"});
+            rewound,memoryRefreshed:revoked,fresh,externallyUpdated:Boolean(externalContextMarker),replaysNatively:instance.driverKind==="grok"});
           turnText=rebuilt.turnText;
           if(revoked)resumeCursor=undefined;
         }
@@ -3769,7 +3769,7 @@ async function startTurn(
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
           turnText=buildTurnContext({text:promptWithReply(skillAuthoring?expandLearnTurnText(text):text,opts?.replyTo,cfg.profile?.name?.trim()||"User"),transcript,
-            rewound:true,fresh:false,externallyUpdated:false,replaysNatively:instance.driverKind==="grok"}).turnText;
+            rewound,memoryRefreshed:true,fresh:false,externallyUpdated:false,replaysNatively:instance.driverKind==="grok"}).turnText;
           resumeCursor=undefined;
         }
         if(!resumeCursor) {

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -266,6 +266,25 @@ describe("goal-driven channel runs", () => {
       coordinatorBotId: lead.id,
       turnCount: 3,
       detail: "Draft produced and independently verified.",
+    }).catch(async (error: unknown) => {
+      // Keep the exact turn budget. If a claimed turn retried before producing
+      // a scripted reply, retain the isolated fixture evidence before cleanup.
+      const snapshot = (await api("GET", "/api/bots?messages=60")).body;
+      const current = snapshot.groups.find((candidate: { id: string }) => candidate.id === room.id);
+      let replyCounter: string | null = null;
+      try { replyCounter = readFileSync(join(home, "complete-replies.txt"), "utf8").slice(0, 32); } catch {}
+      const diagnostics = {
+        replyCounter,
+        messages: (current?.messages ?? []).slice(-40).map((message: any) => ({
+          kind: message.kind,
+          from: message.from?.name,
+          goalRun: message.goalRun,
+          activity: message.kind === "activity" ? message.tool?.name : undefined,
+        })),
+        stderr: stderr.slice(-4000),
+      };
+      if (error instanceof Error) error.message += `\nIsolated goal fixture diagnostics: ${JSON.stringify(diagnostics).slice(0, 12000)}`;
+      throw error;
     });
 
     const state = (await api("GET", "/api/bots?messages=30")).body;
