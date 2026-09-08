@@ -1,3 +1,4 @@
+import { mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -351,6 +352,7 @@ function configureRestoredDesktopConnections() {
  * the same as the user having saved nothing. Everything downstream — the
  * server's view of "configured", and whether we may register a fresh
  * installation — keys off this rather than off an empty object. */
+const modelProviderCommitToken = randomBytes(32).toString("hex");
 let credentialStoreUnavailable = false;
 
 async function loadSecureCredentials() {
@@ -1140,6 +1142,7 @@ async function startServerOn(port) {
       : {}),
     // "we could not read your keys" must not reach the UI as "you have none"
     MURAGE_CREDENTIAL_STORE: credentialStoreUnavailable ? "unavailable" : "ok",
+    MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: modelProviderCommitToken,
     // one env var per stored workspace secret (xai/box/voice/OpenCode Go);
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
@@ -2301,6 +2304,22 @@ const CREDENTIAL_PATCH = {
   firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
 };
+
+ipcMain.handle("model-provider:mutate", async (_event, input) => {
+  if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
+  if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("The operating-system credential store is unavailable");
+  return mutateProviderCredentials(input, {
+    packaged: app.isPackaged, updateDocument: updateSecureCredentialDocument, createId: randomUUID,
+    post: async (route, body) => {
+      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, {
+        method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` }, body: JSON.stringify(body),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Could not save model connection.");
+      return result;
+    },
+  });
+});
 
 ipcMain.handle("credential:set", async (_event, name, value) => {
   const patchFor = CREDENTIAL_PATCH[name];

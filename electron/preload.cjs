@@ -228,6 +228,7 @@ contextBridge.exposeInMainWorld("muragebox", {
       throw new Error(message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, ""));
     }),
   /** Store a provider credential with OS-backed encryption. */
+  mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 
   /** In-app auto-update. State object:

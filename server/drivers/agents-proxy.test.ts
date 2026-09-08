@@ -227,6 +227,8 @@ describe("agents-proxy MCP surface", () => {
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
+      "list_image_models",
+      "generate_image",
       "web_search",
       "list_bots",
       "ask_bot",
@@ -446,6 +448,7 @@ describe("agents-proxy MCP surface", () => {
       name: "Pixel",
       role: "Product designer",
       instructions: "Design and review the user experience.",
+      model_selection: { instanceId: "fixture", model: "model", connectionId: "provider-account" },
     });
     expect(res.result.content[0].text).toContain("Created @Pixel in Work");
     expect(lastCreateBody).toEqual({
@@ -454,6 +457,7 @@ describe("agents-proxy MCP surface", () => {
       name: "Pixel",
       role: "Product designer",
       instructions: "Design and review the user experience.",
+      modelSelection: { instanceId: "fixture", model: "model", connectionId: "provider-account" },
     });
   });
 

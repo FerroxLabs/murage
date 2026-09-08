@@ -236,6 +236,7 @@ const instanceConfigSchema = z.object({
 });
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
 const appConfigSchema = z.object({
+  modelProviders: z.object({ bank: z.string().max(200000).optional() }).strict().optional(),
   telegram: z.object({ botToken: z.string().max(256).optional(), targetBotId: z.string().max(160).optional() }).strict().optional(),
   notifications: notificationPreferencesSchema.optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
@@ -256,7 +257,7 @@ const appConfigSchema = z.object({
    * built-in voices, no key). */
   tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["elevenlabs", "system"]).optional() }).optional(),
   /** OpenAI key used only by the in-process avatar image generator. */
-  imageGen: z.object({ key: optionalText }).optional(),
+  imageGen: z.object({ key: optionalText, enabled: z.boolean().optional(), connectionId: z.string().max(160).optional(), model: z.string().max(180).optional() }).optional(),
   /** Optional external search credentials are write-only workspace state.
    * Absent keeps engine search. Only desktop Murage-specific key variables
    * are imported; ambient engine/MCP provider credentials remain separate. */
@@ -308,6 +309,7 @@ export interface AppConfig {
   mcpServers?: Record<string, unknown>;
   language?: string;
   xai?: { key?: string; url?: string };
+  modelProviders?: { bank?: string };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
   box?: { token?: string };
@@ -315,7 +317,7 @@ export interface AppConfig {
   vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
-  imageGen?: { key?: string };
+  imageGen?: { key?: string; enabled?: boolean; connectionId?: string; model?: string };
   webSearch?: { provider?: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string };
   sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
@@ -429,6 +431,7 @@ export function loadBrowserProfileIdAliases(): ReadonlyMap<string, string> {
 }
 
 export function parseConfigPatch(value: JsonValue): ConfigPatch {
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "modelProviders")) throw Object.assign(new Error("Model connections must be changed through Models settings."), { status: 400 });
   // saveConfig now knows how to write `mcpServers`, and that field decides
   // which local processes every capable bot spawns as tool servers. It is
   // therefore settable ONLY through the desktop-gated /api/mcp/servers
@@ -511,6 +514,8 @@ export function loadConfig(): AppConfig {
   // shadow the save until the next launch.
   cfg.xai = { ...cfg.xai };
   if (process.env.XAI_API_KEY !== undefined) cfg.xai.key = process.env.XAI_API_KEY;
+  cfg.modelProviders = { ...cfg.modelProviders };
+  if (process.env.MURAGE_MODEL_PROVIDER_CONNECTIONS !== undefined) cfg.modelProviders.bank = process.env.MURAGE_MODEL_PROVIDER_CONNECTIONS;
   cfg.openaiCompat = { ...cfg.openaiCompat };
   if (process.env.OPENAI_COMPAT_API_KEY !== undefined) cfg.openaiCompat.key = process.env.OPENAI_COMPAT_API_KEY;
   if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
@@ -547,6 +552,7 @@ export function loadConfig(): AppConfig {
  * untouched. */
 export function syncCredentialEnv(patch: ConfigWritePatch): void {
   const secrets: Array<[value: string | undefined, name: string]> = [
+    [patch.modelProviders?.bank, "MURAGE_MODEL_PROVIDER_CONNECTIONS"],
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
@@ -597,6 +603,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENCODE_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
+  "MURAGE_MODEL_PROVIDER_CONNECTIONS",
+  "MURAGE_MODEL_PROVIDER_COMMIT_TOKEN",
   "MURAGE_TELEGRAM_BOT_TOKEN",
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
@@ -698,7 +706,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

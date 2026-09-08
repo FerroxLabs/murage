@@ -450,7 +450,7 @@ export function createPasteController(effects: PasteEffects): PasteController {
       const row = rows.find((one) => one.id === id);
       if (!row || row.status !== "pending") return;
       const target = rowTarget(row);
-      if (!target) return;
+      if (!target || !row.providers.includes(target)) return;
       const value = vault.read(id).trim();
       if (!value) return;
 
@@ -494,6 +494,16 @@ export function PasteKeys() {
       render: setRows,
       save: (target, value) => {
         const provider = PROVIDERS[target];
+        if (provider.modelPreset) {
+          const input = { action: "create" as const, preset: provider.modelPreset, key: value };
+          const write = window.muragebox?.mutateProviderConnection
+            ? window.muragebox.mutateProviderConnection(input)
+            : api("/api/provider-connections/mutate", { method: "POST", body: JSON.stringify(input) });
+          return write.then(async () => {
+            window.dispatchEvent(new Event("murage:provider-connections-changed"));
+            return api("/api/config") as Promise<ConfigStatus>;
+          });
+        }
         return provider.credential && window.muragebox?.setCredential
           ? window.muragebox.setCredential(provider.credential, value)
           : (api("/api/config", { method: "PUT", body: JSON.stringify(provider.body(value)) }) as Promise<ConfigStatus>);

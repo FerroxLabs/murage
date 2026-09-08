@@ -1,3 +1,7 @@
+import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
+import { providerEngineProtocol } from "../shared/provider-engine.ts";
+import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
+import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
 import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
@@ -20,7 +24,7 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memor
 // Murage server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -238,7 +242,7 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
-import { fluxConfigured } from "./flux-config.ts";
+import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
 import {
   ensureWorkspace,
@@ -297,6 +301,8 @@ import {
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
+import { ImageGenerationService, type ImageConnection } from "./image-generation.ts";
+import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
@@ -384,6 +390,48 @@ process.once("exit", () => {
 ensureDirs();
 assertRestoreReviewed(DATA_DIR);
 const cfg = loadConfig();
+const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), legacyConnections: () => {
+  const rows: LegacyProviderConnection[] = [];
+  const add = (id: string, preset: LegacyProviderConnection["preset"], label: string, key: string | null | undefined, managedIn: LegacyProviderConnection["managedIn"], legacyError?: string) => {
+    if (!key?.trim()) return;
+    rows.push({ id, preset, label, key: key.trim(), enabled: !legacyError, revision: createHash("sha256").update(JSON.stringify([id, key, legacyError ?? "", PROVIDER_PRESETS[preset].baseUrl])).digest("hex"), legacy: true, managedIn, ...(legacyError ? { legacyError } : {}) });
+  };
+  add("legacy-flux", "flux", "Flux Router · existing workspace key", fluxKey(), "engines");
+  add("legacy-openai-image", "openai", "OpenAI · existing image key", cfg.imageGen?.key, "images");
+  add("legacy-xai", "xai", "xAI · existing workspace key", cfg.xai?.key, "engines");
+  if (cfg.openaiCompat?.key?.trim()) {
+    const configuredUrl = (cfg.openaiCompat.url ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+    const preset = Object.keys(PROVIDER_PRESETS).find(id => PROVIDER_PRESETS[id as keyof typeof PROVIDER_PRESETS].baseUrl === configuredUrl) as keyof typeof PROVIDER_PRESETS | undefined;
+    let problem = preset ? undefined : "This existing compatible endpoint is not a named provider preset. Manage it in existing engine settings; no key has been copied.";
+    if (preset && /^(sk-ant-|sk-flux-|sk-(?:proj|svcacct|admin)-|xai-|gsk_)/.test(cfg.openaiCompat.key)) {
+      try { assertProviderKey(preset, cfg.openaiCompat.key); } catch { problem = "This saved key does not match its configured endpoint. Choose the correct provider before using it."; }
+    }
+    add("legacy-openai-compatible", preset ?? "openrouter", problem ? "Existing compatible key · needs review" : `${PROVIDER_PRESETS[preset!].label} · existing compatible key`, cfg.openaiCompat.key, "engines", problem);
+  }
+  return rows;
+} });
+let providerConnectionsBusy = false;
+const activeProviderSelections = new Map<string, { botId: string; instanceId: string; route: ProviderTurnRoute }>();
+function selectedProviderRoute(selection: ModelSelection, driverKind: string): ProviderTurnRoute | undefined {
+  if (!selection.connectionId) return undefined;
+  const connection = providerConnections.resolve(selection.connectionId);
+  if (!connection?.enabled) throw Object.assign(new Error("Selected provider connection is disabled or unavailable"), { status: 409 });
+  const model = providerConnections.getCatalog(connection.id).models.find(row => row.id === selection.model);
+  if (!model?.enabled || !model.chatEligible || model.capabilities.chat !== true) throw Object.assign(new Error("Selected model is unavailable or not a chat model in this provider catalog"), { status: 409 });
+  const protocol = providerEngineProtocol(driverKind, connection.preset, connection.protocol);
+  if (!protocol) throw Object.assign(new Error("Selected engine does not support this provider connection"), { status: 409 });
+  const route = { connectionId: connection.id, preset: connection.preset, protocol, baseUrl: connection.baseUrl, apiKey: connection.key, model: selection.model, revision: connection.revision };
+  validateProviderTurnRoute(driverKind, route); return route;
+}
+function providerRouteIsCurrent(route: ProviderTurnRoute | undefined): boolean { return !route || providerConnections.isCurrent(route.connectionId, route.revision); }
+providerConnections.subscribe(changedIds => {
+  for (const [threadId, active] of activeProviderSelections) if (changedIds.includes(active.route.connectionId) && !providerRouteIsCurrent(active.route)) {
+    cancelDirectTurnDispatch(active.botId, threadId); revokeInternalThread(threadId);
+    void registry.get(active.instanceId)?.adapter.interruptTurn(threadId).catch(() => {});
+    activeProviderSelections.delete(threadId);
+  }
+});
+
 let providerConfigBusy = false;
 let providerFleetReady = true;
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
@@ -1026,7 +1074,7 @@ function checkedModelSelection(
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, status: 400, error: "modelSelection must be an object" };
   }
-  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown };
+  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown; connectionId?: unknown };
   if (typeof value.instanceId !== "string" || !value.instanceId.trim()) {
     return { ok: false, status: 400, error: "modelSelection.instanceId is required" };
   }
@@ -1037,6 +1085,10 @@ function checkedModelSelection(
     instanceId: value.instanceId.trim(),
     model: value.model.trim(),
   };
+  if (value.connectionId !== undefined) {
+    if (typeof value.connectionId !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(value.connectionId)) return { ok: false, status: 400, error: "modelSelection.connectionId is invalid" };
+    selection.connectionId = value.connectionId;
+  }
   if (value.effort !== undefined) {
     if (!isEffortLevel(value.effort)) {
       return { ok: false, status: 400, error: `effort "${String(value.effort)}" is not recognized` };
@@ -1046,7 +1098,7 @@ function checkedModelSelection(
   const changed = current && (
     selection.instanceId !== current.selection.instanceId ||
     selection.model !== current.selection.model ||
-    selection.effort !== current.selection.effort
+    selection.effort !== current.selection.effort || selection.connectionId !== current.selection.connectionId
   );
   if (current?.busy && changed) {
     return { ok: false, status: 409, error: "the bot is working — stop it before changing models" };
@@ -1056,7 +1108,11 @@ function checkedModelSelection(
   // engines can accept IDs that are not in their discovery catalog, and
   // several drivers only learn the final catalog when a turn starts. The
   // MCP tool applies a stricter discovered-model policy for its own calls.
-  if (requireAvailableModel) {
+  if (selection.connectionId) {
+    try { if (!target) throw new Error("Selected engine is unavailable"); selectedProviderRoute(selection, target.driverKind); }
+    catch (error) { return { ok: false, status: 409, error: (error as Error).message }; }
+  }
+  if (requireAvailableModel && !selection.connectionId) {
     if (!target) {
       return { ok: false, status: 400, error: `model instance "${selection.instanceId}" is unavailable` };
     }
@@ -1756,6 +1812,45 @@ function broadcast(payload: Record<string, unknown>) {
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+const imageOperations = new ImageOperations({ store, waiting: (threadId, waiting, requestId, messageId) => {
+  if (waiting && messageId) askMessageByRequest.set(`${threadId}:${requestId}`, messageId);
+  else askMessageByRequest.delete(`${threadId}:${requestId}`);
+  watchdog.setWaitingOnHuman(threadId, waiting);
+} });
+function imageConnection(id: string): ImageConnection | null {
+  if (id.startsWith("model:")) {
+    const connection = providerConnections.resolve(id.slice(6));
+    if (!connection?.enabled || !["flux", "openai", "openrouter", "xai"].includes(connection.preset)) return null;
+    return { id, provider: connection.preset as ImageConnection["provider"], apiKey: connection.key, revision: connection.revision };
+  }
+  let key = "", provider: ImageConnection["provider"];
+  if (id === "flux") { provider = "flux"; key = fluxKey() ?? ""; }
+  else if (id === "openai") { provider = "openai"; key = cfg.imageGen?.key ?? ""; }
+  else if (id === "xai") { provider = "xai"; key = cfg.xai?.key ?? ""; }
+  else if (id === "openai-compatible") {
+    provider = "openai";
+    if (cfg.openaiCompat?.url !== "https://api.openai.com/v1") return null;
+    key = cfg.openaiCompat?.key ?? "";
+  } else if (id === "openrouter") {
+    provider = "openrouter";
+    if (cfg.openaiCompat?.url !== "https://openrouter.ai/api/v1" && !(cfg.openaiCompat?.url === undefined && cfg.openaiCompat?.key?.startsWith("sk-or-"))) return null;
+    key = cfg.openaiCompat?.key ?? "";
+  } else return null;
+  return key ? { id, provider, apiKey: key, revision: createHash("sha256").update(JSON.stringify([provider, key, cfg.openaiCompat?.url])).digest("hex") } : null;
+}
+const imageService = new ImageGenerationService({ resolveConnection: imageConnection,
+  connectionIds: () => [...providerConnections.list().filter(connection => connection.enabled && !connection.legacy).map(connection => `model:${connection.id}`), "flux", "openai", "openai-compatible", "openrouter", "xai"] });
+async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
+  const connections = imageService.listConnections().map(connection => ({ ...connection, label: connection.id.startsWith("model:")
+    ? providerConnections.resolve(connection.id.slice(6))?.label ?? connection.provider
+    : ({ flux: "Flux Router", openai: "OpenAI image key", "openai-compatible": "OpenAI", openrouter: "OpenRouter", xai: "xAI" } as Record<string,string>)[connection.id] ?? connection.provider }));
+  const chosen = connectionId ?? connections.find(connection => connection.provider === "flux")?.id ?? connections.find(connection => connection.provider === "openai")?.id;
+  const catalog = chosen && imageConnection(chosen) ? await imageService.getCatalog(chosen) : null;
+  const model = cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model ?? catalog?.defaultModel : catalog?.defaultModel;
+  const selected = chosen && model && catalog?.models.some(item => item.id === model && item.generate && !item.disabledReason) ? { connectionId: chosen, model } : null;
+  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog };
+}
+
 function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
   const group = activeGroupTurnForBot(bot.id);
   const threads = new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId), ...(group ? [group.threadId] : [])]);
@@ -1806,8 +1901,8 @@ async function answerRequest(
     : thread.find((m) => m.card?.requestId === requestId);
   const card = cardMessage?.card;
   const instance = registry.get(instanceId);
-  let outcome: RequestOutcome = "unavailable";
-  if (instance) {
+  let outcome: RequestOutcome = imageOperations.resolve(threadId, requestId, behavior) ?? "unavailable";
+  if (!requestId.startsWith("image-") && instance) {
     try {
       outcome = await instance.adapter.respondToRequest(threadId, requestId, { behavior, message });
     } catch {
@@ -1861,6 +1956,7 @@ function closeOpenApprovals(threadId: string): void {
   // Peer approvals also hold an in-memory promise. Resolve those first; merely
   // patching their cards would leave the delegation queue waiting 15 minutes.
   cancelPeerApprovalsForThread(threadId);
+  imageOperations.cancelThread(threadId);
   for (const message of store.messagesFor(threadId)) {
     const card = message.card;
     if (!card?.requestId || card.answered || card.dismissed) continue;
@@ -2584,7 +2680,8 @@ bus.subscribe((event: RuntimeEvent) => {
       // tally at turn.completed (below) so retries never double-count
       turnUsage.set(event.threadId, { input: event.input, output: event.output, cachedInput: event.cachedInput });
       break;
-    case "turn.completed": {
+    case "turn.completed":
+      activeProviderSelections.delete(event.threadId); {
       const generatedKey = generatedImageTurnKey(event.threadId, event.turnId);
       const generated = generatedImagesByTurn.get(generatedKey) ?? [];
       generatedImagesByTurn.delete(generatedKey);
@@ -3226,6 +3323,8 @@ async function startTurn(
   }
   const instanceId = instance.instanceId;
   const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
+  const providerRoute = opts?.runOn === "cloud" ? undefined : selectedProviderRoute(bot.modelSelection, instance.driverKind);
+  activeProviderSelections.delete(threadId);
   // a cloud routine borrows the instance default model, so it borrows no
   // per-bot effort either
   const effort = opts?.runOn === "cloud" ? undefined : bot.modelSelection.effort;
@@ -3242,7 +3341,7 @@ async function startTurn(
   // ever being re-checked against the catalog (checkedModelSelection only
   // validates ids when requireAvailableModel is set). Unrefused, it is posted
   // to the ENGINE'S own host — api.openai.com for codex — and 400s there.
-  const fluxRefusal = fluxSelectionRefusal(model, instance.driverKind);
+  const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);
   if (fluxRefusal) throw Object.assign(new Error(fluxRefusal), { status: 409 });
 
   // an edit hands us its already-branched user message; a plain send appends
@@ -3689,7 +3788,10 @@ async function startTurn(
       watchdog.watch(threadId, bot.id);
       projectTurnLeases.markDispatched(dispatchClaimId);
       memoryReceipt?.assertCurrent();
+      if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
+      if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId, route: providerRoute });
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
+        providerRoute,
         memoryContext:memoryReceipt?.bundle,
         threadId,
         text: turnText,
@@ -3760,7 +3862,7 @@ async function startTurn(
             : ""),
         integrations,
         cwd,
-      }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
+      }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
         await instance.adapter.interruptTurn(threadId).catch(() => {});
       });
       if(!dispatch.cancelled)memoryReceipt?.accepted();
@@ -3799,6 +3901,7 @@ async function startTurn(
         startScreenPoller(bot.id, previewCapture, { screenIsTheWork: instance.driverKind === "boxAgent" });
       }
     } catch (e) {
+      if (activeProviderSelections.get(threadId)?.route === providerRoute) activeProviderSelections.delete(threadId);
       revokeInternalGeneration(threadId, dispatchClaimId);
       clearCancelledProviderHandshake(threadId, `direct:${dispatchClaimId}`);
       clearDirectTurnDispatch(bot.id, dispatchClaimId);
@@ -4789,7 +4892,11 @@ async function runGroupMemberTurn(
       await prepareRoomMemory();
       if(abandoned||isCancelled?.()||internalTurnOwners.get(threadId)?.generation!==internalGeneration)throw new Error("turn stopped before memory dispatch");
       memoryReceipt?.assertCurrent();
+      const providerRoute = selectedProviderRoute(bot.modelSelection, instance.driverKind);
+      activeProviderSelections.delete(threadId);
+      if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId: instance.instanceId, route: providerRoute });
       return guardTurnDispatch(instance.adapter.sendTurn({
+        providerRoute,
         memoryContext:memoryReceipt?.bundle,
         threadId,
         text,
@@ -4797,7 +4904,7 @@ async function runGroupMemberTurn(
         cwd,
         integrations,
         ...memberTurnSelection(bot.modelSelection),
-      }), () => abandoned || Boolean(isCancelled?.()), async () => {
+      }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async () => {
         // Stop may have landed while the adapter was authenticating, before
         // it had an active process for the first interrupt to reach. Now that
         // sendTurn completed setup, revoke again and interrupt the real turn.
@@ -6986,6 +7093,23 @@ const server = createServer(async (req, res) => {
       const result = await browserOwnerRequest(unifiedBrowser, authority, method, body, m[2] ? Number(url.searchParams.get("generation")) : undefined);
       res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
     }
+
+    if (path === "/api/images/settings" && (method === "GET" || method === "POST")) {
+      if (method === "GET") return json(res, 200, await imageSettings());
+      const patch = z.object({ enabled: z.boolean().optional(), connectionId: z.string().max(160).optional(), model: z.string().max(180).optional() }).strict().parse(await readBody(req));
+      const next = { ...cfg.imageGen, ...patch };
+      if (patch.connectionId && patch.connectionId !== cfg.imageGen?.connectionId) delete next.model;
+      if (patch.connectionId || patch.model || patch.enabled === true) {
+        const state = await imageSettings(next.connectionId);
+        if (!state.catalog) return json(res, 409, { error: "Connect an image provider first." });
+        const model = patch.model ?? next.model ?? state.catalog.defaultModel;
+        if (model && !state.catalog.models.some(item => item.id === model && item.generate && !item.disabledReason)) return json(res, 400, { error: "Choose a supported image model from this connection." });
+        if (model) next.model = model; else { delete next.model; next.enabled = false; }
+      }
+      const { key: _imageKey, ...preferences } = next;
+      saveConfig({ imageGen: preferences }); cfg.imageGen = next;
+      return json(res, 200, await imageSettings());
+    }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
@@ -7034,6 +7158,32 @@ const server = createServer(async (req, res) => {
       };
       assertInternalIdentity(Object.fromEntries(url.searchParams));
       requireActiveInternal();
+
+      if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }
+      if (path === "/api/internal/generate-image" && method === "POST") {
+        const body = z.object({ requestId: z.string().regex(/^[\w-]{1,80}$/), prompt: z.string().min(1).max(4000), operation: z.enum(["generate", "edit"]).optional(),
+          connectionId: z.string().max(160).optional(), model: z.string().max(180).optional(), quality: z.enum(["low", "medium", "high"]).optional(),
+          size: z.enum(["1024x1024", "1536x1024", "1024x1536"]).optional(), referenceIds: z.array(z.string().max(180)).max(4).optional() }).strict().parse(await readBody(req));
+        requireActiveInternal();
+        const settingIdentity = JSON.stringify(cfg.imageGen ?? {});
+        const state = await imageSettings(body.connectionId);
+        requireActiveInternal();
+        const chosen = body.connectionId ?? state.selected?.connectionId;
+        if (cfg.imageGen?.enabled === false || !chosen) return json(res, 409, { error: "Choose an image connection and model in Settings → Tools & Connections → Image generation." });
+        const controller = new AbortController();
+        const disconnected = () => controller.abort(); res.once("close", disconnected);
+        const active = () => { requireActiveInternal(); if (controller.signal.aborted || cfg.imageGen?.enabled === false || JSON.stringify(cfg.imageGen ?? {}) !== settingIdentity) throw Object.assign(new Error("Image operation was cancelled or its settings changed."), { status: 409 }); };
+        const revoked = setInterval(() => { try { active(); } catch { controller.abort(); } }, 100);
+        try {
+          const actor = { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation, signal: controller.signal, assertActive: active };
+          const refs = imageReferences(store, actor.threadId, body.referenceIds);
+          const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined, prompt: body.prompt,
+            operation: body.operation ?? (refs.length ? "edit" : "generate"), quality: body.quality, size: body.size };
+          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, reserve =>
+            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish: async (image, meta) => publishImage(store, actor, image, meta) }, refs));
+          active(); return json(res, 200, result);
+        } finally { clearInterval(revoked); res.off("close", disconnected); }
+      }
       if (method === "POST" && path === "/api/internal/web-search") {
         const body = await readBody(req);
         assertInternalIdentity(body);
@@ -11102,6 +11252,44 @@ const server = createServer(async (req, res) => {
     }
 
     // ── provider instances (model picker) ──
+    if (path === "/api/provider-connections" && method === "GET") {
+      return json(res, 200, { connections: providerConnections.list(), storage: utilityParentPort ? "encrypted" : "local-config" });
+    }
+    const providerCatalogRoute = /^\/api\/provider-connections\/([A-Za-z0-9_-]+)\/(catalog|refresh)$/.exec(path);
+    if (providerCatalogRoute && (method === "GET" && providerCatalogRoute[2] === "catalog" || method === "POST" && providerCatalogRoute[2] === "refresh")) {
+      return json(res, 200, providerCatalogRoute[2] === "refresh" ? await providerConnections.refresh(providerCatalogRoute[1]) : providerConnections.getCatalog(providerCatalogRoute[1]));
+    }
+    if (["/api/provider-connections/mutate", "/api/provider-connections/replace"].includes(path) && method === "POST") {
+      if (path.endsWith("/replace")) {
+        const expected = process.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN ?? "";
+        const supplied = /^Bearer ([a-f0-9]{64})$/.exec(String(req.headers.authorization ?? ""))?.[1] ?? "";
+        if (!expected || supplied.length !== expected.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(supplied))) return json(res, 404, { error: "no such route" });
+      }
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      if (providerConnectionsBusy) return json(res, 409, { error: "Model connections are already being changed. Try again." });
+      if (path.endsWith("/mutate") && utilityParentPort) return json(res, 409, { error: "Use the desktop Models connection control to preserve encrypted key storage." });
+      providerConnectionsBusy = true;
+      try {
+        const body = await readBody(req);
+        const previous = cfg.modelProviders?.bank ?? "[]";
+        let next: string;
+        if (path.endsWith("/replace")) {
+          const parsed = z.object({ bank: z.string().max(200000), expectedRevision: z.string().max(20000) }).strict().safeParse(body);
+          if (!parsed.success) return json(res, 400, { error: "Invalid model connection update." });
+          if (providerBankRevision(previous) !== parsed.data.expectedRevision) return json(res, 409, { error: "Model connections changed. Refresh before saving." });
+          next = JSON.stringify(parseProviderBank(parsed.data.bank));
+        } else next = JSON.stringify(mutateProviderBank(previous, body, randomUUID));
+        // Secret bank lives only in credentials.bin for packaged desktops.
+        // The explicit dev fallback follows the app's established local config behavior.
+        const external = path.endsWith("/replace");
+        saveConfig({ modelProviders: { bank: external ? "" : next } });
+        syncCredentialEnv({ modelProviders: { bank: next } }); cfg.modelProviders = { bank: next };
+        try { await providerConnections.changed(previous, next); }
+        catch (error) { saveConfig({ modelProviders: { bank: external ? "" : previous } }); syncCredentialEnv({ modelProviders: { bank: previous } }); cfg.modelProviders = { bank: previous }; throw error; }
+        return json(res, 200, { connections: providerConnections.list(), storage: external ? "encrypted" : "local-config" });
+      } finally { providerConnectionsBusy = false; }
+    }
+
     if (method === "GET" && path === "/api/instances") {
       // Rescan PATH first: this endpoint is how the app answers "what can I
       // run?", and the interesting case is a CLI installed since launch.

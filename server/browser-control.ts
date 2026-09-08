@@ -9,7 +9,7 @@ import { listHeadlessBrowserTools, validateHeadlessBrowserCall } from "./browser
 
 export type BrowserStatus = { generation: number; held: boolean; owner: string | null; connected: boolean; protectedDocument: boolean; url: string };
 type Entry = BrowserStatus & { native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void> };
-const refusal = () => new Error("Browser control changed, is held by a person, or the document requires human review");
+const refusal = () => Object.assign(new Error("Browser control changed, is held by a person, or the document requires human review"), { status: 409 });
 // Conservative document barrier: never deliver any DOM/text/pixels from a page
 // containing a protected input. Human input taints the session until explicit
 // owner reopen; returning control alone cannot disclose a transformed secret.
@@ -45,7 +45,7 @@ export class UnifiedBrowserController {
   private native(e: Entry) { return e.native ??= this.factory(e.spec!); }
   async connect(key: string) {
     const e = this.entry(key);
-    if (e.connected) return;
+    if (e.connected || e.pending) return;
     if (e.connecting) return e.connecting;
     const generation = e.generation;
     e.connecting = this.native(e).connect((frame) => {
@@ -82,7 +82,7 @@ export class UnifiedBrowserController {
   }
   frame(key: string, generation: number) {
     const e = this.entry(key);
-    if (e.generation !== generation) throw refusal();
+    if (e.generation !== generation) throw Object.assign(new Error("Browser frame generation is stale"), { status: 409 });
     return e.frame ?? null;
   }
   async navigate(key: string, owner: string, generation: number, address: string) {
@@ -120,6 +120,10 @@ export class UnifiedBrowserController {
       }
       if (method !== "tools/call") throw new Error("Unsupported browser method");
       const call = validateHeadlessBrowserCall(params.name, params.arguments ?? {});
+      // Native Windows navigation can wait on an attached screencast. Keep
+      // the viewer detached for the operation; connect() refuses to race the
+      // in-flight action and the next owner status read restores the stream.
+      native.resetStream(); e.connected = false; e.frame = undefined;
       // All frame/tab/value reads use this same barrier. No direct MCP mount.
       const before = await native.protected();
       if (before) { e.protectedDocument = true; this.save(); throw refusal(); }

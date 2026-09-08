@@ -2,6 +2,7 @@
 // stream has NO authentication: this relay protects network clients, not other
 // processes running with the same OS identity. Never disclose its port in APIs.
 import { readFileSync } from "node:fs";
+import { connect as connectSocket } from "node:net";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import WebSocket from "ws";
@@ -19,6 +20,11 @@ export interface NativeBrowser {
   input(event: Record<string, unknown>): void;
   resetStream(): void;
   close(): Promise<void>;
+}
+export function browserInputEvents(event: Record<string, unknown>): Record<string, unknown>[] {
+  return event.type === "input_keyboard" && event.eventType === "char" && typeof event.text === "string"
+    ? Array.from(event.text).map(text => ({ type: "input_keyboard", eventType: "keyDown", key: text, text, modifiers: event.modifiers ?? 0 }))
+    : [event];
 }
 export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
   let client: EngineClient | undefined;
@@ -87,7 +93,8 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
     },
     input(event) {
       if (!socket || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 64 * 1024) throw new Error("Browser stream disconnected or busy");
-      socket.send(JSON.stringify(event));
+      const events = browserInputEvents(event);
+      for (const item of events) socket.send(JSON.stringify(item));
     },
     resetStream() { const old = socket; socket = undefined; old?.removeAllListeners(); old?.terminate(); },
     async close() {
@@ -95,12 +102,34 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
       guard.close();
       socket?.close(); socket = undefined;
       await client?.close();
-      await command(["close"]);
       const pid = daemonPid;
-      if (pid && Number(readFileSync(pidFile, "utf8")) === pid) {
+      let currentPid: number | undefined;
+      try { currentPid = Number(readFileSync(pidFile, "utf8")); } catch {}
+      let alive = false;
+      if (pid && currentPid === pid) { try { process.kill(pid, 0); alive = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; } }
+      if (pid && alive) {
+        // Send directly to the existing daemon: CLI `close` performs startup
+        // discovery and would create a new daemon after an idle timeout.
+        await new Promise<void>((done, fail) => {
+          const endpoint = process.platform === "win32"
+            ? { host: "127.0.0.1", port: Number(readFileSync(join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.port`), "utf8")) }
+            : { path: join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.sock`) };
+          const transport = connectSocket(endpoint, () => transport.write(JSON.stringify({ id: "murage-close", action: "close" }) + "\n"));
+          let data = "";
+          const timer = setTimeout(() => { transport.destroy(); fail(new Error("Browser session close timed out")); }, 5000);
+          transport.on("data", chunk => {
+            data += chunk.toString();
+            if (data.length > 65536) { transport.destroy(); clearTimeout(timer); fail(new Error("Browser close response exceeded its bound")); return; }
+            if (!data.includes("\n")) return;
+            clearTimeout(timer); transport.destroy();
+            try { const result = JSON.parse(data.split("\n")[0]!); result.success === true && result.data?.closed === true ? done() : fail(new Error("Browser session close was refused")); }
+            catch { fail(new Error("Browser close response was invalid")); }
+          });
+          transport.once("error", () => { clearTimeout(timer); fail(new Error("Browser session close connection failed")); });
+        });
         if (process.platform === "win32") {
           const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-          const script = `$ErrorActionPreference='Stop'; $p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if($p){if($p.Path -ne ${quote(spec.command)}){throw 'Browser daemon identity changed'}; Stop-Process -Id ${pid}; Wait-Process -Id ${pid} -Timeout 5 -ErrorAction SilentlyContinue}`;
+          const script = `$ErrorActionPreference='Stop'; $p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if($p){if($p.Path -ne ${quote(spec.command)}){throw 'Browser daemon identity changed'}; Stop-Process -Id ${pid}; Wait-Process -Id ${pid} -Timeout 5 -ErrorAction SilentlyContinue; if(Get-Process -Id ${pid} -ErrorAction SilentlyContinue){throw 'Browser daemon is still running'}}; exit 0`;
           await new Promise<void>((done, fail) => {
             const cleanup = spawn(join(spec.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: "ignore" });
             const timer = setTimeout(() => cleanup.kill(), 7000);

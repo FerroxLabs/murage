@@ -34,10 +34,10 @@ try {
   const x=box.x+box.width/2,y=box.y+box.height/2;
   controller.input('fixture','fixture-owner',status.generation,{type:'input_mouse',eventType:'mousePressed',x,y,button:'left',clickCount:1});
   controller.input('fixture','fixture-owner',status.generation,{type:'input_mouse',eventType:'mouseReleased',x,y,button:'left',clickCount:1});
-  controller.input('fixture','fixture-owner',status.generation,{type:'input_keyboard',eventType:'keyDown',key:'m',code:'KeyM',text:'m',windowsVirtualKeyCode:77});
+  controller.input('fixture','fixture-owner',status.generation,{type:'input_keyboard',eventType:'char',text:'E2 native text'});
   await new Promise(r=>setTimeout(r,300));
   const value=await native.command(['get','value','#name']);
-  if(value.value!=='m')throw new Error('Native typing did not reach fixture input: '+JSON.stringify(value));
+  if(value.value!=='E2 native text')throw new Error('Native typing did not reach fixture input: '+JSON.stringify(value));
   frame=controller.frame('fixture',status.generation);
   if(frame)writeFileSync(join(evidence,`${target}-input.jpg`),Buffer.from(frame.data,'base64'));
   results.checks.push({name:'native-frame-and-input',frameSeq:frame?.seq,status:controller.status('fixture')});
@@ -47,6 +47,9 @@ try {
   status=await controller.take('fixture','fixture-owner');
   status=await controller.reopen('fixture','fixture-owner',status.generation);
   results.checks.push({name:'close-reopen',status});
+  await native.close();
+  await native.close();
+  results.checks.push({name:'idempotent-idle-close',pass:true});
 } catch(error) { results.error=error.message; process.exitCode=1; }
 finally { await controller.close().catch(error=>{results.cleanupError=error.message;process.exitCode=1}); await new Promise(done=>server.close(done)); writeFileSync(join(evidence,`${target}.json`),JSON.stringify(results,null,2)); if(!results.cleanupError)rmSync(root,{recursive:true,force:true}); }
 console.log(JSON.stringify(results,null,2));

@@ -1411,6 +1411,59 @@ describe("harness HTTP API", () => {
     } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
   });
 
+  it("routes approved image MCP requests into owned artifacts without exposing keys or crossing conversations", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Image fixture" })).body.bot;
+    const receipt = join(home, "image-fixture-calls.json"); rmSync(receipt, { force: true });
+    const imageCall = (env: Record<string,string>, args: Record<string,unknown>) => {
+      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
+      let stdout="", stderr="";
+      const result = new Promise<any>((resolve,reject)=>{
+        const timer=setTimeout(()=>{proxy.kill();reject(new Error("Image MCP timed out: "+stderr));},15000);
+        proxy.stderr.on("data",chunk=>{stderr+=chunk;});
+        proxy.stdout.on("data",chunk=>{stdout+=chunk;for(const line of stdout.split("\n")){try{const value=JSON.parse(line);if(value.id===42){clearTimeout(timer);proxy.stdin.end();resolve(value.result);return;}}catch{}}});
+        proxy.on("error",reject);
+      });
+      proxy.stdin.write(JSON.stringify({jsonrpc:"2.0",id:42,method:"tools/call",params:{name:"generate_image",arguments:args}})+"\n");
+      return {proxy,result};
+    };
+    const pendingCard = async () => { let card:any; await expect.poll(async()=>{const state=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id);card=state.messages.find((m:any)=>m.card?.tool==="generate_image"&&!m.card.answered);return Boolean(card);}).toBe(true);return card; };
+    const proxies: ReturnType<typeof imageCall>["proxy"][]=[];
+    try {
+      expect((await api("GET","/api/images/settings")).status).toBe(404);
+      expect((await desktopApi("PATCH","/api/config?secretStorage=external",{imageGen:{key:"fixture-image-key"}})).status).toBe(200);
+      const settings = await desktopApi("POST","/api/images/settings",{enabled:true,connectionId:"openai",model:"gpt-image-2"});
+      expect(settings.status).toBe(200);expect(settings.body.selected).toEqual({connectionId:"openai",model:"gpt-image-2"});
+      expect(JSON.stringify(settings.body)).not.toContain("fixture-image-key");expect(readFileSync(join(home,".murage","config.json"),"utf8")).not.toContain("fixture-image-key");
+      let turn=await startInternalFixtureTurn(bot.id);
+      const denied=imageCall(turn.env,{request_id:"deny",prompt:"Synthetic image fixture"});proxies.push(denied.proxy);
+      let card=await pendingCard();expect(existsSync(receipt)).toBe(false);
+      expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"})).status).toBe(200);
+      expect((await denied.result).isError).toBe(true);expect(existsSync(receipt)).toBe(false);
+      await api("POST",`/api/bots/${bot.id}/interrupt`);
+      turn=await startInternalFixtureTurn(bot.id);
+      const args={request_id:"generate",prompt:"Synthetic image fixture",connection_id:"openai",model:"gpt-image-2"};
+      const generated=imageCall(turn.env,args);proxies.push(generated.proxy);card=await pendingCard();
+      expect(card.card.subtitle).toContain("gpt-image-2");expect(existsSync(receipt)).toBe(false);
+      expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
+      const result=await generated.result;expect(result.isError).not.toBe(true);
+      const payload=JSON.parse(result.content[0].text);expect(payload.metadata.model).toBe("gpt-image-2");expect(existsSync(payload.artifact.path)).toBe(true);
+      expect(payload.artifact.path).toContain(join("workspaces",bot.id,"generated-images"));
+      expect(JSON.stringify(payload)).not.toContain("fixture-image-key");expect(JSON.parse(readFileSync(receipt,"utf8"))).toMatchObject({calls:1,model:"gpt-image-2",n:1,references:0});
+      const repeat=imageCall(turn.env,args);proxies.push(repeat.proxy);expect(JSON.parse((await repeat.result).content[0].text).artifact.id).toBe(payload.artifact.id);
+      expect(JSON.parse(readFileSync(receipt,"utf8")).calls).toBe(1);
+      await api("POST",`/api/bots/${bot.id}/interrupt`);
+      expect((await fetch(`${BASE}/api/internal/image-models`,{headers:turn.headers})).status).toBe(401);
+      turn=await startInternalFixtureTurn(bot.id);
+      const edit=imageCall(turn.env,{request_id:"edit",prompt:"Edit the synthetic fixture",operation:"edit",reference_ids:[payload.artifact.referenceId]});proxies.push(edit.proxy);
+      card=await pendingCard();expect(card.card.title).toBe("Approve image edit");
+      await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"});
+      expect((await edit.result).isError).not.toBe(true);expect(JSON.parse(readFileSync(receipt,"utf8"))).toMatchObject({calls:2,references:1});
+    } finally {
+      await api("POST",`/api/bots/${bot.id}/interrupt`);for(const proxy of proxies)if(proxy.exitCode===null)await waitForExit(proxy,{signal:"SIGTERM"});
+      await desktopApi("PATCH","/api/config",{imageGen:{key:"",enabled:false}});await desktopApi("DELETE",`/api/bots/${bot.id}`);
+    }
+  }, 40000);
+
   it("routes scoped native search without exposing credentials or allowing retired turns", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const requestFile = join(home, "search-fixture-calls.json");

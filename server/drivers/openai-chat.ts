@@ -6,6 +6,7 @@ import type {
   RuntimeEventListener,
   SendTurnInput,
 } from "../contracts.ts";
+import { validateProviderTurnRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
@@ -92,17 +93,20 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     stream: boolean,
     signal?: AbortSignal,
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
+    providerRoute?: ProviderTurnRoute,
   ): Promise<Completion> => {
     const timeout = AbortSignal.timeout(options.timeoutMs);
-    const response = await fetch(`${options.apiUrl}/chat/completions`, {
+    const response = await fetch(`${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`, {
       method: "POST",
-      headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${providerRoute?.apiKey ?? options.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify(options.requestBody(model, messages, stream)),
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`${options.httpErrorLabel} HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+      const rawBody = await response.text().catch(() => "");
+      const secret = providerRoute?.apiKey ?? options.apiKey;
+      const body = secret ? rawBody.replaceAll(secret, "[redacted]") : rawBody;
+      throw new Error(`${providerRoute?.preset ?? options.httpErrorLabel} HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
     }
 
     if (!stream) {
@@ -176,13 +180,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   ];
 
   const sendTurn = async (turn: SendTurnInput) => {
-    if (!options.apiKey) throw new Error(options.missingKeyError);
+    if (turn.providerRoute) validateProviderTurnRoute(options.driverKind, turn.providerRoute);
+    if (!turn.providerRoute?.apiKey && !options.apiKey) throw new Error(options.missingKeyError);
     if (active.has(turn.threadId)) throw new Error("a turn is already running on this thread");
 
     const turnId = newId();
     const abort = new AbortController();
     const messages = messagesFor(turn);
-    const model = turn.model || options.models().default;
+    const model = turn.providerRoute?.model || turn.model || options.models().default;
     active.set(turn.threadId, abort);
     appendNative(turn.threadId, {
       dir: "out",
@@ -200,7 +205,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const completion = await complete(messages, model, true, abort.signal, (delta, streamKind) => {
             if (streamKind === "assistant_text") streamedText = true;
             emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta });
-          });
+          }, turn.providerRoute);
           appendNative(turn.threadId, {
             dir: "in",
             source: options.nativeLog.source,

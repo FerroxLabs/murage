@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { acceptBrowserGeneration, expectedStaleBrowserFrame } from "@/lib/browser-view-state";
 import { Hand, Maximize2, RotateCcw } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import { BrowserLiveView, type LiveBrowserFrame } from "./BrowserLiveView";
@@ -17,6 +18,7 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
   const queueSize = useRef(0);
   const base = `/api/bots/${encodeURIComponent(bot.id)}/browser`;
   const accept = (next: Status) => {
+    if (!acceptBrowserGeneration(current.current?.generation, next?.generation)) return;
     if (current.current && next.generation !== current.current.generation) setFrame(null);
     current.current = next; setStatus(next);
   };
@@ -33,7 +35,9 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
           accept(next); lastStatus = Date.now();
         }
         const generation = current.current!.generation;
-        const next = await api(`${base}/frame?generation=${generation}`) as LiveBrowserFrame | null;
+        let next: LiveBrowserFrame | null;
+        try { next = await api(`${base}/frame?generation=${generation}`) as LiveBrowserFrame | null; }
+        catch (cause) { if (expectedStaleBrowserFrame(cause)) { lastStatus = 0; return; } throw cause; }
         if (!alive || epoch.current !== identity || current.current?.generation !== generation) return;
         if (next?.generation === generation) setFrame(old => old?.seq === next.seq ? old : next);
       } catch (cause) {

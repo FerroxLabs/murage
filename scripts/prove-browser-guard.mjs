@@ -20,11 +20,13 @@ try{
   if(!tools.tools?.length)throw new Error('No real native MCP browser tools');checks.push({name:'native-mcp-tools',count:tools.tools.length});
   const snapshot=await controller.dispatch('fixture','tools/call',{name:'agent_browser_snapshot'},()=>true);
   if(snapshot.isError)throw new Error('Ordinary document refused');checks.push({name:'ordinary-document-observation',pass:true});
-  await native.command(['open',`http://127.0.0.1:${server.address().port}/protected`]);
+  let navigating=await controller.take('fixture','owner');
+  navigating=await controller.navigate('fixture','owner',navigating.generation,`http://127.0.0.1:${server.address().port}/protected`);
+  await controller.release('fixture','owner',navigating.generation);
   let refused=false;try{await controller.dispatch('fixture','tools/call',{name:'agent_browser_snapshot'},()=>true);}catch{refused=true;}
   if(!refused)throw new Error('Protected document leaked');checks.push({name:'protected-native-observation-refused',pass:true});
-  const held=await controller.take('fixture','owner');await controller.reopen('fixture','owner',held.generation);
-  await native.command(['open',`http://127.0.0.1:${server.address().port}/`]);
+  const held=await controller.take('fixture','owner');const reopened=await controller.reopen('fixture','owner',held.generation);
+  await controller.navigate('fixture','owner',reopened.generation,`http://127.0.0.1:${server.address().port}/`);
   await native.protected();
   // Page-world attempts cannot clear the isolated guard.
   await native.command(['eval','globalThis.__murageGuard=()=>false;document.querySelector("#ordinary").type="password";document.querySelector("#ordinary").dispatchEvent(new InputEvent("input",{bubbles:true,data:"fake"}));document.querySelector("#ordinary").type="text"']);

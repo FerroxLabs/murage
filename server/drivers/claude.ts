@@ -8,6 +8,7 @@
 //   - Composio Sessions (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
+import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
@@ -81,6 +82,7 @@ export function claudeSignedIn(
 function claudeEnvironment(
   model?: string | null,
   source: NodeJS.ProcessEnv = process.env,
+  providerRoute?: ProviderTurnRoute,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   delete env.CLAUDECODE;
@@ -94,7 +96,8 @@ function claudeEnvironment(
   // identity as the API key deleted below, so that guard needs this to hold.
   // Must run before applyClaudeInject: the inject re-sets what it means to.
   stripRoutingEnv(env);
-  claudeRouting(env, model);
+  if (providerRoute) applyProviderRoute(DRIVER_KIND, env, providerRoute);
+  else claudeRouting(env, model);
   return env;
 }
 
@@ -727,7 +730,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       ])];
       if (disallowedTools.length) args.push("--disallowedTools", disallowedTools.join(","));
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
-      const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
+      const turnModel = turn.providerRoute ? turn.providerRoute.model : await resolveClaudeTurnModel(turn.model, turnEnvironment);
       // argv and the process-reuse key below must come from the SAME routing
       // decision the spawn env gets from `claudeEnvironment`. A throwaway copy
       // is enough — only `.model` is read — but it has to go through
@@ -735,7 +738,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // returns `{ injected: false }` and argv would then carry no `--model`
       // at all while the env said `flux-auto`, and `argsKey` would match a live
       // natively-routed process and hand it the Flux turn.
-      const injected = claudeRouting({ ...turnEnvironment }, turnModel);
+      const injected = turn.providerRoute ? { model: turn.providerRoute.model, injected: true } : claudeRouting({ ...turnEnvironment }, turnModel);
       if (injected.model) args.push("--model", injected.model);
       if (turn.effort) args.push("--effort", turn.effort);
 
@@ -840,7 +843,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env = claudeEnvironment(turnModel, turnEnvironment);
+      const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute);
       const cwd = turn.cwd ?? homedir();
       // Everything that shapes the process, minus session/turn-specific temp
       // paths. Their contents are represented directly in the key instead.
@@ -852,6 +855,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers,
         cwd,
         model: injected.model ?? null,
+        providerConnection: turn.providerRoute ? [turn.providerRoute.connectionId, turn.providerRoute.revision] : null,
         base: env.ANTHROPIC_BASE_URL ?? null,
       });
 
