@@ -128,11 +128,16 @@ export function EngineSetup({
   instance,
   className,
   intent = "cloud",
+  authRequired = false,
+  onReady,
 }: {
   instance: InstanceInfo;
   className?: string;
   /** `inject` installs the CLI but deliberately skips cloud sign-in. */
   intent?: "cloud" | "inject";
+  /** A flagged native auth failure overrides an older ready snapshot until rechecked. */
+  authRequired?: boolean;
+  onReady?: () => void;
 }) {
   const { dispatch } = useStore();
   const [checking, setChecking] = useState(false);
@@ -148,6 +153,7 @@ export function EngineSetup({
       const current = instances.find((item) => item.instanceId === instance.instanceId);
       if (!current) throw new Error("This engine was not returned. Refresh Settings and try again.");
       dispatch({ type: "instances", instances });
+      if (current.snapshot.state === "available" && (!authRequired || current.snapshot.authenticated === true)) onReady?.();
       setCheckMessage(current.snapshot.state !== "available"
         ? current.snapshot.reason ?? "The engine is not detected yet. Finish setup and check again."
         : needsSignIn(current) && intent === "cloud"
@@ -168,7 +174,7 @@ export function EngineSetup({
   const install = instance.install;
   const installCommand = installCommandFor(install);
   const signInCommand = install?.signInCommand;
-  const signInOnly = intent === "cloud" && needsSignIn(instance);
+  const signInOnly = intent === "cloud" && (needsSignIn(instance) || (authRequired && instance.snapshot.state === "available"));
   const command = signInOnly ? signInCommand : installCommand;
   const title = signInOnly ? `Sign in to ${instance.displayName}` : `Install ${instance.displayName}`;
   const description = signInOnly

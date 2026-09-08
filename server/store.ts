@@ -138,7 +138,7 @@ export interface Message {
    * for chips not worth interrupting the ear for. */
   /** `setup` marks an error the user fixes by installing or configuring
    * something — the UI offers setup instead of a retry that cannot work. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */

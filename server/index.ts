@@ -2668,7 +2668,7 @@ bus.subscribe((event: RuntimeEvent) => {
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, 160)}`, ok: false, setup: event.setup, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.providerError ? { providerError: event.providerError } : {}) },
+        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, 160)}`, ok: false, setup: event.setup, authRequired: event.authRequired, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.providerError ? { providerError: event.providerError } : {}) },
       });
       // a setup error means the engine could not even start: the bot is
       // dead until something changes, not merely idle. The next successful

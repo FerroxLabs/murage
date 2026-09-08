@@ -72,6 +72,13 @@ export function claudeSignedIn(
   });
 }
 
+/** Adapted from OpenMausBot1d777ff7 (Apache-2.0). Match auth text only
+ * after the CLI flags an API error; ordinary model discussion stays text. */
+export function claudeAuthFailure(frame: { error?: unknown; is_api_error_message?: unknown }, text: string): boolean {
+  if (frame.is_api_error_message !== true && typeof frame.error !== "string") return false;
+  return frame.error === "authentication_failed" || classifyError({ text }).reason === "auth";
+}
+
 /** The CLI environment shared by auth probes and real turns.
  *
  * Subscription users can be billed pay-as-you-go if an inherited API key
@@ -624,7 +631,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       /** the CLI's session id from `init`, what --resume takes later */
       sessionId: string | null;
       /** the running turn, or null between turns */
-      turn: { turnId: string; settled: boolean; sawStreamDelta: boolean } | null;
+      turn: { turnId: string; settled: boolean; sawStreamDelta: boolean; authFailed?: boolean } | null;
       idleTimer: ReturnType<typeof setTimeout> | null;
       closing: boolean;
       stderr: string;
@@ -1075,6 +1082,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "assistant": {
             const msg = o.message ?? {};
             const text = firstText(msg.content);
+            if (claudeAuthFailure(o, text)) {
+              if (session.turn) session.turn.authFailed = true;
+              emit({ ...base(threadId, currentTurnId()), type: "runtime.error",
+                message: injected.injected ? "The selected model provider could not authenticate. Review its saved connection in Settings." : text || "Claude needs you to sign in. Open engine setup to continue.",
+                setup: !injected.injected, ...(!injected.injected ? { authRequired: true } : { details: text }),
+              });
+              break;
+            }
             if (text.trim()) {
               // fallback delta for CLIs/paths that never streamed the block
               if (!session.turn?.sawStreamDelta) {
@@ -1115,8 +1130,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // they are reported separately too, so the UI can show how much
             // of the figure was context re-read rather than new text.
             settle(
-              o.is_error !== true,
-              o.stop_reason ?? o.terminal_reason ?? null,
+              o.is_error !== true && !session.turn?.authFailed,
+              session.turn?.authFailed ? "auth_required" : o.stop_reason ?? o.terminal_reason ?? null,
               o.total_cost_usd ?? null,
               o.usage
                 ? {

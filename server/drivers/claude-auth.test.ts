@@ -2,7 +2,7 @@
 // runner, so they never read or mutate the developer's real credentials.
 import { describe, expect, it } from "vitest";
 
-import { claudeSignedIn } from "./claude.ts";
+import { claudeAuthFailure, claudeSignedIn } from "./claude.ts";
 
 describe("claudeSignedIn", () => {
   it("uses the CLI's machine-readable auth status", async () => {
@@ -34,5 +34,22 @@ describe("claudeSignedIn", () => {
 
     expect(await claudeSignedIn("claude", {}, failed)).toBe(false);
     expect(await claudeSignedIn("claude", {}, malformed)).toBe(false);
+  });
+});
+
+
+describe("claudeAuthFailure", () => {
+  const login = "Not logged in · Please run /login";
+  it("requires a CLI error flag before classifying login text", () => {
+    expect(claudeAuthFailure({ error: "authentication_failed", is_api_error_message: true }, login)).toBe(true);
+    expect(claudeAuthFailure({ error: "authentication_failed" }, "")).toBe(true);
+    expect(claudeAuthFailure({ is_api_error_message: true }, login)).toBe(true);
+    expect(claudeAuthFailure({ error: "api_error" }, "401 unauthorized")).toBe(true);
+    for (const frame of [{}, { is_api_error_message: false }, { is_api_error_message: "true", error: false }]) expect(claudeAuthFailure(frame, login)).toBe(false);
+    expect(claudeAuthFailure({}, "You are not logged in to npm; run npm login.")).toBe(false);
+  });
+  it("does not relabel non-auth provider errors as sign-in failures", () => {
+    expect(claudeAuthFailure({ error: "api_error", is_api_error_message: true }, "API Error (529): overloaded")).toBe(false);
+    expect(claudeAuthFailure({ error: "api_error" }, "Request timed out")).toBe(false);
   });
 });
