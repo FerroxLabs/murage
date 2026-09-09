@@ -7333,9 +7333,14 @@ describe("internal capability authority", () => {
         const reviewed = { ...request, action: "import", archiveSha256: preview.body.archiveSha256, reviewHash: preview.body.reviewHash, acknowledgeWarnings: true };
         expect((await desktopApi("POST", "/api/starter-profiles", { ...reviewed, reviewHash: "0".repeat(64) })).status).toBeGreaterThanOrEqual(400);
         expect(readFileSync(botsFile)).toEqual(before);
-        const result = await desktopApi("POST", "/api/starter-profiles", reviewed);
+        const invalidModel = await desktopApi("POST", "/api/starter-profiles", { ...reviewed, modelSelection: { instanceId: "missing-onboarding-engine", model: "missing-model" } });
+        expect(invalidModel.status).toBe(400);
+        expect(readFileSync(botsFile)).toEqual(before);
+        const chosenModel = { instanceId: "claude", model: "claude-sonnet-5", effort: "low" };
+        const result = await desktopApi("POST", "/api/starter-profiles", { ...reviewed, modelSelection: chosenModel });
         expect(result.status).toBe(201);
         expect(result.body.bots).toHaveLength(profile.members);
+        for (const bot of result.body.bots) expect(bot.modelSelection).toEqual(chosenModel);
         const newIds = result.body.bots.map((bot: { id: string }) => bot.id);
         botIds.push(...newIds);
         routineIds.push(...result.body.routines.map((routine: { id: string }) => routine.id));

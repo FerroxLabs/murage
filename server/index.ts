@@ -8752,12 +8752,20 @@ const server = createServer(async (req, res) => {
         }
       };
       refuseRepeatedImport();
+      let importModelSelection: ModelSelection;
+      if (starter && body.modelSelection !== undefined) {
+        const checked = checkedModelSelection(body.modelSelection, undefined, true);
+        if (!checked.ok) return json(res, checked.status, { error: checked.error });
+        importModelSelection = checked.selection;
+      } else {
+        importModelSelection = await defaultSelection();
+      }
       const importSelected = (options: Omit<Parameters<typeof importBotPackageArchive>[0], "archivePath">) => contents
         ? importBotPackageContents({ ...options, contents })
         : importBotPackageArchive({ ...options, archivePath: body.archivePath });
       const result = await importSelected({ dataDir: DATA_DIR,
         selection: body.selection, expectedArchiveSha256: body.archiveSha256, expectedReviewHash: body.reviewHash,
-        acknowledgeWarnings: body.acknowledgeWarnings === true, existingBots: store.bots, modelSelection: await defaultSelection(),
+        acknowledgeWarnings: body.acknowledgeWarnings === true, existingBots: store.bots, modelSelection: importModelSelection,
         atomicCommit: ({ prepared }) => {
           if (dataWritersStopped || !routines) throw new Error("Installation is closing");
           refuseRepeatedImport();
