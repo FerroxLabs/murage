@@ -6,7 +6,7 @@ import { emailGateDone, initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
-import { SettingsPanel } from "@/components/SettingsPanel";
+import { BotSettingsDialog } from "@/components/BotSettingsDialog";
 import { PluginsPanel, preloadConnectedApps } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
@@ -285,7 +285,7 @@ function Shell() {
           )}
         </main>
       )}
-      {state.settingsOpen && bot && <SettingsPanel bot={bot} />}
+      {state.settingsOpen && bot && <BotSettingsDialog key={bot.id} bot={bot} />}
       {state.computerOpen && bot && (
         <ComputerPanel
           key={bot.id}
