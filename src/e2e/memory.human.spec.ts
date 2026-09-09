@@ -284,7 +284,6 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
-  await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
   await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).first().click();
   const panel=page.getByRole("region",{name:"Bot memory",exact:true});
   await panel.getByRole("textbox",{name:"Search memory",exact:true}).fill("PAGEDMEMORY");

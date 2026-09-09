@@ -53,7 +53,7 @@ for (const scenario of [{ width: 1440, skin: "light" }, { width: 390, skin: "dar
     expect(inbox.items[0].link).toEqual({ threadId: oldThread, messageId, runId: "inbox-proof-run" });
     await api(`/api/bots/${botId}/tasks/${currentThread}`, "POST");
     await page.setViewportSize({ width: scenario.width, height: 900 });
-    await page.addInitScript(skin => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-skin", skin); }, scenario.skin);
+    await page.addInitScript(skin => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); }, scenario.skin);
     await page.goto(origin);
     const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
     if (await invitation.isVisible()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
