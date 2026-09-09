@@ -26,7 +26,7 @@ import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memor
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
@@ -39,7 +39,7 @@ import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
 import type { InboxView } from "../shared/inbox.ts";
-import { artifactsRequest, registerArtifact, readArtifact, type ArtifactScope } from "./artifacts.ts";
+import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
@@ -4119,6 +4119,7 @@ async function interruptRoutineGroupGoal(
 }
 
 routines = new RoutineManager({
+  automaticPaused: () => cfg.automationsPaused === true,
   emit: broadcast,
   channelThread: botId => {
     const bot = store.bot(botId);
@@ -7123,8 +7124,28 @@ const server = createServer(async (req, res) => {
     if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop") {
       return json(res, 404, { error: "no such route" });
     }
+    if (path === "/api/automation-admission" && (method === "GET" || method === "POST")) {
+      if (method === "POST") {
+        if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "JSON required" });
+        const input = z.object({ paused: z.boolean() }).strict().safeParse(await readBody(req));
+        if (!input.success) return json(res, 400, { error: "Choose whether automatic work is paused." });
+        saveConfig({ automationsPaused: input.data.paused });
+        cfg.automationsPaused = input.data.paused;
+      }
+      return json(res, 200, { paused: cfg.automationsPaused === true });
+    }
     if (path === "/api/artifacts" || path.startsWith("/api/artifacts/")) {
       const access = { owner: requestSurface(req.headers, url.searchParams) === "desktop", scopes: artifactScopes() };
+      if (path === "/api/artifacts/workspace" && method === "GET") {
+        const scope = access.scopes.find(scope => scope.botId === url.searchParams.get("botId") && scope.threadId === url.searchParams.get("threadId"));
+        if (!access.owner || !scope) return json(res, 404, { error: "This working folder is unavailable." });
+        try {
+          const folder = artifactWorkspaceIdentity(scope.workspaceRoot);
+          const stat = lstatSync(folder);
+          if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("not a directory");
+          return json(res, 200, { path: folder });
+        } catch { return json(res, 404, { error: "This working folder is unavailable." }); }
+      }
       const nativeMatch = /^\/api\/artifacts\/([a-f0-9-]{36})\/native$/.exec(path);
       if (nativeMatch && method === "GET") {
         const saved = readArtifact(database(), join(DATA_DIR, "artifact-files"), nativeMatch[1], access);
@@ -11904,6 +11925,7 @@ const server = createServer(async (req, res) => {
       const reloadKeys = Object.keys(patch).filter(
         (key) =>
           key !== "profile" &&
+          key !== "automationsPaused" &&
           key !== "language" &&
           key !== "tts" &&
           key !== "imageGen" &&

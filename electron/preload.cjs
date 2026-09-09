@@ -230,6 +230,7 @@ contextBridge.exposeInMainWorld("muragebox", {
    * the path, or null when the save dialog was cancelled. */
   exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
   artifactAction: (id, action) => ipcRenderer.invoke("desktop:artifact-action", id, action),
+  revealWorkspace: (botId, threadId) => ipcRenderer.invoke("desktop:reveal-workspace", botId, threadId),
   /** Ask where to save a bot-created file (inside ~/.murage), copy it
    * there and reveal it. Returns the chosen path, or null if the user
    * cancelled the dialog. The chat bubble shows the
