@@ -24,7 +24,7 @@ export function MemoryLauncher({ botId, botName, compact = false }: { botId: str
         <h2 id={titleId} className="min-w-0 truncate text-[17px] font-semibold">{botName} · Memory</h2>
         <button type="button" autoFocus onClick={() => setOpen(false)} aria-label="Close memory" className="rounded-lg p-2 hover:bg-raised focus-visible:outline-2 focus-visible:outline-focus"><X size={18} /></button>
       </div>
-      {open && <div className="p-4"><MemorySettings key={botId} botId={botId} /></div>}
+      {open && <div className="p-4"><MemorySettings key={botId} botId={botId} onNavigate={() => setOpen(false)} /></div>}
     </dialog>
   </>;
 }
