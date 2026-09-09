@@ -1,5 +1,16 @@
 # Releasing
 
+## README release checklist
+
+Before publication, review the README in both `FerroxLabs/murage` and
+`FerroxLabs/murage-releases`. Use “Latest release” linked to `/releases/latest`
+instead of a hardcoded version in the download heading. Verify installer links,
+bundled-engine information, setup requirements and known platform limitations
+against the new artifacts. Desktop installers include standalone Fuigo and do
+not require Node.js, npm, pnpm or a separate Fuigo installation. Keep developer
+toolchain requirements separate. Never describe an unpublished candidate as the
+latest public release. README review is required for every release.
+
 For a normal release, run **Actions → Prepare next release → Run workflow**
 and choose a patch, minor, or custom version. It opens a tiny version-bump PR;
 merging that PR automatically starts **Release** and assembles a draft from the
