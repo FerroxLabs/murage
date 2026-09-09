@@ -112,6 +112,7 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={on ? "Auto mode" : "Ask for approval"}
+        disabled={bot.busy}
         onClick={() => setOpen((current) => !current)}
         className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
@@ -421,7 +422,7 @@ export function Composer({
   const canInject = composerCanInjectNow(busy, locked, pendingCount);
   const interruptTurn = () => {
     if (group) dispatch({ type: "interruptGroup", groupId: group.id });
-    else if (bot) dispatch({ type: "interrupt", botId: bot.id });
+    else if (bot) dispatch({ type: "interrupt", botId: bot.id,threadId });
   };
   const fileInput = useRef<HTMLInputElement>(null);
   const [autoWarn, setAutoWarn] = useState(false);
@@ -458,7 +459,7 @@ export function Composer({
       setAutoWarn(true);
       return;
     }
-    dispatch({ type: "updateBot", botId: autoBot.id, patch: { autoApprove: auto } });
+    dispatch({ type: "updateTask", botId: autoBot.id,threadId, patch: { autoApprove: auto } });
   };
 
   const hasContent = Boolean(effectiveText.trim()) || attachments.length > 0;
@@ -1075,8 +1076,9 @@ export function Composer({
         onConfirm={() => {
           if (autoBot) {
             dispatch({
-              type: "updateBot",
+              type: "updateTask",
               botId: autoBot.id,
+              threadId,
               patch: { autoApprove: true, acknowledgeLocalAuto: true },
             });
           }

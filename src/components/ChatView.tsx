@@ -33,6 +33,7 @@ import {
   messageVersions,
   openNotificationTarget,
   visibleMessages,
+  viewedTaskBot,
   type Bot,
   type InstanceInfo,
   type Message,
@@ -515,7 +516,7 @@ function Bubble({
   const versions = user ? messageVersions(bot, message) : [message];
   const versionIndex = versions.findIndex((v) => v.id === message.id);
   const switchTo = (v: Message | undefined) => {
-    if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id, messageId: v.id });
+    if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id,threadId:bot.threadId, messageId: v.id });
   };
 
   return (
@@ -1073,7 +1074,8 @@ function PinnedBanner({
   );
 }
 
-export function ChatView({ bot }: { bot: Bot }) {
+export function ChatView({ bot:profile }: { bot: Bot }) {
+  const bot=viewedTaskBot(profile);
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -1149,7 +1151,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   const submitEdit = useCallback(
     (messageId: string, text: string) => {
       setEditingId(null); // closes the editor first — a double Enter can't fork twice
-      dispatch({ type: "editMessage", botId: bot.id, messageId, text });
+      dispatch({ type: "editMessage", botId: bot.id,threadId:bot.threadId, messageId, text });
     },
     [bot.id, dispatch],
   );
@@ -1197,7 +1199,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   // existing branch machinery, so the old answer stays reachable via ‹ ›
   const regenerate = useCallback(() => {
     if (lastUserMessage?.text && !bot.busy) {
-      dispatch({ type: "editMessage", botId: bot.id, messageId: lastUserMessage.id, text: lastUserMessage.text });
+      dispatch({ type: "editMessage", botId: bot.id,threadId:bot.threadId, messageId: lastUserMessage.id, text: lastUserMessage.text });
     }
   }, [lastUserMessage, bot.busy, bot.id, dispatch]);
 
@@ -1404,7 +1406,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} compact />
           {bot.busy && (
             <button
-              onClick={() => dispatch({ type: "interrupt", botId: bot.id })}
+              onClick={() => dispatch({ type: "interrupt", botId: bot.id,threadId:bot.threadId })}
               className={cn(
                 "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink",
                 COMPACT_BUBBLE,
@@ -1422,7 +1424,7 @@ export function ChatView({ bot }: { bot: Bot }) {
               header name opens — so in a narrow column this is a duplicate that
               costs the conversation name its width. It also drops the 380px
               menu that has nowhere to open on a 390px screen. */}
-          <ModelPicker bot={bot} className="@max-md/chathead:hidden" />
+          <ModelPicker key={`model-${bot.threadId}`} bot={bot} threadId={bot.threadId} />
           <CallButton bot={bot} />
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}
@@ -1700,21 +1702,30 @@ function WorkingFolderChip({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
   const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
   const folder = task?.cwd === undefined ? bot.cwd : (task.cwd ?? undefined);
-  if (!folder) return null;
-  const name = folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || folder;
+  const [open,setOpen]=useState(false),[draft,setDraft]=useState(folder??"");
+  useEffect(()=>setOpen(false),[bot.threadId]);
+  const name = folder?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Folder";
   return (
+    <div className="relative">
     <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true })}
+      type="button" aria-label="Thread working folder" aria-haspopup="dialog" aria-expanded={open} disabled={bot.busy}
+      onClick={() => {setDraft(folder??"");setOpen(value=>!value);}}
       className={cn(
         "flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
-        // Same as UsageChip: status, and its click goes to the agent profile.
-        "@max-md/chathead:hidden",
         COMPACT_SQUARE,
       )}
-      title={`Working folder: ${folder}`}
+      title={`Working folder: ${folder??"This thread's private folder"}`}
     >
       <Folder size={12} className="@max-4xl/chathead:size-[14px]" />
       <span className="truncate font-mono @max-4xl/chathead:hidden">{name}</span>
     </button>
+    {open&&<div role="dialog" aria-label="Thread working folder" className="absolute right-0 top-full z-30 mt-2 w-[min(340px,calc(100vw-24px))] rounded-xl border border-hairline bg-card p-3 shadow-xl">
+      <form className="space-y-3" onSubmit={event=>{event.preventDefault();dispatch({type:"updateTask",botId:bot.id,threadId:bot.threadId,patch:{cwd:draft.trim()||null}});setOpen(false);}}>
+        <label className="block text-[13px] text-ink">Working folder<input autoFocus value={draft} onChange={event=>setDraft(event.target.value)} className="mt-1 w-full rounded bg-inset px-2 py-2 text-[13px]" placeholder="Private thread folder" /></label>
+        <p className="text-[12px] text-ink-secondary">Leave blank for this thread's private folder. Changing folders starts a fresh engine session and preserves the conversation.</p>
+        <div className="flex justify-end gap-2"><button type="button" className="rounded px-3 py-2 text-[13px]" onClick={()=>setOpen(false)}>Cancel</button><button type="submit" className="rounded bg-control px-3 py-2 text-[13px]">Save folder</button></div>
+      </form>
+    </div>}
+    </div>
   );
 }
