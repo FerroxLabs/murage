@@ -188,6 +188,8 @@ function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
 }
 
 export interface RoutineManagerOptions {
+  /** Admission only: never interrupts active work or blocks manual/channel requests. */
+  automaticPaused?: () => boolean;
   file?: string;
   now?: () => number;
   /** Keyed frames only: every payload on this bus is `{ kind, … }`, which
@@ -878,6 +880,7 @@ export class RoutineManager {
   }): RoutineRun {
     const existing = this.findWebhookDelivery(input.webhookId, input.deliveryId);
     if (existing) return existing;
+    if(!input.telegramConnectionId&&this.options.automaticPaused?.())throw Object.assign(new Error("Automatic work is paused. Resume automations before accepting new webhook work."),{status:409,code:"automations_paused"});
     if (this.options.botState(input.botId) === "missing") {
       throw Object.assign(new Error("The assigned EMBER no longer exists"), { status: 410 });
     }
@@ -1061,6 +1064,7 @@ export class RoutineManager {
       let changed = false;
       const missedRuns: RoutineRun[] = [];
       for (const routine of this.routines) {
+        if(this.options.automaticPaused?.())break;
         if (!routine.enabled || routine.nextRunAt == null || routine.nextRunAt > now) continue;
         const pendingAt = routine.nextRunAt;
         const late = now - pendingAt;
@@ -1116,6 +1120,7 @@ export class RoutineManager {
         // dispatch. Manual runs and webhook deliveries retain their exact
         // requested/received timestamps.
         const triggerSource = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+        if((triggerSource==="schedule"||triggerSource==="webhook")&&this.options.automaticPaused?.())continue;
         const definition = triggerSource === "schedule"
           ? this.routines.find((routine) => routine.id === run.routineId)
           : undefined;

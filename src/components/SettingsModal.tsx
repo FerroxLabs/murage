@@ -24,6 +24,7 @@ import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { StartupSettings } from "./StartupSettings";
 import { TelegramSettings } from "./TelegramSettings";
 import { StarterProfiles } from "./StarterProfiles";
 import { cn } from "@/lib/cn";
@@ -41,7 +42,7 @@ const SECTIONS: Array<{
   desktopOnly?: boolean;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in"] },
   { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   // `desktopOnly` is not a tidiness flag. These four are the credential and
   // execution surface of the app: API keys for xAI, Box, Composio and the
@@ -737,6 +738,7 @@ export function SettingsModal() {
                   <SkinPicker />
                 </Card>
                 {desktop === true && <NotificationSettings />}
+                {desktop === true && <StartupSettings />}
                 {desktop === true && <><Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
