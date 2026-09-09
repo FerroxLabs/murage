@@ -81,7 +81,7 @@ it("refuses a competing working-directory launch without touching its peer's run
   for(const threadId of [bot.first,bot.second])expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${threadId}`,{cwd})).status).toBe(200);
   await hold(bot.id,bot.first,"workspace-first");rmSync(join(fixture.info.dataDir,"second-dump.json"),{force:true});
   expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.second,text:"competing workspace"})).status).toBe(202);
-  await expect.poll(async()=>(await messages(bot.second)).some(message=>message.tool?.name?.includes("Project folder lease refused: conflict")),{timeout:5000}).toBe(true);
+  await expect.poll(async()=>(await messages(bot.second)).some(message=>message.tool?.name?.includes("Another thread is using this working folder")),{timeout:5000}).toBe(true);
   expect(existsSync(join(fixture.info.dataDir,"second-dump.json"))).toBe(false);
   expect((await botState(bot.id)).tasks.find((task:any)=>task.threadId===bot.first).busy).toBe(true);
   await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
