@@ -5,12 +5,13 @@
 // own transcript and its own provider session — so sensitive work, a
 // long job and a quick question can sit side by side under one agent.
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Download, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useStore, formatTime, type Bot, type Group, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE } from "@/lib/compact-chip";
 import { formatTaskTokens } from "@/lib/usage";
 import { nextRename } from "@/lib/rename";
+import { downloadConversation } from "@/lib/conversation-export";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -85,6 +86,11 @@ function ConversationTaskPicker({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{ error: boolean; text: string } | null>(null);
+  const [menuOffset, setMenuOffset] = useState(0);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const exportPending = useRef(false);
   const ref = useRef<HTMLDivElement>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finishingRename = useRef(false);
@@ -103,6 +109,7 @@ function ConversationTaskPicker({
     setRenaming(null);
     setQuery("");
     setOpen(false);
+    trigger.current?.focus();
   };
 
   const queueDismiss = () => {
@@ -164,26 +171,17 @@ function ConversationTaskPicker({
     };
   }, [open, renaming]);
 
-  // a bot that has only ever done one thing doesn't need a switcher yet —
-  // just the button that gives it a second context
-  if (tasks.length <= 1) {
-    return (
-      <button
-        type="button"
-        onClick={onNew}
-        aria-label="New thread"
-        disabled={busy}
-        title={busy ? "Let this turn finish first" : "New task — a fresh conversation"}
-        className={cn(
-          "flex items-center gap-1 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40",
-          COMPACT_BUBBLE,
-        )}
-      >
-        <Plus size={12} className="@max-4xl/chathead:size-[14px]" />
-        <span className="@max-4xl/chathead:hidden">Task</span>
-      </button>
-    );
-  }
+  const exportCurrent = async () => {
+    if (exportPending.current) return;
+    clearDismiss();
+    exportPending.current = true; setExporting(true); setExportResult(null);
+    try {
+      const filename = await downloadConversation(threadId, current?.title ?? "Conversation");
+      setExportResult({ error: false, text: `Download started: ${filename}` });
+    } catch (error) {
+      setExportResult({ error: true, text: error instanceof Error ? error.message : "Could not export this conversation. Try again." });
+    } finally { exportPending.current = false; setExporting(false); }
+  };
 
   const commitRename = (threadId: string, save: boolean) => {
     // Escape unmounts the input, which fires blur. Without this guard the
@@ -210,11 +208,17 @@ function ConversationTaskPicker({
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={trigger}
         type="button"
         aria-label="All threads"
         onClick={() => {
           if (open) closeMenu();
-          else setOpen(true);
+          else {
+            const right = ref.current?.getBoundingClientRect().right ?? 300;
+            const width = Math.min(300, window.innerWidth - 16);
+            setMenuOffset(Math.max(8, Math.min(right - width, window.innerWidth - width - 8)) - (right - width));
+            setOpen(true);
+          }
         }}
         title={switchTitle}
         className={cn(
@@ -229,7 +233,7 @@ function ConversationTaskPicker({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-[300px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50">
+        <div style={{ transform: `translateX(${menuOffset}px)` }} className="absolute right-0 top-full z-40 mt-1 w-[300px] max-w-[calc(100vw-16px)] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50">
           <div className="px-2 pb-1 pt-1.5">
             <div className="flex items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 focus-within:border-accent/60">
               <Search size={13} className="shrink-0 text-ink-secondary" />
@@ -353,6 +357,17 @@ function ConversationTaskPicker({
               );
             })}
           </div>
+          <button
+            type="button"
+            onClick={() => void exportCurrent()}
+            disabled={exporting}
+            className="mt-1 flex w-full items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
+          >
+            <Download size={13} className="shrink-0 text-ink-secondary" />
+            {exporting ? "Exporting conversation…" : "Export conversation (Markdown)"}
+          </button>
+          <p className="px-3 pb-2 text-[11px] text-ink-secondary">Current conversation only. Not an importable bot package.</p>
+          {exportResult && <p role={exportResult.error ? "alert" : "status"} className={cn("break-words px-3 pb-2 text-[12px]", exportResult.error ? "text-danger" : "text-ink-secondary")}>{exportResult.text}</p>}
           <button
             type="button"
             onClick={() => {
