@@ -1,5 +1,8 @@
 import { mutateProviderCredentials } from "./provider-connection-control.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { execFile } from "node:child_process";
+import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
+import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -70,6 +73,7 @@ import capabilitiesModule from "./capabilities.cjs";
 
 // Explicit fixture/profile isolation must precede credentials and the instance lock.
 // Ordinary installed launches keep Electron's default paths unchanged.
+applyLoginProfileArguments(process.argv,process.env);
 if (process.env.MURAGE_USER_DATA !== undefined) {
   const userData = process.env.MURAGE_USER_DATA;
   const dataDir = process.env.MURAGE_DATA_DIR;
@@ -138,6 +142,7 @@ const browserConnectionStore = createDescriptorStore({
 });
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
+let backgroundLifecycle=null;
 let unreadCount = 0;
 let unreadOverlayIcon = null;
 
@@ -256,7 +261,7 @@ function queuePackageInstall(rawLink) {
   const packageUrl = packageUrlFromDeepLink(rawLink);
   if (!packageUrl) return false;
   pendingPackageInstallUrl = packageUrl;
-  activateExistingWindow(BrowserWindow.getAllWindows());
+  if(!activateExistingWindow(BrowserWindow.getAllWindows()))backgroundLifecycle?.open();
   const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
   deliverPackageInstall(target);
   return true;
@@ -1747,7 +1752,42 @@ async function runDesktopRecovery(operation, parameters) {
   });
 }
 
-function createWindow() {
+function initializeBackgroundLifecycle(){
+  const profileDir=desktopDataDir??(process.env.MURAGE_DATA_DIR&&process.env.MURAGE_USER_DATA?fs.realpathSync(process.env.MURAGE_DATA_DIR):null);
+  const preferenceFile=profileDir?path.join(profileDir,"startup-background.json"):null;
+  const primaryPath=path.join(app.getPath("home"),".murage");
+  const login=createBackgroundLogin({platform:process.platform,app,installed:app.isPackaged,primaryProfile:profileDir===(fs.existsSync(primaryPath)?fs.realpathSync(primaryPath):primaryPath),profileDir,userDataDir:app.getPath("userData"),executable:process.env.APPIMAGE??app.getPath("exe"),autostartDir:path.join(path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:path.join(app.getPath("home"),".config"),"autostart")});
+  const automation=async(paused)=>{
+    if(!serverReady||!desktopSurfaceSecret)throw new Error("Automatic-work controls are unavailable until the desktop server is ready.");
+    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/automation-admission`,{method:paused===undefined?"GET":"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},...(paused===undefined?{}:{body:JSON.stringify({paused})}),signal:AbortSignal.timeout(5000)});
+    if(!response.ok)throw new Error("Automatic-work settings could not be confirmed.");
+    const value=await response.json();if(typeof value.paused!=="boolean")throw new Error("Automatic-work status is unavailable.");return value;
+  };
+  backgroundLifecycle=createBackgroundLifecycle({platform:process.platform,login,window:()=>mainWindow,isQuitting:()=>desktopShutdownStarted,serviceReady:()=>serverReady,
+    preferencesWritable:()=>Boolean(preferenceFile),
+    loadPreferences:()=>{try{if(!preferenceFile)return {};const stat=fs.lstatSync(preferenceFile);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>8192)return {};return JSON.parse(fs.readFileSync(preferenceFile,"utf8"));}catch{return {};}},
+    savePreferences:value=>{if(!preferenceFile)throw new Error("An owned installation is required to save startup settings.");if(app.isPackaged)ownedDesktopDataDir();const temporary=`${preferenceFile}.${process.pid}.tmp`;fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,preferenceFile);},
+    dockAvailable:()=>process.platform==="darwin"&&app.dock?.isVisible()===true,
+    createTray:onOpen=>{const icon=nativeImage.createFromPath(APP_ICON).resize({width:18,height:18});if(process.platform==="darwin")icon.setTemplateImage(true);const tray=new Tray(icon);tray.setToolTip("Murage");tray.on("click",onOpen);return tray;},
+    setTrayMenu:(tray,items)=>tray.setContextMenu(Menu.buildFromTemplate(items)),
+    probeTray:tray=>process.platform==="linux"?linuxTrayHostAvailable(execFile):(()=>{try{const bounds=tray.getBounds();return bounds.width>0&&bounds.height>0;}catch{return false;}})(),
+    openWindow:()=>{const win=mainWindow&&!mainWindow.isDestroyed()?mainWindow:createWindow();if(win.isMinimized())win.restore();win.show();win.focus();},
+    openInbox:()=>{const win=mainWindow;if(!win||win.isDestroyed())return;const send=()=>{if(!win.isDestroyed())win.webContents.send("startup-background:open-inbox");};if(win.webContents.isLoadingMainFrame())win.webContents.once("did-finish-load",send);else send();},
+    explainClose:async win=>{const options={type:"info",title:"Murage stays available",message:"Closing this window keeps Murage running.",detail:"Use the Murage menu bar or tray icon to reopen it, open Inbox or quit. Automatic work only runs while Murage is open and this computer is awake. Change this in Settings → General → Startup & background.",buttons:["Keep running","Quit Murage"],defaultId:0,cancelId:0};const result=win?await dialog.showMessageBox(win,options):await dialog.showMessageBox(options);return result.response===1?"quit":"keep";},
+    automationStatus:()=>automation(),setAutomationsPaused:paused=>automation(paused),quit:()=>app.quit(),
+    onChange:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
+    onError:error=>{slog(`startup/background: ${error.message}`);},
+  });
+  return {lifecycle:backgroundLifecycle,login};
+}
+function backgroundForEvent(event){
+  if(!mainWindow||mainWindow.isDestroyed()||event.sender!==mainWindow.webContents||event.senderFrame!==event.sender.mainFrame||new URL(event.senderFrame.url).origin!==rendererOrigin()||!backgroundLifecycle)throw new Error("Startup settings are available only in the main Murage window.");
+  return backgroundLifecycle;
+}
+ipcMain.handle("startup-background:status",event=>backgroundForEvent(event).status());
+ipcMain.handle("startup-background:update",(event,patch)=>backgroundForEvent(event).update(patch));
+
+function createWindow({quiet=false}={}) {
   if (app.isPackaged && desktopRecoveryMode) return showDesktopRecovery();
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
@@ -1767,7 +1807,7 @@ function createWindow() {
     // wait for and every Windows cold start sat invisible for the full 5s
     // fallback. With backgroundColor now theme-correct there is nothing left to
     // hide.
-    show: true,
+    show: !quiet,
     icon: APP_ICON,
     backgroundColor: skinChrome(persistedSkin).color,
     autoHideMenuBar: process.platform !== "darwin",
@@ -1778,11 +1818,14 @@ function createWindow() {
     },
   });
   mainWindow = win;
+  win.on("close",event=>backgroundLifecycle?.handleClose(event));
+  win.on("query-session-end",()=>backgroundLifecycle?.beginQuit());
+  win.on("session-end",()=>backgroundLifecycle?.beginQuit());
   attachUpdaterWindow(win);
   // Browser execution and viewing are owned by the unified harness engine.
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
-  if (restored.maximized) win.maximize();
+  if (restored.maximized&&!quiet) win.maximize();
   win.once("closed", () => {
     if (mainWindow === win) mainWindow = null;
   });
@@ -2531,7 +2574,16 @@ const desktopStartup = app.whenReady().then(async () => {
       if (!desktopShutdownStarted) slog("companion startup did not complete");
     });
   }
-  createWindow();
+  const background=initializeBackgroundLifecycle();
+  const backgroundReady=background.lifecycle.start();
+  const loginLaunch=background.login.launchedAtLogin();
+  if(loginLaunch)await backgroundReady;else void backgroundReady.catch(error=>slog(`background startup: ${error.message}`));
+  assertDesktopStartupActive();
+  if(mainWindow&&!mainWindow.isDestroyed())background.lifecycle.open();
+  else createWindow({quiet:loginLaunch&&background.lifecycle.shouldStartQuietly()});
+  powerMonitor.on("suspend",()=>backgroundLifecycle?.setSuspended(true));
+  powerMonitor.on("resume",()=>backgroundLifecycle?.setSuspended(false));
+  powerMonitor.on("shutdown",()=>backgroundLifecycle?.beginQuit());
   // Reconcile incomplete setup and resume interrupted sign-out only after the
   // local app is usable. This background network work never gates LAN pairing
   // or the first window.
@@ -2582,7 +2634,7 @@ const desktopStartup = app.whenReady().then(async () => {
     cleanup: cleanupDesktopForExit,
   }) });
   app.on("activate", () => {
-    if (!desktopShutdownStarted && BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!desktopShutdownStarted)backgroundLifecycle?.open();
   });
 });
 void desktopStartup.catch((error) => {
@@ -2606,8 +2658,9 @@ void desktopStartup.catch((error) => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if(backgroundLifecycle?!backgroundLifecycle.keepAliveWithoutWindows():process.platform!=="darwin")app.quit();
 });
+app.on("will-quit",()=>backgroundLifecycle?.dispose());
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
@@ -2683,6 +2736,7 @@ function cleanupDesktopForExit() {
 }
 
 app.on("before-quit", (e) => {
+  backgroundLifecycle?.beginQuit();
   if (cuaCleanedUp) return;
   e.preventDefault();
   const alreadyClosing = Boolean(desktopCleanup);

@@ -236,6 +236,7 @@ const instanceConfigSchema = z.object({
 });
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
 const appConfigSchema = z.object({
+  automationsPaused: z.boolean().optional(),
   modelProviders: z.object({ bank: z.string().max(200000).optional() }).strict().optional(),
   telegram: z.object({ botToken: z.string().max(256).optional(), targetBotId: z.string().max(160).optional() }).strict().optional(),
   notifications: notificationPreferencesSchema.optional(),
@@ -303,6 +304,8 @@ const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers:
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
+  /** Pause scheduled/webhook admission; manual owner work remains available. */
+  automationsPaused?: boolean;
   telegram?: { botToken?: string; targetBotId?: string };
   notifications?: NotificationPreferences;
   engineDiscovery?: "automatic" | "explicit";

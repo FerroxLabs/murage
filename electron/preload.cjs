@@ -6,6 +6,12 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 // load sibling CommonJS files. Keep this tiny predicate inline here; main's
 // privileged process uses the shared browser-platform helper.
 const browserSurfaceSupported = process.platform === "darwin" || process.platform === "linux";
+let pendingStartupInbox=false;
+const startupInboxListeners=new Set();
+ipcRenderer.on("startup-background:open-inbox",()=>{
+  if(!startupInboxListeners.size)pendingStartupInbox=true;
+  for(const listener of startupInboxListeners)listener();
+});
 
 let pendingPackageInstallUrl = null;
 const packageInstallListeners = new Set();
@@ -37,6 +43,12 @@ const desktopSurfaceSecret = (() => {
 contextBridge.exposeInMainWorld("muragebox", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
+  startup: {
+    status:()=>ipcRenderer.invoke("startup-background:status"),
+    update:patch=>ipcRenderer.invoke("startup-background:update",patch),
+    onChange:cb=>{const handler=(_event,state)=>cb(state);ipcRenderer.on("startup-background:changed",handler);return()=>ipcRenderer.removeListener("startup-background:changed",handler);},
+    onOpenInbox:cb=>{startupInboxListeners.add(cb);if(pendingStartupInbox){pendingStartupInbox=false;queueMicrotask(cb);}return()=>startupInboxListeners.delete(cb);},
+  },
   /** Proof, to this launch's harness, that this really is the renderer. */
   desktopSurfaceSecret,
   getCapabilities: () => ipcRenderer.invoke("desktop:capabilities"),

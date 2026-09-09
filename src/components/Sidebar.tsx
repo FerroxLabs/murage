@@ -1336,6 +1336,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     window.addEventListener("murage:open-files", open);
     return () => window.removeEventListener("murage:open-files", open);
   }, [desktop]);
+  useEffect(()=>window.muragebox?.startup?.onOpenInbox(()=>setInboxOpen(true)),[]);
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
   const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());

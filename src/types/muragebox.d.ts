@@ -127,6 +127,12 @@ type SkillRecordingPayload = {
   interface Window {
     muragebox?: {
       platform: NodeJS.Platform;
+      startup?: {
+        status(): Promise<StartupBackgroundState>;
+        update(patch:{keepRunning?:boolean;startAtLogin?:boolean}):Promise<StartupBackgroundState>;
+        onChange(callback:(state:StartupBackgroundState)=>void):()=>void;
+        onOpenInbox(callback:()=>void):()=>void;
+      };
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
       companionAccount?: {
@@ -314,6 +320,14 @@ export interface UpdaterState {
   command?: string;
   /** hand-off only: whether a terminal was opened to paste it into */
   terminalOpened?: boolean;
+}
+
+export interface StartupBackgroundState {
+  platform:NodeJS.Platform;
+  keepRunning:boolean; defaultInherited:boolean; configurable:boolean;
+  trayAvailable:boolean; canKeepRunning:boolean; effectiveKeepRunning:boolean;
+  windowVisible:boolean; suspended:boolean; quitting:boolean; automationsPaused:boolean|null;
+  login:{supported:boolean;openAtLogin:boolean;wasOpenedAtLogin?:boolean;requiresApproval?:boolean;reason?:string};
 }
 
 export interface CompanionAccountState {
