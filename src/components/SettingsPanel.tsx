@@ -22,6 +22,12 @@ import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
 import { BotAccessSettings } from "./BotAccessSettings";
 import { MemoryLauncher } from "./MemoryLauncher";
+import { activeSettingsRole, settingsRoleLabel, type BotSettingsSection } from "./bot-settings-sections";
+import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
+
+function SettingsSection({ id, active, children }: { id: BotSettingsSection; active?: BotSettingsSection; children: React.ReactNode }) {
+  return <section hidden={active !== undefined && active !== id} data-settings-section={id} className="space-y-4">{children}</section>;
+}
 
 function Field({
   label,
@@ -42,6 +48,7 @@ function Field({
  * engine is billed — on a subscription the figure is an equivalent. */
 function BotUsageCard({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
+  const navigate = useBotSettingsNavigation();
   const usage = botUsage(bot);
   const instance = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId);
   if (usage.turns === 0) return null;
@@ -50,7 +57,7 @@ function BotUsageCard({ bot }: { bot: Bot }) {
       <div className="flex items-baseline justify-between">
         <div className="text-[15px] font-medium text-ink">Usage</div>
         <button
-          onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })}
+          onClick={() => navigate(() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" }))}
           className="text-[12px] text-ink-secondary hover:text-ink"
         >
           All bots →
@@ -97,6 +104,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
   const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
   const pinned = task?.cwd; // undefined = not yet, null = legacy home, string = folder
   const pinnedElsewhere = pinned !== undefined && (pinned ?? undefined) !== bot.cwd;
+  useBotSettingsDraft("Working folder", draft !== null && draft !== (bot.cwd ?? ""), saving);
 
   const save = async (cwd: string | null) => {
     setSaving(true);
@@ -144,6 +152,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
         >
           <input
             className={cn(inputCls, "font-mono text-[12.5px]")}
+            aria-label="Working folder path"
             placeholder="Private bot workspace — or an absolute path"
             value={draft ?? bot.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
@@ -184,6 +193,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
   const [topics, setTopics] = useState<MemoryTopic[]>([]);
   const [saving, setSaving] = useState(false);
   const [topic, setTopic] = useState<{ name: string; text: string } | null>(null);
+  useBotSettingsDraft("Legacy notebook", dirty, saving);
 
   const load = async () => {
     setLoading(true);
@@ -322,7 +332,8 @@ function MemoryCard({ bot }: { bot: Bot }) {
   );
 }
 
-export function SettingsPanel({ bot }: { bot: Bot }) {
+export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; section?: BotSettingsSection; embedded?: boolean }) {
+  const navigate = useBotSettingsNavigation();
   // The one card in this panel that provisions rather than configures: "This
   // computer" hands a bot the machine, and Cloud opens the Box / VPS backend
   // picker, which is where a managed container gets created and started. Those
@@ -386,7 +397,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   return (
     <>
     <aside
-      className={cn(
+      className={embedded ? "relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-clip bg-panel" : cn(
         // Clip without creating a second scroll container. overflow:hidden
         // still lets focus/scrollIntoView scroll this aside past its header.
         "animate-panel-in relative z-20 flex h-full min-h-0 flex-col overflow-clip border-l border-hairline/40 bg-panel",
@@ -398,8 +409,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",
       )}
     >
-      {/* Header */}
-      <div className="flex shrink-0 items-center justify-between px-4 py-3">
+      {/* The native wrapper owns its own header. */}
+      {!embedded && <div className="flex shrink-0 items-center justify-between px-4 py-3">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
           aria-label="Collapse agent profile"
@@ -417,9 +428,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         >
           <X size={18} />
         </button>
-      </div>
+      </div>}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+      <div data-settings-scroll className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
         <div className="flex flex-col gap-4 pt-4">
           {/* Below md this panel covers the chat, and the chat is where the
               app's error banner renders — a refused role change would land
@@ -429,13 +440,30 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               {state.error}
             </div>
           )}
+          <SettingsSection id="overview" active={section}>
+          <details open={section === undefined ? true : undefined} className="rounded-xl bg-card p-3">
+            <summary className="cursor-pointer text-[13px] font-medium">Appearance</summary>
           <BotProfileAvatarCard
             bot={bot}
             activeState={activeState}
             mascotMotion={mascotMotion}
             onPatch={patch}
           />
-
+          </details>
+          <div className="rounded-xl bg-card p-4 text-[13px]">
+            <p className="font-medium">{settingsRoleLabel(activeSettingsRole(bot))}</p>
+            <p className="mt-1 text-ink-secondary">{bot.title || "No title set"}{bot.section ? ` · ${bot.section}` : ""}</p>
+            {bot.installedPackage?.sourceRole && <div className="mt-3 border-t border-hairline/40 pt-3">
+              <p>Imported role: {settingsRoleLabel(bot.installedPackage.sourceRole)}</p>
+              {bot.installedPackage.sourceTeam && <p className="mt-1">Imported team: {bot.installedPackage.sourceTeam}</p>}
+              <p className="mt-2 text-ink-secondary">{bot.installedPackage.sourceRole === activeSettingsRole(bot)
+                ? "The current role matches the imported intent."
+                : "The imported role is not active. Use the role control below to assign a role explicitly."}</p>
+              <p className="mt-1 text-ink-secondary">Importing a profile does not grant permissions.</p>
+            </div>}
+          </div>
+          </SettingsSection>
+          <SettingsSection id="identity" active={section}>
           <Field label="Name">
             <input
               className={inputCls}
@@ -492,6 +520,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </div>
           </Field>
 
+          </SettingsSection>
+
           {/* SETUP LIVES HERE, not in the composer dock.
               Beside the role control because this is the same kind of
               question — what IS this bot — and because a person arrives at
@@ -499,10 +529,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               genuinely new agent; this one is always reachable, and warns
               before it touches an agent that already has skills, a
               description, or a conversation behind it. */}
+          <SettingsSection id="overview" active={section}>
           <BotSetupAction bot={bot} />
 
           <BotRoleControl bot={bot} canCoordinate={canCoordinate} />
+          </SettingsSection>
 
+
+          <SettingsSection id="permissions" active={section}>
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
@@ -524,6 +558,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             />
           </div>
 
+          </SettingsSection>
+          <SettingsSection id="access" active={section}>
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">Connected apps</div>
@@ -579,6 +615,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             />
           </div>
 
+          </SettingsSection>
+          <SettingsSection id="model" active={section}>
           <div className="rounded-xl bg-card p-4">
             <ModelPicker
               bot={bot}
@@ -627,6 +665,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </div>
           )}
 
+          </SettingsSection>
+          <SettingsSection id="access" active={section}>
           {/* WHERE THE WORK RUNS is a decision for the keyboard.
               Rendered only on a confirmed desktop — `undefined` shows nothing,
               because showing it and then taking it away is worse than a card
@@ -695,9 +735,17 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           </div>
           )}
 
+          </SettingsSection>
+          <SettingsSection id="usage" active={section}>
           <BotUsageCard bot={bot} />
+          {botUsage(bot).turns === 0 && <p className="text-[13px] text-ink-secondary">No usage recorded for this bot yet.</p>}
+          </SettingsSection>
+          <SettingsSection id="access" active={section}>
           <WorkingFolder bot={bot} />
+          </SettingsSection>
 
+
+          <SettingsSection id="memory" active={section}>
           {/* keyed so switching bots never shows one bot's notes under another's name */}
           <section className="rounded-xl bg-card p-4">
             <h3 className="text-[15px] font-medium text-ink">Managed memory</h3>
@@ -705,16 +753,22 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} />
           </section>
           <MemoryCard key={bot.id} bot={bot} />
+          </SettingsSection>
+
 
           {/* "Add a skill" is the other end of assignment: it opens the
               library with THIS agent already chosen, so the person never has
               to say which agent twice. */}
+          <SettingsSection id="skills" active={section}>
           <BotSkillsPanel
             key={`skills-${bot.id}`}
             bot={bot}
-            onBrowse={() => dispatch({ type: "showTeamLibrary", botId: bot.id })}
+            onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id }))}
           />
+          </SettingsSection>
 
+
+          <SettingsSection id="permissions" active={section}>
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">Auto mode</div>
@@ -773,6 +827,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </div>
           </div>
 
+          </SettingsSection>
+          <SettingsSection id="voice" active={section}>
           <VoiceSettings bot={bot} onPatch={patch} />
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
@@ -794,6 +850,18 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               }}
             />
           </div>
+          </SettingsSection>
+          <SettingsSection id="routines" active={section}>
+          {state.routines.filter(routine => routine.botId === bot.id).map(routine => <div key={routine.id} className="rounded-xl bg-card p-4"><p className="text-[14px] font-medium">{routine.name}</p><p className="mt-1 text-[12px] text-ink-secondary">{routine.enabled ? "Enabled" : "Paused"}</p></div>)}
+          {!state.routines.some(routine => routine.botId === bot.id) && <p className="text-[13px] text-ink-secondary">No routines assigned to this bot.</p>}
+          <button type="button" onClick={() => navigate(() => dispatch({ type: "showRoutines" }))} className="min-h-10 rounded-lg bg-control px-3 py-2 text-[13px]">Open Calendar</button>
+          </SettingsSection>
+          <SettingsSection id="history" active={section}>
+          {(bot.tasks ?? []).map(task => <button type="button" key={task.threadId} onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })} className="block min-h-10 w-full rounded-xl bg-card p-4 text-left">
+            <p className="text-[14px] font-medium">{task.title}</p><p className="mt-1 text-[12px] text-ink-secondary">{new Date(task.createdAt).toLocaleString()}{task.threadId === bot.threadId ? " · Current task" : ""}</p>
+          </button>)}
+          {!bot.tasks?.length && <p className="text-[13px] text-ink-secondary">No task history available.</p>}
+          </SettingsSection>
         </div>
       </div>
     </aside>

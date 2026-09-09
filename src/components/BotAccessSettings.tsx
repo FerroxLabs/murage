@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import type { AccessGrant, ConnectedAppAccess, PendingPermissionStatus } from "../../shared/bot-access";
+import { useBotSettingsDraft } from "./bot-settings-drafts";
 interface AccessView { enabled:boolean; policy:ConnectedAppAccess; catalog:{toolkit:string;tool:string;label:string;writes:boolean}[]; accounts:{toolkit:string;accountId:string;label?:string}[]; pending:PendingPermissionStatus[] }
 /** Owner-only controls. Managers can request a bundle but cannot approve it. */
 export function BotAccessSettings({botId}:{botId:string}) {
@@ -12,6 +13,7 @@ export function BotAccessSettings({botId}:{botId:string}) {
  const refresh=async()=>{setError(null);try{apply(await api(url));}catch{setError("Could not load app access. Try again.");}};
  const save=async(body:object)=>{if(gate.current||!view)return;gate.current=true;setBusy(true);setError(null);try{apply(await api(url,{method:"PUT",body:JSON.stringify({...body,revision:view.policy.revision})}));}catch(e){setError(e instanceof Error?e.message:"Could not save access. Refresh and try again.");}finally{gate.current=false;setBusy(false);}};
  const account=view?.accounts.find(item=>item.accountId===accountId);
+ useBotSettingsDraft("App access", view !== null && (mode !== view.policy.mode || writes !== view.policy.allowWrites || JSON.stringify(grants) !== JSON.stringify(view.policy.grants)), busy);
  const toggle=(tool:string)=>{if(!account)return;setGrants(current=>{const row=current.find(item=>item.accountId===account.accountId&&item.toolkit===account.toolkit);const tools=row?.tools.includes(tool)?row.tools.filter(item=>item!==tool):[...(row?.tools??[]),tool];return [...current.filter(item=>item!==row),...(tools.length?[{toolkit:account.toolkit,accountId:account.accountId,tools}]:[])];});};
  return <div className="rounded-xl bg-card p-4">
   <button type="button" onClick={()=>setOpen(value=>!value)} aria-expanded={open} className="w-full text-left text-[14px] font-medium text-ink">App access and approvals</button>
