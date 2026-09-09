@@ -7,10 +7,11 @@
 // fence is very likely complete), then highlights and caches — so the settled
 // bubble, a fresh component instance, mounts straight from cache instead of
 // popping from plain to highlighted.
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, WrapText } from "lucide-react";
+import { codeLanguageLabel, codeLineLabel } from "@/lib/code-block";
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed and capped. Streamed partials may land here
@@ -57,14 +58,24 @@ const localFilePath = (href?: string): string | null => {
   return absolutePath(href);
 };
 
-function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
+export function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const [wrapped, setWrapped] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const copyRevision = useRef(0);
+  const currentCode = useRef(code); currentCode.current = code;
+  useEffect(() => {
+    copyRevision.current++; setCopied(false); setCopyError(false); clearTimeout(copyTimer.current);
+    return () => { copyRevision.current++; clearTimeout(copyTimer.current); };
+  }, [code]);
 
   useEffect(() => {
     const key = `${lang}:${hash(code)}`;
     const cached = highlightCache.get(key);
     if (cached) return setHtml(cached);
+    setHtml(null);
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const highlight = () => {
@@ -94,7 +105,6 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
       // growing plain <pre> shows the real content, then wait for the block
       // to hold still. The effect re-runs (and this cleanup clears the timer)
       // on every content change, which is the debounce.
-      setHtml(null);
       timer = setTimeout(highlight, STREAM_SETTLE_MS);
     } else {
       highlight();
@@ -105,31 +115,43 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
     };
   }, [code, lang, streaming]);
 
-  const copy = () => {
-    void navigator.clipboard?.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+  const copy = async () => {
+    const revision = ++copyRevision.current;
+    setCopied(false); setCopyError(false); clearTimeout(copyTimer.current);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(code);
+      if (revision !== copyRevision.current || currentCode.current !== code) return;
+      setCopied(true); copyTimer.current = setTimeout(() => setCopied(false), 1500);
+    } catch { if (revision === copyRevision.current) setCopyError(true); }
   };
 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
-      <div className="flex items-center justify-between border-b border-hairline/30 px-3 py-1">
-        <span className="text-[11px] uppercase tracking-wide text-ink-secondary">{lang || "code"}</span>
+      <div className="flex items-center justify-between gap-2 border-b border-hairline/30 bg-raised/30 px-3 py-1.5">
+        <div className="flex min-w-0 items-center gap-2"><span title={codeLanguageLabel(lang)} className="min-w-0 truncate rounded border border-hairline/40 bg-raised px-1.5 py-0.5 text-[11px] font-medium text-ink">{codeLanguageLabel(lang)}</span><span className="shrink-0 text-[11px] text-ink-secondary">{codeLineLabel(code)}</span></div>
+        <div className="flex shrink-0 items-center gap-1">
+        <button type="button" aria-label={wrapped ? "Disable line wrapping" : "Wrap long lines"} aria-pressed={wrapped} onClick={() => setWrapped(value => !value)} className="flex min-h-8 items-center gap-1 rounded px-2 text-[11px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"><WrapText size={13} aria-hidden="true" /><span className="max-sm:hidden">{wrapped ? "Unwrap" : "Wrap"}</span></button>
         <button
-          onClick={copy}
-          className="rounded p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          type="button"
+          onClick={() => void copy()}
+          aria-label="Copy code"
+          className="flex min-h-8 items-center gap-1 rounded px-2 text-[11px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"
           title="Copy code"
         >
           {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+          <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
         </button>
+        </div>
       </div>
+      {copyError && <p role="alert" className="px-3 py-2 text-[12px] text-danger">Could not copy. Select the code and copy it manually.</p>}
       {html ? (
         <div
-          className="overflow-x-auto text-[13px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:m-0 [&_pre]:p-3"
+          className={"text-[13px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:m-0 [&_pre]:p-3 " + (wrapped ? "overflow-x-hidden [&_pre]:!whitespace-pre-wrap [&_code]:!whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]" : "overflow-x-auto")}
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (
-        <pre className="overflow-x-auto p-3 text-[13px] leading-relaxed text-ink">{code}</pre>
+        <pre className={"p-3 text-[13px] leading-relaxed text-ink " + (wrapped ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "overflow-x-auto")}>{code}</pre>
       )}
     </div>
   );
@@ -243,7 +265,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             // fenced code arrives as <pre><code class="language-x">…</code></pre>
             const child: any = Array.isArray(children) ? children[0] : children;
             const className: string = child?.props?.className ?? "";
-            const lang = /language-([\w-]+)/.exec(className)?.[1] ?? "";
+            const lang = /language-([^\s]+)/.exec(className)?.[1] ?? "";
             // children can be a string OR an array of strings/nodes — flatten
             // strings only, so String() never comma-joins an array
             const flat = (n: any): string =>
