@@ -7,6 +7,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   path: RegExp;
   purpose: string;
 }> = [
+  { methods: ["GET", "POST", "PATCH", "DELETE"], path: new RegExp("^/api/claude-accounts(?:/|$)"), purpose: "named native Claude account configuration" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/automation-admission$"), purpose: "pause or resume automatic work" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/artifacts(?:/|$)"), purpose: "verified private workspace deliverables" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/inbox(?:/|$)"), purpose: "owner-only durable results and attention" },
