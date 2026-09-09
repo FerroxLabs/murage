@@ -253,6 +253,8 @@ export interface VerificationServer {
   info: { url: string; pid: number; dataDir: string; logPath: string };
   fixtureDumpPath: string;
   child: ChildProcess;
+  /** Stop the owned process and reload its same isolated profile without reseeding. */
+  restart(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -271,7 +273,7 @@ export async function launchVerificationServer(
   mkdirSync(fixtureTemp, { recursive: true });
   const evidenceDir = join(tmpdir(), "murage-verification-evidence");
   mkdirSync(evidenceDir, { recursive: true });
-  const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
+  let logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     instances: {
       verification: {
@@ -282,7 +284,6 @@ export async function launchVerificationServer(
     },
   }, null, 2));
 
-  const log = openSync(logPath, "a", 0o600);
   const childEnv: NodeJS.ProcessEnv = {};
   const platformKeys = new Set(["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ"]);
   for (const [key, value] of Object.entries(parentEnv)) {
@@ -313,15 +314,18 @@ export async function launchVerificationServer(
   // their previous launch; no preload path or source enters a live app config.
   const instrumentationPath = join(dataDir, ".verification-instrumentation.mjs");
   if (options.instrumentationSource !== undefined) writeFileSync(instrumentationPath, options.instrumentationSource, { mode: 0o600 });
-  const child = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
+  function startChild() {
+    const log = openSync(logPath, "a", 0o600);
+    try { return spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: childEnv,
     stdio: ["ignore", log, log],
-  });
-  closeSync(log);
+    }); } finally { closeSync(log); }
+  }
+  let child = startChild();
 
+  async function ready() {
   const deadline = Date.now() + 20_000;
-  try {
     for (;;) {
       if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
       if (child.exitCode !== null || child.signalCode !== null) {
@@ -340,6 +344,9 @@ export async function launchVerificationServer(
       if (Date.now() >= deadline) throw new Error(`verification server did not become ready; see ${logPath}`);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
+  }
+  try {
+    await ready();
   } catch (error) {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(dataDir);
@@ -347,17 +354,33 @@ export async function launchVerificationServer(
   }
 
   let closed = false;
-  return {
+  let restarting = false;
+  const fixture: VerificationServer = {
     info: { url, pid: child.pid!, dataDir, logPath },
     fixtureDumpPath,
     child,
+    async restart() {
+      if (closed || restarting) throw new ControlMurageError("verification fixture is closed or restarting");
+      restarting = true;
+      try {
+        await waitForExit(child, { signal: "SIGTERM" });
+        logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
+        child = startChild();
+        fixture.child = child;
+        fixture.info = { url, pid: child.pid!, dataDir, logPath };
+        try { await ready(); }
+        catch (error) { await waitForExit(child, { signal: "SIGTERM" }); throw error; }
+      } finally { restarting = false; }
+    },
     async close() {
       if (closed) return;
+      if (restarting) throw new ControlMurageError("verification fixture is restarting");
       closed = true;
       await waitForExit(child, { signal: "SIGTERM" });
       await removeTempDir(dataDir);
     },
   };
+  return fixture;
 }
 
 export function controlResultSucceeded(command: string, result: unknown): boolean {
