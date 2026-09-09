@@ -1,0 +1,78 @@
+{
+  "runId": "f339b3b7-a16d-40ae-930c-9e5b063d5558",
+  "platform": "darwin",
+  "electron": "43.4.0",
+  "stage": "complete",
+  "probes": [
+    {
+      "at": 1788949959172,
+      "destroyed": false,
+      "bounds": {
+        "x": 0,
+        "y": 982,
+        "width": 34,
+        "height": 0
+      }
+    },
+    {
+      "at": 1788949959172,
+      "destroyed": false,
+      "bounds": {
+        "x": 0,
+        "y": 982,
+        "width": 34,
+        "height": 0
+      }
+    },
+    {
+      "at": 1788949959601,
+      "destroyed": false,
+      "bounds": {
+        "x": 3432,
+        "y": -4,
+        "width": 34,
+        "height": 30
+      }
+    },
+    {
+      "at": 1788949964175,
+      "destroyed": false,
+      "bounds": {
+        "x": 2700,
+        "y": -30,
+        "width": 34,
+        "height": 30
+      }
+    }
+  ],
+  "errors": [],
+  "image": {
+    "empty": false,
+    "size": {
+      "width": 1024,
+      "height": 1024
+    },
+    "trayEmpty": false,
+    "traySize": {
+      "width": 18,
+      "height": 18
+    }
+  },
+  "status": {
+    "platform": "darwin",
+    "keepRunning": true,
+    "defaultInherited": true,
+    "configurable": true,
+    "trayAvailable": true,
+    "canKeepRunning": true,
+    "effectiveKeepRunning": false,
+    "windowVisible": false,
+    "suspended": false,
+    "quitting": true,
+    "automationsPaused": false,
+    "login": {
+      "supported": true,
+      "openAtLogin": true
+    }
+  }
+}

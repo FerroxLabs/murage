@@ -1,0 +1,12 @@
+{
+  "runId": "f339b3b7-a16d-40ae-930c-9e5b063d5558",
+  "platform": "darwin",
+  "electron": "43.4.0",
+  "nativeTray": true,
+  "nativeCloseHideReopen": true,
+  "inboxAction": true,
+  "firstExplanationOnce": true,
+  "quitBypassesHide": true,
+  "realPreloadStartupControl": true,
+  "loginWritesWereMocked": true
+}
