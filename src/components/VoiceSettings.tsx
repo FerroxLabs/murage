@@ -11,6 +11,7 @@ import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 import { Switch } from "./SettingsPrimitives";
+import { useBotSettingsDraft } from "./bot-settings-drafts";
 
 const SAMPLE = "Morning. Overnight the tests went green, and I left two notes for you in the thread.";
 
@@ -30,6 +31,7 @@ export function VoiceSettings({
   const [error, setError] = useState<string | null>(null);
   const [voices, setVoices] = useState<Array<{ id: string; label: string; description?: string }>>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
+  useBotSettingsDraft("Voice settings", Boolean(key.trim()), saving || switching);
 
   const { capabilities } = useDesktopCapabilities();
   // Built-in voices are offered where the desktop contract says they exist —
