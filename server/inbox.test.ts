@@ -126,3 +126,12 @@ it("rejects malformed bounds and refuses any attempt to resolve or approve throu
   expect(inboxRequest(db, { method: "POST", path: "/api/inbox/state" }, access).status).toBe(400);
   expect(listInbox(db, {}, access).items[0].status).toBe("pending");
 });
+
+it("projects explicit saved-file identities without treating ordinary text as a deliverable", () => {
+  const { db } = fixture(), artifactId = "12345678-1234-4123-8123-123456789abc";
+  put(db, { id: "prose", kind: "text", text: "I saved /reports/file.html", turnTerminal: true });
+  put(db, { id: "saved", kind: "text", text: "Saved file: Weekly report", artifactIds: [artifactId] });
+  put(db, { id: "replayed", kind: "text", text: "Saved file: Weekly report", artifactIds: [artifactId], at: 101 });
+  expect(listInbox(db, { view: "results" }, access)).toMatchObject({ total: 1, items: [{ kind: "artifact", duplicates: 2, link: { threadId: "thread", messageId: "replayed", artifactId } }] });
+  expect(listInbox(db, {}, access).total).toBe(0);
+});

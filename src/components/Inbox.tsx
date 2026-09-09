@@ -73,7 +73,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0 }: { onOpen: (link: Inbo
         </div>
         {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
         <div className="mt-3 flex flex-wrap gap-2">
-          <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
+          <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
           <button className={button} disabled={busy} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
           {item.snoozedUntil !== null && item.snoozedUntil > Date.now()
             ? <button className={button} disabled={busy} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>

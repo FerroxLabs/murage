@@ -1,9 +1,9 @@
 export type InboxView = "needs-you" | "results" | "all";
-export interface InboxLink { threadId: string; messageId: string; runId?: string }
+export interface InboxLink { threadId: string; messageId: string; runId?: string; artifactId?: string }
 export interface InboxItem {
   id: string;
   version: string;
-  kind: "request" | "connection" | "error" | "routine" | "goal";
+  kind: "request" | "connection" | "error" | "routine" | "goal" | "artifact";
   status: string;
   needsYou: boolean;
   title: string;

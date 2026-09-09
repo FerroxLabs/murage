@@ -173,6 +173,12 @@ export function listArtifacts(db: DatabaseSync, storageRoot: string, query: Arti
   return { items: rows.map(row => publicRow(row, matching(row, access)!, storageRoot)), total, page, pageSize };
 }
 
+export function describeArtifact(db: DatabaseSync, storageRoot: string, id: string, access: ArtifactAccess): Artifact {
+  accessScopes(access); const row = db.prepare("SELECT * FROM artifacts WHERE id=?").get(id) as unknown as Row | undefined;
+  const scope = row && matching(row, access); if (!row || !scope) fail(404, "This saved file is unavailable.");
+  return publicRow(row, scope, storageRoot);
+}
+
 export function readArtifact(db: DatabaseSync, storageRoot: string, id: string, access: ArtifactAccess) {
   accessScopes(access); const row = db.prepare("SELECT * FROM artifacts WHERE id=?").get(id) as unknown as Row | undefined;
   const scope = row && matching(row, access); if (!row || !scope) fail(404, "This saved file is unavailable.");
@@ -201,6 +207,8 @@ export function artifactsRequest(db: DatabaseSync, storageRoot: string, request:
       if (!request.body || Object.keys(request.body).some(key => !["botId", "threadId", "relativePath", "name"].includes(key))) fail(400, "Invalid file registration.");
       return { status: 201, body: { artifact: registerArtifact(db, storageRoot, request.body, access) } };
     }
+    const metadata = /^\/api\/artifacts\/([a-f0-9-]{36})$/.exec(request.path);
+    if (metadata && request.method === "GET") return { status: 200, body: { artifact: describeArtifact(db, storageRoot, metadata[1], access) } };
     const match = /^\/api\/artifacts\/([a-f0-9-]{36})\/(preview|download)$/.exec(request.path);
     if (match && request.method === "GET") {
       if (match[2] === "preview") return { status: 200, body: previewArtifact(db, storageRoot, match[1], access), headers: { "content-type": "application/json; charset=utf-8", "content-security-policy": "default-src 'none'; sandbox", "x-content-type-options": "nosniff", "cache-control": "no-store" } };
