@@ -2669,7 +2669,8 @@ void desktopStartup.catch((error) => {
     slog(`desktop startup refused (${recoveryError ? error.code : "STARTUP_FAILED"})`);
     if (app.isPackaged) {
       try {
-        showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED" : "STARTUP_FAILED");
+        showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED"
+          : recoveryError && error.code === "LEASE_FOREIGN_HOST" ? "LEASE_FOREIGN_HOST" : "STARTUP_FAILED");
         return;
       } catch { /* The native error box remains the last-resort fallback. */ }
     }

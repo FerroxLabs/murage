@@ -63,3 +63,21 @@ test("actual packaged early startup rejection opens recovery without exposing pr
   assert.equal(calls.includes("quit"), false);
   assert.equal(JSON.stringify(calls).includes("PRIVATE_CREDENTIAL_CANARY"), false);
 });
+test("actual startup catch forwards foreign ownership code without private error text", async () => {
+  const body = between("void desktopStartup.catch((error) => {", 'app.on("window-all-closed"');
+  const calls = [];
+  const startup = Promise.reject(Object.assign(new Error("PRIVATE_ERROR_CANARY"), { name: "DataDirLeaseError", code: "LEASE_FOREIGN_HOST" }));
+  const scope = { desktopStartup: startup, desktopShutdownStarted: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
+  await new Function(...Object.keys(scope), body + "; return desktopStartup.catch(()=>{});")(...Object.values(scope));
+  assert.equal(calls.includes("LEASE_FOREIGN_HOST"), true);
+  assert.equal(calls.includes("STARTUP_FAILED"), false);
+  assert.equal(calls.includes("quit"), false);
+  assert.equal(JSON.stringify(calls).includes("PRIVATE_ERROR_CANARY"), false);
+});
+test("failed acquisition retains location for diagnostics without granting ownership", () => {
+  const body = between("function acquireDesktopDataOwner()", "function ownedDesktopDataDir()");
+  const scope = { assertDesktopStartupActive() {}, app: { isPackaged: true, getPath: () => "/fixture/home" }, process: { env: { MURAGE_DATA_DIR: "/chosen/data" } }, path,
+    dataDirLeasePaths: () => ({ canonicalDataDir: "/canonical/data" }), acquireDataDirLease: () => { throw Object.assign(new Error("foreign"), { code: "LEASE_FOREIGN_HOST" }); } };
+  const result = new Function(...Object.keys(scope), "let desktopDataDir=null,desktopDataOwner=null;" + body + ";try{acquireDesktopDataOwner();}catch{}return {desktopDataDir,desktopDataOwner};")(...Object.values(scope));
+  assert.deepEqual(result, { desktopDataDir: "/canonical/data", desktopDataOwner: null });
+});
