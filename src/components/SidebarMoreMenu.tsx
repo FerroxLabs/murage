@@ -3,7 +3,7 @@
 // Hover alone would make them unreachable by keyboard and fragile with a
 // trackpad, so: hovering opens it, a click pins it, Escape and an outside
 // click close it, and the trigger is an ordinary focusable button.
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from "react";
 import { ChevronUp, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -65,7 +65,7 @@ export function SidebarMoreMenuPanel({
   );
 }
 
-export function SidebarMoreMenu({ items, compact = false }: { items: MoreMenuItem[]; compact?: boolean }) {
+export function SidebarMoreMenu({ items, compact = false, triggerRef }: { items: MoreMenuItem[]; compact?: boolean; triggerRef?: Ref<HTMLButtonElement> }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -134,6 +134,7 @@ export function SidebarMoreMenu({ items, compact = false }: { items: MoreMenuIte
         aria-label={attention ? "Tools, items need attention" : "Tools"}
         title="Tools"
         data-sidebar-more-trigger
+        ref={triggerRef}
         onClick={() => {
           clearTimers();
           if (open && pinned) close();
