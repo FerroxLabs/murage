@@ -32,11 +32,12 @@ import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureDirs } from "../../config.ts";
-import type { ProviderInstance } from "../../contracts.ts";
+import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 import { resetPathCacheForTests } from "../../env-path.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { FuigoAgentDriver, parseFuigoModels, STATIC_FUIGO_MODELS } from "./fuigo.ts";
+import { acpVersionFailureDetail } from "./core.ts";
 
 /** Shape only, never a live credential. */
 const FLUX_KEY = "sk-flux-Ffffffffffffffffffffffffffffffffffffffffff";
@@ -99,7 +100,10 @@ process.stdin.on("data", (d) => {
     const ok = (r) => send({ jsonrpc: "2.0", id: m.id, result: r });
     if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }] });
     else if (m.method === "authenticate") ok({});
-    else if (m.method === "session/new") ok({ sessionId: SID });
+    else if (m.method === "session/new") {
+      if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "session.json"), JSON.stringify(m.params));
+      ok({ sessionId: SID });
+    }
     else if (m.method === "session/prompt") {
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } } });
@@ -122,7 +126,7 @@ function dump(kind: "models" | "version" | "agent"): { argv: string[]; env: Reco
 
 /** Run one turn and hand back exactly what the CLI was spawned with. */
 async function runTurn(
-  options: { model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string> } = {},
+  options: { model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string>; integrations?: SendTurnInput["integrations"] } = {},
 ): Promise<EventRecorder> {
   instance = await FuigoAgentDriver.create({
     instanceId: "fuigo-test",
@@ -137,6 +141,7 @@ async function runTurn(
     text: "hi",
     ...(options.model ? { model: options.model } : {}),
     ...(options.effort ? { effort: options.effort } : {}),
+    ...(options.integrations ? { integrations: options.integrations } : {}),
   });
   await recorder.until((e) => e.type === "turn.completed");
   return recorder;
@@ -214,6 +219,15 @@ describe("parseFuigoModels", () => {
   it("never selects a default that the non-chat filter removed", () => {
     const catalog = parseFuigoModels("Default model: gpt-image-med\n\nAvailable models:\n  - gpt-image-med\n  - flux-auto\n");
     expect(catalog.default).toBe("flux-auto");
+  });
+});
+
+describe("ACP version diagnostics", () => {
+  it("distinguishes a timeout, errno, exit, and empty successful response", () => {
+    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { killed: true, signal: "SIGTERM" }))).toContain("timed out after 8 seconds");
+    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { code: "EACCES" }))).toContain("not executable (EACCES)");
+    expect(acpVersionFailureDetail(Object.assign(new Error("private"), { code: 7 }))).toContain("exit 7");
+    expect(acpVersionFailureDetail(null)).toContain("returned no version");
   });
 });
 
@@ -451,6 +465,52 @@ describe("fuigo binary resolution — the bundled engine", () => {
     expect(dump("agent").env.PATH.split(delimiter)[0]).toBe(bundleDir);
     // and the catalog spawn, which only ever sees transformEnv, gets it too
     expect(dump("models").env.PATH.split(delimiter)[0]).toBe(bundleDir);
+  });
+
+  it("keeps bundled PATH when a browser MCP environment has its own PATH", async () => {
+    const browser = { command: process.execPath, args: ["browser-proxy.mjs"], env: { PATH: emptyBin, ELECTRON_RUN_AS_NODE: "1" } };
+    const events = await runTurn({ model: "flux-auto", integrations: { browser } });
+    expect(events.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(dump("agent").env.PATH.split(delimiter)[0]).toBe(bundleDir);
+    const session = JSON.parse(readFileSync(join(dumps, "session.json"), "utf8"));
+    expect(session.mcpServers).toContainEqual({ name: "browser", command: browser.command, args: browser.args,
+      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" }] });
+  });
+
+  const snapshotDefault = async (cli = "fuigo") => {
+    instance = await FuigoAgentDriver.create({ instanceId: "bundle-probe", displayName: "Fuigo",
+      environment: { HOME: home }, enabled: true, config: { cli, fullAuto: false } });
+    return instance.snapshot();
+  };
+
+  it.skipIf(process.platform === "win32")("executes the default bundled CLI with no Node/npm in its PATH", async () => {
+    // Absolute /bin/sh is the fixture interpreter, never env node or npm.
+    writeFileSync(join(bundleDir, "fuigo"), '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "fuigo fixture\\n"; fi\n');
+    expect(await snapshotDefault()).toMatchObject({ state: "available", version: "fuigo fixture" });
+  });
+
+  it("reports a missing declared bundle as a repair, not a missing npm installation", async () => {
+    process.env.MURAGE_FUIGO_DIR = join(root, "missing-bundle");
+    expect(await snapshotDefault()).toMatchObject({ state: "unavailable", reason: expect.stringMatching(/bundled engine is missing.*Repair or reinstall Murage.*Node\/npm is not required/s) });
+  });
+
+  it.skipIf(process.platform === "win32")("reports bundle permissions separately", async () => {
+    chmodSync(join(bundleDir, "fuigo"), 0o644);
+    expect(await snapshotDefault()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("is not executable") });
+  });
+
+  it.skipIf(process.platform === "win32")("reports a bundled version exit without copying stderr", async () => {
+    writeFileSync(join(bundleDir, "fuigo"), '#!/bin/sh\nprintf "secret-fixture-output" >&2\nexit 7\n');
+    const snapshot = await snapshotDefault();
+    expect(snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("--version failed (exit 7)") });
+    expect(snapshot.reason).not.toContain("secret-fixture-output");
+    expect(snapshot.reason).toContain("Repair or reinstall Murage");
+  });
+
+  it("does not prescribe bundle repair for a missing custom CLI", async () => {
+    const snapshot = await snapshotDefault(join(root, "missing-custom-cli"));
+    expect(snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("CLI not found (ENOENT)") });
+    expect(snapshot.reason).not.toContain("Repair or reinstall");
   });
 
   it("does NOT touch PATH when the user has their own fuigo installed", async () => {

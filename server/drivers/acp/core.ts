@@ -55,6 +55,18 @@ export function skipSubscriptionAuthForLocalInject(model: string | undefined): b
   return Boolean(decodeInjectId(model));
 }
 
+/** Never copy CLI stderr/error.message: a version failure can contain secrets. */
+export function acpVersionFailureDetail(error: Error | null): string {
+  if (!error) return "returned no version from --version";
+  const { code, killed, signal } = error as Error & { code?: string | number; killed?: boolean; signal?: string };
+  if (killed && signal === "SIGTERM") return "--version timed out after 8 seconds";
+  if (code === "ENOENT") return "CLI not found (ENOENT)";
+  if (code === "EACCES" || code === "EPERM") return `is not executable (${code}); check its file permissions`;
+  if (typeof code === "number") return `--version failed (exit ${code})`;
+  if (typeof code === "string" && /^E[A-Z0-9_]+$/.test(code)) return `--version failed (${code})`;
+  return "--version failed; check the engine installation";
+}
+
 import type {
   DriverCreateInput,
   EffortLevel,
@@ -118,6 +130,10 @@ export interface AcpSupport {
   loginNote: string;
   /** How a user installs this harness's CLI; surfaced by the setup UI. */
   install?: EngineInstall;
+  /** Add engine-specific repair guidance after a failed version probe. */
+  versionFailureReason?(
+    env: Record<string, string | undefined>, config: AcpConfig, detail: string,
+  ): string | undefined;
   /** CLI argv AFTER the binary name to enter ACP stdio mode. */
   spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
   /** Provider credential variables this ACP child is allowed to inherit. */
@@ -831,13 +847,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
       const snapshot = async (): Promise<ProviderSnapshot> => {
         const env = childEnv();
-        const version = await new Promise<string | null>((resolve) => {
-          execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
-            resolve(err ? null : stdout.trim()),
+        const probe = await new Promise<{ error: Error | null; version: string }>((resolve) => {
+          execCli(config.cli, ["--version"], { timeout: 8000, env }, (error, stdout) =>
+            resolve({ error, version: stdout.trim() }),
           );
         });
-        if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-        return { state: "available", version, authenticated: await support.isAuthenticated(env, config) };
+        if (probe.error || !probe.version) {
+          const detail = acpVersionFailureDetail(probe.error);
+          return { state: "unavailable", reason: support.versionFailureReason?.(env, config, detail)
+            ?? `\`${config.cli}\` ${detail}` };
+        }
+        return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config) };
       };
 
       return {

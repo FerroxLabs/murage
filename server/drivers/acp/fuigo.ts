@@ -88,16 +88,15 @@ function fuigoHome(env: Record<string, string | undefined>): string {
  *
  * It THROWS when neither answers, and that is caught here on purpose. This
  * runs on the catalog refresh and the snapshot as well as the turn, and the
- * honest report for "no engine anywhere" is the snapshot's own
- * ``\`fuigo\` CLI not found`` / `describeSpawnFailure`'s ENOENT copy, not a
- * rejected `create()` that downgrades the whole instance to a shadow.
+ * snapshot classifies the failed probe (including a declared bundle repair)
+ * without a rejected `create()` downgrading the whole instance to a shadow.
  */
 function reachBundledFuigo(env: Record<string, string | undefined>): void {
   let resolved;
   try {
     resolved = resolveFuigoCli(env as NodeJS.ProcessEnv);
   } catch {
-    return; // no fuigo on PATH and none bundled — let the spawn say so
+    return; // snapshot retains the declared bundle's resolution diagnostic
   }
   if (resolved.source !== "bundled") return;
   env.PATH = [dirname(resolved.command), env.PATH].filter(Boolean).join(delimiter);
@@ -241,6 +240,18 @@ const support: AcpSupport = {
   effortLevels: ["none", "low", "medium", "high", "xhigh", "max"],
 
   defaultCli: "fuigo",
+  versionFailureReason: (env, config, detail) => {
+    // A custom CLI owns its own installation; bundle repair cannot fix it.
+    if (config.cli !== "fuigo" || !env.MURAGE_FUIGO_DIR?.trim()) return;
+    const repair = "Repair or reinstall Murage's bundled Fuigo engine. Node/npm is not required.";
+    try {
+      const resolved = resolveFuigoCli(env);
+      if (resolved.source === "bundled") return `Bundled Fuigo at ${resolved.command} ${detail}. ${repair}`;
+    } catch (error) {
+      // resolveFuigoCli's messages contain only our checked resource path.
+      return `${error instanceof Error ? error.message : "Bundled Fuigo is unavailable"}. ${repair}`;
+    }
+  },
   nativeSource: "fuigo.acp",
   loginNote: "Fuigo has no credential — add a Flux Router key in App Settings, or run `fuigo login` in a terminal",
 
