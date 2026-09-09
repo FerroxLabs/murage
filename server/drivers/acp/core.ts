@@ -37,13 +37,19 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
   return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
 }
 
+const ACP_DIAGNOSTIC_METHODS = new Set([
+  "initialize", "authenticate", "session/new", "session/load", "session/prompt",
+  "session/set_mode", "session/set_model", "session/set_config_option",
+]);
+
 /** Preserve diagnostic facts without copying response bodies, requests or URLs. */
 export function acpRpcErrorDetails(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return;
-  const { code, data } = error as { code?: unknown; data?: unknown };
+  const { code, data, acpMethod } = error as { code?: unknown; data?: unknown; acpMethod?: unknown };
   const status = data && typeof data === "object" && !Array.isArray(data)
     ? (data as { http_status?: unknown }).http_status : undefined;
   const facts: string[] = [];
+  if (typeof acpMethod === "string" && ACP_DIAGNOSTIC_METHODS.has(acpMethod)) facts.push(`ACP request: ${acpMethod}`);
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) facts.push(`Provider response: HTTP ${status}`);
   if (typeof code === "number" && Number.isSafeInteger(code)) facts.push(`Engine error code: ${code}`);
   return facts.length ? facts.join("\n") : undefined;
@@ -430,7 +436,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
           number,
-          { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }
+          { method: string; resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }
         >();
 
         const send = (obj: unknown) => {
@@ -450,7 +456,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }, timeoutMs);
               timer.unref?.();
             }
-            rpcPending.set(id, { resolve, reject, timer });
+            rpcPending.set(id, { method, resolve, reject, timer });
             send({ jsonrpc: "2.0", id, method, params });
           });
 
@@ -634,7 +640,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 if (pend.timer) clearTimeout(pend.timer);
                 if (msg.error) {
                   const error = new Error(acpRpcErrorMessage(msg.error));
-                  Object.assign(error, { code: msg.error.code, data: msg.error.data });
+                  Object.assign(error, { code: msg.error.code, data: msg.error.data, acpMethod: pend.method });
                   pend.reject(error);
                 } else {
                   pend.resolve(msg.result);

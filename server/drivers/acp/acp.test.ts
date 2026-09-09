@@ -754,6 +754,40 @@ describe("ACP turns (fake CLI)", () => {
     expect(acpRpcErrorDetails({ code: Infinity, data: { http_status: 999 } })).toBeUndefined();
   });
 
+  it.each(["initialize", "authenticate", "session/new", "session/load", "session/prompt", "session/set_mode", "session/set_model", "session/set_config_option"])("allows only known ACP diagnostic method %s", (acpMethod) => {
+    expect(acpRpcErrorDetails({ acpMethod, code: -32603 })).toBe(`ACP request: ${acpMethod}\nEngine error code: -32603`);
+  });
+
+  it("omits arbitrary method strings and invalid numeric diagnostic fields", () => {
+    for (const acpMethod of ["https://billing.invalid/?key=fake-secret-canary", "session/prompt\nfake-secret-canary", "unknown", 123, null]) {
+      expect(acpRpcErrorDetails({ acpMethod, code: -32603 })).toBe("Engine error code: -32603");
+    }
+    for (const code of [NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1, "-32603"]) {
+      expect(acpRpcErrorDetails({ code })).toBeUndefined();
+    }
+    for (const http_status of [99, 600, 500.5, NaN, "500"]) {
+      expect(acpRpcErrorDetails({ data: { http_status } })).toBeUndefined();
+    }
+  });
+
+  it.each(["initialize", "session/new", "session/prompt"])("correlates failed %s through the CLI without exposing provider data", async (method) => {
+    await create(GrokAgentDriver, `rpc-error:${method}`);
+    await instance.adapter.sendTurn({ threadId: "t-rpc-diagnostics", text: "fake-private-request" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ message: "Internal error", details: `ACP request: ${method}\nProvider response: HTTP 500\nEngine error code: -32603` });
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-private|fake-secret-canary|billing\.invalid|session\/cancel/);
+  });
+
+  it("ignores an unmatched RPC error without attributing it to the pending prompt", async () => {
+    await create(GrokAgentDriver, "unknown-rpc-error");
+    await instance.adapter.sendTurn({ threadId: "t-unknown-rpc-error", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
+    expect(JSON.stringify(recorder.events)).not.toContain("fake-secret-canary");
+  });
+
   it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
     expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("ACP request failed");
