@@ -62,7 +62,7 @@ function TaskUsage({ usage }: { usage: Task["usage"] }) {
   );
 }
 
-type PickerTask = Pick<Task, "threadId" | "title" | "createdAt"> & { usage?: Task["usage"] };
+type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "busy" | "unread"> & { usage?: Task["usage"] };
 
 function ConversationTaskPicker({
   threadId,
@@ -171,6 +171,7 @@ function ConversationTaskPicker({
       <button
         type="button"
         onClick={onNew}
+        aria-label="New thread"
         disabled={busy}
         title={busy ? "Let this turn finish first" : "New task — a fresh conversation"}
         className={cn(
@@ -210,6 +211,7 @@ function ConversationTaskPicker({
     <div className="relative" ref={ref}>
       <button
         type="button"
+        aria-label="All threads"
         onClick={() => {
           if (open) closeMenu();
           else setOpen(true);
@@ -321,6 +323,7 @@ function ConversationTaskPicker({
                       <div className="truncate text-[13px] text-ink">{task.title}</div>
                       <div className="text-[11px] text-ink-secondary">
                         {formatTime(task.createdAt)}
+                        {task.busy?" · Working":""}{task.unread?" · Unread":""}
                         <TaskUsage usage={task.usage} />
                       </div>
                     </button>
@@ -339,7 +342,7 @@ function ConversationTaskPicker({
                   <button
                     type="button"
                     onClick={() => onDelete(task.threadId)}
-                    disabled={busy && active}
+                    disabled={Boolean(task.busy)||(busy && active)}
                     aria-label="Delete task"
                     title="Delete this task and its conversation"
                     className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger group-hover:opacity-100 disabled:opacity-20"
@@ -373,7 +376,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
     <ConversationTaskPicker
       threadId={bot.threadId}
       tasks={bot.tasks ?? []}
-      busy={Boolean(bot.busy)}
+      busy={false}
       onNew={() => dispatch({ type: "newTask", botId: bot.id })}
       onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}

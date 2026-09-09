@@ -9961,6 +9961,10 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const existingBot = store.bot(m[1]);
+      if(body.settingsScope!==undefined&&body.settingsScope!=="defaults")return json(res,400,{error:"settingsScope must be defaults"});
+      const preserveTaskSettings=body.settingsScope==="defaults";
+      if(preserveTaskSettings&&requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"not found"});
+      if(!preserveTaskSettings&&(existingBot?.tasks?.length??0)>1&&(body.modelSelection!==undefined||body.autoApprove!==undefined||body.alwaysAllow!==undefined))return json(res,409,{error:"Choose a thread or edit bot defaults explicitly"});
       if(existingBot&&directRuns.forBot(existingBot.id).length>1)return json(res,409,{error:"Stop this bot's threads before changing shared settings"});
       if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
         return json(res, 400, { error: "requireAvailableModel must be true or false" });
@@ -10222,11 +10226,11 @@ const server = createServer(async (req, res) => {
         const error = leadershipAdmissionError(selection ? registry.get(selection.instanceId) : undefined, selection?.instanceId ?? "");
         if (error) return json(res, 409, { error });
       }
-      if (existingBot && normalizedSelection
+      if (!preserveTaskSettings && existingBot && normalizedSelection
         && JSON.stringify(normalizedSelection) !== JSON.stringify(existingBot.modelSelection)) {
         revokeInternalBot(existingBot.id);
       }
-      const bot = store.patchBot(m[1], patch);
+      const bot = store.patchBot(m[1], patch,{preserveTaskSettings});
       if (!bot) return json(res, 404, { error: "no such bot" });
       const chiefChanges =
         body.chiefOfStaff === true || chiefMovedSections || requestedScope

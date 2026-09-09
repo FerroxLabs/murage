@@ -1593,17 +1593,17 @@ export class Store {
     return true;
   }
 
-  patchBot(id: string, patch: Partial<BotRecord>): BotRecord | null {
+  patchBot(id: string, patch: Partial<BotRecord>, options: {preserveTaskSettings?:boolean} = {}): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
-    if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
+    if (!options.preserveTaskSettings && patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
       patch = { ...patch, ...(tasks?.length===1 ? {resumeCursors:{},tasks:tasks.map(task=>({...task,resumeCursors:{},modelSelection:structuredClone(patch.modelSelection!)}))} : {}) };
     }
     Object.assign(bot, patch);
     if(bot.tasks?.length===1){
       const task=bot.tasks[0];
-      for(const key of ["modelSelection","autoApprove","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key))Object.assign(task,{[key]:structuredClone(patch[key])});
+      for(const key of ["modelSelection","autoApprove","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["modelSelection","autoApprove","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
     }
     this.saveBots();
     this.emit({ type: "bot", botId: id });

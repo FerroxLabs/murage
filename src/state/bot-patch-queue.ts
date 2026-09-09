@@ -44,9 +44,10 @@ export type BotUpdatePatch = Partial<
    * reach the wire inside the coalesced body and must never fold into bot
    * state — the queue strips it from every overlay it hands back. */
   acknowledgeLocalAuto?: boolean;
+  settingsScope?: "defaults";
 };
 
-export type BotStateOverlay = Omit<BotUpdatePatch, "computer" | "acknowledgeLocalAuto" | "chiefTier"> & { computer?: Bot["computer"] };
+export type BotStateOverlay = Omit<BotUpdatePatch, "computer" | "acknowledgeLocalAuto" | "chiefTier" | "settingsScope"> & { computer?: Bot["computer"] };
 
 interface BotPatchQueueEntry {
   botId: string;
@@ -90,7 +91,7 @@ const hasFields = (patch: BotUpdatePatch): boolean => Object.keys(patch).length 
  * wire-only fields — the consent flag and the Chief's tier. One strip point
  * covers both overlay paths. */
 const stateOverlay = (patch: BotUpdatePatch): BotStateOverlay => {
-  const { acknowledgeLocalAuto: _ack, chiefTier: _tier, ...fields } = patch;
+  const { acknowledgeLocalAuto: _ack, chiefTier: _tier, settingsScope:_scope, ...fields } = patch;
   const { computer, ...rest } = fields;
   return { ...rest, ...(Object.hasOwn(fields, "computer") ? { computer: computer ?? undefined } : {}) };
 };

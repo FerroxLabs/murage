@@ -54,3 +54,10 @@ it("does not publish a rejected settings write and can save again after recovery
   store.patchTask(bot.id,threadId,{autoApprove:true});
   expect(fresh().projectBotForTask(bot.id,threadId)?.autoApprove).toBe(true);
 });
+it("keeps existing task settings and cursors when the owner changes new-thread defaults",()=>{
+  const store=fresh(),bot=store.createBot(),first=bot.threadId;
+  store.setResumeCursor(bot.id,"engine-one","keep-session",first);
+  store.patchBot(bot.id,{modelSelection:{instanceId:"engine-two",model:"two",connectionId:"account-two"},autoApprove:true},{preserveTaskSettings:true});
+  expect(store.projectBotForTask(bot.id,first)).toMatchObject({modelSelection:{instanceId:"engine-one",connectionId:"account-one"},autoApprove:false,resumeCursors:{"engine-one":"keep-session"}});
+  const next=store.createTask(bot.id)!;expect(next).toMatchObject({modelSelection:{instanceId:"engine-two",connectionId:"account-two"},autoApprove:true});
+});

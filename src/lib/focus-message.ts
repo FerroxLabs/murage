@@ -19,7 +19,7 @@ export async function landOnSearchHit(
   const group = hit.groupId ? state.groups.find((candidate) => candidate.id === hit.groupId) : undefined;
   if (!ownerId || (!bot && !group)) throw new Error("That conversation is no longer available.");
 
-  dispatch({ type: "select", id: ownerId });
+  dispatch({ type: "select", id: ownerId,threadId:hit.threadId });
   if (bot && bot.threadId !== hit.threadId) {
     const result = await api(`/api/bots/${bot.id}/tasks/${hit.threadId}`, { method: "POST" });
     if (result?.bot) dispatch({ type: "taskSwitched", bot: result.bot });
@@ -31,7 +31,7 @@ export async function landOnSearchHit(
   if (bot && !hit.onActivePath) {
     const branch = await api(`/api/bots/${bot.id}/active-branch`, {
       method: "POST",
-      body: JSON.stringify({ messageId: hit.messageId }),
+      body: JSON.stringify({ messageId: hit.messageId,threadId:hit.threadId }),
     });
     if (branch?.activeLeafId) {
       dispatch({ type: "threadActive", threadId: hit.threadId, activeLeafId: branch.activeLeafId });

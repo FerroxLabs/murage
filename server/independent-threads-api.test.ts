@@ -86,3 +86,13 @@ it("refuses a competing working-directory launch without touching its peer's run
   expect((await botState(bot.id)).tasks.find((task:any)=>task.threadId===bot.first).busy).toBe(true);
   await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
 },30000);
+it("routes owner defaults separately and refuses ambiguous legacy multi-thread settings",async()=>{
+  const created=(await api("POST","/api/bots",{name:"Defaults fixture",modelSelection:{instanceId:"verification",model:modelOne}})).body.bot;
+  await api("PATCH",`/api/bots/${created.id}`,{computer:"off"});
+  expect((await api("PATCH",`/api/bots/${created.id}`,{settingsScope:"defaults",modelSelection:{instanceId:"second",model:modelTwo},autoApprove:true})).status).toBe(200);
+  expect((await botState(created.id)).tasks[0]).toMatchObject({modelSelection:{instanceId:"verification",model:modelOne},autoApprove:false});
+  const second=(await api("POST",`/api/bots/${created.id}/tasks`,{})).body.task;
+  expect(second).toMatchObject({modelSelection:{instanceId:"second",model:modelTwo},autoApprove:true});
+  expect((await api("PATCH",`/api/bots/${created.id}`,{autoApprove:false})).status).toBe(409);
+  expect((await api("PATCH",`/api/bots/${created.id}`,{settingsScope:"defaults",autoApprove:false},false)).status).toBe(404);
+});
