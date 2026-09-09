@@ -36,6 +36,9 @@ import { extname, join } from "node:path";
 import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
+import { database } from "./database.ts";
+import { inboxRequest } from "./inbox.ts";
+import type { InboxView } from "../shared/inbox.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
@@ -7087,6 +7090,18 @@ const server = createServer(async (req, res) => {
     }
     if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop") {
       return json(res, 404, { error: "no such route" });
+    }
+    if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
+      const threads = [
+        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: bot.name, botId: bot.id }))),
+        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: group.name }))),
+      ];
+      const result = inboxRequest(database(), { method, path,
+        query: { view: (url.searchParams.get("view") ?? "needs-you") as InboxView, query: url.searchParams.get("query") ?? "",
+          page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
+        body: method === "POST" ? await readBody(req) : undefined,
+      }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads });
+      return json(res, result.status, result.body);
     }
     if((method==="GET" && path==="/api/memory/status") || (method==="POST" && path==="/api/memory/action")) {
       try {
