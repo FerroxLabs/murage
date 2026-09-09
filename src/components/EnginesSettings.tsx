@@ -9,6 +9,7 @@ import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
 import { api, useStore, type InstanceInfo } from "@/state/store";
 import { EngineManagement } from "./EngineManagement";
+import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
@@ -335,7 +336,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
 }
 
 export function EnginesSettings() {
-  const { state } = useStore();
+  const { state, refreshInstances } = useStore();
   // every KNOWN-driver instance has cliDefault; unknown-driver shadows have
   // neither unless an override was set. Including them keeps a Reset-able row
   // (and a Set CLI… path) for engines the running build doesn't recognize.
@@ -350,7 +351,9 @@ export function EnginesSettings() {
         <EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>
         <EngineRow instance={primary}/>
         {members.length>1&&<details className="mt-3 border-t border-hairline/30 pt-2"><summary className="cursor-pointer text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</summary><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">Uses the same executable; this configured account is preserved separately.</p>}</div>)}</div></details>}
+        {primary.driverKind === "claudeAgent" && <ClaudeAccountsSettings onChanged={refreshInstances} />}
       </section>)}
+      {!rows.some(instance => instance.driverKind === "claudeAgent") && <ClaudeAccountsSettings onChanged={refreshInstances} />}
       <div className="text-[12px] leading-relaxed text-ink-secondary">
         Set CLI points an engine at a specific binary: a versioned build, a wrapper script, or an
         absolute path. Saving reloads providers and interrupts any running turns.
