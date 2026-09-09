@@ -9,7 +9,7 @@ import { portableArchivePath, type ArchiveLimits } from "./installation-archive.
 import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
 
 const RECORDS = new Set(["config.json", "bots.json", "groups.json", "routines.json", "calendar-calls.json", "webhooks.json", "delegations.json", "delegation-receipts.json", "section-contexts.json", "browser-cleanups.json", "messages.db", "messages.db-wal", "messages.db-shm"]);
-const DIRECTORIES = new Set(["attachments", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
+const DIRECTORIES = new Set(["attachments", "artifact-files", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
 const fail = (code: string): never => { throw new InstallationSnapshotError(code); };
 const same = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 

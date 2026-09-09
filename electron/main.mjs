@@ -41,6 +41,7 @@ import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName, withSavableFile } from "./save-file.mjs";
+import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import {
   ensureManagedComposioCredentials,
@@ -2071,6 +2072,28 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // where, which a silent copy into ~/Downloads does not. The path is
 // renderer-controlled, so it must resolve inside ~/.murage and be a
 // regular file — never a symlink escape or directory.
+ipcMain.handle("desktop:artifact-action", async (event, id, action) => {
+  const parent = BrowserWindow.fromWebContents(event.sender);
+  const expectedOrigin = new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;
+  if (!parent || event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== expectedOrigin
+    || typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id) || !["open", "reveal"].includes(action) || !desktopSurfaceSecret) throw new Error("File action is unavailable here.");
+  const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/artifacts/${id}/native`, {
+    headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret }, signal: AbortSignal.timeout(10000), redirect: "error",
+  });
+  if (!response.ok) throw new Error("This saved file is unavailable. Refresh Files.");
+  const record = await response.json();
+  if (action === "open" && record.kind === "html") {
+    const decision = await dialog.showMessageBox(parent, { type: "warning", title: "Open HTML report?", message: "Your browser may run scripts or access the network when opening this file. Use Preview in Murage for an isolated view.", buttons: ["Cancel", "Open in browser"], defaultId: 0, cancelId: 0 });
+    if (decision.response !== 1) return;
+  }
+  const savedPath = verifiedArtifactNativePath(record, ownedDesktopDataDir());
+  if (action === "open" && ![".html", ".htm", ".txt", ".md", ".csv", ".json", ".pdf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".png", ".jpg", ".jpeg", ".gif", ".webp"].includes(path.extname(savedPath).toLowerCase())) {
+    throw new Error("This file type cannot be opened directly by Murage. Download or reveal it for manual review.");
+  }
+  if (action === "reveal") shell.showItemInFolder(savedPath);
+  else { const error = await shell.openPath(savedPath); if (error) throw new Error("The operating system could not open this file. Download it instead."); }
+});
+
 ipcMain.handle("desktop:save-file", async (event, rawPath) => {
   return withSavableFile(rawPath, { home: os.homedir() }, async ({ defaultName, copyTo }) => {
     const parent = BrowserWindow.fromWebContents(event.sender);

@@ -117,6 +117,8 @@ export interface SecretRequestCardData {
 
 export interface Message {
   id: string;
+  /** Verified durable deliverable identities; raw paths never become download links. */
+  artifactIds?: string[];
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
   text?: string;

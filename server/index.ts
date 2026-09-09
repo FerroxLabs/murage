@@ -39,6 +39,8 @@ import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
 import type { InboxView } from "../shared/inbox.ts";
+import { artifactsRequest, registerArtifact, readArtifact, type ArtifactScope } from "./artifacts.ts";
+import type { ArtifactKind } from "../shared/artifacts.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
@@ -92,6 +94,8 @@ import { validateBotCwd } from "./bot-cwd.ts";
 import { subscribe } from "./sendlane.ts";
 import {
   attachmentExists,
+  cleanupStaleAttachmentPartials,
+  deleteAttachment,
   extensionForMime,
   FILE_MAX_BYTES,
   IMAGE_MAX_BYTES,
@@ -827,7 +831,7 @@ function purgeGeneratedImagesForThread(threadId: string): void {
     if (!key.startsWith(`${threadId}:`)) continue;
     generatedImagesByTurn.delete(key);
     for (const attachment of attachments) {
-      try { unlinkSync(attachment.path); } catch { /* already gone */ }
+      try { deleteAttachment(attachment.path); } catch { /* already gone; accounting invalidates on failure */ }
     }
   }
 }
@@ -852,7 +856,7 @@ function retireProviderTurn(turnId: string): void {
     if (!key.endsWith(`:${turnId}`)) continue;
     generatedImagesByTurn.delete(key);
     for (const attachment of attachments) {
-      try { unlinkSync(attachment.path); } catch { /* already gone */ }
+      try { deleteAttachment(attachment.path); } catch { /* already gone; accounting invalidates on failure */ }
     }
   }
 }
@@ -6442,6 +6446,25 @@ async function reloadProviders() {
 // Config writes rebuild the whole provider registry. Keep the read-modify-write
 // and reload sequence single-flight so two settings requests cannot drop one
 // another's changes or dispose a fleet while another reload is creating it.
+function artifactScopes(): ArtifactScope[] {
+  const scopes: ArtifactScope[] = [];
+  for (const bot of store.bots) {
+    for (const task of bot.tasks ?? [{ threadId: bot.threadId, cwd: undefined }]) {
+      const workspaceRoot = task.cwd === null ? undefined : task.cwd ?? bot.cwd ?? join(DATA_DIR, "workspaces", bot.id);
+      if (workspaceRoot) scopes.push({ botId: bot.id, botName: bot.name, threadId: task.threadId, workspaceRoot });
+    }
+    for (const group of store.groups.filter(group => group.memberIds.includes(bot.id))) {
+      for (const task of group.tasks ?? [{ threadId: group.threadId, pinnedCwd: group.pinnedCwd }]) {
+        const pinned = task.pinnedCwd === undefined ? group.cwd : task.pinnedCwd;
+        const workspaceRoot = pinned ?? join(DATA_DIR, "workspaces", bot.id);
+        if (workspaceRoot) scopes.push({ botId: bot.id, botName: bot.name, threadId: task.threadId, workspaceRoot });
+      }
+    }
+    const retained = database().prepare("SELECT DISTINCT source_root FROM artifacts WHERE bot_id=?").all(bot.id);
+    for (const row of retained) scopes.push({ botId: bot.id, botName: bot.name, workspaceRoot: String(row.source_root), threadAvailable: false });
+  }
+  return scopes;
+}
 const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
 const engineManager = new EngineManager({
   root: join(DATA_DIR, "managed-engines"),
@@ -7100,6 +7123,24 @@ const server = createServer(async (req, res) => {
     if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop") {
       return json(res, 404, { error: "no such route" });
     }
+    if (path === "/api/artifacts" || path.startsWith("/api/artifacts/")) {
+      const access = { owner: requestSurface(req.headers, url.searchParams) === "desktop", scopes: artifactScopes() };
+      const nativeMatch = /^\/api\/artifacts\/([a-f0-9-]{36})\/native$/.exec(path);
+      if (nativeMatch && method === "GET") {
+        const saved = readArtifact(database(), join(DATA_DIR, "artifact-files"), nativeMatch[1], access);
+        return json(res, 200, { path: saved.verifiedNativePath, sha256: saved.artifact.sha256, kind: saved.artifact.kind });
+      }
+      const result = artifactsRequest(database(), join(DATA_DIR, "artifact-files"), { method, path,
+        query: { query: url.searchParams.get("query") ?? undefined, botId: url.searchParams.get("botId") ?? undefined,
+          threadId: url.searchParams.get("threadId") ?? undefined, kind: (url.searchParams.get("kind") ?? undefined) as ArtifactKind | undefined,
+          page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25),
+          since: url.searchParams.has("since") ? Number(url.searchParams.get("since")) : undefined,
+          until: url.searchParams.has("until") ? Number(url.searchParams.get("until")) : undefined },
+        body: method === "POST" ? await readBody(req) : undefined }, access);
+      if (result.headers) for (const [name, value] of Object.entries(result.headers)) if (value) res.setHeader(name, value);
+      if ("bytes" in result && result.bytes) { res.writeHead(result.status); res.end(result.bytes); return; }
+      return json(res, result.status, result.body);
+    }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
       const threads = [
         ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: bot.name, botId: bot.id }))),
@@ -7222,6 +7263,18 @@ const server = createServer(async (req, res) => {
       };
       assertInternalIdentity(Object.fromEntries(url.searchParams));
       requireActiveInternal();
+
+      if (path === "/api/internal/register-artifact" && method === "POST") {
+        const body = z.object({ relativePath: z.string().min(1).max(4096), name: z.string().min(1).max(200).optional() }).strict().parse(await readBody(req));
+        requireActiveInternal();
+        const scope = artifactScopes().find(scope => scope.botId === internalClaim.botId && scope.threadId === internalClaim.threadId);
+        if (!scope) return json(res, 404, { error: "This task has no file workspace." });
+        const artifact = registerArtifact(database(), join(DATA_DIR, "artifact-files"), { ...body, botId: internalClaim.botId, threadId: internalClaim.threadId }, { owner: true, scopes: [scope] });
+        if (!store.messagesFor(internalClaim.threadId).some(message => message.artifactIds?.includes(artifact.id))) {
+          store.appendMessage(internalClaim.threadId, { role: "bot", kind: "text", text: `Saved file: ${artifact.name}`, artifactIds: [artifact.id] });
+        }
+        return json(res, 201, { artifact });
+      }
 
       if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }
       if (path === "/api/internal/generate-image" && method === "POST") {
@@ -9836,7 +9889,7 @@ const server = createServer(async (req, res) => {
       if (!bot) {
         // There are no awaits between the refreshed lookup and this patch, but
         // keep the attachment invariant explicit if the store ever changes.
-        try { unlinkSync(saved.path); } catch {}
+        try { deleteAttachment(saved.path); } catch {}
         return json(res, 404, { error: "no such bot" });
       }
       const visible = wireBot(bot);
@@ -12246,6 +12299,8 @@ const stopModelCatalogRefresh = startModelCatalogRefresh(async signal => {
 
 calendarCalls.start();
 
+try { cleanupStaleAttachmentPartials(); }
+catch { console.warn("Attachment cleanup could not finish. The next upload will retry initialization."); }
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
   // Warm the skill index while nobody is waiting.

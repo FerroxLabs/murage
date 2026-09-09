@@ -9,7 +9,7 @@ import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 
 const JSON_COMPONENTS = new Set(["config.json", "bots.json", "groups.json", "routines.json", "calendar-calls.json", "webhooks.json", "delegations.json", "delegation-receipts.json", "section-contexts.json", "browser-cleanups.json"]);
-const DIRECTORY_COMPONENTS = new Set(["attachments", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
+const DIRECTORY_COMPONENTS = new Set(["attachments", "artifact-files", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
 const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }

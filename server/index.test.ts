@@ -7312,6 +7312,39 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("registers verified task files through the live agent capability without accepting foreign paths", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Artifact API fixture" })).body.bot;
+    try {
+      const { headers } = await startInternalFixtureTurn(bot.id, undefined, "__fixture_hold_authority__");
+      const workspace = join(home, ".murage", "workspaces", bot.id);
+      mkdirSync(join(workspace, "reports"), { recursive: true });
+      const bytes = "<h1>Morning report fixture</h1>";
+      writeFileSync(join(workspace, "reports", "morning.html"), bytes);
+      const register = async (relativePath: string) => {
+        const response = await fetch(`${BASE}/api/internal/register-artifact`, { method: "POST", headers, body: JSON.stringify({ relativePath, name: "Morning report" }) });
+        return { status: response.status, body: await response.json() as any };
+      };
+      expect((await register("../outside.txt")).status).toBeGreaterThanOrEqual(400);
+      const saved = await register("reports/morning.html");
+      expect(saved.status).toBe(201);
+      const id = saved.body.artifact.id;
+      expect(saved.body.artifact.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+      expect((await register("reports/morning.html")).body.artifact.id).toBe(id);
+      expect((await api("GET", "/api/artifacts")).status).toBe(404);
+      const listed = await desktopApi("GET", `/api/artifacts?botId=${bot.id}`);
+      expect(listed.body.items.map((item: { id: string }) => item.id)).toEqual([id]);
+      writeFileSync(join(workspace, "reports", "morning.html"), "changed original");
+      const preview = await desktopApi("GET", `/api/artifacts/${id}/preview`);
+      expect(preview.body.content).toBe(bytes);
+      expect(preview.body.artifact.sourceState).toBe("changed");
+      const state = (await api("GET", "/api/bots")).body.bots.find((item: { id: string }) => item.id === bot.id);
+      expect(state.messages.filter((message: { artifactIds?: string[] }) => message.artifactIds?.includes(id))).toHaveLength(1);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("imports role-aware Markdown package intent without automatically appointing a Chief", async () => {
     const payload = { format: "murage.package", version: 1, package: {
       id: "role-aware-export", release: "1.0.0", name: "Role-aware export", tagline: "Reviewed role intent.",
