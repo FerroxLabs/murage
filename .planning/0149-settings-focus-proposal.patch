@@ -1,0 +1,27 @@
+diff --git a/src/components/BotSettingsDialog.tsx b/src/components/BotSettingsDialog.tsx
+--- a/src/components/BotSettingsDialog.tsx
++++ b/src/components/BotSettingsDialog.tsx
+@@ -7,6 +7,7 @@
+ 
+ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => void }) {
+   const { dispatch } = useStore(), dialog = useRef<HTMLDialogElement>(null), content = useRef<HTMLDivElement>(null);
++  const opener = useRef<HTMLElement | null>(null);
+   const [section, setSection] = useState<BotSettingsSection>("overview"), [query, setQuery] = useState("");
+   const [drafts, setDrafts] = useState<Record<string, BotSettingsDraft>>({}), [notice, setNotice] = useState<string | null>(null);
+   const matches = useMemo(() => filterBotSettingsSections(query), [query]);
+@@ -24,9 +25,12 @@
+   };
+   const close = () => navigate(() => { if (onClose) onClose(); else dispatch({ type: "toggleSettings", open: false }); });
+   useEffect(() => {
+-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+-    dialog.current?.showModal();
+-    return () => { if (previous?.isConnected) previous.focus(); };
++    const node = dialog.current;
++    if (!opener.current && document.activeElement instanceof HTMLElement && !node?.contains(document.activeElement)) opener.current = document.activeElement;
++    if (node && !node.open) node.showModal();
++    return () => { queueMicrotask(() => {
++      if (!node?.isConnected && opener.current?.isConnected) opener.current.focus();
++    }); };
+   }, []);
+   useEffect(() => { content.current?.querySelector<HTMLElement>("[data-settings-scroll]")?.scrollTo({ top: 0 }); }, [section]);
+   useEffect(() => { if (!saving) setNotice(null); }, [saving]);

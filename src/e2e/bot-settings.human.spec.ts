@@ -30,8 +30,8 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sectioned settings preserve drafts and authority at ${width}px ${skin}`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 900 });
   await page.addInitScript(skin => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); }, skin);
-  await page.goto(origin + "/__bot-settings"); await page.evaluate(skin => document.documentElement.dataset.skin = skin, skin);
-  const opener = page.getByRole("button", { name: "Open bot settings", exact: true }); await opener.click();
+  await page.goto(origin); await page.evaluate(skin => document.documentElement.dataset.skin = skin, skin);
+  const opener = page.getByRole("button", { name: "Open Settings proof bot's profile", exact: true }).first(); await opener.click();
   const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Imported role: Team leader", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Imported team: Studio", { exact: true })).toBeVisible();
@@ -39,11 +39,33 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   if (width < 640) expect(await dialog.getByRole("combobox", { name: "Section", exact: true }).locator("option").count()).toBe(11);
   else expect(await dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button").count()).toBe(11);
   await page.screenshot({ path: testInfo.outputPath(`settings-overview-${width}-${skin}.png`), fullPage: true });
+  if (width === 1440 && skin === "dark") {
+    // Delay an actual fixture upload response. Closing must not pretend it
+    // cancels an operation that has already reached the server.
+    let finishUpload: (() => void) | undefined;
+    await page.route("**/api/attachments", async route => {
+      if (route.request().method() !== "POST") return route.continue();
+      const response = await route.fetch(); await new Promise<void>(resolve => { finishUpload = resolve; }); await route.fulfill({ response });
+    });
+    await dialog.getByText("Appearance", { exact: true }).click();
+    const png = await page.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 2; canvas.height = 2; canvas.getContext("2d")!.fillRect(0, 0, 2, 2); return canvas.toDataURL("image/png").split(",")[1]; });
+    await dialog.locator('input[type="file"]').setInputFiles({ name: "fixture-avatar.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+    await expect.poll(() => Boolean(finishUpload)).toBe(true);
+    await dialog.getByRole("button", { name: "Close bot settings", exact: true }).click();
+    await expect(dialog.getByRole("status")).toHaveText("Wait for the current operation to finish before closing.");
+    finishUpload!(); await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toBeEnabled();
+    await dialog.getByText("Appearance", { exact: true }).click();
+  }
   const search = dialog.getByRole("searchbox", { name: "Search settings" });
   await search.fill("working folder"); await expect(dialog.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
   const folder = dialog.getByRole("textbox", { name: "Working folder path", exact: true }); const original = await folder.inputValue();
   await folder.fill("/fixture-unsaved-folder");
   await search.fill("personality"); await expect(dialog.getByRole("textbox", { name: /^Personality/ })).toBeVisible();
+  await search.fill("folder"); await expect(folder).toHaveValue("/fixture-unsaved-folder");
+  await search.fill("model"); await dialog.locator('[data-settings-section="model"] button[aria-haspopup="dialog"]').click();
+  page.once("dialog", confirm => confirm.dismiss()); await dialog.getByRole("button", { name: "Manage models and providers", exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await dialog.locator('[data-settings-section="model"] button[aria-haspopup="dialog"]').click();
   await search.fill("folder"); await expect(folder).toHaveValue("/fixture-unsaved-folder");
   await folder.focus(); page.once("dialog", confirm => confirm.dismiss()); await page.keyboard.press("Escape"); await expect(dialog).toBeVisible();
   await expect(folder).toHaveValue("/fixture-unsaved-folder"); await folder.fill(original);
