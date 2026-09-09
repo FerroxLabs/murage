@@ -491,18 +491,18 @@ describe("fuigo binary resolution — the bundled engine", () => {
 
   it("reports a missing declared bundle as a repair, not a missing npm installation", async () => {
     process.env.MURAGE_FUIGO_DIR = join(root, "missing-bundle");
-    expect(await snapshotDefault()).toMatchObject({ state: "unavailable", reason: expect.stringMatching(/bundled engine is missing.*Repair or reinstall Murage.*Node\/npm is not required/s) });
+    expect(await snapshotDefault()).toMatchObject({ state: "unavailable", setupAction: "repair", reason: expect.stringMatching(/bundled engine is missing.*Repair or reinstall Murage.*Node\/npm is not required/s) });
   });
 
   it.skipIf(process.platform === "win32")("reports bundle permissions separately", async () => {
     chmodSync(join(bundleDir, "fuigo"), 0o644);
-    expect(await snapshotDefault()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("is not executable") });
+    expect(await snapshotDefault()).toMatchObject({ state: "unavailable", setupAction: "repair", reason: expect.stringContaining("is not executable") });
   });
 
   it.skipIf(process.platform === "win32")("reports a bundled version exit without copying stderr", async () => {
     writeFileSync(join(bundleDir, "fuigo"), '#!/bin/sh\nprintf "secret-fixture-output" >&2\nexit 7\n');
     const snapshot = await snapshotDefault();
-    expect(snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("--version failed (exit 7)") });
+    expect(snapshot).toMatchObject({ state: "unavailable", setupAction: "repair", reason: expect.stringContaining("--version failed (exit 7)") });
     expect(snapshot.reason).not.toContain("secret-fixture-output");
     expect(snapshot.reason).toContain("Repair or reinstall Murage");
   });
@@ -511,6 +511,7 @@ describe("fuigo binary resolution — the bundled engine", () => {
     const snapshot = await snapshotDefault(join(root, "missing-custom-cli"));
     expect(snapshot).toMatchObject({ state: "unavailable", reason: expect.stringContaining("CLI not found (ENOENT)") });
     expect(snapshot.reason).not.toContain("Repair or reinstall");
+    expect(snapshot).not.toHaveProperty("setupAction");
   });
 
   it("does NOT touch PATH when the user has their own fuigo installed", async () => {
