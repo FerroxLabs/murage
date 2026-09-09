@@ -40,6 +40,16 @@ describe("Antigravity stream input compatibility", () => {
 });
 
 describe("readAntigravityModelCatalog", () => {
+  it("includes the confirmed Gemini 3.8 Flash variants without changing the default", () => {
+    const catalog = readAntigravityModelCatalog({ HOME: join(tmpdir(), "murage-agy-missing-home") });
+    expect(catalog.default).toBe("gemini-3.1-pro-high");
+    expect(catalog.options.filter(({ id }) => id.startsWith("gemini-3.8-flash-"))).toEqual([
+      { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
+      { id: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },
+      { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+    ]);
+  });
+
   it("returns the official list when settings are missing", () => {
     expect(readAntigravityModelCatalog({ HOME: join(tmpdir(), "murage-agy-missing-home") })).toEqual(
       STATIC_ANTIGRAVITY_MODELS,
