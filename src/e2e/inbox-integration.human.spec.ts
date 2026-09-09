@@ -4,8 +4,12 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
+
+// Runtime URL import keeps the Node-only control tool out of app compilation.
+interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
+type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
+test.describe.configure({ mode: "serial" });
 
 let fixture: VerificationServer, vite: ViteDevServer, origin: string, headers: Record<string, string>;
 const botId = "inbox-proof-bot", oldThread = "inbox-old-task", currentThread = "inbox-current-task", messageId = "inbox-report-message";
@@ -14,6 +18,8 @@ async function api(path: string, method = "GET", body?: unknown) {
   const value = await response.json(); expect(response.ok, `${method} ${path}: ${response.status}`).toBe(true); return value as any;
 }
 test.beforeAll(async () => {
+  const { launchVerificationServer } = await import(new URL("../../scripts/control-murage.ts", import.meta.url).href) as
+    { launchVerificationServer: LaunchVerificationServer };
   // Seed the fixture BEFORE Store opens: it is a restart-shaped database,
   // not an out-of-band write into a cached live transcript.
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
