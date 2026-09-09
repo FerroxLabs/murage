@@ -247,6 +247,7 @@ import { fluxConfigured, fluxKey } from "./flux-config.ts";
 import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
 import {
   ensureWorkspace,
+  ensureTaskWorkspace,
   listMemoryTopics,
   isMemoryTopicName,
 } from "./workspace.ts";
@@ -792,14 +793,37 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
   }));
 }
 
+import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, requireDirectThreadTarget } from "./independent-thread-runs.ts";
 type DirectTurnDispatchClaim = {
   id: string;
+  botId: string;
   threadId: string;
   phase: "setup" | "dispatching";
 };
 class DirectTurnSetupCancelled extends Error {}
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
-const directTurnGenerationByBot = new Map<string, string>();
+const directRuns = new IndependentThreadRuns<BotRecord>();
+function botForDirectThread(botId:string,threadId:string):BotRecord|null {
+  const run=directRuns.get(threadId);
+  return run?{...run.snapshot,alwaysAllow:structuredClone(store.taskByThread(botId,threadId)?.alwaysAllow??run.snapshot.alwaysAllow),busy:true,activity:store.taskByThread(botId,threadId)?.activity??"working"}:store.projectBotForTask(botId,threadId);
+}
+function directThreadBusy(botId:string,threadId:string):boolean { return Boolean(directRuns.get(threadId)||store.taskByThread(botId,threadId)?.busy); }
+function requestedDirectBot(botId:string,requested:unknown):BotRecord {
+  if(!store.bot(botId))throw Object.assign(new Error("no such bot"),{status:404});
+  const threadId=requireDirectThreadTarget(store.tasks(botId).map(task=>task.threadId),requested);
+  const bot=botForDirectThread(botId,threadId);if(!bot)throw Object.assign(new Error("no such task"),{status:404});return bot;
+}
+async function interruptDirectThread(botId:string,threadId:string):Promise<void>{
+  const selected=botForDirectThread(botId,threadId);if(!selected)return;
+  const run=directRuns.get(threadId),claim=cancelDirectTurnDispatch(botId,threadId);
+  await releaseBrowserCapabilityForThread(threadId);
+  await registry.get(selected.modelSelection.instanceId)?.adapter.interruptTurn(threadId);
+  closeOpenApprovals(threadId);
+  if(run&&claim?.phase!=="dispatching"&&directRuns.current(run)){
+    if(screenPollers.get(botId)?.threadId===threadId)await finalScreenFrame(botId,threadId);
+    directRuns.release(run);store.setTaskActivity(botId,threadId,"idle");
+  }
+}
 
 /** Images a provider turn has produced but not yet attached to a message.
  * The bytes land on disk as they arrive and are folded onto the turn's
@@ -866,33 +890,35 @@ function shouldIgnoreProviderEvent(event: RuntimeEvent): boolean {
 }
 
 function directTurnClaimIsCurrent(botId: string, claimId: string, threadId: string): boolean {
-  const claim = directTurnDispatchClaims.get(botId);
-  const bot = store.bot(botId);
-  return claim?.id === claimId && claim.threadId === threadId && bot?.busy === true;
+  const run=directRuns.get(threadId);
+  return run?.generation===claimId&&run.botId===botId&&run.phase!=="stopping"&&store.taskByThread(botId,threadId)?.busy===true;
 }
 
 function directTurnClaimExists(botId: string, claimId: string, threadId: string): boolean {
-  const claim = directTurnDispatchClaims.get(botId);
-  return claim?.id === claimId && claim.threadId === threadId;
+  const claim = directTurnDispatchClaims.get(threadId);
+  return claim?.id === claimId && claim.botId === botId;
 }
 
 function markDirectTurnDispatching(botId: string, claimId: string, threadId: string): boolean {
   if (!directTurnClaimIsCurrent(botId, claimId, threadId)) return false;
-  directTurnDispatchClaims.set(botId, { id: claimId, threadId, phase: "dispatching" });
+  directTurnDispatchClaims.set(threadId, { id: claimId, botId, threadId, phase: "dispatching" });
+  directRuns.dispatch({threadId,generation:claimId});
   return true;
 }
 
-function clearDirectTurnDispatch(botId: string, claimId: string): void {
-  if (directTurnDispatchClaims.get(botId)?.id === claimId) directTurnDispatchClaims.delete(botId);
+function clearDirectTurnDispatch(threadId: string, claimId: string): void {
+  if (directTurnDispatchClaims.get(threadId)?.id === claimId) directTurnDispatchClaims.delete(threadId);
 }
 
 function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): DirectTurnDispatchClaim | null {
-  if (expectedThreadId === undefined) revokeInternalBot(botId);
-  else if (internalTurnOwners.get(expectedThreadId)?.botId === botId) revokeInternalThread(expectedThreadId);
-  const claim = directTurnDispatchClaims.get(botId);
-  if (!claim || (expectedThreadId !== undefined && claim.threadId !== expectedThreadId)) return null;
+  const threadId=expectedThreadId??store.bot(botId)?.threadId;
+  if(!threadId)return null;
+  if(internalTurnOwners.get(threadId)?.botId===botId)revokeInternalThread(threadId);
+  const run=directRuns.get(threadId);if(run&&run.botId===botId)directRuns.cancel(run);
+  const claim = directTurnDispatchClaims.get(threadId);
+  if (!claim || claim.botId!==botId) return null;
   recordMemorySettlement(claim.threadId, claim.id, "cancelled");
-  directTurnDispatchClaims.delete(botId);
+  directTurnDispatchClaims.delete(threadId);
   // Setup has not called the adapter yet, so there is no provider handshake
   // (and no unknown turn id) to quarantine. Dispatching is the only phase in
   // which a late provider event can exist.
@@ -906,7 +932,7 @@ function cancelDirectTurnDispatch(botId: string, expectedThreadId?: string): Dir
   return claim;
 }
 
-async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId = randomUUID()) {
+async function browserIntegration(botId: string, profile: string | undefined, threadId: string, stillValid: () => boolean = () => true, ownerId: string = randomUUID()) {
   if (browserEngineStatus().kind !== "ready") return null;
   const binding = await unifiedBrowserBinding(botId, profile);
   if (!stillValid()) return null;
@@ -989,7 +1015,7 @@ type AskBotOutcome = {
   stopReason?: string | null;
 };
 
-function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string, eventId?: string, coordination?: CoordinationTrace): Promise<AskBotOutcome> {
+function askBotAndWait(targetBotId: string, message: string, depth: number, _fromBotId?: string, eventId?: string, coordination?: CoordinationTrace, sourceThreadId?:string): Promise<AskBotOutcome> {
   const target = store.bot(targetBotId);
   if (!target) return Promise.resolve({ status: "error", text: "(no such bot)" });
   const threadId = target.threadId;
@@ -1024,7 +1050,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
       commsDepth: depth + 1,
       eventId,
       coordination,
-      unattended: isUnattended(fromBotId),
+      unattended: isUnattended(sourceThreadId),
       onDispatchError: (reason) => { releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${reason})` }); },
     }).catch((err) => {
       releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` });
@@ -2023,6 +2049,14 @@ const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
   checkMs: 60_000,
   onStall: (turn) => {
+    if(directRuns.get(turn.threadId)){
+      void interruptDirectThread(turn.botId,turn.threadId).then(()=>{
+        recordMemorySettlement(turn.threadId,`watchdog:${store.activeLeaf(turn.threadId)}`,"interrupted");
+        store.appendMessage(turn.threadId,{role:"bot",kind:"activity",tool:{name:"error: inactive thread stopped",ok:false}});
+        drainQueuedSends();
+      }).catch(()=>store.appendMessage(turn.threadId,{role:"bot",kind:"activity",tool:{name:"error: provider stop is unconfirmed; restart Murage before continuing this thread",ok:false}}));
+      return;
+    }
     revokeInternalThread(turn.threadId);
     void releaseBrowserCapabilityForThread(turn.threadId);
     repeats.settle(turn.threadId);
@@ -2203,24 +2237,24 @@ bus.subscribe((event: RuntimeEvent) => {
 const unattendedBots = new Map<string, number>();
 const UNATTENDED_TTL_MS = 30 * 60_000;
 
-function markUnattended(botId: string) {
-  unattendedBots.set(botId, Date.now());
+function markUnattended(threadId: string) {
+  unattendedBots.set(threadId, Date.now());
 }
-function clearUnattended(botId: string) {
-  unattendedBots.delete(botId);
+function clearUnattended(threadId: string) {
+  unattendedBots.delete(threadId);
 }
-function isUnattended(botId?: string | null): boolean {
-  if (!botId) return false;
-  const at = unattendedBots.get(botId);
+function isUnattended(threadId?: string | null): boolean {
+  if (!threadId) return false;
+  const at = unattendedBots.get(threadId);
   if (at === undefined) return false;
   // A long-running turn is still unattended even if its next approval comes
   // more than 30 minutes after the previous one. Only an idle bot may age
   // out; every positive read refreshes the inactivity window.
-  if (Date.now() - at > UNATTENDED_TTL_MS && !store.bot(botId)?.busy) {
-    unattendedBots.delete(botId);
+  if (Date.now() - at > UNATTENDED_TTL_MS && !directRuns.get(threadId)) {
+    unattendedBots.delete(threadId);
     return false;
   }
-  unattendedBots.set(botId, Date.now());
+  unattendedBots.set(threadId, Date.now());
   return true;
 }
 let routines: RoutineManager | null = null;
@@ -2357,7 +2391,8 @@ bus.subscribe((event: RuntimeEvent) => {
   // through runtime SSE would multiply large bytes across every app window.
   if (!privateImageEvent) broadcast({ kind: "runtime", event });
   const routineRun = privateImageEvent ? null : (routines?.handleRuntimeEvent(event) ?? null);
-  const bot = store.botByThread(event.threadId);
+  const profileBot = store.botByThread(event.threadId);
+  const bot = profileBot ? botForDirectThread(profileBot.id,event.threadId) : null;
   const group = bot ? undefined : store.groupByThread(event.threadId);
   if (!bot && !group) return;
   const speaker = group ? groupSpeakers.get(event.threadId) : undefined;
@@ -2461,7 +2496,7 @@ bus.subscribe((event: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      const unattended = permission && asker && event.requestId ? isUnattended(asker.id) : false;
+      const unattended = permission && asker && event.requestId ? isUnattended(event.threadId) : false;
       const verdict = permission && asker && event.requestId
         ? autoVerdict(asker, event.tool, event.summary, { unattended, scope: event.approvalScope })
         : null;
@@ -2614,7 +2649,8 @@ bus.subscribe((event: RuntimeEvent) => {
         const card = store.messagesFor(event.threadId).find((candidate) => candidate.id === message.id)?.card;
         if (!card || card.answered) return;
         // the bot is not working now — it is waiting on a person
-        if (asker.busy) store.setActivity(asker.id, "waiting-on-you");
+        if (bot)store.setTaskActivity(bot.id,event.threadId,"waiting-on-you");
+        else if (asker.busy) store.setActivity(asker.id, "waiting-on-you");
         notify(buildNotification(
           permission ? "approval" : "question",
           asker,
@@ -2642,7 +2678,8 @@ bus.subscribe((event: RuntimeEvent) => {
     case "request.resolved": {
       // answered (by whoever): the turn is working again, unless it settled
       const waiting = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      if (waiting?.activity === "waiting-on-you") store.setActivity(waiting.id, "working");
+      if(bot&&store.taskByThread(bot.id,event.threadId)?.activity==="waiting-on-you")store.setTaskActivity(bot.id,event.threadId,"working");
+      else if (!bot&&waiting?.activity === "waiting-on-you") store.setActivity(waiting.id, "working");
       const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
@@ -2674,7 +2711,7 @@ bus.subscribe((event: RuntimeEvent) => {
       // dead until something changes, not merely idle. The next successful
       // dispatch moves it to working; turn.completed (which follows a setup
       // failure) is told to leave "dead" alone.
-      if (event.setup && bot) store.setActivity(bot.id, "dead");
+      if (event.setup && bot) store.setTaskActivity(bot.id,event.threadId, "dead");
       break;
     case "thread.token-usage.updated":
       // running totals for the turn in flight; folded into the task's
@@ -2735,12 +2772,19 @@ bus.subscribe((event: RuntimeEvent) => {
           costUsd: event.cost ?? null,
         });
         // settled → idle; a setup failure already marked it dead, keep that
-        if (store.bot(bot.id)?.activity !== "dead") store.setActivity(bot.id, "idle");
+        const directRun=directRuns.get(event.threadId);
+        if(directRun)directRuns.settling(directRun);
+        const settleDirect=()=>{
+          if(directRun&&!directRuns.current(directRun))return;
+          if(directRun)directRuns.release(directRun);
+          if(store.taskByThread(bot.id,event.threadId)?.activity!=="dead")store.setTaskActivity(bot.id,event.threadId,"idle");
+          drainQueuedSends();
+        };
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
         const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
         // Group-origin routines belong to that channel's unread state. Their
         // hidden execution task should not light up the bot's 1:1 sidebar too.
-        if (!routineReportGroup) store.patchBot(bot.id, { unread: true });
+        if (!routineReportGroup) store.patchTask(bot.id,event.threadId, { unread: true });
         if (routineRun?.status !== "failed") {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
@@ -2749,7 +2793,7 @@ bus.subscribe((event: RuntimeEvent) => {
             : reply;
           notify(buildNotification("done", bot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: bot.avatarUrl }));
         }
-        if (screenPollers.has(bot.id)) {
+        if (screenPollers.get(bot.id)?.threadId===event.threadId) {
           // the last live frame becomes a settled inline screen message —
           // the screenshot-in-chat moment. One fresh capture first, so the
           // frame shows the turn's END state (the final tool's poke may
@@ -2768,10 +2812,11 @@ bus.subscribe((event: RuntimeEvent) => {
               if (group) pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
               else store.insertMessageAfter(event.threadId, settleLeafId, { role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
             }
-          }).finally(clearVpsTurn);
+          }).finally(()=>{clearVpsTurn();settleDirect();});
         } else if (vpsTurn) {
           clearVpsTurn();
-        }
+          settleDirect();
+        } else settleDirect();
       }
       const speaker = groupSpeakers.get(event.threadId);
       const group = store.groupByThread(event.threadId);
@@ -3008,7 +3053,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
       coordination,
       // The delegating bot is the one whose unattended state matters, and a
       // room thread has no owner to look it up from.
-      unattended: isUnattended(fromBotId || store.botByThread(sourceThreadId)?.id),
+      unattended: isUnattended(sourceThreadId),
       // startTurn schedules provider/integration setup after marking the bot
       // busy. Those asynchronous setup failures do not emit turn.completed,
       // so clear the watch and report them through this callback too.
@@ -3105,6 +3150,7 @@ const screenPollers = new Map<
   string,
   {
     timer: ReturnType<typeof setInterval> | null;
+    threadId: string;
     capture: () => Promise<void>;
     last: Frame | null;
     /** Did this turn actually reach for the screen? A bot that merely HAS
@@ -3130,7 +3176,7 @@ const SCREEN_MIN_GAP_MS = 3000;
 function startScreenPoller(
   botId: string,
   capture: () => Promise<{ png: string; format: string }>,
-  { screenIsTheWork = false } = {},
+  { screenIsTheWork = false, threadId = store.bot(botId)?.threadId ?? "" } = {},
 ) {
   if (screenPollers.has(botId)) return;
   // One capture at a time, shared by the interval, the pokes, and the
@@ -3141,6 +3187,7 @@ function startScreenPoller(
   let current: Promise<void> | null = null;
   let lastAt = 0;
   const entry = {
+    threadId,
     timer: null as ReturnType<typeof setInterval> | null,
     capture: (): Promise<void> => {
       // A person can type credentials while driving any browser/computer
@@ -3227,7 +3274,7 @@ function shownScreenHash(botId: string, threadId: string): string | undefined {
  * per-turn state survives the turn. */
 async function finalScreenFrame(botId: string, threadId: string): Promise<Frame | null> {
   const entry = screenPollers.get(botId);
-  if (!entry) return null;
+  if (!entry || entry.threadId!==threadId) return null;
   if (entry.timer) clearInterval(entry.timer);
   screenPollers.delete(botId);
   if (!entry.touched) return null;
@@ -3281,20 +3328,23 @@ async function startTurn(
     onDispatchError?: (message: string) => void;
   },
 ) {
-  const bot = store.bot(botId);
-  if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
-  if (providerConfigBusy) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
+  const profile = store.bot(botId);
+  if (!profile) throw Object.assign(new Error("no such bot"), { status: 404 });
+  const threadId = opts?.threadId ?? profile.threadId;
+  const bot=store.projectBotForTask(botId,threadId);
+  if(!bot)throw Object.assign(new Error("no such task"),{status:404});
+  if (providerConfigBusy||!providerFleetReady) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
   if (checkpointRestoreLeases.has(botId)) {
     throw Object.assign(new Error("this bot's project files are being restored — wait for the restore to finish"), {
       status: 409,
     });
   }
-  if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
-  const threadId = opts?.threadId ?? bot.threadId;
+  if (directThreadBusy(botId,threadId)||activeGroupTurnForBot(botId)) throw Object.assign(new Error("this thread or its group is already working"), { status: 409 });
+  if(directRuns.forBot(botId).length>=MAX_CONCURRENT_BOT_THREADS)throw Object.assign(new Error("this bot is already working on three threads"),{status:409,code:"thread_limit"});
   // a webhook turn, or one inherited from a bot already running unattended
-  if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(bot.id);
+  if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
   // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(bot.id);
+  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
   const eventId = opts?.eventId ?? (opts?.cardContinuation ? task.automationEventId : undefined);
@@ -3424,13 +3474,13 @@ async function startTurn(
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
-  const dispatchClaimId = randomUUID();
+  const run=directRuns.admit(bot.id,threadId,bot);
+  const dispatchClaimId = run.generation;
   beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination);
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
-  directTurnGenerationByBot.set(bot.id, dispatchClaimId);
-  directTurnDispatchClaims.set(bot.id, { id: dispatchClaimId, threadId, phase: "setup" });
-  store.setActivity(bot.id, "working");
-  store.patchBot(bot.id, { unread: false });
+  directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId:bot.id, threadId, phase: "setup" });
+  store.setTaskActivity(bot.id, threadId, "working");
+  store.patchTask(bot.id,threadId, { unread: false });
   turnUsage.delete(threadId);
 
   void (async () => {
@@ -3469,7 +3519,7 @@ async function startTurn(
       // desk, not the whole house — and the workspace is where its
       // MEMORY.md lives. API/box engines have no local filesystem story.
       const worksInWorkspace = instance.driverKind !== "grok" && instance.driverKind !== "boxAgent";
-      const privateWorkspace = worksInWorkspace ? ensureWorkspace(bot.id) : undefined;
+      const privateWorkspace = worksInWorkspace ? ensureTaskWorkspace(bot.id,threadId) : undefined;
       const skillInstructions = renderSkillInstructions(selectedSkills, {
         includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
       });
@@ -3501,6 +3551,7 @@ async function startTurn(
       const dwebUrl = process.env.DWEB_URL?.trim();
       if (dwebUrl) integrations.dweb = { url: dwebUrl };
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the EMBER default
+      if(wants&&wants!=="off"&&wants!=="browser"&&!directRuns.claim(run,[wants==="local"?"computer:host":wants==="vm"?"computer:vm":`computer:bot:${bot.id}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
       // Cloud routines always use Box/BoxAgent. The per-bot backend applies
       // only to ordinary turns that mount a computer into the local agent.
       const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
@@ -3723,6 +3774,7 @@ async function startTurn(
       // Mint the browser bearer at the last possible moment. The desktop
       // registration is asynchronous, so validate this exact setup claim
       // again inside browserIntegration before the capability is published.
+      if(computerKind&&!directRuns.claim(run,[computerKind==="local"?"computer:host":computerKind==="vm"?"computer:vm":`computer:bot:${bot.id}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
       const liveBot = store.bot(bot.id);
       if (
         liveBot &&
@@ -3731,6 +3783,7 @@ async function startTurn(
         instance.adapter.capabilities.browserMcp === true
       ) {
         const selectedProfile = liveBot.browserProfile;
+        if(!directRuns.claim(run,[`browser:${selectedProfile??"default"}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this browser profile. Wait for it to finish.");
         browser = await browserIntegration(bot.id, selectedProfile, threadId, () => {
           const current = store.bot(bot.id);
           return (
@@ -3891,9 +3944,10 @@ async function startTurn(
         retireProviderTurn(dispatch.value.turnId);
         throw new DirectTurnSetupCancelled("turn stopped during provider setup");
       }
-      clearDirectTurnDispatch(bot.id, dispatchClaimId);
+      directRuns.accepted(run,dispatch.value.turnId);
+      clearDirectTurnDispatch(threadId, dispatchClaimId);
       // dispatched: the rewind is spent, and the old cursors are dead
-      if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
+      if (rewound) store.patchTask(bot.id,threadId, { rewound: false, resumeCursors: {} });
       // and this engine now owns the thread's most recent turn
       // Consume exactly the external-update generation this turn replayed.
       // If a newer delegated result landed during setup, its unique marker
@@ -3914,8 +3968,8 @@ async function startTurn(
           return { png: image.data, format: "png" };
         };
       }
-      if (previewCapture && store.bot(bot.id)?.busy) {
-        startScreenPoller(bot.id, previewCapture, { screenIsTheWork: instance.driverKind === "boxAgent" });
+      if (previewCapture && store.taskByThread(bot.id,threadId)?.busy) {
+        startScreenPoller(bot.id, previewCapture, { threadId, screenIsTheWork: instance.driverKind === "boxAgent" });
       }
     } catch (e) {
       if(acceptedTurnCleanupFailed) {
@@ -3928,9 +3982,10 @@ async function startTurn(
       if (activeProviderSelections.get(threadId)?.route === providerRoute) activeProviderSelections.delete(threadId);
       revokeInternalGeneration(threadId, dispatchClaimId);
       clearCancelledProviderHandshake(threadId, `direct:${dispatchClaimId}`);
-      clearDirectTurnDispatch(bot.id, dispatchClaimId);
+      clearDirectTurnDispatch(threadId, dispatchClaimId);
       await releaseBrowserCapabilityForThread(threadId, dispatchClaimId);
-      const ownsLatestGeneration = directTurnGenerationByBot.get(bot.id) === dispatchClaimId;
+      const ownsLatestGeneration = directRuns.current(run);
+      if(ownsLatestGeneration)directRuns.release(run);
       if (ownsLatestGeneration) {
         releaseLocalVmThread(threadId);
         if (activeVpsThreads.get(bot.id) === threadId) activeVpsThreads.delete(bot.id);
@@ -3939,8 +3994,8 @@ async function startTurn(
       }
       if (e instanceof DirectTurnSetupCancelled) {
         opts?.onDispatchError?.(e.message);
-        if (ownsLatestGeneration && store.bot(bot.id)?.busy) {
-          store.setActivity(bot.id, "idle");
+        if (ownsLatestGeneration && store.taskByThread(bot.id,threadId)?.busy) {
+          store.setTaskActivity(bot.id,threadId, "idle");
           retryDelegationsWaitingOn(bot.id);
         }
         if (ownsLatestGeneration) {
@@ -3979,7 +4034,7 @@ async function startTurn(
           buildNotification("turn-failed", bot, threadId, redactSecretsInText(message), { avatarUrl: bot.avatarUrl }),
         );
       }
-      store.setActivity(bot.id, "idle");
+      store.setTaskActivity(bot.id,threadId, "idle");
       retryDelegationsWaitingOn(bot.id);
       opts?.onDispatchError?.(message);
       // a dispatch failure never emits turn.completed, so the settle-driven
@@ -6392,12 +6447,21 @@ function persistMcpServers(next: Record<string, unknown>): void {
  * effect without a server restart (kills any in-flight turns). */
 async function reloadProviders() {
   providerFleetReady = false;
+  const retiringDirect=store.bots.flatMap(bot=>directRuns.forBot(bot.id));
   const retiringProjects = projectTurnLeases.generations();
   revokeAllInternalTurns();
   await releaseAllBrowserCapabilities();
   bus.detachAll();
   await registry.disposeAll();
   projectTurnLeases.disposed(retiringProjects);
+  for(const run of retiringDirect)if(directRuns.current(run)){
+    directRuns.release(run);clearDirectTurnDispatch(run.threadId,run.generation);
+    if(screenPollers.get(run.botId)?.threadId===run.threadId)stopScreenPoller(run.botId);
+    releaseLocalVmThread(run.threadId);
+    recordMemorySettlement(run.threadId,run.generation,"interrupted");
+    store.setTaskActivity(run.botId,run.threadId,"idle");
+    store.appendMessage(run.threadId,{role:"bot",kind:"activity",tool:{name:"error: turn interrupted because provider settings changed",ok:false}});
+  }
   await registry.load(instanceConfigs(cfg));
   bus.attach(registry.instances());
   providerFleetReady = true;
@@ -7620,7 +7684,7 @@ const server = createServer(async (req, res) => {
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this Murage workspace. Reply to them.]\n\n${message}`;
         admitEventAction("handoff", eventAdmissionId);
-        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId, nextCoordination());
+        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId, nextCoordination(),fromThreadId);
         if (store.bot(toBotId)?.busy) handoffSlot.commit();
         const outcome = await waiting;
         requireActiveInternal();
@@ -9816,9 +9880,12 @@ const server = createServer(async (req, res) => {
       if (!store.bot(m[1]) || (requestSurface(req.headers, url.searchParams) !== "desktop" && !visibleToCompanion(store, { scope: "bot", botId: m[1] }))) {
         return json(res, 404, { error: "no such bot" });
       }
-      const parsed = readStateRequestSchema.safeParse(body);
+      const {threadId:requestedThread,...readBodyFields}=body??{};
+      const parsed = readStateRequestSchema.safeParse(readBodyFields);
       if (!parsed.success) return json(res, 400, { error: "read state accepts only an optional unread boolean" });
-      const bot = store.patchBot(m[1], { unread: parsed.data.unread ?? false });
+      const selected=requestedDirectBot(m[1],requestedThread);
+      store.patchTask(selected.id,selected.threadId,{unread:parsed.data.unread??false});
+      const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const visible = wireBot(bot);
       broadcast({ kind: "bot", bot: visible });
@@ -9828,7 +9895,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const body = await readBody(req);
       const allowKey = typeof body.allowKey === "string" ? body.allowKey : "";
-      const bot = store.bot(m[1]);
+      const bot = requestedDirectBot(m[1],body.threadId);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (!allowKey) return json(res, 400, { error: "allowKey required" });
       const pending = store.messagesFor(bot.threadId).some((message) =>
@@ -9840,9 +9907,10 @@ const server = createServer(async (req, res) => {
       if (!pending) {
         return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
       }
-      const updated = store.patchBot(bot.id, {
+      store.patchTask(bot.id,bot.threadId, {
         alwaysAllow: [...new Set([...(bot.alwaysAllow ?? []), allowKey])].slice(0, 200),
       })!;
+      const updated=store.bot(bot.id)!;
       const visible = wireBot(updated);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
@@ -9854,6 +9922,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const existingBot = store.bot(m[1]);
+      if(existingBot&&directRuns.forBot(existingBot.id).length>1)return json(res,409,{error:"Stop this bot's threads before changing shared settings"});
       if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
         return json(res, 400, { error: "requireAvailableModel must be true or false" });
       }
@@ -10182,6 +10251,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if(directRuns.forBot(bot.id).length)return json(res,409,{error:"Stop this bot's threads before deleting it"});
       const activeRoutine = routines!.activeRunForBot(bot.id);
       if (activeRoutine) {
         return json(res, 409, {
@@ -10217,7 +10287,6 @@ const server = createServer(async (req, res) => {
       try {
         // a running turn dies with its bot
         const directClaim = cancelDirectTurnDispatch(bot.id);
-        directTurnGenerationByBot.delete(bot.id);
         await releaseBrowserCapabilitiesForBot(bot.id);
         const directThreadId = directClaim?.threadId ?? bot.threadId;
         await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(directThreadId).catch(() => {});
@@ -10703,7 +10772,7 @@ const server = createServer(async (req, res) => {
       }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
-      const bot = store.bot(m[1]);
+      const bot = requestedDirectBot(m[1],body.threadId);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
         return json(res, 400, { error: "threadId must be a task id" });
@@ -10745,7 +10814,7 @@ const server = createServer(async (req, res) => {
             }
           }
 
-          const currentAtStart = store.bot(bot.id);
+          const currentAtStart = botForDirectThread(bot.id,threadId);
           if (!currentAtStart) throw Object.assign(new Error("no such bot"), { status: 404 });
           if (!store.taskByThread(currentAtStart.id, threadId)) {
             throw Object.assign(new Error("the target task no longer exists"), { status: 409 });
@@ -10773,7 +10842,7 @@ const server = createServer(async (req, res) => {
             // successful steer; otherwise that late acknowledgement writes a user
             // message into a task the bot no longer owns. A conflict leaves the
             // text in the client's composer/outbox to resend deliberately.
-            const current = store.bot(bot.id);
+            const current = botForDirectThread(bot.id,threadId);
             if (!current) throw Object.assign(new Error("no such bot"), { status: 404 });
             if (!store.taskByThread(bot.id, threadId)) {
               throw Object.assign(new Error("the target task no longer exists"), { status: 409 });
@@ -10790,7 +10859,7 @@ const server = createServer(async (req, res) => {
                   { status: 409 },
                 );
               }
-              clearUnattended(current.id);
+              clearUnattended(threadId);
               const message = store.appendMessage(threadId, {
                 role: "user",
                 kind: "text",
@@ -10837,9 +10906,8 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages\/([\w-]+)\/edit$/);
     if (m && method === "POST") {
       const messageId = m[2];
-      const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
       const body = await readBody(req);
+      const bot = requestedDirectBot(m[1],body.threadId);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
       // everything from here down is synchronous, so two racing edits can
@@ -10857,9 +10925,9 @@ const server = createServer(async (req, res) => {
       }
       const message = store.branchMessage(bot.threadId, messageId, text);
       if (!message) return json(res, 404, { error: "no such message" });
-      store.patchBot(bot.id, { rewound: true });
+      store.patchTask(bot.id,bot.threadId, { rewound: true });
       const replyTo = message.replyToId ? resolveReplyTarget(bot.threadId, message.replyToId) : undefined;
-      await startTurn(bot.id, text, { userMessage: message, replyTo });
+      await startTurn(bot.id, text, { threadId:bot.threadId,userMessage: message, replyTo });
       return json(res, 202, { ok: true });
     }
 
@@ -10867,20 +10935,19 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/active-branch$/);
     if (m && method === "POST") {
       const body = await readBody(req);
-      const bot = store.bot(m[1]);
+      const bot = requestedDirectBot(m[1],body.threadId);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (bot.busy) return json(res, 409, { error: "the bot is working — stop it before switching versions" });
       const leaf = store.setActiveLeaf(bot.threadId, String(body.messageId ?? ""));
       if (!leaf) return json(res, 404, { error: "no such message" });
       // provider sessions still hold the other branch — next turn replays
-      store.patchBot(bot.id, { rewound: true });
+      store.patchTask(bot.id,bot.threadId, { rewound: true });
       return json(res, 200, { activeLeafId: leaf });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
-      const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
       const body = await readBody(req);
+      const bot = requestedDirectBot(m[1],body.threadId);
       const behavior = requestBehavior(body.behavior);
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
       if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
@@ -10971,7 +11038,8 @@ const server = createServer(async (req, res) => {
           (pending?.from ? store.bot(pending.from.botId) : undefined)
         : store.botByThread(threadId);
       if (!owner && !pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
-      const outcome = await answerRequest(threadId, owner?.modelSelection.instanceId ?? "", requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined);
+      const requestOwner=owner?botForDirectThread(owner.id,threadId)??owner:null;
+      const outcome = await answerRequest(threadId, requestOwner?.modelSelection.instanceId ?? "", requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined);
       return json(res, 200, { ok: true, outcome });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
@@ -10983,11 +11051,18 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const body = rawBody ?? {};
+      if(body.threadId!==undefined||!activeGroupTurnForBot(bot.id)){
+        const selected=requestedDirectBot(bot.id,body.threadId),threadId=selected.threadId;
+        const routine=routines!.activeBotRunForBot(bot.id);
+        if(routine?.threadId===threadId){cancelDirectTurnDispatch(bot.id,threadId);await routines!.cancelRun(routine.id);return json(res,200,{ok:true});}
+        await interruptDirectThread(bot.id,threadId);
+        return json(res,200,{ok:true});
+      }
       const expectedThreadId = body.threadId;
       if (expectedThreadId !== undefined && (typeof expectedThreadId !== "string" || !/^[\w-]+$/.test(expectedThreadId))) {
         return json(res, 400, { error: "threadId must be a task id" });
       }
-      const directClaim = directTurnDispatchClaims.get(bot.id);
+      const directClaim = directTurnDispatchClaims.get(bot.threadId);
       const routineRun = routines!.activeBotRunForBot(bot.id);
       if (routineRun) {
         if (expectedThreadId !== undefined && routineRun.threadId !== expectedThreadId) {
@@ -11044,10 +11119,8 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      if (bot.busy) return json(res, 409, { error: "this bot is working — let it finish before starting a task" });
       const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
-      revokeInternalBot(bot.id);
       const fresh = botWithThread(store.bot(bot.id)!);
       broadcast({ kind: "bot", bot: fresh });
       return json(res, 201, { bot: fresh, task: wireTask(task) });
@@ -11060,10 +11133,8 @@ const server = createServer(async (req, res) => {
       // loses ownership of the process and can make a later interrupt target
       // the wrong task. Keep this mutation atomic at the HTTP boundary; an
       // MCP client cannot make a safe check-then-switch across two requests.
-      if (bot.busy) return json(res, 409, { error: "this bot is working — stop it before switching tasks" });
       const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
-      revokeInternalBot(bot.id);
       const fresh = botWithThread(switched);
       broadcast({ kind: "bot", bot: fresh });
       const responseBot = url.searchParams.get("messages") === "0"
@@ -11073,7 +11144,24 @@ const server = createServer(async (req, res) => {
     }
     if (m && method === "PATCH") {
       const body = await readBody(req);
-      const task = store.renameTask(m[1], m[2], String(body.title ?? ""));
+      if(!body||typeof body!=="object"||Array.isArray(body))return json(res,400,{error:"body must be an object"});
+      const current=store.projectBotForTask(m[1],m[2]);if(!current)return json(res,404,{error:"no such task"});
+      if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","cwd","unread","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
+      const settings=body.modelSelection!==undefined||body.autoApprove!==undefined||body.cwd!==undefined;
+      if(settings&&requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"not found"});
+      if(settings&&directThreadBusy(current.id,current.threadId))return json(res,409,{error:"Stop this thread before changing its settings"});
+      const patch:Parameters<typeof store.patchTask>[2]={};
+      if(body.modelSelection!==undefined){const checked=checkedModelSelection(body.modelSelection,{selection:current.modelSelection,busy:false},body.requireAvailableModel===true);if(!checked.ok)return json(res,checked.status,{error:checked.error});patch.modelSelection=checked.selection;}
+      if(body.autoApprove!==undefined){
+        if(typeof body.autoApprove!=="boolean")return json(res,400,{error:"autoApprove must be true or false"});
+        if(body.autoApprove&&!current.autoApprove&&shouldMountLocalComputer({requested:current.computer==="vm"||current.computer==="browser"?"off":current.computer,hostPlatform:process.platform,providerSupportsLocal:true})&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first"});
+        patch.autoApprove=body.autoApprove;
+      }
+      if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;}
+      if(body.unread!==undefined){if(typeof body.unread!=="boolean")return json(res,400,{error:"unread must be true or false"});patch.unread=body.unread;}
+      if(body.title!==undefined&&typeof body.title!=="string")return json(res,400,{error:"title must be text"});
+      if(body.title!==undefined)patch.title=body.title;
+      const task = store.patchTask(m[1],m[2],patch);
       if (!task) return json(res, 404, { error: "no such task" });
       const fresh = botWithThread(store.bot(m[1])!);
       broadcast({ kind: "bot", bot: fresh });
@@ -11081,7 +11169,7 @@ const server = createServer(async (req, res) => {
     }
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
-      if (bot?.busy && (bot.threadId === m[2] || routines!.isActiveThread(m[2]))) {
+      if (bot && (directThreadBusy(bot.id,m[2]) || routines!.isActiveThread(m[2]))) {
         return json(res, 409, { error: "this task is running — stop it first" });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
