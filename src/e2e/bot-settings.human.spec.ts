@@ -58,7 +58,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
     const response = await route.fetch(); await new Promise<void>(resolve => { release = resolve; }); await route.fulfill({ response });
   });
   await dialog.getByRole("button", { name: "Save", exact: true }).click(); await expect.poll(() => Boolean(release)).toBe(true);
-  await dialog.getByRole("button", { name: "Close bot settings", exact: true }).click(); await expect(dialog.getByRole("status")).toHaveText("Wait for the current save to finish before closing.");
+  await dialog.getByRole("button", { name: "Close bot settings", exact: true }).click(); await expect(dialog.getByRole("status")).toHaveText("Wait for the current operation to finish before closing.");
   release!(); await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
   await search.fill("never-matching-section"); await expect(dialog.getByText("No matching settings sections.", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Clear search", exact: true }).click();

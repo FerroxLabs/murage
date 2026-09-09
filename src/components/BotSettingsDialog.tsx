@@ -18,7 +18,7 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
     const next = { ...current }; if (state) next[key] = state; else delete next[key]; return next;
   }), []);
   const navigate = (operation: () => void) => {
-    if (saving) { setNotice("Wait for the current save to finish before closing."); return; }
+    if (saving) { setNotice("Wait for the current operation to finish before closing."); return; }
     if (dirty.length && !window.confirm("Discard unsaved changes and close bot settings?")) return;
     operation();
   };

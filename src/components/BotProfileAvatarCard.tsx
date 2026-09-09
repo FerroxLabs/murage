@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { Check, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
@@ -48,6 +49,7 @@ export function BotProfileAvatarCard({
   const [savingKey, setSavingKey] = useState(false);
   const [direction, setDirection] = useState("");
   const [generating, setGenerating] = useState(false);
+  useBotSettingsDraft("Appearance", Boolean(imageKey.trim() || direction.trim()), savingKey || uploading || generating);
   const [error, setError] = useState<string | null>(null);
   const crop = bot.avatarCrop ?? "mascot";
   const cropRef = useRef(crop);
