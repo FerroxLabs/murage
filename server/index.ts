@@ -41,6 +41,8 @@ import { inboxRequest } from "./inbox.ts";
 import type { InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
+import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema } from "./claude-accounts.ts";
+import { persistableClaudeInstances, replaceClaudeAccountInstances, restoreClaudeAccountInstances } from "./claude-account-config.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
@@ -6467,6 +6469,20 @@ function artifactScopes(): ArtifactScope[] {
   return scopes;
 }
 const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
+async function describedClaudeAccounts() {
+  const descriptions = await registry.describe();
+  return Object.entries(persistableClaudeInstances(cfg)).filter(([, entry]) => entry.driver === "claudeAgent").map(([instanceId, entry]) => {
+    const config = entry.config && typeof entry.config === "object" && !Array.isArray(entry.config) ? entry.config : {};
+    const cli = "cli" in config && typeof config.cli === "string" ? config.cli : "claude";
+    const instance = descriptions.find(instance => instance.instanceId === instanceId);
+    return { instanceId, displayName: entry.displayName || instanceId, ...claudeAccountInfo(instanceId, entry, cli),
+      snapshot: instance?.snapshot ?? { state: "unavailable", reason: "Account engine is unavailable." } };
+  });
+}
+function claudeAccountReferenced(instanceId: string) {
+  return store.bots.some(bot => bot.modelSelection.instanceId === instanceId || (bot.tasks ?? []).some(task =>
+    task.lastInstanceId === instanceId || (task as { modelSelection?: ModelSelection }).modelSelection?.instanceId === instanceId));
+}
 const engineManager = new EngineManager({
   root: join(DATA_DIR, "managed-engines"),
   get envPath() { return augmentedPath(); },
@@ -7123,6 +7139,49 @@ const server = createServer(async (req, res) => {
     }
     if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop") {
       return json(res, 404, { error: "no such route" });
+    }
+    const claudeAccountRoute = /^\/api\/claude-accounts(?:\/([\w-]+))?$/.exec(path);
+    if (claudeAccountRoute && ["GET", "POST", "PATCH", "DELETE"].includes(method)) {
+      const id = claudeAccountRoute[1];
+      if (method === "GET") return json(res, 200, { accounts: await describedClaudeAccounts() });
+      if ((method === "POST") === Boolean(id)) return json(res, 405, { error: "Choose an account action." });
+      if (method !== "DELETE" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "JSON required" });
+      const parsed = method === "DELETE" ? undefined : (method === "POST" ? createClaudeAccountSchema : claudeAccountSettingsSchema).safeParse(await readBody(req));
+      if (parsed && !parsed.success) return json(res, 400, { error: "Provide a valid account name and configuration directory." });
+      if (dataWritersStopped || providerConfigBusy || engineWorkActive()) return json(res, 409, { error: "Finish running work and let engine setup settle before changing Claude accounts." });
+      providerConfigBusy = true;
+      try {
+        let next = persistableClaudeInstances(cfg), target = id;
+        if (method === "POST") { const created = newClaudeAccount(next, parsed?.success ? parsed.data : {}); next = created.instances; target = created.instanceId; }
+        else {
+          const entry = next[id];
+          if (!entry || entry.driver !== "claudeAgent") return json(res, 404, { error: "Claude account not found." });
+          const patch = parsed?.success ? parsed.data : undefined;
+          if (method === "DELETE") {
+            if (id === "claude") return json(res, 409, { error: "The default Claude account cannot be removed here." });
+            if (claudeAccountReferenced(id)) return json(res, 409, { error: "This account is used by an existing bot or task. Change that selection before removing it." });
+            delete next[id];
+          } else if (patch) {
+            if (patch.displayName !== undefined) entry.displayName = patch.displayName;
+            if (patch.configDir !== undefined) {
+              if (!patch.configDir.trim() || id === "claude") return json(res, 400, { error: "Use a separate nonempty directory for a named account; the default account stays unchanged." });
+              if (claudeAccountReferenced(id)) return json(res, 409, { error: "This account is used by an existing bot or task. Its credential directory cannot be changed." });
+              entry.config = { ...(entry.config && typeof entry.config === "object" && !Array.isArray(entry.config) ? entry.config : {}), configDir: patch.configDir };
+              assertSeparateClaudeAccount(next, id, entry);
+            }
+          }
+        }
+        const receipt = replaceClaudeAccountInstances(next);
+        try { Object.assign(cfg, loadConfig()); await reloadProviders(); }
+        catch {
+          try { restoreClaudeAccountInstances(receipt); Object.assign(cfg, loadConfig()); await reloadProviders(); }
+          catch { return json(res, 500, { error: "Claude account activation and recovery could not be confirmed. Stop and inspect Engines before retrying." }); }
+          return json(res, 500, { error: "Claude account activation failed. The previous configuration was restored." });
+        }
+        if (method === "DELETE") return json(res, 200, { removed: true, credentialsRetained: true });
+        const account = (await describedClaudeAccounts()).find(account => account.instanceId === target);
+        return json(res, method === "POST" ? 201 : 200, { account });
+      } finally { finishProviderConfigMutation(); }
     }
     if (path === "/api/automation-admission" && (method === "GET" || method === "POST")) {
       if (method === "POST") {
