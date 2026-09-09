@@ -300,6 +300,8 @@ export interface ProviderAdapter {
 // ── provider snapshot (upstream ServerProviderShape, reduced) ────────────
 export interface ProviderSnapshot {
   state: "available" | "unavailable";
+  /** Packaged engine exists by contract but requires application repair, not a CLI install. */
+  setupAction?: "repair";
   reason?: string;
   authenticated?: boolean;
   version?: string | null;

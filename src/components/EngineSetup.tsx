@@ -196,6 +196,21 @@ export function EngineSetup({
     </div>;
   }
 
+  if (instance.snapshot.state === "unavailable" && instance.snapshot.setupAction === "repair") {
+    return <div className={cn("rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
+      <div className="text-[13px] font-semibold text-ink">Repair bundled {instance.displayName}</div>
+      <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">This engine is included with Murage but could not start. You do not need Node.js, npm or a separate engine installation.</p>
+      <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{instance.snapshot.reason}</p>
+      <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">Reinstall the official Murage package without deleting your workspace. If the problem continues, report your Murage version, operating system and installer type.</p>
+      <button type="button" disabled={checking} onClick={() => void checkAgain()}
+        className="mt-3 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] font-medium text-ink hover:bg-raised-hover disabled:opacity-50">
+        {checking ? t("setup.checkingEngine") : t("common.checkAgain")}
+      </button>
+      {checkMessage && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{checkMessage}</p>}
+      {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
+    </div>;
+  }
+
   // Some engines are configured elsewhere (for example, a cloud computer
   // token) and intentionally have no install descriptor.
   if (!install) {

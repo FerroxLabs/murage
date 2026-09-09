@@ -435,6 +435,7 @@ export interface InstanceInfo {
   displayName: string;
   snapshot: {
     state: "available" | "unavailable";
+    setupAction?: "repair";
     reason?: string;
     authenticated?: boolean;
     version?: string | null;

@@ -1,7 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
-import { needsCli, needsSignIn } from "./EngineSetup";
+import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import type { InstanceInfo } from "@/state/store";
+
+vi.mock("@/state/store", async (original) => ({ ...await original<typeof import("@/state/store")>(), useStore: () => ({ dispatch: vi.fn() }) }));
+afterEach(() => vi.unstubAllGlobals());
+
+describe("bundled engine repair", () => {
+  it("renders repair guidance without sending desktop customers to npm", () => {
+    vi.stubGlobal("window", { muragebox: { platform: "linux" } });
+    const value: InstanceInfo = { ...instance({ state: "unavailable", setupAction: "repair", reason: "Bundled engine could not start." }),
+      driverKind: "fuigoAgent", displayName: "Fuigo", install: { command: { linux: "npm install -g fuigo" }, needsNode: true } };
+    const html = renderToStaticMarkup(createElement(EngineSetup, { instance: value }));
+    expect(html).toContain("Repair bundled Fuigo");
+    expect(html).toContain("You do not need Node.js, npm");
+    expect(html).toContain("without deleting your workspace");
+    expect(html).not.toContain("npm install -g fuigo");
+    expect(html).not.toContain("Requires Node.js");
+  });
+});
 
 function instance(snapshot: InstanceInfo["snapshot"]): InstanceInfo {
   return {
