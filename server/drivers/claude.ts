@@ -17,6 +17,7 @@ import { join, dirname } from "node:path";
 
 import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
+import { claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
@@ -59,7 +60,7 @@ export function claudeSignedIn(
   run: typeof execCli = execCli,
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    run(cli, ["auth", "status", "--json"], { timeout: 8000, env }, (_error, stdout) => {
+    run(cli, ["auth", "status", "--json"], { timeout: 8000, maxBuffer:65536, env }, (_error, stdout) => {
       try {
         const status: unknown = JSON.parse(stdout);
         resolve(
@@ -147,6 +148,8 @@ function claudeRouting(
 
 export interface ClaudeConfig {
   cli: string;
+  /** Named native account; absence preserves the user's default CLI namespace. */
+  configDir?: string;
   permissionMode: "acceptEdits" | "auto" | "bypassPermissions";
   /** Available Claude built-ins. An empty list passes `--tools ""`. */
   tools?: string[];
@@ -551,8 +554,12 @@ function decodeConfig(raw: unknown): ClaudeConfig {
   }
   const tools = decodeToolList(o.tools, "tools");
   const disallowedTools = decodeToolList(o.disallowedTools, "disallowedTools");
+  if(o.configDir!==undefined&&typeof o.configDir!=="string")throw new Error("claude: configDir must be a string");
+  const configDir=typeof o.configDir==="string"?o.configDir.trim():undefined;
+  if(configDir)resolveClaudeConfigDir(configDir);
   return {
     cli: typeof o.cli === "string" ? o.cli : "claude",
+    ...(configDir?{configDir}:{}),
     permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "acceptEdits",
     ...(tools !== undefined ? { tools } : {}),
     ...(disallowedTools !== undefined ? { disallowedTools } : {}),
@@ -591,7 +598,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
   async create(input: DriverCreateInput<ClaudeConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
-    const catalogEnv: Record<string, string | undefined> = { ...process.env, ...input.environment };
+    const accountEnvironment=()=>claudeAccountEnvironment({...process.env,...input.environment},config.configDir);
+    const catalogEnv: Record<string, string | undefined> = accountEnvironment();
     // readClaudeModelCatalog reads `env.ANTHROPIC_MODEL` into an extra picker
     // row; an ambient one from a provider switcher would offer a phantom model
     // the spawned CLI is never pointed at.
@@ -736,7 +744,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         ...(turn.integrations?.agents ? ["ListAgents", "SendMessage"] : []),
       ])];
       if (disallowedTools.length) args.push("--disallowedTools", disallowedTools.join(","));
-      const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
+      const turnEnvironment: NodeJS.ProcessEnv = accountEnvironment();
       const turnModel = turn.providerRoute ? turn.providerRoute.model : await resolveClaudeTurnModel(turn.model, turnEnvironment);
       // argv and the process-reuse key below must come from the SAME routing
       // decision the spawn env gets from `claudeEnvironment`. A throwaway copy
@@ -1302,7 +1310,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
-      const env = claudeEnvironment(undefined, { ...process.env, ...input.environment });
+      const env = claudeEnvironment(undefined, accountEnvironment());
       const version = await new Promise<string | null>((resolve) => {
         execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
@@ -1327,7 +1335,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           ["-p", "--model", "claude-haiku-4-5", "--output-format", "text"],
           {
             stdio: ["pipe", "pipe", "pipe"],
-            env: claudeEnvironment("claude-haiku-4-5", { ...process.env, ...input.environment }),
+            env: claudeEnvironment("claude-haiku-4-5", accountEnvironment()),
           },
         );
         let stdout = "";
