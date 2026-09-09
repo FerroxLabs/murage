@@ -1640,12 +1640,12 @@ ipcMain.handle("browser:set-human-control", (event, botId, held, profile) => {
   }
   const id = String(botId ?? "");
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new Error("A bot id is required");
-  // A generic Computer-panel release must be able to clear a positive hold
-  // remembered across renderer/surface recreation. If no surface exists,
-  // there is no local browser to update, but the remembered gate still goes.
+  // Computer takeover is bot-wide even when the native browser is absent.
+  // Remember the gate now; startBrowserSurface applies it before publishing
+  // a future surface or exposing its host. Release clears that remembered gate.
   if (!browserSurface) {
-    if (held === true) throw new Error("The built-in browser is unavailable");
-    browserControlHolds.delete(id);
+    if (held === true) browserControlHolds.add(id);
+    else browserControlHolds.delete(id);
     return true;
   }
   const surface = browserSurface;
