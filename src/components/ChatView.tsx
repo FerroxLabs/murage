@@ -41,7 +41,8 @@ import { EngineSetup } from "./EngineSetup";
 import { ProviderErrorCard } from "./ProviderErrorCard";
 import { RuntimeErrorCard } from "./RuntimeErrorCard";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
-import { BotAvatar, EmberAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
+import { CommAvatar } from "./CommAvatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
@@ -764,7 +765,7 @@ function Bubble({
 
 /** A tool run: spinner while live, check/cross once settled. */
 function ActivityChip({ message }: { message: Message }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const tool = message.tool;
   if (!tool) return null;
   // bot⇄bot comm chip: opens the channel where the exchange lives
@@ -778,7 +779,7 @@ function ActivityChip({ message }: { message: Message }) {
           className={cn(CHIP, "text-left text-ink-secondary hover:bg-raised hover:text-ink")}
         >
           <span className="shrink-0">
-            <EmberAvatar color={comm.withColor} state="happy" size={16} />
+            <CommAvatar comm={comm} bots={state.bots} />
           </span>
           <span className={CHIP_NAME}>{tool.name}</span>
           <ChevronRight size={13} className="shrink-0" />
