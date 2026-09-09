@@ -131,9 +131,9 @@ export interface AcpSupport {
   /** How a user installs this harness's CLI; surfaced by the setup UI. */
   install?: EngineInstall;
   /** Add engine-specific repair guidance after a failed version probe. */
-  versionFailureReason?(
+  versionFailure?(
     env: Record<string, string | undefined>, config: AcpConfig, detail: string,
-  ): string | undefined;
+  ): { reason: string; setupAction?: "repair" } | undefined;
   /** CLI argv AFTER the binary name to enter ACP stdio mode. */
   spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
   /** Provider credential variables this ACP child is allowed to inherit. */
@@ -854,8 +854,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
         if (probe.error || !probe.version) {
           const detail = acpVersionFailureDetail(probe.error);
-          return { state: "unavailable", reason: support.versionFailureReason?.(env, config, detail)
-            ?? `\`${config.cli}\` ${detail}` };
+          return { state: "unavailable", ...(support.versionFailure?.(env, config, detail)
+            ?? { reason: `\`${config.cli}\` ${detail}` }) };
         }
         return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config) };
       };

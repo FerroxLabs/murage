@@ -240,16 +240,16 @@ const support: AcpSupport = {
   effortLevels: ["none", "low", "medium", "high", "xhigh", "max"],
 
   defaultCli: "fuigo",
-  versionFailureReason: (env, config, detail) => {
+  versionFailure: (env, config, detail) => {
     // A custom CLI owns its own installation; bundle repair cannot fix it.
     if (config.cli !== "fuigo" || !env.MURAGE_FUIGO_DIR?.trim()) return;
     const repair = "Repair or reinstall Murage's bundled Fuigo engine. Node/npm is not required.";
     try {
       const resolved = resolveFuigoCli(env);
-      if (resolved.source === "bundled") return `Bundled Fuigo at ${resolved.command} ${detail}. ${repair}`;
+      if (resolved.source === "bundled") return { reason: `Bundled Fuigo at ${resolved.command} ${detail}. ${repair}`, setupAction: "repair" };
     } catch (error) {
       // resolveFuigoCli's messages contain only our checked resource path.
-      return `${error instanceof Error ? error.message : "Bundled Fuigo is unavailable"}. ${repair}`;
+      return { reason: `${error instanceof Error ? error.message : "Bundled Fuigo is unavailable"}. ${repair}`, setupAction: "repair" };
     }
   },
   nativeSource: "fuigo.acp",
