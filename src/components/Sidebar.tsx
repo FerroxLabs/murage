@@ -94,6 +94,7 @@ import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
+import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
 import { InboxDialog } from "./InboxDialog";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
@@ -1325,6 +1326,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const hiddenChange = useRef(false);
   const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const toolsTriggerRef = useRef<HTMLButtonElement>(null);
   const [filesOpen, setFilesOpen] = useState<FilesOpenDetail | null>(null);
   useEffect(() => {
     const open = (event: Event) => {
@@ -2055,6 +2058,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         {density !== "icons" && (
           <SidebarMoreMenu
             compact={density === "compact"}
+            triggerRef={toolsTriggerRef}
             items={[
               ...(desktop === true ? [{ key: "inbox", label: "Inbox", icon: <BellDot size={18} />, onSelect: () => setInboxOpen(true) }] : []),
               ...(desktop === true ? [{ key: "files", label: "Files", icon: <Folder size={18} />, onSelect: () => setFilesOpen({}) }] : []),
@@ -2093,6 +2097,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 icon: <Puzzle size={18} />,
                 onSelect: () => dispatch({ type: "togglePlugins", open: true }),
               },
+              { key: "keyboard-shortcuts", label: "Keyboard shortcuts", icon: <BookOpen size={18} />, onSelect: () => setShortcutsOpen(true) },
             ]}
           />
         )}
@@ -2140,6 +2145,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />}
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
+      <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusRef={toolsTriggerRef} />
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}
       {sectionPicker && (
         <SectionPicker
