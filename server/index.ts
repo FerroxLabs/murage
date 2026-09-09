@@ -1043,7 +1043,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
 
 // default selection for new bots: first available instance, Fuigo preferred
 async function defaultSelection() {
-  const described = await registry.describe();
+  const described = await describedInstances();
   const available = described.filter((d) => d.snapshot.state === "available");
   // Deliberately NO fallback to described[0]. Handing a bot an engine whose
   // CLI isn't installed makes it look ready and then fail on send with a raw
@@ -6469,6 +6469,20 @@ function artifactScopes(): ArtifactScope[] {
   return scopes;
 }
 const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
+async function describedInstances() {
+  const instances = await registry.describe();
+  const configured = instanceConfigs(cfg);
+  return instances.map(instance => {
+    const entry = configured[instance.instanceId];
+    if (entry?.driver !== "claudeAgent" || !instance.install) return instance;
+    try {
+      const account = claudeAccountInfo(instance.instanceId, entry, instance.cli || instance.cliDefault || "claude");
+      return account.managed ? { ...instance, install: { ...instance.install, signInCommand: account.signInCommand } } : instance;
+    } catch {
+      return { ...instance, install: undefined, snapshot: { state: "unavailable" as const, reason: "Named Claude account setup is invalid. Review its directory in Engines settings." } };
+    }
+  });
+}
 async function describedClaudeAccounts() {
   const descriptions = await registry.describe();
   return Object.entries(persistableClaudeInstances(cfg)).filter(([, entry]) => entry.driver === "claudeAgent").map(([instanceId, entry]) => {
@@ -11520,7 +11534,7 @@ const server = createServer(async (req, res) => {
       // Windows never pushes PATH changes into a live process, so without
       // this the answer is frozen at boot and "check again" is a no-op.
       resetPathCache();
-      return json(res, 200, { instances: await registry.describe() });
+      return json(res, 200, { instances: await describedInstances() });
     }
 
     // ── CLI binary discovery for the Engines "detected" dropdown ──
@@ -11598,8 +11612,15 @@ const server = createServer(async (req, res) => {
       const instance = registry.get(parsed.data.instanceId);
       if (!instance) return json(res, 404, { error: "Engine not found." });
       const install = BUILT_IN_DRIVERS.find(driver => driver.driverKind === instance.driverKind)?.install;
-      const command = parsed.data.action === "connect" ? install?.signInCommand
+      let command = parsed.data.action === "connect" ? install?.signInCommand
         : install?.command?.[process.platform as "darwin" | "win32" | "linux"];
+      const entry = instanceConfigs(cfg)[parsed.data.instanceId];
+      if (parsed.data.action === "connect" && entry?.driver === "claudeAgent") {
+        const raw = entry.config && typeof entry.config === "object" && !Array.isArray(entry.config) ? entry.config : {};
+        const cli = "cli" in raw && typeof raw.cli === "string" ? raw.cli : "claude";
+        const account = claudeAccountInfo(parsed.data.instanceId, entry, cli);
+        if (account.managed) command = account.signInCommand;
+      }
       if (!command) return json(res, 409, { error: "Use this engine's setup guide for your platform." });
       return json(res, 200, { command });
     }
@@ -11640,7 +11661,7 @@ const server = createServer(async (req, res) => {
         // from the memoized PATH, so resetting after would answer this request
         // with the pre-reset cache
         resetPathCache();
-        return json(res, 200, { instances: await registry.describe() });
+        return json(res, 200, { instances: await describedInstances() });
       } finally {
         finishProviderConfigMutation();
       }
