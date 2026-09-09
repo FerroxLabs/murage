@@ -15,11 +15,13 @@
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { homedir } from "node:os";
+import { stripVTControlCharacters } from "node:util";
 
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 import { classifyProviderError } from "../../../shared/provider-error.ts";
+import { redactSecretsInText } from "../../redact.ts";
 
 /** Some ACP providers wrap actionable billing failures in "Internal error".
  * Classify only the observed shape; never copy nested provider data or URLs
@@ -421,7 +423,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
 
         child.once("close", () => providerBinding?.cleanup());
-        const state = { settled: false, promptSent: false, text: "" };
+        const state = { settled: false, promptSent: false, cancelRequested: false, text: "" };
         const asks = new Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>();
         let nextId = 1;
         let sessionId: string | null = null;
@@ -657,16 +659,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
         child.on("close", (code) => {
           if (!state.settled) {
+            if (state.cancelRequested) {
+              settle(true, "cancelled");
+              return;
+            }
+            const detail = redactSecretsInText(stripVTControlCharacters(stderr)).trim().slice(-300);
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} exited ${code} before the prompt result${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
+              message: `${DRIVER_KIND} exited ${code} before the prompt result${detail ? `: ${detail}` : ""}`,
             });
             settle(false, "exit_before_result");
           }
         });
 
         const interrupt = () => {
+          if (state.settled) return;
+          state.cancelRequested = true;
           if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
           else stop();
           if (interruptTimer) clearTimeout(interruptTimer);

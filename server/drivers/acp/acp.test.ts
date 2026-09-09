@@ -681,6 +681,48 @@ describe("ACP turns (fake CLI)", () => {
     expect(done).toMatchObject({ type: "turn.completed" });
   });
 
+  it("cancellation-close regression: exit on cancellation is not an unexpected failure", async () => {
+    await create(GrokAgentDriver, "exit-on-cancel");
+    const threadId = "t-cancel-close";
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+    const started = performance.now();
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed", 4000);
+    const raw = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    expect(raw.some(row => row.dir === "out" && row.msg.method === "session/cancel")).toBe(true);
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    console.log(JSON.stringify({ cancellationCloseObserved: { elapsedMs: Math.round(performance.now() - started), terminal: done.type === "turn.completed" ? { ok: done.ok, stopReason: done.stopReason } : null, runtimeErrors: errors.length, cancelRequestRecorded: true } }));
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(errors).toEqual([]);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
+  it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {
+    await create(GrokAgentDriver, "exit-on-prompt");
+    await instance.adapter.sendTurn({ threadId: "t-unsolicited-close", text: "fixture only" });
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    const code = process.platform === "win32" ? 1073807364 : 4;
+    expect(error).toMatchObject({ message: expect.stringContaining(`exited ${code} before the prompt result`) });
+  });
+
+  it("cancellation-close regression: unsolicited stderr is plain redacted bounded text", async () => {
+    await create(GrokAgentDriver, "exit-with-ansi");
+    await instance.adapter.sendTurn({ threadId: "t-ansi-close", text: "fixture only" });
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    expect(error?.type).toBe("runtime.error");
+    if (error?.type !== "runtime.error") throw new Error("Expected runtime failure");
+    expect(error.message).toContain("STDERR_VISIBLE_END");
+    expect(error.message).not.toContain("\u001b");
+    expect(error.message).not.toContain("SYNTHETICKEYCANARY");
+    expect(error.message.split("before the prompt result: ")[1].length).toBeLessThanOrEqual(300);
+  });
+
   it("an exit before result becomes runtime.error + failed turn", async () => {
     await create(GrokAgentDriver, "exit-early");
     await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });
