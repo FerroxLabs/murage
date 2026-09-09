@@ -33,6 +33,7 @@ import {
   messageVersions,
   openNotificationTarget,
   visibleMessages,
+  viewedTaskBot,
   type Bot,
   type InstanceInfo,
   type Message,
@@ -519,7 +520,7 @@ function Bubble({
   const versions = user ? messageVersions(bot, message) : [message];
   const versionIndex = versions.findIndex((v) => v.id === message.id);
   const switchTo = (v: Message | undefined) => {
-    if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id, messageId: v.id });
+    if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id,threadId:bot.threadId, messageId: v.id });
   };
 
   return (
@@ -1078,7 +1079,8 @@ function PinnedBanner({
   );
 }
 
-export function ChatView({ bot }: { bot: Bot }) {
+export function ChatView({ bot:profile }: { bot: Bot }) {
+  const bot=viewedTaskBot(profile);
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -1154,7 +1156,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   const submitEdit = useCallback(
     (messageId: string, text: string) => {
       setEditingId(null); // closes the editor first — a double Enter can't fork twice
-      dispatch({ type: "editMessage", botId: bot.id, messageId, text });
+      dispatch({ type: "editMessage", botId: bot.id,threadId:bot.threadId, messageId, text });
     },
     [bot.id, dispatch],
   );
@@ -1202,7 +1204,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   // existing branch machinery, so the old answer stays reachable via ‹ ›
   const regenerate = useCallback(() => {
     if (lastUserMessage?.text && !bot.busy) {
-      dispatch({ type: "editMessage", botId: bot.id, messageId: lastUserMessage.id, text: lastUserMessage.text });
+      dispatch({ type: "editMessage", botId: bot.id,threadId:bot.threadId, messageId: lastUserMessage.id, text: lastUserMessage.text });
     }
   }, [lastUserMessage, bot.busy, bot.id, dispatch]);
 
@@ -1409,7 +1411,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} compact />
           {bot.busy && (
             <button
-              onClick={() => dispatch({ type: "interrupt", botId: bot.id })}
+              onClick={() => dispatch({ type: "interrupt", botId: bot.id,threadId:bot.threadId })}
               className={cn(
                 "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink",
                 COMPACT_BUBBLE,
@@ -1427,7 +1429,7 @@ export function ChatView({ bot }: { bot: Bot }) {
               header name opens — so in a narrow column this is a duplicate that
               costs the conversation name its width. It also drops the 380px
               menu that has nowhere to open on a 390px screen. */}
-          <ModelPicker bot={bot} className="@max-md/chathead:hidden" />
+          <ModelPicker key={`model-${bot.threadId}`} bot={bot} threadId={bot.threadId} />
           <CallButton bot={bot} />
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}

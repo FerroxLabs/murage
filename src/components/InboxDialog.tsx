@@ -21,7 +21,7 @@ export function InboxDialog({ onClose }: { onClose: () => void }) {
         const result = await api(`/api/bots/${bot.id}/tasks/${link.threadId}`, { method: "POST" });
         if (!result.bot || result.bot.threadId !== link.threadId) throw new Error("The source conversation could not be opened.");
         dispatch({ type: "taskSwitched", bot: result.bot });
-        dispatch({ type: "select", id: bot.id });
+        dispatch({ type: "select", id: bot.id,threadId:link.threadId });
       } else if (group) {
         const result = await api(`/api/groups/${group.id}/tasks/${link.threadId}`, { method: "POST" });
         if (!result.group || result.group.threadId !== link.threadId) throw new Error("The source conversation could not be opened.");

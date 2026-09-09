@@ -23,6 +23,7 @@ import type { BotRecord, Message } from "./store.ts";
 /** The slice of Store this module needs — narrow so tests can fake it. */
 export interface SteerStore {
   bot(id: string): BotRecord | null;
+  taskByThread?(botId:string,threadId:string):{busy?:boolean}|undefined;
   appendMessage(threadId: string, message: Omit<Message, "id" | "at">): Message;
   patchMessage(threadId: string, messageId: string, patch: Partial<Message>): Message | null;
 }
@@ -89,7 +90,7 @@ export function drainSteeredMessages(
       queues.delete(threadId);
       continue;
     }
-    if (bot.busy) continue; // still working — the next settle tries again
+    if (store.taskByThread ? store.taskByThread(bot.id,threadId)?.busy : bot.busy) continue;
     // committed to draining: the entry leaves the map before anything runs,
     // so a settle racing another settle can never fire the same queue twice
     queues.delete(threadId);

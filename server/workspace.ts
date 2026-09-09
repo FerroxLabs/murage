@@ -46,6 +46,13 @@ export function workspaceDir(botId: string): string {
   return join(WORKSPACES_DIR, botId);
 }
 
+/** New threads have separate default desks; existing pinned task cwd stays put. */
+export function ensureTaskWorkspace(botId:string,threadId:string):string {
+  if(!/^[\w-]+$/.test(botId)||!/^[\w-]+$/.test(threadId))throw new Error("Invalid task workspace");
+  const dir=join(ensureWorkspace(botId),"threads",threadId);
+  mkdirSync(dir,{recursive:true,mode:0o700});return dir;
+}
+
 /** MEMORY.md under the load budget: first MEMORY_MAX_LINES lines or
  * MEMORY_MAX_BYTES bytes, whichever cuts first. Returns null when the file
  * is missing or effectively empty (seed-only counts as empty). */
