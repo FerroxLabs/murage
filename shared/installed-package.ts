@@ -24,6 +24,9 @@ export interface InstalledPackageRequiredApp {
 }
 
 export interface InstalledPackageMetadata {
+  /** Imported intent only; neither field grants authority or active team membership. */
+  sourceRole?: "individual" | "member" | "leader" | "chief";
+  sourceTeam?: string;
   id: string;
   name: string;
   release: string;
