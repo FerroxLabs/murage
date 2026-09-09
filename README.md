@@ -24,6 +24,8 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 
 **[Latest release and release notes](https://github.com/FerroxLabs/murage-releases/releases/latest)**
 
+**Windows 0.1.49** is a focused installer and startup hotfix. Fuigo 1.0.8 remains bundled. The reported `-32603` engine errors and exit code `1073807364` remain under investigation.
+
 | Platform | Installer |
 |---|---|
 | macOS · Apple Silicon | **[Download for Mac](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage.dmg)** |
@@ -169,7 +171,7 @@ Murage also includes a local MCP server for other clients to list the team, send
 
 | Area | Current boundary |
 |---|---|
-| Windows browser | The embedded browser is disabled because of an upstream Electron sandbox issue. |
+| Windows browser | See [release notes](https://github.com/FerroxLabs/murage-releases/releases/latest) for Windows verification and known limitations. |
 | Ubuntu desktop control | The app runs on GNOME Xorg and Wayland; local computer control is restricted to Xorg. Linux dictation and ARM64 installers are unavailable. |
 | Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime in 0.1.47. |
 | Background work | Murage's host must remain available for routines and Telegram. This release is not an always-on hosted service. |
