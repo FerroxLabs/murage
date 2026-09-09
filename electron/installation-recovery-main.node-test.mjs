@@ -23,7 +23,7 @@ function fixture({ writes = [], stop = async () => {}, mode = true } = {}) {
     utilityProcess: { fork() {} }, trackOwnedServerChild() {},
     runInstallationRecoveryWorker: async options => { forks++; captured = options; return { ok: true }; },
   };
-  const body = between("async function runDesktopRecovery(", "function createWindow()");
+  const body = between("async function runDesktopRecovery(", "function initializeBackgroundLifecycle()");
   const run = new Function(...Object.keys(scope), "let serverProc = {}; " + body + "; return runDesktopRecovery;")(...Object.values(scope));
   return { run, forks: () => forks, releases: () => releases, captured: () => captured };
 }

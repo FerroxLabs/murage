@@ -18,6 +18,15 @@ function render(state) {
   document.documentElement.dataset.skin = state.context?.skin === "light" ? "light" : "dark";
   byId("reason").textContent = state.context?.reason || "Startup needs attention. Your installation data remains preserved.";
   byId("location").textContent = state.context?.dataDirectory || "Installation ownership is unavailable.";
+  const ownership = state.context?.ownership;
+  byId("ownership").hidden = !ownership;
+  if (ownership) {
+    const kinds = { primary: "App ownership", child: "Background server ownership", reaper: "Recovery ownership" };
+    byId("ownership-summary").textContent = (kinds[ownership.claimKind] || "Ownership inspection") +
+      ". Recorded computer: " + (ownership.recordedHost || "unavailable") +
+      ". Current computer: " + (ownership.currentHost || "unavailable") +
+      ". Status: " + (ownership.code || "No blocker observed; startup must still verify ownership") + ".";
+  }
   const error = state.error ? (errors[state.error] || "The operation could not complete. Keep retained files and check diagnostics.") + " (" + state.error + ")" : "";
   byId("error").textContent = error;
   byId("error").hidden = !error;
