@@ -158,7 +158,7 @@ import {
   customMcpServers,
 } from "./config.ts";
 import { ComputerControl } from "./computer-control.ts";
-import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
+import { augmentedPath, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli } from "./env-path.ts";
 import { fluxSelectionRefusal } from "./flux-surface.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import {
@@ -6449,7 +6449,16 @@ const engineManager = new EngineManager({
   getInstance: async id => {
     resetPathCache();
     const instance = (await registry.describe()).find(item => item.instanceId === id);
-    return instance ? { instanceId: id, driverKind: instance.driverKind === "fuigoAgent" ? "fuigo" : instance.driverKind, snapshot: instance.snapshot } : undefined;
+    if (!instance) return undefined;
+    const config = instanceConfigs(cfg)[id]?.config;
+    const cli = config && typeof config === "object" && !Array.isArray(config) && "cli" in config && typeof config.cli === "string" ? config.cli : undefined;
+    let defaultSource: "path" | "bundled" | undefined;
+    if (instance.driverKind === "fuigoAgent" && (!cli || cli === "fuigo")) {
+      try { defaultSource = resolveFuigoCli().source; } catch { /* status retains the actual discovery failure */ }
+    }
+    return { instanceId: id, driverKind: instance.driverKind === "fuigoAgent" ? "fuigo" : instance.driverKind,
+      snapshot: instance.snapshot, cli, defaultSource,
+      bundledCli: instance.driverKind === "fuigoAgent" ? bundledFuigoPath() ?? undefined : undefined };
   },
   isBusy: () => providerConfigBusy || engineWorkActive(),
   activate: async (id, cli) => {
