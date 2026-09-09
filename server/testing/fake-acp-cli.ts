@@ -9,6 +9,7 @@
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
 //   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
+//                   | exit-on-cancel | exit-on-prompt | exit-with-ansi
 //                   | interleave (message → tool → message → tool → message)
 //                   | no-session-config (reject session/set_mode + set_model
 //                     with -32601, i.e. an agent predating those methods)
@@ -429,6 +430,18 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode === "exit-on-cancel") {
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
+        setInterval(() => {}, 1_000);
+        return;
+      }
+      if (mode === "exit-on-prompt" || mode === "exit-with-ansi") {
+        const diagnostic = mode === "exit-with-ansi"
+          ? `\u001b[31mtool_error: fixture failure\u001b[0m\nsk-test-${"SYNTHETICKEYCANARY".repeat(24)}\n\u001b[32mSTDERR_VISIBLE_END\u001b[0m\n`
+          : "fake-acp: simulated prompt exit\n";
+        process.stderr.write(diagnostic, () => process.exit(1073807364));
+        return;
+      }
       if (mode === "load-proof") {
         void loadProof(msg.id, msg.params?.sessionId).catch(() => { process.exitCode = 1; });
         return;
@@ -671,6 +684,11 @@ function handle(msg: any) {
       break;
     }
     case "session/cancel":
+      if (mode === "exit-on-cancel") {
+        // Exit before replying to the outstanding prompt, inside the driver's
+        // cancellation grace. POSIX truncates this Windows exit value to 4.
+        process.exit(1073807364);
+      }
       // the interrupted prompt resolves as cancelled
       break;
     default:
