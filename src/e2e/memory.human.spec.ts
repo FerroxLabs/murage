@@ -204,6 +204,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
 
 test("bot memory keeps workspace settings out of the narrow profile panel", async ({page}, info) => {
   await action({action:"configure",mode:"off"});
+  await page.addInitScript(()=>localStorage.setItem("murage-flux-invite-dismissed","1"));
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
   await page.goto(origin);
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
@@ -211,6 +212,7 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
   await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
+  await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).last().click();
   const memory=page.getByRole("region",{name:"Bot memory",exact:true});
   await expect(memory.getByRole("combobox",{name:"Audience",exact:true})).toBeVisible();
   await expect(memory.getByRole("combobox",{name:"Memory mode",exact:true})).toHaveCount(0);
@@ -270,6 +272,7 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
 });
 
 test("paged bot memory handles 3000 records in both skins without accumulating cards", async ({page}, info) => {
+  await page.addInitScript(()=>localStorage.setItem("murage-flux-invite-dismissed","1"));
   database.exec("BEGIN IMMEDIATE");
   for(let n=0;n<3000;n++)database.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,created_at) VALUES(?,1,?,'fact',?,'owner-statement','active',?,?,?)")
     .run(`paged-${String(n).padStart(4,"0")}`,botScope,`PAGEDMEMORY: useful note ${n}`,n===2999?1:0,Date.UTC(2026,8,1)+n,Date.UTC(2026,8,1)+n);
@@ -282,6 +285,7 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
   await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
+  await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).first().click();
   const panel=page.getByRole("region",{name:"Bot memory",exact:true});
   await panel.getByRole("textbox",{name:"Search memory",exact:true}).fill("PAGEDMEMORY");
   await panel.getByRole("button",{name:"Search",exact:true}).click();
