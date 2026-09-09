@@ -7,6 +7,20 @@ const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py
 const field = "min-h-10 min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 export interface FilesBot { id: string; name: string; threadId: string; tasks?: { threadId: string; title: string }[] }
 type NativeAction = (artifact: Artifact, action: "open" | "reveal") => void | Promise<void>;
+export interface FilesOpenDetail { botId?: string; threadId?: string; artifactId?: string }
+export function openFiles(detail: FilesOpenDetail = {}) { window.dispatchEvent(new CustomEvent("murage:open-files", { detail })); }
+export function artifactNativeAction() {
+  const bridge = window.muragebox as (NonNullable<Window["muragebox"]> & { artifactAction?: (id: string, action: "open" | "reveal") => Promise<void> }) | undefined;
+  return typeof bridge?.artifactAction === "function" ? (artifact: Artifact, action: "open" | "reveal") => bridge.artifactAction!(artifact.id, action) : undefined;
+}
+export async function downloadSavedArtifact(artifact: Artifact) {
+  await ensureDesktopSurfaceSecret();
+  const response = await fetch(`/api/artifacts/${artifact.id}/download`, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? "The saved copy could not be downloaded."); }
+  const url = URL.createObjectURL(await response.blob()), link = document.createElement("a");
+  link.href = url; link.download = artifact.filename; document.body.appendChild(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 /** This prelude precedes untrusted HTML. The iframe also has an opaque origin
  * and no sandbox allowances; scripts and remote resources stay disabled. */
@@ -49,8 +63,8 @@ export function ArtifactCard({ artifact, busy, onPreview, onDownload, onSource, 
   </article>;
 }
 
-export function Files({ bots, initialBotId = "", initialThreadId = "", onClose, onSource, onNativeAction, workingFolder, onRevealWorkingFolder }: {
-  bots: FilesBot[]; initialBotId?: string; initialThreadId?: string; onClose?: () => void;
+export function Files({ bots, initialBotId = "", initialThreadId = "", initialArtifactId, onClose, onSource, onNativeAction, workingFolder, onRevealWorkingFolder }: {
+  bots: FilesBot[]; initialBotId?: string; initialThreadId?: string; initialArtifactId?: string; onClose?: () => void;
   onSource?: (artifact: Artifact) => void; onNativeAction?: NativeAction;
   workingFolder?: string; onRevealWorkingFolder?: () => void;
 }) {
@@ -62,7 +76,17 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", onClose, 
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [relativePath, setRelativePath] = useState(""), [name, setName] = useState("");
   const gate = useRef(false);
+  const previewPanel = useRef<HTMLElement>(null);
   const bot = bots.find(bot => bot.id === botId), targetThread = threadId || bot?.threadId;
+  useEffect(() => {
+    if (!initialArtifactId) return;
+    const controller = new AbortController();
+    void api(`/api/artifacts/${encodeURIComponent(initialArtifactId)}/preview`, { signal: controller.signal }).then(value => {
+      if (!controller.signal.aborted) setPreview(value as ArtifactPreview);
+    }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "This saved file could not be opened."); });
+    return () => controller.abort();
+  }, [initialArtifactId]);
+  useEffect(() => { if (preview) previewPanel.current?.scrollIntoView({ block: "start" }); }, [preview]);
   useEffect(() => {
     const controller = new AbortController(); setBusy(true); setError(null);
     const params = new URLSearchParams({ page: String(page), pageSize: "25", query });
@@ -79,14 +103,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", onClose, 
     try { await action(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The file action failed."); }
     finally { gate.current = false; setBusy(false); }
   };
-  const download = (artifact: Artifact) => act(async () => {
-    await ensureDesktopSurfaceSecret();
-    const response = await fetch(`/api/artifacts/${artifact.id}/download`, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
-    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error ?? "The saved copy could not be downloaded."); }
-    const url = URL.createObjectURL(await response.blob()), link = document.createElement("a");
-    link.href = url; link.download = artifact.filename; document.body.appendChild(link); link.click(); link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  });
+  const download = (artifact: Artifact) => act(() => downloadSavedArtifact(artifact));
   return <section className="mx-auto h-full w-full max-w-5xl overflow-y-auto bg-panel p-4 text-ink sm:p-6" aria-labelledby="files-title">
     <header className="flex flex-wrap items-center justify-between gap-2"><h1 id="files-title" className="text-[22px] font-semibold">Files</h1><div className="flex gap-2"><button className={button} disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Files</button>}</div></header>
     <p className="mt-2 text-[13px] text-ink-secondary">Verified saved copies of your bots' deliverables. A path mentioned in chat is not automatically a saved file.</p>
@@ -112,7 +129,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", onClose, 
     {result && !result.items.length && !busy && <p className="py-6 text-[13px] text-ink-secondary">No saved files match these filters.</p>}
     <div className="space-y-3">{result?.items.map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} busy={busy} onPreview={() => void act(async () => setPreview(await api(`/api/artifacts/${artifact.id}/preview`) as ArtifactPreview))} onDownload={() => void download(artifact)} onSource={onSource ? () => onSource(artifact) : undefined} onNativeAction={onNativeAction} />)}</div>
     {result && <footer className="mt-4 flex items-center justify-between gap-3"><button className={button} disabled={busy || !page} onClick={() => setPage(value => value - 1)}>Previous</button><span className="text-[12px]">Page {page + 1} · {result.total} files</span><button className={button} disabled={busy || (page + 1) * result.pageSize >= result.total} onClick={() => setPage(value => value + 1)}>Next</button></footer>}
-    {preview && <section role="region" aria-label="File preview" className="mt-5 rounded-xl border border-hairline p-3"><div className="flex items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><button className={button} onClick={() => setPreview(null)}>Close preview</button></div>
+    {preview && <section ref={previewPanel} role="region" aria-label="File preview" className="mt-5 rounded-xl border border-hairline p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><div className="flex gap-2"><button className={button} disabled={busy} onClick={() => void download(preview.artifact)}>Download saved copy</button><button className={button} onClick={() => setPreview(null)}>Close preview</button></div></div>
       {preview.mode === "html" && <><p className="my-2 text-[12px] text-ink-secondary">Protected preview: scripts, external resources and app access are blocked.</p><iframe title={`Preview ${preview.artifact.name}`} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactPreviewHtml(preview.content ?? "")} className="h-[420px] w-full rounded-lg bg-white" /></>}
       {preview.mode === "text" && <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-[12px]">{preview.content}</pre>}
       {preview.mode === "image" && <img className="mt-3 max-h-96 max-w-full object-contain" src={preview.content} alt={preview.artifact.name} />}

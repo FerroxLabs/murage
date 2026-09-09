@@ -123,6 +123,8 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
   text?: string;
+  /** Verified registry identities, never inferred from message prose. */
+  artifactIds?: string[];
   /** Provider-generated files attached to this assistant response. */
   attachments?: Array<{ kind: "image"; path: string; mime: string }>;
   card?: OptionCardData;

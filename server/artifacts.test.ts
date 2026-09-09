@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
-import { artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess } from "./artifacts.ts";
+import { artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess } from "./artifacts.ts";
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
@@ -101,4 +101,17 @@ it("keeps preview responses inert and downloads byte-exact with attachment heade
   writeFileSync(join(f.workspace, "report.pdf"), "fake PDF bytes");
   const pdf = registerArtifact(f.db, f.storage, { ...f.input, relativePath: "report.pdf" }, f.access);
   expect(previewArtifact(f.db, f.storage, pdf.id, f.access).mode).toBe("download");
+});
+
+it("describes registry metadata without reading the saved payload and preserves scope denial", () => {
+  const f = fixture(), saved = registerArtifact(f.db, f.storage, f.input, f.access);
+  const blob = readArtifact(f.db, f.storage, saved.id, f.access).verifiedNativePath;
+  writeFileSync(blob, "x".repeat(saved.bytes));
+  expect(describeArtifact(f.db, f.storage, saved.id, f.access).id).toBe(saved.id);
+  const response = artifactsRequest(f.db, f.storage, { method: "GET", path: `/api/artifacts/${saved.id}` }, f.access);
+  expect(response).toMatchObject({ status: 200, body: { artifact: { id: saved.id } } });
+  expect(response).not.toHaveProperty("bytes");
+  expect(JSON.stringify(response)).not.toContain(f.storage);
+  expect(artifactsRequest(f.db, f.storage, { method: "GET", path: `/api/artifacts/${saved.id}` }, { owner: true, scopes: [] }).status).toBe(404);
+  expect(() => readArtifact(f.db, f.storage, saved.id, f.access)).toThrow("saved copy changed");
 });

@@ -61,6 +61,9 @@ import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
+import { ArtifactCards } from "./ArtifactCards";
+import { openFiles } from "./Files";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { ModelPicker } from "./ModelPicker";
 import { MemoryLauncher } from "./MemoryLauncher";
 import { RenameTitle } from "./RenameTitle";
@@ -662,6 +665,7 @@ function Bubble({
                 />
               ) : null}
               {text ? <ChatMarkdown text={text} /> : null}
+              {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
             </MessageBoundary>
           )}
         </div>
@@ -1693,25 +1697,23 @@ function UsageChip({ bot }: { bot: Bot }) {
   );
 }
 
-/** The folder this task's tools run in — quiet unless it's somewhere other
- * than home. Shows the pinned task folder when there is one, else the bot's
- * folder a first turn would pin. Click opens bot settings to change it. */
+/** Opens this bot/task's deliverables; working-folder configuration stays
+ * in settings and is never changed by file navigation. */
 function WorkingFolderChip({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+  const desktop = useDesktopSurface();
   const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
   const folder = task?.cwd === undefined ? bot.cwd : (task.cwd ?? undefined);
-  if (!folder) return null;
-  const name = folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || folder;
+  if (desktop !== true) return null;
+  const name = folder?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Files";
   return (
     <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true })}
+      onClick={() => openFiles({ botId: bot.id, threadId: bot.threadId })}
       className={cn(
         "flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
-        // Same as UsageChip: status, and its click goes to the agent profile.
-        "@max-md/chathead:hidden",
         COMPACT_SQUARE,
       )}
-      title={`Working folder: ${folder}`}
+      title={folder ? `Files in ${folder}` : `Files for ${bot.name}`}
+      aria-label={`Open files for ${bot.name}`}
     >
       <Folder size={12} className="@max-4xl/chathead:size-[14px]" />
       <span className="truncate font-mono @max-4xl/chathead:hidden">{name}</span>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, useStore } from "@/state/store";
 import { Inbox } from "./Inbox";
+import { openFiles } from "./Files";
 import type { InboxLink } from "../../shared/inbox";
 
 export function InboxDialog({ onClose }: { onClose: () => void }) {
@@ -10,6 +11,7 @@ export function InboxDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string>();
   useEffect(() => { dialog.current?.showModal(); }, []);
   const openSource = async (link: InboxLink) => {
+    if (link.artifactId) { openFiles({ artifactId: link.artifactId }); onClose(); return; }
     if (gate.current) return;
     gate.current = true; setError(undefined);
     try {

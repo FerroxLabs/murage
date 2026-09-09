@@ -14,6 +14,7 @@ import {
   Crown,
   Eye,
   EyeOff,
+  Folder,
   FolderMinus,
   FolderPlus,
   Library,
@@ -94,6 +95,8 @@ import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { InboxDialog } from "./InboxDialog";
+import { FilesDialog } from "./FilesDialog";
+import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 
 /** What the bottom-left toast is currently saying. `detail` is a second,
@@ -1322,6 +1325,17 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const hiddenChange = useRef(false);
   const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState<FilesOpenDetail | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      if (desktop !== true) return;
+      const detail = (event as CustomEvent<FilesOpenDetail>).detail ?? {};
+      if (typeof detail !== "object" || [detail.botId, detail.threadId, detail.artifactId].some(value => value !== undefined && (typeof value !== "string" || value.length > 200))) return;
+      setFilesOpen(detail);
+    };
+    window.addEventListener("murage:open-files", open);
+    return () => window.removeEventListener("murage:open-files", open);
+  }, [desktop]);
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
   const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
@@ -2042,6 +2056,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             compact={density === "compact"}
             items={[
               ...(desktop === true ? [{ key: "inbox", label: "Inbox", icon: <BellDot size={18} />, onSelect: () => setInboxOpen(true) }] : []),
+              ...(desktop === true ? [{ key: "files", label: "Files", icon: <Folder size={18} />, onSelect: () => setFilesOpen({}) }] : []),
               {
                 key: "team-map",
                 label: "Team map",
@@ -2124,6 +2139,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />}
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
+      {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}
       {sectionPicker && (
         <SectionPicker
           current={state.bots.find((b) => b.id === sectionPicker.botId)?.section}

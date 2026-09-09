@@ -33,25 +33,26 @@ const SOURCE = `WITH raw AS (
       WHEN 'connector' THEN COALESCE(json_extract(m.json,'$.connector.resumeKey') || ':' || json_extract(m.json,'$.connector.slug'),m.id)
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.runId'),m.id)
       WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.runId'),m.id)
+      WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')
       ELSE m.id END) AS source_key,
     CASE m.kind
       WHEN 'options' THEN CASE WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))
-      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') ELSE 'failed' END AS status,
+      WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') WHEN 'text' THEN 'completed' ELSE 'failed' END AS status,
     CASE m.kind WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')
-      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') ELSE '' END AS summary,
+      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file') ELSE '' END AS summary,
     CASE m.kind WHEN 'options' THEN CASE
       WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'
       WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'
       WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END
       WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')
-      WHEN 'goal.run' THEN 'Team goal result' ELSE 'Provider needs attention' END AS title
+      WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file' ELSE 'Provider needs attention' END AS title
   FROM messages m
   WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(?))
-    AND m.kind IN ('options','secret','connector','routine.run','goal.run','activity')
+    AND m.kind IN ('options','secret','connector','routine.run','goal.run','activity','text')
     AND CASE m.kind
       WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'
       WHEN 'secret' THEN json_type(m.json,'$.secret')='object'
@@ -59,6 +60,7 @@ const SOURCE = `WITH raw AS (
       WHEN 'routine.run' THEN json_extract(m.json,'$.routineRun.status') NOT IN ('queued','running')
       WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status')!='working'
       WHEN 'activity' THEN json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object')
+      WHEN 'text' THEN json_type(m.json,'$.artifactIds[0]')='text' AND length(json_extract(m.json,'$.artifactIds[0]'))=36
     END
 ), ranked AS (
   SELECT *, ROW_NUMBER() OVER (PARTITION BY source_key ORDER BY CASE WHEN status IN ('resolved','completed','failed','cancelled','stopped','missed') THEN 1 ELSE 0 END DESC,at DESC,source_row DESC) AS position,
@@ -82,13 +84,13 @@ function item(row: Row, access: InboxAccess): InboxItem {
   const source = access.threads.find(thread => thread.threadId === row.thread_id)!;
   const message = JSON.parse(row.json);
   const runId = row.kind === "routine.run" ? message.routineRun?.runId : row.kind === "goal.run" ? message.goalRun?.runId : undefined;
-  const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : "goal";
+  const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
   const revision = version(row.json);
   return { id: Buffer.from(row.source_key).toString("base64url"), version: revision, kind, status: row.status,
     needsYou: row.needs_you === 1, title: text(row.title, 120), summary: text(row.summary),
     sourceLabel: text(source.label, 100), ...(source.botId ? { botId: source.botId } : {}), at: row.at,
     read: row.read_version === revision, snoozedUntil: row.snoozed_until, duplicates: row.copies,
-    link: { threadId: row.thread_id, messageId: row.message_id, ...(typeof runId === "string" ? { runId } : {}) } };
+    link: { threadId: row.thread_id, messageId: row.message_id, ...(typeof runId === "string" ? { runId } : {}), ...(row.kind === "text" ? { artifactId: message.artifactIds[0] as string } : {}) } };
 }
 function queryValues(query: InboxQuery) {
   const view = query.view ?? "needs-you", page = query.page ?? 0, pageSize = query.pageSize ?? 25;
@@ -100,7 +102,7 @@ function queryValues(query: InboxQuery) {
 
 export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now = Date.now()): InboxPage {
   const allowed = scope(access), { view, page, pageSize, search } = queryValues(query);
-  const predicate = `(?='all' OR (?='needs-you' AND needs_you=1) OR (?='results' AND needs_you=0 AND kind IN ('routine.run','goal.run')))
+  const predicate = `(?='all' OR (?='needs-you' AND needs_you=1) OR (?='results' AND needs_you=0 AND kind IN ('routine.run','goal.run','text')))
     AND (?=1 OR snoozed_until IS NULL OR snoozed_until<=?)
     AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0
       OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))`;
