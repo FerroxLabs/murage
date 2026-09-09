@@ -7,6 +7,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   path: RegExp;
   purpose: string;
 }> = [
+  { methods: ["GET", "POST"], path: new RegExp("^/api/artifacts(?:/|$)"), purpose: "verified private workspace deliverables" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/inbox(?:/|$)"), purpose: "owner-only durable results and attention" },
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/provider-connections(?:\/|$)/, purpose: "model provider connection custody and catalogs" },
   { methods: ["GET", "POST"], path: /^\/api\/images\/settings$/, purpose: "image provider and billing selection" },

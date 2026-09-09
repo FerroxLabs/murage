@@ -24,6 +24,8 @@ function fixture() {
   writeFileSync(join(data, "webhooks.json"), JSON.stringify({ version: 1, webhooks: [{ id: "hook", endpointId: "endpoint", name: "Hook", prompt: "Task", botId: "bot", runOn: "ember", createdAt: 1, updatedAt: 1, deliveryCount: 1, secretHash: "a8".repeat(32), enabled: true }], deliveries: [{ key: "endpoint:already-accepted", runId: "finished-run", at: 1 }] }));
   mkdirSync(join(data, "attachments"));
   writeFileSync(join(data, "attachments", "fixture.txt"), "Private attachment content");
+  mkdirSync(join(data, "artifact-files"));
+  writeFileSync(join(data, "artifact-files", "report.html"), "<h1>Saved report</h1>");
   mkdirSync(join(parent, "external"));
   writeFileSync(join(parent, "external", "untouched.txt"), "external-data-canary");
   return { parent, data };
@@ -47,6 +49,7 @@ it("stages private app content under one epoch, excluding credential fields and 
   expect(JSON.stringify(webhooks)).not.toContain("a8".repeat(32));
   expect(webhooks.deliveries).toEqual([{ key: "endpoint:already-accepted", runId: "finished-run", at: 1 }]);
   expect(readFileSync(join(directory, "state", "attachments", "fixture.txt"), "utf8")).toBe("Private attachment content");
+  expect(readFileSync(join(directory, "state", "artifact-files", "report.html"), "utf8")).toBe("<h1>Saved report</h1>");
   expect(manifest.files.every(file => /^[0-9a-f]{64}$/.test(file.sha256))).toBe(true);
   expect(manifest.files.some(file => file.path.includes("external"))).toBe(false);
   expect(readFileSync(join(f.data, "config.json"), "utf8")).toBe(original);

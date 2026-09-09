@@ -21,6 +21,7 @@ function fixture() {
   put("messages.db-shm", Buffer.from([5, 4, 3]));
   put("section-contexts.json", '{"version":999,"contexts":');
   put("workspaces/bot/notes.txt", "unfinished user work");
+  put("artifact-files/report.html", "<h1>Saved report</h1>");
   return { root, data, target, put };
 }
 async function readZip(path: string) {
@@ -45,7 +46,7 @@ async function readZip(path: string) {
 it("exports damaged JSON and database bytes unchanged as private non-restorable evidence", async () => {
   const f = fixture();
   for (const home of ["vm-home", "vm-homes", "connection-profiles", "companion", "native", "flux-hermes-home"]) f.put(`${home}/private`, "fake-excluded-home-secret");
-  const originals = new Map(["config.json", "messages.db", "messages.db-wal", "messages.db-shm", "section-contexts.json", "workspaces/bot/notes.txt"].map(path => [path, readFileSync(join(f.data, path))]));
+  const originals = new Map(["config.json", "messages.db", "messages.db-wal", "messages.db-shm", "section-contexts.json", "workspaces/bot/notes.txt", "artifact-files/report.html"].map(path => [path, readFileSync(join(f.data, path))]));
   const result = await writeInstallationDamagedExport(f.data, f.target);
   expect(result.manifest).toMatchObject({ format: "murage.installation-damaged", version: 1, complete: false, restorePolicy: "preservation-only-no-restore" });
   expect(result.manifest.warning).toContain("credentials");

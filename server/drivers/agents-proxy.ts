@@ -219,6 +219,7 @@ const ROUTINE_FIELDS_SCHEMA = {
 } as const;
 
 const TOOLS = [
+  { name: "register_artifact", description: "Save a completed report or deliverable into Murage Files. First create the real file inside this task's working folder, then register its relative path. Murage verifies and preserves the bytes before showing a downloadable card. Do not pass absolute paths, private setup/memory files or credentials. A filename in prose is not a saved deliverable.", inputSchema: { type: "object", required: ["relative_path"], additionalProperties: false, properties: { relative_path: { type: "string", minLength: 1, maxLength: 4096 }, name: { type: "string", minLength: 1, maxLength: 200 } } } },
   { name: "list_image_models", description: "List Murage's configured image connections, selected default and supported generation/edit models. This checks metadata only; no image is generated. Image tools use server-owned keys, never a CLI subscription.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "generate_image", description: "Create one image, or edit up to four existing image attachments from this exact conversation. Murage shows the owner a paid-operation approval with connection/model before any provider request. GPT Image 2 is the default where configured. Use list_image_models to inspect choices. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request; do not retry or switch billing connections after timeout/uncertain failure. Generated output is saved in this bot's private generated-images workspace and attached to this conversation. One image attempt per turn.", inputSchema: { type: "object", properties: {
     request_id: {type:"string",minLength:1,maxLength:80}, prompt:{type:"string",minLength:1,maxLength:4000}, operation:{type:"string",enum:["generate","edit"]},
@@ -533,6 +534,10 @@ function confirmationResult(r: Json, fallback: string): { text: string } {
 }
 
 async function callTool(name: string, args: Json): Promise<{ text: string; isError?: boolean }> {
+  if (name === "register_artifact") {
+    const result = await api("/api/internal/register-artifact", { method: "POST", body: JSON.stringify({ relativePath: args.relative_path, ...(args.name === undefined ? {} : { name: args.name }) }) });
+    return { text: JSON.stringify(result) };
+  }
   if (name === "list_image_models") return { text: JSON.stringify(await api("/api/internal/image-models")) };
   if (name === "generate_image") {
     const result = await api("/api/internal/generate-image", { method: "POST", signal: AbortSignal.timeout(300_000), body: JSON.stringify({
