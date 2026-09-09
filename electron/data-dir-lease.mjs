@@ -4,13 +4,15 @@
 // Copyright 2026 Milind Soni and the OpenMausBot contributors; see LICENSE/NOTICE.
 // Murage adaptations: stable sibling anchors, canonical aliases, strict bounded
 // no-follow reads, sanitized errors, bounded acquisition, and sealed release.
+// Boot-session detection adapted from upstream PR #937 at b6a27330560c.
 // This helper never creates, migrates, renames or replaces the installation.
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync,
-  openSync, readSync, realpathSync, unlinkSync, writeFileSync,
+  openSync, readFileSync, readSync, realpathSync, unlinkSync, writeFileSync,
 } from "node:fs";
-import { hostname } from "node:os";
+import { hostname, uptime } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
 const CHILD_LEASE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
@@ -20,6 +22,45 @@ const MAX_RECORD_BYTES = 4096;
 const MAX_CLAIM_ATTEMPTS = 32;
 const MAX_REAPER_GENERATIONS = 128;
 const OWNER_KEYS = ["version", "pid", "host", "token", "createdAt"];
+const BOOT_KEYS = ["boot", "uptime"];
+
+const validBoot = (value) => typeof value === "string" && /^[0-9A-Za-z:_.-]{1,128}$/.test(value);
+const validUptime = (value) => Number.isSafeInteger(value) && value >= 0;
+let cachedBootSession;
+function bootSession() {
+  if (cachedBootSession !== undefined) return cachedBootSession;
+  cachedBootSession = null;
+  try {
+    const raw = process.platform === "linux" ? readFileSync("/proc/sys/kernel/random/boot_id", "utf8")
+      : process.platform === "darwin" ? execFileSync("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], {
+        encoding: "utf8", timeout: 5_000, maxBuffer: 1024, stdio: ["ignore", "pipe", "ignore"],
+      }) : null;
+    const value = typeof raw === "string" ? raw.trim() : null;
+    if (validBoot(value)) cachedBootSession = value;
+  } catch { /* Unknown boot identity cannot prove an owner stale. */ }
+  return cachedBootSession;
+}
+
+function uptimeMs() {
+  try {
+    const value = Math.floor(uptime() * 1000);
+    return validUptime(value) ? value : null;
+  } catch { return null; }
+}
+
+// A different known boot, or a backwards since-boot clock when boot identity
+// is unavailable, proves death. Wall time is never evidence. Unknown probes
+// retain PID exclusion; notably failed uptime must not become zero.
+function ownerIsAlive(owner) {
+  const boot = bootSession();
+  if (boot !== null && typeof owner.boot === "string") {
+    if (owner.boot !== boot) return false;
+  } else if (validUptime(owner.uptime)) {
+    const current = uptimeMs();
+    if (current !== null && current < owner.uptime) return false;
+  }
+  return processIsAlive(owner.pid);
+}
 
 const MESSAGES = {
   INVALID_DATA_DIR: "Murage cannot lease an invalid installation directory.",
@@ -151,15 +192,19 @@ const isPid = (value) => Number.isInteger(value) && value > 0 && value <= 0x7fff
 function isOwner(value, reaperTarget) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const keys = reaperTarget === undefined ? OWNER_KEYS : [...OWNER_KEYS, "targetToken"];
-  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+  return Object.keys(value).every((key) => keys.includes(key) || BOOT_KEYS.includes(key))
+    && keys.every((key) => Object.hasOwn(value, key))
     && value.version === 1 && isPid(value.pid)
     && typeof value.host === "string" && value.host.length > 0 && value.host.length <= 255 && !/[\r\n\0]/.test(value.host)
     && typeof value.token === "string" && UUID.test(value.token)
     && Number.isSafeInteger(value.createdAt) && value.createdAt > 0
+    && (!Object.hasOwn(value, "boot") || value.boot === null || validBoot(value.boot))
+    && (!Object.hasOwn(value, "uptime") || value.uptime === null || validUptime(value.uptime))
     && (reaperTarget === undefined || value.targetToken === reaperTarget);
 }
 const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
-const sameOwner = (a, b) => Boolean(a && b && a.pid === b.pid && a.host === b.host && a.token === b.token && a.createdAt === b.createdAt);
+const sameOwner = (a, b) => Boolean(a && b && a.pid === b.pid && a.host === b.host && a.token === b.token && a.createdAt === b.createdAt
+  && a.boot === b.boot && a.uptime === b.uptime);
 
 /** No follow, no unbounded allocation, no special-file open, no raw causes. */
 function readRecord(path, reaperTarget) {
@@ -246,7 +291,7 @@ function removeOwnedRecord(path, expected) {
   }
 }
 
-const newOwner = () => ({ version: 1, pid: process.pid, host: localHost(), token: randomUUID(), createdAt: Date.now() });
+const newOwner = () => ({ version: 1, pid: process.pid, host: localHost(), token: randomUUID(), createdAt: Date.now(), boot: bootSession(), uptime: uptimeMs() });
 
 // Recovery claims are immutable. A dead reaper's random token chooses its
 // successor's path, so contenders never remove a newer election record.
@@ -260,7 +305,7 @@ function claimReaper(leasePath, target) {
     const current = readRecord(path, target.token)?.owner;
     if (!current) continue;
     if (current.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
-    if (processIsAlive(current.pid)) return false;
+    if (ownerIsAlive(current)) return false;
     const digest = createHash("sha256").update(current.token).digest("hex").slice(0, 32);
     path = `${leasePath}.reap-${target.token}-${digest}`;
   }
@@ -272,7 +317,7 @@ function retireDeadOwner(path, expected) {
   const current = readRecord(path)?.owner;
   if (!current || !sameOwner(current, expected)) return;
   if (current.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
-  if (processIsAlive(current.pid)) throw fail("LEASE_BUSY");
+  if (ownerIsAlive(current)) throw fail("LEASE_BUSY");
   removeOwnedRecord(path, expected);
 }
 
@@ -280,7 +325,7 @@ function assertNoLiveChild(paths) {
   const child = readRecord(paths.childLeasePath)?.owner;
   if (!child) return;
   if (child.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
-  if (processIsAlive(child.pid)) throw fail("LEASE_CHILD_BUSY");
+  if (ownerIsAlive(child)) throw fail("LEASE_CHILD_BUSY");
 }
 
 function claim(path, guard = () => {}) {
@@ -295,7 +340,7 @@ function claim(path, guard = () => {}) {
     const current = readRecord(path)?.owner;
     if (!current) continue;
     if (current.host !== owner.host) throw fail("LEASE_FOREIGN_HOST");
-    if (processIsAlive(current.pid)) throw fail("LEASE_BUSY");
+    if (ownerIsAlive(current)) throw fail("LEASE_BUSY");
     retireDeadOwner(path, current);
   }
   throw fail("LEASE_RECOVERY_LIMIT");
@@ -365,7 +410,7 @@ export function acquireDataDirLeaseForProcess(dataDir, environment = process.env
   const validateParent = () => {
     const owner = readRecord(paths.leasePath)?.owner;
     if (!owner || owner.pid !== Number(match[1]) || owner.token !== match[2]
-      || owner.host !== localHost() || !processIsAlive(owner.pid)) throw fail("LEASE_DELEGATION_INVALID");
+      || owner.host !== localHost() || !ownerIsAlive(owner)) throw fail("LEASE_DELEGATION_INVALID");
     assertNotClosing(paths, owner);
   };
   validateParent();
