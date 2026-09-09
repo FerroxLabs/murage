@@ -93,6 +93,7 @@ import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
+import { InboxDialog } from "./InboxDialog";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 
 /** What the bottom-left toast is currently saying. `detail` is a second,
@@ -1320,6 +1321,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [showHidden, setShowHidden] = useState(false);
   const hiddenChange = useRef(false);
   const [exportTeamOpen, setExportTeamOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
   const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
@@ -2039,6 +2041,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <SidebarMoreMenu
             compact={density === "compact"}
             items={[
+              ...(desktop === true ? [{ key: "inbox", label: "Inbox", icon: <BellDot size={18} />, onSelect: () => setInboxOpen(true) }] : []),
               {
                 key: "team-map",
                 label: "Team map",
@@ -2120,6 +2123,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />}
+      {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
       {sectionPicker && (
         <SectionPicker
           current={state.bots.find((b) => b.id === sectionPicker.botId)?.section}

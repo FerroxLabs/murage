@@ -30,6 +30,7 @@ export function ComposerAttachments({
   allowImages = true,
   notice,
   onNotice,
+  onAudioFile,
 }: {
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
@@ -38,6 +39,7 @@ export function ComposerAttachments({
   allowImages?: boolean;
   notice: string | null;
   onNotice: (notice: string | null) => void;
+  onAudioFile?: (file: File) => void;
 }) {
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<PreviewImage | null>(null);
@@ -76,6 +78,7 @@ export function ComposerAttachments({
         allowImages,
         getPath: pathForFile,
         uploadImage: imageAttachmentFromFile,
+        queueAudio: onAudioFile,
       });
       if (!active) return;
       if (attachments.length) onAdd(attachments);
@@ -95,7 +98,7 @@ export function ComposerAttachments({
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onAdd, allowImages, onNotice]);
+  }, [onAdd, allowImages, onNotice, onAudioFile]);
 
   return (
     <>

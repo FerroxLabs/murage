@@ -48,6 +48,7 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { ReplyQuote } from "./ReplyQuote";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
+import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -425,6 +426,13 @@ export function Composer({
   const fileInput = useRef<HTMLInputElement>(null);
   const [autoWarn, setAutoWarn] = useState(false);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const audioFileRef = useRef<File | null>(null);
+  const queueAudioFile = useCallback((file: File) => {
+    if (audioFileRef.current) throw new Error("Transcribe or remove the selected audio before choosing another recording.");
+    audioFileRef.current = file; setAudioFile(file);
+  }, []);
+  const removeAudioFile = () => { audioFileRef.current = null; setAudioFile(null); };
   // Auto mode belongs to one bot; a room has several, each with its own.
   const autoBot = group ? undefined : bot;
   const pickFiles = async (picked: FileList | null) => {
@@ -433,6 +441,7 @@ export function Composer({
       allowImages: engineSupportsImages,
       getPath: pathForFile,
       uploadImage: imageAttachmentFromFile,
+      queueAudio: queueAudioFile,
     });
     if (added.length) addAttachments(added);
     // Keep file-specific failures beside the attachments. A successful
@@ -740,7 +749,11 @@ export function Composer({
           allowImages={engineSupportsImages}
           notice={attachmentNotice}
           onNotice={setAttachmentNotice}
+          onAudioFile={queueAudioFile}
         />
+        {audioFile && <AudioAttachmentIntake file={audioFile} configured={Boolean(state.config?.flux?.configured)}
+          onAddTranscript={transcript => addAttachments([pasteAttachment(transcript)])} onRemove={removeAudioFile}
+          onSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })} />}
         <div className="relative">
           {/* App-ground from the pill midline down, full-bleed. Bubbles may
               tuck into the top half of the radius; they must not show below

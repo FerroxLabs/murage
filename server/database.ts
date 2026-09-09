@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DATA_DIR } from "./config.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
+import { initializeInbox } from "./inbox.ts";
 
 let handle: DatabaseSync | null = null;
 let handlePath: string | null = null;
@@ -24,6 +25,7 @@ export function database(): DatabaseSync {
       CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
       CREATE TABLE IF NOT EXISTS thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);`);
     migrateMemorySchema(db, freshInstallation ? "active" : "off");
+    initializeInbox(db);
   } catch (error) { db.close(); throw error; }
   handle = db; handlePath = file;
   return db;

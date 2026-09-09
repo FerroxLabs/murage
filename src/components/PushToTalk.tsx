@@ -302,13 +302,16 @@ export interface PushToTalkProps {
  * rather than as multipart is what lets the route answer 413 from the
  * content-length before the upload starts.
  */
-export async function postClip(clip: Blob, timeoutMs: number = CLIP_TIMEOUT_MS): Promise<{ text: string }> {
+export async function postClip(clip: Blob, timeoutMs: number = CLIP_TIMEOUT_MS, signal?: AbortSignal): Promise<{ text: string }> {
   // A deadline, because the button is DISABLED while this is outstanding. A
   // socket that never answers — a tailnet that dropped between the release
   // and the response is the ordinary way this happens — otherwise leaves
   // "Transcribing" on screen forever, and the only cure is a remount the
   // person has no way to ask for.
   const controller = new AbortController();
+  if (signal?.aborted) throw new Error("Transcription cancelled locally.");
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
   const deadline = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
@@ -318,19 +321,19 @@ export async function postClip(clip: Blob, timeoutMs: number = CLIP_TIMEOUT_MS):
       body: clip,
       signal: controller.signal,
     });
+    const body = await response.json().catch((error) => { if (controller.signal.aborted) throw error; return null; });
+    if (!response.ok) throw Object.assign(new Error(body?.error ?? "Transcribing failed."), { reason: body?.reason });
+    return { text: typeof body?.text === "string" ? body.text : "" };
   } catch (error) {
+    if (signal?.aborted) throw new Error("Cancelled locally. Flux may still process audio that was already uploaded.");
     // An abort is our own deadline, and it gets a sentence about what to do
     // rather than the DOM's "signal is aborted without reason".
     if (controller.signal.aborted) throw new Error("That took too long to transcribe. Try again in shorter bursts.");
     throw error;
   } finally {
     clearTimeout(deadline);
+    signal?.removeEventListener("abort", cancel);
   }
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw Object.assign(new Error(body?.error ?? "Transcribing failed."), { reason: body?.reason });
-  }
-  return { text: typeof body?.text === "string" ? body.text : "" };
 }
 
 /**
