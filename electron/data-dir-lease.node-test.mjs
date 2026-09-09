@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { hostname, tmpdir, uptime } from "node:os";
 import { dirname, join, parse, relative } from "node:path";
 import { inspect } from "node:util";
 import test from "node:test";
@@ -35,8 +35,28 @@ async function until(predicate, detail) {
 // No production test hooks or alternate publication algorithm are involved.
 const WORKER = `
   import fs from 'node:fs';
+  import os from 'node:os';
+  import cp from 'node:child_process';
   import { syncBuiltinESMExports } from 'node:module';
   import { spawnSync } from 'node:child_process';
+  // Probe faults are confined to this disposable process, before ESM imports.
+  const bootProbe = () => {
+    if (process.env.LEASE_TEST_BOOT === 'throw') throw new Error('probe unavailable');
+    return process.env.LEASE_TEST_BOOT;
+  };
+  if (process.env.LEASE_TEST_BOOT !== undefined) {
+    const read = fs.readFileSync;
+    fs.readFileSync = (path, ...args) => path === '/proc/sys/kernel/random/boot_id' ? bootProbe() : read(path, ...args);
+    const exec = cp.execFileSync;
+    cp.execFileSync = (path, ...args) => path === '/usr/sbin/sysctl' ? bootProbe() : exec(path, ...args);
+  }
+  if (process.env.LEASE_TEST_UPTIME !== undefined) os.uptime = () => {
+    if (process.env.LEASE_TEST_UPTIME === 'throw') throw new Error('uptime unavailable');
+    return Number(process.env.LEASE_TEST_UPTIME);
+  };
+  if (process.env.LEASE_TEST_PID_EPERM) process.kill = () => {
+    throw Object.assign(new Error('not permitted'), {code:'EPERM'});
+  };
   let pause;
   let paused = false;
   let attempts = 0;
@@ -249,10 +269,11 @@ test("Darwin missing-leaf case aliases cannot acquire two owners", { skip: proce
   unicode.release();
 });
 
-for (const stale of [false, true]) {
-  test(`real process contenders elect one ${stale ? "stale-owner successor" : "fresh owner"}`, async () => {
+for (const stale of ["fresh", "dead-pid", "prior-boot"]) {
+  test(`real process contenders elect one ${stale} owner`, async () => {
     const f = fixture();
-    if (stale) writeRecord(f.leasePath, record(await deadPid()));
+    if (stale === "dead-pid") writeRecord(f.leasePath, record(await deadPid()));
+    if (stale === "prior-boot") writeRecord(f.leasePath, record(process.pid, { boot: null, uptime: Math.floor(uptime() * 1000) + 3_600_000 }));
     const contenders = Array.from({ length: 8 }, () => worker(f));
     await Promise.all(contenders.map((item) => item.event("ready")));
     const outcomes = await Promise.all(contenders.map((item) => item.command("acquire")));
@@ -556,4 +577,110 @@ test("changed ownership cannot be released by a stale handle", () => {
   writeRecord(f.leasePath, foreignNonce);
   assert.throws(() => lease.release(), errorCode("LEASE_NOT_OWNED"));
   assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), foreignNonce);
+});
+
+function currentRecord(f) {
+  const lease = acquireDataDirLease(f.dataDir);
+  const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  lease.release();
+  return owner;
+}
+
+test("new records carry boot metadata while legacy live owners remain excluded", () => {
+  const f = fixture();
+  const owner = currentRecord(f);
+  assert.deepEqual(Object.keys(owner).sort(), ["boot", "createdAt", "host", "pid", "token", "uptime", "version"]);
+  assert.ok(owner.boot === null || /^[0-9A-Za-z:_.-]{1,128}$/.test(owner.boot));
+  assert.ok(Number.isSafeInteger(owner.uptime) && owner.uptime >= 0);
+  writeRecord(f.leasePath, owner);
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  const legacy = record(process.pid);
+  writeRecord(f.leasePath, legacy);
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), legacy);
+});
+
+test("prior-boot primary and reaper with live reused PIDs recover via immutable successor", { skip: process.platform === "win32" }, () => {
+  const f = fixture();
+  const owner = currentRecord(f);
+  assert.notEqual(owner.boot, null, "native boot identity must be available on this verification host");
+  const stale = { ...owner, boot: randomUUID() };
+  const reaper = { ...stale, token: randomUUID(), targetToken: stale.token };
+  writeRecord(f.leasePath, stale);
+  const reaperPath = `${f.leasePath}.reap-${stale.token}`;
+  writeRecord(reaperPath, reaper);
+  const lease = acquireDataDirLease(f.dataDir);
+  const digest = createHash("sha256").update(reaper.token).digest("hex").slice(0, 32);
+  assert.equal(JSON.parse(readFileSync(`${reaperPath}-${digest}`, "utf8")).boot, owner.boot);
+  assert.deepEqual(JSON.parse(readFileSync(reaperPath, "utf8")), reaper);
+  lease.release();
+});
+
+test("prior-boot child can be replaced and prior-boot parent cannot delegate", () => {
+  const f = fixture();
+  const stale = { ...currentRecord(f), boot: null, uptime: Math.floor(uptime() * 1000) + 3_600_000 };
+  writeRecord(f.leasePath, stale);
+  assert.throws(() => acquireDataDirLeaseForProcess(f.dataDir, { [PRIVATE_ENV]: `v1:${stale.pid}:${stale.token}` }), errorCode("LEASE_DELEGATION_INVALID"));
+  assert.equal(existsSync(f.childLeasePath), false);
+  writeRecord(f.childLeasePath, stale);
+  const parent = acquireDataDirLease(f.dataDir);
+  const child = acquireDataDirLeaseForProcess(f.dataDir, { ...parent.utilityServerLeaseEnvironment() });
+  assert.equal(child.delegated, true);
+  assert.throws(() => parent.release(), errorCode("LEASE_CHILD_BUSY"));
+  child.release();
+  parent.release();
+});
+
+for (const scenario of [
+  { name: "missing boot and throwing uptime", boot: "throw", uptime: "throw", acquired: false },
+  { name: "malformed boot and NaN uptime", boot: "bad boot", uptime: "NaN", acquired: false },
+  { name: "missing boot and negative uptime", boot: "throw", uptime: "-1", acquired: false },
+  { name: "missing boot and infinite uptime", boot: "throw", uptime: "Infinity", acquired: false },
+  { name: "missing boot and unsafe uptime", boot: "throw", uptime: "1e20", acquired: false },
+  { name: "missing boot and increasing uptime", boot: "throw", uptime: "61", acquired: false },
+  { name: "missing boot and backwards uptime", boot: "throw", uptime: "1", acquired: true },
+  { name: "same boot overrides backwards uptime", boot: "fixture-boot", uptime: "1", acquired: false, needsBoot: true },
+  { name: "different boot overrides unavailable uptime", boot: "next-boot", uptime: "throw", acquired: true, needsBoot: true },
+]) {
+  test(`boot probes fail closed: ${scenario.name}`, { skip: scenario.needsBoot && process.platform === "win32" }, async () => {
+    const f = fixture();
+    const planted = record(process.pid, { boot: "fixture-boot", uptime: 60_000 });
+    writeRecord(f.leasePath, planted);
+    const contender = worker(f, { LEASE_TEST_BOOT: scenario.boot, LEASE_TEST_UPTIME: scenario.uptime, LEASE_TEST_PID_EPERM: "1" });
+    const outcome = await contender.command("acquire");
+    if (scenario.acquired) {
+      assert.equal(outcome.event, "acquired");
+      assert.equal((await contender.command("release")).released, true);
+    } else {
+      assert.equal(outcome.code, "LEASE_BUSY");
+      assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), planted);
+    }
+  });
+}
+
+test("invalid boot metadata is rejected without changing the record", () => {
+  const f = fixture();
+  for (const extra of [{ boot: "" }, { boot: "bad boot" }, { boot: "x".repeat(129) }, { boot: 2 }, { uptime: -1 }, { uptime: 1.5 }, { uptime: Number.MAX_SAFE_INTEGER + 1 }]) {
+    const planted = record(process.pid, extra);
+    writeRecord(f.leasePath, planted);
+    assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_INVALID"));
+    assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), planted);
+  }
+});
+
+test("unknown optional identity cannot evict a live owner", () => {
+  const f = fixture();
+  for (const extra of [{ boot: null, uptime: null }, { boot: null }, { uptime: null }]) {
+    writeRecord(f.leasePath, record(process.pid, extra));
+    assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  }
+});
+
+test("changed boot metadata invalidates an old release handle", () => {
+  const f = fixture();
+  const lease = acquireDataDirLease(f.dataDir);
+  const changed = { ...JSON.parse(readFileSync(f.leasePath, "utf8")), boot: randomUUID() };
+  writeRecord(f.leasePath, changed);
+  assert.throws(() => lease.release(), errorCode("LEASE_NOT_OWNED"));
+  assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), changed);
 });
