@@ -2115,6 +2115,22 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // where, which a silent copy into ~/Downloads does not. The path is
 // renderer-controlled, so it must resolve inside ~/.murage and be a
 // regular file — never a symlink escape or directory.
+ipcMain.handle("desktop:reveal-workspace", async (event, botId, threadId) => {
+  const parent = BrowserWindow.fromWebContents(event.sender);
+  const expectedOrigin = new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;
+  if (!parent || event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== expectedOrigin
+    || [botId, threadId].some(id => typeof id !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(id)) || !desktopSurfaceSecret) throw new Error("Working folder is unavailable here.");
+  const query = new URLSearchParams({ botId, threadId });
+  const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/artifacts/workspace?${query}`, { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret }, signal: AbortSignal.timeout(10000), redirect: "error" });
+  if (!response.ok) throw new Error("Working folder is unavailable. Refresh Files.");
+  const result = await response.json();
+  if (typeof result.path !== "string" || !path.isAbsolute(result.path)) throw new Error("Working folder could not be verified.");
+  const stat = fs.lstatSync(result.path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Working folder changed. Refresh Files.");
+  const error = await shell.openPath(result.path);
+  if (error) throw new Error("The operating system could not open this folder.");
+});
+
 ipcMain.handle("desktop:artifact-action", async (event, id, action) => {
   const parent = BrowserWindow.fromWebContents(event.sender);
   const expectedOrigin = new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;

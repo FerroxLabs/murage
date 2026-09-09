@@ -13,6 +13,7 @@ afterAll(async()=>{await fixture?.close();});
 it("pauses automatic admission through the real owner API while manual work remains available",async()=>{
   expect((await api("GET","/api/automation-admission",undefined,false)).status).toBe(404);
   expect((await api("POST","/api/automation-admission",{paused:true},false)).status).toBe(404);
+  expect((await api("POST","/api/automation-admission",{paused:"yes"}))).toMatchObject({status:400});
   expect((await api("POST","/api/automation-admission",{paused:true}))).toMatchObject({status:200,body:{paused:true}});
   expect((await api("GET","/api/automation-admission")).body.paused).toBe(true);
   const bot=(await api("POST","/api/bots",{name:"Paused automation fixture"})).body.bot;
