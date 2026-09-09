@@ -1,0 +1,77 @@
+import { expect, test } from "@playwright/test";
+import { createServer, type ViteDevServer } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ClaudeAccount } from "../components/ClaudeAccountsSettings";
+
+type Fixture = { info: { url: string; dataDir: string }; fixtureDumpPath: string; close(): Promise<void> };
+let fixture: Fixture, vite: ViteDevServer, origin: string, headers: Record<string, string>;
+async function request(path: string, method = "GET", body?: unknown) {
+  return fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15000) });
+}
+async function api(path: string, method = "GET", body?: unknown): Promise<any> {
+  const response = await request(path, method, body); expect(response.ok, `${method} ${path}: ${response.status}`).toBe(true); return response.json();
+}
+test.beforeAll(async () => {
+  const { launchVerificationServer } = await import(new URL("../../scripts/control-murage.ts", import.meta.url).href) as { launchVerificationServer(): Promise<Fixture> };
+  fixture = await launchVerificationServer();
+  try {
+    const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
+    headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+    const root = fileURLToPath(new URL("../../", import.meta.url));
+    vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "accounts-vite"), resolve: { alias: { "@": join(root, "src") } }, server: { host: "127.0.0.1", hmr: false, watch: null, proxy: { "/api": { target: fixture.info.url, headers } } }, plugins: [react(), tailwindcss(), {
+      name: "accounts-fixture", resolveId(id) { if (id === "/__accounts.js") return "\0accounts-fixture"; },
+      load(id) { if (id !== "\0accounts-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {ClaudeAccountsSettings} from '/src/components/ClaudeAccountsSettings.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'light';window.copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>window.copied.push(value)},configurable:true});createRoot(document.getElementById('root')).render(React.createElement(ClaudeAccountsSettings));`; },
+      configureServer(server) { server.middlewares.use((req, res, next) => { if (!req.url?.startsWith("/__accounts?")) return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app);color:var(--color-ink)"><main id="root" style="max-width:760px;margin:24px auto;padding:16px"></main><script type="module" src="/__accounts.js"></script>'); }); },
+    }] });
+    await vite.listen(0); const address = vite.httpServer!.address(); if (!address || typeof address === "string") throw Error("Accounts UI fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
+  } catch (error) { await vite?.close(); await fixture.close(); throw error; }
+});
+test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
+
+test("owner account CRUD preserves credentials, selected identity and active work", async ({ page }, info) => {
+  expect((await fetch(fixture.info.url + "/api/claude-accounts")).status).toBe(404);
+  await page.goto(origin + "/__accounts?skin=" + (info.project.name === "narrow" ? "dark" : "light"));
+  await expect(page.getByText("Verification fixture", { exact: true })).toBeVisible();
+  for (const name of ["Work", "Personal"]) {
+    await page.getByRole("button", { name: "Add Claude account", exact: true }).click();
+    await page.getByLabel("Account name", { exact: true }).fill(name);
+    await page.getByRole("button", { name: "Create account", exact: true }).click();
+    await expect(page.getByText(name, { exact: true })).toBeVisible();
+    await expect(page.getByRole("status")).toContainText("Sign in explicitly");
+  }
+  const list = (await api("/api/claude-accounts")).accounts as ClaudeAccount[];
+  const work = list.find(account => account.displayName === "Work")!, personal = list.find(account => account.displayName === "Personal")!;
+  expect(work.configDir).not.toBe(personal.configDir);
+  await page.getByText("Sign-in instructions for Work", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy sign-in command for Work", exact: true }).click();
+  expect(await page.evaluate(() => (window as any).copied)).toEqual([work.signInCommand]);
+  expect(work.signInCommand).toContain("auth");
+  await page.getByRole("button", { name: "Edit Work account", exact: true }).click();
+  await page.getByLabel("Account name", { exact: true }).fill("Work renamed");
+  await page.getByRole("button", { name: "Save account", exact: true }).click();
+  await expect(page.getByText("Work renamed", { exact: true })).toBeVisible();
+  expect((await request("/api/claude-accounts", "POST", { displayName: "Alias", configDir: work.configDir })).status).toBe(409);
+  const bot = (await api("/api/bots", "POST", { name: "Account selection proof", modelSelection: { instanceId: work.instanceId, model: "sonnet" } })).bot;
+  expect(bot.modelSelection.instanceId).toBe(work.instanceId);
+  expect((await request(`/api/claude-accounts/${work.instanceId}`, "DELETE")).status).toBe(409);
+  await api(`/api/bots/${bot.id}/messages`, "POST", { text: "__fixture_hold_authority__", threadId: bot.threadId });
+  await expect.poll(() => { try { return JSON.stringify(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).prompt).includes("__fixture_hold_authority__"); } catch { return false; } }, { timeout: 15000 }).toBe(true);
+  const pid = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).pid as number;
+  const rejected = await request("/api/claude-accounts", "POST", { displayName: "Must wait" }); expect(rejected.status).toBe(409);
+  process.kill(pid, 0);
+  await api(`/api/bots/${bot.id}/interrupt`, "POST", { threadId: bot.threadId });
+  await expect.poll(async () => Boolean((await api("/api/bots?messages=0")).bots.find((entry: any) => entry.id === bot.id).busy)).toBe(false);
+  mkdirSync(personal.configDir, { recursive: true }); const marker = join(personal.configDir, "synthetic-credential-marker"); writeFileSync(marker, "preserve-original");
+  await page.getByRole("button", { name: "Remove Personal account", exact: true }).click();
+  await expect(page.getByText(/does not revoke its login or delete credential files/)).toBeVisible();
+  await page.getByRole("button", { name: "Confirm removal of Personal", exact: true }).click();
+  await expect(page.locator(`[data-claude-account="${personal.instanceId}"]`)).toHaveCount(0);
+  expect(readFileSync(marker, "utf8")).toBe("preserve-original");
+  expect((await api("/api/bots?messages=0")).bots.find((entry: any) => entry.id === bot.id).modelSelection.instanceId).toBe(work.instanceId);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath("accounts-" + info.project.name + ".png"), fullPage: true });
+});

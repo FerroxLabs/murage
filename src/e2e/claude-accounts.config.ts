@@ -1,0 +1,2 @@
+import { defineConfig, devices } from "@playwright/test";
+export default defineConfig({ testDir: ".", testMatch: "claude-accounts.human.spec.ts", workers: 1, retries: 0, timeout: 60000, reporter: "list", outputDir: "../../.planning/claude-accounts-evidence/browser", use: { headless: true, trace: "retain-on-failure", screenshot: "only-on-failure" }, projects: [{ name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 1000 } } }, { name: "narrow", use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 } } }] });
