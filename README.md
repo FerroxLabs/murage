@@ -20,7 +20,9 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 
 ## Download
 
-**[Murage 0.1.47 — stable release](https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.47)** · [Release notes](https://github.com/FerroxLabs/murage-releases/releases/latest)
+**Fuigo is built into the desktop installers for Mac, Windows and Linux.** Install Murage, then connect your provider account or API key. You do not need a JavaScript toolchain or an `npm install` command.
+
+**[Latest release and release notes](https://github.com/FerroxLabs/murage-releases/releases/latest)**
 
 | Platform | Installer |
 |---|---|
@@ -29,9 +31,11 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 | Windows · x64 | **[Download for Windows](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage-setup.exe)** |
 | Ubuntu 24.04 · x64 | **[Download .deb](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage-amd64.deb)** · [AppImage](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage.AppImage) |
 
-Mac downloads are signed and notarized. Windows downloads are signed. Ubuntu installation and upgrade checks passed for this release. [Ubuntu checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt) are available alongside the downloads.
+Mac downloads are signed and notarized. Windows downloads are signed. See the release notes for platform verification and known limitations. [Ubuntu checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt) are available alongside the downloads.
 
-**Fuigo 1.0.7 is bundled. Installed desktop builds need neither Node.js nor pnpm.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
+**Fuigo is bundled. Installed desktop builds require no Node.js, npm, pnpm or separate Fuigo installation.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
+
+If an official desktop build says “Fuigo CLI not found” or asks you to install Fuigo through npm, that is a bundled-engine detection or installation problem, not a normal prerequisite. Report your Murage version, operating system and installer type. Do not include API keys.
 
 ## A real brief. A working team.
 
@@ -141,7 +145,7 @@ Telegram group routing and additional inbound messaging channels remain future w
 
 ## Fuigo built in. Multi-vendor by design.
 
-**Fuigo 1.0.7 is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
+**Fuigo is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
 
 Multi-vendor choice is part of the product, not an add-on. Use Fuigo, installed engines such as **Claude Code** and **Codex**, custom ACP agents, or compatible API endpoints. Choose an engine and model per agent, mix them in a team, and keep Murage-owned conversations and memory around that work. Each engine retains its supported capabilities and permission requirements.
 
