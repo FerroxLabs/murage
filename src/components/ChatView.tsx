@@ -62,6 +62,7 @@ import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { ModelPicker } from "./ModelPicker";
+import { MemoryLauncher } from "./MemoryLauncher";
 import { RenameTitle } from "./RenameTitle";
 import { TaskPicker } from "./TaskPicker";
 import { UsagePopover } from "./UsagePopover";
@@ -1400,6 +1401,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           >
             <Search size={18} />
           </button>
+          <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} compact />
           {bot.busy && (
             <button
               onClick={() => dispatch({ type: "interrupt", botId: bot.id })}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, useStore, type Bot, type Group } from "@/state/store";
+import { api, useStore, type Bot, type Group, type ModelSelection } from "@/state/store";
 import type { Routine } from "@/lib/routines";
 import { getDraft, getDraftAttachments, restoreComposerDraft } from "@/lib/drafts";
 import { starterFirstTaskDraft } from "@/lib/starter-first-task";
@@ -14,7 +14,9 @@ interface Preview {
   scan: { blocked: boolean; reviewRequired: boolean; findings: { path: string; rule: string }[] };
 }
 interface Imported { profileId: string; bots: Bot[]; groups: Group[]; routines: Routine[] }
-export function StarterProfiles() {
+export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask }: {
+  initialProfileId?: string; modelSelection?: ModelSelection; onFirstTask?: () => void;
+} = {}) {
   const { dispatch } = useStore();
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [selected, setSelected] = useState<Profile | null>(null);
@@ -28,7 +30,7 @@ export function StarterProfiles() {
   const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
   const load = async () => {
     setBusy("loading"); setError("");
-    try { const value = await api("/api/starter-profiles", { method: "POST", body: JSON.stringify({ action: "catalog" }) }); setProfiles(value.profiles); }
+    try { const value = await api("/api/starter-profiles", { method: "POST", body: JSON.stringify({ action: "catalog" }) }); setProfiles(value.profiles); if (initialProfileId) { const profile = value.profiles.find((item: Profile) => item.id === initialProfileId); if (!profile) throw new Error("Starter unavailable"); choose(profile); } }
     catch { setError("Could not load starter profiles. Try again."); }
     finally { setBusy(null); }
   };
@@ -50,6 +52,8 @@ export function StarterProfiles() {
     try {
       const result = await api("/api/starter-profiles", { method: "POST", body: JSON.stringify({
         action: "import", profileId: selected.id, selection: selection(), archiveSha256: preview.archiveSha256, reviewHash: preview.reviewHash, acknowledgeWarnings: acknowledged,
+        ...(modelSelection ? { modelSelection } : {}),
+        ...(initialProfileId ? { firstRun: true } : {}),
       }) }) as { bots: Bot[]; groups?: Group[]; routines?: Routine[] };
       for (const bot of result.bots) dispatch({ type: "botAdded", bot });
       for (const group of result.groups ?? []) dispatch({ type: "groupPatched", group });
@@ -89,15 +93,16 @@ export function StarterProfiles() {
       }
       dispatch({ type: "select", id: bot.id });
       dispatch({ type: "toggleAppSettings", open: false });
+      onFirstTask?.();
     } catch {
       setError("The first-task draft could not be saved safely. Your bots are imported. Open the bot from the sidebar and add your notes in the normal composer.");
     }
   };
   return <section aria-labelledby="starter-profiles-title" className="rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="starter-profiles-title" className="text-[15px] font-medium text-ink">Starter profiles</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Choose a starting team, review it, then import a separate copy. Your current Chief stays unchanged; new bots receive no Chief role or permissions.</p>
+    <h3 id="starter-profiles-title" className="text-[15px] font-medium text-ink">{initialProfileId ? "Preview your crew" : "Starter profiles"}</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{initialProfileId ? "A small crew for your first useful task. Review the people and optional routines before creating it. Connections and permissions can wait until a task needs them." : "Choose a starting team, review it, then import a separate copy. Your current Chief stays unchanged; new bots receive no Chief role or permissions."}</p>
     {busy === "loading" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Loading starter profiles…</p>}
-    {profiles && <div aria-label="Available starter profiles" className="mt-3 grid gap-2">
+    {profiles && !initialProfileId && <div aria-label="Available starter profiles" className="mt-3 grid gap-2">
       {profiles.map(profile => <button key={profile.id} type="button" aria-pressed={selected?.id === profile.id} disabled={Boolean(busy)}
         onClick={() => choose(profile)} className={"rounded-lg border p-3 text-left disabled:opacity-50 " + (selected?.id === profile.id ? "border-accent bg-accent/5 " : "border-hairline/50 bg-inset ") + focus}>
         <span className="block text-[13px] font-semibold text-ink">{profile.name}</span>

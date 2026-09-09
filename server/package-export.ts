@@ -2,6 +2,10 @@ import { parseBotPackage, type BotPackageDefinition, type BotPackagePlaybook, ty
 import type { Routine } from "./routines.ts";
 import type { BotRecord, GroupRecord, InstalledPlaybook } from "./store.ts";
 
+export function botExportRole(bot: BotRecord): "individual" | "member" | "leader" | "chief" {
+  return bot.chiefOfStaff ? bot.chiefScope === "workspace" ? "chief" : "leader" : bot.individual ? "individual" : "member";
+}
+
 function portableKey(value: string, fallback: string, used: Set<string>): string {
   const stem = value
     .normalize("NFKD")
@@ -113,23 +117,24 @@ function buildBotPackageExport(input: BotPackageExportInput) {
       name: group.name,
       members,
       bulletin: group.bulletin,
+      team: group.section,
       defaultResponder,
     });
   }
 
   const routineKeys = new Set<string>();
-  const routineCandidates: Array<{ id: string; key: string | null; name: string; botId: string; supported: boolean }> = [];
+  const routineCandidates: Array<{ id: string; key: string | null; name: string; botId: string; supported: boolean; prompt: string; schedule: Routine["schedule"] }> = [];
   const routines: NonNullable<BotPackageDefinition["routines"]> = input.routines.flatMap((routine, index) => {
     // Package v1 only has a single-agent routine shape. Silently exporting a
     // room goal as a bot task would change what it does after import, so keep
     // it out until the portable format can name a package-local room.
     const agent = idToKey.get(routine.botId);
     if (routine.target === "room-goal" || !agent) {
-      routineCandidates.push({ id: routine.id, key: null, name: routine.name, botId: routine.botId, supported: false });
+      routineCandidates.push({ id: routine.id, key: null, name: routine.name, botId: routine.botId, supported: false, prompt: routine.prompt, schedule: routine.schedule });
       return [];
     }
     const key = portableKey(routine.name, `routine-${index + 1}`, routineKeys);
-    routineCandidates.push({ id: routine.id, key, name: routine.name, botId: routine.botId, supported: true });
+    routineCandidates.push({ id: routine.id, key, name: routine.name, botId: routine.botId, supported: true, prompt: routine.prompt, schedule: routine.schedule });
     if ((routineIds && !routineIds.has(routine.id)) || (botIds && !botIds.has(routine.botId))) return [];
     return [{
       key,
@@ -161,6 +166,8 @@ function buildBotPackageExport(input: BotPackageExportInput) {
       name: bot.name,
       title: bot.title,
       description: bot.description,
+      role: botExportRole(bot),
+      team: bot.section,
       appearance,
     };
     const assigned = agentPlaybooks.get(bot.id)?.filter(key => !selectedPlaybooks || selectedPlaybooks.has(key));
@@ -181,7 +188,7 @@ function buildBotPackageExport(input: BotPackageExportInput) {
     requirements: { apps: [...requirements.values()], capabilities: [] },
     agents,
   };
-  const chief = selectedBots.find((bot) => bot.chiefOfStaff);
+  const chief = selectedBots.find((bot) => bot.chiefOfStaff && bot.chiefScope === "workspace");
   if (chief) definition.chiefOfStaff = idToKey.get(chief.id)!;
   if (rooms.length) definition.rooms = rooms;
   if (routines.length) definition.routines = routines;
@@ -193,8 +200,13 @@ function buildBotPackageExport(input: BotPackageExportInput) {
     package: definition,
   });
   return { parsed, candidates: {
-    bots: bots.map(bot => ({ id: bot.id, key: idToKey.get(bot.id)!, name: bot.name, playbookKeys: agentPlaybooks.get(bot.id) ?? [] })),
-    playbooks: playbooks.map(playbook => ({ key: playbook.key, name: playbook.name })),
+    bots: bots.map(bot => ({ id: bot.id, key: idToKey.get(bot.id)!, name: bot.name, title: bot.title,
+      description: bot.description, role: botExportRole(bot), team: bot.section?.trim() || "General",
+      playbookKeys: agentPlaybooks.get(bot.id) ?? [],
+      requiredApps: (bot.installedPackage?.requiredApps ?? []).map(app => ({ label: app.label, reason: app.reason })),
+    })),
+    groups: input.groups.filter(group => !group.dm).map(group => ({ id: group.id, name: group.name, memberIds: group.memberIds.filter(id => idToKey.has(id)) })),
+    playbooks: playbooks.map(playbook => ({ key: playbook.key, name: playbook.name, summary: playbook.summary, instructions: playbook.instructions })),
     routines: routineCandidates,
   } };
 }

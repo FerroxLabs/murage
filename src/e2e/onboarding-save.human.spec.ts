@@ -33,7 +33,8 @@ test.beforeAll(async () => {
           import React from 'react';
           import { createRoot } from 'react-dom/client';
           import { Onboarding } from '/src/components/Onboarding.tsx';
-          createRoot(document.getElementById('root')).render(React.createElement(Onboarding, {onDone:()=>{}}));
+          import { StoreProvider } from '/src/state/store.tsx';
+          createRoot(document.getElementById('root')).render(React.createElement(StoreProvider, null, React.createElement(Onboarding, {onDone:()=>{}})));
         `;
       },
       configureServer(vite) {
@@ -65,6 +66,7 @@ test.beforeAll(async () => {
             });
           } else if (path === "/api/subscribe") { subscriptions++; json({ ok: true }); }
           else if (path === "/api/instances") json({ instances: [] });
+          else if (path === "/api/bots") json({ bots: [], groups: [] });
           else if (path.startsWith("/api/")) json({ error: "Unexpected fixture route" }, 404);
           else next();
         });
@@ -82,6 +84,7 @@ test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { re
 
 async function fill(page: import("@playwright/test").Page) {
   await page.goto(`${origin}/__onboarding`);
+  await page.getByRole("button", { name: "Add your details (optional)" }).click();
   await page.getByPlaceholder("Your name").fill("Fixture Person");
   await page.getByPlaceholder("you@example.com").fill("Fixture@Example.test");
 }

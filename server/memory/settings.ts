@@ -13,7 +13,8 @@ import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemory
 import { forgetMemory, memoryDeletionStatus } from "./forget.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
-import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook } from "./import.ts";
+import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook, migrateDetectedMemoryNotebooks } from "./import.ts";
+import { ownerMemoryList } from "./owner-list.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
 
@@ -29,7 +30,7 @@ export interface MemoryOwnerOptions {
 const id=z.string().min(1).max(180),version=z.number().int().positive();
 const subject={subjectType:z.enum(["bot","room"]),subjectId:id};
 const actions=z.discriminatedUnion("action",[
-  z.object({action:z.literal("list"),query:z.string().max(4096).optional(),scopeId:id.optional(),botId:id.optional(),state:z.enum(["candidate","active","archived","superseded","deleted"]).optional(),cursor:z.string().max(512).optional()}).strict(),
+  z.object({action:z.literal("list"),query:z.string().max(4096).optional(),scopeId:id.optional(),botId:id.optional(),state:z.enum(["candidate","active","archived","superseded","deleted"]).optional(),cursor:z.string().max(512).optional(),view:z.enum(["search","important","recent","review"]).optional()}).strict(),
   z.object({action:z.literal("inspect"),id,version}).strict(),
   z.object({action:z.literal("review-as-skill"),id,version,botId:id}).strict(),
   z.object({action:z.literal("approve"),id,version}).strict(),
@@ -48,6 +49,8 @@ const actions=z.discriminatedUnion("action",[
   ])).min(1).max(20)}).strict(),
   z.object({action:z.literal("import-commit"),previewId:id,track:z.boolean().optional()}).strict(),
   z.object({action:z.literal("import-inventory")}).strict(),
+  z.object({action:z.literal("import-review-list"),botId:id.optional(),cursor:id.optional()}).strict(),
+  z.object({action:z.literal("enable-and-import")}).strict(),
   z.object({action:z.literal("import-stop-tracking"),id}).strict(),
   z.object({action:z.literal("model-download"),confirm:z.literal(true)}).strict(),
 ]);
@@ -144,12 +147,8 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   const parsed=actions.safeParse(body);if(!parsed.success)throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
   const input=parsed.data,db=database();
   if(input.action==="list"){
-    if(input.botId&&!roster.bots.some(bot=>bot.id===input.botId))throw new Error("MEMORY_SUBJECT_UNKNOWN");
-    const scope=input.scopeId??(input.botId?ensureScope("bot",input.botId):undefined);
-    let after={id:"",version:Number.MAX_SAFE_INTEGER};
-    if(input.cursor){try{after=z.object({id:z.string(),version:z.number().int().positive()}).strict().parse(JSON.parse(Buffer.from(input.cursor,"base64url").toString()));}catch{throw new Error("INVALID_MEMORY_CURSOR");}}
-    const rows=db.prepare("SELECT * FROM memory_records WHERE (? IS NULL OR scope_id=?) AND (? IS NULL OR state=?) AND (? IS NOT NULL OR state!='deleted') AND (? IS NULL OR instr(lower(text),lower(?))>0) AND (id>? OR (id=? AND version<?)) ORDER BY id,version DESC LIMIT 51").all(scope??null,scope??null,input.state??null,input.state??null,input.state??null,input.query??null,input.query??null,after.id,after.id,after.version);
-    return {records:rows.slice(0,50).map(record),...rows.length>50?{nextCursor:Buffer.from(JSON.stringify({id:String(rows[49].id),version:Number(rows[49].version)})).toString("base64url")}:{}};
+    const {rows,...result}=ownerMemoryList(input,roster);
+    return {...result,records:rows.map(record)};
   }
   if(input.action==="inspect"){
     const current=getRecord(input.id,input.version);let remaining=32768;
@@ -205,6 +204,15 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="import-preview")return previewMemoryImport(ticket,input.selections,roster);
   if(input.action==="import-commit")return commitMemoryImport(ticket,input.previewId,roster,input.track);
   if(input.action==="import-inventory")return {...availableMemoryNotebooks(ticket,roster),links:memoryNotebookLinks()};
+  if(input.action==="import-review-list"){
+    if(input.botId&&!roster.bots.some(bot=>bot.id===input.botId))throw new Error("MEMORY_SUBJECT_UNKNOWN");
+    const rows=db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='notebook-link' AND state='granted' AND json_extract(intent,'$.status')='needs-review' AND (? IS NULL OR json_extract(intent,'$.selection.botId')=?) AND id>? ORDER BY id LIMIT 51").all(input.botId??null,input.botId??null,input.cursor??"");
+    return {links:rows.slice(0,50).map(row=>({id:String(row.id),...JSON.parse(String(row.intent))})),...rows.length>50?{nextCursor:String(rows[49].id)}:{}};
+  }
+  if(input.action==="enable-and-import"){
+    await memoryOwnerRoute(path,{action:"configure",mode:"active"},ticket,roster,options);
+    return {...migrateDetectedMemoryNotebooks(roster),status:memoryOwnerStatus(ticket,roster,options)};
+  }
   if(input.action==="import-stop-tracking")return stopTrackingMemoryNotebook(ticket,input.id);
   if(input.action==="model-download"){if(!supportsNativeMemoryModel())throw Object.assign(new Error("Intel Mac builds use keyword memory; a semantic model download is not available in this release."),{status:409});if(download?.state!=="downloading")void downloadModel(options);return {model:modelStatus()};}
   throw new Error("MEMORY_ROUTE_UNAVAILABLE");
