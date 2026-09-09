@@ -1,405 +1,104 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, AlertTriangle, Loader2, Mic } from "lucide-react";
-import { useActiveSkin } from "../lib/use-active-skin";
-import { EmberAvatar } from "./Avatar";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, Check } from "lucide-react";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
-import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { api, useStore } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
-import { PhoneSetupFlow } from "./PhoneSetupFlow";
-import { useDesktopSurface } from "@/lib/use-surface";
-import { api, type InstanceInfo } from "@/state/store";
-
-// First-run onboarding: who you are (email), what's installed (live engine
-// checks from the harness), what the app may use (TCC), then an optional
-// phone setup that can always be resumed from Settings → Phone.
-// Every check is skippable — onboarding must never brick the app.
-
-type InstanceRow = InstanceInfo;
-
-function StatusRow({
-  ok,
-  warn,
-  title,
-  detail,
-  mark,
-  children,
-}: {
-  ok: boolean;
-  warn?: boolean;
-  title: string;
-  detail?: string;
-  mark?: ReactNode;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-3 rounded-xl bg-card p-3.5">
-      <span
-        className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
-          ok ? "bg-success/15 text-success" : warn ? "bg-warning/15 text-warning" : "bg-raised text-ink-secondary"
-        }`}
-      >
-        {ok ? <Check size={14} /> : <AlertTriangle size={13} />}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
-          {mark}
-          <span className="min-w-0 truncate">{title}</span>
-        </div>
-        {detail && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{detail}</div>}
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/** One engine on the setup screen: what it's called, what the harness
- * found, and the one-liner to show when it's good to go. Ready states get
- * a sentence; anything the user has to act on gets the shared setup UI, so
- * the instructions come from the driver and are correct for this platform. */
-interface EngineEntry {
-  instance: InstanceRow;
-  label: string;
-  readyNote: string;
-}
-
-function engineReady(instance: InstanceRow): boolean {
-  return (
-    instance.snapshot.state === "available" &&
-    (instance.access === "custom" || instance.snapshot.authenticated !== false)
-  );
-}
-
-function engineTitle({ instance, label }: EngineEntry): string {
-  const version = instance?.snapshot.version ? ` · ${instance.snapshot.version.split(" ")[0]}` : "";
-  return `${label}${version}`;
-}
-
-/** A ready engine needs no attention: a small tile in the grid, so five
- * engines don't read as one long list where the good news and the setup
- * work look the same. */
-function ReadyTile(entry: EngineEntry) {
-  return (
-    <div className="flex items-start gap-2.5 rounded-xl bg-card p-3">
-      <ProviderMark driverKind={entry.instance.driverKind} size={17} />
-      <div className="min-w-0">
-        <div className="truncate text-[13.5px] font-medium text-ink">{engineTitle(entry)}</div>
-        <div className="mt-0.5 text-[12px] leading-snug text-ink-secondary">{entry.readyNote}</div>
-      </div>
-    </div>
-  );
-}
-
-/** An engine that still needs installing or signing in keeps the full-width
- * row: the command box and terminal button need the room. */
-function SetupRow(entry: EngineEntry) {
-  return (
-    <StatusRow
-      ok={false}
-      warn
-      title={engineTitle(entry)}
-      mark={<ProviderMark driverKind={entry.instance.driverKind} size={16} />}
-    >
-      <EngineSetup
-        instance={entry.instance}
-        className="mt-0.5"
-        intent={entry.instance.access === "custom" ? "inject" : "cloud"}
-      />
-    </StatusRow>
-  );
-}
+import { StarterProfiles } from "./StarterProfiles";
+import { ONBOARDING_CHOICES, ONBOARDING_PROGRESS_KEY, readOnboardingProgress, type OnboardingChoice } from "@/lib/onboarding-progress";
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const desktop = useDesktopSurface();
-  const skin = useActiveSkin();
-  const { capabilities } = useDesktopCapabilities();
-  const [step, setStep] = useState(0);
+  const { state, dispatch } = useStore();
+  const [saved] = useState(() => { try { return readOnboardingProgress(window.localStorage); } catch { return { choice: null, instanceId: "", model: "" }; } });
+  const [choice, setChoice] = useState<OnboardingChoice | null>(saved.choice);
+  const [instanceId, setInstanceId] = useState(saved.instanceId);
+  const [model, setModel] = useState(saved.model);
+  const [step, setStep] = useState(saved.choice ? 1 : 0);
+  const [workspace, setWorkspace] = useState<"checking" | "empty" | "established" | "error">("checking");
+  const [checking, setChecking] = useState(false);
+  const [engineError, setEngineError] = useState("");
+  const [details, setDetails] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const profileSaveActive = useRef(false);
-  const [instances, setInstances] = useState<InstanceRow[] | null>(null);
-  const [perms, setPerms] = useState<{ mic: string } | null>(null);
+  const saveActive = useRef(false);
+  const done = useRef(onDone); done.current = onDone;
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
-
+  const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+  const button = "min-h-11 rounded-lg px-4 py-2.5 text-[14px] font-medium disabled:opacity-40 " + focus;
+  const finish = () => {
+    try { localStorage.removeItem(ONBOARDING_PROGRESS_KEY); } catch { /* workspace admission prevents a repeat */ }
+    setEmailGateDone("submitted"); track("onboarding_completed", { starter: choice ?? "empty" }); done.current();
+  };
+  const checkWorkspace = async () => {
+    setWorkspace("checking");
+    try {
+      const value = await api("/api/bots?messages=0");
+      if (!Array.isArray(value.bots) || !Array.isArray(value.groups)) throw new Error("Workspace not confirmed");
+      if (value.bots.length || value.groups.length) { setWorkspace("established"); setEmailGateDone("submitted"); done.current(); }
+      else setWorkspace("empty");
+    } catch { setWorkspace("error"); }
+  };
+  useEffect(() => { if (desktop === true) void checkWorkspace(); }, [desktop]);
+  useEffect(() => {
+    if (workspace !== "empty") return;
+    try { localStorage.setItem(ONBOARDING_PROGRESS_KEY, JSON.stringify({ choice, instanceId, model })); } catch { /* no import is retried automatically */ }
+  }, [choice, instanceId, model, workspace]);
+  const refreshEngines = async () => {
+    setChecking(true); setEngineError("");
+    try { const value = await api("/api/instances"); if (!Array.isArray(value.instances)) throw new Error("Engine check was not confirmed."); dispatch({ type: "instances", instances: value.instances }); }
+    catch (cause) { setEngineError(cause instanceof Error ? cause.message : "Could not check engines."); }
+    finally { setChecking(false); }
+  };
+  useEffect(() => { if (step === 1 && workspace === "empty") void refreshEngines(); }, [step, workspace]);
   const saveProfile = async () => {
-    if (!valid || profileSaveActive.current) return;
-    profileSaveActive.current = true;
-    setProfileSaving(true);
-    setProfileError("");
+    if (!valid || saveActive.current) return;
+    saveActive.current = true; setProfileSaving(true); setProfileError("");
     const profile = { name: name.trim(), email: email.trim().toLowerCase() };
     try {
-      const saved = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
-      if (saved?.profile?.name !== profile.name || saved?.profile?.email !== profile.email) {
-        throw new Error("Your profile save could not be confirmed. Please retry, or choose Maybe later.");
-      }
-      identifyEmail(profile.email);
-      // A subscription outage must not hold a successfully saved profile at
-      // the welcome screen. A failed local save must not subscribe repeatedly.
-      void api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {});
-      setStep(1);
-    } catch (cause) {
-      setProfileError(cause instanceof Error ? cause.message : "Could not save your profile. Please retry.");
-    } finally {
-      profileSaveActive.current = false;
-      setProfileSaving(false);
-    }
+      const result = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
+      if (result?.profile?.name !== profile.name || result?.profile?.email !== profile.email) throw new Error("Your profile save could not be confirmed. Please retry, or choose Maybe later.");
+      identifyEmail(profile.email); void api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).catch(() => {}); setDetails(false);
+    } catch (cause) { setProfileError(cause instanceof Error ? cause.message : "Could not save your profile. Please retry."); }
+    finally { saveActive.current = false; setProfileSaving(false); }
   };
-
-  useEffect(() => {
-    track("onboarding_step", { step });
-  }, [step]);
-
-  useEffect(() => {
-    if (step !== 1) return;
-    let active = true;
-    let latestRequest = 0;
-    const refresh = () => {
-      const request = ++latestRequest;
-      fetch("/api/instances")
-        .then((r) => r.json())
-        .then((d) => active && request === latestRequest && setInstances(d.instances ?? []))
-        .catch(() => active && request === latestRequest && setInstances([]));
-    };
-    refresh();
-    window.addEventListener("focus", refresh);
-    return () => {
-      active = false;
-      window.removeEventListener("focus", refresh);
-    };
-  }, [step]);
-
-  useEffect(() => {
-    if (step === 2 && capabilities.dictation.available) {
-      const poll = () => window.muragebox?.permStatus?.().then(setPerms).catch(() => {});
-      poll();
-      // keep polling — the user may grant in System Settings and come back
-      const t = setInterval(poll, 2000);
-      return () => clearInterval(t);
-    }
-  }, [step, capabilities.dictation.available]);
-
-  const finish = () => {
-    track("onboarding_completed", {
-      engines_available: instances?.filter((i) => i.snapshot.state === "available").length ?? -1,
-      mic: perms?.mic ?? "n/a",
-    });
-    setEmailGateDone("submitted");
-    onDone();
-  };
-
-  const engines: EngineEntry[] = (instances ?? [])
-    .filter((instance) => instance.install)
-    .map((instance) => ({
-      instance,
-      label: instance.displayName,
-      readyNote:
-        instance.access === "custom"
-          ? "Installed — ready for a local model."
-          : "Installed — ready to power bots.",
-    }));
-  const readyEngines = engines.filter((e) => engineReady(e.instance));
-  const setupEngines = engines.filter((e) => !engineReady(e.instance));
-
-  // EVERY STEP OF THIS SCREEN IS A DESKTOP STEP.
-  //
-  // Step 0 asks a returning user who he is because localStorage on a phone is
-  // empty. Step 1 lists engines installed ON THIS COMPUTER and offers to
-  // install them. Step 2 asks macOS for the microphone. Step 3 explains how to
-  // open Murage on a phone — to a phone. None of it is answerable from the
-  // other side of the browser door, and all of it was rendered there.
-  //
-  // App.tsx already refuses to mount this off the desktop. This is the second
-  // lock, on the component itself, so a future caller cannot reopen the hole
-  // by rendering `<Onboarding>` somewhere new. `undefined` renders nothing:
-  // the neutral answer, never the desktop one.
-  if (desktop !== true) return null;
-
-  return (
-    <div className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-app p-8 max-md:p-4">
-      {/* the engines step lays tiles out two across, so it gets more room —
-          but never more than the window: the panel caps at the viewport and
-          the engine list scrolls inside it, so the header and Continue stay
-          put and nothing runs into the edges */}
-      <div
-        className={`flex max-h-full w-full flex-col rounded-2xl border border-hairline/40 bg-panel p-8 max-md:p-5 ${step === 1 ? "max-w-[680px]" : step === 3 ? "max-w-[620px]" : "max-w-[460px]"}`}
-      >
-        {step === 0 && (
-          // min-h-0 + overflow-y-auto: the card is `max-h-full`, so with the
-          // keyboard up (--vvh) this content is taller than the box that holds
-          // it. Without a scroller here the children simply render outside the
-          // card — measured at 390x508, Continue landed 34px below the fold on
-          // the one screen whose first field is autoFocus.
-          <div className="flex min-h-0 w-full flex-col items-center overflow-y-auto">
-            <img
-              // The wordmark is baked ink, not a tintable glyph: the default
-              // asset is white and vanished into the light theme's card.
-              src={skin === "light" ? "/murage-logo-dark.png" : "/murage-logo.png"}
-              alt="Murage"
-              className="mb-7 h-14 w-auto max-md:hidden"
-              draggable={false}
-            />
-            <EmberAvatar color="orange" state="happy" size={72} />
-            <h1 className="mt-4 text-[20px] font-semibold text-ink">Welcome to Murage</h1>
-            <p className="mt-1.5 text-center text-[14px] leading-relaxed text-ink-secondary">
-              One desktop, every AI engine doing REAL work on their OWN computer.
-              Tell us who you are and we&rsquo;ll let you know when big things ship.
-            </p>
-            <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">New workspaces capture and recall local memory by default. You can pause or disable it in workspace memory settings. Recalled context follows your chosen engine; optional model-based extraction requires a separate choice. Existing workspace settings are preserved.</p>
-            <input
-              autoFocus
-              type="text"
-              value={name}
-              disabled={profileSaving}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
-              className="mt-5 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-            />
-            <input
-              type="email"
-              value={email}
-              disabled={profileSaving}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveProfile(); } }}
-              placeholder="you@example.com"
-              className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-            />
-            <button
-              onClick={() => void saveProfile()}
-              disabled={!valid || profileSaving}
-              aria-busy={profileSaving}
-              className="mt-3 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white disabled:opacity-40"
-            >
-              {profileSaving ? "Saving…" : "Continue"}
-            </button>
-            {profileError && <p role="alert" className="mt-2 text-[12px] text-danger">{profileError}</p>}
-            <button
-              disabled={profileSaving}
-              onClick={() => {
-                track("email_skipped");
-                setStep(1);
-              }}
-              className="mt-3 text-[12px] text-ink-secondary hover:text-ink"
-            >
-              Maybe later
-            </button>
-          </div>
-        )}
-
-        {step === 1 && (
-          <div className="flex min-h-0 flex-col">
-            <h1 className="text-[18px] font-semibold text-ink">Your engines</h1>
-            <p className="mt-1 text-[13.5px] text-ink-secondary">
-              Bots run on AI tools installed on this computer; here&rsquo;s what we found.
-            </p>
-            <div className="mt-4 flex min-h-0 flex-col gap-2.5 overflow-y-auto pr-1">
-              {!instances ? (
-                <div className="flex items-center gap-2 py-6 text-ink-secondary">
-                  <Loader2 size={16} className="animate-spin" /> Checking…
-                </div>
-              ) : (
-                <>
-                  {readyEngines.length > 0 && (
-                    <>
-                      <div className="text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Ready</div>
-                      <div className="grid grid-cols-2 gap-2.5">
-                        {readyEngines.map((e) => (
-                          <ReadyTile key={e.label} {...e} />
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  {setupEngines.length > 0 && (
-                    <>
-                      <div className={`text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary ${readyEngines.length ? "mt-2" : ""}`}>
-                        Needs setup
-                      </div>
-                      {setupEngines.map((e) => (
-                        <SetupRow key={e.label} {...e} />
-                      ))}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-            <button
-              onClick={() => setStep(capabilities.dictation.available ? 2 : 3)}
-              className="mt-5 w-full shrink-0 rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white"
-            >
-              Continue
-            </button>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div className="flex min-h-0 flex-col overflow-y-auto">
-            <h1 className="text-[18px] font-semibold text-ink">Permissions</h1>
-            <p className="mt-1 text-[13.5px] text-ink-secondary">
-              Optional, and only ever used when you ask for the feature.
-            </p>
-            <div className="mt-4 flex flex-col gap-2.5">
-              <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-3.5">
-                <div className="flex items-start gap-3">
-                  <Mic size={18} className="mt-0.5 shrink-0 text-ink-secondary" />
-                  <div>
-                    <div className="text-[14px] font-medium text-ink">Microphone & speech</div>
-                    <div className="mt-0.5 text-[12.5px] text-ink-secondary">
-                      Voice dictation into the composer, transcribed on-device.
-                    </div>
-                  </div>
-                </div>
-                {perms?.mic === "granted" ? (
-                  <Check size={16} className="shrink-0 text-success" />
-                ) : perms?.mic === "denied" || perms?.mic === "restricted" ? (
-                  <button
-                    onClick={() => window.muragebox?.permOpenSettings?.("mic")}
-                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
-                  >
-                    Open Settings
-                  </button>
-                ) : (
-                  <button
-                    onClick={() =>
-                      window.muragebox?.permRequestMic?.().then(() => window.muragebox?.permStatus?.().then(setPerms))
-                    }
-                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
-                  >
-                    Enable
-                  </button>
-                )}
-              </div>
-              {/* Screen Recording deliberately has no row here: macOS 15+
-                  makes a pre-grant unreliable (per-process status caching,
-                  helper misattribution, periodic re-prompts) — the OS flow
-                  triggers on the first real capture in the Computer panel,
-                  which is the moment the user has context for the dialog. */}
-            </div>
-            <button onClick={() => setStep(3)} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
-              Continue
-            </button>
-            <button onClick={() => setStep(3)} className="mt-3 text-[12px] text-ink-secondary hover:text-ink">
-              Skip for now
-            </button>
-          </div>
-        )}
-
-        {step === 3 && (
-          <PhoneSetupFlow
-            variant="onboarding"
-            profileEmail={email}
-            onSkip={() => {
-              track("phone_setup_skipped");
-              finish();
-            }}
-            onComplete={() => {
-              track("phone_setup_completed");
-              finish();
-            }}
-          />
-        )}
-
-      </div>
-    </div>
-  );
+  const selected = state.instances.find(instance => instance.instanceId === instanceId);
+  const ready = selected?.snapshot.state === "available" && (selected.access === "custom" || selected.snapshot.authenticated !== false);
+  const modelReady = ready && Boolean(model) && selected.models.options.some(option => option.id === model);
+  if (desktop !== true || workspace === "established") return null;
+  return <div className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-app p-8 max-md:p-4">
+    <main aria-label="Set up your workspace" className="flex max-h-full w-full max-w-[620px] flex-col overflow-y-auto rounded-2xl border border-hairline/40 bg-panel p-8 max-md:p-5">
+      {workspace === "checking" ? <p role="status" className="text-ink-secondary">Checking your workspace…</p> : workspace === "error" ? <>
+        <h1 className="text-xl font-semibold text-ink">Could not check your workspace</h1><p role="alert" className="mt-2 text-sm text-ink-secondary">Reconnect and try again before creating a crew.</p><button className={button + " mt-4 bg-control text-ink"} onClick={() => void checkWorkspace()}>Check again</button>
+      </> : <>
+        {step > 0 && <button className={button + " mb-3 flex w-fit items-center gap-2 px-0 text-ink-secondary"} onClick={() => setStep(step - 1)}><ArrowLeft size={16} />Back</button>}
+        {step === 0 && <>
+          <p className="text-[12px] font-medium text-accent">WELCOME TO MURAGE</p><h1 className="mt-2 text-[26px] font-semibold leading-tight text-ink">What would you like to do?</h1><p className="mt-2 text-[14px] leading-relaxed text-ink-secondary">Start with a small crew and one useful task. You can change everything later.</p>
+          <div className="mt-5 grid gap-2.5" aria-label="Choose your first outcome">{ONBOARDING_CHOICES.map(item => <button key={item.id} className={"rounded-xl border border-hairline/50 bg-card p-4 text-left hover:bg-control " + focus} onClick={() => { setChoice(item.id); setStep(1); }}><span className="block text-[15px] font-semibold text-ink">{item.title}</span><span className="mt-1 block text-[13px] leading-relaxed text-ink-secondary">{item.detail}</span></button>)}</div>
+          <div className="mt-4 flex flex-wrap gap-2"><button className={button + " bg-control text-ink"} onClick={finish}>Start empty</button><button className={button + " text-ink-secondary"} onClick={() => { dispatch({ type: "showTeamLibrary", view: "teams" }); finish(); }}>Import existing</button></div>
+          <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Import existing opens the library, where you can choose a file and review its contents. Local memory is on for new workspaces; you can pause it in Settings. Permissions and account connections are requested when you need them.</p>
+          {!details ? <button className={button + " mt-2 w-fit px-0 text-ink-secondary"} onClick={() => setDetails(true)}>Add your details (optional)</button> : <div className="mt-4 border-t border-hairline/40 pt-4">
+            <p className="text-[13px] text-ink-secondary">Save your name and receive product updates.</p>
+            <input aria-label="Your name" placeholder="Your name" value={name} disabled={profileSaving} onChange={event => setName(event.target.value)} className="mt-3 min-h-11 w-full rounded-lg border border-hairline/40 bg-inset px-3 text-ink" />
+            <input aria-label="Email" type="email" placeholder="you@example.com" value={email} disabled={profileSaving} onChange={event => setEmail(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void saveProfile(); } }} className="mt-2 min-h-11 w-full rounded-lg border border-hairline/40 bg-inset px-3 text-ink" />
+            <button className={button + " mt-3 bg-accent text-accent-ink"} disabled={!valid || profileSaving} onClick={() => void saveProfile()}>{profileSaving ? "Saving…" : "Continue"}</button><button className={button + " ml-2 text-ink-secondary"} disabled={profileSaving} onClick={() => setDetails(false)}>Maybe later</button>{profileError && <p role="alert" className="mt-2 text-sm text-danger">{profileError}</p>}
+          </div>}
+        </>}
+        {step === 1 && <>
+          <h1 className="text-[22px] font-semibold text-ink">Choose an engine</h1><p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">Fuigo is included with Murage. Choose it or another installed engine, then choose a model. Account access and model pricing depend on that choice.</p><p className="mt-2 text-[12px] text-ink-secondary">No credentials are copied and no paid fallback is enabled by this setup.</p>
+          {checking && <p role="status" className="mt-3 text-sm text-ink-secondary">Checking engines…</p>}
+          <div className="mt-4 grid gap-2" aria-label="Choose an engine">{state.instances.filter(instance => instance.enabled !== false).map(instance => <button key={instance.instanceId} aria-pressed={instanceId === instance.instanceId} className={"flex items-center gap-3 rounded-xl border p-3 text-left " + (instanceId === instance.instanceId ? "border-accent bg-accent/5 " : "border-hairline/50 bg-card ") + focus} onClick={() => { setInstanceId(instance.instanceId); setModel(""); }}><ProviderMark driverKind={instance.driverKind} size={20} /><span className="flex-1 text-sm text-ink">{instance.displayName}{instance.driverKind === "fuigoAgent" && <> <span className="ml-2 text-xs text-ink-secondary">Included</span></>}</span>{instanceId === instance.instanceId && <Check size={16} className="text-accent" />}</button>)}</div>
+          {selected && (!ready || !selected.models.options.length) && <EngineSetup instance={selected} intent={selected.access === "custom" ? "inject" : "cloud"} />}
+          {ready && selected.models.options.length > 0 && <label className="mt-4 text-sm font-medium text-ink">Model<select aria-label="Model" className="mt-2 min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 text-ink" value={model} onChange={event => setModel(event.target.value)}><option value="">Choose a model</option>{selected.models.options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>}
+          {engineError && <p role="alert" className="mt-3 text-sm text-danger">{engineError}</p>}{!state.instances.length && !checking && <button className={button + " mt-3 bg-control text-ink"} onClick={() => void refreshEngines()}>Check engines again</button>}
+          <button className={button + " mt-5 bg-accent text-accent-ink"} disabled={!modelReady || checking} onClick={() => setStep(2)}>Preview my crew</button>
+        </>}
+        {step === 2 && choice && modelReady && <StarterProfiles initialProfileId={choice} modelSelection={{ instanceId, model }} onFirstTask={finish} />}
+        {step === 2 && !modelReady && <><p role="alert" className="text-sm text-ink-secondary">Your selected engine needs another check before creating the crew.</p><button className={button + " mt-3 bg-control text-ink"} onClick={() => setStep(1)}>Check engine</button></>}
+      </>}
+    </main>
+  </div>;
 }
