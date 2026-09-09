@@ -6,7 +6,7 @@ import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderB
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
 import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
-import { syncTrackedMemoryImports } from "./memory/import.ts";
+import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
 import { manageBot, mayInspectBot, organizationRevision } from "./bot-management.ts";
 import { hasPendingBotDelegations } from "./delegations.ts";
 import { accessOwnerView, assertConnectedAppCall, requestBotAccess, restrictedConnectorTools, reviewBotAccess } from "./bot-access.ts";
@@ -1182,12 +1182,15 @@ function memoryIntegration(botId: string, threadId: string, generation: string) 
   return {command:process.execPath,args:[SPAWNED_PROXIES.memory],env:{...AGENTS_NODE_FLAG,
     MURAGE_HARNESS_URL:`http://127.0.0.1:${PORT}`,MURAGE_MEMORY_TOKEN:internalToken(botId,threadId,generation,"memory")}};
 }
+let memoryMigrationCursor: string | undefined;
 const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,signal)=>{
   const selected=memoryExtractorInstanceId();
   if(!selected)return;
   const extractor=resolveMemoryExtractor(selected,registry.instances());
   return consolidateMemorySource(jobId,extractor,signal);
 },onIdleConsolidation:async(signal)=>{
+  const migrated = migrateDetectedMemoryNotebooks({ bots: store.bots, groups: store.groups }, memoryMigrationCursor);
+  memoryMigrationCursor = migrated.nextCursor;
   syncTrackedMemoryImports({bots:store.bots,groups:store.groups});
   const selected=memoryExtractorInstanceId();
   const extractor=resolveMemoryExtractor(selected,registry.instances());

@@ -21,7 +21,7 @@ import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
 import { BotAccessSettings } from "./BotAccessSettings";
-import { MemorySettings } from "./MemorySettings";
+import { MemoryLauncher } from "./MemoryLauncher";
 
 function Field({
   label,
@@ -334,7 +334,6 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
-  const [memoryOpen, setMemoryOpen] = useState(true);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (
     p: Partial<
@@ -700,10 +699,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           <WorkingFolder bot={bot} />
 
           {/* keyed so switching bots never shows one bot's notes under another's name */}
-          <details open={memoryOpen} className="rounded-xl bg-card p-4" onToggle={event => setMemoryOpen(event.currentTarget.open)}>
-            <summary className="cursor-pointer text-[15px] font-medium text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">Managed memory</summary>
-            {memoryOpen && <div className="mt-3"><MemorySettings key={`memory-${bot.id}`} botId={bot.id} /></div>}
-          </details>
+          <section className="rounded-xl bg-card p-4">
+            <h3 className="text-[15px] font-medium text-ink">Managed memory</h3>
+            <p className="mt-1 text-[12px] text-ink-secondary">Search saved knowledge, inspect its source and manage what this bot remembers.</p>
+            <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} />
+          </section>
           <MemoryCard key={bot.id} bot={bot} />
 
           {/* "Add a skill" is the other end of assignment: it opens the

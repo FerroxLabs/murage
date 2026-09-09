@@ -1,17 +1,10 @@
-// The sidebar's utility rows, folded behind one chevron.
-//
-// Team map, Teach a skill, Calendar and Connected apps are places you visit
-// occasionally; they were costing four permanent rows at the bottom of a list
-// whose whole job is showing bots. They now live behind a slim bar that sits
-// directly above the profile row and opens on hover — the pull-up handle
-// shape, so the arrow reads as "there is more above" rather than as a button
-// whose purpose you have to guess.
+// Utility destinations remain grouped behind a visible Tools button.
 //
 // Hover alone would make them unreachable by keyboard and fragile with a
 // trackpad, so: hovering opens it, a click pins it, Escape and an outside
 // click close it, and the trigger is an ordinary focusable button.
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { ChevronUp } from "lucide-react";
+import { ChevronUp, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export interface MoreMenuItem {
@@ -45,7 +38,7 @@ export function SidebarMoreMenuPanel({
     <div
       id={id}
       role="menu"
-      aria-label="More"
+      aria-label="Tools"
       className="animate-pop-in absolute bottom-full left-0 right-0 z-40 mb-1 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/50"
     >
       {items.map((item) => (
@@ -138,8 +131,8 @@ export function SidebarMoreMenu({ items, compact = false }: { items: MoreMenuIte
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label="More"
-        title="More"
+        aria-label={attention ? "Tools, items need attention" : "Tools"}
+        title="Tools"
         data-sidebar-more-trigger
         onClick={() => {
           clearTimers();
@@ -150,15 +143,17 @@ export function SidebarMoreMenu({ items, compact = false }: { items: MoreMenuIte
           }
         }}
         className={cn(
-          "relative flex w-full items-center justify-center rounded-xl text-ink-secondary transition-colors hover:bg-raised hover:text-ink",
-          compact ? "py-1" : "py-1.5",
+          "relative flex min-h-9 w-full items-center gap-2.5 rounded-xl px-3 text-ink-secondary transition-colors hover:bg-raised hover:text-ink",
+          compact ? "py-1.5" : "py-2",
           open ? "bg-raised text-ink" : "bg-raised/40",
         )}
       >
-        <ChevronUp size={16} className={cn("transition-transform", open && "rotate-180")} />
+        <Wrench size={18} aria-hidden="true" className="shrink-0" />
+        <span className="flex-1 text-left text-[14px] font-medium">Tools</span>
         {attention && !open && (
-          <span data-sidebar-more-attention className="absolute right-3 top-1/2 size-2 -translate-y-1/2 rounded-full bg-danger" />
+          <span data-sidebar-more-attention aria-hidden="true" className="size-2 shrink-0 rounded-full bg-danger" />
         )}
+        <ChevronUp size={16} aria-hidden="true" className={cn("shrink-0 transition-transform", open && "rotate-180")} />
       </button>
 
       {open && <SidebarMoreMenuPanel items={items} id={menuId} onChoose={close} />}

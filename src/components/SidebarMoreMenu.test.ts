@@ -24,7 +24,9 @@ describe("sidebar more-menu trigger", () => {
 
     expect(markup).toContain('aria-haspopup="menu"');
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="More"');
+    expect(markup).toContain('aria-label="Tools"');
+    expect(markup).toContain(">Tools</span>");
+    expect(markup).toContain("lucide-wrench");
     expect(markup).toContain("data-sidebar-more-trigger");
     // nothing is folded open on first paint: the four destinations are hidden
     expect(markup).not.toContain('role="menu"');
@@ -40,12 +42,13 @@ describe("sidebar more-menu trigger", () => {
     expect(quiet).not.toContain("data-sidebar-more-attention");
     expect(loud).toContain("data-sidebar-more-attention");
     expect(loud).toContain("bg-danger");
+    expect(loud).toContain('aria-label="Tools, items need attention"');
   });
 
   it("tightens its own height in the compact density without changing anything else", () => {
-    expect(trigger([item()], false)).toContain("py-1.5");
-    expect(trigger([item()], true)).toContain("py-1");
-    expect(trigger([item()], true)).not.toContain("py-1.5");
+    expect(trigger([item()], false)).toContain("py-2");
+    expect(trigger([item()], true)).toContain("py-1.5");
+    expect(trigger([item()], true)).not.toContain("py-2");
   });
 });
 
