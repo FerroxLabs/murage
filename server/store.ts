@@ -253,6 +253,16 @@ export interface TaskRecord {
   createdAt: number;
   /** provider-native continuation per instance, for THIS task only */
   resumeCursors: Record<string, unknown>;
+  /** Independent direct-thread settings; copied from the bot on creation. */
+  modelSelection?: ModelSelection;
+  autoApprove?: boolean;
+  alwaysAllow?: string[];
+  unread?: boolean;
+  rewound?: boolean;
+  pinnedMessageId?: string;
+  /** Runtime only. Never resume a running process after restart. */
+  activity?: BotActivity;
+  busy?: boolean;
   /** which instance dispatched the most recent turn. A cursor alone can't
    * say whether an engine's session is current — another engine may have
    * taken turns since — so this is what decides an inline replay. Absent
@@ -740,6 +750,7 @@ export class Store {
   private defaultSelection: () => ModelSelection;
   private listeners = new Set<(change: StoreChange) => void>();
   private accessRoles = new Map<string, string>();
+  private legacyActivities = new Map<string, BotActivity>();
 
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
@@ -910,13 +921,11 @@ export class Store {
       g.pinnedCwd = active.pinnedCwd;
       g.pinnedMessageId = active.pinnedMessageId;
     }
-    if (botsMigrated) this.saveBots();
     if (groupsMigrated) this.saveGroups();
     // bots saved before tasks existed have one endless thread; adopt it as
     // their first task so nothing is lost and nothing special-cases it
     for (const b of this.bots) {
-      if (b.tasks?.length) continue;
-      b.tasks = [
+      if (!b.tasks?.length) b.tasks = [
         {
           threadId: b.threadId,
           title: this.firstUserLine(b.threadId) ?? UNTITLED_TASK,
@@ -924,7 +933,19 @@ export class Store {
           resumeCursors: b.resumeCursors ?? {},
         },
       ];
+      if (!b.tasks.some(task=>task.threadId===b.threadId)) b.tasks.unshift({threadId:b.threadId,title:this.firstUserLine(b.threadId)??UNTITLED_TASK,createdAt:b.createdAt,resumeCursors:b.resumeCursors??{}});
+      for (const task of b.tasks) {
+        if (task.modelSelection === undefined) { task.modelSelection=structuredClone(b.modelSelection); botsMigrated=true; }
+        if (task.autoApprove === undefined) { task.autoApprove=b.autoApprove===true; botsMigrated=true; }
+        if (task.alwaysAllow === undefined) { task.alwaysAllow=structuredClone(b.alwaysAllow??[]); botsMigrated=true; }
+        if (task.unread === undefined) { task.unread=task.threadId===b.threadId&&b.unread; botsMigrated=true; }
+        task.resumeCursors ??= task.threadId===b.threadId?structuredClone(b.resumeCursors??{}):{};
+        if (task.threadId===b.threadId) { task.rewound??=b.rewound; task.pinnedMessageId??=b.pinnedMessageId; }
+        task.busy=false;task.activity="idle";
+      }
+      b.unread=b.tasks.some(task=>task.unread);
     }
+    if (botsMigrated) this.saveBots();
     // Search reads SQLite directly, so migrate every known legacy transcript
     // at startup rather than waiting until the user happens to open it. Only
     // pending JSON files are touched; already-migrated threads stay lazy.
@@ -948,7 +969,7 @@ export class Store {
       const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
       return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
     });
-    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, JSON.stringify(normalized, null, 2)));
+    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, JSON.stringify(normalized.map(({busy:_busy,activity:_activity,...bot})=>({...bot,tasks:bot.tasks?.map(({busy:_taskBusy,activity:_taskActivity,...task})=>task)})), null, 2)));
     for (const next of normalized) {
       this.accessRoles.set(next.id, accessRoleBinding({ ...next, accessRoleEpoch: 0 }));
       const supplied = bots.find(bot => bot.id === next.id);
@@ -1535,7 +1556,7 @@ export class Store {
       createdAt: Date.now(),
     };
     if (section) bot.section = section;
-    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {} }];
+    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {},modelSelection:structuredClone(bot.modelSelection),autoApprove:false,alwaysAllow:[],unread:false }];
     this.bots.unshift(bot);
     this.saveBots();
     // Announce the owner before its onboarding transcript. SSE clients need
@@ -1577,9 +1598,13 @@ export class Store {
     if (!bot) return null;
     if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
-      patch = { ...patch, resumeCursors: {}, ...(tasks ? { tasks: tasks.map(task => ({ ...task, resumeCursors: {} })) } : {}) };
+      patch = { ...patch, ...(tasks?.length===1 ? {resumeCursors:{},tasks:tasks.map(task=>({...task,resumeCursors:{},modelSelection:structuredClone(patch.modelSelection!)}))} : {}) };
     }
     Object.assign(bot, patch);
+    if(bot.tasks?.length===1){
+      const task=bot.tasks[0];
+      for(const key of ["modelSelection","autoApprove","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key))Object.assign(task,{[key]:structuredClone(patch[key])});
+    }
     this.saveBots();
     this.emit({ type: "bot", botId: id });
     return bot;
@@ -1638,13 +1663,23 @@ export class Store {
   setActivity(botId: string, activity: BotActivity): BotRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
-    const busy = ACTIVITY_BUSY.has(activity);
-    if (bot.activity === activity && Boolean(bot.busy) === busy) return bot;
-    bot.activity = activity;
-    bot.busy = busy;
-    this.saveBots();
+    if ((this.legacyActivities.get(botId)??"idle")===activity) return bot;
+    this.legacyActivities.set(botId,activity);
+    this.refreshBotActivity(bot);
     this.emit({ type: "bot", botId });
     return bot;
+  }
+
+  setTaskActivity(botId:string,threadId:string,activity:BotActivity):BotRecord|null {
+    const bot=this.bot(botId),task=this.taskByThread(botId,threadId);
+    if(!bot||!task)return null;
+    task.activity=activity;task.busy=ACTIVITY_BUSY.has(activity);this.refreshBotActivity(bot);
+    this.emit({type:"bot",botId});return bot;
+  }
+  private refreshBotActivity(bot:BotRecord){
+    const values=[this.legacyActivities.get(bot.id),...(bot.tasks??[]).map(task=>task.activity)];
+    bot.activity=(["waiting-on-you","no-signal","working","dead"] as const).find(value=>values.includes(value))??"idle";
+    bot.busy=ACTIVITY_BUSY.has(bot.activity);
   }
 
   /** Elect one Chief of Staff in its section (or clear one section) as one persisted change.
@@ -1920,6 +1955,23 @@ export class Store {
     return this.bot(botId)?.tasks?.find((t) => t.threadId === threadId);
   }
 
+  projectBotForTask(botId:string,threadId:string):BotRecord|null {
+    const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
+    return {...bot,threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),autoApprove:task.autoApprove??false,alwaysAllow:structuredClone(task.alwaysAllow??[]),unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
+  }
+  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>):TaskRecord|null {
+    const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
+    const next={...task,...structuredClone(patch)};
+    if(patch.title!==undefined)next.title=patch.title.trim().slice(0,80)||UNTITLED_TASK;
+    if(patch.modelSelection&&patch.modelSelection.connectionId!==task.modelSelection?.connectionId)next.resumeCursors={};
+    const tasks=bot.tasks!.map(candidate=>candidate===task?next:candidate);
+    const mirrors=bot.threadId===threadId?{resumeCursors:{...next.resumeCursors},rewound:next.rewound,pinnedMessageId:next.pinnedMessageId}:{};
+    const candidate={...bot,...mirrors,tasks,unread:tasks.some(task=>task.unread)};
+    this.saveBots(this.bots.map(current=>current===bot?candidate:current));
+    Object.assign(task,next);Object.assign(bot,mirrors,{unread:candidate.unread});
+    this.emit({type:"bot",botId});return task;
+  }
+
   /** A fresh context on the same bot: new thread, new session, same
    * persona/tools/computer. Becomes the active task. */
   createTask(botId: string, title?: string, activate = true): TaskRecord | null {
@@ -1927,9 +1979,10 @@ export class Store {
     if (!bot) return null;
     const task: TaskRecord = {
       threadId: newId(),
-      title: title?.trim() || UNTITLED_TASK,
+      title: title?.trim().slice(0,80) || UNTITLED_TASK,
       createdAt: Date.now(),
       resumeCursors: {},
+      modelSelection:structuredClone(bot.modelSelection),autoApprove:bot.autoApprove===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {
@@ -1947,6 +2000,7 @@ export class Store {
     if (!bot || !task) return null;
     bot.threadId = task.threadId;
     bot.resumeCursors = { ...task.resumeCursors };
+    bot.rewound=task.rewound;bot.pinnedMessageId=task.pinnedMessageId;
     this.saveBots();
     this.emit({ type: "bot", botId });
     return bot;
