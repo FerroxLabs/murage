@@ -794,6 +794,7 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
 }
 
 import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, requireDirectThreadTarget } from "./independent-thread-runs.ts";
+import { workspaceResource } from "./turn-resources.ts";
 type DirectTurnDispatchClaim = {
   id: string;
   botId: string;
@@ -3542,6 +3543,7 @@ async function startTurn(
       let cwd = pinnedCwd ?? undefined;
       if (privateWorkspace && opts?.runOn !== "cloud") {
         if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
+        if(!directRuns.claim(run,[workspaceResource(cwd??homedir())]))throw new Error("Another thread is using this working folder. Wait for it to finish.");
         cwd = projectTurnLeases.acquire(threadId, dispatchClaimId, cwd ?? homedir()).canonicalPath;
       }
       // Checkpoint explicit project folders, where a bot can overwrite the
