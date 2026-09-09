@@ -23,7 +23,7 @@ export const WORKSPACES_DIR = join(DATA_DIR, "workspaces");
 export const MEMORY_MAX_LINES = 200;
 export const MEMORY_MAX_BYTES = 24_000;
 
-const MEMORY_SEED = `# Memory
+export const MEMORY_SEED = `# Memory
 
 Durable notes this bot keeps between tasks. The first ${MEMORY_MAX_LINES} lines
 load at the start of every session — keep this file short and curated.
