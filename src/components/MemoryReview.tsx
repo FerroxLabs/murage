@@ -24,7 +24,8 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
   const active = record.state === "active";
   return <section aria-label="Memory details" className="space-y-4 rounded-xl border border-hairline/50 bg-panel p-4" data-memory-detail-id={record.id}>
     <div className="flex items-center justify-between gap-3"><h3 className="text-[15px] font-medium">Memory details</h3><button className={memoryButtonClass} onClick={onClose}>Close details</button></div>
-    <p className="text-[12px] text-ink-secondary">{audience} · {record.state} · Version {record.version} · {record.assertion.replaceAll("-", " ")}</p>
+    <p className="text-[12px] text-ink-secondary">{audience} · Record: {record.state} · Version {record.version} · {record.assertion.replaceAll("-", " ")} · <time dateTime={new Date(record.validFrom).toISOString()}>{new Date(record.validFrom).toLocaleString()}</time></p>
+    {record.assertion === "unverified-import" && <p className="text-[12px] text-ink-secondary">Imported notebook text is reference material. Active means saved for recall, not verified instructions or a change to workspace capture settings.</p>}
     <p className="whitespace-pre-wrap break-words text-[13px]" data-testid="memory-record-text">{record.text}</p>
     <div className="space-y-2">
       <h4 className="text-[13px] font-medium">Sources</h4>
