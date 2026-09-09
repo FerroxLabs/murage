@@ -80,6 +80,7 @@ describe("package export", () => {
           modelSelection: { instanceId: "private-engine", model: "secret-model", effort: "medium" },
           resumeCursors: { provider: "secret-session" },
           chiefOfStaff: true,
+          chiefScope: "workspace",
           composio: true,
           cwd: "/private/path",
           autoApprove: true,
