@@ -33,7 +33,7 @@ import {
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
-import { acquireDataDirLease, dataDirLeasePaths } from "./data-dir-lease.mjs";
+import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
 import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
@@ -311,6 +311,8 @@ function acquireDesktopDataOwner() {
   // An empty override is invalid, not permission to open a new default home.
   const raw = process.env.MURAGE_DATA_DIR ?? path.join(app.getPath("home"), ".murage");
   const canonical = dataDirLeasePaths(raw).canonicalDataDir;
+  // Retain the inspected location for recovery without granting ownership.
+  desktopDataDir = canonical;
   const owner = acquireDataDirLease(canonical);
   desktopDataDir = canonical;
   desktopDataOwner = owner;
@@ -1693,14 +1695,17 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   desktopRecoveryMode = true;
   serverReady = false;
   if (recoveryWindow && !recoveryWindow.isDestroyed()) { recoveryWindow.focus(); return recoveryWindow; }
-  const reason = reasonCode === "RESTORE_REVIEW_REQUIRED"
+  const ownership = reasonCode === "LEASE_FOREIGN_HOST" && desktopDataDir ? inspectDataDirLease(desktopDataDir) : null;
+  const reason = reasonCode === "LEASE_FOREIGN_HOST"
+    ? "This installation has an ownership record for a different computer name. This does not establish that your data is damaged. Reinstalling Murage will not clear this record."
+    : reasonCode === "RESTORE_REVIEW_REQUIRED"
     ? "This restored installation is paused for recovery review. Your previous installation remains retained."
     : reasonCode === "PORT_CONFLICT"
       ? "Another process answered on Murage's ports. Close that process before retrying startup; restoring data will not resolve a port conflict."
       : "Murage could not finish startup. Keep the original installation while you inspect recovery options.";
   const recovery = openInstallationRecoveryWindow({
     BrowserWindow, ipcMain, dialog, baseDir: __dirname,
-    context: { reason, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
+    context: { reason, ownership, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     run: runDesktopRecovery,
     retry: async () => { app.relaunch(); app.quit(); },
