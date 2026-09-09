@@ -2,7 +2,9 @@
 ; application code even when the parent DACL carries package-specific SIDs.
 ; Only the package code tree is granted RX. Keep all prior ACEs and owners;
 ; never reset a user profile/ancestor ACL or grant write/control privileges.
+!include "windows-upgrade-staging.nsh"
 !macro customInstall
+  !insertmacro murageRestoreUpgradeEnvironment
   Push $0
   Push $1
   DetailPrint "Preparing sandboxed application runtime permissions..."
