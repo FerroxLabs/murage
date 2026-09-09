@@ -162,8 +162,14 @@ export function createBotPackageExportPreview(input: {
   const definition: ParsedBotPackage = { ...source.definition, package: {
     ...pkg, agents, routines,
     playbooks: (pkg.playbooks ?? []).filter((playbook) => playbookKeys.has(playbook.key)),
-    // Room records are not an explicit selection category in this version.
-    rooms: [],
+    // Rooms carry only selected fresh members, never existing workspace IDs.
+    rooms: (pkg.rooms ?? []).flatMap(room => {
+      const members = room.members.filter(member => chosen.agents.has(member));
+      if (!members.length) return [];
+      const defaultResponder = room.defaultResponder.kind === "agent" && !members.includes(room.defaultResponder.agent)
+        ? { kind: "mentions" as const } : room.defaultResponder;
+      return [{ ...room, members, defaultResponder }];
+    }),
     ...(pkg.chiefOfStaff && chosen.agents.has(pkg.chiefOfStaff) ? { chiefOfStaff: pkg.chiefOfStaff } : { chiefOfStaff: undefined }),
   } };
   return { manifest: parseBotPackageManifest({ format: BOT_PACKAGE_BUNDLE_FORMAT, version: BOT_PACKAGE_BUNDLE_VERSION, definition, skills, instructions, entries }), missingDependencies: [], omitted, requiresContentScan: true };

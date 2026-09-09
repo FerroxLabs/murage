@@ -7312,6 +7312,32 @@ describe("computer control API (who is driving)", () => {
 });
 
 describe("internal capability authority", () => {
+  it("imports role-aware Markdown package intent without automatically appointing a Chief", async () => {
+    const payload = { format: "murage.package", version: 1, package: {
+      id: "role-aware-export", release: "1.0.0", name: "Role-aware export", tagline: "Reviewed role intent.",
+      summary: "Preserve private roles without authority.", category: "Work", author: { name: "Fixture" }, license: "MIT",
+      outcomes: ["Import safely."], setupMinutes: 2, requirements: { apps: [], capabilities: [] }, chiefOfStaff: "chief",
+      agents: [
+        { key: "chief", name: "Role Chief Fixture", role: "chief", team: "Research", appearance: { color: "green" } },
+        { key: "member", name: "Role Member Fixture", role: "member", team: "Research", appearance: { color: "blue" } },
+      ], rooms: [{ key: "room", name: "Role Room Fixture", team: "Research", members: ["chief", "member"], defaultResponder: { kind: "agent", agent: "chief" } }],
+    } };
+    const { renderBotPackageMarkdown, parseBotPackage } = await import("./bot-package.ts");
+    const result = await desktopApi("POST", "/api/teams/import", renderBotPackageMarkdown(parseBotPackage(payload)));
+    try {
+      expect(result.status).toBe(201);
+      const bots = result.body.bots;
+      expect(bots).toHaveLength(2);
+      expect(bots.every((bot: { chiefOfStaff?: boolean }) => !bot.chiefOfStaff)).toBe(true);
+      expect(bots[0].installedPackage).toMatchObject({ sourceRole: "chief", sourceTeam: "Research" });
+      expect(bots[1].installedPackage).toMatchObject({ sourceRole: "member", sourceTeam: "Research" });
+      expect(bots[0].section).toBe(bots[1].section);
+    } finally {
+      for (const group of result.body.groups ?? []) await desktopApi("DELETE", `/api/groups/${group.id}`);
+      for (const bot of result.body.bots ?? []) await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("applies all three starters through the reviewed transaction without changing existing roles", async () => {
     const botIds: string[] = [], routineIds: string[] = [];
     const botsFile = join(home, ".murage", "bots.json");
@@ -7331,6 +7357,9 @@ describe("internal capability authority", () => {
         expect(preview.body.scan.blocked).toBe(false);
         expect(readFileSync(botsFile)).toEqual(before);
         const reviewed = { ...request, action: "import", archiveSha256: preview.body.archiveSha256, reviewHash: preview.body.reviewHash, acknowledgeWarnings: true };
+        const firstRunAttempt = await desktopApi("POST", "/api/starter-profiles", { ...reviewed, firstRun: true });
+        expect(firstRunAttempt.status).toBe(409);
+        expect(readFileSync(botsFile)).toEqual(before);
         expect((await desktopApi("POST", "/api/starter-profiles", { ...reviewed, reviewHash: "0".repeat(64) })).status).toBeGreaterThanOrEqual(400);
         expect(readFileSync(botsFile)).toEqual(before);
         const invalidModel = await desktopApi("POST", "/api/starter-profiles", { ...reviewed, modelSelection: { instanceId: "missing-onboarding-engine", model: "missing-model" } });

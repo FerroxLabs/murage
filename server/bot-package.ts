@@ -70,6 +70,9 @@ const packageSchema = z.object({
       name: requiredText(100),
       title: optionalText(200),
       description: optionalText(4_000),
+      /** Portable intent only; importing never grants coordination authority. */
+      role: z.enum(["individual", "member", "leader", "chief"]).optional(),
+      team: optionalText(200),
       appearance: z.object({
         color: z.enum(COLORS, { error: "is not supported" }),
         mascotExpression: optionalText(80),
@@ -83,6 +86,7 @@ const packageSchema = z.object({
       name: requiredText(100),
       members: z.array(key).min(1).max(200),
       bulletin: optionalText(12_000),
+      team: optionalText(200),
       defaultResponder: z.discriminatedUnion("kind", [
         z.object({ kind: z.literal("agent"), agent: key }),
         z.object({ kind: z.literal("everyone") }),
@@ -212,14 +216,14 @@ export function parseBotPackage(value: JsonValue | ParsedBotPackage): ParsedBotP
 const list = (values: string[]) => values.map((value) => `- ${value}`).join("\n");
 
 /** Render the public artifact. The frontmatter enables deterministic imports;
- * the body is deliberately complete enough for any Chief-of-Staff agent to
- * run without Murage or another proprietary parser. */
+ * the body describes the selected roles without assigning new authority. */
 export function renderBotPackageMarkdown(document: ParsedBotPackage): string {
   const pkg = parseBotPackage(document).package;
   const frontmatter = stringifyYaml({ emberbot: EMBERBOT_MARKDOWN_VERSION, ...pkg }, { lineWidth: 0 }).trim();
   const agents = pkg.agents.map((agent) => [
     `### ${agent.name} — ${agent.title || "Specialist"}`,
     `**Role key:** \`${agent.key}\``,
+    `**Role:** ${agent.role === "chief" ? "Chief of Staff" : agent.role === "leader" ? "Team leader" : agent.role === "individual" ? "Individual bot" : pkg.chiefOfStaff === agent.key ? "Chief of Staff (blueprint intent)" : "Team member"}${agent.team ? ` · ${agent.team}` : ""}`,
     agent.playbooks?.length ? `**Use these playbooks:** ${agent.playbooks.map((key) => `\`${key}\``).join(", ")}` : "",
     "",
     agent.description,
@@ -269,7 +273,7 @@ export function renderBotPackageMarkdown(document: ParsedBotPackage): string {
     ? pkg.requirements.apps.map((app) => `- **${app.label}${app.optional ? " (optional)" : ""}:** ${app.reason}`).join("\n")
     : "- No connected apps are required.";
 
-  return `---\n${frontmatter}\n---\n\n# ${pkg.name}\n\n${pkg.tagline}\n\n> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; Murage can also install it directly.\n\n## Activation\n\nYou are the Chief of Staff for this blueprint. Read the whole document before acting. Confirm the user's goal and any missing inputs, then create or delegate to the specialist roles below. Preserve their names, ownership, boundaries, shared-room rules, and playbooks. If your platform cannot literally spawn agents, perform the roles one at a time and keep their outputs clearly separated.\n\nNever request pasted passwords or secret keys. Use the platform's normal connection flow. Do not send messages, publish content, spend money, delete data, or enable a schedule without the user's explicit approval. All routines start paused.\n\n## Mission\n\n${pkg.summary}\n\n## Outcomes\n\n${list(pkg.outcomes)}\n\n## Connections\n\n${connections}\n\n## Team\n\n${agents}\n\n## Chief of Staff\n\nThe Chief of Staff role is \`${pkg.chiefOfStaff ?? pkg.agents[0].key}\`. This role owns delegation, synthesis, conflict resolution, and the final answer to the user.\n${rooms ? `\n## Shared rooms\n\n${rooms}\n` : ""}${routines ? `\n## Suggested routines\n\n${routines}\n` : ""}${playbooks ? `\n## Playbooks\n\n${playbooks}\n` : ""}${examples ? `\n## Example job\n\n${examples}\n` : ""}\n## Completion rule\n\nReturn one clear result to the user, distinguish evidence from inference, cite source links when the work uses external material, and state what still needs human approval or a connected app.\n`;
+  return `---\n${frontmatter}\n---\n\n# ${pkg.name}\n\n${pkg.tagline}\n\n> **Selected bot blueprint.** Review the roles and contents before use. Murage can import this Markdown definition; skill files are available only in ZIP packages.\n\n## Activation\n\nRead the whole document before acting. Confirm the user's goal and use only the roles explicitly described below. A single bot remains that bot; being first in this file does not make it a Chief or team leader. Preserve names, instructions, team relationships and selected playbooks. Importing records the intended roles; the user must assign Chief or leader authority through the normal role controls.\n\nNever request pasted passwords or secret keys. Use the platform's normal connection flow. Do not send messages, publish content, spend money, delete data, or enable a schedule without the user's explicit approval. All routines start paused.\n\nCredentials, conversations, private memory, engine sessions and permission grants are excluded. Connected apps must be configured separately. File-based skills are not embedded in this Markdown.\n\n## Mission\n\n${pkg.summary}\n\n## Outcomes\n\n${list(pkg.outcomes)}\n\n## Connections\n\n${connections}\n\n## Team\n\n${agents}\n\n## Chief of Staff\n\n${pkg.chiefOfStaff ? `The selected blueprint names \`${pkg.chiefOfStaff}\` as Chief of Staff. This is role intent, not permission or automatic promotion on import.` : "No Chief of Staff is included in this selection. Do not infer one from the order of the bots."}\n${rooms ? `\n## Shared rooms\n\n${rooms}\n` : ""}${routines ? `\n## Suggested routines\n\n${routines}\n` : ""}${playbooks ? `\n## Playbooks\n\n${playbooks}\n` : ""}${examples ? `\n## Example job\n\n${examples}\n` : ""}\n## Completion rule\n\nReturn one clear result to the user, distinguish evidence from inference, cite source links when the work uses external material, and state what still needs human approval or a connected app.\n`;
 }
 
 export function packageAgentAsMember(agent: BotPackageAgent): TeamManifestMember {

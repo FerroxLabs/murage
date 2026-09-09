@@ -69,7 +69,8 @@ describe("bot packages", () => {
     expect(markdown).toContain("emberbot: 1");
     expect(markdown).not.toContain("botmrr: 1");
     expect(markdown).toContain("## Activation");
-    expect(markdown).toContain("Give this file to your Chief of Staff");
+    expect(markdown).toContain("Selected bot blueprint");
+    expect(markdown).not.toContain("You are the Chief of Staff");
     expect(markdown).not.toContain("autoApprove");
     expect(parseBotPackage(markdown).package).toMatchObject({
       id: "research-desk",

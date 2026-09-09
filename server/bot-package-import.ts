@@ -76,6 +76,9 @@ function inspect(intake: Intake, selection: BotPackageSelection, existingBots: r
     skills: selected.skills.length, instructions: selected.instructions.length,
     suggestedChief: intake.scan.blocked ? null : selected.definition.package.chiefOfStaff ?? null,
     importedChiefRole: false as const, skillsInitiallyEnabled: false as const,
+    roles: intake.scan.blocked ? [] : selected.definition.package.agents.map(agent => ({ key: agent.key, name: agent.name,
+      intendedRole: agent.role ?? (agent.key === selected.definition.package.chiefOfStaff ? "chief" : "member"), team: agent.team ?? null })),
+    rooms: selected.definition.package.rooms?.length ?? 0,
   } : null;
   const previous = existingBots.filter(bot => bot.installedPackage?.id === selected?.definition.package.id)
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || a.id.localeCompare(b.id));
@@ -131,6 +134,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
     bots: [], groups: [], routines: [], files: [], baseline: createPackageImportBaseline(manifest) };
   const ids = new Map<string, string>();
   const pkg = manifest.definition.package;
+  const teamSection = (team?: string) => `${pkg.name} · ${team?.trim() || "General"} (${result.id.slice(0, 8)})`;
   const skillsByKey = new Map(manifest.skills.map((skill) => [skill.key, skill]));
   const instructionsByAgent = new Map(manifest.instructions.map((entry) => [entry.agent, entry.path]));
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -163,8 +167,10 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
       modelSelection: structuredClone(options.modelSelection), resumeCursors: {}, createdAt: at,
       tasks: [{ threadId, title: "New task", createdAt: at, resumeCursors: {} }],
       composio: false, computer: "off", browser: false, autoApprove: false, chiefOfStaff: false,
+      section: teamSection(agent.team),
       ...(playbooks.length ? { playbooks: structuredClone(playbooks) } : {}),
-      installedPackage: { id: pkg.id, name: pkg.name, release: pkg.release, requiredApps: pkg.requirements.apps.map((app) => ({ ...app })) },
+      installedPackage: { id: pkg.id, name: pkg.name, release: pkg.release, requiredApps: pkg.requirements.apps.map((app) => ({ ...app })),
+        sourceRole: agent.role ?? (agent.key === pkg.chiefOfStaff ? "chief" : "member"), sourceTeam: agent.team },
     };
     result.bots.push(bot); ids.set(agent.key, id);
     const assigned = new Set<string>();
@@ -195,6 +201,16 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
       };
     }
     if (assigned.size) addFile("skill-state/" + id + "/skills.json", JSON.stringify(skillState, null, 2) + "\n");
+  }
+  for (const room of pkg.rooms ?? []) {
+    const id = freshId(), threadId = freshId();
+    result.groups.push({ id, threadId, name: room.name, memberIds: room.members.map(key => ids.get(key)!),
+      defaultResponder: room.defaultResponder.kind === "agent"
+        ? { kind: "member", botId: ids.get(room.defaultResponder.agent)! } : { kind: room.defaultResponder.kind },
+      bulletin: room.bulletin ?? "", unread: false, createdAt: at,
+      section: teamSection(room.team),
+      tasks: [{ threadId, title: "New task", createdAt: at }],
+    });
   }
   for (const routine of pkg.routines ?? []) {
     const botId = ids.get(routine.agent);

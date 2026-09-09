@@ -8746,6 +8746,9 @@ const server = createServer(async (req, res) => {
       if (body.action !== "import" || typeof body.archiveSha256 !== "string" || typeof body.reviewHash !== "string") return json(res, 400, { error: "Reviewed archive hash is required" });
       const selectionHash = packageImportSelectionHash(body.selection);
       const refuseRepeatedImport = () => {
+        if (starter && body.firstRun === true && (store.bots.length > 0 || store.groups.length > 0)) {
+          throw Object.assign(new Error("This workspace already has bots or groups. Continue from your existing workspace or add a starter from Settings."), { status: 409 });
+        }
         if (store.bots.some(bot => bot.packageImportReceipt?.archiveSha256 === body.archiveSha256
           && (bot.packageImportReceipt?.selectionHash === selectionHash || bot.packageImportReceipt?.reviewHash === body.reviewHash))) {
           throw Object.assign(new Error("This reviewed package was already imported"), { status: 409 });
@@ -9017,10 +9020,11 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: error instanceof Error ? error.message : "Invalid bot package" });
       }
       const pkg = packageDocument?.package;
+      const roleAwarePackage = Boolean(pkg?.agents.some(agent => agent.role !== undefined || agent.team !== undefined));
       const importName = pkg?.name ?? manifest!.team.name;
       const sourceMembers = pkg
-        ? pkg.agents.map((agent) => ({ member: packageAgentAsMember(agent), playbookKeys: agent.playbooks ?? [], skillIds: agent.skills ?? [] }))
-        : manifest!.team.members.map((member) => ({ member, playbookKeys: [] as string[], skillIds: [] as string[] }));
+        ? pkg.agents.map((agent) => ({ member: packageAgentAsMember(agent), playbookKeys: agent.playbooks ?? [], skillIds: agent.skills ?? [], role: agent.role, team: agent.team }))
+        : manifest!.team.members.map((member) => ({ member, playbookKeys: [] as string[], skillIds: [] as string[], role: undefined, team: undefined }));
 
       // Snapshot before creating anything so replace never archives the new
       // team. Old bots are hidden only after every new bot was created; a
@@ -9068,7 +9072,7 @@ const server = createServer(async (req, res) => {
       let group: GroupRecord | undefined;
       try {
         const selection = await defaultSelection();
-        if (pkg?.chiefOfStaff) {
+        if (pkg?.chiefOfStaff && !roleAwarePackage) {
           const error = leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId);
           if (error) return json(res, 409, { error });
         }
@@ -9085,6 +9089,19 @@ const server = createServer(async (req, res) => {
           }
         }
         const playbookByKey = new Map((pkg?.playbooks ?? []).map((playbook) => [playbook.key, playbook]));
+        const importedSections = new Map<string, string>();
+        const sectionFor = (team?: string) => {
+          if (!roleAwarePackage) return packageSection;
+          const key = team?.trim() || "General";
+          if (!importedSections.has(key)) {
+            const stem = `${packageSection} · ${key}`;
+            let value = stem;
+            for (let suffix = 2; existingSections.has(value.toLowerCase()); suffix++) value = `${stem} ${suffix}`;
+            existingSections.add(value.toLowerCase());
+            importedSections.set(key, value);
+          }
+          return importedSections.get(key);
+        };
         for (const source of sourceMembers) {
           const member = source.member;
           // importedMemberProfile is the authority boundary: persona fields
@@ -9098,7 +9115,7 @@ const server = createServer(async (req, res) => {
             {
               ...importedMemberProfile(member, takenNames),
               modelSelection: selection,
-              ...(packageSection ? { section: packageSection } : {}),
+              ...(packageSection ? { section: sectionFor(source.team) } : {}),
             },
             { seedMessages: false },
           );
@@ -9147,6 +9164,8 @@ const server = createServer(async (req, res) => {
                     name: pkg.name,
                     release: pkg.release,
                     requiredApps: pkg.requirements.apps.map((app) => ({ ...app })),
+                    sourceRole: source.role ?? (member.key === pkg.chiefOfStaff ? "chief" : "member"),
+                    sourceTeam: source.team,
                   },
                 }
               : {}),
@@ -9159,7 +9178,7 @@ const server = createServer(async (req, res) => {
         // from package-local keys only, then normalized to fresh bot ids.
         for (const room of pkg?.rooms ?? []) {
           const ids = room.members.map((key) => memberIds.get(key)!);
-          let created = store.createGroup(room.name, ids, false, packageSection);
+          let created = store.createGroup(room.name, ids, false, sectionFor(room.team));
           const defaultResponder = room.defaultResponder.kind === "agent"
             ? { kind: "member" as const, botId: memberIds.get(room.defaultResponder.agent)! }
             : { kind: room.defaultResponder.kind } as const;
@@ -9185,7 +9204,7 @@ const server = createServer(async (req, res) => {
           createdRoutineIds.push(created.id);
         }
 
-        if (pkg?.chiefOfStaff) {
+        if (pkg?.chiefOfStaff && !roleAwarePackage) {
           store.setChiefOfStaff(memberIds.get(pkg.chiefOfStaff)!);
         }
 

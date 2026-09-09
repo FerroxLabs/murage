@@ -2116,7 +2116,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
         />
       )}
-      {exportTeamOpen && <TeamExportDialog onClose={() => setExportTeamOpen(false)} onExported={exported => {
+      {exportTeamOpen && <TeamExportDialog initialBotIds={state.groups.find(group => group.id === state.selectedId)?.memberIds ?? (state.bots.some(bot => bot.id === state.selectedId) ? [state.selectedId!] : [])} onClose={() => setExportTeamOpen(false)} onExported={exported => {
         track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />}

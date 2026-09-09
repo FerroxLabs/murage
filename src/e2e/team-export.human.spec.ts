@@ -9,8 +9,8 @@ let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async()=>{
   const root=fileURLToPath(new URL('../../',import.meta.url));cache=mkdtempSync(join(tmpdir(),'murage-export-ui-'));
   server=await createServer({configFile:false,root,cacheDir:cache,envFile:false,resolve:{alias:{'@':`${root}/src`}},server:{host:'127.0.0.1',watch:null,hmr:false},plugins:[tailwindcss(),{
-    name:'export-fixture',resolveId(id){if(id==='/__export.js')return '\0fixture-export';},load(id){if(id!=='\0fixture-export')return;return `import React from 'react';import {createRoot} from 'react-dom/client';import {TeamExportDialog} from '/src/components/TeamExportDialog.tsx';import '/src/styles.css';createRoot(document.getElementById('root')).render(React.createElement(TeamExportDialog,{onClose:()=>{},onExported:()=>{}}));`;},
-    configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=='/__export')return next();res.setHeader('content-type','text/html');res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__export.js"></script>');});},
+    name:'export-fixture',resolveId(id){if(id==='/__export.js')return '\0fixture-export';},load(id){if(id!=='\0fixture-export')return;return `import React from 'react';import {createRoot} from 'react-dom/client';import {TeamExportDialog} from '/src/components/TeamExportDialog.tsx';import '/src/styles.css';const selected=new URL(location.href).searchParams.get('bots')?.split(',')??[];createRoot(document.getElementById('root')).render(React.createElement(TeamExportDialog,{initialBotIds:selected,onClose:()=>{},onExported:()=>{}}));`;},
+    configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/__export')return next();res.setHeader('content-type','text/html');res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__export.js"></script>');});},
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
@@ -18,6 +18,7 @@ const options={bots:[{id:'a',key:'a',name:'Researcher',playbookKeys:['research']
 test('selection review gates downloads and stale previews require another review',async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
   await page.route('**/api/desktop-secret',route=>route.fulfill({json:{secret:'fixture-secret'}}));
+  await page.route('**/api/packages/export',route=>route.fulfill({json:options}));
   const requests:any[]=[];let stale=true;
   await page.route('**/api/teams/export',async route=>{
     const body=route.request().postDataJSON();requests.push(body);
@@ -28,6 +29,7 @@ test('selection review gates downloads and stale previews require another review
   });
   await page.goto(`${origin}/__export`);
   await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('radio',{name:'Markdown (.md)',exact:true}).check();
   await expect(page.getByRole('button',{name:'Preview selection'})).toBeDisabled();
   await page.getByRole('checkbox',{name:'Researcher',exact:true}).check();
   await page.getByRole('button',{name:'Preview selection'}).click();
@@ -52,8 +54,9 @@ test('selection review gates downloads and stale previews require another review
 });
 test('blocked scan never renders payload content or enables download',async({page})=>{
   await page.route('**/api/desktop-secret',route=>route.fulfill({json:{secret:'fixture-secret'}}));
+  await page.route('**/api/packages/export',route=>route.fulfill({json:options}));
   await page.route('**/api/teams/export',route=>route.fulfill({json:route.request().postDataJSON().action==='options'?options:{name:'Blocked',members:1,previewHash:'blocked',markdown:'FAKE_SECRET_MUST_NOT_RENDER',scan:{blocked:true,reviewRequired:true,findings:[{path:'instructions.md',rule:'provider-token'}]}}}));
-  await page.goto(`${origin}/__export`);await page.getByRole('checkbox',{name:'Researcher',exact:true}).check();
+  await page.goto(`${origin}/__export`);await page.getByRole('radio',{name:'Markdown (.md)',exact:true}).check();await page.getByRole('checkbox',{name:'Researcher',exact:true}).check();
   await page.getByRole('button',{name:'Preview selection'}).click();
   await expect(page.getByRole('alert')).toContainText('Export blocked');
   await expect(page.getByRole('button',{name:'Download package'})).toBeDisabled();
@@ -137,3 +140,49 @@ test("blocked ZIP review hides all file contents and prevents download", async (
   await expect(page.getByText("ZIP_SECRET_MUST_NOT_RENDER")).toHaveCount(0);
   await expect(page.getByText(/Review included files/)).toHaveCount(0);
 });
+
+for (const skin of ["light", "dark"]) for (const width of [390, 1440]) {
+  test(`contextual scope, grouped search and dependency pruning at ${width}px ${skin}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route("**/api/desktop-secret", route => route.fulfill({ json: { secret: "fixture-secret" } }));
+    const large = { ...options, bots: [
+      { ...options.bots[0], team: "Research", role: "leader", title: "Research lead", description: "Review supplied evidence and report uncertainty." },
+      ...Array.from({ length: 120 }, (_, i) => ({ id: `bot-${i}`, key: `bot-${i}`, name: `Specialist ${i}`, team: i < 60 ? "Research" : "Operations", role: i === 119 ? "chief" : "member", playbookKeys: [] })),
+    ], groups: [{ id: "review-room", name: "Review room", memberIds: ["a", "bot-0"] }], skills: [],
+      playbooks: [{ ...options.playbooks[0], summary: "Check evidence", instructions: "Read the supplied sources." }],
+      routines: [{ ...options.routines[0], prompt: "Review the daily evidence.", schedule: { type: "daily", time: "09:00" } }],
+    };
+    const requests: any[] = [];
+    await page.route("**/api/packages/export", route => {
+      const body = route.request().postDataJSON(); requests.push(body);
+      return route.fulfill({ json: body.action === "options" ? large : { name: "Research", members: body.selection.botIds.length, previewHash: "context-review", scan: { blocked: false, reviewRequired: false, findings: [] }, files: [], reviewWarnings: [] } });
+    });
+    await page.goto(origin + "/__export?bots=a");
+    await page.evaluate(skin => document.documentElement.dataset.skin = skin, skin);
+    await expect(page.getByRole("radio", { name: "ZIP package (.zip)", exact: true })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Researcher", exact: true })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Specialist 0", exact: true })).not.toBeChecked();
+    await page.getByRole("checkbox", { name: "Research playbook", exact: true }).check();
+    await page.getByRole("checkbox", { name: "Daily review", exact: true }).check();
+    await page.getByText("Review routine", { exact: true }).click();
+    await expect(page.getByText("Review the daily evidence.", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Preview selection" }).click();
+    await expect(page.getByLabel("Export review")).toContainText("other members omitted");
+    expect(requests.at(-1).selection).toEqual({ botIds: ["a"], playbookKeys: ["research"], routineIds: ["r"], skillIds: [] });
+    await page.getByRole("searchbox", { name: "Find a bot or team" }).fill("Specialist 119");
+    await expect(page.getByRole("checkbox", { name: "Specialist 119", exact: true })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "Specialist 0", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Chief of Staff", { exact: true })).toBeVisible();
+    await page.getByRole("searchbox").fill("");
+    await page.getByRole("checkbox", { name: "Researcher", exact: true }).uncheck();
+    await expect(page.getByRole("button", { name: "Download ZIP package" })).toHaveCount(0);
+    await page.getByRole("checkbox", { name: "Researcher", exact: true }).check();
+    await expect(page.getByRole("checkbox", { name: "Research playbook", exact: true })).not.toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Daily review", exact: true })).not.toBeChecked();
+    await page.getByRole("searchbox").fill("Researcher");
+    await page.getByText("Researcher · Team leader", { exact: true }).click();
+    await expect(page.getByText("Review supplied evidence and report uncertainty.", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`context-export-${width}-${skin}.png`), fullPage: true });
+  });
+}
