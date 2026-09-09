@@ -7,7 +7,7 @@ import { requireMemoryOwner } from "./authority.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
 import { chunksFor } from "./chunks.ts";
 import { redactSecretsInText } from "../redact.ts";
-import { isMemoryTopicName } from "../workspace.ts";
+import { isMemoryTopicName, MEMORY_SEED } from "../workspace.ts";
 
 export type ImportSelection = {kind:"bot";botId:string;topic?:string}|{kind:"section";section:string};
 interface ImportItem {selection:ImportSelection;path:string;hash:string;bytes:number;text:string;scopeId:string;scopeLabel:string;alreadyImported:boolean}
@@ -84,7 +84,7 @@ function commitImportItems(items:ImportItem[], track=false){
       if(db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=?) OR (target_type='import' AND target_id=? AND content_hash=?)").get(id,item.scopeId,item.hash))throw new Error("MEMORY_IMPORT_FORGOTTEN");
       const prior=db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(id);
       if(prior && prior.state!=="active")throw new Error("MEMORY_IMPORT_SOURCE_RETIRED");
-      if(prior && prior.content_hash!==item.hash && db.prepare("SELECT 1 FROM memory_records r JOIN memory_evidence e ON e.record_id=r.id AND e.record_version=r.version WHERE e.source_id=? AND (r.owner_pinned=1 OR r.state IN ('archived','deleted') OR r.assertion!='unverified-import') LIMIT 1").get(id))throw new Error("MEMORY_IMPORT_REVIEW_CONFLICT");
+      if(prior && prior.content_hash!==item.hash && db.prepare("SELECT 1 FROM memory_records r WHERE r.id IN (SELECT record_id FROM memory_evidence WHERE source_id=?) AND (r.owner_pinned=1 OR r.state IN ('archived','deleted') OR r.assertion!='unverified-import') LIMIT 1").get(id))throw new Error("MEMORY_IMPORT_REVIEW_CONFLICT");
       if(track)db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','notebook-link',0,'granted',?) ON CONFLICT(id) DO UPDATE SET state='granted',intent=excluded.intent")
         .run(`notebook-link:${id}`,item.scopeId,JSON.stringify({selection:item.selection,hash:item.hash,status:"current",checkedAt:Date.now()}));
       if(prior?.content_hash===item.hash){skipped++;continue;}
@@ -136,6 +136,51 @@ export function stopTrackingMemoryNotebook(ticket:object,id:string){
   requireMemoryOwner(ticket);
   database().prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE id=? AND subject_type='system' AND subject_id='notebook-link'").run(id);
   return {stopped:true};
+}
+
+/** Startup migration: one bot and at most four files per call. A restart may
+ * rescan names, but source hashes and receipts make publication idempotent.
+ * Only Murage-owned private notebooks qualify; shared briefs stay reviewed.
+ */
+export function migrateDetectedMemoryNotebooks(roster:MemoryRoster,cursor?:string){
+  const db=database();
+  if(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode!=="active")return {imported:0,skipped:0,needsReview:0,paused:true};
+  const bots=roster.bots.filter(bot=>/^[\w-]+$/.test(bot.id)).map(bot=>bot.id).sort();
+  let after={bot:"",file:""};
+  if(cursor){
+    try{const parsed=JSON.parse(Buffer.from(cursor,"base64url").toString());if(typeof parsed.bot!=="string"||typeof parsed.file!=="string")throw new Error();after=parsed;}
+    catch{throw new Error("INVALID_MEMORY_IMPORT_CURSOR");}
+  }
+  const botId=bots.find(id=>id>=after.bot);
+  if(!botId)return {imported:0,skipped:0,needsReview:0,paused:false};
+  const scopeId=ensureScope("bot",botId),base=join(DATA_DIR,"workspaces",botId);
+  const selections:ImportSelection[]=[];
+  const unsafeBase=[DATA_DIR,join(DATA_DIR,"workspaces"),base].some(path=>existsSync(path)&&lstatSync(path).isSymbolicLink());
+  if(unsafeBase||existsSync(join(base,"MEMORY.md")))selections.push({kind:"bot",botId});
+  const topics=join(base,"memory");
+  // Invalid descendants are recorded by selectionItem, never followed.
+  try{if(!unsafeBase&&!lstatSync(topics).isSymbolicLink())for(const topic of readdirSync(topics).sort())if(isMemoryTopicName(topic))selections.push({kind:"bot",botId,topic});}catch{/* No topic directory. */}
+  const key=(selection:ImportSelection)=>selection.kind==="bot"&&selection.topic?`memory/${selection.topic}`:"MEMORY.md";
+  const pending=selections.filter(selection=>botId!==after.bot||key(selection)>after.file).sort((a,b)=>key(a)<key(b)?-1:1);
+  let imported=0,skipped=0,needsReview=0;
+  for(const selection of pending.slice(0,4)){
+    const path=join(base,key(selection)),sourceId=`legacy:${hash(JSON.stringify([scopeId,path]))}`,linkId=`notebook-link:${sourceId}`;
+    // Stopping tracking is an owner choice, not an invitation to relink later.
+    if(db.prepare("SELECT 1 FROM memory_scope_bindings WHERE id=? AND state!='granted'").get(linkId)){skipped++;continue;}
+    try{
+      const item=selectionItem(selection,roster);
+      if(item.text===MEMORY_SEED){skipped++;continue;}
+      const result=commitImportItems([item],true);imported+=result.imported;skipped+=result.skipped;
+    }catch(error){
+      const code=error instanceof Error&&error.message.startsWith("MEMORY_IMPORT_")?error.message:"MEMORY_IMPORT_FILE_UNREADABLE";
+      if(code==="MEMORY_IMPORT_EMPTY"){skipped++;continue;}
+      const intent=JSON.stringify({selection,hash:"",status:"needs-review",checkedAt:Date.now(),error:code});
+      db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','notebook-link',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent WHERE state='granted'").run(linkId,scopeId,intent);
+      needsReview++;
+    }
+  }
+  const next=pending.length>4?{bot:botId,file:key(pending[3])}:bots.find(id=>id>botId)?{bot:bots.find(id=>id>botId)!,file:""}:undefined;
+  return {imported,skipped,needsReview,paused:false,...next?{nextCursor:Buffer.from(JSON.stringify(next)).toString("base64url")}:{}};
 }
 
 export function availableMemoryNotebooks(ticket:object,roster:MemoryRoster){

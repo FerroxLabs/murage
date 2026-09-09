@@ -220,8 +220,8 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   await page.screenshot({path:info.outputPath("bot-memory-profile.png")});
   await memory.getByRole("button",{name:"Open workspace memory settings",exact:true}).click();
   await expect(page.getByRole("heading",{name:"Workspace memory",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"Enable capture and recall",exact:true}).click();
-  await expect(page.getByText("Capture and recall enabled. Existing notebooks can now be imported below.",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Enable and import notebooks",exact:true}).click();
+  await expect(page.getByText("Capture and recall enabled. Detected bot notebooks are being imported; originals are preserved.",{exact:true})).toBeVisible();
   expect((await api("GET","/api/memory/status")).mode).toBe("active");
   expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBeNull();
   await page.screenshot({path:info.outputPath("workspace-memory-settings.png")});
@@ -267,4 +267,41 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   await tracked.getByRole("button",{name:"Stop tracking",exact:true}).click();
   await expect(tracked).toHaveCount(0);
   await fitsViewport(page);
+});
+
+test("paged bot memory handles 3000 records in both skins without accumulating cards", async ({page}, info) => {
+  database.exec("BEGIN IMMEDIATE");
+  for(let n=0;n<3000;n++)database.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,created_at) VALUES(?,1,?,'fact',?,'owner-statement','active',?,?,?)")
+    .run(`paged-${String(n).padStart(4,"0")}`,botScope,`PAGEDMEMORY: useful note ${n}`,n===2999?1:0,Date.UTC(2026,8,1)+n,Date.UTC(2026,8,1)+n);
+  seed("paged-candidate",botScope,"PAGEDMEMORY: proposed detail",bot.threadId);
+  database.exec("UPDATE memory_meta SET data_revision=data_revision+1; COMMIT");
+  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
+  await page.goto(origin);
+  const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
+  if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
+  const sidebar=await openSidebar(page);
+  await sidebar.getByText("Memory browser fixture",{exact:true}).click();
+  await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
+  const panel=page.getByRole("region",{name:"Bot memory",exact:true});
+  await panel.getByRole("textbox",{name:"Search memory",exact:true}).fill("PAGEDMEMORY");
+  await panel.getByRole("button",{name:"Search",exact:true}).click();
+  await expect(panel.locator("[data-memory-id]")).toHaveCount(50);
+  await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-2999");
+  await panel.getByRole("button",{name:"Next page",exact:true}).click();
+  await expect(panel.getByText("Page 2",{exact:true})).toBeVisible();
+  await expect(panel.locator("[data-memory-id]")).toHaveCount(50);
+  await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-2949");
+  await panel.getByRole("button",{name:"Previous page",exact:true}).click();
+  await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-2999");
+  await panel.getByRole("button",{name:"Important",exact:true}).click();
+  await expect(panel.locator("[data-memory-id]")).toHaveCount(1);
+  await panel.getByRole("button",{name:"Needs review",exact:true}).click();
+  await expect(panel.locator("[data-memory-id]")).toHaveCount(1);
+  await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-candidate");
+  for(const skin of ["light","dark"]){
+    await page.evaluate(skin=>{document.documentElement.dataset.skin=skin;},skin);
+    await panel.scrollIntoViewIfNeeded();
+    expect(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+    await page.screenshot({path:info.outputPath(`paged-memory-${skin}-${info.project.name}.png`)});
+  }
 });
