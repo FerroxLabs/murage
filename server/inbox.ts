@@ -6,7 +6,8 @@ import { redactSecretsInText } from "./redact.ts";
 export interface InboxThread { threadId: string; label: string; botId?: string }
 export interface InboxAccess { owner: boolean; threads: readonly InboxThread[] }
 export class InboxError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
+  readonly status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
 }
 const reject = (status: number, message: string): never => { throw new InboxError(status, message); };
 const version = (json: string) => createHash("sha256").update(json).digest("hex");
