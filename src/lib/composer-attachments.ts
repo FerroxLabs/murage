@@ -1,6 +1,7 @@
 // What is attached to the next message: text too long for the input or a
 // file dropped onto the window. Chips fold back into a normal prompt on
 // send, so every driver receives the same message shape.
+import { audioTranscriptionMime, isAudioCandidate } from "./audio-intake.ts";
 export type PasteAttachment = {
   kind: "paste";
   id: string;
@@ -349,6 +350,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
     allowImages: boolean;
     getPath: (file: T) => string;
     uploadImage: (file: T) => Promise<Attachment | null>;
+    queueAudio?: (file: T) => void;
   },
 ): Promise<{ attachments: Attachment[]; notice: string | null }> {
   const files = [..._files];
@@ -359,6 +361,14 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
   // Finish each selected file in sequence so the chips retain the order in
   // which the user chose or dropped them.
   for (const file of files) {
+    if (isAudioCandidate(file)) {
+      try {
+        audioTranscriptionMime(file);
+        if (!_opts.queueAudio) throw new Error("Choose this audio in the composer to review transcription before uploading.");
+        _opts.queueAudio(file);
+      } catch (error) { imageErrors.push(`${file.name}: ${error instanceof Error ? error.message : "Could not queue audio"}`); }
+      continue;
+    }
     if (allowImages && isImageFile(file)) {
       try {
         const attachment = await uploadImage(file);
