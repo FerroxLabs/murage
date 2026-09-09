@@ -331,6 +331,18 @@ function handle(msg: any) {
   if (!msg.method) return;
   recordMethod(msg.method);
 
+  // Synthetic diagnostics: use the real request ID, but a spoofed provider
+  // method and private canaries that must never enter runtime.error details.
+  if (mode === `rpc-error:${msg.method}`) {
+    return out({ jsonrpc: "2.0", id: msg.id, error: {
+      code: -32603, message: "Internal error", acpMethod: "session/cancel",
+      data: { http_status: 500, message: "fake-private-response", request: "fake-private-request", url: "https://billing.invalid/?key=fake-secret-canary" },
+    } });
+  }
+  if (mode === "unknown-rpc-error" && msg.method === "session/prompt") {
+    out({ jsonrpc: "2.0", id: -999, error: { code: -32603, message: "fake-secret-canary", data: { http_status: 500 } } });
+  }
+
   switch (msg.method) {
     case "initialize": {
       if (mode === "exit-early") {
