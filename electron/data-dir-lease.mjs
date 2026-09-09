@@ -328,6 +328,56 @@ function assertNoLiveChild(paths) {
   if (ownerIsAlive(child)) throw fail("LEASE_CHILD_BUSY");
 }
 
+/** Diagnostic snapshot only: "available" never grants ownership. Acquisition
+ * must still perform its own election and race checks. Never creates anchors,
+ * retires owners, or exposes nonce-bearing records to the recovery renderer. */
+export function inspectDataDirLease(dataDir) {
+  const safeHost = (host) => typeof host === "string" && /^[A-Za-z0-9._:-]{1,255}$/.test(host) ? host : null;
+  let currentHost = null;
+  let claimKind = null;
+  let recordedHost = null;
+  const result = (status, code) => Object.freeze({ status, code, claimKind, recordedHost, currentHost });
+  try {
+    const host = localHost();
+    currentHost = safeHost(host);
+    const paths = dataDirLeasePaths(dataDir);
+    const read = (path, kind, target) => {
+      claimKind = kind;
+      recordedHost = null;
+      const owner = readRecord(path, target)?.owner;
+      if (owner) recordedHost = safeHost(owner.host);
+      return owner;
+    };
+    // Match primary acquisition: the child guard runs before the primary,
+    // and only a dead primary requires traversing its immutable reapers.
+    const child = read(paths.childLeasePath, "child");
+    if (child) {
+      if (child.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
+      if (ownerIsAlive(child)) return result("blocked", "LEASE_CHILD_BUSY");
+    }
+    const primary = read(paths.leasePath, "primary");
+    if (primary) {
+      if (primary.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
+      if (ownerIsAlive(primary)) return result("blocked", "LEASE_BUSY");
+      let path = `${paths.leasePath}.reap-${primary.token}`;
+      for (let generation = 0; generation < MAX_REAPER_GENERATIONS; generation++) {
+        const reaper = read(path, "reaper", primary.token);
+        if (!reaper) break;
+        if (reaper.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
+        if (ownerIsAlive(reaper)) return result("blocked", "LEASE_RECOVERY_BUSY");
+        if (generation === MAX_REAPER_GENERATIONS - 1) return result("blocked", "LEASE_RECOVERY_LIMIT");
+        const digest = createHash("sha256").update(reaper.token).digest("hex").slice(0, 32);
+        path = `${paths.leasePath}.reap-${primary.token}-${digest}`;
+      }
+    }
+    claimKind = null;
+    recordedHost = null;
+    return result("available", null);
+  } catch (error) {
+    return result("error", error instanceof DataDirLeaseError ? error.code : "LEASE_IO");
+  }
+}
+
 function claim(path, guard = () => {}) {
   const owner = newOwner();
   for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {

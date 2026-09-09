@@ -8,7 +8,7 @@ import { hostname, tmpdir, uptime } from "node:os";
 import { dirname, join, parse, relative } from "node:path";
 import { inspect } from "node:util";
 import test from "node:test";
-import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths } from "./data-dir-lease.mjs";
+import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
 
 const MODULE = new URL("./data-dir-lease.mjs", import.meta.url).href;
 const PRIVATE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
@@ -519,6 +519,81 @@ test("foreign primary, child and recovery owners are preserved", async () => {
     assert.equal(readFileSync(path, "utf8"), before);
     if (kind === "reaper") assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
   }
+});
+
+test("inspection reports foreign claims without leaking or changing records", async () => {
+  for (const kind of ["primary", "child", "reaper"]) {
+    const f = fixture(kind);
+    const primary = record(await deadPid());
+    const foreign = record(process.pid, { host: "foreign-host.invalid" });
+    let path = kind === "child" ? f.childLeasePath : f.leasePath;
+    if (kind === "reaper") {
+      writeRecord(f.leasePath, primary);
+      path = `${f.leasePath}.reap-${primary.token}`;
+      foreign.targetToken = primary.token;
+    }
+    writeRecord(path, foreign);
+    const before = readFileSync(path, "utf8"), names = readdirSync(f.root);
+    const result = inspectDataDirLease(f.dataDir);
+    assert.deepEqual(result, { status: "blocked", code: "LEASE_FOREIGN_HOST", claimKind: kind, recordedHost: foreign.host, currentHost: hostname() });
+    assert.equal(readFileSync(path, "utf8"), before);
+    assert.deepEqual(readdirSync(f.root), names);
+    assert.equal(JSON.stringify(result).includes(foreign.token), false);
+    assert.equal(JSON.stringify(result).includes(f.root), false);
+    assert.equal(Object.hasOwn(result, "pid"), false);
+  }
+});
+
+test("inspection creates no missing directories or lease anchors", () => {
+  const f = fixture();
+  const nested = join(f.root, "absent-parent", "new-installation");
+  const names = readdirSync(f.root);
+  assert.deepEqual(inspectDataDirLease(nested), { status: "available", code: null, claimKind: null, recordedHost: null, currentHost: hostname() });
+  assert.equal(existsSync(dirname(nested)), false);
+  assert.deepEqual(readdirSync(f.root), names);
+});
+
+test("inspection preserves malformed records and redacts unsafe host strings", () => {
+  const f = fixture();
+  const invalid = "secret-canary invalid JSON";
+  writeFileSync(f.leasePath, invalid);
+  assert.deepEqual(inspectDataDirLease(f.dataDir), { status: "error", code: "LEASE_INVALID", claimKind: "primary", recordedHost: null, currentHost: hostname() });
+  assert.equal(readFileSync(f.leasePath, "utf8"), invalid);
+  writeRecord(f.leasePath, record(process.pid, { host: "<img src=/secret-canary>" }));
+  const result = inspectDataDirLease(f.dataDir);
+  assert.equal(result.code, "LEASE_FOREIGN_HOST");
+  assert.equal(result.recordedHost, null);
+  assert.equal(JSON.stringify(result).includes("secret-canary"), false);
+});
+
+test("inspection refuses a symlink lease without following or changing it", { skip: process.platform === "win32" }, () => {
+  const f = fixture(), target = join(f.root, "secret-target");
+  const bytes = "secret-canary target";
+  writeFileSync(target, bytes);
+  symlinkSync(target, f.leasePath);
+  const result = inspectDataDirLease(f.dataDir);
+  assert.equal(result.code, "LEASE_INVALID");
+  assert.equal(result.status, "error");
+  assert.equal(lstatSync(f.leasePath).isSymbolicLink(), true);
+  assert.equal(readFileSync(target, "utf8"), bytes);
+  assert.equal(JSON.stringify(result).includes("secret"), false);
+});
+
+test("inspection follows acquisition order and immutable reaper successors", async () => {
+  const f = fixture(), dead = await deadPid();
+  const primary = record(dead), oldReaper = record(dead, { targetToken: primary.token });
+  writeRecord(f.leasePath, primary);
+  const path = `${f.leasePath}.reap-${primary.token}`;
+  writeRecord(path, oldReaper);
+  const successor = `${path}-${createHash("sha256").update(oldReaper.token).digest("hex").slice(0, 32)}`;
+  writeRecord(successor, record(dead, { host: "foreign-successor.invalid", targetToken: primary.token }));
+  assert.equal(inspectDataDirLease(f.dataDir).recordedHost, "foreign-successor.invalid");
+  writeRecord(f.childLeasePath, record(process.pid));
+  assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_CHILD_BUSY");
+  rmSync(f.childLeasePath);
+  writeRecord(f.leasePath, record(process.pid));
+  assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_BUSY");
+  assert.equal(readFileSync(path, "utf8"), `${JSON.stringify(oldReaper)}\n`);
 });
 
 test("interrupted stale reapers are succeeded, with a bounded immutable chain", async () => {
