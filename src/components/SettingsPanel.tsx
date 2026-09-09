@@ -372,7 +372,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "modelSelection"
       >
     > & { acknowledgeLocalAuto?: boolean; persona?: string },
-  ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
+  ) => dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined?{settingsScope:"defaults" as const}:{})} });
   // `persona` is validated, persisted and prompted server-side already
   // (shared/bot-profile.ts, server/bot-profile.ts, server/index.ts). The
   // renderer's `Bot` record and `BotUpdatePatch` live in src/state/, which
@@ -625,7 +625,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 <div>
                   <div className="text-[15px] font-medium text-ink">Model</div>
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
-                    Which provider and model this bot runs on
+                    Default for new threads. Existing threads keep their selected model.
                   </div>
                 </div>
               }
@@ -641,7 +641,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                   we could not keep for a thread that had already been sent
                   one. Sending nothing is true on every engine. */}
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                How hard this bot thinks{bot.modelSelection.effort ? "" : " (Default: no level is sent)"}
+                Default effort for new threads{bot.modelSelection.effort ? "" : " (Default: no level is sent)"}
               </div>
               <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
                 {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (
