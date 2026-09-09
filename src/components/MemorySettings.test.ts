@@ -11,4 +11,7 @@ describe("owner memory audience requests", () => {
   it("uses all owner audiences only from the workspace surface", () => {
     expect(memoryListAction("", "", "")).toEqual({ action: "list" });
   });
+  it("carries view and cursor without dropping the selected bot", () => {
+    expect(memoryListAction("", "", "", "bot-one", "page-two", "important")).toEqual({action:"list",botId:"bot-one",cursor:"page-two",view:"important"});
+  });
 });
