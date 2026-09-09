@@ -7,9 +7,11 @@ import { ProviderMark } from "./ProviderIcons";
 import { EngineSetup, needsCli } from "./EngineSetup";
 import { cn } from "@/lib/cn";
 import { COMPACT_SQUARE } from "@/lib/compact-chip";
+import { useBotSettingsNavigation } from "./bot-settings-drafts";
 const PREFS="murage-model-picker-v1";
 function preferences():{favorites:string[];recent:string[]}{try{const value=JSON.parse(localStorage.getItem(PREFS)??"{}");return{favorites:Array.isArray(value.favorites)?value.favorites.filter((s:unknown)=>typeof s==="string").slice(0,100):[],recent:Array.isArray(value.recent)?value.recent.filter((s:unknown)=>typeof s==="string").slice(0,12):[]};}catch{return{favorites:[],recent:[]};}}
 export function ModelPicker({bot,className,contained=false,label}:{bot:Bot;className?:string;contained?:boolean;label?:ReactNode}){
+  const navigate=useBotSettingsNavigation();
   const{state,dispatch,refreshInstances}=useStore();const[open,setOpen]=useState(false),[engineId,setEngineId]=useState(bot.modelSelection.instanceId),[query,setQuery]=useState(""),[limit,setLimit]=useState(30),[connections,setConnections]=useState<PublicProviderConnection[]>([]),[error,setError]=useState(""),[refreshing,setRefreshing]=useState(false),[prefs,setPrefs]=useState(preferences);
   const root=useRef<HTMLDivElement>(null),trigger=useRef<HTMLButtonElement>(null),refreshingRef=useRef(false);
   const active=state.instances.find(i=>i.instanceId===bot.modelSelection.instanceId),engine=state.instances.find(i=>i.instanceId===engineId)??active;
@@ -28,7 +30,7 @@ export function ModelPicker({bot,className,contained=false,label}:{bot:Bot;class
   const selectedKey=pickerKey(bot.modelSelection);const selected=rows.find(row=>row.key===selectedKey);const selectedConnection=connections.find(c=>c.id===bot.modelSelection.connectionId);const selectedLabel=selected?.label??active?.models.options.find(o=>o.id===bot.modelSelection.model)?.label??bot.modelSelection.model;
   const save=(next:typeof prefs)=>{setPrefs(next);try{localStorage.setItem(PREFS,JSON.stringify(next));}catch{}};
   const pick=(selection:ModelSelection)=>{save({...prefs,recent:[pickerKey(selection),...prefs.recent.filter(k=>k!==pickerKey(selection))].slice(0,12)});dispatch({type:'setModel',botId:bot.id,selection:{...selection,...(selection.instanceId===bot.modelSelection.instanceId&&bot.modelSelection.effort?{effort:bot.modelSelection.effort}:{})}});setOpen(false);trigger.current?.focus();};
-  const manage=()=>{setOpen(false);dispatch({type:'toggleAppSettings',open:true,section:'models'});};
+  const manage=()=>navigate(()=>{setOpen(false);dispatch({type:'toggleAppSettings',open:true,section:'models'});});
   let previousGroup="";
   return <div ref={root} className={cn(contained?'w-full':'relative',className)}>
     <div className={cn(contained&&'flex items-center justify-between gap-4')}>{contained&&label}<button ref={trigger} type="button" aria-haspopup="dialog" aria-expanded={open} onClick={()=>{setEngineId(bot.modelSelection.instanceId);setQuery("");setLimit(30);setOpen(v=>!v);}} title={`${active?.displayName??'Unavailable engine'} · ${selectedLabel}${selectedConnection?` · ${selectedConnection.label}`:''}`} className={cn('flex items-center gap-1.5 rounded-full border border-hairline/40 bg-control/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised-hover',!contained&&active&&COMPACT_SQUARE)}>{active&&<ProviderMark driverKind={active.driverKind} size={14}/>}<span className={cn('max-w-[160px] truncate',!contained&&active&&'@max-4xl/chathead:hidden')}>{selectedLabel}</span><ChevronDown size={14}/></button></div>

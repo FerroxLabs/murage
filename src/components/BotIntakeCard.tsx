@@ -3,6 +3,7 @@ import { AlertTriangle, BookOpen, Sparkles, X } from "lucide-react";
 
 import { api, useStore, type Bot, type BotAnnouncement } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { useBotSettingsNavigation } from "./bot-settings-drafts";
 import {
   invalidateSkillCount,
   setSkillCount,
@@ -92,6 +93,7 @@ function IntakeQuestion({
   autoFocus?: boolean;
 }) {
   const { dispatch } = useStore();
+  const navigate = useBotSettingsNavigation();
   const desktop = useDesktopSurface();
   const [answer, setAnswer] = useState("");
   const [suggestion, setSuggestion] = useState<IntakeSuggestion | null>(null);
@@ -192,7 +194,7 @@ function IntakeQuestion({
    *  disabled buttons: the library, already on Skills, already knowing which
    *  agent this is about. A dead end with an apology in it is not an answer. */
   const browseLibrary = () => {
-    dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" });
+    navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id, view: "skills" }));
   };
 
   const profile = suggestion?.profile ?? null;
