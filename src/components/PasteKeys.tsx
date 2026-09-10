@@ -148,7 +148,7 @@ export function PasteKeysBody({
         autoComplete="off"
         autoCorrect="off"
         autoCapitalize="off"
-        placeholder={"OPENAI_API_KEY=…\nFLUX_API_KEY=…"}
+        placeholder={"OPENAI_API_KEY=…\nCOMPOSIO_API_KEY=…"}
         aria-label="Paste keys to look through"
         className="w-full resize-y rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
       />
@@ -255,12 +255,14 @@ function PasteKeyRow({
         </div>
       ) : (
         <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
-          {ambiguous && !target
+          {target === "flux"
+            ? "Manage Flux Router in Models. Opening Models clears this pasted copy; enter your key in the Flux Router card to connect."
+            : ambiguous && !target
             ? "This prefix is used by more than one service, so Murage will not guess. Pick where it goes."
             : target
               ? PROVIDERS[target].blurb
               : ""}
-          {alreadySaved && row.status !== "saved" && " Saving replaces the key already there."}
+          {target !== "flux" && alreadySaved && row.status !== "saved" && " Saving replaces the key already there."}
         </div>
       )}
 
@@ -294,15 +296,15 @@ function PasteKeyRow({
               // A row with an open question cannot be confirmed. This is the
               // whole no-guessing rule, expressed as a disabled button.
               disabled={target === null || row.status === "saving"}
-              className="flex w-[92px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control py-1.5 text-[12px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50"
-              title={target === null ? "Pick which key this is first" : "Save this key"}
+              className="flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              title={target === null ? "Pick which key this is first" : target === "flux" ? "Open the single Flux Router key editor" : "Save this key"}
             >
               {row.status === "saving" ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <>
-                  <Check size={12} />
-                  {alreadySaved ? "Replace" : "Save"}
+                  {target !== "flux" && <Check size={12} />}
+                  {target === "flux" ? "Open Flux Router in Models" : alreadySaved ? "Replace" : "Save"}
                 </>
               )}
             </button>
@@ -480,6 +482,7 @@ export function PasteKeys() {
   const { state, dispatch } = useStore();
   const [rows, setRows] = useState<PasteRow[]>([]);
   const [scanned, setScanned] = useState(false);
+  const [navigationError, setNavigationError] = useState("");
 
   // The controller outlives any single render, so it reaches the store through
   // a ref rather than through whichever closure happened to build it.
@@ -493,6 +496,7 @@ export function PasteKeys() {
     held.current = createPasteController({
       render: setRows,
       save: (target, value) => {
+        if (target === "flux") throw new Error("Use the Flux Router card in Models to connect this key.");
         const provider = PROVIDERS[target];
         if (provider.modelPreset) {
           const input = { action: "create" as const, preset: provider.modelPreset, key: value };
@@ -514,7 +518,7 @@ export function PasteKeys() {
   const controller = held.current;
 
   return (
-    <PasteKeysBody
+    <><PasteKeysBody
       rows={rows}
       scanned={scanned}
       onScan={(blob) => {
@@ -522,9 +526,20 @@ export function PasteKeys() {
         controller.scan(blob);
       }}
       onChoose={controller.choose}
-      onAccept={(id) => void controller.accept(id)}
-      onDismiss={controller.dismiss}
+      onAccept={(id) => {
+        setNavigationError("");
+        const row = controller.rows().find(item => item.id === id);
+        if (row && rowTarget(row) === "flux") {
+          if (controller.rows().some(item => item.id !== id && item.status !== "saved" && item.status !== "dismissed")) {
+            setNavigationError("Save or dismiss the other pasted keys before opening Models. Nothing has been moved.");
+            return;
+          }
+          controller.dismiss(id);
+          dispatch({ type: "toggleAppSettings", open: true, section: "models" });
+        } else void controller.accept(id);
+      }}
+      onDismiss={(id) => { setNavigationError(""); controller.dismiss(id); }}
       configured={state.config ?? null}
-    />
+    />{navigationError && <p role="alert" className="mt-2 text-[12px] text-danger">{navigationError}</p>}</>
   );
 }

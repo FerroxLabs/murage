@@ -1,122 +1,56 @@
-// The Flux key field. What it must never render, and what it must.
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-
-// desktop.ts reads `window` at module scope and @/lib/analytics boots
-// posthog-js on import; neither survives a node-env import of the component.
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false,
-  setAnalyticsEnabled: () => {},
-  initAnalytics: () => {},
-  track: () => {},
-}));
-
+vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { FluxKeyCardBody } = await import("./FluxKeyCard");
-type Props = Parameters<typeof FluxKeyCardBody>[0];
+const { FluxRouterConnection } = await import("./FluxRouterConnection");
+const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
+const pointer = read("./FluxKeyCard.tsx"), canonical = read("./FluxRouterConnection.tsx"), models = read("./ModelsSettings.tsx");
+const renderCanonical = (configured: boolean) => renderToStaticMarkup(createElement(FluxRouterConnection, { configured, onSave: async () => {}, onTest: async () => ({ modelCount: 0 }), onDisconnect: async () => {} }));
 
-const render = (over: Partial<Props> = {}) =>
-  renderToStaticMarkup(
-    createElement(FluxKeyCardBody, {
-      configured: false,
-      value: "",
-      onValue: vi.fn(),
-      onSave: vi.fn(),
-      saving: false,
-      error: null,
-      ...over,
-    }),
-  );
-
-const source = readFileSync(fileURLToPath(new URL("./FluxKeyCard.tsx", import.meta.url)), "utf8");
-
-describe("the key is never shown in full", () => {
-  it("masks what is being typed", () => {
-    const html = render({ value: "flux-live-verysecret" });
-    expect(html).toContain('type="password"');
-    expect(html).not.toContain('type="text"');
+describe("setup links to one Flux key editor", () => {
+  it("renders only a keyboard-accessible navigation action", () => {
+    const html = renderToStaticMarkup(createElement(FluxKeyCardBody, { onOpen: vi.fn() }));
+    expect(html).toContain('type="button"'); expect(html).toContain("Open Flux Router in Models");
+    expect(html).not.toMatch(/<input|<form|<textarea/); expect(html).toContain("focus-visible:ring-2");
   });
-
-  it("has no way to read a saved key back out of config", () => {
-    // GET /api/config answers `flux: { configured: boolean }` and ConfigStatus
-    // is typed to match, so there is no field a key could arrive in. This
-    // asserts the component never reaches for one anyway.
-    expect(source).toMatch(/state\.config\?\.flux\?\.configured/);
-    expect(source).not.toMatch(/config[^\n]*\.flux[^\n]*apiKey/);
-    // apiKey appears in exactly one place: the outbound patch builder.
-    expect(source.match(/apiKey/g) ?? []).toHaveLength(0);
-    expect(source).toContain("fluxKeyPatch(value.trim())");
+  it("never holds or writes a key in the setup pointer", () => {
+    expect(pointer).not.toMatch(/api\(|fluxKeyPatch|apiKey|useState|type="password"/);
+    expect(pointer).toContain('dispatch({ type: "toggleAppSettings", open: true, section: "models" })');
   });
-
-  it("shows a connected key as a flag, not as a value", () => {
-    const html = render({ configured: true });
-    expect(html).toContain("Connected");
-    expect(html).toContain("Saved. Paste a new key to replace it.");
-    // POSITIVE control: the same rig does NOT report Connected when there is
-    // no key, so a green above is the flag working and not the matcher
-    // agreeing with everything.
-    expect(render({ configured: false })).not.toContain("Connected");
+  it("keeps the canonical typed field masked and write-only", () => {
+    expect(renderCanonical(false)).toContain('type="password"');
+    expect(canonical).not.toContain('type="text"'); expect(canonical).not.toMatch(/config[^\n]*apiKey/);
+    expect(canonical).toContain('input.current.value = ""');
   });
-
-  it("drops the typed key the moment it is saved", () => {
-    expect(source).toMatch(/setValue\(""\)/);
+  it("shows a saved key only as status, without rendering its field", () => {
+    expect(renderCanonical(true)).toContain("Connected · key saved");
+    expect(renderCanonical(true)).not.toContain("<input"); expect(renderCanonical(false)).not.toContain("Connected · key saved");
   });
-});
-
-describe("what the field offers", () => {
-  it("saves through the config route, the door that works on both surfaces", () => {
-    expect(source).toMatch(/api\("\/api\/config", \{ method: "PUT", body: fluxKeyPatch/);
+  it("keeps explicit disconnect separate from an empty replacement", () => {
+    expect(canonical).toContain('if (kind === "save" && !key)');
+    expect(canonical).toContain("Disconnect Flux Router?"); expect(canonical).toContain("Keep connected");
   });
-
-  it("cannot be saved empty when there is nothing to clear", () => {
-    // Nothing typed and no key saved: the button is inert rather than posting
-    // an empty patch the server would answer 400 to.
-    expect(render({ configured: false, value: "" })).toContain("disabled=");
-    // POSITIVE control: it does become live once there is something to send.
-    expect(render({ configured: false, value: "flux-live-abc" })).not.toContain("disabled=");
+  it("keeps error feedback and official signup on the canonical form", () => {
+    expect(canonical).toContain('role="alert"'); expect(canonical).toContain('role="status"');
+    expect(renderCanonical(false)).toContain("https://fluxrouter.ai/auth/sign-up");
   });
-
-  it("offers to clear a saved key by leaving the box empty", () => {
-    const html = render({ configured: true, value: "" });
-    expect(html).toContain("Clear");
-    expect(html).toContain("Remove the saved key");
-  });
-
-  it("surfaces a save failure instead of swallowing it", () => {
-    expect(render({ error: "nothing to save" })).toContain("nothing to save");
-    expect(render({ error: null })).not.toContain("nothing to save");
-  });
-
-  it("is labelled for a screen reader and points at where to get a key", () => {
-    const html = render();
-    expect(html).toContain('aria-label="Flux Router key"');
-    expect(html).toContain("https://fluxrouter.ai");
-  });
-});
-
-describe("Flux setup is reachable without duplicating the invitation field", () => {
-  it("Settings renders Models with the existing Flux key control", () => {
-    const settings = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.meta.url)), "utf8");
-    expect(settings).toContain('<ModelsSettings />');
-    const models = readFileSync(fileURLToPath(new URL("./ModelsSettings.tsx", import.meta.url)), "utf8");
+  it("removes the legacy Flux fallback writer even when status is unavailable", () => {
     expect(models).toContain('<FluxRouterConnection configured={flux?.configured ?? null}');
-    expect(models).toContain('{!flux && <ExistingKey id="legacy-flux" label="Flux Router default"');
-    expect(models).toContain('configured={state.config?.flux?.configured ?? false}');
+    expect(models).not.toContain('<ExistingKey id="legacy-flux"');
+    expect(models).not.toContain('{ flux: { apiKey: value } }');
+    expect(models).toContain("Your saved keys are unchanged.");
+    expect(models).toContain("Saved Flux connection:");
   });
-
-  it("is reachable by searching Settings for flux", () => {
-    const settings = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.meta.url)), "utf8");
-    const models = settings.match(/\{ id: "models",[^\n]*\}/)?.[0] ?? "";
-    expect(models).toContain('"Models"');
-    expect(models).toContain('"flux"');
+  it("routes the invitation and avatar hint to Models", () => {
+    for (const file of ["./FluxInvite.tsx", "./BotProfileAvatarCard.tsx"]) expect(read(file)).toContain('section: "models"');
+    expect(read("./FluxInvite.tsx")).not.toMatch(/<input/);
   });
-
-  it("does not grow a second one inside the invitation", () => {
-    const invite = readFileSync(fileURLToPath(new URL("./FluxInvite.tsx", import.meta.url)), "utf8");
-    expect(invite).not.toMatch(/<input/);
-    expect(invite).not.toContain("fluxKeyPatch");
+  it("preserves onboarding state while Settings temporarily takes focus", () => {
+    const source = read("./Onboarding.tsx");
+    expect(source).toContain('workspace === "established" || state.appSettingsOpen) return null;');
+    expect(source.indexOf('state.appSettingsOpen) return null;')).toBeGreaterThan(source.lastIndexOf('useEffect('));
   });
 });

@@ -84,7 +84,7 @@ export function FluxInvite({ firstRunGate }: { firstRunGate: boolean }) {
     <FluxInviteBody
       onOpen={() => {
         dismiss();
-        dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
+        dispatch({ type: "toggleAppSettings", open: true, section: "models" });
       }}
       onDismiss={dismiss}
     />
