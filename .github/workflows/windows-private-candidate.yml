@@ -9,7 +9,7 @@ on:
       source_sha:
         description: Exact approved 40-character application source SHA
         required: true
-        default: f320e846fe4ad49a277f7b8a14c361cce8d51e32
+        default: 9eeb5e032b99edf0c93c0f651d0ddf387fae66b8
         type: string
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 40
     env:
-      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || 'f320e846fe4ad49a277f7b8a14c361cce8d51e32' }}
+      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || '9eeb5e032b99edf0c93c0f651d0ddf387fae66b8' }}
     steps:
       - name: Require an exact source identity
         shell: pwsh
@@ -61,7 +61,7 @@ jobs:
         shell: pwsh
         run: |
           $resources = 'release/win-unpacked/resources'
-          foreach ($name in @('server/index.js','ui/index.html','murage-recovery.exe','fuigo/fuigo.exe','cloudflared/cloudflared.exe','licenses/cloudflared-LICENSE.txt','licenses/cloudflared-README.md','app-update.yml')) {
+          foreach ($name in @('server/index.js','ui/index.html','murage-recovery.exe','fuigo/fuigo.exe','fuigo-probe/launcher.exe','fuigo-probe/manifest.json','cloudflared/cloudflared.exe','licenses/cloudflared-LICENSE.txt','licenses/cloudflared-README.md','app-update.yml')) {
             if (-not (Test-Path -LiteralPath (Join-Path $resources $name) -PathType Leaf)) { throw "Missing packaged resource: $name" }
           }
           $update = Get-Content -Raw (Join-Path $resources 'app-update.yml')
@@ -69,11 +69,17 @@ jobs:
           $installers = @(Get-ChildItem 'release' -Filter '*-setup.exe' -File)
           $archives = @(Get-ChildItem 'release' -Filter '*.zip' -File)
           if ($installers.Count -ne 1 -or $archives.Count -ne 1) { throw 'Expected one NSIS installer and one portable ZIP' }
-          $required = @('release/win-unpacked/Murage.exe',(Join-Path $resources 'murage-recovery.exe'),(Join-Path $resources 'fuigo/fuigo.exe'),$installers[0].FullName)
+          $required = @('release/win-unpacked/Murage.exe',(Join-Path $resources 'murage-recovery.exe'),(Join-Path $resources 'fuigo/fuigo.exe'),(Join-Path $resources 'fuigo-probe/launcher.exe'),$installers[0].FullName)
+          $signatures = @()
           foreach ($file in $required) {
             $signature = Get-AuthenticodeSignature -LiteralPath $file
             if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Ferrox Labs, LLC') { throw "Required Ferrox signature failed: $file" }
+            $signatures += @{ file = $file; status = [string]$signature.Status; subject = $signature.SignerCertificate.Subject }
           }
+          $signatures | ConvertTo-Json -Depth 3 | Set-Content '.planning/windows-private-r1/signatures.json'
+          # Re-read the final assembled helper, not only the earlier afterPack copy.
+          node --input-type=module -e 'import {validateFuigoProbeResources} from "./scripts/fuigo-probe-resources.mjs"; console.log(JSON.stringify(await validateFuigoProbeResources("release/win-unpacked/resources", "win32")));' | Tee-Object '.planning/windows-private-r1/updater-helper.json'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # afterPack already enforces raw Fuigo/browser pins, complete memory
           # payload, successful signing, and valid browser publishers.
           'Packaged inventory, updater metadata and required signatures passed.' | Tee-Object '.planning/windows-private-r1/validation.log'
@@ -88,7 +94,8 @@ jobs:
           $artifacts = @(Get-ChildItem 'release' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.(exe|zip|blockmap)$' } | ForEach-Object {
             @{ name = $_.Name; size = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
           })
-          $receipt = @{ source = $env:PRIVATE_SOURCE_SHA; workflowSource = $env:GITHUB_SHA; runId = $env:GITHUB_RUN_ID; version = '0.1.50'; platform = 'win32-x64'; node = (node --version); pnpm = (pnpm --version); build = $env:PRIVATE_BUILD_OUTCOME; validation = $env:PRIVATE_VALIDATION_OUTCOME; installed = $false; uninstalled = $false; nativeQualification = $false; published = $false; artifacts = $artifacts }
+          $updaterHelper = if (Test-Path -LiteralPath '.planning/windows-private-r1/updater-helper.json') { Get-Content -Raw '.planning/windows-private-r1/updater-helper.json' | ConvertFrom-Json } else { $null }
+          $receipt = @{ source = $env:PRIVATE_SOURCE_SHA; workflowSource = $env:GITHUB_SHA; runId = $env:GITHUB_RUN_ID; version = '0.1.50'; platform = 'win32-x64'; node = (node --version); pnpm = (pnpm --version); build = $env:PRIVATE_BUILD_OUTCOME; validation = $env:PRIVATE_VALIDATION_OUTCOME; updaterHelper = $updaterHelper; installed = $false; uninstalled = $false; nativeQualification = $false; published = $false; artifacts = $artifacts }
           $receipt | ConvertTo-Json -Depth 5 | Set-Content '.planning/windows-private-r1/receipt.json'
           $artifacts | ForEach-Object { "$($_.sha256)  $($_.name)" } | Set-Content '.planning/windows-private-r1/SHA256SUMS'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
