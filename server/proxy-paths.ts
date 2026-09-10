@@ -47,6 +47,7 @@ export const SPAWNED_PROXIES = {
   browser: resolveProxy("drivers/browser-proxy"),
   headlessBrowser: resolveProxy("drivers/headless-browser-proxy"),
   unifiedBrowser: resolveProxy("drivers/unified-browser-proxy"),
+  hostComputer: resolveProxy("drivers/host-computer-proxy"),
   // Loaded by the external `pi` process via `-e`, not by this server — but
   // resolved through the same single source of truth so the packaged layout
   // check can assert it ships.

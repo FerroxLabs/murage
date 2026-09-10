@@ -298,7 +298,8 @@ import {
 import { fetchSkillFromSource } from "./skill-fetch.ts";
 import { expandLearnTurnText, learnSource } from "./skill-learn.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
-import { readCuaConnection } from "./local-computer.ts";
+import { readCuaConnection, type LocalComputerConnection } from "./local-computer.ts";
+import { HostComputerBroker } from "./host-computer-broker.ts";
 import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
@@ -565,6 +566,8 @@ function holdCoordinationSlot(threadId: string): () => void {
   return release;
 }
 const projectTurnLeases = new ProjectTurnLeases();
+const hostComputer = new HostComputerBroker();
+const hostComputerThreads = new Map<string, { botId: string; ownerId: string; connection: LocalComputerConnection }>();
 const internalTurnOwners = new Map<string, {
   botId: string; generation: string; depth: number; skillAuthoring: boolean;
   eventId?: string;
@@ -592,22 +595,26 @@ function internalToken(botId: string, threadId: string, generation: string, kind
   return token;
 }
 function revokeInternalGeneration(threadId: string, generation: string): void {
+  if (hostComputerThreads.get(threadId)?.ownerId === generation) hostComputerThreads.delete(threadId);
   projectTurnLeases.abandon(generation);
   internalCapabilities.revokeGeneration(threadId, generation);
   if (internalTurnOwners.get(threadId)?.generation === generation) internalTurnOwners.delete(threadId);
 }
 function revokeInternalThread(threadId: string): void {
+  hostComputerThreads.delete(threadId);
   const owner = internalTurnOwners.get(threadId);
   if (owner) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeThread(threadId);
   internalTurnOwners.delete(threadId);
 }
 function revokeInternalBot(botId: string): void {
+  for (const [threadId, entry] of hostComputerThreads) if (entry.botId === botId) hostComputerThreads.delete(threadId);
   for (const owner of internalTurnOwners.values()) if (owner.botId === botId) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeBot(botId);
   for (const [threadId, owner] of internalTurnOwners) if (owner.botId === botId) internalTurnOwners.delete(threadId);
 }
 function revokeAllInternalTurns(): void {
+  hostComputerThreads.clear();
   for (const owner of internalTurnOwners.values()) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeAll();
   internalTurnOwners.clear();
@@ -988,7 +995,9 @@ function connectedAppsIntegration(botId: string, threadId: string, generation: s
 // they hold it, the bot's computer proxies refuse every action. The record
 // lives here; the proxies consult it over loopback with the boot token.
 const computerControlRevision = new Map<string, number>();
+let hostControlRevision = 0;
 const computerControl = new ComputerControl((botId, snapshot) => {
+  hostControlRevision++;
   computerControlRevision.set(botId, (computerControlRevision.get(botId) ?? 0) + 1);
   // One-way, fail-closed mirror into the Electron process that owns the
   // native browser. Never send release: a loopback caller can influence the
@@ -1023,6 +1032,15 @@ function controlIntegration(botId: string, threadId: string, generation: string)
     url: `http://127.0.0.1:${PORT}/api/internal/computer-control?botId=${encodeURIComponent(botId)}`,
     token: internalToken(botId, threadId, generation, "computer"),
   };
+}
+
+function hostComputerIntegration(botId: string, threadId: string, generation: string, connection: LocalComputerConnection): LocalComputerConnection {
+  const control = controlIntegration(botId, threadId, generation);
+  hostComputerThreads.set(threadId, { botId, ownerId: generation, connection });
+  return { ...connection, command: process.execPath, args: [SPAWNED_PROXIES.hostComputer], env: {
+    ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
+    MURAGE_CONTROL_URL: control.url, MURAGE_CONTROL_TOKEN: control.token,
+  } };
 }
 
 /** Run a turn on `targetBotId` and resolve with its assistant text — the
@@ -3578,7 +3596,10 @@ async function startTurn(
       const dwebUrl = process.env.DWEB_URL?.trim();
       if (dwebUrl) integrations.dweb = { url: dwebUrl };
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the EMBER default
-      if(wants&&wants!=="off"&&wants!=="browser"&&!directRuns.claim(run,[wants==="local"?"computer:host":wants==="vm"?"computer:vm":`computer:bot:${bot.id}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
+      // Mounting host tools does not reserve the host for this entire turn.
+      // The broker arbitrates actual host actions; private screens and other
+      // destinations retain their existing turn-lifetime ownership.
+      if(wants&&wants!=="off"&&wants!=="browser"&&!directRuns.claim(run,[...(wants==="local"?[]:[wants==="vm"?"computer:vm":`computer:bot:${bot.id}`]),`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
       // Cloud routines always use Box/BoxAgent. The per-bot backend applies
       // only to ordinary turns that mount a computer into the local agent.
       const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
@@ -3628,7 +3649,7 @@ async function startTurn(
         }
         const cua = readCuaConnection();
         if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart Murage");
-        integrations.localComputer = cua;
+        integrations.localComputer = hostComputerIntegration(bot.id, threadId, dispatchClaimId, cua);
         computerKind = "local";
       }
 
@@ -3720,7 +3741,7 @@ async function startTurn(
       ) {
         const cua = readCuaConnection();
         if (cua) {
-          integrations.localComputer = cua;
+          integrations.localComputer = hostComputerIntegration(bot.id, threadId, dispatchClaimId, cua);
           computerKind = "local";
         }
       }
@@ -3801,7 +3822,7 @@ async function startTurn(
       // Mint the browser bearer at the last possible moment. The desktop
       // registration is asynchronous, so validate this exact setup claim
       // again inside browserIntegration before the capability is published.
-      if(computerKind&&!directRuns.claim(run,[computerKind==="local"?"computer:host":computerKind==="vm"?"computer:vm":`computer:bot:${bot.id}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
+      if(computerKind&&!directRuns.claim(run,[...(computerKind==="local"?[]:[computerKind==="vm"?"computer:vm":`computer:bot:${bot.id}`]),`screen:bot:${bot.id}`]))throw new Error("Another thread is using this computer. Wait for it to finish.");
       const liveBot = store.bot(bot.id);
       if (
         liveBot &&
@@ -3810,7 +3831,7 @@ async function startTurn(
         instance.adapter.capabilities.browserMcp === true
       ) {
         const selectedProfile = liveBot.browserProfile;
-        if(!directRuns.claim(run,[`browser:${selectedProfile??"default"}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this browser profile. Wait for it to finish.");
+        if(!directRuns.claim(run,[`browser:${unifiedBrowserKey(liveBot)??`guest:${bot.id}`}`,`screen:bot:${bot.id}`]))throw new Error("Another thread is using this browser profile. Wait for it to finish.");
         browser = await browserIntegration(bot.id, selectedProfile, threadId, () => {
           const current = store.bot(bot.id);
           return (
@@ -7450,7 +7471,7 @@ const server = createServer(async (req, res) => {
         return json(res, 401, { error: "unauthorized" });
       }
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith("/api/internal/connectors/")
-        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser"].includes(path) ? "computer" : "agents";
+        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       const requireActiveInternal = () => {
         if (!internalCapabilities.isActive(internalClaim) || !store.bot(internalClaim.botId)
@@ -7552,6 +7573,21 @@ const server = createServer(async (req, res) => {
             { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status });
           throw error;
         } finally { clearInterval(revoked); res.off("close", disconnected); }
+      }
+      if (path === "/api/internal/host-computer") {
+        if (method !== "POST") return json(res, 405, { error: "computer RPC requires POST" });
+        const entry = hostComputerThreads.get(internalClaim.threadId);
+        const revision = hostControlRevision;
+        const authorized = () => !!entry && internalCapabilities.isActive(internalClaim)
+          && hostComputerThreads.get(internalClaim.threadId) === entry
+          && entry.botId === internalClaim.botId && entry.ownerId === internalClaim.generation
+          && hostControlRevision === revision
+          && !store.bots.some(bot => (bot.computer === undefined || bot.computer === "local") && computerControl.snapshot(bot.id).held);
+        if (!authorized()) return json(res, 403, { error: "computer turn is no longer authorized or a person has control" });
+        const body = z.object({ method: z.enum(["tools/list", "tools/call"]), params: z.record(z.string(), z.unknown()).optional() }).strict().parse(await readBody(req));
+        requireActiveInternal();
+        const result = await hostComputer.dispatch(entry!.connection, body.method, body.params, authorized);
+        res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
       }
       if (path === "/api/internal/unified-browser") {
         requireActiveInternal();
@@ -12679,6 +12715,7 @@ const gracefulShutdown = createGracefulShutdown({
       webhookIngress?.server.close();
     },
     () => memoryWorker.stop(),
+    () => hostComputer.drain(),
     () => releaseAllBrowserCapabilities(),
     async () => {
       const retiringProjects = projectTurnLeases.generations();

@@ -61,6 +61,7 @@ const ENTRY_POINTS = [
   "drivers/browser-proxy.ts",
   "drivers/headless-browser-proxy.ts",
   "drivers/unified-browser-proxy.ts",
+  "drivers/host-computer-proxy.ts",
 ];
 
 await build({
