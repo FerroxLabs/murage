@@ -1,0 +1,200 @@
+[
+  {
+    "scenario": "cancel",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-JJWSBB",
+    "receipt": {
+      "nonce": "{7206BD76-3722-4713-9E86-0199CAA0FDD1}",
+      "snapshotId": "{00000000-0000-0000-0000-000000000000}",
+      "status": 2147943623,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": false,
+      "captureTime": "0",
+      "volumeSerial": "0",
+      "fileId": "00000000000000000000000000000000",
+      "volume": "",
+      "bytes": 0,
+      "entries": 0
+    }
+  },
+  {
+    "scenario": "identity",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-Qhog1x",
+    "receipt": {
+      "nonce": "{201DCAE2-33F0-4E81-91A6-ABE91C506228}",
+      "snapshotId": "{00000000-0000-0000-0000-000000000000}",
+      "status": 2147943406,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": false,
+      "captureTime": "0",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "1f1a0100000002000000000000000000",
+      "volume": "",
+      "bytes": 0,
+      "entries": 0
+    }
+  },
+  {
+    "scenario": "unc",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-Sk7B4J",
+    "receipt": {
+      "nonce": "{7128B109-8B39-44A0-A337-9198561C5CE0}",
+      "snapshotId": "{00000000-0000-0000-0000-000000000000}",
+      "status": 2147942487,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": false,
+      "captureTime": "0",
+      "volumeSerial": "0",
+      "fileId": "00000000000000000000000000000000",
+      "volume": "",
+      "bytes": 0,
+      "entries": 0
+    }
+  },
+  {
+    "scenario": "overlap",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-XrnCx9",
+    "receipt": {
+      "nonce": "{BA62F4AF-BE7E-49DC-9939-5E5AB7A5E228}",
+      "snapshotId": "{00000000-0000-0000-0000-000000000000}",
+      "status": 2147942487,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": false,
+      "captureTime": "0",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "321a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 0,
+      "entries": 0
+    }
+  },
+  {
+    "scenario": "idle",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-he95gc",
+    "receipt": {
+      "nonce": "{2C9CE616-591E-4471-AD0C-02B42A9A240E}",
+      "snapshotId": "{8D7FA307-AF63-4833-AA8D-76910702EEE6}",
+      "status": 0,
+      "cleanupStatus": 0,
+      "copyComplete": true,
+      "snapshotReleased": true,
+      "captureTime": "134334975131584380",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "3b1a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 78288,
+      "entries": 5
+    }
+  },
+  {
+    "scenario": "concurrent",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-oHczCL",
+    "receipt": {
+      "nonce": "{5378A1C8-97BA-4836-B768-6DA0363293A6}",
+      "snapshotId": "{3F31D882-ECA2-4472-AA6A-5BAD97ED659D}",
+      "status": 0,
+      "cleanupStatus": 0,
+      "copyComplete": true,
+      "snapshotReleased": true,
+      "captureTime": "134334975139408238",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "441a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 276048,
+      "entries": 5
+    }
+  },
+  {
+    "scenario": "journal",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-ZC1Z0a",
+    "receipt": {
+      "nonce": "{3B700AC3-061C-4302-9C2F-183E540DE687}",
+      "snapshotId": "{FEEADE4A-7CEF-4182-8226-0242DDB52278}",
+      "status": 2147942450,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": true,
+      "captureTime": "134334975146597195",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "5d1a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 0,
+      "entries": 0
+    }
+  },
+  {
+    "scenario": "restore",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-nZ0owV",
+    "receipt": {
+      "nonce": "{CAADC2C5-A40E-4DB9-B62D-2CF8B3835736}",
+      "snapshotId": "{6786DE32-4E62-4907-8578-D718DF999EC8}",
+      "status": 2147949101,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": true,
+      "captureTime": "134334975153159958",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "761a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 0,
+      "entries": 0
+    }
+  },
+  {
+    "scenario": "reparse",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-Mxkep0",
+    "receipt": {
+      "nonce": "{024EECE4-55D8-431A-9FB7-89E620728292}",
+      "snapshotId": "{6B49522F-1579-4FCD-A71F-BA1ABB33E86E}",
+      "status": 2147942487,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": true,
+      "captureTime": "134334975159881190",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "811a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 0,
+      "entries": 0
+    }
+  },
+  {
+    "scenario": "quota",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-PRnAAo",
+    "receipt": {
+      "nonce": "{509E5919-8FAD-4B33-A3C6-CC76E867AF59}",
+      "snapshotId": "{49AAE836-9166-47B9-82B5-D03D629831F1}",
+      "status": 2147944216,
+      "cleanupStatus": 0,
+      "copyComplete": false,
+      "snapshotReleased": true,
+      "captureTime": "134334975166447242",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "8b1a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 0,
+      "entries": 2
+    }
+  },
+  {
+    "scenario": "invalid-records",
+    "root": "D:\\a\\_temp\\murage-vss-fixture-VxFVz1",
+    "receipt": {
+      "nonce": "{B35FFE6D-1344-45D5-A869-FB8CD04B3983}",
+      "snapshotId": "{EF7E4EE6-C170-4D85-BCB1-88F0900A2CDD}",
+      "status": 0,
+      "cleanupStatus": 0,
+      "copyComplete": true,
+      "snapshotReleased": true,
+      "captureTime": "134334975173013719",
+      "volumeSerial": "1356714115766433039",
+      "fileId": "961a0100000002000000000000000000",
+      "volume": "\\\\?\\Volume{26a81912-0000-0000-0000-100000000000}\\",
+      "bytes": 82408,
+      "entries": 5
+    }
+  }
+]
