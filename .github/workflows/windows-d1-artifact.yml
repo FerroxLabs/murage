@@ -1,0 +1,48 @@
+name: Windows D1 compile-only artifact
+on:
+  push:
+    branches: [work/0150-windows-d1-build]
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 1ea3f9fc82312a8cb9d90f3b8720a554ca540b34
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+          architecture: x64
+      - name: Compile without invoking helpers
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b %errorlevel%
+          node scripts/build-fuigo-probe.mjs --with-canary
+          if errorlevel 1 exit /b %errorlevel%
+          cl /nologo /std:c11 /O2 /W4 /DUNICODE /D_UNICODE native\fuigo-probe\windows-launch-diagnostic.c /Fe:dist-native\fuigo-probe\win32-x64\windows-launch-diagnostic.exe /Fo:dist-native\fuigo-probe\win32-x64\windows-launch-diagnostic.obj /link Userenv.lib Advapi32.lib
+          if errorlevel 1 exit /b %errorlevel%
+      - name: Prepare immutable input manifest
+        shell: pwsh
+        run: |
+          $target = '.planning/windows-d1-artifact'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          foreach ($name in @('launcher.exe','canary.exe','standard-user.exe','windows-launch-diagnostic.exe')) {
+            Copy-Item "dist-native/fuigo-probe/win32-x64/$name" "$target/$name"
+          }
+          Copy-Item (Get-Command node).Source "$target/node.exe"
+          $files = @(Get-ChildItem $target -File | Sort-Object Name | ForEach-Object {
+            @{name=$_.Name;bytes=$_.Length;sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+          })
+          @{source='1ea3f9fc82312a8cb9d90f3b8720a554ca540b34';purpose='windows-updater-D1';files=$files} | ConvertTo-Json -Depth 4 | Set-Content "$target/manifest.json" -Encoding utf8
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-updater-D1
+          path: .planning/windows-d1-artifact
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
