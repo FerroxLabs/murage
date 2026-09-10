@@ -1,64 +1,36 @@
 {
   "version": "1.0",
-  "timestamp": "2026-09-10T13:18:37Z",
-  "phase": "0.1.50",
-  "phase_name": "Reliability release qualification",
-  "phase_dir": ".planning",
-  "status": "released-normal-0.1.50-with-documented-limitations",
-  "source_commit": "15c3cbd64056a7288777739f5dd244ca4365ea0b",
-  "source_branch": "work/0150-integration",
+  "timestamp": "2026-09-10T15:43:00Z",
+  "phase": "0.1.51",
+  "phase_name": "Concurrent bot regression release",
+  "status": "published-verified",
+  "source_commit": "acaee1dbfb5551ae41d5f0d24c6bf3a314e5a282",
+  "source_branch": "work/0151-concurrency",
   "handoff_branch": "work/0150-continuation-record",
-  "detailed_handoff": ".planning/.continue-here.md",
-  "working_root": "/private/tmp/murage-0150-build-recovery-fdatWt",
+  "detailed_handoff": ".planning/0151-installed-contention-investigation.md",
+  "working_root": "/private/tmp/murage-0151-concurrency",
+  "publication_receipt": ".planning/0151-publication-receipt.json",
   "completed_tasks": [
-    {"id": "claude-notice-authority", "status": "verified-integrated", "commit": "4f35f486"},
-    {"id": "native-updaters", "status": "verified-integrated", "commit": "9eeb5e03"},
-    {"id": "recovery-helper-signing", "status": "verified-integrated", "commit": "15c3cbd6"},
-    {"id": "windows-signed-artifact", "status": "verified-retained", "run": 34471681869},
-    {"id": "mac-signed-native-artifacts", "status": "verified-retained", "run": 34473310308},
-    {"id": "linux-artifacts", "status": "verified-retained", "run": 34473310353},
-    {"id": "release-assembly", "status": "local-verifiers-passed", "assets": 21},
-    {"id": "windows-post-reboot", "status": "passed-and-normally-closed"},
-    {"id": "windows-workload", "status": "passed-useful-read-handled-failure-cancel", "external_model_calls": 0},
-    {"id": "native-export-cleanup", "status": "complete-original-and-backing-preserved"}
+    "Reproduced Auto/local whole-turn contention",
+    "Scoped host broker and default browser identity correction",
+    "Scoped concurrent-bot, proxy, cancellation and transport checks",
+    "Windows and Linux build/signature/scoped gates",
+    "Mac attempt2 signing/notarization and both native architectures",
+    "21 published asset digests plus public feeds and stable aliases",
+    "Both README updates remotely verified"
   ],
-  "remaining_tasks": [
-    {"id": "windows-upgrade-exit", "status": "missing-receipt-or-user-disposition", "p2_cutoff": "2026-09-10T13:03:29Z"},
-    {"id": "incident-limitations", "status": "explicit-user-disposition-pending"},
-    {"id": "final-docs-publication", "status": "gated-not-started"}
-  ],
-  "async_jobs": [{
-    "job_id": "recovery-uac-xckr66a2",
-    "backend": "hetzner-dsm disposable Windows VM",
-    "status": "closed-2026-09-10T13:18:37Z",
-    "manifest": "/var/tmp/murage-win11-guest-20260909-vj96yyyk/recovery-uac-xckr66a2/launch.json",
-    "deadline": "2026-09-10T13:48:29Z",
-    "pids": {"vm": 605370, "tpm": 605336, "watchdog": 605984, "transfer": 618722},
-    "winrm_port": 58151,
-    "guest_app_pid": 7516,
-    "guest_server_pid": 1540,
-    "guest_session": 1,
-    "last_export_sha256": "60f50f2c5f4b9ff9fbb20476e52b6780685cfeccf028fe20798337e43af7e478",
-    "execution_record": "/private/tmp/murage-0150-build-recovery-fdatWt/windows-native/EXECUTION.md",
-    "resume_command": "Do not restart: workload passed and lease closed; read cleanup.json and final workload receipt.",
-    "verification_command": "rtk proxy ssh -o BatchMode=yes -o ConnectTimeout=10 hetzner-dsm 'ps -p 605370,605336,605984 -o pid=,etime=,comm='"
-  }],
-  "blockers": [
-    {"type": "external", "description": "Mando content reads EPERM", "workaround": "Use accessible temporary checkout and remote continuation branch; leave original volume permissions unchanged."},
-    {"type": "evidence", "description": "Original upgrade exit code missed; postconditions passed but do not prove exit0."},
-    {"type": "human_action", "description": "Older customer errors and original Mac timeout/custody disposition unanswered."}
-  ],
-  "human_actions_pending": [
-    {"action": "Dispose of missing upgrade-exit evidence or approve precise new confirmation resource budget if cutoff passed", "blocking": true},
-    {"action": "Explicitly accept or continue investigating documented older engine/Mac limitations before publication", "blocking": true}
-  ],
-  "constraints": [
-    {"severity": "blocking", "description": "Do not duplicate a running installer/workload or infer exit0 from quiet output, UI, shell success or null ExitCode."},
-    {"severity": "blocking", "description": "Do not extend VM deadline, overwrite original/backing disks, or expose host credentials."},
-    {"severity": "blocking", "description": "Preserve verification counters; no reclassification of missing/failed evidence as pass."},
-    {"severity": "advisory", "description": "All CI build jobs are complete; do not rerun them merely after account switch."}
-  ],
-  "next_action": "Release is published and public assets/feeds/READMEs verified. Read 0150-publication-receipt.json. Historical remaining_tasks and blockers above were explicitly dispositioned by user for this normal release; retain them as follow-up issues, not as fixed incidents. Do not republish or rerun completed checks.",
+  "remaining_tasks": [],
+  "async_jobs": [],
+  "blockers": [],
   "published": true,
-  "goal_complete": true
+  "goal_complete": true,
+  "retained_followups": [
+    "Older engine errors and original Mac credential-shutdown incident remain unconfirmed; see separate 0151 investigation files.",
+    "Broader deferred features remain outside this focused patch; do not assume delivered.",
+    "Windows local desktop routing remains unsupported; Mac host fixture not a Windows test.",
+    "No new native Windows installer qualification; source/transport/build/signatures checked."
+  ],
+  "verification_counters": "Source two rounds plus one explicitly approved diagnostic/correction/confirmation extension accepted. Windows package round2 and Mac package attempt2 accepted. Preserve historical failures; no more retries.",
+  "next_action": "No further release action. 0.1.51 is published/latest and verified. Await next user scope; do not republish, restart old VMs, or re-audit passing gates.",
+  "previous_release_receipt": ".planning/0150-publication-receipt.json"
 }

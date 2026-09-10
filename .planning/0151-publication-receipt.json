@@ -1,0 +1,29 @@
+{
+  "version": "0.1.51",
+  "source": "acaee1dbfb5551ae41d5f0d24c6bf3a314e5a282",
+  "sourceBranch": "work/0151-concurrency",
+  "releaseId": 386412188,
+  "url": "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.51",
+  "publishedAt": "2026-09-10T15:41:47Z",
+  "draft": false,
+  "prerelease": false,
+  "latestVerified": true,
+  "assetCount": 21,
+  "allRemoteSizesAndDigestsMatched": true,
+  "publicChecksAt": "2026-09-10T15:42:16.056Z",
+  "publicFeedsAndChecksumFullBytesMatched": 4,
+  "stableAliasHeadSizesMatched": 5,
+  "runs": {
+    "mac": {"id": 34490171017, "attempt": 2, "result": "success", "bothArchitecturesSignedNotarizedStapled": true, "arm64AndX64NativeLaunchQuit": "passed"},
+    "windows": {"id": 34490695635, "result": "success", "focusedTests": 23, "requiredSignatures": "passed", "newNativeInstallerQualification": false},
+    "linux": {"id": 34490172233, "result": "success", "existingScopedSmoke": "passed"}
+  },
+  "localEvidence": "/private/tmp/murage-0151-release-stage",
+  "retainedLimitations": [
+    "Earlier unexplained engine -32603 and exit1073807364 incidents are not claimed fixed.",
+    "Original intermittent Mac credential shutdown delay is not claimed fixed.",
+    "Windows local desktop routing remains intentionally unsupported.",
+    "Mac-specific host admission fixture was unsuitable for Windows; supported Windows thread and transport checks passed instead."
+  ],
+  "readmeUpdates": {"sourceCommit": "105389650208f76f9eaaa8288d9df84d0bffbf81", "downloadsCommit": "cbebe245f2b371ff72a180ad1eb9682aabff748f", "bothRemoteReadbacksVerified": true}
+}
