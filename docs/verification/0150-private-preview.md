@@ -1,24 +1,47 @@
 # Murage 0.1.50 private preview
 
-This guide describes private integration source at `5c40a66b` on
-`work/0150-integration`, inspected on 2026-09-10. It is not a download announcement
-or evidence that a 0.1.50 installer has been packaged, qualified or released.
+This guide describes private integration source at `11549fff` on
+`work/0150-integration`, inspected on 2026-09-10. A macOS arm64 app from this
+source has passed its basic isolated native smoke. This is not a download
+announcement, full candidate qualification, or a released 0.1.50 installer.
 The coordinator's current `.planning/STATE.md` and `.planning/MURAGE-PLAN.md` in
 the parent Murage checkout control the remaining release gates; older records
 inside this integration checkout may describe earlier stages.
+
+## Recorded private artifact
+
+The local [app bundle](../../../0150-current-private-build/release/mac-arm64/Murage.app)
+is version **0.1.50**, built from
+`11549fff0d7f0f15775b8d274e8aed7dffad1bff`. Its accepted
+[native receipt](../../../0150-current-private-build/.planning/current-private-evidence/native-smoke-r2/result.json)
+records the actual packaged main, static server, sandboxed preload and rendered
+window; four owner routes returned 200 and unauthenticated owner access was
+hidden. The temporary profile and owned processes were cleaned up while the
+normal app and foreground application were preserved.
+
+That smoke deliberately disabled engines and sent no engine turns. It does not
+prove live accounts, model generation, TCC, OS credential custody, every feature,
+Windows/Linux behavior or macOS Intel behavior. The app has an ad-hoc signature
+and is not notarized. The [candidate manifest](../../.planning/0150-candidate-manifest.json)
+records the source and artifact hashes; publication and release readiness remain
+false. Earlier artifacts and failed attempts remain historical evidence.
 
 ## Getting started
 
 Use a maintainer-provided preview with a separate test profile. Do not replace
 your normal installation or point development commands at your everyday data.
-This source guide does not supply a qualified preview installer.
+The local app above is available only for its recorded private verification
+scope; this guide does not authorize an installed-app replacement or another run
+against existing data.
 
 The desktop packaging includes the native Fuigo engine; customers do not need
 to install Node.js or npm to use it. This candidate pins Fuigo **1.0.10**. A source
 pin alone does not prove every packaged platform or a real provider session.
 
-On first run, choose an engine and then a model. Fuigo is labelled **Included**;
-other installed engines can also appear. Account access and pricing depend on
+On first run, choose an engine and then a model. The bundled Fuigo setup path
+identifies an available bundled engine as **Included**; the disabled-engine
+smoke above did not qualify that readiness path. Other installed engines can
+also appear. Account access and pricing depend on
 that selection. Setup does not copy credentials or enable a paid fallback.
 Review your chosen starter crew before importing it, including any selected
 routine suggestions and warnings. A crew import is not permission for
@@ -51,8 +74,16 @@ instructions when access is required.
   This is not a claim that real OAuth or native credential isolation has passed
   on every platform.
 - **Fuigo:** The bundled version and a separately managed engine update are
-  different from a Murage app update. Do not treat the 1.0.10 bundle pin as
-  completion of the independent update/activation/rollback workflow.
+  different from a Murage app update. The independent updater has accepted
+  macOS arm64 production install/update/rollback/bundled proof. Windows, Linux
+  and macOS Intel native updater qualification remain open; the bundle pin
+  does not close those gates.
+- **File watches:** Explicitly choose an existing relative file in an approved
+  bot working folder, then confirm the proposed watch. The bounded file adapter
+  uses the existing routine scheduler and durable Inbox results; baseline and
+  unchanged reads stay quiet. Confirmation, change delivery, quiet behavior and
+  restart deduplication have scoped fixture proof. Watches do not run a model
+  turn, and this slice does not provide arbitrary web or connector monitoring.
 
 ## Known limits
 
@@ -62,22 +93,33 @@ regression evidence; neither establishes that the reported customer incident
 is fixed. The browser takeover hold correction is integrated, but the actual
 customer Box/native UI path is not yet qualified.
 
-The separate ownership-recovery candidate is **not integrated**. Do not use this
-preview guide as an instruction to clear locks, copy a live profile, elevate
-Windows privileges or run recovery against existing data. The proposed
-no-backup Windows snapshot recovery still needs its explicit disposition.
+The ownership-recovery broker, VSS capture, archive, separate restore and selector
+flow are integrated. The accepted Windows Server2022 joined fixture used
+**emulated elevation**, preserved original/anchor bytes, excluded credentials
+and required review before activation. Actual interactive same-user UAC
+cancel/approve and the signed installed app/helper boundary remain unqualified.
+Do not use this guide to clear locks, copy a live profile, elevate privileges or
+run recovery against existing data.
 
-Cloud work remains **blocked for feature acceptance**; no deployed service or
-qualified cloud setup is supplied here. Proactive watches contain an accepted
-pure state foundation only: no source adapter, scheduler activation or Inbox
-delivery is connected. Chief is not running a new watch heartbeat in this
-candidate.
+The isolated remote-window journey is accepted: pairing, connected renderer,
+fake-engine chat, renewal, revocation, disconnect and local-session preservation.
+Hosted provisioning, DNS/TLS, hosted login/persistence and deployed-service
+readiness remain open. No cloud service is supplied by this preview.
 
-Files has preserved browser/core lifecycle evidence, including download and
-restart behavior. Native OS open/reveal is still a separate **pending gate**.
-Platform, native engine updater, profile reconciliation and final package
-qualification remain governed by the coordinator's existing record. Prior
-0.1.49 release results do not qualify this expanded candidate.
+The joined Inbox → Files → exact source-message/report-card journey passed
+byte-identical download and same-profile restart, with one result and unchanged
+sibling-thread state. Earlier rendering and fixture failures are historical,
+not current blockers. macOS text Open/Reveal dispatch also has scoped native
+preload/handler proof; editor rendering and packaged Windows/Linux behavior
+remain unverified.
+
+Windows/Linux native updater confirmation is blocked: Windows contained launch
+returns error 5, and real Linux Fuigo fails during ACP initialization. The two
+rounds and pending continuation decision are preserved in the coordinator's
+record. Windows/Linux final packages and broader packaged UI/auth/Files/background
+qualification remain open. Release-CI credential403 and notarization remain
+unresolved; no publication is authorized. Prior 0.1.49 results do not qualify
+this expanded candidate.
 
 ## Developer-only isolated fixture
 
@@ -88,14 +130,14 @@ data/home directories, a fake engine and its own server; it does not establish
 live provider authentication, renderer behavior or packaged native readiness.
 
 ```sh
-rtk proxy node --experimental-strip-types scripts/control-murage.ts launch
+rtk proxy /Users/seandonahoe/.nvm/versions/node/v24.20.0/bin/node --experimental-strip-types scripts/control-murage.ts launch
 ```
 
 Keep that terminal open. In another terminal, use the exact URL printed by the
 launcher, replacing `PORT` below:
 
 ```sh
-rtk pnpm control:murage doctor --url http://127.0.0.1:PORT
+rtk proxy /Users/seandonahoe/.nvm/versions/node/v24.20.0/bin/node --experimental-strip-types scripts/control-murage.ts doctor --url http://127.0.0.1:PORT
 ```
 
 Interrupt the foreground launcher with Ctrl-C when finished. It owns its child
@@ -104,8 +146,8 @@ receipts. See [Verifying Murage](README.md) for the existing control-surface
 contract. These commands were checked against that guide, `package.json` and
 `scripts/control-murage.ts`; they were not rerun for this documentation change.
 
-<!-- Documentation package: own this new guide only. Acceptance is accurate
-source identity, implemented user flows and explicit pending gates grounded in
-current source and coordinator records. No runtime changes, new tests/audits,
-public README changes, packaging, push or publication. Documentation inspection
-complete; no verification cycles reopened. -->
+<!-- Documentation closeout: update this guide and the candidate manifest only.
+Acceptance is source/receipt agreement, truthful scoped passes and open gates,
+valid JSON/paths and a focused diff. No runtime changes, tests/builds/native runs,
+public README changes, commit, push or publication are performed by this edit.
+Historical evidence and verification counters are preserved. -->
