@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ExternalLink, Route } from "lucide-react";
 
 export const FLUX_SIGNUP_URL = "https://fluxrouter.ai/auth/sign-up";
@@ -10,12 +10,13 @@ export interface FluxRouterConnectionProps {
   onSave: (key: string) => Promise<void>;
   onTest: () => Promise<{ modelCount: number; error?: string }>;
   onDisconnect: () => Promise<void>;
+  children?: ReactNode;
 }
 
 const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const button = `min-h-11 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50 ${focus}`;
 
-export function FluxRouterConnection({ configured, conflict = false, choices = [], onSelect, onSave, onTest, onDisconnect }: FluxRouterConnectionProps) {
+export function FluxRouterConnection({ configured, conflict = false, choices = [], onSelect, onSave, onTest, onDisconnect, children }: FluxRouterConnectionProps) {
   const input = useRef<HTMLInputElement>(null);
   const running = useRef(false);
   const [editing, setEditing] = useState(false);
@@ -75,5 +76,6 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
     <a href={FLUX_SIGNUP_URL} target="_blank" rel="noopener noreferrer" className={`mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-lg text-[13px] font-medium text-accent hover:underline ${focus}`}>Sign up for Flux Router<ExternalLink size={13} aria-hidden="true" /></a>
     {notice && <p role="status" className="mt-2 text-[12px] leading-relaxed text-success">{notice}</p>}
     {error && <p id="flux-router-error" role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{error}</p>}
+    {children}
   </section>;
 }

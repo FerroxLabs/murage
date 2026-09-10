@@ -102,7 +102,8 @@ describe("Flux setup is reachable without duplicating the invitation field", () 
     const settings = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.meta.url)), "utf8");
     expect(settings).toContain('<ModelsSettings />');
     const models = readFileSync(fileURLToPath(new URL("./ModelsSettings.tsx", import.meta.url)), "utf8");
-    expect(models).toContain('<ExistingKey id="legacy-flux" label="Flux Router default"');
+    expect(models).toContain('<FluxRouterConnection configured={flux?.configured ?? null}');
+    expect(models).toContain('{!flux && <ExistingKey id="legacy-flux" label="Flux Router default"');
     expect(models).toContain('configured={state.config?.flux?.configured ?? false}');
   });
 
