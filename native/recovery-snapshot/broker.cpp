@@ -72,14 +72,14 @@ std::vector<Handle> pin(const std::wstring& path, DWORD lastAccess = FILE_READ_A
     if (at != 2) need(part(path.substr(at+1, next == std::wstring::npos ? next : next-at-1)));
     const auto prefix = at == 2 ? path.substr(0, 3) : path.substr(0, next);
     const bool last = at != 2 && next == std::wstring::npos;
-    held.emplace_back(CreateFileW(prefix.c_str(), last ? lastAccess : FILE_READ_ATTRIBUTES,
+    held.emplace_back(CreateFileW(prefix.c_str(), (last ? lastAccess : FILE_READ_ATTRIBUTES) | FILE_LIST_DIRECTORY,
       FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     FILE_ATTRIBUTE_TAG_INFO info{}; win(GetFileInformationByHandleEx(held.back().h, FileAttributeTagInfo, &info, sizeof(info)));
     need((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT));
     if (last) break;
     if (at == 2) { at = 2; const auto first = path.find(L'\\', 3);
       need(part(path.substr(3, first == std::wstring::npos ? first : first-3)));
-      held.emplace_back(CreateFileW(path.substr(0, first).c_str(), first == std::wstring::npos ? lastAccess : FILE_READ_ATTRIBUTES,
+      held.emplace_back(CreateFileW(path.substr(0, first).c_str(), (first == std::wstring::npos ? lastAccess : FILE_READ_ATTRIBUTES) | FILE_LIST_DIRECTORY,
         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
       win(GetFileInformationByHandleEx(held.back().h, FileAttributeTagInfo, &info, sizeof(info)));
       need((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT));

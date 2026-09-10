@@ -48,7 +48,7 @@ std::wstring finalPath(HANDLE h) {
   return {buffer.data(), length};
 }
 Handle openRead(const std::wstring& path, bool directory, bool pin = false, bool security = false) {
-  Handle h(CreateFileW(path.c_str(), (directory ? FILE_READ_ATTRIBUTES : GENERIC_READ) | (security ? READ_CONTROL : 0),
+  Handle h(CreateFileW(path.c_str(), (directory ? FILE_READ_ATTRIBUTES : GENERIC_READ) | (pin ? FILE_LIST_DIRECTORY : 0) | (security ? READ_CONTROL : 0),
     FILE_SHARE_READ | FILE_SHARE_WRITE | (pin ? 0 : FILE_SHARE_DELETE), nullptr, OPEN_EXISTING,
     FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_FLAG_SEQUENTIAL_SCAN), nullptr));
   FILE_ATTRIBUTE_TAG_INFO info{};
