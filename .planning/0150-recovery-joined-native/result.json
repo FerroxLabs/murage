@@ -1,0 +1,29 @@
+{
+  "source": "f7ad8968d50dfdb82c9a825cd9b0a8fb360a1005",
+  "transport": "emulated-elevation-same-runner-token",
+  "actualUac": "not-exercised",
+  "nativePolicyChecks": "passed",
+  "confirmationCancellation": "passed",
+  "parentDeath": "passed",
+  "guardedCapture": {
+    "event": "result",
+    "nonce": "0148a0c1-630e-41f6-bdad-0dce9e2bbb7b",
+    "status": 0,
+    "snapshotId": "678e5b04-1a59-41b3-b0d6-dd55ce982587",
+    "copyComplete": true,
+    "snapshotReleased": true,
+    "sourceIdentity": {
+      "volumeSerial": "1885546912028738891",
+      "fileId": "641a0100000001000000000000000000"
+    },
+    "directory": "D:\\a\\_temp\\murage-transport-fixture-8sDWmc\\clone",
+    "consistency": "crash-consistent",
+    "activationAvailable": false
+  },
+  "archiveRestore": "passed",
+  "history": "preserved",
+  "credentials": "excluded",
+  "enginesSchedulesMemory": "paused",
+  "freshProcessSelector": "passed",
+  "originalAndAnchors": "unchanged"
+}
