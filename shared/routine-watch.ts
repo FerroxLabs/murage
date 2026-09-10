@@ -12,6 +12,21 @@ export interface RoutineWatchDefinition {
   maxChecks: number;
 }
 
+export type RoutineWatchInput = Omit<RoutineWatchDefinition, "id">;
+
+/** The proposing conversation owns the watch, including cross-bot proposals. */
+export interface RoutineWatchBinding {
+  ownerBotId: string;
+  state: RoutineWatchState;
+}
+
+export interface RoutineWatchRun {
+  watchId: string;
+  ownerBotId: string;
+  source: RoutineWatchSource;
+  outcome: "pending" | "baseline" | "unchanged" | "changed" | "failed" | "abandoned";
+}
+
 export interface RoutineWatchObservation {
   /** SHA-256 of canonical relevant source fields, excluding volatile metadata.
    * Raw source content and credentials must not enter the checkpoint ledger. */

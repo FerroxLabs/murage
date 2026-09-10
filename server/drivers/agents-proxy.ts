@@ -393,6 +393,11 @@ const TOOLS = [
       additionalProperties: false,
       properties: {
         ...ROUTINE_FIELDS_SCHEMA,
+        watch: {
+          type: "object", additionalProperties: false, required: ["relative_path", "expires_at", "max_checks"],
+          description: "Only when the user asks to watch a chosen existing file in this bot's current working folder. Read-only change detection; use interval cadence >=5 minutes and run_on ember. No URLs, absolute paths, secrets or provider execution. Confirmation is still required.",
+          properties: { relative_path: { type: "string", minLength: 1, maxLength: 200 }, expires_at: { type: "string", format: "date-time" }, max_checks: { type: "integer", minimum: 1, maximum: 10000 } },
+        },
         for_bot_id: {
           type: "string",
           description:
@@ -763,6 +768,10 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (scheduleError) return { text: scheduleError, isError: true };
     if (!routine.name || !routine.instructions || !routine.schedule) {
       return { text: "propose_routine needs name, instructions, and schedule.", isError: true };
+    }
+    if (args.watch !== undefined) {
+      if (!jsonRecord(args.watch) || Object.keys(args.watch).some(key => !["relative_path", "expires_at", "max_checks"].includes(key))) return { text: "A file watch needs only relative_path, expires_at and max_checks.", isError: true };
+      routine.watch = { relativePath: args.watch.relative_path, expiresAt: args.watch.expires_at, maxChecks: args.watch.max_checks };
     }
     const forBotId = String(args.for_bot_id ?? "").trim();
     const r = await api("/api/internal/routine-requests", {

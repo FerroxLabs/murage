@@ -10,6 +10,9 @@ import { redactSecretsInText } from "./redact.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import { routineEventForRun, type RoutineEvent } from "../shared/routine-event.ts";
+import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, RoutineWatchRun, RoutineWatchSource } from "../shared/routine-watch.ts";
+import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
+import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -45,6 +48,7 @@ export type RoutineRunStatus =
   | "missed";
 
 export interface Routine {
+  watch?: RoutineWatchBinding;
   id: string;
   name: string;
   prompt: string;
@@ -69,6 +73,7 @@ export interface Routine {
 }
 
 export interface RoutineRun {
+  watch?: RoutineWatchRun;
   event?: RoutineEvent;
   eventBudget?: EventActionBudget;
   id: string;
@@ -158,6 +163,7 @@ type RoutineRequestCommitFor<Action extends RoutineRequestOperation["action"]> =
   Omit<RoutineRequestCommit, "action"> & { action: Action };
 
 export interface RoutineInput {
+  watch?: RoutineWatchInput;
   name: string;
   prompt: string;
   target?: RoutineTarget;
@@ -188,6 +194,8 @@ function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
 }
 
 export interface RoutineManagerOptions {
+  validateWatchSource?: (ownerBotId: string, botId: string, source: RoutineWatchSource) => void;
+  readWatchSource?: (ownerBotId: string, botId: string, source: RoutineWatchSource, signal: AbortSignal) => Promise<RoutineWatchObservation>;
   /** Admission only: never interrupts active work or blocks manual/channel requests. */
   automaticPaused?: () => boolean;
   file?: string;
@@ -343,6 +351,7 @@ function loadGroupId(value: unknown, target: RoutineTarget): string | undefined 
 function cloneRoutine(routine: Routine): Routine {
   return {
     ...routine,
+    ...(routine.watch ? { watch: structuredClone(routine.watch) } : {}),
     schedule: cloneSchedule(routine.schedule),
     attachments: cloneAttachments(routine.attachments),
   };
@@ -351,6 +360,7 @@ function cloneRoutine(routine: Routine): Routine {
 function cloneRun(run: RoutineRun): RoutineRun {
   return {
     ...run,
+    ...(run.watch ? { watch: structuredClone(run.watch) } : {}),
     ...(run.event ? { event: structuredClone(run.event) } : {}),
     ...(run.eventBudget ? { eventBudget: structuredClone(run.eventBudget) } : {}),
     attachments: cloneAttachments(run.attachments),
@@ -494,6 +504,7 @@ export class RoutineManager {
   private routineRequestReceipts: RoutineRequestReceipt[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  private watchReads = new Map<string, AbortController>();
 
   constructor(options: RoutineManagerOptions) {
     this.options = options;
@@ -516,6 +527,10 @@ export class RoutineManager {
               attachments: loadAttachments(routine.attachments),
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
             };
+            if (routine.watch !== undefined) {
+              try { loaded.watch = readRoutineWatchBinding(routine.watch, routine.id); }
+              catch { return []; }
+            }
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
             return [loaded];
           })
@@ -537,6 +552,15 @@ export class RoutineManager {
             loaded.event = routineEventForRun(loaded);
             const budget = eventActionBudgetSchema.safeParse(run.eventBudget);
             loaded.eventBudget = budget.success ? budget.data : undefined;
+            const watched = this.routines.find(item => item.id === loaded.routineId)?.watch;
+            if (run.watch !== undefined || watched) {
+              const parsedWatch = z.object({ watchId: z.string().min(1), ownerBotId: z.string().min(1), source: routineWatchInputSchema.shape.source,
+                outcome: z.enum(["pending", "baseline", "unchanged", "changed", "failed", "abandoned"]) }).strict().safeParse(run.watch);
+              if (!parsedWatch.success || parsedWatch.data.watchId !== loaded.routineId || watched && parsedWatch.data.ownerBotId !== watched.ownerBotId) {
+                loaded.status = "failed"; loaded.finishedAt = this.now(); loaded.error = "Saved file watch receipt is invalid; no check was started";
+                delete loaded.watch;
+              } else loaded.watch = parsedWatch.data;
+            }
             return loaded;
           })
         : [];
@@ -567,6 +591,15 @@ export class RoutineManager {
         run.error = "Murage restarted while this routine was running";
         run.attention = undefined;
         run.finishedAt = this.now();
+        if (run.watch) {
+          run.watch.outcome = "abandoned";
+          const routine = this.routines.find(item => item.id === run.routineId);
+          if (routine?.watch) {
+            const now = Math.max(this.now(), routine.watch.state.updatedAt);
+            routine.watch.state = pauseRoutineWatch(routine.watch.state, true, now);
+            if (routine.enabled) routine.watch.state = pauseRoutineWatch(routine.watch.state, false, now);
+          }
+        }
         recovered.push(cloneRun(run));
       }
     }
@@ -680,6 +713,12 @@ export class RoutineManager {
     const clean = sanitizeInput(input);
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     const at = this.now();
+    const watchInput = input.watch === undefined ? undefined : routineWatchInputSchema.parse(input.watch);
+    if (watchInput) {
+      if (!request || !this.options.validateWatchSource || !this.options.readWatchSource) throw new Error("Confirm a file watch in its routine card before enabling it");
+      if (clean.target !== "bot" || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length) throw new Error("File watches use an interval on this computer without attachments");
+      this.options.validateWatchSource(request.botId, clean.botId, watchInput.source);
+    }
     const routine: Routine = {
       id: randomUUID(),
       ...clean,
@@ -690,6 +729,7 @@ export class RoutineManager {
       createdAt: at,
       updatedAt: at,
     };
+    if (watchInput && request) routine.watch = { ownerBotId: request.botId, state: createRoutineWatchState({ id: routine.id, ...watchInput }, at) };
     this.commitMutation(() => {
       this.routines.unshift(routine);
       if (request) this.rememberRoutineRequest(request, routine.id, at);
@@ -712,6 +752,7 @@ export class RoutineManager {
     }
     const routine = this.routines.find((r) => r.id === id);
     if (!routine) return null;
+    if (Object.hasOwn(patch, "watch")) throw new Error("Confirm a new file watch to change its source, expiry or check limit");
     const now = this.now();
     const clean = sanitizeInput({
       name: patch.name ?? routine.name,
@@ -727,6 +768,11 @@ export class RoutineManager {
       attachments: patch.attachments ?? routine.attachments,
     });
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
+    if (routine.watch && (clean.target !== "bot" || clean.botId !== routine.botId || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length)) throw new Error("A file watch must keep its approved bot, local interval and source");
+    if (routine.watch && patch.enabled === true) {
+      if (now >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks) throw new Error("This file watch expired or reached its check limit. Confirm a new watch to continue");
+      this.options.validateWatchSource?.(routine.watch.ownerBotId, routine.botId, routine.watch.state.definition.source);
+    }
     const cancelledRuns: RoutineRun[] = [];
     this.commitMutation(() => {
       Object.assign(routine, clean, {
@@ -748,6 +794,10 @@ export class RoutineManager {
           cancelledRuns.push(run);
         }
       }
+      if (routine.watch && patch.enabled !== undefined) {
+        routine.watch.state = pauseRoutineWatch(routine.watch.state, !patch.enabled, Math.max(now, routine.watch.state.updatedAt));
+        if (!patch.enabled) this.watchReads.get(routine.id)?.abort();
+      }
       if (request) this.rememberRoutineRequest(request, routine.id, now);
     });
     for (const run of cancelledRuns) this.emitRun(run);
@@ -764,6 +814,7 @@ export class RoutineManager {
     }
     const at = this.routines.findIndex((r) => r.id === id);
     if (at === -1) return false;
+    this.watchReads.get(id)?.abort();
     const cancelledRuns: RoutineRun[] = [];
     this.commitMutation(() => {
       this.routines.splice(at, 1);
@@ -785,6 +836,10 @@ export class RoutineManager {
     let changed = false;
     for (const routine of this.routines) {
       if (routine.botId !== botId || !routine.enabled) continue;
+      if (routine.watch) {
+        this.watchReads.get(routine.id)?.abort();
+        routine.watch.state = pauseRoutineWatch(routine.watch.state, true, Math.max(this.now(), routine.watch.state.updatedAt));
+      }
       routine.enabled = false;
       routine.nextRunAt = null;
       routine.updatedAt = Math.max(this.now(), routine.updatedAt + 1);
@@ -851,6 +906,7 @@ export class RoutineManager {
     }
     const routine = this.routines.find((r) => r.id === id);
     if (!routine) return null;
+    if (routine.watch && (!routine.enabled || this.now() >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks)) throw new Error("This file watch is paused, expired or has reached its check limit");
     let run!: RoutineRun;
     this.commitMutation(() => {
       run = this.newRun(routine, this.now(), true);
@@ -972,6 +1028,16 @@ export class RoutineManager {
       run.attention = undefined;
       run.finishedAt = this.now();
       if (run.eventBudget) run.eventBudget.closed = true;
+      if (run.watch) {
+        const routine = this.routines.find(item => item.id === run.routineId);
+        if (routine?.watch) {
+          const now = Math.max(this.now(), routine.watch.state.updatedAt);
+          routine.watch.state = pauseRoutineWatch(routine.watch.state, true, now);
+          if (routine.enabled) routine.watch.state = pauseRoutineWatch(routine.watch.state, false, now);
+        }
+        run.watch.outcome = "abandoned";
+        this.watchReads.get(run.routineId)?.abort();
+      }
     });
     this.emitRun(run);
     if (run.threadId) {
@@ -1006,6 +1072,7 @@ export class RoutineManager {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const read of this.watchReads.values()) read.abort();
   }
 
   /** Stop runs that have outrun their wall-clock limit.
@@ -1065,6 +1132,13 @@ export class RoutineManager {
       const missedRuns: RoutineRun[] = [];
       for (const routine of this.routines) {
         if(this.options.automaticPaused?.())break;
+        if (routine.watch && (now >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks)) {
+          if (routine.enabled || routine.nextRunAt !== null) {
+            this.commitMutation(() => { routine.enabled = false; routine.nextRunAt = null; });
+            this.emitRoutine(routine);
+          }
+          continue;
+        }
         if (!routine.enabled || routine.nextRunAt == null || routine.nextRunAt > now) continue;
         const pendingAt = routine.nextRunAt;
         const late = now - pendingAt;
@@ -1138,6 +1212,7 @@ export class RoutineManager {
           this.failRun(run, this.missingTargetMessage(run.target));
           continue;
         }
+        if (run.watch) { await this.checkWatch(run); continue; }
         // A webhook is an incoming message, so make its task the bot's live
         // chat immediately. Scheduled work remains detached and unobtrusive.
         const task = run.target === "room-goal"
@@ -1366,10 +1441,66 @@ export class RoutineManager {
       sourceThreadId: routine.sourceThreadId,
       createdAt: this.now(),
     };
+    if (routine.watch) run.watch = { watchId: routine.id, ownerBotId: routine.watch.ownerBotId, source: structuredClone(routine.watch.state.definition.source), outcome: "pending" };
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
+    if (run.watch) run.eventBudget.closed = true;
     this.runs.push(run);
     return run;
+  }
+
+  private async checkWatch(run: RoutineRun): Promise<void> {
+    const routine = this.routines.find(item => item.id === run.routineId);
+    if (!routine?.watch || !run.watch || !routine.enabled || run.watch.watchId !== routine.id) {
+      this.commitMutation(() => { run.status = "cancelled"; if (run.watch) run.watch.outcome = "abandoned"; run.finishedAt = this.now(); });
+      this.emitRun(run); return;
+    }
+    const now = Math.max(this.now(), routine.watch.state.updatedAt);
+    const admission = reserveRoutineWatchCheck(routine.watch.state, run.id, now);
+    if (admission.outcome !== "admitted") {
+      this.commitMutation(() => { run.status = "cancelled"; run.watch!.outcome = "abandoned"; run.finishedAt = now; });
+      this.emitRun(run); return;
+    }
+    const controller = new AbortController();
+    this.commitMutation(() => { routine.watch!.state = admission.state; run.status = "running"; run.startedAt = now; });
+    this.watchReads.set(routine.id, controller);
+    let observation: RoutineWatchObservation | null = null;
+    let failure: string | undefined;
+    try {
+      if (!this.options.readWatchSource || !this.options.validateWatchSource) throw new Error("File watch source access is unavailable");
+      this.options.validateWatchSource(routine.watch.ownerBotId, routine.botId, run.watch.source);
+      observation = await this.options.readWatchSource(routine.watch.ownerBotId, routine.botId, run.watch.source, controller.signal);
+      this.options.validateWatchSource(routine.watch.ownerBotId, routine.botId, run.watch.source);
+    } catch { failure = "The selected watch file is unavailable or no longer permitted. Review its working folder and source."; }
+    finally { this.watchReads.delete(routine.id); }
+    const current = this.routines.find(item => item.id === routine.id);
+    if (!current?.watch) {
+      if (run.status === "running") {
+        this.commitMutation(() => { run.status = "cancelled"; run.watch!.outcome = "abandoned"; run.finishedAt = this.now(); });
+        this.emitRun(run);
+      }
+      return;
+    }
+    if (run.status !== "running") return;
+    const completedAt = Math.max(this.now(), current.watch.state.updatedAt);
+    const automatic = run.triggerSource !== "manual";
+    this.commitMutation(() => {
+      if (controller.signal.aborted || !current.enabled || automatic && this.options.automaticPaused?.()) {
+        current.watch!.state = pauseRoutineWatch(current.watch!.state, true, completedAt);
+        if (current.enabled) current.watch!.state = pauseRoutineWatch(current.watch!.state, false, completedAt);
+      }
+      const completion = completeRoutineWatchCheck(current.watch!.state, run.id, failure ? null : observation, completedAt);
+      current.watch!.state = completion.state;
+      run.watch!.outcome = completion.outcome === "stale" ? "abandoned" : completion.outcome;
+      run.status = ["stale", "abandoned"].includes(completion.outcome) ? "cancelled" : completion.outcome === "failed" ? "failed" : "completed";
+      run.finishedAt = completedAt;
+      if (completion.outcome === "changed") run.output = `File changed: ${run.watch!.source.sourceId}`;
+      if (completion.outcome === "failed") run.error = failure;
+      if (completedAt >= completion.state.definition.expiresAt || completion.state.checks.length >= completion.state.definition.maxChecks) { current.enabled = false; current.nextRunAt = null; }
+    });
+    this.emitRoutine(current);
+    this.emitRun(run);
+    if (run.watch?.outcome === "failed") this.options.onRunFailed?.(cloneRun(run));
   }
 
   private emitRoutine(routine: Routine) {

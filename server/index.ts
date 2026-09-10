@@ -319,6 +319,9 @@ import { ImageGenerationService, type ImageConnection } from "./image-generation
 import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
+import { createRoutineWatchFileAdapter } from "./routine-watch-file.ts";
+import { listRoutineWatchFiles, routineFileWatchProposalSchema, routineWatchFileScope, selectRoutineWatchFile } from "./routine-watch-integration.ts";
+import type { RoutineWatchSource } from "../shared/routine-watch.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
 import { scoutProject, suggestTeam } from "./project-scout.ts";
 import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
@@ -4079,7 +4082,7 @@ function routineSourceOwner(run: RoutineRun) {
   if (!threadId) return null;
   // Validate before messagesFor(): Store lazily opens transcript storage, so
   // reading an orphan id first would recreate a deleted conversation.
-  const bot = store.bot(run.botId);
+  const bot = store.bot(run.watch?.ownerBotId ?? run.botId);
   if (!bot) return null;
   if (store.taskByThread(bot.id, threadId)) return { bot, group: undefined, threadId };
   const group = store.groupByThread(threadId);
@@ -4139,6 +4142,7 @@ function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): strin
  * including restart recovery, patches the existing run id instead of adding
  * another chat message. */
 function syncRoutineRunToSource(run: RoutineRun): string | null {
+  if (run.watch && !["changed", "failed"].includes(run.watch.outcome)) return null;
   const source = routineSourceOwner(run);
   if (!source) return null;
   const sourceThreadId = source.threadId;
@@ -4169,7 +4173,24 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
     if (source.group) store.patchGroup(source.group.id, { unread: true });
     else store.patchBot(source.bot.id, { unread: true });
   }
+  if (!existing && run.watch?.outcome === "changed") notify(buildNotification("done", source.bot, sourceThreadId, card.summary ?? "The selected file changed."));
   return sourceThreadId;
+}
+
+function watchFileScope(botId: string) {
+  const bot = store.bot(botId);
+  if (!bot || bot.hidden) return null;
+  const task = store.taskByThread(bot.id, bot.threadId);
+  return routineWatchFileScope(botId, task?.cwd === null ? undefined : task?.cwd ?? bot.cwd);
+}
+function resolveWatchSource(ownerBotId: string, botId: string, relativePath: string): RoutineWatchSource {
+  const owner = store.bot(ownerBotId), bot = store.bot(botId);
+  if (!owner || !bot || owner.hidden || bot.hidden || owner.id !== bot.id && !canReach(owner, bot)) throw new Error("This watch's bot is no longer available to its owner");
+  return selectRoutineWatchFile(watchFileScope(botId), relativePath);
+}
+function validateWatchSource(ownerBotId: string, botId: string, source: RoutineWatchSource) {
+  const selected = resolveWatchSource(ownerBotId, botId, source.sourceId);
+  if (source.adapterId !== "file" || selected.scopeId !== source.scopeId) throw new Error("The working folder changed. Confirm a new watch for the selected file");
 }
 
 async function interruptRoutineGroupGoal(
@@ -4188,6 +4209,15 @@ async function interruptRoutineGroupGoal(
 }
 
 routines = new RoutineManager({
+  validateWatchSource,
+  readWatchSource: async (ownerBotId, botId, source, signal) => {
+    validateWatchSource(ownerBotId, botId, source);
+    return createRoutineWatchFileAdapter(scopeId => {
+      try { validateWatchSource(ownerBotId, botId, source); } catch { return null; }
+      const scope = watchFileScope(botId);
+      return scope?.workspaceId === scopeId ? scope : null;
+    }).read(source, signal);
+  },
   automaticPaused: () => cfg.automationsPaused === true,
   emit: broadcast,
   channelThread: botId => {
@@ -4248,12 +4278,13 @@ routines = new RoutineManager({
   interruptGoal: interruptRoutineGroupGoal,
   onRunChanged: syncRoutineRunToSource,
   onRunFailed: (run) => {
-    const bot = store.bot(run.botId);
+    const bot = store.bot(run.watch?.ownerBotId ?? run.botId);
     if (!bot) return;
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
   },
 });
+for (const run of routines.listRuns().filter(run => run.watch && ["changed", "failed"].includes(run.watch.outcome))) syncRoutineRunToSource(run);
 // The scheduler receipt and room transcript live in separate durable stores.
 // If the process exited between those two writes, prefer the correlated
 // RoutineRun's terminal truth; an uncorrelated manual goal is simply failed
@@ -4381,6 +4412,7 @@ async function cloudRoutineReadiness(): Promise<{ ready: boolean; reason?: strin
   }
 }
 const routineRequests = new RoutineRequestService({
+  resolveWatchSource,
   store,
   routines,
   cloudReady: cloudRoutineReadiness,
@@ -4412,6 +4444,7 @@ const agentRoutine = (
   const safeName = redactSecretsInText(routine.name);
   return {
     id: routine.id,
+    ...(routine.watch ? { watch: { relativePath: routine.watch.state.definition.source.sourceId, expiresAt: new Date(routine.watch.state.definition.expiresAt).toISOString(), maxChecks: routine.watch.state.definition.maxChecks, checksUsed: routine.watch.state.checks.length } } : {}),
     name: safeName,
     instructions: safeInstructions.slice(0, 2_000),
     instructionsTruncated: safeInstructions.length > 2_000,
@@ -7637,13 +7670,13 @@ const server = createServer(async (req, res) => {
         // the agent can answer "did it run?" from scheduler truth rather
         // than guessing from conversation history.
         for (const run of routines!.listRuns()) {
-          if (run.botId === from.id && !latestRuns.has(run.routineId)) latestRuns.set(run.routineId, run);
+          if ((run.watch?.ownerBotId ?? run.botId) === from.id && !latestRuns.has(run.routineId)) latestRuns.set(run.routineId, run);
         }
         return json(res, 200, {
           now: new Date().toISOString(),
           timeZone: routineTimeZone(),
           routines: routines!.listRoutines()
-            .filter((routine) => routine.botId === from.id)
+            .filter((routine) => (routine.watch?.ownerBotId ?? routine.botId) === from.id)
             .slice(0, 100)
             .map((routine) => agentRoutine(routine, latestRuns.get(routine.id))),
         });
@@ -8370,6 +8403,28 @@ const server = createServer(async (req, res) => {
         return [{ sourceBotId, targetBotId: watch.toBotId, threadId, groupId: channel?.id }];
       });
       return json(res, 200, { collaborations, queued, running });
+    }
+
+    const watchFilesRoute = /^\/api\/bots\/([\w-]+)\/watch-files$/.exec(path);
+    if (watchFilesRoute && method === "GET") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      return json(res, 200, listRoutineWatchFiles(watchFileScope(watchFilesRoute[1]), url.searchParams.get("directory") ?? ""));
+    }
+    const watchProposalRoute = /^\/api\/bots\/([\w-]+)\/watch-proposal$/.exec(path);
+    if (watchProposalRoute && method === "POST") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      const parsed = routineFileWatchProposalSchema.extend({ everyMinutes: z.number().int().min(5).max(1440) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an existing relative file, cadence, future expiry and check limit" });
+      const target = store.bot(watchProposalRoute[1]);
+      if (!target || target.hidden) return json(res, 404, { error: "no such bot" });
+      const owner = store.workspaceChief() ?? target;
+      const { everyMinutes, ...watch } = parsed.data;
+      const proposal = await routineRequests.propose({ botId: owner.id, threadId: owner.threadId, proposal: {
+        action: "create", ...(owner.id === target.id ? {} : { forBot: { botId: target.id, name: target.name } }),
+        routine: { name: `Watch ${watch.relativePath}`.slice(0, 80), instructions: "Report when the selected file changes.",
+          schedule: { type: "interval", everyMinutes }, runOn: "ember", watch },
+      } });
+      return json(res, 201, { ...proposal, botId: owner.id, threadId: owner.threadId });
     }
 
     // ── routines calendar ────────────────────────────────────────────────

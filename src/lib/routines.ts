@@ -35,6 +35,7 @@ export type RoutineRunStatus =
   | "missed";
 
 export interface Routine {
+  watch?: import("../../shared/routine-watch").RoutineWatchBinding;
   id: string;
   name: string;
   prompt: string;
@@ -54,6 +55,7 @@ export interface Routine {
 }
 
 export interface RoutineRun {
+  watch?: import("../../shared/routine-watch").RoutineWatchRun;
   event?: import("../../shared/routine-event").RoutineEvent;
   id: string;
   routineId: string;

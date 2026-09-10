@@ -21,6 +21,8 @@ import type {
   RoutineRequestRunOn,
   RoutineRequestSchedule,
 } from "../shared/routine-request.ts";
+import type { RoutineWatchSource } from "../shared/routine-watch.ts";
+import { routineFileWatchProposalSchema, routineWatchInput, routineWatchInputSchema } from "./routine-watch-integration.ts";
 
 const WEEKDAY_NUMBER = {
   sunday: 0,
@@ -64,6 +66,7 @@ const routineToolScheduleSchema = z.discriminatedUnion("type", [
 ]);
 
 const routineToolDefinitionSchema = z.object({
+  watch: routineFileWatchProposalSchema.optional(),
   name: z.string().max(80),
   instructions: z.string().max(20_000),
   schedule: routineToolScheduleSchema,
@@ -73,7 +76,7 @@ const routineToolDefinitionSchema = z.object({
 }).strict();
 
 const routineToolChangesSchema = routineToolDefinitionSchema
-  .omit({ timeoutMinutes: true })
+  .omit({ timeoutMinutes: true, watch: true })
   .partial()
   .extend({ timeoutMinutes: z.number().nullable().optional() })
   .strict()
@@ -115,6 +118,7 @@ const storedScheduleSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 const storedDefinitionSchema = z.object({
+  watch: routineWatchInputSchema.optional(),
   name: z.string().trim().min(1).max(80),
   instructions: z.string().trim().min(1).max(20_000),
   schedule: storedScheduleSchema,
@@ -123,7 +127,7 @@ const storedDefinitionSchema = z.object({
   timeoutMinutes: z.number().int().min(5).max(240).optional(),
 }).strict();
 const storedChangesSchema = storedDefinitionSchema
-  .omit({ timeoutMinutes: true })
+  .omit({ timeoutMinutes: true, watch: true })
   .partial()
   .extend({ timeoutMinutes: z.number().int().min(5).max(240).nullable().optional() })
   .strict()
@@ -199,6 +203,7 @@ export interface RoutineRequestStore {
 }
 
 export interface RoutineRequestServiceOptions {
+  resolveWatchSource?: (ownerBotId: string, botId: string, relativePath: string) => RoutineWatchSource;
   store: RoutineRequestStore;
   routines: RoutineManager;
   now?: () => number;
@@ -403,7 +408,7 @@ function routineId(value: string): string {
 }
 
 function ownedRoutine(manager: RoutineManager, id: string, botId: string): Routine | null {
-  return manager.listRoutines().find((routine) => routine.id === id && routine.botId === botId) ?? null;
+  return manager.listRoutines().find((routine) => routine.id === id && (routine.watch?.ownerBotId ?? routine.botId) === botId) ?? null;
 }
 
 function normalizedOperation(
@@ -493,6 +498,7 @@ function effectiveDefinition(operation: RoutineRequestOperation, manager: Routin
   const existing = manager.listRoutines().find((routine) => routine.id === operation.routineId);
   if (!existing) return null;
   const base: RoutineRequestDefinition = {
+    ...(existing.watch ? { watch: routineWatchInput(existing.watch) } : {}),
     name: existing.name,
     instructions: existing.prompt,
     schedule: { ...existing.schedule },
@@ -554,6 +560,17 @@ function cardCopy(
   // shows every instruction, but credential-shaped values never travel back
   // through the bot's MCP response or into the transcript.
   const visibleInstructions = redactSecretsInText(definition.instructions);
+  if (definition.watch) {
+    const watch = definition.watch;
+    const detail = [`Action: ${actionCopy.detail} (read-only file watch)`, `Name: ${name}`,
+      ...(forBot ? [`Working folder: @${redactSecretsInText(forBot.name)}`] : []),
+      `Selected file: ${watch.source.sourceId}`, `Schedule: ${when}`, `Next check: ${nextDescription}`,
+      `Expires: ${formatInstant(watch.expiresAt, timeZone)} (${timeZone})`, `Maximum checks: ${watch.maxChecks}`,
+      "Only changes are reported in Inbox. The first check records a baseline. Quiet hours follow notification settings.",
+      "This watch only reads this file. It cannot run an agent, send messages to others, spend, or change files."].join("\n");
+    return { title, summary: `${actionLabel} file watch “${name}”${forSuffix} · ${when} · ${watch.maxChecks} checks`, detail,
+      nextRunAt, tool: operation.action === "create" ? "schedule_routine" : "manage_routine" };
+  }
   const runLimit = definition.timeoutMinutes === undefined
     ? "no run limit"
     : `${definition.timeoutMinutes} min limit`;
@@ -579,6 +596,7 @@ function cardCopy(
 
 function inputFromDefinition(definition: RoutineRequestDefinition, botId: string, now: number): RoutineInput {
   return {
+    ...(definition.watch ? { watch: structuredClone(definition.watch) } : {}),
     name: definition.name,
     prompt: definition.instructions,
     botId,
@@ -699,6 +717,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
     : operation.action === "update"
       ? operation.changes.schedule
       : undefined;
+  if (operation.action === "create" && operation.routine.watch && operation.routine.watch.expiresAt <= now) throw new RoutineRequestError("This watch expiry has passed. Choose a new expiry and confirm a fresh watch.", 409);
   if (schedule?.type === "once" && schedule.at <= now) {
     throw new RoutineRequestError("That one-time schedule is now in the past. Ask the bot to propose a new time.", 409);
   }
@@ -721,6 +740,7 @@ export class RoutineRequestService {
   private readonly cloudReady?: () => Promise<{ ready: boolean; reason?: string }>;
   private readonly canPersist?: RoutineRequestServiceOptions["canPersist"];
   private readonly validateTarget?: RoutineRequestServiceOptions["validateTarget"];
+  private readonly resolveWatchSource?: RoutineRequestServiceOptions["resolveWatchSource"];
 
   constructor(options: RoutineRequestServiceOptions) {
     this.store = options.store;
@@ -730,6 +750,7 @@ export class RoutineRequestService {
     this.cloudReady = options.cloudReady;
     this.canPersist = options.canPersist;
     this.validateTarget = options.validateTarget;
+    this.resolveWatchSource = options.resolveWatchSource;
   }
 
   async propose(args: ProposeRoutineRequestArgs): Promise<RoutineProposalResult> {
@@ -741,6 +762,15 @@ export class RoutineRequestService {
       throw new RoutineRequestError(schemaIssue(parsedProposal.error, "Invalid routine proposal"));
     }
     const operation = normalizedOperation(this.routines, botId, parsedProposal.data, at);
+    if (parsedProposal.data.action === "create" && parsedProposal.data.routine.watch && operation.action === "create") {
+      if (!this.resolveWatchSource) throw new RoutineRequestError("File watches are unavailable here", 409);
+      if (operation.routine.runOn !== "ember" || operation.routine.schedule.type !== "interval") throw new RoutineRequestError("File watches use an interval on this computer");
+      const input = parsedProposal.data.routine.watch;
+      operation.routine.watch = routineWatchInputSchema.parse({
+        source: this.resolveWatchSource(botId, operation.forBot?.botId ?? botId, input.relativePath),
+        expiresAt: Date.parse(input.expiresAt), maxChecks: input.maxChecks,
+      });
+    }
     if (operation.action === "create" && operation.forBot && this.validateTarget) {
       const refusal = this.validateTarget(botId, operation.forBot);
       if (refusal) throw new RoutineRequestError(refusal, 403);

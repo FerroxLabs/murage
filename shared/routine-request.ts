@@ -16,6 +16,7 @@ export type RoutineRequestSchedule =
   | { type: "interval"; everyMinutes: number; anchorAt?: number };
 
 export interface RoutineRequestDefinition {
+  watch?: import("./routine-watch.ts").RoutineWatchInput;
   name: string;
   instructions: string;
   schedule: RoutineRequestSchedule;
