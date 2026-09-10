@@ -239,6 +239,10 @@ linux:
   extraResources:
     - from: dist-native/cua-linux-x64
       to: cua-linux-x64
+    - from: dist-native/fuigo-probe/linux-x64/launcher
+      to: fuigo-probe/launcher
+    - from: dist-native/fuigo-probe/linux-x64/manifest.json
+      to: fuigo-probe/manifest.json
     - from: dist-native/cloudflared/linux-x64/cloudflared
       to: cloudflared/cloudflared
     - from: dist-native/browser/linux-${arch}
