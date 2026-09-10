@@ -17,6 +17,8 @@ const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:rin
 const button = `min-h-11 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50 ${focus}`;
 
 export function FluxRouterConnection({ configured, conflict = false, choices = [], onSelect, onSave, onTest, onDisconnect, children }: FluxRouterConnectionProps) {
+  const selectionRequired = conflict || configured === false && choices.length > 0;
+  const showSavedChoices = selectionRequired || choices.length > 1;
   const input = useRef<HTMLInputElement>(null);
   const running = useRef(false);
   const [editing, setEditing] = useState(false);
@@ -58,15 +60,15 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
   return <section id="flux-router-connection" aria-labelledby="flux-router-heading" className="min-w-0 rounded-xl border border-accent/40 bg-panel p-4">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex min-w-0 items-center gap-2"><Route size={20} className="shrink-0 text-accent" aria-hidden="true" /><h3 id="flux-router-heading" className="text-[16px] font-semibold text-ink">Flux Router</h3></div>
-      <span className="text-[12px] text-ink-secondary">{configured === null ? "Loading connection…" : conflict ? "Choose a saved connection" : configured ? "Connected · key saved" : "Not connected"}</span>
+      <span className="text-[12px] text-ink-secondary">{configured === null ? "Loading connection…" : selectionRequired ? "Choose a saved connection" : configured ? "Connected · key saved" : "Not connected"}</span>
     </div>
     <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">One key for Flux Router models. Choose a Flux model when you want to use it; model requests use your Flux Router balance.</p>
-    {conflict && <div className="mt-4 space-y-3 text-[13px] text-ink"><p>Different Flux Router keys are saved. Choose the connection to use for Flux models. Saved keys are never displayed.</p><div className="flex flex-wrap gap-2">{choices.map(choice => <button key={choice.id} type="button" className={`${button} break-words text-left`} disabled={Boolean(busy) || !onSelect} onClick={() => void selectExisting(choice.id)}>Use {choice.label}{choice.enabled ? "" : " (currently disabled)"}</button>)}</div></div>}
-    {!conflict && (!configured || editing) && <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void act("save"); }}>
+    {showSavedChoices && <div className="mt-4 space-y-3 text-[13px] text-ink"><p>{conflict ? "Different Flux Router keys are saved. Choose the connection to use for Flux models. Saved keys are never displayed." : "Choose a saved connection to use for Flux models. You do not need to enter its key again."}</p><div className="flex flex-wrap gap-2">{choices.map(choice => <button key={choice.id} type="button" className={`${button} break-words text-left`} disabled={Boolean(busy) || !onSelect} onClick={() => void selectExisting(choice.id)}>Use {choice.label}{choice.enabled ? "" : " (currently disabled)"}</button>)}</div></div>}
+    {!selectionRequired && (!configured || editing) && <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void act("save"); }}>
       <label className="block text-[13px] text-ink">{configured ? "New Flux Router key" : "Flux Router key"}<input ref={input} name="flux-router-key" type="password" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy) || configured === null} aria-invalid={invalid || undefined} aria-describedby={invalid ? "flux-router-error" : undefined} onInput={() => { if (invalid) setInvalid(false); }} placeholder="Paste your Flux Router key…" className={`mt-1.5 min-h-11 w-full min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink ${focus}`} /></label>
       <div className="flex flex-wrap gap-2"><button type="submit" disabled={Boolean(busy) || configured === null} className={`${button} font-medium`}>{busy === "save" ? "Saving…" : configured ? "Replace key" : "Connect"}</button>{editing && <button type="button" disabled={Boolean(busy)} className={button} onClick={cancelEdit}>Cancel</button>}</div>
     </form>}
-    {configured && !conflict && !editing && <div className="mt-4 flex flex-wrap gap-2">
+    {configured && !selectionRequired && !editing && <div className="mt-4 flex flex-wrap gap-2">
       <button type="button" className={button} disabled={Boolean(busy) || disconnecting} onClick={() => { setEditing(true); setNotice(""); setError(""); }}>Replace key</button>
       <button type="button" className={button} disabled={Boolean(busy) || disconnecting} onClick={() => void act("test")}>{busy === "test" ? "Testing catalog…" : "Test connection"}</button>
       <button type="button" className={button} disabled={Boolean(busy) || disconnecting} onClick={() => { setDisconnecting(true); setNotice(""); setError(""); }}>Disconnect</button>
