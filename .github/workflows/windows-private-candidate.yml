@@ -1,7 +1,9 @@
-# Preparation only: no push trigger. Root must settle the exact source before
-# dispatch. Existing Azure secret references are confined to the package step.
+# Preparation only until root settles source and pushes this isolated branch.
+# Existing Azure secret references are confined to the package step.
 name: Private Windows 0.1.50 candidate
 on:
+  push:
+    branches: [work/0150-windows-private-prep]
   workflow_dispatch:
     inputs:
       source_sha:
@@ -16,7 +18,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 40
     env:
-      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha }}
+      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || 'f320e846fe4ad49a277f7b8a14c361cce8d51e32' }}
     steps:
       - name: Require an exact source identity
         shell: pwsh
@@ -24,7 +26,7 @@ jobs:
           if ($env:PRIVATE_SOURCE_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'An approved full source SHA is required' }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ env.PRIVATE_SOURCE_SHA }}
           persist-credentials: false
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
         with:
