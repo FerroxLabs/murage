@@ -1,4 +1,12 @@
 {
+  "source.openError": "元の会話を開けませんでした。",
+  "inbox.conversationUnavailable": "この会話は現在利用できません。",
+  "inbox.openResultError": "この結果を開けませんでした。もう一度お試しください。",
+  "inbox.title": "受信トレイ",
+  "files.sourceUnavailableRetained": "元の会話は現在利用できません。保存済みのファイルは保持されています。",
+  "files.title": "ファイル",
+  "files.workingFolderError": "作業フォルダーを開けませんでした。ファイル画面を更新してください。",
+  "files.nativeActionError": "OS上のファイル操作に失敗しました。",
   "noEngines.title": "AI エンジンをインストールして始めましょう",
   "noEngines.intro": "Murage 自体はモデルを持ちません。ボットはこのコンピューターにインストール済みの AI CLI 上で、既存のログインを使って動きます。どれか一つをセットアップすれば、ボットが動き出します。",
   "engines.cloud": "クラウド",

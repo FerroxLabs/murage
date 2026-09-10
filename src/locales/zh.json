@@ -1,4 +1,12 @@
 {
+  "source.openError": "无法打开原始对话。",
+  "inbox.conversationUnavailable": "此对话已不可用。",
+  "inbox.openResultError": "无法打开此结果。请重试。",
+  "inbox.title": "收件箱",
+  "files.sourceUnavailableRetained": "原始对话已不可用。已保存的文件仍被保留。",
+  "files.title": "文件",
+  "files.workingFolderError": "无法打开工作文件夹。请刷新文件页面。",
+  "files.nativeActionError": "系统文件操作失败。",
   "noEngines.title": "安装一个 AI 引擎，开始使用",
   "noEngines.intro": "Murage 本身不自带模型：你的机器人依托这台电脑上已安装的 AI 命令行工具运行，使用你现有的登录。任选其一完成设置，机器人即可开始工作。",
   "engines.cloud": "云端",

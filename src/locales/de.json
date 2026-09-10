@@ -1,4 +1,12 @@
 {
+  "source.openError": "Die ursprüngliche Unterhaltung konnte nicht geöffnet werden.",
+  "inbox.conversationUnavailable": "Diese Unterhaltung ist nicht mehr verfügbar.",
+  "inbox.openResultError": "Dieses Ergebnis konnte nicht geöffnet werden. Versuche es erneut.",
+  "inbox.title": "Posteingang",
+  "files.sourceUnavailableRetained": "Die ursprüngliche Unterhaltung ist nicht mehr verfügbar. Die gespeicherte Datei bleibt erhalten.",
+  "files.title": "Dateien",
+  "files.workingFolderError": "Der Arbeitsordner konnte nicht geöffnet werden. Aktualisiere die Dateienansicht.",
+  "files.nativeActionError": "Die Dateiaktion im Betriebssystem ist fehlgeschlagen.",
   "noEngines.title": "Installiere eine KI-Engine, um loszulegen",
   "noEngines.intro": "Murage bringt kein eigenes Modell mit: deine Bots laufen über eine auf diesem Rechner installierte KI-CLI mit deinem bestehenden Login. Richte eine davon ein und deine Bots erwachen zum Leben.",
   "engines.cloud": "Cloud",

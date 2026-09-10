@@ -1,4 +1,12 @@
 {
+  "source.openError": "No se pudo abrir la conversación de origen.",
+  "inbox.conversationUnavailable": "Esta conversación ya no está disponible.",
+  "inbox.openResultError": "No se pudo abrir este resultado. Inténtalo de nuevo.",
+  "inbox.title": "Bandeja de entrada",
+  "files.sourceUnavailableRetained": "La conversación de origen ya no está disponible. El archivo guardado se conserva.",
+  "files.title": "Archivos",
+  "files.workingFolderError": "No se pudo abrir la carpeta de trabajo. Actualiza Archivos.",
+  "files.nativeActionError": "La acción de archivo del sistema operativo falló.",
   "noEngines.title": "Instala un motor de IA para empezar",
   "noEngines.intro": "Murage no incluye un modelo propio: tus bots funcionan con una CLI de IA instalada en este equipo, usando tu sesión existente. Configura cualquiera de ellas y tus bots cobrarán vida.",
   "engines.cloud": "Nube",
