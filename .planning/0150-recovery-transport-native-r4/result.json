@@ -1,0 +1,23 @@
+{
+  "source": "5108046cceb58e1d22c0d02d7642e9194fdc0b53",
+  "transport": "emulated-elevation-same-runner-token",
+  "actualUac": "not-exercised",
+  "nativePolicyChecks": "passed",
+  "confirmationCancellation": "passed",
+  "parentDeath": "passed",
+  "guardedCapture": {
+    "event": "result",
+    "nonce": "016d7867-0b17-4ed1-80a8-3d1246fb1e8f",
+    "status": 0,
+    "snapshotId": "0f222334-7110-45f4-a004-e29f435d6a02",
+    "copyComplete": true,
+    "snapshotReleased": true,
+    "sourceIdentity": {
+      "volumeSerial": "633595009135490578",
+      "fileId": "ff240000000001000000000000000000"
+    },
+    "directory": "D:\\a\\_temp\\murage-transport-fixture-Gql6AW\\clone",
+    "consistency": "crash-consistent",
+    "activationAvailable": false
+  }
+}
