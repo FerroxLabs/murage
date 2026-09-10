@@ -1,0 +1,64 @@
+{
+  "status": "passed",
+  "platform": "darwin",
+  "electron": "43.4.0",
+  "pid": 50689,
+  "dispatches": [
+    {
+      "action": "open",
+      "nativeFunction": "electron.shell.openPath",
+      "path": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verify-data-lSIlBy/artifact-files/0114faf33425e0b230cea4f98ce74ad0c27585d5cfb9ad68da0ee017d963881f.txt",
+      "result": "",
+      "realCallThrough": true
+    },
+    {
+      "action": "reveal",
+      "nativeFunction": "electron.shell.showItemInFolder",
+      "path": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verify-data-lSIlBy/artifact-files/0114faf33425e0b230cea4f98ce74ad0c27585d5cfb9ad68da0ee017d963881f.txt",
+      "realCallThrough": true
+    }
+  ],
+  "visualFileOpened": "unverified; native dispatch is not document-rendering proof",
+  "stages": [
+    {
+      "name": "before-ready",
+      "at": "2026-09-10T02:05:49.365Z"
+    },
+    {
+      "name": "ready",
+      "at": "2026-09-10T02:05:49.426Z"
+    },
+    {
+      "name": "preload-ready",
+      "at": "2026-09-10T02:05:49.661Z"
+    },
+    {
+      "name": "open-dispatched",
+      "at": "2026-09-10T02:05:49.798Z"
+    },
+    {
+      "name": "reveal-dispatched",
+      "at": "2026-09-10T02:05:50.442Z"
+    }
+  ],
+  "handlerSha256": "123d41962c9c32dda93c67069b470ad77f227f8367d67b3a84b6e3a21d011cac",
+  "preloadSha256": "a1a697fcefba73e74ab8d7697507f12fd53e337dfac943c563e386dddd91d4eb",
+  "actualPreload": true,
+  "rendererOrigin": "http://127.0.0.1:56230",
+  "openFrontmost": {
+    "pid": 32205,
+    "bundle": "com.apple.TextEdit"
+  },
+  "revealFrontmost": {
+    "pid": 32205,
+    "bundle": "com.apple.TextEdit"
+  },
+  "snapshotSha256": "0114faf33425e0b230cea4f98ce74ad0c27585d5cfb9ad68da0ee017d963881f",
+  "childPids": [
+    50689,
+    50690,
+    50691,
+    50692
+  ],
+  "windowClosed": true
+}
