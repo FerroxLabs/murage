@@ -146,7 +146,7 @@ jobs:
           cp "release/Murage-$v-arm64.dmg" release/Murage.dmg
           cp "release/Murage-$v-x64.dmg" release/Murage-intel.dmg
           (cd release && shasum -a 256 *.dmg *.zip *.blockmap latest-mac.yml > SHA256SUMS-mac.txt)
-          printf 'source=15c3cbd64056a7288777739f5dd244ca4365ea0b\\nversion=0.1.50\\nworkflow=%s\\nrun=%s\\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > release/SOURCE.txt
+          printf 'source=15c3cbd64056a7288777739f5dd244ca4365ea0b\nversion=0.1.50\nworkflow=%s\nrun=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > release/SOURCE.txt
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
