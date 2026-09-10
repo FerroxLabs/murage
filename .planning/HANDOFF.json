@@ -1,10 +1,10 @@
 {
   "version": "1.0",
-  "timestamp": "2026-09-10T13:07:00Z",
+  "timestamp": "2026-09-10T13:18:37Z",
   "phase": "0.1.50",
   "phase_name": "Reliability release qualification",
   "phase_dir": ".planning",
-  "status": "paused-for-account-switch",
+  "status": "awaiting-release-limitations-disposition",
   "source_commit": "15c3cbd64056a7288777739f5dd244ca4365ea0b",
   "source_branch": "work/0150-integration",
   "handoff_branch": "work/0150-continuation-record",
@@ -18,19 +18,19 @@
     {"id": "mac-signed-native-artifacts", "status": "verified-retained", "run": 34473310308},
     {"id": "linux-artifacts", "status": "verified-retained", "run": 34473310353},
     {"id": "release-assembly", "status": "local-verifiers-passed", "assets": 21},
-    {"id": "windows-post-reboot", "status": "passed-app-left-running", "app_pid": 7516, "server_pid": 1540, "session": 1}
+    {"id": "windows-post-reboot", "status": "passed-and-normally-closed"},
+    {"id": "windows-workload", "status": "passed-useful-read-handled-failure-cancel", "external_model_calls": 0},
+    {"id": "native-export-cleanup", "status": "complete-original-and-backing-preserved"}
   ],
   "remaining_tasks": [
-    {"id": "windows-workload", "status": "not-started-close-existing-app-first-after-revalidation"},
     {"id": "windows-upgrade-exit", "status": "missing-receipt-or-user-disposition", "p2_cutoff": "2026-09-10T13:03:29Z"},
-    {"id": "native-export-cleanup", "status": "pending"},
     {"id": "incident-limitations", "status": "explicit-user-disposition-pending"},
     {"id": "final-docs-publication", "status": "gated-not-started"}
   ],
   "async_jobs": [{
     "job_id": "recovery-uac-xckr66a2",
     "backend": "hetzner-dsm disposable Windows VM",
-    "status": "live-check-required",
+    "status": "closed-2026-09-10T13:18:37Z",
     "manifest": "/var/tmp/murage-win11-guest-20260909-vj96yyyk/recovery-uac-xckr66a2/launch.json",
     "deadline": "2026-09-10T13:48:29Z",
     "pids": {"vm": 605370, "tpm": 605336, "watchdog": 605984, "transfer": 618722},
@@ -40,7 +40,7 @@
     "guest_session": 1,
     "last_export_sha256": "60f50f2c5f4b9ff9fbb20476e52b6780685cfeccf028fe20798337e43af7e478",
     "execution_record": "/private/tmp/murage-0150-build-recovery-fdatWt/windows-native/EXECUTION.md",
-    "resume_command": "Read EXECUTION.md and lease launch/cleanup receipts; verify actual live task/child identity before any action.",
+    "resume_command": "Do not restart: workload passed and lease closed; read cleanup.json and final workload receipt.",
     "verification_command": "rtk proxy ssh -o BatchMode=yes -o ConnectTimeout=10 hetzner-dsm 'ps -p 605370,605336,605984 -o pid=,etime=,comm='"
   }],
   "blockers": [
@@ -58,7 +58,7 @@
     {"severity": "blocking", "description": "Preserve verification counters; no reclassification of missing/failed evidence as pass."},
     {"severity": "advisory", "description": "All CI build jobs are complete; do not rerun them merely after account switch."}
   ],
-  "next_action": "Inspect the last-minute Windows worker handoff and current UTC deadline; resume or safely clean only the exact existing operation.",
+  "next_action": "Obtain explicit disposition of the missing upgrade-exit receipt and documented older engine/Mac limitations; then follow guarded release preflight. No active jobs remain.",
   "published": false,
   "goal_complete": false
 }

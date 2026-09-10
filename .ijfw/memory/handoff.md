@@ -1,4 +1,5 @@
 # Murage 0.1.50 account-switch entry
+LATEST13:18:37UTC: workload PASS/useful-read+handled-failure+cancel; guest CLOSED/allownedgone/backingspreserved. Old live-process notes below are historical. No job to resume. Await explicit release-limitations disposition, then guarded publication; nothing published.
 Read `.planning/.continue-here.md` and `.planning/HANDOFF.json` first.
 Timestamp: 2026-09-10 13:07UTC; notreleased/notcomplete.
 Exact appsource15c3cbd64056a7288777739f5dd244ca4365ea0b, remote work/0150-integration.
