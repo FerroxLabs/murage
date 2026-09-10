@@ -35,7 +35,7 @@ try {
   assert.equal(await hash(cli), receipt.binarySha256);
   Object.assign(result, { status: 'passed', receipt, cleanup: 'Production probe confirmed child close and isolation-profile cleanup; no probe scratch remains', noPrompt: true, noOwnerCredentials: true, network: 'OS denies every network connection, including loopback; native primitive denial receipts retained separately' });
 } catch (error) {
-  Object.assign(result, { status: 'failed', error: error.message, code: error.code ?? null, probeMethod: error.probeMethod ?? null, rpcCode: error.rpcCode ?? null, profileName: error.profileName ?? null, profileSid: error.profileSid ?? null });
+  Object.assign(result, { status: 'failed', error: error.message, code: error.code ?? null, probeMethod: error.probeMethod ?? null, rpcCode: error.rpcCode ?? null, probeDiagnostic: error.probeDiagnostic ?? null, profileName: error.profileName ?? null, profileSid: error.profileSid ?? null });
   process.exitCode = 1;
 }
 result.finishedAt = new Date().toISOString();

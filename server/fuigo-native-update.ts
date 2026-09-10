@@ -113,6 +113,15 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
     const version = nativeFuigoVersion(result.stdout);
     if (!version || expectedVersion && version !== expectedVersion) throw new Error("Fuigo executable version did not match the verified release.");
     const child = spawn(command, [...prefix, "--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_native_probe", "stdio"], { cwd: home, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    // Only the isolated synthetic probe can populate these bounded diagnostics.
+    const diagnostic = { cause: "unknown", exitCode: null as number | null, signal: null as string | null, stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    let stderrSample = "";
+    const sanitize = (value: string) => value.replace(/\x1b\[[0-9;]*m/g, "")
+      .split(env.MURAGE_FUIGO_PROBE_KEY!).join("[synthetic-key]").split(home).join("[probe-home]").split(cli).join("[candidate]")
+      .replace(/(?:https?:\/\/)[^\s"']+/gi, "[url]")
+      .replace(/((?:api[_-]?key|token|authorization|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "?").slice(-4096);
+    child.once("exit", (code, signal) => { diagnostic.exitCode = code; diagnostic.signal = signal; });
     let closed = false; child.once("close", () => { closed = true; });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -122,25 +131,28 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
           phase = method; requestId++;
           child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }) + "\n");
         };
-        const fail = (reason = "Fuigo ACP compatibility could not be verified. Keep the current engine.", rpcCode?: unknown) => {
+        const fail = (reason = "Fuigo ACP compatibility could not be verified. Keep the current engine.", rpcCode?: unknown, cause = "protocol") => {
           if (finished) return; finished = true;
+          diagnostic.cause = cause;
           reject(Object.assign(new Error(reason), {
             code: "FUIGO_INCOMPATIBLE", probeMethod: phase,
             rpcCode: typeof rpcCode === "number" && Number.isSafeInteger(rpcCode) ? rpcCode : null,
+            probeDiagnostic: diagnostic,
           }));
         };
-        timer = setTimeout(() => fail(), 20000);
-        child.once("error", () => fail()); child.once("exit", () => fail()); child.stdin.once("error", () => fail());
-        child.stderr.on("data", chunk => { total += chunk.length; if (total > 512 * 1024) fail(); });
+        timer = setTimeout(() => fail(undefined, undefined, "timeout"), 20000);
+        child.once("error", () => fail(undefined, undefined, "spawn")); child.once("close", () => fail(undefined, undefined, "child-close")); child.stdin.once("error", () => fail(undefined, undefined, "stdin"));
+        child.stderr.on("data", chunk => { diagnostic.stderrBytes += chunk.length; stderrSample = (stderrSample + chunk.toString("utf8")).slice(0, 16384); diagnostic.stderr = sanitize(stderrSample); total += chunk.length; if (total > 512 * 1024) fail(undefined, undefined, "output-limit"); });
         child.stdout.on("data", chunk => {
           if (finished) return;
-          total += chunk.length; if (total > 512 * 1024) { fail(); return; }
+          diagnostic.stdoutBytes += chunk.length;
+          total += chunk.length; if (total > 512 * 1024) { fail(undefined, undefined, "output-limit"); return; }
           buffer += chunk.toString("utf8");
           for (;;) {
             const newline = buffer.indexOf("\n"); if (newline < 0) break;
             const line = buffer.slice(0, newline).trim(); buffer = buffer.slice(newline + 1); if (!line) continue;
-            let message: any; try { message = JSON.parse(line); } catch { fail(); return; }
-            if (message.method && message.id !== undefined) { fail(); return; }
+            let message: any; try { message = JSON.parse(line); } catch { fail(undefined, undefined, "stdout-json"); return; }
+            if (message.method && message.id !== undefined) { fail(undefined, undefined, "server-request"); return; }
             if (message.id !== requestId) continue;
             if (message.jsonrpc !== "2.0" || message.error || !message.result) { fail("Fuigo refused the isolated ACP compatibility request. The release was not activated.", message.error?.code); return; }
             if (phase === "initialize") {

@@ -107,26 +107,40 @@ static int run(int argc, wchar_t **argv) {
   STARTUPINFOEXW startup = {0}; startup.StartupInfo.cb = sizeof(startup); startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
   HANDLE handles[3] = {0}, source[3] = { GetStdHandle(STD_INPUT_HANDLE), GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE) };
   HANDLE job = NULL; PROCESS_INFORMATION process = {0}; DWORD error = ERROR_SUCCESS, code = 72;
+  const char *operation = "initialize-attributes";
   if (!attributes || !InitializeProcThreadAttributeList(attributes, 2, 0, &bytes)) { error = GetLastError(); goto done; }
   startup.lpAttributeList = attributes;
-  for (int i = 0; i < 3; i++) if (!DuplicateHandle(GetCurrentProcess(), source[i], GetCurrentProcess(), &handles[i], 0, TRUE, DUPLICATE_SAME_ACCESS)) { error = GetLastError(); goto done; }
+  for (int i = 0; i < 3; i++) {
+    operation = i == 0 ? "duplicate-stdin" : i == 1 ? "duplicate-stdout" : "duplicate-stderr";
+    if (!DuplicateHandle(GetCurrentProcess(), source[i], GetCurrentProcess(), &handles[i], 0, TRUE, DUPLICATE_SAME_ACCESS)) { error = GetLastError(); goto done; }
+  }
   startup.StartupInfo.hStdInput = handles[0]; startup.StartupInfo.hStdOutput = handles[1]; startup.StartupInfo.hStdError = handles[2];
-  if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &capabilities, sizeof(capabilities), NULL, NULL)
-    || !UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles, sizeof(handles), NULL, NULL)) { error = GetLastError(); goto done; }
+  operation = "security-capabilities";
+  if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &capabilities, sizeof(capabilities), NULL, NULL)) { error = GetLastError(); goto done; }
+  operation = "handle-list";
+  if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles, sizeof(handles), NULL, NULL)) { error = GetLastError(); goto done; }
+  operation = "create-job";
   job = CreateJobObjectW(NULL, NULL);
+  if (!job) { error = GetLastError(); goto done; }
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0}; limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-  if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { error = GetLastError(); goto done; }
+  operation = "job-limits";
+  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { error = GetLastError(); goto done; }
+  operation = "create-process";
   if (!CreateProcessW(executable, command, NULL, NULL, TRUE, EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW, NULL, argv[4], &startup.StartupInfo, &process)) { error = GetLastError(); goto done; }
+  operation = "assign-job";
   if (!AssignProcessToJobObject(job, process.hProcess)) { error = GetLastError(); TerminateProcess(process.hProcess, 72); goto done; }
+  operation = "resume-thread";
   if (ResumeThread(process.hThread) == (DWORD)-1) { error = GetLastError(); goto done; }
+  operation = "wait-process";
   if (WaitForSingleObject(process.hProcess, 45000) != WAIT_OBJECT_0) { error = ERROR_TIMEOUT; goto done; }
+  operation = "exit-code";
   if (!GetExitCodeProcess(process.hProcess, &code)) error = GetLastError();
 done:
   if (job) CloseHandle(job); /* Kernel kills every contained child, including on launcher termination. */
   if (process.hThread) CloseHandle(process.hThread); if (process.hProcess) CloseHandle(process.hProcess);
   for (int i = 0; i < 3; i++) if (handles[i]) CloseHandle(handles[i]);
   if (attributes) { if (startup.lpAttributeList) DeleteProcThreadAttributeList(attributes); HeapFree(GetProcessHeap(), 0, attributes); }
-  FreeSid(sid); return error == ERROR_SUCCESS ? (int)code : failure("run", error);
+  FreeSid(sid); return error == ERROR_SUCCESS ? (int)code : failure(operation, error);
 }
 int wmain(int argc, wchar_t **argv) {
   if (argc == 5 && !wcscmp(argv[1], L"setup")) return setup(argv[2], argv[3], argv[4]);
