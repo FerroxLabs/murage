@@ -58,3 +58,12 @@ test("connect and replacement enforce provider binding and preserve existing ali
   assert.throws(() => change(connected, { action: "replace", key: "sk-ant-FAKE_ONLY" }), /different provider/);
   assert.equal(change(connected, { action: "replace", key: "sk-flux-FAKE_OTHER" }).workspaceKey, "sk-flux-FAKE_OTHER");
 });
+test("different raw configuration and inherited environment keys require explicit selection", () => {
+  const saved = { ...state([], "sk-flux-FAKE_MANAGED"), fileWorkspaceKey: "sk-flux-FAKE_FILE", ambientWorkspaceKey: "sk-flux-FAKE_ENV" };
+  const status = fluxCredentialStatus(saved);
+  assert.equal(status.conflict, true); assert.equal(status.choices.length, 3);
+  assert.equal(JSON.stringify(status).includes("FAKE"), false);
+  assert.throws(() => change(saved, { action: "replace", key: "sk-flux-FAKE_NEXT" }), /Choose which/);
+  assert.equal(change(saved, { action: "select", connectionId: "legacy-flux-file" }).workspaceKey, "sk-flux-FAKE_FILE");
+  assert.equal(change(saved, { action: "select", connectionId: "legacy-flux-environment" }).workspaceKey, "sk-flux-FAKE_ENV");
+});

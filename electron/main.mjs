@@ -1,4 +1,5 @@
 import { mutateProviderCredentials } from "./provider-connection-control.mjs";
+import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { execFile } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
@@ -1156,6 +1157,7 @@ async function startServerOn(port) {
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
+    MURAGE_FLUX_AMBIENT_KEY: secureCredentials.fluxConnectionManaged !== "true" && secureCredentials.fluxApiKey && process.env.FLUX_API_KEY !== secureCredentials.fluxApiKey ? process.env.FLUX_API_KEY ?? "" : "",
   });
   delete childEnv.MURAGE_BROWSER_CONNECTION;
   slog(`fork ${entry} port=${port}`);
@@ -2392,6 +2394,22 @@ const CREDENTIAL_PATCH = {
   firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
 };
+
+ipcMain.handle("flux-connection:mutate", async (_event, input) => {
+  if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
+  if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("The operating-system credential store is unavailable");
+  return mutateFluxCredentials(input, {
+    packaged: app.isPackaged, updateDocument: updateSecureCredentialDocument,
+    post: async (route, body) => {
+      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, {
+        method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` }, body: JSON.stringify(body),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Could not save Flux connection.");
+      return result;
+    },
+  });
+});
 
 ipcMain.handle("model-provider:mutate", async (_event, input) => {
   if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
