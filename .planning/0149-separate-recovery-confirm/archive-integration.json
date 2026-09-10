@@ -1,0 +1,37 @@
+[
+  {
+    "kind": "primary",
+    "result": "PASS",
+    "snapshotId": "09ed1654-2367-4aae-8f44-a567c59c910c",
+    "originalAndAnchorHashesUnchanged": true,
+    "pausedMemory": true,
+    "engines": "disabled",
+    "schedules": "paused",
+    "freshProcessSelection": true
+  },
+  {
+    "kind": "child",
+    "result": "PASS",
+    "snapshotId": "04d6dfa9-ca4c-4f1f-98ea-b66f956f04f8",
+    "originalAndAnchorHashesUnchanged": true,
+    "pausedMemory": true,
+    "engines": "disabled",
+    "schedules": "paused",
+    "freshProcessSelection": true
+  },
+  {
+    "kind": "reaper",
+    "result": "PASS",
+    "snapshotId": "9f68cd7e-5924-40c4-b2a7-5fe3fc87b1ac",
+    "originalAndAnchorHashesUnchanged": true,
+    "pausedMemory": true,
+    "engines": "disabled",
+    "schedules": "paused",
+    "freshProcessSelection": true
+  },
+  {
+    "kind": "hash-mismatch",
+    "result": "PASS",
+    "selectorNotPublished": true
+  }
+]

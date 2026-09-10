@@ -1,7 +1,7 @@
 import { mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
 import { createRequire } from "node:module";
@@ -40,6 +40,8 @@ import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
+import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
+import { resolveInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
 import { createServerChildLifecycle, awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
@@ -296,6 +298,9 @@ let secureCredentials = {};
 let secureCredentialState = null;
 let desktopDataDir = null;
 let desktopDataOwner = null;
+let desktopRequestedDataDir = null;
+let desktopSelectionActive = false;
+let retainedSeparateDirectory = null;
 const ownedServerChildren = new Set();
 const credentialWrites = new Set();
 const managedComposioShutdown = new AbortController();
@@ -314,8 +319,11 @@ function acquireDesktopDataOwner() {
   const canonical = dataDirLeasePaths(raw).canonicalDataDir;
   // Retain the inspected location for recovery without granting ownership.
   desktopDataDir = canonical;
-  const owner = acquireDataDirLease(canonical);
-  desktopDataDir = canonical;
+  desktopRequestedDataDir = canonical;
+  const selection = resolveInstallationSelection(app.getPath("userData"), canonical);
+  desktopDataDir = selection.dataDirectory;
+  desktopSelectionActive = selection.selected;
+  const owner = acquireDataDirLease(desktopDataDir);
   desktopDataOwner = owner;
 }
 
@@ -1709,6 +1717,12 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     BrowserWindow, ipcMain, dialog, baseDir: __dirname,
     context: { reason, ownership, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
+    canRestoreSeparate: canRestoreSeparateInstallation,
+    canCaptureSeparate: canCaptureSeparateInstallation,
+    runCaptureSeparate: runSnapshotDesktopRecovery,
+    planSeparate: () => planSeparateInstallation(app.getPath("userData"), desktopRequestedDataDir, desktopDataDir),
+    runSeparate: runSeparateDesktopRecovery,
+    retainedDestination: () => retainedSeparateDirectory,
     run: runDesktopRecovery,
     retry: async () => { app.relaunch(); app.quit(); },
     openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
@@ -1728,14 +1742,72 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   return recoveryWindow;
 }
 
-async function runDesktopRecovery(operation, parameters) {
-  if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !desktopDataDir) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
+function canRestoreSeparateInstallation() {
+  return Boolean(desktopRecoveryMode && !desktopShutdownStarted && !desktopDataOwner && desktopDataDir && desktopRequestedDataDir &&
+    inspectDataDirLease(desktopDataDir)?.code === "LEASE_FOREIGN_HOST");
+}
+
+function canCaptureSeparateInstallation() {
+  return Boolean(process.platform === "win32" && app.isPackaged && canRestoreSeparateInstallation() &&
+    fs.existsSync(path.join(process.resourcesPath, "murage-recovery.exe")));
+}
+
+async function runSnapshotDesktopRecovery(confirm) {
+  if (!canCaptureSeparateInstallation()) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_CAPTURE_UNAVAILABLE" });
+  const plan = planSeparateInstallation(app.getPath("userData"), desktopRequestedDataDir, desktopDataDir);
+  const captureDirectory = path.join(app.getPath("userData"), `recovery-capture-${plan.id}`);
+  const archive = `${captureDirectory}.zip`;
+  const env = {};
+  for (const key of ["PATH", "USERPROFILE", "SystemRoot", "TEMP", "TMP"]) if (process.env[key] !== undefined) env[key] = process.env[key];
+  const cancellation = new AbortController();
+  const cancelled = () => cancellation.abort();
+  const window = recoveryWindow;
+  window?.once("closed", cancelled);
+  app.once("before-quit", cancelled);
+  try {
+    const captured = await captureRecoveryCopy({ spawn, helper: path.join(process.resourcesPath, "murage-recovery.exe"),
+      source: desktopDataDir, destination: captureDirectory,
+      restoreJournalLeaf: path.basename(`${dataDirLeasePaths(desktopDataDir).leasePath}.restore.json`),
+      env, signal: cancellation.signal, confirm: preview => confirm({ ...preview, installation: plan.dataDirectory }) });
+    if (captured.directory !== captureDirectory || !canCaptureSeparateInstallation() || cancellation.signal.aborted) throw Object.assign(new Error("Recovery stopped"), { code: "RECOVERY_CAPTURE_FAILED" });
+    retainedSeparateDirectory = captureDirectory;
+    const owner = acquireDataDirLease(captureDirectory);
+    let saved;
+    try { saved = await runDesktopRecovery("backup", { output: archive }, { owner, dataDirectory: captureDirectory }); }
+    finally { owner.release(); }
+    if (cancellation.signal.aborted) throw Object.assign(new Error("Recovery stopped"), { code: "RECOVERY_CAPTURE_CANCELLED" });
+    const result = await runSeparateDesktopRecovery({ archive, sha256: saved.sha256 }, plan, cancellation.signal);
+    return { ...result, recoveryArchive: archive };
+  } catch (error) {
+    if (retainedSeparateDirectory !== plan.dataDirectory && (fs.existsSync(captureDirectory) || fs.existsSync(`${captureDirectory}.capture.json`))) retainedSeparateDirectory = captureDirectory;
+    throw error;
+  } finally { window?.removeListener("closed", cancelled); app.removeListener("before-quit", cancelled); }
+}
+
+async function runSeparateDesktopRecovery(parameters, plan, signal = null) {
+  if (!canRestoreSeparateInstallation() || signal?.aborted) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
+  const allocated = allocateSeparateInstallation(plan);
+  retainedSeparateDirectory = allocated.dataDirectory;
+  const owner = acquireDataDirLease(allocated.dataDirectory);
+  try {
+    const result = await runDesktopRecovery("restore", parameters, { owner, dataDirectory: allocated.dataDirectory });
+    if (desktopShutdownStarted || signal?.aborted) throw Object.assign(new Error("Recovery stopped"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
+    publishInstallationSelection(allocated, result);
+    return { ...result, separateDataDirectory: allocated.dataDirectory, retainedOriginal: desktopDataDir };
+  } finally { owner.release(); }
+}
+
+async function runDesktopRecovery(operation, parameters, separate = null) {
+  const owner = separate?.owner ?? desktopDataOwner;
+  const dataDirectory = separate?.dataDirectory ?? desktopDataDir;
+  const archiveOnly = operation === "plan-restore" && canRestoreSeparateInstallation();
+  if (!desktopRecoveryMode || desktopShutdownStarted || (!archiveOnly && (!owner || !dataDirectory))) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
   const args = operation === "plan-restore" ? ["plan-restore", "--archive", parameters.archive]
-    : operation === "review" ? ["review", "--data-dir", desktopDataDir]
-    : operation === "activate" ? ["activate", "--data-dir", desktopDataDir, "--review-hash", parameters.reviewHash]
-    : operation === "backup" ? ["backup", "--data-dir", desktopDataDir, "--output", parameters.output]
-    : operation === "restore" ? ["restore", "--data-dir", desktopDataDir, "--archive", parameters.archive, "--sha256", parameters.sha256]
-    : operation === "rollback" ? ["rollback", "--data-dir", desktopDataDir] : null;
+    : operation === "review" ? ["review", "--data-dir", dataDirectory]
+    : operation === "activate" ? ["activate", "--data-dir", dataDirectory, "--review-hash", parameters.reviewHash]
+    : operation === "backup" ? ["backup", "--data-dir", dataDirectory, "--output", parameters.output]
+    : operation === "restore" ? ["restore", "--data-dir", dataDirectory, "--archive", parameters.archive, "--sha256", parameters.sha256]
+    : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
   await awaitOwnedWork(Promise.all([...ownedServerChildren].map(child => child.stop())), "Owned writers have not exited");
@@ -1748,10 +1820,10 @@ async function runDesktopRecovery(operation, parameters) {
   await awaitOwnedWork(browserHost?.stop() ?? Promise.resolve(), "Browser host has not stopped");
   await awaitOwnedWork(cuaReady, "Computer-use startup has not settled");
   await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed");
-  if (desktopShutdownStarted || !desktopDataOwner) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
+  if (desktopShutdownStarted || (!archiveOnly && !owner) || (archiveOnly && !canRestoreSeparateInstallation())) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
   const env = {};
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP", "TMP"]) if (process.env[key] !== undefined) env[key] = process.env[key];
-  if (operation !== "plan-restore") Object.assign(env, desktopDataOwner.utilityServerLeaseEnvironment());
+  if (operation !== "plan-restore") Object.assign(env, owner.utilityServerLeaseEnvironment());
   return runInstallationRecoveryWorker({
     fork: (entry, argv, options) => utilityProcess.fork(entry, argv, options),
     entry: path.join(process.resourcesPath, "server", "installation-recovery-worker.js"),
@@ -2500,7 +2572,7 @@ const desktopStartup = app.whenReady().then(async () => {
     migrateLegacyDataDirectory({
       dataDir: ownedDesktopDataDir(),
       legacyDataDir: path.join(app.getPath("home"), ".opengrokbot"),
-      enabled: process.env.MURAGE_DATA_DIR === undefined,
+      enabled: process.env.MURAGE_DATA_DIR === undefined && !desktopSelectionActive,
     });
     assertRestoreReviewed(ownedDesktopDataDir());
   }

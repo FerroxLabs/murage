@@ -171,6 +171,8 @@ win:
       arch: x64
   icon: build/icon.ico
   extraResources:
+    - from: dist-native/recovery/win32-x64/murage-recovery.exe
+      to: murage-recovery.exe
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
     # Directory copies sign EXEs before afterPack; defer these two files until

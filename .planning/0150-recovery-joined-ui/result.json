@@ -1,0 +1,38 @@
+[
+  {
+    "skin": "light",
+    "width": 390,
+    "result": "PASS",
+    "scope": "actual recovery renderer; mocked main bridge; native UAC separate"
+  },
+  {
+    "skin": "light",
+    "width": 820,
+    "result": "PASS",
+    "scope": "actual recovery renderer; mocked main bridge; native UAC separate"
+  },
+  {
+    "skin": "light",
+    "width": 1440,
+    "result": "PASS",
+    "scope": "actual recovery renderer; mocked main bridge; native UAC separate"
+  },
+  {
+    "skin": "dark",
+    "width": 390,
+    "result": "PASS",
+    "scope": "actual recovery renderer; mocked main bridge; native UAC separate"
+  },
+  {
+    "skin": "dark",
+    "width": 820,
+    "result": "PASS",
+    "scope": "actual recovery renderer; mocked main bridge; native UAC separate"
+  },
+  {
+    "skin": "dark",
+    "width": 1440,
+    "result": "PASS",
+    "scope": "actual recovery renderer; mocked main bridge; native UAC separate"
+  }
+]
