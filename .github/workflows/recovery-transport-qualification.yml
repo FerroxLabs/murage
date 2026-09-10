@@ -1,0 +1,37 @@
+name: Recovery transport qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-transport:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Compile production broker and separate emulated-elevation fixture
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b %errorlevel%
+          cl /nologo /std:c++20 /EHsc /W4 /D_WIN32_WINNT=0x0602 native\recovery-snapshot\capture.cpp native\recovery-snapshot\broker.cpp /Fe:native\recovery-snapshot\murage-recovery.exe /link VssApi.lib Ole32.lib OleAut32.lib Advapi32.lib Uuid.lib Shell32.lib
+          if errorlevel 1 exit /b %errorlevel%
+          cl /nologo /std:c++20 /EHsc /W4 /D_WIN32_WINNT=0x0602 native\recovery-snapshot\capture.cpp native\recovery-snapshot\transport-fixture.cpp /Fe:native\recovery-snapshot\transport-fixture.exe /link VssApi.lib Ole32.lib OleAut32.lib Advapi32.lib Uuid.lib Shell32.lib
+          if errorlevel 1 exit /b %errorlevel%
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Desktop protocol checks
+        run: node --test electron/installation-recovery-snapshot.node-test.mjs
+      - name: Disposable native transport and guarded capture
+        run: node scripts/qualify-recovery-transport.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: recovery-transport-receipts
+          path: .planning/0150-recovery-transport-native
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

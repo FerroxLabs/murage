@@ -9,6 +9,9 @@ namespace murage::recovery {
 struct ApprovedCapture {
   std::wstring source; // Absolute DOS path, resolved/confirmed by trusted main.
   FILE_ID_INFO sourceIdentity{}; // Bound at confirmation, checked before VSS.
+  FILE_ID_INFO destinationParentIdentity{};
+  bool bindDestinationParent = false;
+  HANDLE callerReadToken = nullptr; // Broker's unelevated impersonation token.
   std::wstring destination; // New child of a trusted, private destination parent.
   std::wstring restoreJournalLeaf; // Exact dataDirLeasePaths source sibling name.
   GUID nonce{};
@@ -34,4 +37,6 @@ using SaveReceipt = void (*)(const CaptureReceipt&, void*);
 // Caller supplies COM initialized as MTA with VSS requester COM security. No
 // service/configuration changes, token privilege grants, elevation or source writes.
 CaptureReceipt captureApprovedInstallation(const ApprovedCapture&, SaveReceipt, void*);
+// Caller access must not expand merely because VSS itself needs elevation.
+HRESULT captureReadAccess(HANDLE object, HANDLE callerToken, bool directory);
 }
