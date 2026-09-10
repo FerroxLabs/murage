@@ -1,0 +1,108 @@
+{
+  "startedAt": "2026-09-10T07:34:55.392Z",
+  "target": "darwin-arm64",
+  "node": "v24.20.0",
+  "root": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz",
+  "sourceCandidate": "ca190343",
+  "native": true,
+  "probe": "production probeNativeFuigo, no injected FuigoProbe",
+  "activation": "isolated persisted selection callback; owner HTTP callback proved separately",
+  "noOwnerCredentials": true,
+  "noPrompt": true,
+  "previousReceiptsPreserved": true,
+  "steps": [
+    {
+      "action": "production-probe",
+      "proof": {
+        "version": "1.0.10",
+        "protocolVersion": 1,
+        "loadSession": true,
+        "sessionCreated": true
+      }
+    },
+    {
+      "action": "install-A",
+      "receipt": {
+        "schema": 1,
+        "instanceId": "fuigo",
+        "version": "1.0.9",
+        "target": "darwin-arm64",
+        "package": "@fuigo/darwin-arm64",
+        "tarball": "https://registry.npmjs.org/@fuigo/darwin-arm64/-/darwin-arm64-1.0.9.tgz",
+        "integrity": "sha512-BS7PaxvSTdinONPHjFyaZmGReNf4QL+Nkn/tzOBsEFZr1IcUU7Ya05TgxfsZoDDLQ5wbAcjS+VMovCAmUSlZLA==",
+        "binarySha256": "753533a987637e5b249afca3a1f628a7af4d101f73431919d4b3e8f8500c282d",
+        "proof": {
+          "version": "1.0.9",
+          "protocolVersion": 1,
+          "loadSession": true,
+          "sessionCreated": true
+        }
+      }
+    },
+    {
+      "action": "update-B",
+      "receipt": {
+        "schema": 1,
+        "instanceId": "fuigo",
+        "version": "1.0.10",
+        "target": "darwin-arm64",
+        "package": "@fuigo/darwin-arm64",
+        "tarball": "https://registry.npmjs.org/@fuigo/darwin-arm64/-/darwin-arm64-1.0.10.tgz",
+        "integrity": "sha512-fFXj9lixzvd+E6Cq4DB/LGng8Bersc0xamoBQ6WMAcUmQtbZ1SQrzsRXuuxAmPV0xGm4nYy1ehr5Jn9QXtuIUw==",
+        "binarySha256": "10ef84065521868e5ae6122941c3318394b9eae4bcc7450cc61ea8ccd36097cd",
+        "proof": {
+          "version": "1.0.10",
+          "protocolVersion": 1,
+          "loadSession": true,
+          "sessionCreated": true
+        },
+        "previousManagedCli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/fuigo/fuigo/1.0.9-178bb042-8af1-450b-9a11-f6a0cade48ca/fuigo"
+      }
+    },
+    {
+      "action": "rollback-A",
+      "selectedVersion": "1.0.9"
+    },
+    {
+      "action": "use-bundled",
+      "selectedVersion": "1.0.10"
+    }
+  ],
+  "downloads": [
+    "https://registry.npmjs.org/%40fuigo%2Fdarwin-arm64/1.0.9",
+    "https://registry.npmjs.org/@fuigo/darwin-arm64/-/darwin-arm64-1.0.9.tgz",
+    "https://registry.npmjs.org/%40fuigo%2Fdarwin-arm64/1.0.10",
+    "https://registry.npmjs.org/@fuigo/darwin-arm64/-/darwin-arm64-1.0.10.tgz"
+  ],
+  "status": "passed",
+  "activations": [
+    {
+      "cli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/fuigo/fuigo/1.0.9-178bb042-8af1-450b-9a11-f6a0cade48ca/fuigo",
+      "expectedCli": null,
+      "version": "1.0.9"
+    },
+    {
+      "cli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/fuigo/fuigo/1.0.10-10dac6a5-d33c-46bd-978b-55fb96edf908/fuigo",
+      "expectedCli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/fuigo/fuigo/1.0.9-178bb042-8af1-450b-9a11-f6a0cade48ca/fuigo",
+      "version": "1.0.10"
+    },
+    {
+      "cli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/fuigo/fuigo/1.0.9-178bb042-8af1-450b-9a11-f6a0cade48ca/fuigo",
+      "expectedCli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/fuigo/fuigo/1.0.10-10dac6a5-d33c-46bd-978b-55fb96edf908/fuigo",
+      "version": "1.0.9"
+    },
+    {
+      "cli": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/bundle/fuigo",
+      "expectedCli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-production-closeout-5rJUIz/fuigo/fuigo/1.0.9-178bb042-8af1-450b-9a11-f6a0cade48ca/fuigo",
+      "version": "1.0.10"
+    }
+  ],
+  "preservedHashes": {
+    "first": "753533a987637e5b249afca3a1f628a7af4d101f73431919d4b3e8f8500c282d",
+    "second": "10ef84065521868e5ae6122941c3318394b9eae4bcc7450cc61ea8ccd36097cd",
+    "bundled": "10ef84065521868e5ae6122941c3318394b9eae4bcc7450cc61ea8ccd36097cd"
+  },
+  "processAndListenerCleanup": "Every production probe returned after confirmed child close and listener close; no probe scratch remains",
+  "cleaned": true,
+  "finishedAt": "2026-09-10T07:35:19.737Z"
+}

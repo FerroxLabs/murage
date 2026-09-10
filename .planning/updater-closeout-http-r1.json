@@ -1,0 +1,41 @@
+{
+  "startedAt": "2026-09-10T07:36:46.892Z",
+  "sourceCandidate": "ca190343",
+  "node": "v24.20.0",
+  "root": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-updater-http-yMLvdL",
+  "port": 21144,
+  "authority": "real server/index.ts owner HTTP routes, config persistence and provider reload callback",
+  "fixtureBoundary": "disabled engine fleet; fake registry bytes and injected FuigoProbe; actual native proof is separate",
+  "cases": [
+    "owner metadata check; custom selection preserved; strict action body and content type",
+    "use-managed A; update B; rollback A; use-bundled with actual persisted config and provider reload",
+    "independent thread blocks initial update even while primary bot busy flag is false",
+    "probe-busy: refused before persistence; concurrent selection or prior bundle preserved",
+    "root-busy: refused before persistence; concurrent selection or prior bundle preserved",
+    "probe-stale: refused before persistence; concurrent selection or prior bundle preserved",
+    "root-stale: refused before persistence; concurrent selection or prior bundle preserved",
+    "provider reload failure rolls actual persisted CLI back and releases config mutation gate",
+    "subsequent update succeeds after rollback; prior managed and custom bytes remain intact"
+  ],
+  "pid": 90033,
+  "status": "passed",
+  "finalState": {
+    "version": "1.0.10",
+    "mode": "normal",
+    "downloads": 8,
+    "probes": 10,
+    "activations": 8,
+    "networkDenied": [],
+    "selectedCli": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-updater-http-yMLvdL/data/managed-engines/fuigo/fuigo/1.0.10-dd555c9d-985c-4e30-885c-c1e9d427de6b/fuigo",
+    "providerConfigBusy": false,
+    "directRuns": 0,
+    "primaryBotBusy": false
+  },
+  "processClosed": true,
+  "exitCode": 0,
+  "signalCode": null,
+  "stderr": "",
+  "stdout": "murage webhook receiver on http://127.0.0.1:21145\nmurage server on http://127.0.0.1:21144\n",
+  "finishedAt": "2026-09-10T07:36:59.940Z",
+  "cleaned": true
+}
