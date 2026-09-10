@@ -1,0 +1,39 @@
+name: Recovery UAC artifact
+on:
+  push:
+    branches: [codex/0150-recovery-uac]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  helper:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - run: node scripts/build-recovery-helper.mjs
+      - name: Record exact unsigned production helper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $env:RUNNER_TEMP 'murage-uac-artifact'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          $binary='dist-native/recovery/win32-x64/murage-recovery.exe'
+          $signature=Get-AuthenticodeSignature $binary
+          if($signature.Status -ne 'NotSigned'){throw 'Unexpected helper signing state'}
+          Copy-Item $binary (Join-Path $out 'murage-recovery.exe')
+          Copy-Item 'electron/installation-recovery-snapshot.mjs' $out
+          Copy-Item 'electron/data-dir-lease.mjs' $out
+          $files=@(Get-ChildItem $out -File | ForEach-Object { @{name=$_.Name;bytes=$_.Length;sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()} })
+          @{source=$env:GITHUB_SHA;nativeReference='f7ad8968d50dfdb82c9a825cd9b0a8fb360a1005';productionHelper=$true;fixtureMode=$false;signed=$false;files=$files} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $out 'manifest.json')
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: murage-recovery-production-uac
+          path: ${{ runner.temp }}/murage-uac-artifact
+          if-no-files-found: error
+          retention-days: 7
