@@ -9,7 +9,7 @@ on:
       source_sha:
         description: Exact approved 40-character application source SHA
         required: true
-        default: 9eeb5e032b99edf0c93c0f651d0ddf387fae66b8
+        default: 4f35f48616282822951f2d903e0cffb370fa41bd
         type: string
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 40
     env:
-      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || '9eeb5e032b99edf0c93c0f651d0ddf387fae66b8' }}
+      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || '4f35f48616282822951f2d903e0cffb370fa41bd' }}
     steps:
       - name: Require an exact source identity
         shell: pwsh
@@ -84,7 +84,7 @@ jobs:
           # payload, successful signing, and valid browser publishers.
           'Packaged inventory, updater metadata and required signatures passed.' | Tee-Object '.planning/windows-private-r1/validation.log'
       - name: Record private artifacts and exact outcomes
-        if: always() && steps.build.outcome != ''
+        if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
         shell: pwsh
         env:
           PRIVATE_BUILD_OUTCOME: ${{ steps.build.outcome }}
@@ -99,7 +99,7 @@ jobs:
           $receipt | ConvertTo-Json -Depth 5 | Set-Content '.planning/windows-private-r1/receipt.json'
           $artifacts | ForEach-Object { "$($_.sha256)  $($_.name)" } | Set-Content '.planning/windows-private-r1/SHA256SUMS'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always() && steps.build.outcome != ''
+        if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
         with:
           name: murage-private-windows-evidence
           path: .planning/windows-private-r1
@@ -107,7 +107,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always() && steps.build.outcome != ''
+        if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
         with:
           name: murage-private-windows-0.1.50
           path: |
