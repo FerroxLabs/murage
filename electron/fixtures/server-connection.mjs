@@ -16,7 +16,7 @@ const { DeviceRegistry } = await import("../../companion/src/devices.ts");
 const forwarded = [];
 const engine = new URL(process.env.MURAGE_FIXTURE_HARNESS);
 const recordingHarness = createServer((req, res) => {
-  forwarded.push({ path: req.url, surface: req.headers["x-murage-surface"], secret: req.headers["x-murage-surface-secret"] });
+  forwarded.push({ path: req.url, companion: req.headers["x-murage-companion"], surface: req.headers["x-murage-surface"], secret: req.headers["x-murage-surface-secret"] });
   const upstream = request({ hostname: engine.hostname, port: engine.port, path: req.url, method: req.method, headers: req.headers }, answer => {
     res.writeHead(answer.statusCode, answer.headers); answer.pipe(res);
   });
@@ -36,7 +36,20 @@ async function until(check, message) {
   while (Date.now() < end) { if (await check()) return; await pause(); }
   throw new Error(message);
 }
-async function screenshot(window, name) { writeFileSync(join(evidence, `${name}.png`), (await window.webContents.capturePage()).toPNG()); }
+async function screenshot(window, name) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const captured = await window.webContents.capturePage();
+      assert.equal(captured.isEmpty(), false, `Empty ${name} capture`);
+      writeFileSync(join(evidence, `${name}.png`), captured.toPNG());
+      return;
+    } catch (error) {
+      if (error.message !== "UnknownVizError" || attempt === 2) throw new Error(`Capture ${name}: ${error.message}`, { cause: error });
+      console.log(`SERVER_CONNECTION_CAPTURE_RETRY ${name} ${attempt + 1}`);
+      await pause();
+    }
+  }
+}
 try {
   const local = new BrowserWindow({ show: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
   await local.loadURL("data:text/html,<h1>Local workspace fixture</h1><input aria-label='Local note'>");
@@ -63,18 +76,26 @@ try {
   await remote.webContents.executeJavaScript(`document.querySelector('#cc').value=${JSON.stringify(pairing.code)};document.querySelector('#cb').click()`);
   await until(() => remote.webContents.getURL() === `${origin}/`, "Pairing did not enter workspace");
   await until(() => remote.webContents.executeJavaScript("!!document.querySelector('#root')?.children.length"), "Remote renderer did not mount");
+  await until(() => remote.webContents.executeJavaScript("!!document.querySelector('[aria-label=\"Bots and navigation\"]') && !document.body.innerText.includes('Connecting to the bot server…')"), "Remote renderer did not connect to its server");
   await screenshot(remote, "connected");
   const api = (path, method = "GET", body) => remote.webContents.executeJavaScript(`fetch(${JSON.stringify(path)},{method:${JSON.stringify(method)},headers:{'content-type':'application/json'},${body === undefined ? "" : `body:${JSON.stringify(JSON.stringify(body))},`}}).then(async r=>({status:r.status,body:await r.json()}))`);
   const created = await api("/api/bots", "POST", { name: "Remote window proof" });
-  assert.equal(created.status, 200, JSON.stringify(created));
+  assert.equal(created.status, 201, JSON.stringify(created));
   const bot = created.body.bot;
-  const sent = await api(`/api/bots/${bot.id}/messages`, "POST", { text: "hello", threadId: bot.threadId });
-  assert.equal(sent.status, 200, JSON.stringify(sent));
+  const task = await api(`/api/bots/${bot.id}/tasks`, "POST", { title: "Remote chat proof" });
+  assert.equal(task.status, 201, JSON.stringify(task));
+  assert.equal(task.body.bot.id, bot.id);
+  const threadId = task.body.task.threadId;
+  assert.equal(task.body.bot.threadId, threadId);
+  assert.deepEqual((await api(`/api/threads/${threadId}/messages?limit=10`)).body.messages, []);
+  const sent = await api(`/api/bots/${bot.id}/messages`, "POST", { text: "hello", threadId });
+  assert.equal(sent.status, 202, JSON.stringify(sent));
+  assert.equal(sent.body.threadId, threadId);
   let messages;
-  await until(async () => { messages = await api(`/api/threads/${bot.threadId}/messages?limit=10`); return messages.body.messages?.some(message => message.role === "assistant"); }, "Fake engine did not reply through remote browser");
+  await until(async () => { messages = await api(`/api/threads/${threadId}/messages?limit=10`); return messages.status === 200 && messages.body.messages?.some(message => message.role === "bot" && message.kind === "text" && message.text?.trim()); }, "Fake engine did not reply through remote browser");
   writeFileSync(join(evidence, "chat-proof.json"), JSON.stringify(messages, null, 2));
-  assert.ok(forwarded.some(entry => entry.path.startsWith("/api/bots") && entry.surface === "browser"));
-  assert.ok(forwarded.every(entry => entry.secret === undefined));
+  assert.ok(forwarded.some(entry => entry.path.startsWith("/api/bots") && entry.companion === "1"));
+  assert.ok(forwarded.every(entry => entry.companion === "1" && entry.surface === undefined && entry.secret === undefined));
   const denied = await api("/api/config", "POST", {});
   assert.equal(denied.status, 403);
   const beforeRenewal = await remote.webContents.session.cookies.get({ url: origin });

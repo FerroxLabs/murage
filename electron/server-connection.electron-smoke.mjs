@@ -4,13 +4,17 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
 import { launchVerificationServer } from "../scripts/control-murage.ts";
 
 test("native server connection uses the real browser door and isolated fake engine", { timeout: 90_000 }, async () => {
   const evidence = mkdtempSync(join(tmpdir(), "murage-server-window-proof-"));
-  const engine = await launchVerificationServer();
+  const staticDir = fileURLToPath(new URL("../dist/", import.meta.url));
+  const engine = await launchVerificationServer(process.env, undefined, {
+    instrumentationSource: `process.env.MURAGE_STATIC_DIR = ${JSON.stringify(staticDir)};`,
+  });
   console.log(JSON.stringify({ evidence, engine: engine.info }));
   try {
     const entry = join(evidence, "fixture.mjs");
