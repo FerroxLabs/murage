@@ -1,28 +1,34 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { ManagedNpmUnavailable, verifiedWindowsCodexPath, windowsNpmCommand } from "./codex-managed-windows.ts";
+import { FUIGO_TARGETS, latestFuigoVersion, managedFuigoReceipt, nativeFuigoTarget, probeNativeFuigo, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo, type FuigoProbe } from "./fuigo-native-update.ts";
 
 export interface ManagedEngineInstance {
   instanceId: string; driverKind: string; cli?: string;
+  bundledCli?: string;
+  defaultSource?: "path" | "bundled";
   snapshot: { state: string; version?: string | null };
 }
 export interface EngineManagementStatus {
   supported: boolean; installedVersion: string | null; latestVersion?: string;
   updateAvailable: boolean; message: string; busy: boolean;
+  source?: "managed" | "bundled" | "path" | "custom" | "unknown";
+  releaseSupported?: boolean; rollbackAvailable?: boolean; bundledAvailable?: boolean;
 }
 interface Dependencies {
   root: string;
   getInstance: (id: string) => Promise<ManagedEngineInstance | undefined>;
   isBusy: () => boolean;
   /** Persist the verified path and reload providers. Must atomically refuse active turns. */
-  activate: (id: string, cli: string) => Promise<void>;
+  activate: (id: string, cli: string, expectedCli?: string | null) => Promise<void>;
   platform?: NodeJS.Platform;
   arch?: string;
   envPath?: string;
   fetch?: typeof fetch;
   run?: (command: string, args: string[], cwd: string) => Promise<string>;
+  fuigoProbe?: FuigoProbe;
 }
 const exec = promisify(execFile);
 const versionPattern = /^\d+\.\d+\.\d+$/;
@@ -50,6 +56,7 @@ export class EngineManager {
   }
   private supported(instance: ManagedEngineInstance) {
     const platform=this.deps.platform??process.platform;
+    if (instance.driverKind === "fuigo") return platform === "darwin" && (FUIGO_TARGETS as readonly string[]).includes(`${platform}-${this.deps.arch ?? process.arch}`);
     return instance.driverKind === "codex" && (["darwin", "linux"].includes(platform)
       ||platform==="win32"&&(this.deps.arch??process.arch)==="x64");
   }
@@ -57,17 +64,34 @@ export class EngineManager {
     const instance = await this.instance(id);
     const installedVersion = versionFrom(instance.snapshot.version);
     const latestVersion = this.versions.get(instance.driverKind);
+    if (instance.driverKind === "fuigo") {
+      const receipt = await managedFuigoReceipt(this.deps.root, id, instance.cli);
+      const source = receipt ? "managed" : instance.cli && instance.cli !== "fuigo"
+        ? instance.cli === instance.bundledCli ? "bundled" : "custom" : instance.defaultSource ?? "unknown";
+      const supported = this.supported(instance), releaseSupported = latestVersion ? supportedFuigoVersion(latestVersion) : undefined;
+      return { supported, installedVersion, latestVersion, source, releaseSupported, busy: this.running,
+        updateAvailable: !!(latestVersion && installedVersion && newer(latestVersion, installedVersion)),
+        rollbackAvailable: !!(receipt?.previousManagedCli && await managedFuigoReceipt(this.deps.root, id, receipt.previousManagedCli)),
+        bundledAvailable: !!instance.bundledCli,
+        message: !supported ? "Native Fuigo update isolation is not qualified on this platform. The selected engine is unchanged."
+          : releaseSupported === false ? "The latest Fuigo release is outside this Murage version’s compatibility range. Keep the current engine."
+          : source === "custom" || source === "path" || source === "unknown" ? "Your existing Fuigo selection is preserved. Choose Use managed Fuigo to opt in to verified native updates; no Node.js or npm is required."
+          : "Fuigo updates independently of Murage. Native downloads are checksum, architecture and ACP-compatibility checked before use; no Node.js or npm is required." };
+    }
     return { supported: this.supported(instance), installedVersion, latestVersion,
       updateAvailable: !!(latestVersion && installedVersion && newer(latestVersion, installedVersion)),
       busy: this.running,
-      message: instance.driverKind === "fuigo" ? "Fuigo is included with Murage. Update Murage to update its bundled engine."
-        : this.supported(instance) ? "Murage keeps your current engine until the new version is verified. Requires Node.js and npm."
+      message: this.supported(instance) ? "Murage keeps your current engine until the new version is verified. Requires Node.js and npm."
         : "Use the engine’s setup guide to install or update on this platform." };
   }
   async check(id: string): Promise<EngineManagementStatus> {
     const instance = await this.instance(id);
-    if (!this.supported(instance) && instance.driverKind !== "fuigo") return this.status(id);
-    const packageName = instance.driverKind === "fuigo" ? "fuigo" : "@openai%2Fcodex";
+    if (instance.driverKind === "fuigo") {
+      this.versions.set("fuigo", await latestFuigoVersion(this.deps.fetch));
+      return this.status(id);
+    }
+    if (!this.supported(instance)) return this.status(id);
+    const packageName = "@openai%2Fcodex";
     const response = await (this.deps.fetch ?? fetch)(`https://registry.npmjs.org/${packageName}/latest`, { signal: AbortSignal.timeout(15_000), redirect: "error" });
     if (!response.ok) throw new Error("Could not check for engine updates. Try again.");
     const metadata = await response.json() as { version?: unknown };
@@ -75,11 +99,31 @@ export class EngineManager {
     this.versions.set(instance.driverKind, metadata.version);
     return this.status(id);
   }
-  async install(id: string): Promise<EngineManagementStatus> {
+  async install(id: string, options: { allowCustom?: boolean } = {}): Promise<EngineManagementStatus> {
     if (this.running || this.deps.isBusy()) throw new Error("Finish or stop running tasks before updating an engine.");
     this.running = true;
     try {
       const instance = await this.instance(id);
+      if (instance.driverKind === "fuigo") {
+        const expectedCli = instance.cli ?? null;
+        if (!this.supported(instance)) throw new Error("Native Fuigo installation is not supported on this platform.");
+        const status = await this.status(id);
+        if (!options.allowCustom && status.source !== "managed" && status.source !== "bundled") throw new Error("Choose Use managed Fuigo explicitly to replace the current custom or PATH selection.");
+        await this.check(id);
+        const version = this.versions.get("fuigo")!;
+        if (!supportedFuigoVersion(version)) throw new Error("This Fuigo release is not supported by this Murage version.");
+        let cli: string;
+        try {
+          cli = await stageNativeFuigo({ root: this.deps.root, id, version, target: `${this.deps.platform ?? process.platform}-${this.deps.arch ?? process.arch}`, fetcher: this.deps.fetch, probe: this.deps.fuigoProbe,
+            ...(status.source === "managed" && instance.cli ? { previousManagedCli: instance.cli } : {}) });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "FUIGO_INCOMPATIBLE") throw error;
+          throw new Error("Native Fuigo download or compatibility verification failed. The selected engine is unchanged. No Node.js/npm setup is needed.");
+        }
+        await this.activateFuigo(id, cli, expectedCli);
+        this.running = false;
+        return this.status(id);
+      }
       if (!this.supported(instance)) throw new Error("Managed installation is not supported for this engine on this platform. Use its setup guide.");
       await this.check(id);
       const version = this.versions.get(instance.driverKind)!;
@@ -118,6 +162,47 @@ export class EngineManager {
       }
       this.running = false;
       return this.status(id);
+    } finally { this.running = false; }
+  }
+
+  private async activateFuigo(id: string, cli: string, expectedCli: string | null): Promise<void> {
+    const current = await this.instance(id);
+    if ((current.cli ?? null) !== expectedCli) throw new Error("The selected Fuigo engine changed while verification ran. Refresh Settings before changing it again.");
+    if (this.deps.isBusy()) throw new Error("Tasks started while verifying Fuigo. Finish them before activating the update; the selected engine is unchanged.");
+    try { await this.deps.activate(id, cli, expectedCli); }
+    catch { throw new Error("Fuigo activation did not complete. Check the selected engine in Settings before retrying; no task was retried automatically."); }
+  }
+  async rollback(id: string): Promise<EngineManagementStatus> {
+    if (this.running || this.deps.isBusy()) throw new Error("Finish or stop running tasks before changing Fuigo.");
+    this.running = true;
+    try {
+      const instance = await this.instance(id);
+      if (!this.supported(instance)) throw new Error("Native Fuigo update isolation is not qualified on this platform. Keep the selected engine.");
+      const expectedCli = instance.cli ?? null;
+      const current = instance.driverKind === "fuigo" ? await managedFuigoReceipt(this.deps.root, id, instance.cli) : null;
+      if (!current?.previousManagedCli) throw new Error("No previous verified managed Fuigo version is available.");
+      await verifyManagedFuigo(this.deps.root, id, current.previousManagedCli, `${this.deps.platform ?? process.platform}-${this.deps.arch ?? process.arch}`, this.deps.fuigoProbe);
+      await this.activateFuigo(id, current.previousManagedCli, expectedCli); this.running = false; return this.status(id);
+    } finally { this.running = false; }
+  }
+  async useBundled(id: string): Promise<EngineManagementStatus> {
+    if (this.running || this.deps.isBusy()) throw new Error("Finish or stop running tasks before changing Fuigo.");
+    this.running = true;
+    try {
+      const instance = await this.instance(id);
+      if (instance.driverKind !== "fuigo" || !instance.bundledCli) throw new Error("This installation has no declared bundled Fuigo fallback.");
+      if (!this.supported(instance)) throw new Error("Native Fuigo update isolation is not qualified on this platform. Keep the selected engine.");
+      const expectedCli = instance.cli ?? null;
+      const stat = await lstat(instance.bundledCli);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024 * 1024 || nativeFuigoTarget(await readFile(instance.bundledCli)) !== `${this.deps.platform ?? process.platform}-${this.deps.arch ?? process.arch}`) throw new Error("The bundled Fuigo executable could not be verified.");
+      await mkdir(this.deps.root, { recursive: true, mode: 0o700 });
+      const scratch = await mkdtemp(join(this.deps.root, "fuigo-bundle-probe-")); let cleanupSafe = true;
+      try {
+        const proof = await (this.deps.fuigoProbe ?? probeNativeFuigo)(instance.bundledCli, undefined, scratch);
+        if (proof.protocolVersion !== 1 || !proof.loadSession || !proof.sessionCreated) throw new Error("The bundled Fuigo protocol could not be verified.");
+      } catch (error) { if ((error as NodeJS.ErrnoException).code === "FUIGO_PROBE_CLEANUP") cleanupSafe = false; throw error; }
+      finally { if (cleanupSafe) await rm(scratch, { recursive: true, force: true }); }
+      await this.activateFuigo(id, instance.bundledCli, expectedCli); this.running = false; return this.status(id);
     } finally { this.running = false; }
   }
 }
