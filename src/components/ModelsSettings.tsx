@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { extractKeys, modelProviderCandidates } from "../../shared/key-extract";
 import type { ProviderCatalog, ProviderConnectionMutation, ProviderModel, ProviderPreset, PublicProviderConnection } from "../../shared/provider-connections";
+import type { FluxConnectionMutation, FluxConnectionStatus } from "../../shared/flux-connection";
+import { FluxRouterConnection } from "./FluxRouterConnection";
 
 type Snapshot = { connections: PublicProviderConnection[]; storage: "encrypted" | "local-config" };
 const labels: Record<ProviderPreset, string> = { anthropic: "Anthropic", openai: "OpenAI", openrouter: "OpenRouter", deepseek: "DeepSeek", mistral: "Mistral", flux: "Flux Router", groq: "Groq", xai: "xAI" };
@@ -59,9 +61,20 @@ export function ModelsSettings() {
   const [hints, setHints] = useState<ProviderPreset[]>([]), [chosen, setChosen] = useState<ProviderPreset | null>(null), [hasKey, setHasKey] = useState(false), [keyIssue, setKeyIssue] = useState("");
   const [query, setQuery] = useState(""), [editing, setEditing] = useState<string | null>(null);
   const [removing, setRemoving] = useState<{ id: string; label: string; revision: string } | null>(null);
+  const [flux, setFlux] = useState<FluxConnectionStatus | null>(null), [fluxError, setFluxError] = useState("");
   const key = useRef<HTMLInputElement>(null), name = useRef<HTMLInputElement>(null), rename = useRef<HTMLInputElement>(null), running = useRef(false);
   const mounted = useRef(true);
-  const readList = async () => { const next: Snapshot = await api("/api/provider-connections"); if (mounted.current) setSnapshot(next); return next; };
+  const readList = async () => {
+    const [listResult, fluxResult] = await Promise.allSettled([api("/api/provider-connections"), api("/api/flux-connection")]);
+    if (mounted.current) {
+      setFlux(fluxResult.status === "fulfilled" ? fluxResult.value as FluxConnectionStatus : null);
+      setFluxError(fluxResult.status === "fulfilled" ? "" : "Flux Router setup is unavailable. Existing Flux controls remain below; refresh connections to try again.");
+    }
+    if (listResult.status === "rejected") throw listResult.reason;
+    const next: Snapshot = listResult.value;
+    if (mounted.current) setSnapshot(next);
+    return next;
+  };
   const reload = async () => {
     if (running.current) return; running.current = true; setBusy("list"); setError("");
     try { await readList(); setRemoving(null); } catch (cause) { setError(failureMessage(cause, "load model connections")); }
@@ -74,6 +87,9 @@ export function ModelsSettings() {
   }, []);
   const recognize = () => {
     const raw = key.current?.value.trim() ?? "", extracted = extractKeys(raw), candidates = modelProviderCandidates(raw);
+    if (flux && candidates.includes("flux")) {
+      setHasKey(Boolean(raw)); setHints([]); setChosen(null); setError(""); setKeyIssue("Use the Flux Router card above to connect or replace your key."); return;
+    }
     setHasKey(Boolean(raw)); setHints(candidates); setChosen(candidates.length === 1 ? candidates[0] : null); setError("");
     setKeyIssue(extracted.length > 1 ? "Paste one API key at a time." : extracted.length === 1 && !candidates.length ? "This key is not a supported model key. Use Tools & Connections for service keys." : "");
   };
@@ -92,6 +108,7 @@ export function ModelsSettings() {
   };
   const add = async () => {
     if (running.current || !chosen || !hasKey || keyIssue) return;
+    if (flux && chosen === "flux") { setKeyIssue("Use the Flux Router card above to connect or replace your key."); return; }
     const raw = key.current?.value.trim() ?? "", extracted = extractKeys(raw);
     if (!raw || extracted.length > 1) return;
     const value = extracted.length === 1 ? extracted[0].value : raw;
@@ -117,15 +134,40 @@ export function ModelsSettings() {
     finally { running.current = false; setBusy(null); }
   };
   const existingSaved = (status: ConfigStatus) => { dispatch({ type: "configStatus", config: status }); notifyConnectionsChanged(); void reload(); };
+  const fluxChanged = async (change: FluxConnectionMutation) => {
+    let status: FluxConnectionStatus;
+    if (window.muragebox) {
+      if (!window.muragebox.mutateFluxConnection) throw new Error("Secure Flux Router storage is unavailable.");
+      status = await window.muragebox.mutateFluxConnection(change);
+    } else status = await api("/api/flux-connection/mutate", { method: "POST", body: JSON.stringify(change) });
+    setFlux(status);
+    if (state.config) dispatch({ type: "configStatus", config: { ...state.config, flux: { configured: status.configured } } });
+    notifyConnectionsChanged();
+  };
+  const fluxTest = async () => {
+    const result: { modelCount: number; error?: string } = await api("/api/flux-connection/test", { method: "POST" });
+    notifyConnectionsChanged();
+    return result;
+  };
   const search = query.trim().toLowerCase();
+  const fluxConnection = snapshot?.connections.find(connection => connection.id === "legacy-flux");
+  const fluxModels = fluxConnection ? chatModels(fluxConnection).filter(model => !search || `${model.label} ${model.id} Flux Router`.toLowerCase().includes(search)) : [];
   return <div className="min-w-0 space-y-5">
+    <FluxRouterConnection configured={flux?.configured ?? null} conflict={flux?.conflict} choices={flux?.choices}
+      onSave={async key => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: flux.configured ? "replace" : "connect", revision: flux.revision, key }); }}
+      onSelect={async connectionId => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: "select", revision: flux.revision, connectionId }); }}
+      onTest={fluxTest}
+      onDisconnect={async () => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: "disconnect", revision: flux.revision }); }}>
+      {fluxError && <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{fluxError}</p>}
+      {flux?.configured && !flux.conflict && fluxConnection && <details className="mt-3" open={search ? true : undefined}><summary className={`min-h-11 cursor-pointer py-3 text-[13px] ${focus}`}>{fluxModels.length} matching Flux chat models</summary><div className="max-h-80 overflow-y-auto">{fluxModels.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p><p className="mt-1 text-[11px] text-ink-secondary">{model.pricing ? `Input ${model.pricing.inputPerMillion === undefined ? "not listed" : money(model.pricing.inputPerMillion)} · output ${model.pricing.outputPerMillion === undefined ? "not listed" : money(model.pricing.outputPerMillion)} per 1M tokens` : "Price not listed"}</p></div>)}</div>{fluxConnection.catalog.error && <p className="mt-2 text-[12px] text-danger">{fluxConnection.catalog.error.message}</p>}{fluxConnection.catalog.stale && <p className="mt-2 text-[12px] text-ink-secondary">Showing the last saved catalog. Test connection to check for updates.</p>}</details>}
+    </FluxRouterConnection>
     <section aria-labelledby="models-heading" className="rounded-xl border border-hairline/40 p-4">
       <h3 id="models-heading" className="text-[15px] font-medium text-ink">Model connections</h3>
       <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Paste one model API key. Recognition happens on this computer; unclear keys need a provider choice.</p>
       <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">API usage is billed to that provider account, separately from engine subscriptions.</p>
       <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void add(); }}>
         <label className="block text-[13px]">API key<input ref={key} type="password" aria-label="Model API key" defaultValue="" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy)} onInput={recognize} placeholder="Paste a model API key" className={`${input} mt-1.5`} /></label>
-        {hasKey && !keyIssue && (hints.length === 1 ? <p className="text-[12px] text-success">Recognized as {labels[hints[0]]}. Nothing is sent until you add the connection.</p> : <fieldset><legend className="text-[12px] text-ink-secondary">Which provider issued this key?</legend><div className="mt-2 grid grid-cols-2 gap-2">{(hints.length ? hints : presets).map(preset => <button key={preset} type="button" aria-pressed={chosen === preset} disabled={Boolean(busy)} onClick={() => setChosen(preset)} className={`${button} ${chosen === preset ? "ring-2 ring-accent" : ""}`}>{labels[preset]}</button>)}</div></fieldset>)}
+        {hasKey && !keyIssue && (hints.length === 1 ? <p className="text-[12px] text-success">Recognized as {labels[hints[0]]}. Nothing is sent until you add the connection.</p> : <fieldset><legend className="text-[12px] text-ink-secondary">Which provider issued this key?</legend><div className="mt-2 grid grid-cols-2 gap-2">{(hints.length ? hints : presets).filter(preset => !flux || preset !== "flux").map(preset => <button key={preset} type="button" aria-pressed={chosen === preset} disabled={Boolean(busy)} onClick={() => setChosen(preset)} className={`${button} ${chosen === preset ? "ring-2 ring-accent" : ""}`}>{labels[preset]}</button>)}</div></fieldset>)}
         {keyIssue && <p role="alert" className="text-[12px] text-danger">{keyIssue}</p>}
         <label className="block text-[13px]">Connection name <span className="text-ink-secondary">(optional)</span><input ref={name} aria-label="Connection name (optional)" defaultValue="" maxLength={80} disabled={Boolean(busy)} placeholder="For example: Work account" className={`${input} mt-1.5`} /></label>
         <button type="submit" disabled={!snapshot || Boolean(busy) || !hasKey || !chosen || Boolean(keyIssue)} className={button}>{busy === "create" ? "Saving connection…" : "Add connection"}</button>
@@ -135,7 +177,7 @@ export function ModelsSettings() {
     <div className="flex flex-wrap gap-2"><label className="min-w-0 flex-1"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label><button type="button" disabled={Boolean(busy)} onClick={() => void reload()} className={button}>Refresh connections</button></div>
     {notice && <p role="status" className="text-[12px] text-success">{notice}</p>}{error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
     {snapshot?.connections.length === 0 && <p className="text-[13px] text-ink-secondary">No additional model connections yet. Existing default keys are managed below.</p>}
-    {snapshot?.connections.map(connection => {
+    {snapshot?.connections.filter(connection => !flux || connection.preset !== "flux").map(connection => {
       const models = chatModels(connection), matching = models.filter(model => !search || `${model.label} ${model.id} ${connection.label} ${labels[connection.preset]}`.toLowerCase().includes(search));
       return <section key={connection.id} aria-label={`${connection.label} connection`} className="min-w-0 rounded-xl border border-hairline/40 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><h4 className="break-words text-[14px] font-medium">{connection.label}</h4><p className="text-[12px] text-ink-secondary">{labels[connection.preset]} · {connection.legacy ? "Existing default" : connection.enabled ? "Enabled" : "Disabled"}</p></div>{!connection.legacy && <label className="flex min-h-11 items-center gap-2 text-[12px]"><input type="checkbox" aria-label={`Use ${connection.label}`} checked={connection.enabled} disabled={Boolean(busy)} onChange={event => void changeConnection({ action: "update", id: connection.id, revision: connection.revision, enabled: event.target.checked })} className={`size-4 accent-accent ${focus}`} />Use connection</label>}</div>
@@ -151,7 +193,7 @@ export function ModelsSettings() {
     })}
     <section id="existing-model-keys" aria-labelledby="existing-keys-heading" className="rounded-xl border border-hairline/40 p-4">
       <h3 id="existing-keys-heading" className="text-[14px] font-medium">Existing/default connections</h3><p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">These update the keys already used by existing setups. No keys are copied into new connections. Saving can reload engines and interrupt running tasks.</p>
-      <ExistingKey id="legacy-flux" label="Flux Router default" configured={state.config?.flux?.configured ?? false} onSaved={existingSaved} />
+      {!flux && <ExistingKey id="legacy-flux" label="Flux Router default" configured={state.config?.flux?.configured ?? false} onSaved={existingSaved} />}
       <ExistingKey id="opencode" label="OpenCode provider" configured={state.config?.opencodeGo?.configured ?? false} onSaved={existingSaved} />
       {snapshot?.connections.filter(connection => connection.legacy && ["legacy-openai-image", "legacy-xai", "legacy-openai-compatible"].includes(connection.id)).map(connection => <ExistingKey key={connection.id} id={connection.id} label={connection.label} configured={connection.configured} onSaved={existingSaved} />)}
     </section>
