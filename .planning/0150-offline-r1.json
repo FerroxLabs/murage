@@ -1,0 +1,20 @@
+{
+  "source": "9a40c0d3 plus isolated offline probe change",
+  "target": "darwin-arm64",
+  "node": "v24.20.0",
+  "binary": "/private/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-synthetic-8IOqZC/fuigo/synthetic/1.0.10-6ad239cd-5c2f-4b76-808d-d191f1ce2b20/fuigo",
+  "expectedSha256": "10ef84065521868e5ae6122941c3318394b9eae4bcc7450cc61ea8ccd36097cd",
+  "root": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-fuigo-offline-wegtVh",
+  "startedAt": "2026-09-10T08:01:13.928Z",
+  "networkCanary": "EPERM; zero accepted loopback connections; no outbound exception",
+  "proof": {
+    "version": "1.0.10",
+    "protocolVersion": 1,
+    "loadSession": true,
+    "sessionCreated": true
+  },
+  "status": "passed",
+  "probeCleanup": true,
+  "listenerClosed": true,
+  "finishedAt": "2026-09-10T08:01:14.799Z"
+}
