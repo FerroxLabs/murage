@@ -21,7 +21,7 @@ async function fixture(options: { driver?: string; platform?: NodeJS.Platform; a
     }
     return "installed";
   });
-  const fetch = vi.fn(async () => new Response(JSON.stringify({ version: "1.2.0" })));
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ name: options.driver === "fuigo" ? "fuigo" : "@openai/codex", version: "1.2.0" })));
   const manager = new EngineManager({ root, getInstance: async id => id === "fixture" ? instance : undefined, isBusy: options.busy ?? (() => false), activate, platform: options.platform ?? "darwin", arch:options.arch??"x64", run, fetch: fetch as typeof globalThis.fetch });
   return { manager, run, activate, fetch, instance, root };
 }
@@ -49,8 +49,8 @@ describe("managed engine install and update", () => {
   it("does not accept an arbitrary engine ID or unsupported platform", async () => {
     const f = await fixture({ platform: "win32",arch:"arm64" }); await expect(f.manager.install("fixture")).rejects.toThrow("not supported"); await expect(f.manager.install(";bad")).rejects.toThrow("not found"); expect(f.run).not.toHaveBeenCalled();
   });
-  it("routes bundled Fuigo updates through Murage without running npm", async () => {
-    const f = await fixture({ driver: "fuigo" }); const status = await f.manager.check("fixture"); expect(status.updateAvailable).toBe(true); expect(status.supported).toBe(false); expect(status.message).toContain("Update Murage"); expect(f.run).not.toHaveBeenCalled();
+  it("checks independent native Fuigo updates without running npm or replacing a custom CLI", async () => {
+    const f = await fixture({ driver: "fuigo" }); const status = await f.manager.check("fixture"); expect(status.updateAvailable).toBe(true); expect(status.supported).toBe(true); expect(status.source).toBe("custom"); expect(status.message).toContain("Use managed Fuigo"); expect(f.run).not.toHaveBeenCalled(); expect(f.activate).not.toHaveBeenCalled();
   });
   it("rejects malformed registry versions before install", async () => {
     const f = await fixture(); f.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ version: "1.0.0; bad" })));
