@@ -116,9 +116,9 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
     // This random value belongs only to a synthetic local model, never a service.
     env.MURAGE_FUIGO_PROBE_KEY = randomUUID();
     env.FUIGO_TELEMETRY_ENABLED = "false";
-    await writeFile(join(env.FUIGO_HOME!, "config.toml"), `[model_providers.murage_native_probe]\nbase_url = "http://127.0.0.1:${address.port}/v1"\ncontext_window = 8192\nenv_key = "MURAGE_FUIGO_PROBE_KEY"\napi_backend = "chat_completions"\n\n[model.murage_native_probe]\nmodel = "murage-native-probe"\nmodel_provider = "murage_native_probe"\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(join(env.FUIGO_HOME!, "config.toml"), `[features]\nremote_fetch = false\n\n[model_providers.murage_native_probe]\nbase_url = "http://127.0.0.1:${address.port}/v1"\ncontext_window = 8192\nenv_key = "MURAGE_FUIGO_PROBE_KEY"\napi_backend = "chat_completions"\n\n[model.murage_native_probe]\nmodel = "murage-native-probe"\nmodel_provider = "murage_native_probe"\n`, { mode: 0o600, flag: "wx" });
     const policy = join(home, "outbound.sb");
-    await writeFile(policy, `(version 1)\n(allow default)\n(deny network-outbound)\n(allow network-outbound (remote ip "localhost:${address.port}"))\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(policy, `(version 1)\n(allow default)\n(deny network-outbound)\n`, { mode: 0o600, flag: "wx" });
     const command = "/usr/bin/sandbox-exec", prefix = ["-f", policy];
     try { await exec(command, [...prefix, "/usr/bin/true"], { cwd: home, env, timeout: 15000, maxBuffer: 65536 }); }
     catch { throw Object.assign(new Error("Private Fuigo update isolation is unavailable. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" }); }
