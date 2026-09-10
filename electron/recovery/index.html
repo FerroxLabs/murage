@@ -22,6 +22,19 @@
       <p>Keep the original installation and its ownership records. Do not delete lock files. A computer-name change and an installation used on another computer need different recovery steps.</p>
       <p>Open the diagnostics folder and contact support with the computer names and claim type shown here. Do not attach your conversations, credentials or full installation folder. A transfer must use a consistent backup or a stopped source and retain the original installation.</p>
     </section>
+    <section id="capture-recovery" aria-labelledby="capture-heading" hidden>
+      <h2 id="capture-heading">Recover without an existing backup</h2>
+      <p>Create a separate recovery copy from data available on this computer. Windows will ask for one-time administrator approval. The original and its ownership records remain unchanged.</p>
+      <p>The snapshot captures one point in time. Work in progress may be incomplete, and later changes are not included. The validated copy opens for paused review with fresh connections.</p>
+      <button data-action="capture-separate" class="primary">Create separate recovery copy</button>
+    </section>
+    <section id="separate-recovery" aria-labelledby="separate-heading" hidden>
+      <h2 id="separate-heading">Recover from an existing backup</h2>
+      <p>Restore a valid Murage backup into a new installation on this computer. The original installation and its ownership records remain unchanged.</p>
+      <p>Only the selected backup snapshot is restored. Newer conversations and deletion records in the original are not copied. Keep the original; do not copy live files or delete locks.</p>
+      <button data-action="choose-separate-backup" class="primary">Choose backup for separate installation</button>
+    </section>
+    <p class="location"><code id="retained-destination" hidden></code></p>
     <section aria-labelledby="backup-heading">
       <h2 id="backup-heading">Restore a private backup</h2>
       <p>Inspect a backup before making changes. Your current installation is retained, and restored agents stay paused.</p>
@@ -31,7 +44,9 @@
         <p id="backup-summary"></p>
         <details><summary>Snapshot identity</summary><p id="snapshot"></p><code id="hash"></code></details>
         <p class="notice">After restoring, review this installation before opening it. Engines and schedules stay off until you enable them.</p>
+        <p class="location"><code id="separate-destination" hidden></code></p>
         <button data-action="restore" id="restore">Restore and keep paused</button>
+        <button data-action="restore-separate" id="restore-separate" hidden>Restore separately and restart for review</button>
       </div>
     </section>
     <section aria-labelledby="activation-heading">

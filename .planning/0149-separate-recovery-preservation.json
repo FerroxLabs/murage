@@ -1,0 +1,92 @@
+{
+  "source": "/Volumes/Mando/WaylandBots/murage-astra/.planning/win11-engine-refresh",
+  "destination": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0149-separate-recovery",
+  "base": "36ca95058d031f5486aef164ea1bf642fad40e36",
+  "allMatched": true,
+  "files": [
+    {
+      "file": "electron/installation-recovery-controller.mjs",
+      "sha256": "5930ced3fc65500ca513faae42865474d5f2445e842531f9d1cc0b8150d3c680"
+    },
+    {
+      "file": "electron/installation-recovery-controller.node-test.mjs",
+      "sha256": "dcd9bfa861c72ee0de6b84c06ba13385ebc0e11e71bf551fdab1fa12fbfaa129"
+    },
+    {
+      "file": "electron/installation-recovery-main.node-test.mjs",
+      "sha256": "50612a3c0e3aac8215e811cc7bb55bfa38bdd41549ea1b00bfcc6b05c50cb19c"
+    },
+    {
+      "file": "electron/installation-recovery-window.mjs",
+      "sha256": "c003be4863bb9640bf38b8f1688a17b1cf18f5cb9fad15e58e83a00c5b63e5b5"
+    },
+    {
+      "file": "electron/main.mjs",
+      "sha256": "5a111fc067e9811c2345a836c671dafc7f88e747c23fd2168d1f5e967eb8ae0b"
+    },
+    {
+      "file": "electron/recovery/index.html",
+      "sha256": "5a4f8769acf49d9b6beb6b9c02aadc5e87888ec4c7b0aca5605908d1766f4de9"
+    },
+    {
+      "file": "electron/recovery/renderer.js",
+      "sha256": "c3f33b4f897fb1111ef242f0a5c610a3e6eaad48875d8d58d0e7bd6d0a4d4b9c"
+    },
+    {
+      "file": "electron/installation-selection.mjs",
+      "sha256": "311d73efa809d1a275352981fd6a7e1c618f416e23276289807fc65089fcfb45"
+    },
+    {
+      "file": "electron/installation-selection.node-test.mjs",
+      "sha256": "1e00808f4b084aaf80c0c5d341ab527eb3431877745010ca5dfad910d4cd229a"
+    },
+    {
+      "file": "electron/installation-selection.integration.node-test.mjs",
+      "sha256": "ba8c0c75eb9e343e67a2b18a49cd3b4fbd3e85b48df1693f2c7660111ea52e50"
+    },
+    {
+      "file": ".planning/0149-foreign-archive-recovery-proposal.md",
+      "sha256": "9d9fb85e45ecdd945761c7bbac4e86150d9b660563cb039927939c7aab6fc0de"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/archive-integration.json",
+      "sha256": "c1aacd4ae9542d527785a572dc96e49c23701358ff39eb38792b9563021a3b07"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/native-state.json",
+      "sha256": "a2467c9230ca8310905ee9994506b74eb693d95125f4bf38b38650746d8812cd"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/native.mjs",
+      "sha256": "a0a10d5e794376387875df3c812b86d50a97aaa0949584715df1093b9d71a599"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/recovery-1000-dark.png",
+      "sha256": "5ba0f22dc3aa3d3fd657af71205554b784f123e604ea03c8aaa30ba493ce535a"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/recovery-1000-light.png",
+      "sha256": "4b2987de494b9804d27490504ee11254fb7c320e076f155621cfa8f67c51fdbb"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/recovery-390-dark.png",
+      "sha256": "c6f85da9a4cee7a447560421a294bb672966ead1bb6c7402f6ec81b72c0924b0"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/recovery-390-light.png",
+      "sha256": "ac1c6ec588552d359d4ce12eff2e05b1709b743a4e88f652f416c4e3c3d9d90c"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/run-native.mjs",
+      "sha256": "270605d8a99e7f434489746b3a0633d0fe1a2fbfb06168f5b45c134c9e69a39a"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/ui.json",
+      "sha256": "9b38c79c9ef7f8134d7f1698ba0f267993dd28df731a2c73d45973bc0030cbad"
+    },
+    {
+      "file": ".planning/0149-separate-recovery-confirm/ui.mjs",
+      "sha256": "ab86fccf32906926a5ae14d37f08f0015376d621deb7f5c2f31118d26a76c1f4"
+    }
+  ]
+}

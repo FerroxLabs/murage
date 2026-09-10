@@ -1,0 +1,26 @@
+[
+  {
+    "skin": "light",
+    "width": 390,
+    "result": "PASS",
+    "scope": "Actual recovery HTML/renderer, fake trusted bridge; native dialog separate"
+  },
+  {
+    "skin": "light",
+    "width": 1000,
+    "result": "PASS",
+    "scope": "Actual recovery HTML/renderer, fake trusted bridge; native dialog separate"
+  },
+  {
+    "skin": "dark",
+    "width": 390,
+    "result": "PASS",
+    "scope": "Actual recovery HTML/renderer, fake trusted bridge; native dialog separate"
+  },
+  {
+    "skin": "dark",
+    "width": 1000,
+    "result": "PASS",
+    "scope": "Actual recovery HTML/renderer, fake trusted bridge; native dialog separate"
+  }
+]
