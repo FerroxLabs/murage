@@ -1180,17 +1180,19 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   useEffect(() => {
     wasWaiting.current = false;
     setPopping(null);
-  }, [bot.id]);
+  }, [bot.id, bot.threadId]);
   useEffect(() => {
     if (waiting) wasWaiting.current = true;
   }, [waiting]);
   useEffect(() => {
+    // A new message cancels the previous timer; retire its transient row too.
+    setPopping(null);
     if (lastMessage?.role !== "bot" || lastMessage.kind !== "text" || !wasWaiting.current) return;
     wasWaiting.current = false;
     setPopping({ id: lastMessage.id, text: lastMessage.text ?? "" });
     const timer = setTimeout(() => setPopping(null), 520);
     return () => clearTimeout(timer);
-  }, [lastMessage?.id, lastMessage?.role, lastMessage?.kind, lastMessage?.text]);
+  }, [bot.id, bot.threadId, lastMessage?.id, lastMessage?.role, lastMessage?.kind, lastMessage?.text]);
   const presenceVisible = waiting || popping !== null;
   const poppingMessage = popping ? messages.find((message) => message.id === popping.id) : undefined;
   // Wall-clock anchor for the working row's elapsed readout — set when the
