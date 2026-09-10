@@ -13,6 +13,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
       - name: Compile production broker and separate emulated-elevation fixture
         shell: cmd
         run: |
@@ -22,9 +25,6 @@ jobs:
           if errorlevel 1 exit /b %errorlevel%
           cl /nologo /std:c++20 /EHsc /W4 /D_WIN32_WINNT=0x0602 native\recovery-snapshot\capture.cpp native\recovery-snapshot\transport-fixture.cpp /Fe:native\recovery-snapshot\transport-fixture.exe /link VssApi.lib Ole32.lib OleAut32.lib Advapi32.lib Uuid.lib Shell32.lib
           if errorlevel 1 exit /b %errorlevel%
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Desktop protocol checks
