@@ -1,4 +1,12 @@
 {
+  "source.openError": "मूल बातचीत नहीं खोली जा सकी।",
+  "inbox.conversationUnavailable": "यह बातचीत अब उपलब्ध नहीं है।",
+  "inbox.openResultError": "यह परिणाम नहीं खोला जा सका। फिर से कोशिश करें।",
+  "inbox.title": "इनबॉक्स",
+  "files.sourceUnavailableRetained": "मूल बातचीत अब उपलब्ध नहीं है। सहेजी गई फ़ाइल सुरक्षित है।",
+  "files.title": "फ़ाइलें",
+  "files.workingFolderError": "कार्य फ़ोल्डर नहीं खोला जा सका। फ़ाइलें रीफ़्रेश करें।",
+  "files.nativeActionError": "ऑपरेटिंग सिस्टम में फ़ाइल की कार्रवाई विफल रही।",
   "noEngines.title": "शुरू करने के लिए एक AI इंजन इंस्टॉल करें",
   "noEngines.intro": "Murage अपना कोई मॉडल नहीं देता: आपके बॉट इस कंप्यूटर पर इंस्टॉल की गई AI CLI पर, आपके मौजूदा लॉगिन से चलते हैं। इनमें से कोई भी सेट कर लें, और आपके बॉट चल पड़ेंगे।",
   "engines.cloud": "क्लाउड",

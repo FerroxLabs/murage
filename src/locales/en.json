@@ -1,4 +1,12 @@
 {
+  "source.openError": "The source conversation could not be opened.",
+  "inbox.conversationUnavailable": "This conversation is no longer available.",
+  "inbox.openResultError": "Could not open this result. Try again.",
+  "inbox.title": "Inbox",
+  "files.sourceUnavailableRetained": "The source conversation is no longer available. The saved file is retained.",
+  "files.title": "Files",
+  "files.workingFolderError": "The working folder could not be opened. Refresh Files.",
+  "files.nativeActionError": "The native file action failed.",
   "noEngines.title": "Install an AI engine to get started",
   "noEngines.intro": "Murage doesn't ship a model of its own: your bots run on an AI CLI installed on this computer, using your existing login. Set up any one of these and your bots come alive.",
   "engines.cloud": "Cloud",
