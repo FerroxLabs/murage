@@ -1,4 +1,4 @@
-/* C2 diagnostic only. Reuse exact production identity/quoting helpers without
+/* C3 diagnostic only. Reuse exact production identity/quoting helpers without
  * modifying the launcher. Neither suspended child is ever resumed. */
 #define wmain production_wmain
 #include "launcher.c"
@@ -39,10 +39,29 @@ static void token_details(void) {
   if (GetTokenInformation(token, TokenElevation, &value, sizeof(value), &bytes)) printf("parent-elevated %lu\n", value);
   printf("parent-restricted %d\n", IsTokenRestricted(token)); CloseHandle(token);
 }
-static DWORD attempt(const wchar_t *image, const wchar_t *cwd, PSID sid, int inherit) {
+static DWORD child_security(PSID sid, PSECURITY_DESCRIPTOR *descriptor) {
+  HANDLE token = NULL; DWORD bytes = 0, error = 0; TOKEN_USER *user = NULL;
+  LPWSTR userSid = NULL, containerSid = NULL; wchar_t sddl[1024];
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return GetLastError();
+  GetTokenInformation(token, TokenUser, NULL, 0, &bytes);
+  user = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
+  if (!user) { error = ERROR_NOT_ENOUGH_MEMORY; goto done; }
+  if (!GetTokenInformation(token, TokenUser, user, bytes, &bytes)
+      || !ConvertSidToStringSidW(user->User.Sid, &userSid)
+      || !ConvertSidToStringSidW(sid, &containerSid)) { error = GetLastError(); goto done; }
+  if (_snwprintf_s(sddl, 1024, _TRUNCATE, L"D:P(A;;GA;;;%s)(A;;GA;;;SY)(A;;GA;;;%s)", userSid, containerSid) < 0) { error = ERROR_BUFFER_OVERFLOW; goto done; }
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, descriptor, NULL)) { error = GetLastError(); goto done; }
+  printf("explicit-child-object-dacl %ls\n", sddl);
+done:
+  if (containerSid) LocalFree(containerSid); if (userSid) LocalFree(userSid);
+  if (user) HeapFree(GetProcessHeap(), 0, user); CloseHandle(token); return error;
+}
+static DWORD attempt(const wchar_t *image, const wchar_t *cwd, PSID sid, int inherit, int explicitSecurity) {
   STARTUPINFOEXW startup = {0}; startup.StartupInfo.cb = sizeof(startup);
   SECURITY_CAPABILITIES capabilities = {0}; capabilities.AppContainerSid = sid;
   SIZE_T bytes = 0; DWORD error = 0; HANDLE handles[3] = {0}; PROCESS_INFORMATION child = {0};
+  PSECURITY_DESCRIPTOR descriptor = NULL;
+  SECURITY_ATTRIBUTES attributes = { sizeof(SECURITY_ATTRIBUTES), NULL, FALSE };
   InitializeProcThreadAttributeList(NULL, inherit ? 2 : 1, 0, &bytes);
   startup.lpAttributeList = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
   if (!startup.lpAttributeList || !InitializeProcThreadAttributeList(startup.lpAttributeList, inherit ? 2 : 1, 0, &bytes)) return GetLastError();
@@ -56,10 +75,16 @@ static DWORD attempt(const wchar_t *image, const wchar_t *cwd, PSID sid, int inh
   }
   wchar_t command[32768] = {0}; size_t used = 0;
   if (!quote(command, 32768, &used, image) || !quote(command, 32768, &used, L"hold")) { error = ERROR_BUFFER_OVERFLOW; goto done; }
+  if (explicitSecurity) {
+    error = child_security(sid, &descriptor); if (error) goto done;
+    attributes.lpSecurityDescriptor = descriptor;
+  }
   SetLastError(0);
-  if (!CreateProcessW(image, command, NULL, NULL, inherit, EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW, NULL, cwd, &startup.StartupInfo, &child)) error = GetLastError();
-  printf("create-process inherit=%d result=%lu pid=%lu suspended=1 capabilities=0\n", inherit, error, child.dwProcessId);
+  if (!CreateProcessW(image, command, explicitSecurity ? &attributes : NULL, explicitSecurity ? &attributes : NULL, inherit, EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW, NULL, cwd, &startup.StartupInfo, &child)) error = GetLastError();
+  printf("create-process inherit=%d explicit-security=%d result=%lu pid=%lu suspended=1 capabilities=0\n", inherit, explicitSecurity, error, child.dwProcessId);
   if (child.hProcess) {
+    security("child-process", child.hProcess, SE_KERNEL_OBJECT, NULL);
+    security("child-thread", child.hThread, SE_KERNEL_OBJECT, NULL);
     HANDLE token = NULL; DWORD isContainer = 0, returned = 0;
     if (OpenProcessToken(child.hProcess, TOKEN_QUERY, &token)) { if (GetTokenInformation(token, TokenIsAppContainer, &isContainer, sizeof(isContainer), &returned)) printf("child-appcontainer inherit=%d value=%lu\n", inherit, isContainer); CloseHandle(token); }
     if (!TerminateProcess(child.hProcess, 0) || WaitForSingleObject(child.hProcess, 5000) != WAIT_OBJECT_0) { printf("child-cleanup-failed %lu\n", GetLastError()); error = ERROR_TIMEOUT; }
@@ -67,6 +92,7 @@ static DWORD attempt(const wchar_t *image, const wchar_t *cwd, PSID sid, int inh
     CloseHandle(child.hThread); CloseHandle(child.hProcess);
   }
 done:
+  if (descriptor) LocalFree(descriptor);
   for (int i = 0; i < 3; i++) if (handles[i]) CloseHandle(handles[i]);
   DeleteProcThreadAttributeList(startup.lpAttributeList); HeapFree(GetProcessHeap(), 0, startup.lpAttributeList);
   return error;
@@ -90,8 +116,8 @@ int wmain(int argc, wchar_t **argv) {
   token_details(); security("parent-process", GetCurrentProcess(), SE_KERNEL_OBJECT, NULL);
   DWORD ids[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
   for (int i = 0; i < 3; i++) { HANDLE h = GetStdHandle(ids[i]); DWORD flags = 0; GetHandleInformation(h, &flags); printf("stdio index=%d type=%lu flags=%lu\n", i, GetFileType(h), flags); security("stdio", h, SE_KERNEL_OBJECT, NULL); }
-  DWORD baseline = attempt(image, argv[3], sid, 1);
-  DWORD discriminator = attempt(image, argv[3], sid, 0);
-  printf("classification baseline=%lu without-inherited-stdio=%lu\n", baseline, discriminator);
+  DWORD baseline = attempt(image, argv[3], sid, 1, 0);
+  DWORD discriminator = attempt(image, argv[3], sid, 1, 1);
+  printf("classification baseline=%lu explicit-child-object-security=%lu\n", baseline, discriminator);
   FreeSid(sid); return 0;
 }
