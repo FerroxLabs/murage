@@ -37,7 +37,7 @@ test.beforeAll(async () => {
           const listeners=new Set(); window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
           window.fixtureInstance={instanceId:'claude',driverKind:'claudeAgent',displayName:'Claude',enabled:true,cliDefault:'claude',models:{default:'',options:[]},snapshot:{state:'unavailable',reason:'CLI not detected'},install:{command:{darwin:'fixture install',linux:'fixture install',win32:'fixture install'},signInCommand:'fixture login'}};
           const state={instances:[window.fixtureInstance]};
-          const dispatch=action=>{if(action.type==='instances')state.instances=action.instances;window.fixtureStore={state:{...state},dispatch,refreshInstances:async()=>{}};listeners.forEach(fn=>fn());};dispatch({});
+          const dispatch=action=>{if(action.type==='instances')state.instances=action.instances;if(action.type==='toggleAppSettings'){state.appSettingsOpen=action.open;state.appSettingsSection=action.section;}window.fixtureStore={state:{...state},dispatch,refreshInstances:async()=>{}};listeners.forEach(fn=>fn());};dispatch({});
           window.muragebox={platform:'darwin',openEngineSetupTerminal:()=>new Promise((resolve,reject)=>{window.resolveTerminal=resolve;window.rejectTerminal=reject;})};
           createRoot(document.getElementById('root')).render(React.createElement(EnginesSettings));
         `;
@@ -53,6 +53,9 @@ test.beforeAll(async () => {
   origin=`http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/claude-accounts', route => route.fulfill({ json: { accounts: [] } }));
+});
 
 test("engine setup reports terminal and probe outcomes without claiming installation",async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
@@ -87,7 +90,7 @@ test("engine setup reports terminal and probe outcomes without claiming installa
 });
 
 
-test("bundled Fuigo connects inline and preserves a detected native account", async ({ page }, testInfo) => {
+test("bundled Fuigo opens Models and preserves a detected native account", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/engine-management/**', route => route.fulfill({ status: 404, json: { error: 'not available in fixture' } }));
   await page.goto(`${origin}/__engine`);
@@ -96,19 +99,17 @@ test("bundled Fuigo connects inline and preserves a detected native account", as
     w.fixtureInstance = { ...w.fixtureInstance, instanceId: 'fuigo', driverKind: 'fuigoAgent', displayName: 'Fuigo', cliDefault: 'fuigo', snapshot: { state: 'available', authenticated: false } };
     w.fixtureStore.dispatch({ type: 'instances', instances: [w.fixtureInstance] });
   });
-  await expect(page.getByText('Got a Flux Router key? Connect it here to get started.')).toBeVisible();
+  await expect(page.getByText('Manage your Flux Router connection in Models, then check this engine again.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open sign-in in Terminal' })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('fuigo-inline-mobile.png') });
-  await page.route('**/api/config', async route => {
-    expect(route.request().method()).toBe('PUT');
-    await route.fulfill({ json: { flux: { configured: true } } });
-  });
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open Flux Router in Models', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).fixtureStore.state.appSettingsSection)).toBe('models');
   await page.route('**/api/instances', async route => {
     const instance = await page.evaluate(() => (window as any).fixtureInstance);
     await route.fulfill({ json: { instances: [{ ...instance, snapshot: { state: 'available', authenticated: true } }] } });
   });
-  await page.locator('input[type="password"]').fill('fixture-only-not-a-real-key');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: 'Check connection', exact: true }).click();
   await expect(page.getByText('Included · connected')).toBeVisible();
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

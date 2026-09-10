@@ -65,6 +65,15 @@ const render = (over: Partial<Props> = {}) =>
 const source = readFileSync(fileURLToPath(new URL("./PasteKeys.tsx", import.meta.url)), "utf8");
 
 describe("no key ever reaches the screen", () => {
+  it("routes a Flux row to Models without offering another save", () => {
+    const html = render({ rows: [row(`FLUX_API_KEY=${FLUX}`)], scanned: true });
+    expect(html).toContain("Open Flux Router in Models");
+    expect(html).toContain("Opening Models clears this pasted copy");
+    expect(html).not.toContain("Save this key");
+    expect(source).toContain('if (target === "flux") throw new Error');
+    expect(source).toContain('controller.dismiss(id);');
+    expect(source).toContain('dispatch({ type: "toggleAppSettings", open: true, section: "models" })');
+  });
   it("renders the hint and not the key, in every state a row can be in", () => {
     // One row per state the component knows how to draw, all at once, so a
     // leak in any single branch turns this red.

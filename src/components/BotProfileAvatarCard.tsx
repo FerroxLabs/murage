@@ -278,7 +278,7 @@ export function BotProfileAvatarCard({
           onImageKey={setImageKey}
           savingKey={savingKey}
           onSaveKey={() => void saveImageKey()}
-          onOpenSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+          onOpenSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "models" })}
         />
 
         {error && <div role="alert" className="mt-3 text-[12px] text-danger">{error}</div>}

@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir: '../src/e2e', testMatch: /(?:flux-entrypoints|engine-setup|onboarding-save)\.human\.spec\.ts$/, workers: 1, retries: 0, timeout: 45000, expect: { timeout: 10000 }, outputDir: './flux-entrypoint-browser-evidence', use: { headless: true, viewport: { width: 1440, height: 900 }, screenshot: 'only-on-failure', trace: 'retain-on-failure' } });

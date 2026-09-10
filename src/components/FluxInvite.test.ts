@@ -49,7 +49,7 @@ describe("the invitation is an offer, not a gate", () => {
     const html = render();
     expect(html).toContain(">Add a key</button>");
     expect(html).not.toContain("<input");
-    expect(source).toContain('dispatch({ type: "toggleAppSettings", open: true, section: "connections" })');
+    expect(source).toContain('dispatch({ type: "toggleAppSettings", open: true, section: "models" })');
   });
 
   it("is over once it has been acted on, either way", () => {
