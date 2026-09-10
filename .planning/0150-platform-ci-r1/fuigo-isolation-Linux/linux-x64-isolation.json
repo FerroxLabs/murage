@@ -1,0 +1,28 @@
+{
+  "target": "linux-x64",
+  "root": "/tmp/murage fuigo isolation vAn3bO",
+  "node": "v24.20.0",
+  "startedAt": "2026-09-10T08:14:16.240Z",
+  "control": {
+    "network4": 1,
+    "network6": 1,
+    "outsideRead": 1,
+    "insideRead": 1,
+    "isolated": 0,
+    "syscallsDenied": 1,
+    "administrator": 0
+  },
+  "restricted": {
+    "network4": 0,
+    "network6": 0,
+    "outsideRead": 0,
+    "insideRead": 1,
+    "isolated": 1,
+    "syscallsDenied": 1,
+    "administrator": 0
+  },
+  "deniedConnections": 0,
+  "terminatedChildPid": 2201,
+  "status": "passed",
+  "finishedAt": "2026-09-10T08:14:16.419Z"
+}

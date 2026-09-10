@@ -17,7 +17,7 @@ int wmain(int argc, wchar_t **argv) {
   if (argc < 2) return 2;
   HANDLE current = NULL, restricted = NULL; BYTE adminBuffer[SECURITY_MAX_SID_SIZE]; DWORD adminSize = sizeof(adminBuffer);
   if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, adminBuffer, &adminSize)
-    || !OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY, &current)) return 3;
+    || !OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT, &current)) return 3;
   SID_AND_ATTRIBUTES administrator = { adminBuffer, 0 };
   if (!CreateRestrictedToken(current, DISABLE_MAX_PRIVILEGE, 1, &administrator, 0, NULL, 0, NULL, &restricted)) { fprintf(stderr, "CreateRestrictedToken %lu\n", GetLastError()); return 4; }
   PSID medium = NULL; if (!ConvertStringSidToSidW(L"S-1-16-8192", &medium)) return 5;
