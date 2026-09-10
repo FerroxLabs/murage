@@ -1132,6 +1132,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             break;
           case "result":
+            // A stopped/completed background task can produce its own
+            // synthetic follow-up result before the submitted user's reply.
+            // It does not complete that user turn or release its broker/MCP
+            // authority. The native protocol marks this result's origin;
+            // do not infer ownership from text or reopen an idle turn.
+            if (o.origin?.kind === "task-notification") break;
             // result.usage is this invocation's total — one process per turn,
             // so it is the turn's figure. cache reads count as input: they
             // are billed (at the cache rate) and they fill the window — but
