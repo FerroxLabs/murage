@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { parse } from "yaml";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -36,7 +37,7 @@ function fixture() {
   const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-windows-signing-"));
   temporaryDirectories.push(appOutDir);
   const resources = path.join(appOutDir, "resources");
-  for (const name of ["fuigo", "cloudflared", "licenses"]) fs.mkdirSync(path.join(resources, name), { recursive: true });
+  for (const name of ["fuigo", "fuigo-probe", "cloudflared", "licenses"]) fs.mkdirSync(path.join(resources, name), { recursive: true });
   const executable = path.join(resources, "fuigo", "fuigo.exe");
   fs.writeFileSync(executable, "pinned fixture");
   const browser = browserBundlePaths(path.join(resources, "browser-engine"), "win32-x64");
@@ -69,22 +70,26 @@ function fixture() {
   header.write("PE\0\0", 0x40); header.writeUInt16LE(0x8664, 0x44);
   for (const name of ["onnxruntime_binding.node", "onnxruntime.dll", "DirectML.dll", "dxcompiler.dll", "dxil.dll"])
     fs.writeFileSync(path.join(native, name), header);
+  const helper = path.join(resources, "fuigo-probe", "launcher.exe"), helperManifest = path.join(resources, "fuigo-probe", "manifest.json");
+  fs.writeFileSync(helper, header);
+  fs.writeFileSync(helperManifest, JSON.stringify({ schema: 1, target: "win32-x64", executable: "launcher.exe", binarySha256: createHash("sha256").update(header).digest("hex") }));
   const signIf = vi.fn(async file => {
     expect(verifyFuigoExecutable).toHaveBeenCalledWith(executable, "win32-x64");
     expect(verifyBrowserBundle).toHaveBeenCalledWith(path.join(resources, "browser-engine"), "win32-x64");
     fs.appendFileSync(file, " signed fixture");
     return true;
   });
-  return { executable, browser, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf } } };
+  return { executable, browser, helper, helperManifest, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf } } };
 }
 
-it("verifies the entire pinned inventory before signing all three packaged Windows engines", async () => {
-  const { context, executable, browser, signIf } = fixture();
+it("verifies pinned inventory before signing engines and updater helper", async () => {
+  const { context, executable, browser, helper, helperManifest, signIf } = fixture();
   await afterPack(context);
-  expect(signIf.mock.calls.map(([file]) => file)).toEqual([executable, browser.engine, browser.chrome]);
+  expect(signIf.mock.calls.map(([file]) => file)).toEqual([executable, browser.engine, browser.chrome, helper]);
   expect(fs.readFileSync(browser.engine, "utf8")).toBe("pinned browser engine signed fixture");
   expect(fs.readFileSync(browser.chrome, "utf8")).toBe("pinned browser chrome signed fixture");
-  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith([browser.engine, browser.chrome], process.env.SystemRoot);
+  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith([browser.engine, browser.chrome, helper], process.env.SystemRoot);
+  expect(JSON.parse(fs.readFileSync(helperManifest, "utf8")).binarySha256).toBe(createHash("sha256").update(fs.readFileSync(helper)).digest("hex"));
   expect(fs.readFileSync(executable, "utf8")).toBe("pinned fixture signed fixture");
 });
 
@@ -115,7 +120,7 @@ it("never signs any engine when the browser bundle pin is rejected", async () =>
   expect(signIf).not.toHaveBeenCalled();
 });
 
-it.each(["agent-browser.exe", "chrome-headless-shell.exe"])("fails closed when browser signing is skipped for %s", async (name) => {
+it.each(["agent-browser.exe", "chrome-headless-shell.exe", "launcher.exe"])("fails closed when packaged signing is skipped for %s", async (name) => {
   const { context, signIf } = fixture();
   signIf.mockImplementation(async file => path.basename(file) !== name);
   await expect(afterPack(context)).rejects.toThrow(`Windows signing did not complete: ${name}`);
@@ -134,8 +139,14 @@ it("rejects unsigned output and invalid final browser signatures", async () => {
   verifyWindowsBrowserImage.mockReturnValue({ signed: false });
   await expect(afterPack(context)).rejects.toThrow("left an unsigned image");
   verifyWindowsBrowserImage.mockReturnValue({ signed: true });
+  const fresh = fixture();
   verifyWindowsBrowserSignatures.mockRejectedValue(new Error("Windows browser requires a valid Ferrox Labs signature"));
-  await expect(afterPack(context)).rejects.toThrow("valid Ferrox Labs signature");
+  await expect(afterPack(fresh.context)).rejects.toThrow("valid Ferrox Labs signature");
+});
+it("refuses a changed native updater helper before invoking the signer", async () => {
+  const { context, helper, signIf } = fixture(); fs.appendFileSync(helper, "tampered");
+  await expect(afterPack(context)).rejects.toThrow("Fuigo probe resource identity mismatch");
+  expect(signIf).not.toHaveBeenCalled();
 });
 
 

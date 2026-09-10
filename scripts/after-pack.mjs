@@ -7,7 +7,7 @@ import {
 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES, HARNESS_RESOURCE_DIRECTORIES } from "../electron/harness-resources.mjs";
 import { FUIGO_VERSION, verifyFuigoExecutable } from "./prepare-fuigo.mjs";
-import { validateFuigoProbeResources } from "./fuigo-probe-resources.mjs";
+import { validateFuigoProbeResources, stampSignedFuigoProbe } from "./fuigo-probe-resources.mjs";
 import { verifyBrowserBundle } from "./prepare-browser.mjs";
 import { browserBundlePaths } from "../server/browser-bundle-release.ts";
 import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
@@ -181,7 +181,7 @@ export default async function afterPack(context) {
   );
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
-  await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));
+  const fuigoProbe = await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));
   await validatePackagedMemoryRuntime(resources, context.electronPlatformName, context.arch, Boolean(context.packager));
   // Resource copying only warns about missing sources. Validate the exact target
   // and complete pinned inventory before signing can change executable bytes.
@@ -198,6 +198,7 @@ export default async function afterPack(context) {
     const executables = [
       path.join(resources, HARNESS_RESOURCE_DIRECTORIES.MURAGE_FUIGO_DIR, FUIGO_EXECUTABLE_NAMES.win32),
       browser.engine, browser.chrome,
+      ...(fuigoProbe ? [fuigoProbe.file] : []),
     ];
     for (const executable of executables) {
       if (await context.packager.signIf(executable) !== true) {
@@ -207,7 +208,8 @@ export default async function afterPack(context) {
     for (const [file, pin] of [[browser.engine, WINDOWS_BROWSER_IMAGE_PINS.engine], [browser.chrome, WINDOWS_BROWSER_IMAGE_PINS.chrome]]) {
       if (!verifyWindowsBrowserImage(await readFile(file), pin).signed) throw new Error("Packaged Windows browser signing left an unsigned image");
     }
-    await verifyWindowsBrowserSignatures([browser.engine, browser.chrome], process.env.SystemRoot);
+    await verifyWindowsBrowserSignatures([browser.engine, browser.chrome, ...(fuigoProbe ? [fuigoProbe.file] : [])], process.env.SystemRoot);
+    if (fuigoProbe) await stampSignedFuigoProbe(fuigoProbe);
   }
 
   if (context.electronPlatformName !== "linux") return;

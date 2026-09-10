@@ -4,16 +4,17 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { validateFuigoProbeResources } from './fuigo-probe-resources.mjs';
+import { validateFuigoProbeResources, stampSignedFuigoProbe } from './fuigo-probe-resources.mjs';
 
 // Header fixtures verify rejection logic only; the CI-only case uses a real compiled helper.
-async function fixture(t) {
+async function fixture(t, platform = 'linux') {
   const resources = await mkdtemp(join(tmpdir(), 'murage-fuigo-resource-'));
   t.after(() => rm(resources, { recursive: true, force: true }));
   const root = join(resources, 'fuigo-probe'); await mkdir(root);
   const bytes = Buffer.alloc(128); Buffer.from([0x7f, 69, 76, 70, 2, 1]).copy(bytes); bytes.writeUInt16LE(0x3e, 18);
-  const manifest = { schema: 1, target: 'linux-x64', executable: 'launcher', binarySha256: createHash('sha256').update(bytes).digest('hex') };
-  const file = join(root, 'launcher'), manifestPath = join(root, 'manifest.json');
+  if (platform === 'win32') { bytes.fill(0); bytes.write('MZ'); bytes.writeUInt32LE(64, 60); bytes.write('PE\0\0', 64); bytes.writeUInt16LE(0x8664, 68); }
+  const manifest = { schema: 1, target: `${platform}-x64`, executable: platform === 'win32' ? 'launcher.exe' : 'launcher', binarySha256: createHash('sha256').update(bytes).digest('hex') };
+  const file = join(root, manifest.executable), manifestPath = join(root, 'manifest.json');
   await writeFile(file, bytes); await writeFile(manifestPath, JSON.stringify(manifest));
   return { resources, root, bytes, manifest, file, manifestPath };
 }
@@ -21,8 +22,19 @@ test('validates Linux inventory and normalizes executable modes', async t => {
   const f = await fixture(t); await chmod(f.root, 0o700); await chmod(f.file, 0o600);
   assert.deepEqual((await validateFuigoProbeResources(f.resources, 'linux')).manifest, f.manifest);
   assert.equal((await stat(f.root)).mode & 0o777, 0o755); assert.equal((await stat(f.file)).mode & 0o777, 0o755);
-  assert.equal(await validateFuigoProbeResources(f.resources, 'win32'), null);
+  await assert.rejects(validateFuigoProbeResources(f.resources, 'win32'));
   assert.equal(await validateFuigoProbeResources(f.resources, 'darwin'), null);
+});
+test('binds the Windows manifest to post-signing bytes and rejects later corruption', async t => {
+  // Format/hash test only; real Authenticode validation is required in afterPack.
+  const f = await fixture(t, 'win32'), resource = await validateFuigoProbeResources(f.resources, 'win32');
+  const signedFixture = Buffer.concat([f.bytes, Buffer.from('synthetic signature bytes')]);
+  await writeFile(f.file, signedFixture);
+  await assert.rejects(validateFuigoProbeResources(f.resources, 'win32'), /identity mismatch/);
+  await stampSignedFuigoProbe(resource);
+  assert.equal((await validateFuigoProbeResources(f.resources, 'win32')).manifest.binarySha256, createHash('sha256').update(signedFixture).digest('hex'));
+  await writeFile(f.file, Buffer.alloc(128));
+  await assert.rejects(stampSignedFuigoProbe(resource));
 });
 test('rejects corrupted bytes and wrong target identity', async t => {
   const f = await fixture(t); await writeFile(f.file, Buffer.concat([f.bytes, Buffer.from('changed')]));

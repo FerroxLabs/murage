@@ -66,7 +66,7 @@
     "build:browser-snapshot": "node scripts/build-browser-snapshot.mjs",
     "package:prepare": "pnpm build && pnpm build:server && pnpm build:companion && pnpm build:updater && pnpm build:android-tools && pnpm build:cloudflared && pnpm build:fuigo && pnpm build:browser",
     "package:mac": "pnpm package:prepare && pnpm build:speech && pnpm build:recorder && pnpm build:cua && electron-builder --mac --publish never",
-    "package:win": "pnpm package:prepare && pnpm build:recovery && electron-builder --win --publish never",
+    "package:win": "pnpm package:prepare && pnpm build:recovery && pnpm build:fuigo-probe && electron-builder --win --publish never",
     "package:linux": "pnpm package:prepare && pnpm build:cua:linux && pnpm build:fuigo-probe && electron-builder --linux --x64 --publish never",
     "package:linux:offline": "pnpm package:prepare && pnpm build:cua:linux:offline && pnpm build:fuigo-probe && electron-builder --linux --x64 --publish never",
     "smoke:deb-command": "node scripts/smoke-deb-command.mjs",

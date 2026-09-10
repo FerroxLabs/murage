@@ -1,4 +1,38 @@
-/* Linux-only native Fuigo updater isolation; Windows remains unqualified. */
+/* Synthetic qualification binary. Not shipped to customers. */
+#ifdef _WIN32
+#define _WIN32_WINNT 0x0602
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <stdio.h>
+#include <wchar.h>
+static int connection(int family, int port) {
+  SOCKET value = socket(family, SOCK_STREAM, IPPROTO_TCP); if (value == INVALID_SOCKET) return 0;
+  u_long one = 1; ioctlsocket(value, FIONBIO, &one);
+  struct sockaddr_in v4 = {0}; struct sockaddr_in6 v6 = {0};
+  v4.sin_family = AF_INET; v4.sin_port = htons((u_short)port); v4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  v6.sin6_family = AF_INET6; v6.sin6_port = htons((u_short)port); v6.sin6_addr = in6addr_loopback;
+  int result = connect(value, family == AF_INET ? (struct sockaddr *)&v4 : (struct sockaddr *)&v6, family == AF_INET ? sizeof(v4) : sizeof(v6));
+  if (result == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
+    fd_set ready, errors; FD_ZERO(&ready); FD_ZERO(&errors); FD_SET(value, &ready); FD_SET(value, &errors); struct timeval wait = {2, 0};
+    if (select(0, NULL, &ready, &errors, &wait) > 0) { int error = 0, size = sizeof(error); getsockopt(value, SOL_SOCKET, SO_ERROR, (char *)&error, &size); result = error ? -1 : 0; }
+  }
+  closesocket(value); return result == 0;
+}
+int wmain(int argc, wchar_t **argv) {
+  if (argc == 2 && !wcscmp(argv[1], L"hold")) { printf("%lu\n", (unsigned long)GetCurrentProcessId()); fflush(stdout); Sleep(60000); return 0; }
+  if (argc != 6) return 2;
+  WSADATA data; if (WSAStartup(MAKEWORD(2,2), &data)) return 3;
+  HANDLE token = NULL; DWORD app = 0, size = 0; int isolated = 0; BOOL administrator = TRUE; BYTE adminBuffer[SECURITY_MAX_SID_SIZE]; DWORD adminSize = sizeof(adminBuffer);
+  if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, adminBuffer, &adminSize) || !CheckTokenMembership(NULL, adminBuffer, &administrator)) return 4;
+  if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) { GetTokenInformation(token, TokenIsAppContainer, &app, sizeof(app), &size); isolated = app != 0; CloseHandle(token); }
+  FILE *outside = _wfopen(argv[4], L"rb"), *inside = _wfopen(argv[5], L"rb");
+  int outsideRead = outside != NULL, insideRead = inside != NULL;
+  if (outside) fclose(outside); if (inside) fclose(inside);
+  printf("{\"network4\":%d,\"network6\":%d,\"outsideRead\":%d,\"insideRead\":%d,\"isolated\":%d,\"syscallsDenied\":1,\"administrator\":%d}\n", connection(AF_INET, _wtoi(argv[2])), connection(AF_INET6, _wtoi(argv[3])), outsideRead, insideRead, isolated, administrator != FALSE);
+  WSACleanup(); return 0;
+}
+#else
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -50,3 +84,4 @@ int main(int argc, char **argv) {
   printf("{\"network4\":%d,\"network6\":%d,\"outsideRead\":%d,\"insideRead\":%d,\"isolated\":%d,\"syscallsDenied\":%d,\"administrator\":%d,\"namedUnix\":%d,\"privatePair\":%d}\n", connection(AF_INET, atoi(argv[2])), connection(AF_INET6, atoi(argv[3])), outsideRead, insideRead, prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, denied, geteuid() == 0, unix_connection(argv[6]), private_pair());
   return 0;
 }
+#endif
