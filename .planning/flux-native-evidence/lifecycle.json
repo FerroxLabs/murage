@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "driverNode": "24.20.0",
+  "electronChildExited": true,
+  "serverClosed": true,
+  "scope": "native Flux IPC with fixture encryption; no OS keychain proof"
+}

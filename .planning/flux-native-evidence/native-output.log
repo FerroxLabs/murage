@@ -1,0 +1,19 @@
+{"passed":true,"candidate":"6407ee4862df1db232c1ca723b0b8fa81718b649","platform":"darwin","arch":"arm64","electron":"43.4.0","node":"24.18.1","checks":["actual-sandboxed-preload-ipc-and-proof-refusal","native-atomic-two-slot-alias-save-and-reservation-fence","actual-held-fake-task-refuses-before-encrypted-write-and-stops","native-lost-real-commit-ack-restores-document-and-runtime","unavailable-custody-refusal-and-native-managed-disconnect"],"providerCalls":0,"sourceHashes":{"preload":"ec00294070f5477697b75955cd6e41c55d8e2ac52acdccfc336cd1f0dece3a8e","handlers":"b6091978d034e86d430e5e732ebd6bdcedecf764ee3262f647a595f3c84ef9b0"},"encryption":"fixture AES-GCM adapter; Electron safeStorage and OS keychain not called","limitation":"Actual native preload/IPC and production extracted handler/store functions with packaged branch injection; no full packaged startup, OS encryption or cross-platform qualification."}
+Error occurred in handler for 'flux-connection:mutate': Error: Desktop authorization is not ready. Try again shortly.
+    at eval (eval at <anonymous> (file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/.planning/flux-native-electron.mjs:64:19), <anonymous>:45:36)
+    at Session.<anonymous> (node:electron/js2c/browser_init:2:118329)
+    at Session.emit (node:events:509:28)
+Error occurred in handler for 'flux-connection:mutate': Error: Finish running work before changing Flux credentials.
+    at post (eval at <anonymous> (file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/.planning/flux-native-electron.mjs:64:19), <anonymous>:54:31)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async post.phase (file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/electron/flux-connection-control.mjs:8:24)
+    at async file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/electron/secure-credential-state.mjs:76:27
+Error occurred in handler for 'flux-connection:mutate': Error: Injected lost commit acknowledgement
+    at transport (file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/.planning/flux-native-electron.mjs:52:135)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async post (eval at <anonymous> (file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/.planning/flux-native-electron.mjs:64:19), <anonymous>:50:24)
+    at async file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/electron/flux-connection-control.mjs:17:20
+    at async file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/electron/secure-credential-state.mjs:79:26
+Error occurred in handler for 'flux-connection:mutate': Error: The operating-system credential store is unavailable
+    at eval (eval at <anonymous> (file:///Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-flux-single-key/.planning/flux-native-electron.mjs:64:19), <anonymous>:46:82)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:2:118313)

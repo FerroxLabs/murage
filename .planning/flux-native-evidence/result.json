@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "candidate": "6407ee4862df1db232c1ca723b0b8fa81718b649",
+  "platform": "darwin",
+  "arch": "arm64",
+  "electron": "43.4.0",
+  "node": "24.18.1",
+  "checks": [
+    "actual-sandboxed-preload-ipc-and-proof-refusal",
+    "native-atomic-two-slot-alias-save-and-reservation-fence",
+    "actual-held-fake-task-refuses-before-encrypted-write-and-stops",
+    "native-lost-real-commit-ack-restores-document-and-runtime",
+    "unavailable-custody-refusal-and-native-managed-disconnect"
+  ],
+  "providerCalls": 0,
+  "sourceHashes": {
+    "preload": "ec00294070f5477697b75955cd6e41c55d8e2ac52acdccfc336cd1f0dece3a8e",
+    "handlers": "b6091978d034e86d430e5e732ebd6bdcedecf764ee3262f647a595f3c84ef9b0"
+  },
+  "encryption": "fixture AES-GCM adapter; Electron safeStorage and OS keychain not called",
+  "limitation": "Actual native preload/IPC and production extracted handler/store functions with packaged branch injection; no full packaged startup, OS encryption or cross-platform qualification."
+}
