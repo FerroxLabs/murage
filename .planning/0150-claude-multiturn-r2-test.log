@@ -1,0 +1,11 @@
+
+ RUN  v4.1.10 /Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-claude-multiturn
+
+ ✓ server/drivers/claude.test.ts (80 tests | 79 skipped) 1488ms
+     ✓ keeps real broker authority across retained turns and rotated process closure  1477ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 79 skipped (80)
+   Start at  16:58:41
+   Duration  3.70s (transform 1.26s, setup 1.04s, import 786ms, tests 1.49s, environment 0ms)
+

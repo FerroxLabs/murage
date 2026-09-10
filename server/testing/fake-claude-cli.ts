@@ -142,8 +142,18 @@ const promptText = (prompt: JsonValue): string => {
   return typeof m?.content === "string" ? m.content : "";
 };
 
+let exitGateTimer: ReturnType<typeof setInterval> | undefined;
 const finishIfDone = () => {
-  if (stdinEnded && !turnRunning) process.exit(0);
+  if (!stdinEnded || turnRunning) return;
+  const exitGateDir = process.env.FAKE_CLAUDE_EXIT_GATE_DIR;
+  if (exitGateDir && !existsSync(join(exitGateDir, String(process.pid)))) {
+    // Hold EOF independently of turn completion so replacement-broker tests
+    // can release the old child's close after its successor is serving asks.
+    exitGateTimer ??= setInterval(finishIfDone, 10);
+    return;
+  }
+  if (exitGateTimer) clearInterval(exitGateTimer);
+  process.exit(0);
 };
 
 const playTurn = (prompt: JsonValue) => {

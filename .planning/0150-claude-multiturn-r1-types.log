@@ -1,0 +1,2 @@
+server/drivers/claude.test.ts(1035,121): error TS2339: Property 'sessionId' does not exist on type 'RuntimeEvent'.
+  Property 'sessionId' does not exist on type 'RuntimeEventBase & { type: "session.exited"; reason?: string | undefined; }'.

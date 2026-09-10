@@ -6,7 +6,7 @@
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect, createServer as createNetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -985,6 +985,112 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ).resolves.toBe("unavailable");
     conn.end();
   });
+
+  it("keeps real broker authority across retained turns and rotated process closure", async () => {
+    const threadId = "t-multi-authority";
+    const dump = join(scratch, "multi-authority.json");
+    const finishGates = join(scratch, "finish");
+    const exitGates = join(scratch, "exit");
+    mkdirSync(finishGates);
+    mkdirSync(exitGates);
+    await create(undefined, {
+      FAKE_CLAUDE_DUMP: dump,
+      FAKE_CLAUDE_DUMP_EACH_TURN: "1",
+      FAKE_CLAUDE_FINISH_GATE_DIR: finishGates,
+      FAKE_CLAUDE_EXIT_GATE_DIR: exitGates,
+    });
+    const integrations = (token: string) => ({
+      agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_COMMS_TOKEN: token } },
+      composio: { command: process.execPath, args: ["fixture-composio-proxy"], env: { MURAGE_CONNECTOR_PROXY_TOKEN: token } },
+    });
+    const sockets: Socket[] = [];
+    const pids = new Set<number>();
+    const open = async (socketPath: string) => {
+      const socket = await connectSocket(socketPath);
+      sockets.push(socket);
+      return { socket, answer: answerQueue(socket) };
+    };
+    const denied = async (connection: Awaited<ReturnType<typeof open>>, id: string, tool: string) => {
+      const openedBefore = recorder.events.filter(event => event.type === "request.opened").length;
+      const answer = connection.answer();
+      connection.socket.write(JSON.stringify({ t: "ask", id, tool, input: {} }) + "\n");
+      await expect(answer).resolves.toMatchObject({ id, behavior: "deny", message: "Murage: the turn ended" });
+      expect(recorder.events.filter(event => event.type === "request.opened")).toHaveLength(openedBefore);
+      await expect(instance.adapter.respondToRequest(threadId, id, { behavior: "allow" })).resolves.toBe("unavailable");
+    };
+    const allowed = async (connection: Awaited<ReturnType<typeof open>>, turnId: string, id: string, tool: string) => {
+      const answer = connection.answer();
+      connection.socket.write(JSON.stringify({ t: "ask", id, tool, input: { diagnostic: "no actual tool execution" } }) + "\n");
+      const opened = await recorder.until(event => event.type === "request.opened" && event.requestId === id);
+      expect(opened).toMatchObject({ threadId, turnId, tool });
+      await expect(instance.adapter.respondToRequest(threadId, id, { behavior: "allow" })).resolves.toBe("allowed-once");
+      await expect(answer).resolves.toMatchObject({ id, behavior: "allow" });
+      expect(await recorder.until(event => event.type === "request.resolved" && event.requestId === id)).toMatchObject({ turnId });
+    };
+    try {
+      const first = await instance.adapter.sendTurn({ threadId, text: "first happy turn", integrations: integrations("first-fake-capability") });
+      expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId)).toMatchObject({ ok: true });
+      const firstDump = JSON.parse(readFileSync(dump, "utf8"));
+      pids.add(firstDump.pid);
+      const session = (recorder.events.find(event => event.type === "session.started" && event.turnId === first.turnId) as { sessionId: string }).sessionId;
+      const old = await open(firstDump.mcpConfig.mcpServers.muragebox.args[1]);
+      for (const tool of ["Bash", "WebSearch"]) await denied(old, `idle-first-${tool}`, tool);
+
+      const second = await instance.adapter.sendTurn({ threadId, text: "__fixture_hold_authority__ second", resumeCursor: session, integrations: integrations("first-fake-capability") });
+      await recorder.until(event => event.type === "session.started" && event.turnId === second.turnId);
+      expect(JSON.parse(readFileSync(dump, "utf8")).pid).toBe(firstDump.pid);
+      for (const tool of ["Bash", "WebSearch"]) await allowed(old, second.turnId, `second-${tool}`, tool);
+      writeFileSync(join(finishGates, String(firstDump.pid)), "finish second");
+      expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === second.turnId)).toMatchObject({ ok: true });
+      await denied(old, "idle-second", "Bash");
+
+      const third = await instance.adapter.sendTurn({ threadId, text: "__fixture_hold_authority__ third", resumeCursor: session, integrations: integrations("rotated-fake-capability") });
+      await recorder.until(event => event.type === "session.started" && event.turnId === third.turnId);
+      const thirdDump = JSON.parse(readFileSync(dump, "utf8"));
+      pids.add(thirdDump.pid);
+      expect(thirdDump.pid).not.toBe(firstDump.pid);
+      expect(thirdDump.argv[thirdDump.argv.indexOf("--resume") + 1]).toBe(session);
+      expect(thirdDump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN).toBe("rotated-fake-capability");
+      expect(thirdDump.mcpConfig.mcpServers.composio.env.MURAGE_CONNECTOR_PROXY_TOKEN).toBe("rotated-fake-capability");
+      expect(JSON.stringify(thirdDump.mcpConfig)).not.toContain("first-fake-capability");
+      expect(() => process.kill(firstDump.pid, 0)).not.toThrow();
+      const freshPath = thirdDump.mcpConfig.mcpServers.muragebox.args[1];
+      const fresh = await open(freshPath);
+      for (const tool of ["Bash", "WebSearch"]) {
+        await denied(old, `old-during-third-${tool}`, tool);
+        await allowed(fresh, third.turnId, `third-before-close-${tool}`, tool);
+      }
+      writeFileSync(join(exitGates, String(firstDump.pid)), "release old close");
+      await expect.poll(() => {
+        try { process.kill(firstDump.pid, 0); return false; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return true; throw error; }
+      }).toBe(true);
+      // A NEW connection proves old-child cleanup did not unlink the fresh
+      // listener; an already-connected socket alone would miss that defect.
+      const afterOldClose = await open(freshPath);
+      for (const tool of ["Bash", "WebSearch"]) await allowed(afterOldClose, third.turnId, `third-after-close-${tool}`, tool);
+      writeFileSync(join(finishGates, String(thirdDump.pid)), "finish third");
+      expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === third.turnId)).toMatchObject({ ok: true });
+      await denied(old, "old-after-third", "WebSearch");
+      await denied(fresh, "fresh-after-third", "Bash");
+      expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(3);
+    } finally {
+      for (const pid of pids) {
+        writeFileSync(join(finishGates, String(pid)), "cleanup");
+        writeFileSync(join(exitGates, String(pid)), "cleanup");
+      }
+      for (const socket of sockets) socket.destroy();
+      // Dispose while the exit gates still exist: afterEach removes scratch,
+      // which must not race the subprocess's EOF/gate observation.
+      await instance.dispose();
+      for (const pid of pids) {
+        await expect.poll(() => {
+          try { process.kill(pid, 0); return false; }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return true; throw error; }
+        }).toBe(true);
+      }
+    }
+  }, 20_000);
 
   it("rotates internal capabilities while resuming the same conversation", async () => {
     await create();

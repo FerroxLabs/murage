@@ -1,0 +1,12 @@
+Excerpt of 0150-claude-multiturn-r1-test.log; 79 skipped-test detail lines omitted.
+
+ RUN  v4.1.10 /Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-claude-multiturn
+
+ ✓ server/drivers/claude.test.ts > ClaudeDriver turns (fake CLI) > keeps real broker authority across retained turns and rotated process closure 4317ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 79 skipped (80)
+   Start at  16:57:07
+   Duration  6.62s (transform 1.17s, setup 984ms, import 703ms, tests 4.34s, environment 1ms)
+
+Process handle7193 exit0. R1 classification also includes new-test TS2339 and owned-fixture cleanup failure; see diagnostic record. This test pass does not establish the customer incident's cause or a fix.
