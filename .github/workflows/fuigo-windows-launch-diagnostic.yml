@@ -1,4 +1,4 @@
-name: Fuigo Windows C2 launch diagnostic
+name: Fuigo Windows C3 process-security diagnostic
 on:
   push:
     branches: [work/0150-windows-c2]
@@ -32,8 +32,8 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: fuigo-windows-c2
-          path: .planning/0150-windows-c2
+          name: fuigo-windows-c3
+          path: .planning/0150-windows-c3
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
