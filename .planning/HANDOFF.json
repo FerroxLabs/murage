@@ -4,7 +4,7 @@
   "phase": "0.1.50",
   "phase_name": "Reliability release qualification",
   "phase_dir": ".planning",
-  "status": "awaiting-release-limitations-disposition",
+  "status": "released-normal-0.1.50-with-documented-limitations",
   "source_commit": "15c3cbd64056a7288777739f5dd244ca4365ea0b",
   "source_branch": "work/0150-integration",
   "handoff_branch": "work/0150-continuation-record",
@@ -58,7 +58,7 @@
     {"severity": "blocking", "description": "Preserve verification counters; no reclassification of missing/failed evidence as pass."},
     {"severity": "advisory", "description": "All CI build jobs are complete; do not rerun them merely after account switch."}
   ],
-  "next_action": "Obtain explicit disposition of the missing upgrade-exit receipt and documented older engine/Mac limitations; then follow guarded release preflight. No active jobs remain.",
-  "published": false,
-  "goal_complete": false
+  "next_action": "Release is published and public assets/feeds/READMEs verified. Read 0150-publication-receipt.json. Historical remaining_tasks and blockers above were explicitly dispositioned by user for this normal release; retain them as follow-up issues, not as fixed incidents. Do not republish or rerun completed checks.",
+  "published": true,
+  "goal_complete": true
 }

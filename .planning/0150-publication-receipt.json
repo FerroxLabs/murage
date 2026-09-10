@@ -1,0 +1,18 @@
+{
+  "version": "0.1.50",
+  "sourceCommit": "15c3cbd64056a7288777739f5dd244ca4365ea0b",
+  "releaseId": 386306693,
+  "repository": "FerroxLabs/murage-releases",
+  "url": "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.50",
+  "publishedAt": "2026-09-10T13:36:58Z",
+  "draft": false,
+  "prerelease": false,
+  "latest": true,
+  "assetDigestsAndSizesVerified": 21,
+  "publicFeedAndChecksumBytesVerified": ["latest.yml", "latest-linux.yml", "latest-mac.yml", "SHA256SUMS-ubuntu-x64.txt"],
+  "publicDownloadStatusAndSizeVerified": ["Murage-setup.exe", "Murage.dmg", "Murage-intel.dmg", "Murage-amd64.deb", "Murage.AppImage"],
+  "releaseNotes": "/private/tmp/murage-0150-release-stage-vHGTTB/RELEASE-NOTES.md",
+  "documentedLimitations": ["Older -32603 and unexplained 1073807364 reports remain under investigation", "Original intermittent Mac credential-write delay not conclusively fixed", "Original upgrade installer exit-code receipt missing; postconditions and separate lifecycle checks passed"],
+  "userDisposition": "Proceed with release after limitations disclosure; explicitly normal feature release, not preview or hotfix",
+  "publicReadmes": {"sourceCommit": "426d0d3eb220d78a7a0d83726e504803473bf9d4", "downloadsCommit": "40217ea85e538256268e574877690ce5adeef2fa", "readbackVerified": true, "onlyReadmeChanged": true}
+}

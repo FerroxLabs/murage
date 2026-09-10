@@ -1,4 +1,5 @@
 # Murage 0.1.50 account-switch entry
+RELEASED NORMAL0.1.50 2026-09-10T13:36:58Z release386306693/latest/nonprerelease. 21digests/publicfeeds/downloads verified; sourceREADME426d0d3e/publicREADME40217ea8 verified. See .planning/0150-publication-receipt.json. Knownlimitations disclosed/userdispositionaccepted; notclaimedfixed. No activeVM/jobs. Historical pendinglines below superseded; do not republish.
 LATEST13:18:37UTC: workload PASS/useful-read+handled-failure+cancel; guest CLOSED/allownedgone/backingspreserved. Old live-process notes below are historical. No job to resume. Await explicit release-limitations disposition, then guarded publication; nothing published.
 Read `.planning/.continue-here.md` and `.planning/HANDOFF.json` first.
 Timestamp: 2026-09-10 13:07UTC; notreleased/notcomplete.
