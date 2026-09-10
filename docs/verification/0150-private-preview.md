@@ -75,9 +75,9 @@ instructions when access is required.
   on every platform.
 - **Fuigo:** The bundled version and a separately managed engine update are
   different from a Murage app update. The independent updater has accepted
-  macOS arm64 production install/update/rollback/bundled proof. Windows, Linux
-  and macOS Intel native updater qualification remain open; the bundle pin
-  does not close those gates.
+  macOS arm64 and native Intel production install/update/rollback/bundled proof.
+  Windows and Linux native updater qualification remain open; the bundle pin
+  does not close those gates. Intel updater proof does not qualify an Intel GUI package.
 - **File watches:** Explicitly choose an existing relative file in an approved
   bot working folder, then confirm the proposed watch. The bounded file adapter
   uses the existing routine scheduler and durable Inbox results; baseline and
