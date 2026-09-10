@@ -68,7 +68,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const selected = state.instances.find(instance => instance.instanceId === instanceId);
   const ready = selected?.snapshot.state === "available" && (selected.access === "custom" || selected.snapshot.authenticated !== false);
   const modelReady = ready && Boolean(model) && selected.models.options.some(option => option.id === model);
-  if (desktop !== true || workspace === "established") return null;
+  if (desktop !== true || workspace === "established" || state.appSettingsOpen) return null;
   return <div className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-app p-8 max-md:p-4">
     <main aria-label="Set up your workspace" className="flex max-h-full w-full max-w-[620px] flex-col overflow-y-auto rounded-2xl border border-hairline/40 bg-panel p-8 max-md:p-5">
       {workspace === "checking" ? <p role="status" className="text-ink-secondary">Checking your workspace…</p> : workspace === "error" ? <>

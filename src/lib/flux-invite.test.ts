@@ -231,9 +231,10 @@ describe("nothing in the app is gated on a Flux key", () => {
   it("Models uses Flux configuration only as saved-key status", () => {
     const models = readFileSync(join(srcRoot, "components/ModelsSettings.tsx"), "utf8");
     const reads = models.split("\n").filter(line => /flux\?\.configured|flux\.configured/.test(line));
-    expect(reads).toHaveLength(1);
-    expect(reads[0]).toContain('<ExistingKey id="legacy-flux"');
-    expect(reads[0]).toContain('configured={state.config?.flux?.configured ?? false}');
+    expect(reads.length).toBeGreaterThan(0);
+    expect(models).toContain('<FluxRouterConnection configured={flux?.configured ?? null}');
+    expect(models).not.toContain('<ExistingKey id="legacy-flux"');
+    expect(models).not.toContain('state.config?.flux?.configured');
   });
 
   it("offers the key without blocking anything: no overlay, no dialog", () => {

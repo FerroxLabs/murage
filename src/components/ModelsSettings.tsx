@@ -7,7 +7,7 @@ import { FluxRouterConnection } from "./FluxRouterConnection";
 
 type Snapshot = { connections: PublicProviderConnection[]; storage: "encrypted" | "local-config" };
 const labels: Record<ProviderPreset, string> = { anthropic: "Anthropic", openai: "OpenAI", openrouter: "OpenRouter", deepseek: "DeepSeek", mistral: "Mistral", flux: "Flux Router", groq: "Groq", xai: "xAI" };
-const presets = Object.keys(labels) as ProviderPreset[];
+const presets = (Object.keys(labels) as ProviderPreset[]).filter(preset => preset !== "flux");
 const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const button = `min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`;
 const notifyConnectionsChanged = () => window.dispatchEvent(new Event("murage:provider-connections-changed"));
@@ -37,7 +37,7 @@ function ExistingKey({ id, label, configured, onSaved }: { id: string; label: st
     const value = remove ? "" : key.current!.value.trim();
     try {
       const credential = id === "opencode" ? "opencodeGoApiKey" : id === "legacy-xai" ? "xaiApiKey" : id === "legacy-openai-image" ? "openaiImageApiKey" : null;
-      const patch = id === "legacy-flux" ? { flux: { apiKey: value } } : id === "opencode" ? { opencodeGo: { apiKey: value } } : id === "legacy-xai" ? { xai: { key: value } } : id === "legacy-openai-image" ? { imageGen: { key: value } } : { openaiCompat: { key: value } };
+      const patch = id === "opencode" ? { opencodeGo: { apiKey: value } } : id === "legacy-xai" ? { xai: { key: value } } : id === "legacy-openai-image" ? { imageGen: { key: value } } : { openaiCompat: { key: value } };
       const status: ConfigStatus = credential && window.muragebox?.setCredential
         ? await window.muragebox.setCredential(credential, value)
         : await api("/api/config", { method: "PUT", body: JSON.stringify(patch) });
@@ -68,7 +68,7 @@ export function ModelsSettings() {
     const [listResult, fluxResult] = await Promise.allSettled([api("/api/provider-connections"), api("/api/flux-connection")]);
     if (mounted.current) {
       setFlux(fluxResult.status === "fulfilled" ? fluxResult.value as FluxConnectionStatus : null);
-      setFluxError(fluxResult.status === "fulfilled" ? "" : "Flux Router setup is unavailable. Existing Flux controls remain below; refresh connections to try again.");
+      setFluxError(fluxResult.status === "fulfilled" ? "" : "Flux Router setup is unavailable. Your saved keys are unchanged. Refresh connections to try again.");
     }
     if (listResult.status === "rejected") throw listResult.reason;
     const next: Snapshot = listResult.value;
@@ -86,10 +86,11 @@ export function ModelsSettings() {
     return () => { mounted.current = false; if (element) element.value = ""; window.removeEventListener("murage:provider-connections-changed", changed); };
   }, []);
   const recognize = () => {
-    const raw = key.current?.value.trim() ?? "", extracted = extractKeys(raw), candidates = modelProviderCandidates(raw);
-    if (flux && candidates.includes("flux")) {
+    const raw = key.current?.value.trim() ?? "", extracted = extractKeys(raw), detected = modelProviderCandidates(raw);
+    if (detected.length === 1 && detected[0] === "flux") {
       setHasKey(Boolean(raw)); setHints([]); setChosen(null); setError(""); setKeyIssue("Use the Flux Router card above to connect or replace your key."); return;
     }
+    const candidates = detected.filter(preset => preset !== "flux");
     setHasKey(Boolean(raw)); setHints(candidates); setChosen(candidates.length === 1 ? candidates[0] : null); setError("");
     setKeyIssue(extracted.length > 1 ? "Paste one API key at a time." : extracted.length === 1 && !candidates.length ? "This key is not a supported model key. Use Tools & Connections for service keys." : "");
   };
@@ -108,7 +109,7 @@ export function ModelsSettings() {
   };
   const add = async () => {
     if (running.current || !chosen || !hasKey || keyIssue) return;
-    if (flux && chosen === "flux") { setKeyIssue("Use the Flux Router card above to connect or replace your key."); return; }
+    if (chosen === "flux") { setKeyIssue("Use the Flux Router card above to connect or replace your key."); return; }
     const raw = key.current?.value.trim() ?? "", extracted = extractKeys(raw);
     if (!raw || extracted.length > 1) return;
     const value = extracted.length === 1 ? extracted[0].value : raw;
@@ -167,7 +168,7 @@ export function ModelsSettings() {
       <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">API usage is billed to that provider account, separately from engine subscriptions.</p>
       <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void add(); }}>
         <label className="block text-[13px]">API key<input ref={key} type="password" aria-label="Model API key" defaultValue="" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy)} onInput={recognize} placeholder="Paste a model API key" className={`${input} mt-1.5`} /></label>
-        {hasKey && !keyIssue && (hints.length === 1 ? <p className="text-[12px] text-success">Recognized as {labels[hints[0]]}. Nothing is sent until you add the connection.</p> : <fieldset><legend className="text-[12px] text-ink-secondary">Which provider issued this key?</legend><div className="mt-2 grid grid-cols-2 gap-2">{(hints.length ? hints : presets).filter(preset => !flux || preset !== "flux").map(preset => <button key={preset} type="button" aria-pressed={chosen === preset} disabled={Boolean(busy)} onClick={() => setChosen(preset)} className={`${button} ${chosen === preset ? "ring-2 ring-accent" : ""}`}>{labels[preset]}</button>)}</div></fieldset>)}
+        {hasKey && !keyIssue && (hints.length === 1 ? <p className="text-[12px] text-success">Recognized as {labels[hints[0]]}. Nothing is sent until you add the connection.</p> : <fieldset><legend className="text-[12px] text-ink-secondary">Which provider issued this key?</legend><div className="mt-2 grid grid-cols-2 gap-2">{(hints.length ? hints : presets).map(preset => <button key={preset} type="button" aria-pressed={chosen === preset} disabled={Boolean(busy)} onClick={() => setChosen(preset)} className={`${button} ${chosen === preset ? "ring-2 ring-accent" : ""}`}>{labels[preset]}</button>)}</div></fieldset>)}
         {keyIssue && <p role="alert" className="text-[12px] text-danger">{keyIssue}</p>}
         <label className="block text-[13px]">Connection name <span className="text-ink-secondary">(optional)</span><input ref={name} aria-label="Connection name (optional)" defaultValue="" maxLength={80} disabled={Boolean(busy)} placeholder="For example: Work account" className={`${input} mt-1.5`} /></label>
         <button type="submit" disabled={!snapshot || Boolean(busy) || !hasKey || !chosen || Boolean(keyIssue)} className={button}>{busy === "create" ? "Saving connection…" : "Add connection"}</button>
@@ -177,7 +178,8 @@ export function ModelsSettings() {
     <div className="flex flex-wrap gap-2"><label className="min-w-0 flex-1"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label><button type="button" disabled={Boolean(busy)} onClick={() => void reload()} className={button}>Refresh connections</button></div>
     {notice && <p role="status" className="text-[12px] text-success">{notice}</p>}{error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
     {snapshot?.connections.length === 0 && <p className="text-[13px] text-ink-secondary">No additional model connections yet. Existing default keys are managed below.</p>}
-    {snapshot?.connections.filter(connection => !flux || connection.preset !== "flux").map(connection => {
+    {!flux && snapshot?.connections.filter(connection => connection.preset === "flux").map(connection => <p key={connection.id} className="text-[12px] text-ink-secondary">Saved Flux connection: {connection.label}. Refresh connections to manage it in the Flux Router card.</p>)}
+    {snapshot?.connections.filter(connection => connection.preset !== "flux").map(connection => {
       const models = chatModels(connection), matching = models.filter(model => !search || `${model.label} ${model.id} ${connection.label} ${labels[connection.preset]}`.toLowerCase().includes(search));
       return <section key={connection.id} aria-label={`${connection.label} connection`} className="min-w-0 rounded-xl border border-hairline/40 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><h4 className="break-words text-[14px] font-medium">{connection.label}</h4><p className="text-[12px] text-ink-secondary">{labels[connection.preset]} · {connection.legacy ? "Existing default" : connection.enabled ? "Enabled" : "Disabled"}</p></div>{!connection.legacy && <label className="flex min-h-11 items-center gap-2 text-[12px]"><input type="checkbox" aria-label={`Use ${connection.label}`} checked={connection.enabled} disabled={Boolean(busy)} onChange={event => void changeConnection({ action: "update", id: connection.id, revision: connection.revision, enabled: event.target.checked })} className={`size-4 accent-accent ${focus}`} />Use connection</label>}</div>
@@ -193,7 +195,6 @@ export function ModelsSettings() {
     })}
     <section id="existing-model-keys" aria-labelledby="existing-keys-heading" className="rounded-xl border border-hairline/40 p-4">
       <h3 id="existing-keys-heading" className="text-[14px] font-medium">Existing/default connections</h3><p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">These update the keys already used by existing setups. No keys are copied into new connections. Saving can reload engines and interrupt running tasks.</p>
-      {!flux && <ExistingKey id="legacy-flux" label="Flux Router default" configured={state.config?.flux?.configured ?? false} onSaved={existingSaved} />}
       <ExistingKey id="opencode" label="OpenCode provider" configured={state.config?.opencodeGo?.configured ?? false} onSaved={existingSaved} />
       {snapshot?.connections.filter(connection => connection.legacy && ["legacy-openai-image", "legacy-xai", "legacy-openai-compatible"].includes(connection.id)).map(connection => <ExistingKey key={connection.id} id={connection.id} label={connection.label} configured={connection.configured} onSaved={existingSaved} />)}
     </section>
