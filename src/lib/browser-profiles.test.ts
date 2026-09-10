@@ -4,6 +4,7 @@ import {
   browserProfileDeletionBlockReason,
   browserProfilePartitionId,
   browserProfilesForPatch,
+  browserProfileReplacementPatch,
 } from "./browser-profiles";
 
 describe("browser profile deletion", () => {
@@ -37,5 +38,12 @@ describe("browser profile partition routing", () => {
       { id: "client", name: "Client" },
       { id: "personal", name: "Personal" },
     ]);
+  });
+
+  it("captures detached expected and next lists without partition authority", () => {
+    const original = [{ id: "work", name: "Work", partitionId: "Work" }];
+    const patch = browserProfileReplacementPatch([...original, { id: "other", name: "Other" }], original);
+    original[0]!.name = "Changed elsewhere";
+    expect(patch).toEqual({ browserProfiles: [{ id: "work", name: "Work" }, { id: "other", name: "Other" }], expectedBrowserProfiles: [{ id: "work", name: "Work" }] });
   });
 });

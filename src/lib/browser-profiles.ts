@@ -25,6 +25,10 @@ export function browserProfilesForPatch(profiles: BrowserProfileRecord[]): Array
   return profiles.map(({ id, name }) => ({ id, name }));
 }
 
+export function browserProfileReplacementPatch(next: BrowserProfileRecord[], expected: BrowserProfileRecord[]) {
+  return { browserProfiles: browserProfilesForPatch(next), expectedBrowserProfiles: browserProfilesForPatch(expected) };
+}
+
 /** A live turn may still be issuing browser actions against this partition.
  * Refuse deletion until those turns are stopped rather than racing the wipe. */
 export function browserProfileDeletionBlockReason(

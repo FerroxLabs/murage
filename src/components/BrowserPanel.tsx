@@ -23,7 +23,7 @@ import { usePageVisible } from "@/lib/page-visible";
 import { cn } from "@/lib/cn";
 import { transitionBrowserControlLease } from "@/lib/computer-control";
 import { api, useStore, type Bot, type BotAnnouncement, type BrowserProfile } from "@/state/store";
-import { browserProfilePartitionId, browserProfilesForPatch } from "@/lib/browser-profiles";
+import { browserProfilePartitionId, browserProfileReplacementPatch } from "@/lib/browser-profiles";
 import { useNativeViewObscured } from "@/hooks/use-native-view-obscured";
 import { aspectFitNativeViewBounds } from "@/lib/local-vm-workspace";
 import {
@@ -568,7 +568,7 @@ export function LegacyBrowserPanel({
       const id = profileIdFor(name, profiles);
       const config = await api("/api/config", {
         method: "PATCH",
-        body: JSON.stringify({ browserProfiles: browserProfilesForPatch([...profiles, { id, name }]) }),
+        body: JSON.stringify(browserProfileReplacementPatch([...profiles, { id, name }], profiles)),
       });
       dispatch({ type: "configStatus", config });
       if (botBusyRef.current) {

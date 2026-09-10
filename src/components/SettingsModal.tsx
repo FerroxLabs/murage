@@ -32,6 +32,7 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import {
   browserProfileDeletionBlockReason,
   browserProfilesForPatch,
+  browserProfileReplacementPatch,
 } from "@/lib/browser-profiles";
 
 const SECTIONS: Array<{
@@ -377,11 +378,11 @@ function ExperimentalFeaturesRow() {
 
 /** Named browser sessions: rename or delete; deleting wipes that session's
  * logins, storage and cache and sends any bot on it back to its own. */
-function BrowserProfilesRow() {
+export function BrowserProfilesRow() {
   const { state, dispatch } = useStore();
   const profiles = state.config?.browserProfiles ?? [];
   const [busy, setBusy] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; name: string; expected: Array<{ id: string; name: string }> } | null>(null);
   const [error, setError] = useState("");
   // Windows temporarily gates the live browser surface, but upgraded users
   // must still be able to rename or permanently erase existing sessions.
@@ -389,11 +390,11 @@ function BrowserProfilesRow() {
   // exposing the browser renderer bridge.
   if (!window.muragebox || (!builtInBrowserEnabled(state.config) && profiles.length === 0)) return null;
 
-  const save = async (next: typeof profiles) => {
+  const save = async (next: typeof profiles, expected: typeof profiles) => {
     try {
       const config: ConfigStatus = await api("/api/config", {
         method: "PATCH",
-        body: JSON.stringify({ browserProfiles: browserProfilesForPatch(next) }),
+        body: JSON.stringify(browserProfileReplacementPatch(next, expected)),
       });
       dispatch({ type: "configStatus", config });
     } catch (cause) {
@@ -428,9 +429,7 @@ function BrowserProfilesRow() {
       // a rejected config save must leave the user's signed-in session intact.
       const config: ConfigStatus = await api("/api/config", {
         method: "PATCH",
-        body: JSON.stringify({
-          browserProfiles: browserProfilesForPatch(profiles.filter((candidate) => candidate.id !== id)),
-        }),
+        body: JSON.stringify(browserProfileReplacementPatch(profiles.filter((candidate) => candidate.id !== id), profiles)),
       });
       dispatch({ type: "configStatus", config });
       // Packaged Electron receives the same post-commit cleanup privately
@@ -453,7 +452,7 @@ function BrowserProfilesRow() {
     if (!name) return;
     setBusy(renaming.id);
     setError("");
-    void save(profiles.map((profile) => (profile.id === renaming.id ? { ...profile, name } : profile)));
+    void save(renaming.expected.map((profile) => (profile.id === renaming.id ? { ...profile, name } : profile)), renaming.expected);
   };
   const usersOf = (id: string) => state.bots.filter((bot) => !bot.hidden && bot.browserProfile === id).map((bot) => bot.name);
 
@@ -484,7 +483,7 @@ function BrowserProfilesRow() {
                       <input
                         autoFocus
                         value={renaming.name}
-                        onChange={(event) => setRenaming({ id: profile.id, name: event.target.value })}
+                        onChange={(event) => setRenaming({ ...renaming!, name: event.target.value })}
                         maxLength={40}
                         className="rounded-md bg-inset px-2 py-1 text-[13px] text-ink outline-none"
                         aria-label="Profile name"
@@ -499,7 +498,7 @@ function BrowserProfilesRow() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setRenaming({ id: profile.id, name: profile.name })}
+                      onClick={() => setRenaming({ id: profile.id, name: profile.name, expected: browserProfilesForPatch(profiles) })}
                       className="truncate text-left text-[14px] font-medium text-ink hover:underline"
                       title="Rename"
                     >
@@ -524,7 +523,12 @@ function BrowserProfilesRow() {
           })}
         </div>
       )}
-      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
+      {error ? <div className="mt-2"><p role="alert" className="text-[12px] text-danger">{error}</p><button type="button" disabled={busy !== null} className="mt-2 rounded-md bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-50" onClick={async () => {
+        setBusy("refresh");
+        try { const config: ConfigStatus = await api("/api/config"); dispatch({ type: "configStatus", config }); setRenaming(null); setError(""); }
+        catch { setError("Could not refresh browser profiles. Try again."); }
+        finally { setBusy(null); }
+      }}>Refresh profiles</button></div> : null}
     </Card>
   );
 }
