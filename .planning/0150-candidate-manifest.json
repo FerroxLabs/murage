@@ -3,17 +3,28 @@
   "version": "0.1.50",
   "kind": "private-candidate-gate-manifest",
   "recordedAt": "2026-09-10",
-  "sourceCommit": "dd8758287623c4ee03315eab9a122b2a1778a8a0",
+  "sourceCommit": "11549fff0d7f0f15775b8d274e8aed7dffad1bff",
+  "pathBase": "integration-worktree-root",
+  "coordinatorRecord": "../STATE.md",
   "localBuildSnapshot": {
-    "sourceCommit": "9774d53e3414d853f4895cb3d4fe32aafcace4e9",
-    "authority": "coordinator task record",
-    "containsReportRenderFix": false,
-    "artifactReceipt": null,
-    "qualifiedForManifestSource": false
+    "sourceCommit": "11549fff0d7f0f15775b8d274e8aed7dffad1bff",
+    "authority": "accepted source-specific build and native smoke receipt; coordinator STATE",
+    "containsReportRenderFix": true,
+    "artifactPath": "../0150-current-private-build/release/mac-arm64/Murage.app",
+    "artifactReceipt": "../0150-current-private-build/.planning/current-private-evidence/native-smoke-r2/result.json",
+    "archiveSha256": "28cc67406293a47f7e24cdb527538350edf37ccb90983aee9d610a2b0b30ba7c",
+    "serverSha256": "1baffc8aea1b2bd3cd83c242dcd06ea67e01be31d864dcc2b3f3ad61f0a945d0",
+    "sourceIdentityMatchesManifest": true,
+    "nativeSmokeStatus": "accepted-basic-macos-arm64-only",
+    "qualificationScope": "actual packaged 0.1.50 main/preload/static server/renderer, four owner HTTP routes and unauthenticated denial, isolated profile and cleanup; disabled engines and no engine turns",
+    "signature": "ad-hoc; not notarized",
+    "qualifiedForManifestSource": false,
+    "fullCandidateQualification": false
   },
   "publicationAuthorized": false,
   "releaseReady": false,
-  "checksRunForThisDocumentation": [],
+  "checksRunForThisDocumentation": ["JSON parsing", "receipt field agreement", "referenced path existence", "two-file diff and whitespace review"],
+  "verificationHistory": "Prior failures, rounds and explicit continuations remain in coordinator STATE and package records; this documentation change starts no runtime checks and resets no counters.",
   "fuigo": {
     "version": "1.0.10",
     "pinSource": "scripts/prepare-fuigo.mjs",
@@ -21,30 +32,37 @@
     "digestFields": ["tarballSha256", "binarySha256"],
     "pinnedTargets": ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"],
     "notStageable": ["linux-arm64", "win32-arm64"],
-    "nativeEvidence": "macOS synthetic loopback actual driver tool/final/cancel; parent STATE",
+    "nativeEvidence": "macOS arm64 tool/final/cancel and production updater install/update/rollback/bundled proofs accepted; exact 1.0.10 deny-all-network full-session prerequisite also passed in the isolated platform candidate",
     "allPlatformQualification": false
   },
   "implementedAndScopedTested": [
-    {"id":"report-render", "commit":"dd875828", "evidence":".planning/0150-report-render.md", "result":"3 component cases plus client/server types passed; two before failures", "combinedRestartProof":false},
+    {"id":"report-render", "commit":"dd875828", "evidence":".planning/0150-report-render.md", "result":"3 component cases plus client/server types passed; two before failures retained", "combinedRestartProof":true, "joinedEvidence":".planning/0150-joined-proof.md"},
+    {"id":"joined-report-source-restart", "commit":"81220303", "evidence":".planning/0150-joined-proof.md", "receipt":".planning/candidate-report-receipt-confirmation/candidate-report-integrati-50897-ad-and-same-profile-restart/joined-receipt.json", "result":"one isolated joined journey passed exact source message/card, one Inbox result, download hash, sibling integrity and same-profile restart; no live model or all-platform claim"},
     {"id":"browser-profile-cas", "commit":"86cdd1d8", "evidence":".planning/0149-browser-reconciliation.md", "result":"Node24 selected3 plus types; retained15 focused/API and4 UI passes"},
-    {"id":"flux-canonical-connection", "commit":"3194784a", "evidence":"parent .planning/STATE.md", "result":"71 focused tests/types plus joined UI6 layouts; no owner-key migration"},
+    {"id":"flux-canonical-connection", "commit":"3194784a", "evidence":"../STATE.md", "result":"71 focused tests/types plus joined UI6 layouts; no owner-key migration"},
+    {"id":"flux-entrypoints", "commit":"347a3f4d", "evidence":".planning/0150-flux-entrypoint-record.md", "result":"Tools preservation guard and explicit Ignore-to-Models navigation passed; zero writes/page errors; earlier fixture failures retained"},
+    {"id":"proactive-file-watch", "commit":"11549fff", "evidence":".planning/0150-watch-flow-record.md", "result":"selected approved relative file source, confirmation, real adapter/routine/Inbox change delivery, quiet behavior and restart dedupe accepted; scoped HTTP6 and picker4 cases plus types passed; no arbitrary web monitoring or provider turn"},
     {"id":"dialog-localisation", "commit":"a7778b5e", "evidence":".planning/0150-localisation-closure.md", "result":"8 keys in7 packs;12 catalog tests/types/3 component cases"},
     {"id":"account-action-localisation", "commit":"655c1d42", "evidence":".planning/0150-account-localisation.md", "result":"21 keys in7 packs;2 catalog tests/types/4 component cases; agent-authored"},
-    {"id":"retained-features", "evidence":"parent .planning/STATE.md", "result":"onboarding, Inbox, Files, threads, accounts and scoped-memory receipts reused; not requalified as one final artifact"}
+    {"id":"retained-features", "evidence":"../STATE.md", "result":"onboarding, Inbox, Files, threads, accounts and scoped-memory receipts reused; not requalified as one final artifact"}
   ],
   "nativeEvidence": [
     {"id":"macos-files", "commit":"5c799777", "result":"actual preload/handler text Open/Reveal", "unverified":["editor rendering","packaged Windows/Linux behavior"]},
-    {"id":"macos-flux-ipc", "commit":"9774d53e", "evidence":".planning/flux-native-evidence/result.json", "result":"actual preload/IPC and handler persistence/busy/rollback; zero provider calls", "encryption":"fixture AES-GCM adapter", "unverified":["OS safeStorage/Keychain","complete packaged startup","cross-platform qualification"]}
+    {"id":"macos-flux-ipc", "commit":"9774d53e", "evidence":".planning/flux-native-evidence/result.json", "result":"actual preload/IPC and handler persistence/busy/rollback; zero provider calls", "encryption":"fixture AES-GCM adapter", "unverified":["OS safeStorage/Keychain","real account readiness","cross-platform qualification"]},
+    {"id":"remote-window", "commit":"8da3e20f", "evidence":".planning/0150-cloud-fixture-extension-proposal.md", "result":"isolated native window pairing, connected renderer, fake-engine chat, renewal, revocation, disconnect and local-session preservation accepted", "unverified":["hosted provisioning","DNS/TLS and hosted login/persistence","deployed service readiness"]},
+    {"id":"recovery-emulated-elevation", "commit":"9a40c0d3", "evidence":".planning/0150-recovery-transport-state.md", "receipt":".planning/0150-recovery-joined-native/result.json", "result":"Windows Server2022 fixture passed guarded VSS capture, archive, separate restore, explicit review/activation and fresh-process selector with original/anchor bytes preserved and credentials excluded", "elevation":"emulated in fixture; production runas not exercised", "unverified":["interactive same-user UAC cancel/approve","signed installed app/helper across integrity boundary","Windows client qualification"]},
+    {"id":"macos-arm64-independent-fuigo-updater", "commit":"ed9c4799", "evidence":"../swarm-0150-updater-integrated/.planning/updater-closeout-native-r1.json", "result":"production probe and 1.0.9 install to 1.0.10 update to rollback to bundled passed; real owner HTTP/config callback cases retained separately", "unverified":["Windows native updater","Linux native updater","macOS Intel native updater"]},
+    {"id":"macos-arm64-private-package-basic", "commit":"11549fff", "evidence":"../0150-current-private-build/.planning/current-private-evidence/native-smoke-r2/result.json", "result":"accepted source-specific basic packaged smoke with no engine turns; all owned processes/profile cleaned and normal app/foreground preserved", "unverified":["live accounts/model generation","TCC and OS credential custody","full-feature combined acceptance","other OS/architectures","notarization"]}
   ],
   "openGates": [
     {"id":"customer-32603", "status":"unresolved", "needed":"causal customer incident evidence and correction proof"},
     {"id":"customer-exit-1073807364", "status":"unresolved", "needed":"exact unexpected-exit incident evidence; cancellation fixes are not closure"},
-    {"id":"joined-report-source-restart", "status":"pending", "needed":"authorized exact-source and restart confirmation on integrated renderer correction; prior invocation limits retained"},
-    {"id":"no-backup-recovery", "status":"pending-decision", "needed":"Windows snapshot/elevation disposition and bounded implementation verification"},
-    {"id":"cloud", "status":"not-accepted", "needed":"remaining authorized cloud fixture/acceptance gates; no deployment claim"},
-    {"id":"proactive-watch", "status":"foundation-only", "needed":"selected source and actual adapter/scheduler/Inbox integration"},
-    {"id":"independent-fuigo-updater", "status":"pending", "needed":"remaining native activation/rollback compatibility gate; bundle pin is not closure"},
-    {"id":"final-artifact", "status":"pending", "needed":"artifact/source identity matching accepted candidate and required platform qualification"},
+    {"id":"no-backup-recovery", "status":"integrated-emulated-proof-only", "needed":"actual interactive same-user UAC cancel/approve and signed installed app/helper confirmation; current guest verification remains separate"},
+    {"id":"cloud", "status":"remote-window-accepted-hosted-service-open", "needed":"approved external resources and hosted provisioning/DNS/TLS/login/persistence qualification; no deployment claim"},
+    {"id":"independent-fuigo-updater", "status":"macos-arm64-accepted-other-targets-open", "evidence":".planning/0150-updater-platforms.md", "needed":"Windows contained launch error5 and Linux real Fuigo initialize failure remain blocked at run34454956810/source84643611; macOS Intel native qualification remains open; no counter reset or unapproved third native run"},
+    {"id":"customer-native-takeover", "status":"unverified", "needed":"actual reported Box/native UI path; scoped hold regression is not customer-path proof"},
+    {"id":"final-artifact", "status":"macos-arm64-basic-smoke-only", "needed":"Windows/Linux 0.1.50 packages and required packaged UI/auth/Files/background and final combined qualification; the accepted 11549fff Mac smoke does not establish these"},
+    {"id":"release-ci", "status":"blocked", "needed":"resolve the recorded release-CI credential403 without bypassing release controls"},
     {"id":"publication", "status":"not-authorized", "needed":"explicit publication authority after required gates"}
   ]
 }
