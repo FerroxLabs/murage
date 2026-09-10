@@ -1,0 +1,41 @@
+name: Fuigo Intel native updater qualification
+
+on:
+  push:
+    branches: [work/0150-updater-intel]
+    paths:
+      - .github/workflows/fuigo-intel-qualification.yml
+      - .planning/native-fuigo-production-closeout.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuigo-intel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+          architecture: x64
+      - name: Check native Intel fixture syntax
+        run: node --check .planning/native-fuigo-production-closeout.mjs
+      - name: Qualify full production update and rollback
+        run: node .planning/native-fuigo-production-closeout.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: fuigo-intel-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .planning/0150-intel-native
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
