@@ -1,6 +1,12 @@
 name: Recovery snapshot qualification
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/0150-recovery-snapshot]
+    paths:
+      - native/recovery-snapshot/**
+      - scripts/qualify-recovery-snapshot.ts
+      - .github/workflows/recovery-snapshot-qualification.yml
 permissions:
   contents: read
 jobs:
