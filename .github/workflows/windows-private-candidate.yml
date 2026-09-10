@@ -1,0 +1,109 @@
+# Preparation only: no push trigger. Root must settle the exact source before
+# dispatch. Existing Azure secret references are confined to the package step.
+name: Private Windows 0.1.50 candidate
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact approved 40-character application source SHA
+        required: true
+        default: f320e846fe4ad49a277f7b8a14c361cce8d51e32
+        type: string
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    env:
+      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Require an exact source identity
+        shell: pwsh
+        run: |
+          if ($env:PRIVATE_SOURCE_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'An approved full source SHA is required' }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - name: Verify source and toolchain
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -cne $env:PRIVATE_SOURCE_SHA) { throw 'Source SHA mismatch' }
+          if ((node --version) -cne 'v24.20.0') { throw 'Node version mismatch' }
+          if ((pnpm --version) -cne '10.33.0') { throw 'pnpm version mismatch' }
+          if ((node -p "require('./package.json').version") -cne '0.1.50') { throw 'Package version mismatch' }
+          New-Item -ItemType Directory -Force '.planning/windows-private-r1' | Out-Null
+      - name: Install exact locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build private Windows x64 installer and ZIP
+        id: build
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          if (-not $env:AZURE_TENANT_ID -or -not $env:AZURE_CLIENT_ID -or -not $env:AZURE_CLIENT_SECRET) { throw 'Established Azure signing CI bindings are unavailable' }
+          pnpm package:win 2>&1 | Tee-Object '.planning/windows-private-r1/build.log'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate packaged inventory and signatures
+        id: validation
+        shell: pwsh
+        run: |
+          $resources = 'release/win-unpacked/resources'
+          foreach ($name in @('server/index.js','ui/index.html','murage-recovery.exe','fuigo/fuigo.exe','cloudflared/cloudflared.exe','licenses/cloudflared-LICENSE.txt','licenses/cloudflared-README.md','app-update.yml')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $resources $name) -PathType Leaf)) { throw "Missing packaged resource: $name" }
+          }
+          $update = Get-Content -Raw (Join-Path $resources 'app-update.yml')
+          if ($update -notmatch '(?m)^owner: FerroxLabs$' -or $update -notmatch '(?m)^repo: murage-releases$' -or $update -notmatch 'publisherName' -or $update -notmatch 'Ferrox Labs, LLC') { throw 'Packaged updater publisher/target mismatch' }
+          $installers = @(Get-ChildItem 'release' -Filter '*-setup.exe' -File)
+          $archives = @(Get-ChildItem 'release' -Filter '*.zip' -File)
+          if ($installers.Count -ne 1 -or $archives.Count -ne 1) { throw 'Expected one NSIS installer and one portable ZIP' }
+          $required = @('release/win-unpacked/Murage.exe',(Join-Path $resources 'murage-recovery.exe'),(Join-Path $resources 'fuigo/fuigo.exe'),$installers[0].FullName)
+          foreach ($file in $required) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Ferrox Labs, LLC') { throw "Required Ferrox signature failed: $file" }
+          }
+          # afterPack already enforces raw Fuigo/browser pins, complete memory
+          # payload, successful signing, and valid browser publishers.
+          'Packaged inventory, updater metadata and required signatures passed.' | Tee-Object '.planning/windows-private-r1/validation.log'
+      - name: Record private artifacts and exact outcomes
+        if: always() && steps.build.outcome != ''
+        shell: pwsh
+        env:
+          PRIVATE_BUILD_OUTCOME: ${{ steps.build.outcome }}
+          PRIVATE_VALIDATION_OUTCOME: ${{ steps.validation.outcome }}
+        run: |
+          New-Item -ItemType Directory -Force '.planning/windows-private-r1' | Out-Null
+          $artifacts = @(Get-ChildItem 'release' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.(exe|zip|blockmap)$' } | ForEach-Object {
+            @{ name = $_.Name; size = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+          })
+          $receipt = @{ source = $env:PRIVATE_SOURCE_SHA; workflowSource = $env:GITHUB_SHA; runId = $env:GITHUB_RUN_ID; version = '0.1.50'; platform = 'win32-x64'; node = (node --version); pnpm = (pnpm --version); build = $env:PRIVATE_BUILD_OUTCOME; validation = $env:PRIVATE_VALIDATION_OUTCOME; installed = $false; uninstalled = $false; nativeQualification = $false; published = $false; artifacts = $artifacts }
+          $receipt | ConvertTo-Json -Depth 5 | Set-Content '.planning/windows-private-r1/receipt.json'
+          $artifacts | ForEach-Object { "$($_.sha256)  $($_.name)" } | Set-Content '.planning/windows-private-r1/SHA256SUMS'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.build.outcome != ''
+        with:
+          name: murage-private-windows-evidence
+          path: .planning/windows-private-r1
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.build.outcome != ''
+        with:
+          name: murage-private-windows-0.1.50
+          path: |
+            release/*.exe
+            release/*.zip
+            release/*.exe.blockmap
+          if-no-files-found: warn
+          retention-days: 7
