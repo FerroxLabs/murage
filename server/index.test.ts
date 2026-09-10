@@ -213,6 +213,13 @@ const delayedJsonBody = async (method: string, path: string, body: unknown, head
  * this helper is what keeps "desktop-only" a statement about the request
  * rather than about the test runner's address. */
 const desktopApi = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  // Existing profile lifecycle fixtures supply the required read snapshot.
+  // Missing/stale preconditions use raw requests in the dedicated CAS suite.
+  if ((method === "PATCH" || method === "PUT") && path === "/api/config" && body && typeof body === "object" && Object.hasOwn(body, "browserProfiles") && !Object.hasOwn(body, "expectedBrowserProfiles")) {
+    const current = await fetch(`${BASE}/api/config`, { headers: DESKTOP_HEADERS });
+    const config = await current.json() as { browserProfiles?: Array<{ id: string; name: string }> };
+    body = { ...body, expectedBrowserProfiles: (config.browserProfiles ?? []).map(({ id, name }: { id: string; name: string }) => ({ id, name })) };
+  }
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
@@ -4950,7 +4957,7 @@ describe("harness HTTP API", () => {
     type IsolatedApiBody =
       | { modelSelection: { instanceId: string; model: string }; requireAvailableModel: boolean }
       | { text: string }
-      | { features: { browser: boolean }; browserProfiles: Array<{ id: string; name: string }> };
+      | { features: { browser: boolean }; browserProfiles: Array<{ id: string; name: string }>; expectedBrowserProfiles: Array<{ id: string; name: string }> };
     const isolatedApi = async (method: string, path: string, body?: IsolatedApiBody, headers: Record<string, string> = {}): Promise<{
       status: number;
       body: any;
@@ -4984,6 +4991,7 @@ describe("harness HTTP API", () => {
       const patched = await isolatedApi("PATCH", "/api/config", {
         features: { browser: false },
         browserProfiles: [],
+        expectedBrowserProfiles: [{ id: "unused", name: "Unused" }],
       }, isolatedDesktopHeaders);
       expect(patched.status).toBe(503);
       expect(patched.body.error).toMatch(/could not confirm.*browser data was erased/i);
@@ -5101,6 +5109,7 @@ describe("harness HTTP API", () => {
         .not.toHaveProperty("browserProfile");
       expect((await isolatedApi("PATCH", "/api/config", {
         browserProfiles: [{ id: "client", name: "A different account" }],
+        expectedBrowserProfiles: [],
       }, isolatedDesktopHeaders)).status).toBe(200);
       const afterReuse = await isolatedApi("GET", "/api/bots?messages=0");
       expect(afterReuse.body.bots.find((bot: { id: string }) => bot.id === "crash-bot"))
@@ -5220,6 +5229,7 @@ describe("harness HTTP API", () => {
       const patched = await isolatedApi("PATCH", "/api/config", {
         features: { browser: false },
         browserProfiles: [],
+        expectedBrowserProfiles: [{ id: "unused", name: "Unused" }],
       }, isolatedDesktopHeaders);
       expect(patched.status).toBe(500);
       expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN, `http://127.0.0.1:${isolatedPort}`)).status).toBe(401);

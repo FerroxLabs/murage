@@ -36,6 +36,7 @@ import { extname, join } from "node:path";
 import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
+import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
 import { inboxRequest } from "./inbox.ts";
 import type { InboxView } from "../shared/inbox.ts";
@@ -11903,6 +11904,7 @@ const server = createServer(async (req, res) => {
       if (patch.telegram && (telegram.status().enabled || telegram.status().connecting || telegram.status().requiresRevoke)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+      if (patch.browserProfiles !== undefined) assertBrowserProfilePrecondition(body && typeof body === "object" && !Array.isArray(body) ? body.expectedBrowserProfiles : undefined, cfg.browserProfiles ?? []);
       const disablingBuiltInBrowser = patch.features?.browser === false && builtInBrowserEnabled(cfg);
       const removedBrowserProfileIds = patch.browserProfiles === undefined
         ? []
