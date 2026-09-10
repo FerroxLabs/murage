@@ -267,7 +267,7 @@ const appConfigSchema = z.object({
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
    *  AFTER the strip. Absent = Flux routing is simply unavailable. */
-  flux: z.object({ apiKey: optionalText }).optional(),
+  flux: z.object({ apiKey: optionalText, connectionAliases: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), label: z.string().min(1).max(80), enabled: z.boolean(), revision: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict()).max(1024).optional() }).optional(),
   /** Sendlane list the onboarding signup writes to. Absent = signup is
    *  captured locally only and no request leaves the machine. */
   sendlane: z
@@ -322,7 +322,7 @@ export interface AppConfig {
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
   imageGen?: { key?: string; enabled?: boolean; connectionId?: string; model?: string };
   webSearch?: { provider?: "engine" | "auto" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
-  flux?: { apiKey?: string };
+  flux?: { apiKey?: string; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
@@ -543,6 +543,7 @@ export function loadConfig(): AppConfig {
   }
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
+  if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
   return cfg;
 }
 
@@ -615,6 +616,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   // Flux Router. The whole point of listing it: the raw workspace key must
   // never ride into a spawned CLI's env. Routing injects it post-strip.
   "FLUX_API_KEY",
+  "MURAGE_FLUX_AMBIENT_KEY",
+  "MURAGE_FLUX_CONNECTION_ALIASES",
   "COMPOSIO_API_KEY",
   "SENDLANE_API_KEY",
   "SENDLANE_HASH_KEY",

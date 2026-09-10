@@ -243,6 +243,7 @@ contextBridge.exposeInMainWorld("muragebox", {
     }),
   /** Store a provider credential with OS-backed encryption. */
   mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
+  mutateFluxConnection: (input) => ipcRenderer.invoke("flux-connection:mutate", input),
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 
   /** In-app auto-update. State object:

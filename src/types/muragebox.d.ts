@@ -266,6 +266,7 @@ type SkillRecordingPayload = {
       revealWorkspace?(botId: string, threadId: string): Promise<void>;
       /** Save a provider credential through Electron's OS-backed store. */
       mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
+      mutateFluxConnection?(input: import("../../shared/flux-connection").FluxConnectionMutation): Promise<import("../../shared/flux-connection").FluxConnectionStatus>;
       setCredential?(
         name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken",
         value: string,

@@ -3,6 +3,8 @@ import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
 import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
 import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
+import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
+import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
 import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
@@ -402,13 +404,16 @@ process.once("exit", () => {
 ensureDirs();
 assertRestoreReviewed(DATA_DIR);
 const cfg = loadConfig();
-const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), legacyConnections: () => {
+const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), resolveAlias: id => {
+  const alias = cfg.flux?.connectionAliases?.find(row => row.id === id);
+  return alias ? resolveFluxAlias(alias, fluxKey() ?? "", createHash("sha256").update(fluxKey() ?? "").digest("hex")) : null;
+}, legacyConnections: () => {
   const rows: LegacyProviderConnection[] = [];
   const add = (id: string, preset: LegacyProviderConnection["preset"], label: string, key: string | null | undefined, managedIn: LegacyProviderConnection["managedIn"], legacyError?: string) => {
     if (!key?.trim()) return;
     rows.push({ id, preset, label, key: key.trim(), enabled: !legacyError, revision: createHash("sha256").update(JSON.stringify([id, key, legacyError ?? "", PROVIDER_PRESETS[preset].baseUrl])).digest("hex"), legacy: true, managedIn, ...(legacyError ? { legacyError } : {}) });
   };
-  add("legacy-flux", "flux", "Flux Router · existing workspace key", fluxKey(), "engines");
+  add("legacy-flux", "flux", "Flux Router", fluxKey(), "connections");
   add("legacy-openai-image", "openai", "OpenAI · existing image key", cfg.imageGen?.key, "images");
   add("legacy-xai", "xai", "xAI · existing workspace key", cfg.xai?.key, "engines");
   if (cfg.openaiCompat?.key?.trim()) {
@@ -445,6 +450,7 @@ providerConnections.subscribe(changedIds => {
 });
 
 let providerConfigBusy = false;
+let fluxMediaRequests = 0;
 let providerFleetReady = true;
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
@@ -1221,11 +1227,14 @@ function memoryIntegration(botId: string, threadId: string, generation: string) 
 }
 let memoryMigrationCursor: string | undefined;
 const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,signal)=>{
+  if(providerConfigBusy)return;
   const selected=memoryExtractorInstanceId();
   if(!selected)return;
   const extractor=resolveMemoryExtractor(selected,registry.instances());
-  return consolidateMemorySource(jobId,extractor,signal);
+  fluxMediaRequests++;
+  try{return await consolidateMemorySource(jobId,extractor,signal);}finally{fluxMediaRequests--;}
 },onIdleConsolidation:async(signal)=>{
+  if(providerConfigBusy)return;
   const migrated = migrateDetectedMemoryNotebooks({ bots: store.bots, groups: store.groups }, memoryMigrationCursor);
   memoryMigrationCursor = migrated.nextCursor;
   syncTrackedMemoryImports({bots:store.bots,groups:store.groups});
@@ -1233,7 +1242,7 @@ const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,s
   const extractor=resolveMemoryExtractor(selected,registry.instances());
   if(!extractor)return;
   const [jobId]=pendingMemoryConsolidationJobs(1);
-  if(jobId)return consolidateMemorySource(jobId,extractor,signal);
+  if(jobId){fluxMediaRequests++;try{return await consolidateMemorySource(jobId,extractor,signal);}finally{fluxMediaRequests--;}}
 }});
 memoryWorker.start();
 const sendSequencer = new SendSequencer();
@@ -6536,6 +6545,27 @@ function artifactScopes(): ArtifactScope[] {
   return scopes;
 }
 const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
+function readFluxConnectionState(): FluxCredentialState {
+  let fileWorkspaceKey: string | undefined;
+  try { fileWorkspaceKey = JSON.parse(readFileSync(join(DATA_DIR, "config.json"), "utf8")).flux?.apiKey; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Flux configuration is unreadable. Original credentials were preserved."); }
+  return { bank: cfg.modelProviders?.bank, workspaceKey: fluxKey() ?? "", aliases: cfg.flux?.connectionAliases, fileWorkspaceKey, ambientWorkspaceKey: process.env.MURAGE_FLUX_AMBIENT_KEY };
+}
+const fluxConnectionTransaction = new FluxConnectionTransaction({
+  read: readFluxConnectionState,
+  assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error("Finish running work before changing Flux credentials."), { status: 409 }); },
+  fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) scheduleCoordinationDrain(); },
+  apply: async (state, external, restore) => {
+    const previous = cfg.modelProviders?.bank;
+    const bank = state.bank ?? "[]", apiKey = state.workspaceKey ?? "", connectionAliases = state.aliases ?? [];
+    saveConfig({ modelProviders: { bank: external ? "" : bank }, flux: { apiKey: restore ? state.fileWorkspaceKey ?? "" : external ? "" : apiKey, connectionAliases } });
+    syncCredentialEnv({ modelProviders: { bank }, flux: { apiKey } });
+    process.env.MURAGE_FLUX_CONNECTION_ALIASES = JSON.stringify(connectionAliases);
+    if (restore && state.ambientWorkspaceKey) process.env.MURAGE_FLUX_AMBIENT_KEY = state.ambientWorkspaceKey; else delete process.env.MURAGE_FLUX_AMBIENT_KEY;
+    cfg.modelProviders = { bank }; cfg.flux = { apiKey, connectionAliases };
+    await providerConnections.changed(previous, bank);
+  },
+});
 async function describedInstances() {
   const instances = await registry.describe();
   const configured = instanceConfigs(cfg);
@@ -10034,7 +10064,11 @@ const server = createServer(async (req, res) => {
       if (!parsed.success) {
         return json(res, 400, { error: `prompt must be at most 400 characters` });
       }
-      const generated = await generateAvatarImage(cfg.imageGen?.key ?? "", existing, parsed.data.prompt);
+      if (providerConfigBusy) return json(res, 409, { error: "Credentials are being changed. Try again shortly." });
+      fluxMediaRequests++;
+      let generated: Awaited<ReturnType<typeof generateAvatarImage>>;
+      try { generated = await generateAvatarImage(cfg.imageGen?.key ?? "", existing, parsed.data.prompt); }
+      finally { fluxMediaRequests--; }
       const current = store.bot(existing.id);
       if (!current) return json(res, 404, { error: "no such bot" });
       if (!avatarGenerationStateMatches(initialAvatar, current)) {
@@ -11584,6 +11618,39 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { decisions: readDecisions(DATA_DIR, parsedLimit ?? 200) });
     }
 
+    if (path === "/api/flux-connection" && method === "GET") return json(res, 200, fluxCredentialStatus(readFluxConnectionState()));
+    if (path === "/api/flux-connection/test" && method === "POST") {
+      if (providerConfigBusy || providerConnectionsBusy) return json(res, 409, { error: "Flux credentials are being changed. Try again shortly." });
+      const status = fluxCredentialStatus(readFluxConnectionState());
+      if (status.conflict) return json(res, 409, { error: "Choose which saved Flux key to use before testing." });
+      if (!status.configured) return json(res, 409, { error: "Connect Flux before testing its key." });
+      fluxMediaRequests++;
+      try {
+        const catalog = await providerConnections.refresh("legacy-flux");
+        return json(res, 200, { modelCount: catalog.models.filter(model => model.enabled && model.chatEligible).length, ...(catalog.error ? { error: catalog.error.message } : {}) });
+      } finally { fluxMediaRequests--; }
+    }
+    if (path === "/api/flux-connection/replace" && method === "POST") {
+      const expected = process.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN ?? "";
+      const supplied = /^Bearer ([a-f0-9]{64})$/.exec(String(req.headers.authorization ?? ""))?.[1] ?? "";
+      if (!expected || supplied.length !== expected.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(supplied))) return json(res, 404, { error: "no such route" });
+      const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "Invalid Flux connection update." });
+      const update = body as Record<string, unknown>;
+      if (update.phase === "begin") return json(res, 200, fluxConnectionTransaction.begin(update.input));
+      if (update.phase === "commit") return json(res, 200, await fluxConnectionTransaction.commit(update.lease, true));
+      if (update.phase === "rollback") return json(res, 200, await fluxConnectionTransaction.rollback(update.lease, true));
+      if (update.phase === "finish") return json(res, 200, fluxConnectionTransaction.finish(update.lease));
+      return json(res, 400, { error: "Invalid Flux connection update." });
+    }
+    if (path === "/api/flux-connection/mutate" && method === "POST") {
+      if (utilityParentPort) return json(res, 409, { error: "Use the desktop Flux connection control to preserve encrypted key storage." });
+      const input = await readBody(req), reserved = fluxConnectionTransaction.begin(input);
+      try { return json(res, 200, await fluxConnectionTransaction.commit(reserved.lease, false)); }
+      catch (error) { await fluxConnectionTransaction.rollback(reserved.lease, false); throw error; }
+      finally { fluxConnectionTransaction.finish(reserved.lease); }
+    }
+
     // ── provider instances (model picker) ──
     if (path === "/api/provider-connections" && method === "GET") {
       return json(res, 200, { connections: providerConnections.list(), storage: utilityParentPort ? "encrypted" : "local-config" });
@@ -11612,6 +11679,9 @@ const server = createServer(async (req, res) => {
           if (providerBankRevision(previous) !== parsed.data.expectedRevision) return json(res, 409, { error: "Model connections changed. Refresh before saving." });
           next = JSON.stringify(parseProviderBank(parsed.data.bank));
         } else next = JSON.stringify(mutateProviderBank(previous, body, randomUUID));
+        const previousFlux = parseProviderBank(previous).filter(row => row.preset === "flux");
+        const nextFlux = parseProviderBank(next).filter(row => row.preset === "flux");
+        if (JSON.stringify(previousFlux) !== JSON.stringify(nextFlux)) return json(res, 409, { error: "Use the Flux Router connection card to change its key." });
         // Secret bank lives only in credentials.bin for packaged desktops.
         // The explicit dev fallback follows the app's established local config behavior.
         const external = path.endsWith("/replace");
@@ -11901,6 +11971,7 @@ const server = createServer(async (req, res) => {
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch = parseConfigPatch(body);
+      if (patch.flux !== undefined) return json(res, 409, { error: "Use the Flux Router connection card to change its key." });
       if (patch.telegram && (telegram.status().enabled || telegram.status().connecting || telegram.status().requiresRevoke)) return json(res, 409, { error: "Revoke Telegram before changing its token or target." });
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
@@ -12209,7 +12280,12 @@ const server = createServer(async (req, res) => {
     // enforced from content-length BEFORE a byte is read, which is a shape
     // this if-chain has no room for. Returns false for every other path, so
     // nothing below this line changes.
-    if (await handleTranscribeRoute(method, url, req, res)) return;
+    if (path === "/api/voice/transcribe" && method === "POST") {
+      if (providerConfigBusy) return json(res, 409, { error: "Credentials are being changed. Try again shortly." });
+      fluxMediaRequests++;
+      try { if (await handleTranscribeRoute(method, url, req, res)) return; }
+      finally { fluxMediaRequests--; }
+    }
 
     // ── connectors (Composio) ──
     if (method === "GET" && path === "/api/connectors/catalog") {

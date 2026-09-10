@@ -14,8 +14,10 @@ function snapshot(state) {
     if (!alias || Object.keys(alias).some(key => !["id", "label", "enabled", "revision"].includes(key)) || !validId(alias.id) || alias.id === "legacy-flux" || ids.has(alias.id) || typeof alias.label !== "string" || !alias.label.trim() || alias.label.length > 80 || /[\x00-\x1f]/.test(alias.label) || typeof alias.enabled !== "boolean" || !validId(alias.revision)) fail("Saved Flux connections are invalid.");
     ids.add(alias.id);
   }
-  if (bank.some(row => row.id === "legacy-flux")) fail("Saved Flux connection identity conflicts with the workspace connection.");
-  return { bank, workspaceKey, aliases };
+  if (bank.some(row => ["legacy-flux", "legacy-flux-file", "legacy-flux-environment"].includes(row.id))) fail("Saved Flux connection identity conflicts with the workspace connection.");
+  const fileWorkspaceKey = (state.fileWorkspaceKey ?? "").trim();
+  const ambientWorkspaceKey = (state.ambientWorkspaceKey ?? "").trim();
+  return { bank, workspaceKey, aliases, fileWorkspaceKey, ambientWorkspaceKey };
 }
 export function fluxCredentialRevision(state) {
   return createHash("sha256").update(JSON.stringify(snapshot(state))).digest("hex");
@@ -23,8 +25,8 @@ export function fluxCredentialRevision(state) {
 export function fluxCredentialStatus(state) {
   const saved = snapshot(state);
   const rows = saved.bank.filter(row => row.preset === "flux");
-  const choices = [ ...(saved.workspaceKey ? [{ id: "legacy-flux", label: "Existing workspace key", enabled: true }] : []), ...rows.map(({ id, label, enabled }) => ({ id, label, enabled })) ];
-  const keys = new Set([saved.workspaceKey, ...rows.map(row => row.key.trim())].filter(Boolean));
+  const choices = [ ...(saved.workspaceKey ? [{ id: "legacy-flux", label: "Existing workspace key", enabled: true }] : []), ...(saved.fileWorkspaceKey && saved.fileWorkspaceKey !== saved.workspaceKey ? [{ id: "legacy-flux-file", label: "Existing configuration key", enabled: true }] : []), ...(saved.ambientWorkspaceKey && saved.ambientWorkspaceKey !== saved.workspaceKey && saved.ambientWorkspaceKey !== saved.fileWorkspaceKey ? [{ id: "legacy-flux-environment", label: "Existing environment key", enabled: true }] : []), ...rows.map(({ id, label, enabled }) => ({ id, label, enabled })) ];
+  const keys = new Set([saved.workspaceKey, saved.fileWorkspaceKey, saved.ambientWorkspaceKey, ...rows.map(row => row.key.trim())].filter(Boolean));
   return { configured: Boolean(saved.workspaceKey), revision: fluxCredentialRevision(state), conflict: keys.size > 1, choices };
 }
 /** Caller must fence active work, then atomically persist all three returned fields. */
@@ -38,7 +40,7 @@ export function planFluxCredentialChange(state, input) {
   let workspaceKey = saved.workspaceKey;
   if (input.action === "disconnect") workspaceKey = "";
   else if (input.action === "select") {
-    const selected = input.connectionId === "legacy-flux" ? saved.workspaceKey : rows.find(row => row.id === input.connectionId)?.key;
+    const selected = input.connectionId === "legacy-flux" ? saved.workspaceKey : input.connectionId === "legacy-flux-file" ? saved.fileWorkspaceKey : input.connectionId === "legacy-flux-environment" ? saved.ambientWorkspaceKey : rows.find(row => row.id === input.connectionId)?.key;
     if (!selected) fail("Choose an existing Flux connection.");
     workspaceKey = selected.trim();
   } else {
@@ -46,6 +48,7 @@ export function planFluxCredentialChange(state, input) {
     if (input.action === "connect" && status.choices.length) fail("Flux is already saved. Replace or select its key.", 409);
     if (input.action === "replace" && !status.choices.length) fail("Connect Flux before replacing its key.", 409);
     if (input.action === "consolidate") {
+      if (!workspaceKey && (saved.fileWorkspaceKey || saved.ambientWorkspaceKey)) fail("Select a saved Flux key before enabling it.", 409);
       if (!workspaceKey && rows.length && !rows.some(row => row.enabled)) fail("Select a saved Flux key before enabling it.", 409);
       workspaceKey ||= rows.find(row => row.enabled)?.key.trim() ?? "";
     } else {

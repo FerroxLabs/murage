@@ -64,14 +64,14 @@ export class ProviderConnectionsService {
  private readonly attempted=new Map<string,{revision:string;at:number}>();
  private readonly listeners=new Set<(changedIds:string[])=>void|Promise<void>>();
  private readonly fetcher:typeof fetch;
- private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[]};
- constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[]}){this.options=options;this.fetcher=options.fetch??fetch;}
+ private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];resolveAlias?:(id:string)=>ProviderConnectionRecord|null};
+ constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];resolveAlias?:(id:string)=>ProviderConnectionRecord|null}){this.options=options;this.fetcher=options.fetch??fetch;}
  isCurrent(id:string,revision:string){const current=this.resolve(id);return Boolean(current?.enabled&&current.revision===revision);}
  subscribe(callback:(changedIds:string[])=>void|Promise<void>){this.listeners.add(callback);return()=>{this.listeners.delete(callback);};}
  async changed(previousBank:string|undefined,nextBank:string){const before=parseProviderBank(previousBank),after=parseProviderBank(nextBank);const ids=[...new Set([...before.map(row=>row.id),...after.map(row=>row.id)])].filter(id=>before.find(row=>row.id===id)?.revision!==after.find(row=>row.id===id)?.revision);for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
  private now(){return this.options.now?.()??Date.now();}
  private records():Array<ProviderConnectionRecord|LegacyProviderConnection>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank())];}
- resolve(id:string){const found=this.records().find(row=>row.id===id);return found?{...PROVIDER_PRESETS[found.preset],...found}:null;}
+ resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...PROVIDER_PRESETS[found.preset],...found}:null;}
  private readCache(connection:ProviderConnectionRecord):ProviderCatalog {
   if("legacyError" in connection && connection.legacyError)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"unavailable",message:String(connection.legacyError)}};
   if(!this.cache.has(connection.id))try{
@@ -84,12 +84,12 @@ export class ProviderConnectionsService {
   const cached=this.cache.get(connection.id);if(!cached||cached.revision!==connection.revision)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only"};
   return{...cached.catalog,stale:cached.catalog.stale||!cached.catalog.fetchedAt||this.now()-cached.catalog.fetchedAt>CACHE_TTL};
  }
- getCatalog(id:string):ProviderCatalog {const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});return this.readCache(connection);}
+ getCatalog(id:string):ProviderCatalog {const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});if(this.options.resolveAlias?.(id)){const catalog=this.getCatalog("legacy-flux");return{...catalog,connectionId:id,models:catalog.models.map(model=>({...model,connectionId:id}))};}return this.readCache(connection);}
  list():PublicProviderConnection[]{return this.records().map(connection=>{const preset=PROVIDER_PRESETS[connection.preset],catalog=this.readCache(connection);return{id:connection.id,preset:connection.preset,label:connection.label,enabled:connection.enabled,revision:connection.revision,baseUrl:preset.baseUrl,protocol:preset.protocol,configured:true,...("legacy" in connection?{legacy:true,managedIn:connection.managedIn}:{}),state:catalog.error?"needs-attention":catalog.fetchedAt?"catalog-ready":"saved",catalog};});}
  async refreshDue(signal?:AbortSignal):Promise<void>{
   for(const connection of this.records()){
    if(signal?.aborted)return;
-   if(!connection.enabled)continue;
+   if(!connection.enabled||connection.preset==="flux")continue;
    const catalog=this.readCache(connection),attempt=this.attempted.get(connection.id);
    const attemptedAt=attempt?.revision===connection.revision?attempt.at:-Infinity;
    if(this.now()-Math.max(catalog.fetchedAt??-Infinity,attemptedAt)<MODEL_CATALOG_REFRESH_MS)continue;
@@ -99,6 +99,7 @@ export class ProviderConnectionsService {
  async refresh(id:string,signal?:AbortSignal):Promise<ProviderCatalog>{
   const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});
   if(!connection.enabled)throw Object.assign(new Error("Enable this connection before refreshing models."),{status:409});
+  if(this.options.resolveAlias?.(id)){await this.refresh("legacy-flux",signal);return this.getCatalog(id);}
   const current=this.pending.get(id);if(current?.revision===connection.revision)return current.promise;
   this.attempted.set(id,{revision:connection.revision,at:this.now()});
   const entry={revision:connection.revision,promise:Promise.resolve(undefined as unknown as ProviderCatalog)};

@@ -71,5 +71,10 @@ export function workspaceCredentialEnv(credentials) {
     const value = credentials?.[name];
     if (typeof value === "string" && value) env[envName] = value;
   }
+  // Flux migration requires explicit user choice, so it is deliberately not
+  // part of the boot-time overwrite table above. Blank is a managed disconnect.
+  if (credentials?.fluxConnectionManaged === "true") env.FLUX_API_KEY = credentials.fluxApiKey ?? "";
+  else if (typeof credentials?.fluxApiKey === "string") env.FLUX_API_KEY = credentials.fluxApiKey;
+  if (typeof credentials?.fluxConnectionAliases === "string") env.MURAGE_FLUX_CONNECTION_ALIASES = credentials.fluxConnectionAliases;
   return env;
 }
