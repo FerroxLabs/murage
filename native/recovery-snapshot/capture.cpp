@@ -116,7 +116,7 @@ std::vector<Entry> entries(const std::wstring& directory, std::uint32_t bound) {
   do {
     std::wstring name(data.cFileName);
     if (name == L"." || name == L"..") continue;
-    require(safePart(name)); require(result.size() < bound, HRESULT_FROM_WIN32(ERROR_QUOTA_EXCEEDED));
+    require(safePart(name)); require(result.size() < bound, HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
     result.push_back({name, data.dwFileAttributes});
   } while (FindNextFileW(search, &data));
   require(GetLastError() == ERROR_NO_MORE_FILES, HRESULT_FROM_WIN32(GetLastError()));
@@ -133,7 +133,7 @@ bool selected(const std::wstring& name) {
 void copyEntry(const std::wstring& source, const std::wstring& destination, bool directory,
                const ApprovedCapture& request, CaptureReceipt& receipt, unsigned depth) {
   checkCancel(request);
-  require(depth <= 64 && ++receipt.entries <= request.maxEntries, HRESULT_FROM_WIN32(ERROR_QUOTA_EXCEEDED));
+  require(depth <= 64 && ++receipt.entries <= request.maxEntries, HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
   auto input = openRead(source, directory);
   const auto id = identity(input.value);
   require(id.VolumeSerialNumber == receipt.sourceIdentity.VolumeSerialNumber);
@@ -148,14 +148,14 @@ void copyEntry(const std::wstring& source, const std::wstring& destination, bool
   require(info.nNumberOfLinks == 1); // External hard links are unsupported too.
   LARGE_INTEGER size{}; win(GetFileSizeEx(input.value, &size));
   require(size.QuadPart >= 0 && static_cast<std::uint64_t>(size.QuadPart) <= request.maxBytes - receipt.bytes,
-    HRESULT_FROM_WIN32(ERROR_QUOTA_EXCEEDED));
+    HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
   Handle output(CreateFileW(destination.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
   std::array<char, 65536> buffer{};
   for (;;) {
     checkCancel(request);
     DWORD read = 0; win(ReadFile(input.value, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr));
     if (!read) break;
-    require(read <= request.maxBytes - receipt.bytes, HRESULT_FROM_WIN32(ERROR_QUOTA_EXCEEDED));
+    require(read <= request.maxBytes - receipt.bytes, HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
     DWORD written = 0; win(WriteFile(output.value, buffer.data(), read, &written, nullptr));
     require(written == read, HRESULT_FROM_WIN32(ERROR_WRITE_FAULT)); receipt.bytes += read;
   }
