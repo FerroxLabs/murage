@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { dataDirLeasePaths } from "./data-dir-lease.mjs";
 import { allocateSeparateInstallation, planSeparateInstallation, publishInstallationSelection, resolveInstallationSelection } from "./installation-selection.mjs";
 const roots = [];
 test.afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -31,7 +32,7 @@ test("published selection resolves only the matching requested installation", ()
   const f = fixture(), r = restored(f.plan); publishInstallationSelection(r.allocated, r.result);
   assert.equal(resolveInstallationSelection(f.userData, f.original).dataDirectory, f.plan.dataDirectory);
   const other = path.join(f.root, "explicit-other");
-  assert.deepEqual(resolveInstallationSelection(f.userData, other), { dataDirectory: other, selected: false });
+  assert.deepEqual(resolveInstallationSelection(f.userData, other), { dataDirectory: dataDirLeasePaths(other).canonicalDataDir, selected: false });
 });
 test("missing, redirected or changed selected metadata fails closed", () => {
   const f = fixture(), r = restored(f.plan); publishInstallationSelection(r.allocated, r.result);
