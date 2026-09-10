@@ -187,8 +187,8 @@ export function EngineSetup({
   if (instance.driverKind === "fuigoAgent" && signInOnly) {
     return <div className={cn("rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
       <div className="text-[13px] font-semibold text-ink">{t("setup.fuigoIncluded")}</div>
-      <p className="mt-1 mb-3 text-[12px] text-ink-secondary">Got a Flux Router key? Connect it here to get started.</p>
-      <FluxKeyCard onSaved={checkAgain} />
+      <p className="mt-1 mb-3 text-[12px] text-ink-secondary">Manage your Flux Router connection in Models, then check this engine again.</p>
+      <FluxKeyCard />
       {checking && <p role="status" className="mt-2 text-[12px] text-ink-secondary">Checking connection…</p>}
       {checkMessage && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{checkMessage}</p>}
       {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
