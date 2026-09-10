@@ -14,6 +14,7 @@ type Authority = { spec: AgentBrowserSpec; held: boolean };
 type Rpc = { id?: string | number | null; method?: string; params?: Record<string, unknown> };
 export interface EngineClient {
   request: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+  notify?: (method: string, params?: Record<string, unknown>) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -104,6 +105,10 @@ export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
   });
   child.stdout.on("end", () => { try { splitter.flush(); } catch { fail(); } });
   return {
+    async notify(method, params) {
+      if (stopped) throw new Error(FAILURE);
+      await writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method, params }));
+    },
     request(method, params) {
       if (stopped) return Promise.reject(new Error(FAILURE));
       const id = ++serial;
