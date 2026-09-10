@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.50",
+  "kind": "private-candidate-gate-manifest",
+  "recordedAt": "2026-09-10",
+  "sourceCommit": "dd8758287623c4ee03315eab9a122b2a1778a8a0",
+  "localBuildSnapshot": {
+    "sourceCommit": "9774d53e3414d853f4895cb3d4fe32aafcace4e9",
+    "authority": "coordinator task record",
+    "containsReportRenderFix": false,
+    "artifactReceipt": null,
+    "qualifiedForManifestSource": false
+  },
+  "publicationAuthorized": false,
+  "releaseReady": false,
+  "checksRunForThisDocumentation": [],
+  "fuigo": {
+    "version": "1.0.10",
+    "pinSource": "scripts/prepare-fuigo.mjs",
+    "pinCommit": "5c40a66b033decdf007aa63805221f621a9397bc",
+    "digestFields": ["tarballSha256", "binarySha256"],
+    "pinnedTargets": ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"],
+    "notStageable": ["linux-arm64", "win32-arm64"],
+    "nativeEvidence": "macOS synthetic loopback actual driver tool/final/cancel; parent STATE",
+    "allPlatformQualification": false
+  },
+  "implementedAndScopedTested": [
+    {"id":"report-render", "commit":"dd875828", "evidence":".planning/0150-report-render.md", "result":"3 component cases plus client/server types passed; two before failures", "combinedRestartProof":false},
+    {"id":"browser-profile-cas", "commit":"86cdd1d8", "evidence":".planning/0149-browser-reconciliation.md", "result":"Node24 selected3 plus types; retained15 focused/API and4 UI passes"},
+    {"id":"flux-canonical-connection", "commit":"3194784a", "evidence":"parent .planning/STATE.md", "result":"71 focused tests/types plus joined UI6 layouts; no owner-key migration"},
+    {"id":"dialog-localisation", "commit":"a7778b5e", "evidence":".planning/0150-localisation-closure.md", "result":"8 keys in7 packs;12 catalog tests/types/3 component cases"},
+    {"id":"account-action-localisation", "commit":"655c1d42", "evidence":".planning/0150-account-localisation.md", "result":"21 keys in7 packs;2 catalog tests/types/4 component cases; agent-authored"},
+    {"id":"retained-features", "evidence":"parent .planning/STATE.md", "result":"onboarding, Inbox, Files, threads, accounts and scoped-memory receipts reused; not requalified as one final artifact"}
+  ],
+  "nativeEvidence": [
+    {"id":"macos-files", "commit":"5c799777", "result":"actual preload/handler text Open/Reveal", "unverified":["editor rendering","packaged Windows/Linux behavior"]},
+    {"id":"macos-flux-ipc", "commit":"9774d53e", "evidence":".planning/flux-native-evidence/result.json", "result":"actual preload/IPC and handler persistence/busy/rollback; zero provider calls", "encryption":"fixture AES-GCM adapter", "unverified":["OS safeStorage/Keychain","complete packaged startup","cross-platform qualification"]}
+  ],
+  "openGates": [
+    {"id":"customer-32603", "status":"unresolved", "needed":"causal customer incident evidence and correction proof"},
+    {"id":"customer-exit-1073807364", "status":"unresolved", "needed":"exact unexpected-exit incident evidence; cancellation fixes are not closure"},
+    {"id":"joined-report-source-restart", "status":"pending", "needed":"authorized exact-source and restart confirmation on integrated renderer correction; prior invocation limits retained"},
+    {"id":"no-backup-recovery", "status":"pending-decision", "needed":"Windows snapshot/elevation disposition and bounded implementation verification"},
+    {"id":"cloud", "status":"not-accepted", "needed":"remaining authorized cloud fixture/acceptance gates; no deployment claim"},
+    {"id":"proactive-watch", "status":"foundation-only", "needed":"selected source and actual adapter/scheduler/Inbox integration"},
+    {"id":"independent-fuigo-updater", "status":"pending", "needed":"remaining native activation/rollback compatibility gate; bundle pin is not closure"},
+    {"id":"final-artifact", "status":"pending", "needed":"artifact/source identity matching accepted candidate and required platform qualification"},
+    {"id":"publication", "status":"not-authorized", "needed":"explicit publication authority after required gates"}
+  ]
+}
