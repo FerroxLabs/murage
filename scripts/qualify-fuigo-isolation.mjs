@@ -16,13 +16,18 @@ await writeFile(inside, '[features]\nremote_fetch = false\n', { mode: 0o600 }); 
 const env = { PATH: '', HOME: home, USERPROFILE: home, FUIGO_HOME: join(home, 'fuigo'), APPDATA: home, LOCALAPPDATA: home, TEMP: home, TMP: home, TMPDIR: home, ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR } : {}) };
 let connections = 0, name, sid, held, result = { target, root, node: process.version, startedAt: new Date().toISOString() };
 const listeners = [createServer(socket => { connections++; socket.destroy(); }), createServer(socket => { connections++; socket.destroy(); })];
+const unixPath = join(root, 'outside.sock');
+const unixListener = process.platform === 'linux' ? createServer(socket => { connections++; socket.destroy(); }) : null;
 const run = async (command, args, options = {}) => exec(command, args, { cwd: home, env, timeout: 12000, maxBuffer: 65536, ...options });
 try {
   await Promise.all(listeners.map((server, index) => new Promise((resolveListen, reject) => { server.once('error', reject); server.listen(0, index ? '::1' : '127.0.0.1', resolveListen); })));
   const ports = listeners.map(server => String(server.address().port));
-  result.control = JSON.parse((await run(canary, ['control', ...ports, outside, inside])).stdout);
+  if (unixListener) await new Promise((resolveListen, reject) => { unixListener.once('error', reject); unixListener.listen(unixPath, resolveListen); });
+  const inputs = [...ports, outside, inside, ...(unixListener ? [unixPath] : [])];
+  result.control = JSON.parse((await run(canary, ['control', ...inputs])).stdout);
   assert.equal(result.control.network4, 1); assert.equal(result.control.network6, 1); assert.equal(result.control.outsideRead, 1); assert.equal(result.control.insideRead, 1);
   assert.equal(result.control.administrator, 0, 'Qualification must run without administrator/root authority');
+  if (unixListener) { assert.equal(result.control.namedUnix, 1); assert.equal(result.control.privatePair, 1); }
   const prefix = process.platform === 'win32' ? null : ['run', canary, home];
   if (process.platform === 'win32') {
     name = `murage-fuigo-probe-${randomUUID()}`;
@@ -31,8 +36,8 @@ try {
   }
   const isolated = prefix ?? ['run', name, sid, home];
   const before = connections;
-  result.restricted = JSON.parse((await run(helper, [...isolated, 'restricted', ...ports, outside, inside])).stdout);
-  assert.deepEqual(result.restricted, { network4: 0, network6: 0, outsideRead: 0, insideRead: 1, isolated: 1, syscallsDenied: 1, administrator: 0 });
+  result.restricted = JSON.parse((await run(helper, [...isolated, 'restricted', ...inputs])).stdout);
+  assert.deepEqual(result.restricted, { network4: 0, network6: 0, outsideRead: 0, insideRead: 1, isolated: 1, syscallsDenied: 1, administrator: 0, ...(unixListener ? { namedUnix: 0, privatePair: 1 } : {}) });
   assert.equal(connections, before); result.deniedConnections = 0;
   held = spawn(helper, [...isolated, 'hold'], { cwd: home, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const heldPid = await new Promise((resolvePid, reject) => { let value = ''; held.stdout.on('data', chunk => { value += chunk; if (value.includes('\n')) resolvePid(Number(value.trim())); }); held.once('error', reject); held.once('exit', () => reject(Error('Held canary exited early'))); setTimeout(() => reject(Error('Held canary did not start')), 5000).unref(); });
@@ -46,7 +51,7 @@ try {
 finally {
   if (held && held.exitCode === null && held.signalCode === null) held.kill('SIGTERM');
   if (sid) { try { await run(helper, ['cleanup', name, sid]); result.profileDeleted = true; } catch (error) { result.profileDeleted = false; result.cleanupError = error.message; result.status = 'failed'; process.exitCode = 1; } }
-  await Promise.all(listeners.map(server => server.listening ? new Promise(resolveClose => server.close(resolveClose)) : undefined));
+  await Promise.all([...listeners, ...(unixListener ? [unixListener] : [])].map(server => server.listening ? new Promise(resolveClose => server.close(resolveClose)) : undefined));
   result.finishedAt = new Date().toISOString();
   await mkdir('.planning/0150-platform-native', { recursive: true });
   await writeFile(`.planning/0150-platform-native/${target}-isolation.json`, JSON.stringify(result, null, 2));

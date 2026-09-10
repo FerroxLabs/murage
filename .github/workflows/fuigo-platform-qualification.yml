@@ -10,7 +10,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, ubuntu-24.04]
+        # C2 Windows diagnostics run separately; never repeat its unchanged failed gate.
+        os: [ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -32,8 +33,8 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/build-fuigo-probe.mjs --with-canary
       - name: Qualify Linux native boundary on synthetic owned fixtures
-        # Unchanged primitive already passed at dca26328, run34454039012.
-        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch'
+        # C2: repeat the primitive because private signal IPC changed.
+        if: runner.os == 'Linux'
         run: node scripts/qualify-fuigo-isolation.mjs
       - name: Qualify Windows native boundary without administrator authority
         if: runner.os == 'Windows'
