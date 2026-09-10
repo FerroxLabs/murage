@@ -24,7 +24,7 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 
 **[Latest release and release notes](https://github.com/FerroxLabs/murage-releases/releases/latest)**
 
-**Windows 0.1.49** is a focused installer and startup hotfix. Fuigo 1.0.8 remains bundled. The reported `-32603` engine errors and exit code `1073807364` remain under investigation.
+**Murage 0.1.50** brings clearer onboarding, a persistent Inbox, saved Files and reports, managed memory, independent conversation controls and native Fuigo updates. **Fuigo 1.0.10 is included.** See the [latest release notes](https://github.com/FerroxLabs/murage-releases/releases/latest) for the complete changes and platform verification.
 
 | Platform | Installer |
 |---|---|
@@ -61,7 +61,7 @@ Custom avatars, named teams and group portraits make that structure easy to reco
 
 You do not have to invent every role and workflow yourself. Browse **prebuilt teams** for an outcome, inspect their members and playbooks, and choose what to import. Agents—called **Embers**—can also work individually, with their own instructions, model and task history.
 
-With a delegation-compatible engine, your Chief can use the live roster, create useful specialists when you ask for a team, and assign them work. The Chief stays your central point of contact. In 0.1.47, nested Chief-to-lead-to-specialist delegation has a known tool-availability limitation; improvements are in development and are not part of this release.
+With a delegation-compatible engine, your Chief can use the live roster, create useful specialists when you ask for a team, and assign them work. The Chief stays your central point of contact. Delegation availability depends on engine and assigned roles; see the [current release notes](https://github.com/FerroxLabs/murage-releases/releases/latest) for verified behavior and limitations.
 
 > “Build a launch team for this product. Have a strategist propose the plan, a reviewer challenge the assumptions, and a writer prepare the copy. Bring me the decisions.”
 
@@ -110,7 +110,7 @@ Combined with managed memory, this gives the team an evolving working playbook: 
 
 *Inspect the saved launch brief’s source and audience. This record was deliberately imported from the demo conversation and retains its unverified-import label.*
 
-**In 0.1.47, managed memory starts off.** Open **More → Team map → Manage memory** to choose Capture only or Capture and recall. Local indexing does not require a paid extraction model. Optional model-based extraction is a separate, explicit setting and creates review candidates.
+Use the memory controls to inspect workspace capture/recall settings and review saved knowledge. Existing opt-outs are preserved. Local indexing does not require a paid extraction model. Optional model-based extraction is a separate, explicit setting and creates review candidates.
 
 Local storage is not the same as local-only AI processing: recalled context sent to a hosted engine is processed by that provider. Forgetting cannot retract text already sent. Intel Macs use keyword memory in this release; local semantic retrieval is available on Apple Silicon, Windows x64 and Linux x64 after model setup. [Read the memory guide](docs/memory.md).
 
@@ -169,11 +169,14 @@ Murage also includes a local MCP server for other clients to list the team, send
 
 ## Before you choose a setup
 
+- Reported engine errors `-32603` and unexpected exit `1073807364` remain under investigation. The reproduced Claude background-task notification bug was fixed, but that does not establish a fix for every reported engine error.
+- An intermittent Mac shutdown delay during credential-write drain remains a known limitation. Later signed native checks exited cleanly; the original delay and native credential persistence were not conclusively resolved. See the [release notes](https://github.com/FerroxLabs/murage-releases/releases/latest).
+
 | Area | Current boundary |
 |---|---|
 | Windows browser | See [release notes](https://github.com/FerroxLabs/murage-releases/releases/latest) for Windows verification and known limitations. |
 | Ubuntu desktop control | The app runs on GNOME Xorg and Wayland; local computer control is restricted to Xorg. Linux dictation and ARM64 installers are unavailable. |
-| Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime in 0.1.47. |
+| Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime. |
 | Background work | Murage's host must remain available for routines and Telegram. This release is not an always-on hosted service. |
 | Memory scale | Verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred. |
 | Cross-device memory | No automatic memory synchronization between separate installations or profiles. |
