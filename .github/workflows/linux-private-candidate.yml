@@ -1,0 +1,104 @@
+name: Private Linux 0.1.50 candidate
+on:
+  push:
+    branches: [work/0150-linux-private-package]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f164ff07e4b6e1d3d41ec813aef56c23e339201d
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - name: Verify source and toolchain identity
+        run: |
+          test "$(git rev-parse HEAD)" = f164ff07e4b6e1d3d41ec813aef56c23e339201d
+          test "$(node --version)" = v24.20.0
+          test "$(pnpm --version)" = 10.33.0
+          test "$(node -p "require('./package.json').version")" = 0.1.50
+          mkdir -p .planning/linux-private-r1
+      - name: Install existing package smoke prerequisites
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0
+          squashfs-tools x11-utils xdotool xvfb
+      - name: Install exact locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build private DEB and AppImage
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm package:linux 2>&1 | tee .planning/linux-private-r1/build.log
+      - name: Verify package contents and metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/verify-linux-package.mjs 2>&1 | tee .planning/linux-private-r1/package-validation.log
+          node --input-type=module -e 'import {validateFuigoProbeResources} from "./scripts/fuigo-probe-resources.mjs"; console.log(JSON.stringify(await validateFuigoProbeResources("release/linux-unpacked/resources", "linux")));' | tee .planning/linux-private-r1/updater-resource.json
+      - name: Configure task-owned unpacked Chromium sandbox
+        run: |
+          test ! -L release/linux-unpacked/chrome-sandbox
+          sudo chown root:root release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux-unpacked/chrome-sandbox
+          test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = 'root:root 4755'
+      - name: Run existing isolated package lifecycle smoke
+        id: smoke
+        env:
+          MURAGE_KEEP_SMOKE_DIR: '1'
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm smoke:linux-package 2>&1 | tee .planning/linux-private-r1/package-smoke.log
+      - name: Record exact artifacts and outcomes
+        if: always()
+        env:
+          PRIVATE_BUILD_OUTCOME: ${{ steps.build.outcome }}
+          PRIVATE_METADATA_OUTCOME: ${{ steps.metadata.outcome }}
+          PRIVATE_SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {createHash} from 'node:crypto';
+          import {existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
+          const directory = '.planning/linux-private-r1'; mkdirSync(directory,{recursive:true});
+          const names = existsSync('release') ? readdirSync('release').filter(name => /\.(deb|AppImage)$/.test(name)).sort() : [];
+          const artifacts = names.map(name => {const bytes = readFileSync(`release/${name}`); return {name,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};});
+          const receipt = {source:'f164ff07e4b6e1d3d41ec813aef56c23e339201d',workflowSource:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,version:'0.1.50',platform:process.platform,arch:process.arch,node:process.version,build:process.env.PRIVATE_BUILD_OUTCOME,metadata:process.env.PRIVATE_METADATA_OUTCOME,smoke:process.env.PRIVATE_SMOKE_OUTCOME,installedDeb:false,published:false,artifacts};
+          writeFileSync(`${directory}/receipt.json`,JSON.stringify(receipt,null,2));
+          writeFileSync(`${directory}/SHA256SUMS`,artifacts.map(a=>`${a.sha256}  ${a.name}`).join('\n')+'\n');
+          console.log(JSON.stringify(receipt));
+          NODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: murage-private-linux-f164ff07-evidence
+          path: |
+            .planning/linux-private-r1
+            /tmp/murage-linux-smoke-*
+            /tmp/murage-linux-smoke-runtime-*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: murage-private-linux-0.1.50-f164ff07
+          path: |
+            release/*.deb
+            release/*.AppImage
+          if-no-files-found: warn
+          retention-days: 7
