@@ -1,0 +1,253 @@
+name: Private macOS 0.1.51 source cohort
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact approved 40-character application source SHA
+        required: true
+        type: string
+env:
+  PRIVATE_SOURCE_SHA: ${{ inputs.source_sha }}
+permissions:
+  contents: read
+concurrency:
+  group: private-mac-cohort-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  mac:
+    name: macOS arm64 + x64 (sign, notarize, staple)
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Require an exact source identity
+        shell: bash
+        run: '[[ "$PRIVATE_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - name: Verify frozen source and tools
+        run: |
+          test "$(git rev-parse HEAD)" = "$PRIVATE_SOURCE_SHA"
+          test "$(node --version)" = v24.20.0
+          test "$(pnpm --version)" = 10.33.0
+          test "$(node -p "require('./package.json').version")" = 0.1.51
+      - run: pnpm install --frozen-lockfile
+      - name: Clean generated output
+        run: pnpm clean
+
+      - name: Package both architectures with the existing Developer ID
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: pnpm package:mac
+
+      - name: "Gate: both packaged apps use the Murage updater feed"
+        # app-update.yml is what an installed app reads forever. Anchored on
+        # both halves: a substring match on the repo alone would pass a feed
+        # pointing at some other account's murage-releases.
+        run: |
+          for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
+            update="$app/Contents/Resources/app-update.yml"
+            test -f "$update" || { echo "::error::missing $update"; exit 1; }
+            grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner in $update"; exit 1; }
+            grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo in $update"; exit 1; }
+          done
+
+      - name: "Gate: the signature must verify BEFORE notarization"
+        run: |
+          for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
+            codesign --verify --deep --strict "$app"
+            codesign -dv --verbose=4 "$app" 2>&1 | grep -q '^Authority=Developer ID Application:'
+            bin="$app/Contents/Resources/cloudflared/cloudflared"
+            test -x "$bin" || { echo "::error::missing executable $bin"; exit 1; }
+            test -f "$app/Contents/Resources/licenses/cloudflared-LICENSE.txt" \
+              || { echo "::error::missing cloudflared license in $app"; exit 1; }
+            test -f "$app/Contents/Resources/licenses/cloudflared-README.md" \
+              || { echo "::error::missing cloudflared provenance in $app"; exit 1; }
+            codesign --verify --strict "$bin"
+            app_team=$(codesign -dv --verbose=4 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            bin_team=$(codesign -dv --verbose=4 "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            test -n "$app_team" && test "$bin_team" = "$app_team" || {
+              echo "::error::cloudflared is not signed by the app's Developer ID team in $app"; exit 1; }
+            echo "ok: $app"
+          done
+
+      - name: "Gate: packaged helper paths and native architectures"
+        run: |
+          for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
+            res="$app/Contents/Resources"
+            node --input-type=module - "$res/server" <<'EOF'
+          import { existsSync } from "node:fs";
+          import { pathToFileURL } from "node:url";
+          const server = process.argv[2];
+          const { SPAWNED_PROXIES } = await import(pathToFileURL(`${server}/proxy-paths.js`));
+          const missing = Object.entries(SPAWNED_PROXIES).filter(([, p]) => !existsSync(p));
+          if (missing.length) {
+            console.error("unresolved proxies:", missing);
+            process.exit(1);
+          }
+          console.log(`ok: ${Object.keys(SPAWNED_PROXIES).length} proxies resolve in ${server}`);
+          EOF
+            for bin in "$res/cua-driver" "$res/Murage Speech.app/Contents/MacOS/speech-helper"; do
+              lipo -archs "$bin" | grep -q "x86_64" || { echo "::error::$bin lacks x86_64"; exit 1; }
+              lipo -archs "$bin" | grep -q "arm64" || { echo "::error::$bin lacks arm64"; exit 1; }
+            done
+            cloudflared="$res/cloudflared/cloudflared"
+            expected_arch=x86_64
+            case "$app" in *mac-arm64*) expected_arch=arm64 ;; esac
+            test "$(lipo -archs "$cloudflared")" = "$expected_arch" || {
+              echo "::error::$cloudflared is not the expected $expected_arch executable"; exit 1; }
+            if [ "$(uname -m)" = "$expected_arch" ]; then
+              "$cloudflared" version | grep -Fq "cloudflared version 2026.8.2 " || {
+                echo "::error::$cloudflared has the wrong version"; exit 1; }
+            fi
+          done
+
+      - name: Notarize all four artifacts
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/notary.p8"' EXIT
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          for f in release/*.dmg release/*.zip; do
+            out=$(xcrun notarytool submit "$f" \
+              --key "$RUNNER_TEMP/notary.p8" \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER_ID" \
+              --wait 2>&1)
+            echo "$out" | tail -2
+            echo "$out" | grep -q "status: Accepted" || { echo "::error::notarization not Accepted for $f"; exit 1; }
+          done
+          rm "$RUNNER_TEMP/notary.p8"
+
+      - name: Staple, re-zip, regenerate blockmaps and the feed
+        run: |
+          xcrun stapler staple release/Murage-*-arm64.dmg
+          xcrun stapler staple release/Murage-*-x64.dmg
+          xcrun stapler staple release/mac-arm64/Murage.app
+          xcrun stapler staple release/mac/Murage.app
+          v=$(node -p "require('./package.json').version")
+          rm -f "release/Murage-$v-arm64.zip" "release/Murage-$v-x64.zip"
+          ditto -c -k --sequesterRsrc --keepParent release/mac-arm64/Murage.app "release/Murage-$v-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent release/mac/Murage.app "release/Murage-$v-x64.zip"
+          node scripts/regenerate-blockmaps.mjs \
+            "release/Murage-$v-arm64.zip" "release/Murage-$v-x64.zip" \
+            "release/Murage-$v-arm64.dmg" "release/Murage-$v-x64.dmg"
+          # refreshes every hash from the post-staple bytes and refuses to
+          # finish unless the feed matches the files on disk
+          node scripts/regenerate-mac-feed.mjs
+
+      - name: Stable-named private copies and checksums
+        run: |
+          v=$(node -p "require('./package.json').version")
+          cp "release/Murage-$v-arm64.dmg" release/Murage.dmg
+          cp "release/Murage-$v-x64.dmg" release/Murage-intel.dmg
+          (cd release && shasum -a 256 *.dmg *.zip *.blockmap latest-mac.yml > SHA256SUMS-mac.txt)
+          printf 'source=%s\nversion=0.1.51\nworkflow=%s\nrun=%s\n' "$PRIVATE_SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > release/SOURCE.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: murage-private-mac-0.1.51-0151
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
+            release/SHA256SUMS-mac.txt
+            release/SOURCE.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  native:
+    name: Native basic macOS ${{ matrix.arch }}
+    needs: mac
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+            macho: arm64
+          - runner: macos-15-intel
+            arch: x64
+            macho: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Require an exact source identity
+        shell: bash
+        run: '[[ "$PRIVATE_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+          architecture: ${{ matrix.arch }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: murage-private-mac-0.1.51-0151
+          path: artifact-input
+      - name: Verify downloaded bytes and native app identity
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          MACHO_ARCH: ${{ matrix.macho }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$PRIVATE_SOURCE_SHA"
+          test "$(node --version)" = v24.20.0
+          test "$(node -p process.arch)" = "$TARGET_ARCH"
+          test "$(uname -m)" = "$MACHO_ARCH"
+          test "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" != 1
+          (cd artifact-input && shasum -a 256 -c SHA256SUMS-mac.txt)
+          grep -qx "source=$PRIVATE_SOURCE_SHA" artifact-input/SOURCE.txt
+          mkdir release-private-0151
+          ditto -x -k "artifact-input/Murage-0.1.51-$TARGET_ARCH.zip" release-private-0151
+          app="$PWD/release-private-0151/Murage.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" = 0.1.51
+          test "$(lipo -archs "$app/Contents/MacOS/Murage")" = "$MACHO_ARCH"
+          codesign --verify --deep --strict "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose "$app"
+      - name: Run existing isolated native window and graceful quit smoke
+        id: smoke
+        run: |
+          set -o pipefail
+          mkdir -p .planning/mac-native
+          node scripts/smoke-mvp-mac.mjs "$PWD/release-private-0151/Murage.app/Contents/MacOS/Murage" 2>&1 | tee .planning/mac-native/smoke.log
+      - name: Record source and native check outcome
+        if: always()
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          mkdir -p .planning/mac-native
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const result={source:process.env.PRIVATE_SOURCE_SHA,workflowSource:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,target:process.env.TARGET_ARCH,platform:process.platform,arch:process.arch,node:process.version,smoke:process.env.SMOKE_OUTCOME,published:false,scope:'Existing isolated native window/profile render and graceful quit; no live model, provider credentials or full-feature claim'};
+          writeFileSync('.planning/mac-native/receipt.json',JSON.stringify(result,null,2));
+          NODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: murage-private-native-${{ matrix.arch }}-0151
+          path: .planning/mac-native
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

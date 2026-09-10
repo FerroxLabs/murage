@@ -1,15 +1,12 @@
 # Preparation only until root settles source and pushes this isolated branch.
 # Existing Azure secret references are confined to the package step.
-name: Private Windows 0.1.50 candidate
+name: Private Windows 0.1.51 candidate
 on:
-  push:
-    branches: [work/0150-windows-private-prep]
   workflow_dispatch:
     inputs:
       source_sha:
         description: Exact approved 40-character application source SHA
         required: true
-        default: 15c3cbd64056a7288777739f5dd244ca4365ea0b
         type: string
 permissions:
   contents: read
@@ -18,7 +15,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 40
     env:
-      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || '15c3cbd64056a7288777739f5dd244ca4365ea0b' }}
+      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha }}
     steps:
       - name: Require an exact source identity
         shell: pwsh
@@ -41,7 +38,7 @@ jobs:
           if ((git rev-parse HEAD) -cne $env:PRIVATE_SOURCE_SHA) { throw 'Source SHA mismatch' }
           if ((node --version) -cne 'v24.20.0') { throw 'Node version mismatch' }
           if ((pnpm --version) -cne '10.33.0') { throw 'pnpm version mismatch' }
-          if ((node -p "require('./package.json').version") -cne '0.1.50') { throw 'Package version mismatch' }
+          if ((node -p "require('./package.json').version") -cne '0.1.51') { throw 'Package version mismatch' }
           New-Item -ItemType Directory -Force '.planning/windows-private-r1' | Out-Null
       - name: Install exact locked dependencies
         run: pnpm install --frozen-lockfile
@@ -95,7 +92,7 @@ jobs:
             @{ name = $_.Name; size = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
           })
           $updaterHelper = if (Test-Path -LiteralPath '.planning/windows-private-r1/updater-helper.json') { Get-Content -Raw '.planning/windows-private-r1/updater-helper.json' | ConvertFrom-Json } else { $null }
-          $receipt = @{ source = $env:PRIVATE_SOURCE_SHA; workflowSource = $env:GITHUB_SHA; runId = $env:GITHUB_RUN_ID; version = '0.1.50'; platform = 'win32-x64'; node = (node --version); pnpm = (pnpm --version); build = $env:PRIVATE_BUILD_OUTCOME; validation = $env:PRIVATE_VALIDATION_OUTCOME; updaterHelper = $updaterHelper; installed = $false; uninstalled = $false; nativeQualification = $false; published = $false; artifacts = $artifacts }
+          $receipt = @{ source = $env:PRIVATE_SOURCE_SHA; workflowSource = $env:GITHUB_SHA; runId = $env:GITHUB_RUN_ID; version = '0.1.51'; platform = 'win32-x64'; node = (node --version); pnpm = (pnpm --version); build = $env:PRIVATE_BUILD_OUTCOME; validation = $env:PRIVATE_VALIDATION_OUTCOME; updaterHelper = $updaterHelper; installed = $false; uninstalled = $false; nativeQualification = $false; published = $false; artifacts = $artifacts }
           $receipt | ConvertTo-Json -Depth 5 | Set-Content '.planning/windows-private-r1/receipt.json'
           $artifacts | ForEach-Object { "$($_.sha256)  $($_.name)" } | Set-Content '.planning/windows-private-r1/SHA256SUMS'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -109,7 +106,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
         with:
-          name: murage-private-windows-0.1.50
+          name: murage-private-windows-0.1.51
           path: |
             release/*.exe
             release/*.zip
