@@ -9,7 +9,7 @@ on:
       source_sha:
         description: Exact approved 40-character application source SHA
         required: true
-        default: 4f35f48616282822951f2d903e0cffb370fa41bd
+        default: 15c3cbd64056a7288777739f5dd244ca4365ea0b
         type: string
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 40
     env:
-      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || '4f35f48616282822951f2d903e0cffb370fa41bd' }}
+      PRIVATE_SOURCE_SHA: ${{ inputs.source_sha || '15c3cbd64056a7288777739f5dd244ca4365ea0b' }}
     steps:
       - name: Require an exact source identity
         shell: pwsh
