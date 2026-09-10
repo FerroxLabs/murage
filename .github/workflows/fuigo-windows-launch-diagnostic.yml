@@ -1,0 +1,39 @@
+name: Fuigo Windows C2 launch diagnostic
+on:
+  push:
+    branches: [work/0150-windows-c2]
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Compile diagnostic and unchanged helpers
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b %errorlevel%
+          node scripts/build-fuigo-probe.mjs --with-canary
+          if errorlevel 1 exit /b %errorlevel%
+          cl /nologo /std:c11 /O2 /W4 /DUNICODE /D_UNICODE native\fuigo-probe\windows-launch-diagnostic.c /Fe:dist-native\fuigo-probe\win32-x64\windows-launch-diagnostic.exe /Fo:dist-native\fuigo-probe\win32-x64\windows-launch-diagnostic.obj /link Userenv.lib Advapi32.lib
+          if errorlevel 1 exit /b %errorlevel%
+      - name: One diagnostic invocation with standard-user token
+        shell: pwsh
+        run: |
+          & .\dist-native\fuigo-probe\win32-x64\standard-user.exe (Get-Command node).Source scripts/diagnose-fuigo-windows-launch.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: fuigo-windows-c2
+          path: .planning/0150-windows-c2
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
