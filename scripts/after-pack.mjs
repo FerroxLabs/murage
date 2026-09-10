@@ -7,6 +7,7 @@ import {
 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES, HARNESS_RESOURCE_DIRECTORIES } from "../electron/harness-resources.mjs";
 import { FUIGO_VERSION, verifyFuigoExecutable } from "./prepare-fuigo.mjs";
+import { validateFuigoProbeResources } from "./fuigo-probe-resources.mjs";
 import { verifyBrowserBundle } from "./prepare-browser.mjs";
 import { browserBundlePaths } from "../server/browser-bundle-release.ts";
 import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
@@ -180,6 +181,7 @@ export default async function afterPack(context) {
   );
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
+  await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));
   await validatePackagedMemoryRuntime(resources, context.electronPlatformName, context.arch, Boolean(context.packager));
   // Resource copying only warns about missing sources. Validate the exact target
   // and complete pinned inventory before signing can change executable bytes.
