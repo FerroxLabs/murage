@@ -5,6 +5,7 @@
 #include <vswriter.h>
 #include <vsbackup.h>
 #include <sddl.h>
+#include <aclapi.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -46,8 +47,8 @@ std::wstring finalPath(HANDLE h) {
   require(length > 0 && length < buffer.size(), HRESULT_FROM_WIN32(ERROR_BAD_PATHNAME));
   return {buffer.data(), length};
 }
-Handle openRead(const std::wstring& path, bool directory, bool pin = false) {
-  Handle h(CreateFileW(path.c_str(), directory ? FILE_READ_ATTRIBUTES : GENERIC_READ,
+Handle openRead(const std::wstring& path, bool directory, bool pin = false, bool security = false) {
+  Handle h(CreateFileW(path.c_str(), (directory ? FILE_READ_ATTRIBUTES : GENERIC_READ) | (security ? READ_CONTROL : 0),
     FILE_SHARE_READ | FILE_SHARE_WRITE | (pin ? 0 : FILE_SHARE_DELETE), nullptr, OPEN_EXISTING,
     FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_FLAG_SEQUENTIAL_SCAN), nullptr));
   FILE_ATTRIBUTE_TAG_INFO info{};
@@ -134,7 +135,8 @@ void copyEntry(const std::wstring& source, const std::wstring& destination, bool
                const ApprovedCapture& request, CaptureReceipt& receipt, unsigned depth) {
   checkCancel(request);
   require(depth <= 64 && ++receipt.entries <= request.maxEntries, HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
-  auto input = openRead(source, directory);
+  auto input = openRead(source, directory, false, request.callerReadToken != nullptr);
+  if (request.callerReadToken) hr(captureReadAccess(input.value, request.callerReadToken, directory));
   const auto id = identity(input.value);
   require(id.VolumeSerialNumber == receipt.sourceIdentity.VolumeSerialNumber);
   if (directory) {
@@ -178,6 +180,22 @@ void createPrivate(const std::wstring& path) {
 }
 }
 
+HRESULT captureReadAccess(HANDLE object, HANDLE callerToken, bool directory) {
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  const DWORD error = GetSecurityInfo(object, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+    nullptr, nullptr, nullptr, nullptr, &descriptor);
+  if (error != ERROR_SUCCESS) return HRESULT_FROM_WIN32(error);
+  GENERIC_MAPPING mapping{FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS};
+  DWORD desired = directory ? FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_TRAVERSE : FILE_READ_DATA | FILE_READ_ATTRIBUTES;
+  DWORD granted = 0, size = sizeof(PRIVILEGE_SET) + 16*sizeof(LUID_AND_ATTRIBUTES);
+  std::vector<BYTE> privileges(size); BOOL allowed = FALSE;
+  const BOOL checked = AccessCheck(descriptor, callerToken, desired, &mapping,
+    reinterpret_cast<PRIVILEGE_SET*>(privileges.data()), &size, &granted, &allowed);
+  const DWORD checkError = checked ? ERROR_SUCCESS : GetLastError(); LocalFree(descriptor);
+  if (!checked) return HRESULT_FROM_WIN32(checkError);
+  return allowed ? S_OK : E_ACCESSDENIED;
+}
+
 CaptureReceipt captureApprovedInstallation(const ApprovedCapture& request, SaveReceipt save, void* context) {
   CaptureReceipt receipt{}; receipt.nonce = request.nonce;
   Com<IVssBackupComponents> backup;
@@ -200,6 +218,7 @@ CaptureReceipt captureApprovedInstallation(const ApprovedCapture& request, SaveR
     const auto relative = source.substr(receipt.volume.size()); require(!relative.empty());
     const auto split = request.destination.find_last_of(L'\\'); require(split != std::wstring::npos && safePart(request.destination.substr(split+1)));
     auto destinationPins = pinPath(request.destination.substr(0, split));
+    if (request.bindDestinationParent) require(sameIdentity(identity(destinationPins.back().value), request.destinationParentIdentity), HRESULT_FROM_WIN32(ERROR_FILE_INVALID));
     const auto destination = finalPath(destinationPins.back().value) + L"\\" + request.destination.substr(split+1);
     require(!within(destination, source) && !within(source, destination));
     ULARGE_INTEGER free{}; win(GetDiskFreeSpaceExW(finalPath(destinationPins.back().value).c_str(), &free, nullptr, nullptr));
@@ -216,7 +235,8 @@ CaptureReceipt captureApprovedInstallation(const ApprovedCapture& request, SaveR
     require(properties.m_pwszSnapshotDeviceObject && properties.m_pwszOriginalVolumeName && fold(properties.m_pwszOriginalVolumeName) == fold(receipt.volume));
     require(IsEqualGUID(properties.m_SnapshotId, receipt.snapshotId));
     const std::wstring snapshot = std::wstring(properties.m_pwszSnapshotDeviceObject) + L"\\" + relative;
-    auto capturedRoot = openRead(snapshot, true);
+    auto capturedRoot = openRead(snapshot, true, false, request.callerReadToken != nullptr);
+    if (request.callerReadToken) hr(captureReadAccess(capturedRoot.value, request.callerReadToken, true));
     require(sameIdentity(identity(capturedRoot.value), receipt.sourceIdentity), HRESULT_FROM_WIN32(ERROR_FILE_INVALID));
     require(sameIdentity(identity(sourcePins.back().value), request.sourceIdentity) && finalPath(sourcePins.back().value) == source);
     receipt.captureTime = properties.m_tsCreationTimestamp; save(receipt, context);
