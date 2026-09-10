@@ -92,7 +92,7 @@ function probeEnvironment(home: string): NodeJS.ProcessEnv {
   return env;
 }
 export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch) => {
-  if (process.platform !== "darwin" && !(process.platform === "linux" && process.arch === "x64")) throw Object.assign(new Error("Native Fuigo update isolation is not qualified on this platform. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
+  if (!(FUIGO_TARGETS as readonly string[]).includes(`${process.platform}-${process.arch}`)) throw Object.assign(new Error("Native Fuigo update isolation is not qualified on this platform. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
   const home = await mkdtemp(join(scratch, "probe-"));
   let cleanupSafe = true, isolation: FuigoIsolation | undefined;
   let proof: FuigoProof | undefined;

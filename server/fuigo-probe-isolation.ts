@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -14,12 +14,12 @@ export interface FuigoIsolation {
 const unavailable = () => Object.assign(new Error("Private Fuigo update isolation is unavailable on this computer. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
 async function nativeHelper(): Promise<string> {
   const target = `${process.platform}-${process.arch}`;
-  if (target !== "linux-x64") throw unavailable();
+  if (!["linux-x64", "win32-x64"].includes(target)) throw unavailable();
   const source = process.env.MURAGE_RESOURCES_PATH
     ? join(process.env.MURAGE_RESOURCES_PATH, "fuigo-probe")
     : fileURLToPath(new URL(`../dist-native/fuigo-probe/${target}`, import.meta.url));
   try {
-    const root = await realpath(source), executable = "launcher";
+    const root = await realpath(source), executable = process.platform === "win32" ? "launcher.exe" : "launcher";
     const cli = join(root, executable), manifestPath = join(root, "manifest.json");
     const [binaryStat, manifestStat] = await Promise.all([lstat(cli), lstat(manifestPath)]);
     if (!binaryStat.isFile() || binaryStat.isSymbolicLink() || binaryStat.size > 8 * 1024 * 1024 || !manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size > 65536) throw unavailable();
@@ -39,6 +39,26 @@ export async function createFuigoIsolation(cli: string, home: string, env: NodeJ
     catch { throw unavailable(); }
     return { command: "/usr/bin/sandbox-exec", prefix: ["-f", policy, cli], cleanup: async () => {} };
   }
-  if (process.platform !== "linux" || process.arch !== "x64") throw unavailable();
-  return { command: await nativeHelper(), prefix: ["run", cli, home], cleanup: async () => {} };
+  const helper = await nativeHelper();
+  if (process.platform === "linux") return { command: helper, prefix: ["run", cli, home], cleanup: async () => {} };
+  const name = `murage-fuigo-probe-${randomUUID()}`;
+  let sid: string;
+  try {
+    sid = (await exec(helper, ["setup", cli, home, name], { cwd: home, env, windowsHide: true, timeout: 15000, maxBuffer: 65536 })).stdout.trim();
+  } catch (error) {
+    if (String((error as { stderr?: unknown }).stderr ?? "").includes("FUIGO_PROBE_CLEANUP")) throw Object.assign(new Error("Fuigo verification profile cleanup is pending."), { code: "FUIGO_PROBE_CLEANUP", profileName: name });
+    throw unavailable();
+  }
+  if (!/^S-1-15-2-(?:\d+-)*\d+$/.test(sid)) throw Object.assign(new Error("Fuigo verification profile identity could not be confirmed; cleanup is pending."), { code: "FUIGO_PROBE_CLEANUP", profileName: name });
+  let cleaned = false;
+  const cleanup = async () => {
+    if (cleaned) return;
+    try { await exec(helper, ["cleanup", name, sid], { cwd: home, env, windowsHide: true, timeout: 15000, maxBuffer: 65536 }); cleaned = true; }
+    catch { throw Object.assign(new Error("Fuigo verification profile cleanup is pending."), { code: "FUIGO_PROBE_CLEANUP", profileName: name, profileSid: sid }); }
+  };
+  try {
+    const [original, copied] = await Promise.all([readFile(cli), readFile(join(home, "probe-fuigo.exe"))]);
+    if (!original.equals(copied)) throw unavailable();
+  } catch (error) { await cleanup(); throw error; }
+  return { command: helper, prefix: ["run", name, sid, home], cleanup };
 }
