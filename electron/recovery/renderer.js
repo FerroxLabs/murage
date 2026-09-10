@@ -10,6 +10,11 @@ const errors = {
   RESTORE_REVIEW_REQUIRED: "The restored installation is paused for recovery review.",
   NO_RESTORE_TO_ROLL_BACK: "No retained restore transaction was found for this installation.",
   RECOVERY_BUSY: "A recovery operation is already in progress.",
+  RECOVERY_CAPTURE_CANCELLED: "Recovery was cancelled. The original installation and startup selection remain unchanged.",
+  RECOVERY_CAPTURE_UNAVAILABLE: "Windows recovery capture is unavailable in this installation. Keep the original and use an existing backup or contact support.",
+  RECOVERY_CAPTURE_FAILED: "The local recovery copy could not be completed safely. Keep the original and any retained recovery files, then check diagnostics.",
+  RECOVERY_CAPTURE_TIMEOUT: "Windows recovery did not finish in time. The startup selection was not changed. Keep retained files and check diagnostics.",
+  INSTALLATION_SELECTION_INVALID: "The saved installation or new destination could not be verified. Retained files were not deleted. Keep them and check diagnostics.",
   REVIEW_STATE_CHANGED: "The installation changed after review. Review it again before opening.",
   RESTORE_WORK_NOT_PAUSED: "Some work is still enabled. Keep the installation stopped and inspect recovery diagnostics.",
 };
@@ -31,6 +36,14 @@ function render(state) {
   byId("error").textContent = error;
   byId("error").hidden = !error;
   byId("preview").hidden = !state.selection;
+  byId("separate-recovery").hidden = !state.separateAvailable;
+  byId("capture-recovery").hidden = !state.captureAvailable;
+  byId("retained-destination").hidden = !state.retainedDataDirectory;
+  byId("retained-destination").textContent = state.retainedDataDirectory ? "Separate recovery files retained at: " + state.retainedDataDirectory : "";
+  byId("separate-destination").hidden = !state.selection?.separate;
+  byId("separate-destination").textContent = state.selection?.separate ? "New installation: " + state.selection.destination + ". The original remains unchanged. Murage will restart here for paused review." : "";
+  byId("restore").hidden = !!state.selection?.separate;
+  byId("restore-separate").hidden = !state.selection?.separate;
   byId("activation-review").hidden = !state.review;
   if (state.review) byId("activation-summary").textContent = "Reviewed " + state.review.files + " files. Engines are disabled, schedules are paused, and connections use fresh storage.";
   if (state.selection) {
@@ -39,7 +52,12 @@ function render(state) {
     byId("snapshot").textContent = state.selection.snapshotId;
     byId("hash").textContent = state.selection.sha256;
   }
-  for (const button of buttons) button.disabled = pending || state.busy || (!state.available && !["retry","diagnostics"].includes(button.dataset.action)) || (button.dataset.action === "restore" && !state.selection) || (button.dataset.action === "activate" && !state.review);
+  for (const button of buttons) {
+    const action = button.dataset.action;
+    const separate = ["choose-separate-backup", "restore-separate"].includes(action);
+    button.disabled = pending || state.busy || (action === "capture-separate" ? !state.captureAvailable : separate ? !state.separateAvailable : !state.available && !["retry","diagnostics"].includes(action)) ||
+      (action === "restore" && (!state.selection || state.selection.separate)) || (action === "restore-separate" && !state.selection?.separate) || (action === "activate" && !state.review);
+  }
   if (pending || state.busy) byId("status").textContent = "Working on the selected operation. Large backups may take several minutes.";
   else if (error) byId("status").textContent = "";
   else if (state.result?.ok) byId("status").textContent = state.result.status === "reviewed-engines-disabled" ? "Review approved. Restarting with engines and schedules disabled." : state.result.status === "restored-review-required" ? "Restore completed and remains paused. Previous data: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Previous installation restored. Candidate retained at: " + (state.result.retainedCandidate || "see receipt") : "Backup saved: " + state.result.path;
@@ -50,7 +68,7 @@ async function action(name) {
   pending = true;
   if (current) render(current);
   try {
-    const state = await window.murageRecovery.action(name, name === "restore" ? current?.selection?.id : name === "activate" ? current?.review?.id : undefined);
+    const state = await window.murageRecovery.action(name, ["restore", "restore-separate"].includes(name) ? current?.selection?.id : name === "activate" ? current?.review?.id : undefined);
     pending = false; render(state);
   } catch {
     pending = false;
