@@ -1,0 +1,296 @@
+
+ RUN  v4.1.10 /Volumes/Mando/WaylandBots/murage-astra/.planning/0150-recipient-permission
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +0ms create source
+
+ ↓ server/index.test.ts > harness HTTP API > P20 refuses checkpoint restoration while another bot owns the same canonical project folder
+ ↓ server/index.test.ts > harness HTTP API > persists structured provider 402 credit guidance from the real ACP error fold without raw secrets
+ ↓ server/index.test.ts > harness HTTP API > rejects non-loopback authorities while accepting IPv4 and IPv6 loopback forms
+ ↓ server/index.test.ts > harness HTTP API > warms the skill index at startup, before anyone asks for it
+ ↓ server/index.test.ts > harness HTTP API > identifies itself on /api/health
+ ↓ server/index.test.ts > harness HTTP API > serves packaged UI assets and preserves API 404s
+ ↓ server/index.test.ts > harness HTTP API > rejects malformed and oversized JSON bodies without hanging
+ ↓ server/index.test.ts > harness HTTP API > seeds one starter bot with its greeting
+ ↓ server/index.test.ts > harness HTTP API > projects privacy-safe live team-map metadata
+ ↓ server/index.test.ts > harness HTTP API > rejects non-object bot and channel create bodies without writing records
+ ↓ server/index.test.ts > harness HTTP API > adds and removes room members through PATCH
+ ↓ server/index.test.ts > harness HTTP API > refuses to empty a room's roster
+ ↓ server/index.test.ts > harness HTTP API > refuses a room whose every member is archived
+ ↓ server/index.test.ts > harness HTTP API > deduplicates repeated room members while preserving their first-seen order
+ ↓ server/index.test.ts > harness HTTP API > keeps direct-message channels a fixed pair at the API boundary
+ ↓ server/index.test.ts > harness HTTP API > hands the lead to a remaining member when the lead leaves the room
+ ↓ server/index.test.ts > harness HTTP API > persists room setup and blocks the first message until it is finished
+ ↓ server/index.test.ts > harness HTTP API > creates an MCP-ready channel in one request without exposing partial setup
+ ↓ server/index.test.ts > harness HTTP API > returns the canonical stored user message for direct and channel sends
+ ↓ server/index.test.ts > harness HTTP API > deduplicates direct send retries by sendId, including after the accepted task becomes inactive
+ ↓ server/index.test.ts > harness HTTP API > deduplicates channel send retries by sendId
+ ↓ server/index.test.ts > harness HTTP API > rejects an entire channel roster when any requested member is unknown
+ ↓ server/index.test.ts > harness HTTP API > creates, switches, renames and deletes independent channel tasks
+ ↓ server/index.test.ts > harness HTTP API > lets a Chief create operators from its direct and channel tasks but not from channels it cannot access
+ ↓ server/index.test.ts > harness HTTP API > rejects null and array task, channel, and bot mutation bodies
+ ↓ server/index.test.ts > harness HTTP API > keeps bot-to-bot channels single-threaded and blocks task changes on an open approval
+ ↓ server/index.test.ts > harness HTTP API > keeps direct-message channels folderless at the API boundary
+ ↓ server/index.test.ts > harness HTTP API > rejects working-folder changes after a room has pinned its first turn
+ ↓ server/index.test.ts > harness HTTP API > renames rooms through a bounded non-empty name
+ ↓ server/index.test.ts > harness HTTP API > gates Telegram pairing and token changes behind desktop authority and explicit revocation
+ ↓ server/index.test.ts > harness HTTP API > refuses leadership on an incapable engine without persisting other changes
+ ↓ server/index.test.ts > harness HTTP API > permits capable leadership and explicit demotion but blocks an incapable engine switch
+ ↓ server/index.test.ts > harness HTTP API > distinguishes persistent agents capability revocation from transport loss and recovers on a fresh turn
+ ↓ server/index.test.ts > harness HTTP API > routes approved image MCP requests into owned artifacts without exposing keys or crossing conversations
+ ↓ server/index.test.ts > harness HTTP API > routes scoped native search without exposing credentials or allowing retired turns
+ ↓ server/index.test.ts > harness HTTP API > keeps native search keys write-only while preserving explicit provider choice
+ ↓ server/index.test.ts > harness HTTP API > describes the configured fleet, shadows included
+ ↓ server/index.test.ts > harness HTTP API > selects the available fake engine by default while ignoring fixture shadows
+ ↓ server/index.test.ts > harness HTTP API > searches transcripts and exports a conversation
+ ↓ server/index.test.ts > harness HTTP API > stores a room reply as a flat reference and rejects foreign targets
+ ↓ server/index.test.ts > harness HTTP API > creates, patches, and deletes a bot
+ ↓ server/index.test.ts > harness HTTP API > elects one Chief of Staff per section and preserves other section Chiefs
+ ↓ server/index.test.ts > harness HTTP API > files a bot as an Individual Assistant and refuses the role to a Chief
+ ↓ server/index.test.ts > harness HTTP API > files a sidebar section atomically, trims and dedupes, and preserves its Chief
+ ↓ server/index.test.ts > harness HTTP API > rejects a sidebar section Chief collision without changing any bot
+ ↓ server/index.test.ts > harness HTTP API > rejects malformed or unavailable sidebar section targets without partially filing bots
+ ↓ server/index.test.ts > harness HTTP API > explains when archived room members cannot respond
+ ↓ server/index.test.ts > harness HTTP API > saves, serves, and guards image attachments
+ ↓ server/index.test.ts > harness HTTP API > streams shared documents safely into the local attachments directory
+ ↓ server/index.test.ts > harness HTTP API > persists only app-owned bot avatars and supported crop shapes
+ ↓ server/index.test.ts > harness HTTP API > limits paired profile writes to validated profile fields and broadcasts the result
+ ↓ server/index.test.ts > harness HTTP API > exports every visible bot and imports the team without creating a room
+ ↓ server/index.test.ts > harness HTTP API > selective package export includes only chosen bots and paused routines and rejects stale previews
+ ↓ server/index.test.ts > harness HTTP API > exports selected installed skill files as a reviewed ZIP through the actual API
+ ↓ server/index.test.ts > harness HTTP API > selective package export blocks embedded credentials without returning preview markdown
+ ↓ server/index.test.ts > harness HTTP API > selective package export requires desktop authority and explicit acknowledgement of ambiguous warnings
+ ↓ server/index.test.ts > harness HTTP API > imports a team as a project: one room, on a folder
+ ↓ server/index.test.ts > harness HTTP API > installs a complete bot package with a Chief, room, playbook, connector intent, and paused routine
+ ↓ server/index.test.ts > harness HTTP API > reports the skills a package import could not deliver
+ ↓ server/index.test.ts > harness HTTP API > restores the workspace Chief to the workspace chair, and refuses to seat a second one
+ ↓ server/index.test.ts > harness HTTP API > tells the assistant why it has no connectors, and what the profile says its job needs
+ ↓ server/index.test.ts > harness HTTP API > tells a bot answering in a ROOM why it has no connectors, and what its profile needs
+ ↓ server/index.test.ts > harness HTTP API > the scout reads a folder, proposes an importable team, and creates nothing until the human imports
+ ↓ server/index.test.ts > harness HTTP API > team import is additive-only: smuggled grants, claimed ids, and re-imports never touch existing records
+ ↓ server/index.test.ts > harness HTTP API > keeps the rest of a duplicate's fields when the source engine is offline
+ ↓ server/index.test.ts > harness HTTP API > rejects an unknown effort value even while the engine is offline
+ ↓ server/index.test.ts > harness HTTP API > buzzes when an attended turn dies before it can start
+ ↓ server/index.test.ts > harness HTTP API > reports a failed routine once, not twice
+ ↓ server/index.test.ts > harness HTTP API > stays silent when a delegated sub-turn is the thing that could not start
+ ↓ server/index.test.ts > harness HTTP API > leaves a failed credential-card continuation on the card without buzzing
+ ↓ server/index.test.ts > harness HTTP API > redacts the failure before it becomes a notification banner
+ ↓ server/index.test.ts > harness HTTP API > creates a fully configured bot in one request and greets with its final name
+ ↓ server/index.test.ts > harness HTTP API > opts MCP-style model writes into the current live catalog without narrowing general writes
+ ↓ server/index.test.ts > harness HTTP API > rejects incomplete model selections instead of persisting a broken bot
+ ↓ server/index.test.ts > harness HTTP API > refuses to switch a bot's active task while its turn is running
+ ↓ server/index.test.ts > harness HTTP API > rechecks bot state after a delayed body for tasks
+ ↓ server/index.test.ts > harness HTTP API > rechecks bot state after a delayed body for active-branch
+ ↓ server/index.test.ts > harness HTTP API > rechecks room state after a delayed body for POST tasks
+ ↓ server/index.test.ts > harness HTTP API > rechecks room state after a delayed body for PATCH tasks
+ ↓ server/index.test.ts > harness HTTP API > updates only read metadata through the remote bots read route
+ ↓ server/index.test.ts > harness HTTP API > updates only read metadata through the remote groups read route
+ ↓ server/index.test.ts > harness HTTP API > does not expose or mutate a hidden bot through its read marker
+ ↓ server/index.test.ts > harness HTTP API > does not expose or mutate a private bot-to-bot room through its read marker
+ ↓ server/index.test.ts > harness HTTP API > rejects coerced computer destinations without applying any profile fields
+ ↓ server/index.test.ts > harness HTTP API > rejects coerced cloudBackend destinations without applying any profile fields
+ ↓ server/index.test.ts > harness HTTP API > refuses to interrupt a conversation after its active task changed
+ ↓ server/index.test.ts > harness HTTP API > pins sends to the expected task and offers compact switch responses
+ ↓ server/index.test.ts > harness HTTP API > leaves a bot with no effort level untouched
+ ↓ server/index.test.ts > harness HTTP API > round-trips an effort level and clears it when the key is dropped
+ ↓ server/index.test.ts > harness HTTP API > P08 sidebar hiding preserves bot roles and routing eligibility
+ ↓ server/index.test.ts > harness HTTP API > P07 computer destinations round trip through the API and clear persisted Auto
+ ↓ server/index.test.ts > harness HTTP API > P07 explicit browser suppresses desktop mounts despite stale VPS autostart preference
+ ↓ server/index.test.ts > harness HTTP API > P07 Auto reset requires acknowledgement when unattended host control is possible
+ ↓ server/index.test.ts > harness HTTP API > grants Auto on this computer only through the warning acknowledgement
+ ↓ server/index.test.ts > harness HTTP API > stores only known approval-review modes
+ ↓ server/index.test.ts > harness HTTP API > offers an idempotent stop boundary for active local turns
+ ↓ server/index.test.ts > harness HTTP API > persists an answered onboarding card
+ ↓ server/index.test.ts > harness HTTP API > validates approval decisions and reports a request that is no longer open
+ ↓ server/index.test.ts > harness HTTP API > answers a room approval whose turn is already over instead of stranding the room
+ ↓ server/index.test.ts > harness HTTP API > closes the approvals a cancelled turn can no longer answer
+ ↓ server/index.test.ts > harness HTTP API > rejects an empty message and explains an unavailable provider
+ ↓ server/index.test.ts > harness HTTP API > refuses to fork a message when the provider is unavailable, without mutating
+ ↓ server/index.test.ts > harness HTTP API > switches the active branch and reports the new leaf
+ ↓ server/index.test.ts > harness HTTP API > refuses a box token the provider rejects, at the point of pasting
+ ↓ server/index.test.ts > harness HTTP API > saves config keys write-only and reports booleans
+ ↓ server/index.test.ts > harness HTTP API > round-trips the UI language and clears it back to system
+ ↓ server/index.test.ts > harness HTTP API > keeps an active turn alive when the UI language changes
+ ↓ server/index.test.ts > harness HTTP API > validates and persists the global room turn timeout
+ ↓ server/index.test.ts > harness HTTP API > mounts the verification skill into a real turn when its trigger appears
+ ↓ server/index.test.ts > harness HTTP API > mounts the verification skill only for the latest channel request
+ ↓ server/index.test.ts > harness HTTP API > keeps Teach a skill off by default and persists an explicit opt-in
+ ↓ server/index.test.ts > harness HTTP API > refuses to delete a bot while it owns an active channel turn
+ ↓ server/index.test.ts > harness HTTP API > creates, edits, lists, and deletes scheduled multi-bot calls
+ ↓ server/index.test.ts > harness HTTP API > opens one calendar room and posts the scheduled seed to everyone
+ ↓ server/index.test.ts > harness HTTP API > refuses to delete a bot while one of its routines is active
+ ↓ server/index.test.ts > harness HTTP API > stops a local bot's exact channel and routine work through the emergency endpoint
+ ↓ server/index.test.ts > harness HTTP API > mounts a scoped unified browser capability and the safety prompt in room turns
+ ↓ server/index.test.ts > harness HTTP API > retires an in-flight unified browser binding and never dispatches after its bot is deleted
+ ↓ server/index.test.ts > harness HTTP API > keeps a setup-cancelled bot owned until the provider handshake is retired
+ ↓ server/index.test.ts > harness HTTP API > does not dispatch a room turn stopped through its bot during unified browser binding
+ ↓ server/index.test.ts > harness HTTP API > revokes active browser access when the global feature is disabled
+ ↓ server/index.test.ts > harness HTTP API > applies browser disable effects before reporting a removed-profile cleanup failure
+ ↓ server/index.test.ts > harness HTTP API > reconciles a committed crash-stale bot reference before ACK and profile-id reuse
+ ↓ server/index.test.ts > harness HTTP API > revokes live browser access even when clearing a removed profile reference cannot persist
+ ↓ server/index.test.ts > harness HTTP API > rejects bot deletion with no teardown when the cleanup journal is unreadable
+ ↓ server/index.test.ts > harness HTTP API > clears bot references when a named browser profile is removed
+ ↓ server/index.test.ts > harness HTTP API > does not remove a browser profile from a bot whose turn is active
+ ↓ server/index.test.ts > harness HTTP API > blocks new profile claims while provider validation commits a profile removal
+ ↓ server/index.test.ts > harness HTTP API > keeps shared Local VM mode by default and resolves isolated targets per bot when enabled
+ ↓ server/index.test.ts > harness HTTP API > keeps an active turn alive when only the room timeout changes
+ ↓ server/index.test.ts > harness HTTP API > tracks and interrupts the whole queued channel turn
+ ↓ server/index.test.ts > harness HTTP API > tracks and cancels a queued channel credential continuation before provider dispatch
+ ↓ server/index.test.ts > harness HTTP API > resolves trusted engine setup recipes only for the desktop owner
+ ↓ server/index.test.ts > harness HTTP API > enforces owner connected-app limits at the real internal relay and revokes stale tokens
+ ↓ server/index.test.ts > harness HTTP API > lets an active Chief inspect and update subordinate profiles without granting security settings
+ ↓ server/index.test.ts > harness HTTP API > keeps chat-created routines inert until their durable card is confirmed
+ ↓ server/index.test.ts > harness HTTP API > only enables the exact learned-skill proposal a current client reviewed
+ ↓ server/index.test.ts > harness HTTP API > validates the non-secret VPS alias and keeps old bots on Box by default
+ ↓ server/index.test.ts > harness HTTP API > validates a Composio project key, creates a Session, and keeps externally stored secrets off disk
+ ↓ server/index.test.ts > harness HTTP API > stores the credentials file with owner-only permissions
+ ↓ server/index.test.ts > harness HTTP API > stores and echoes the user profile (not write-only, unlike keys)
+ ↓ server/index.test.ts > harness HTTP API > creates an independent webhook, accepts a delivery, deduplicates it, and rotates its secret
+ ↓ server/index.test.ts > harness HTTP API > stores OpenCode Go credentials as a configured-only status
+ ↓ server/index.test.ts > harness HTTP API > stores the avatar image key as configured-only status
+ ↓ server/index.test.ts > harness HTTP API > rejects a non-string OpenCode Go API key
+ ↓ server/index.test.ts > harness HTTP API > never hands a client the provider session cursors
+ ↓ server/index.test.ts > harness HTTP API > validates the event inspector limit at the HTTP boundary
+ ↓ server/index.test.ts > harness HTTP API > 404s unknown routes with the route in the error
+ ↓ server/index.test.ts > section context API > keeps user-managed briefs isolated by live section and clears them explicitly
+ ↓ server/index.test.ts > section context API > rejects missing, unknown, invalid, and oversized section context writes
+ ↓ server/index.test.ts > bot memory API > reads empty memory for a fresh bot and 404s a bot that does not exist
+ ↓ server/index.test.ts > bot memory API > round-trips a MEMORY.md edit and rejects non-string or oversized text
+ ↓ server/index.test.ts > bot memory API > lists memory/ topic files and serves one by (possibly encoded) name
+ ↓ server/index.test.ts > bot memory API > refuses every coat of path traversal without reading the target
+ ↓ server/index.test.ts > message pages > returns the whole transcript when nothing is asked for
+ ↓ server/index.test.ts > message pages > returns only the newest n when asked
+ ↓ server/index.test.ts > message pages > pages backwards from a message the client already holds
+ ↓ server/index.test.ts > message pages > returns a bounded transcript window around a search result
+ ↓ server/index.test.ts > message pages > refuses a cursor or size it cannot page from
+ ↓ server/index.test.ts > message pages > 404s an image on a message that has none
+ ↓ server/index.test.ts > message pages > 404s an image on a conversation that does not exist, without inventing one
+ ↓ server/index.test.ts > resumable event stream > hands out a cursor and numbers every frame
+ ↓ server/index.test.ts > resumable event stream > sends browser-visible heartbeats without moving the replay cursor
+ ↓ server/index.test.ts > resumable event stream > replays exactly what a disconnected client missed
+ ↓ server/index.test.ts > resumable event stream > resumes a browser EventSource through Last-Event-ID alone
+ ↓ server/index.test.ts > resumable event stream > prefers a newer Last-Event-ID over the EventSource URL's stale cursor
+ ↓ server/index.test.ts > resumable event stream > keeps delivering everything else when a client declines screen frames
+ ↓ server/index.test.ts > resumable event stream > refuses a cursor it cannot honour instead of replaying the wrong run
+ ↓ server/index.test.ts > instance CLI override API > engine enablement is desktop-only, typed and reflected by the live registry
+ ↓ server/index.test.ts > instance CLI override API > round-trips a set, clear, and rejects bad input
+ ↓ server/index.test.ts > instance CLI override API > echoes a path-ish name back as the only cli candidate
+ ↓ server/index.test.ts > instance CLI override API > reports a missing binary as a failed probe with install info
+ ↓ server/index.test.ts > instance CLI override API > probes the complete wrapper with fixed arguments and no inherited credentials
+ ↓ server/index.test.ts > instance CLI override API > reports excessive probe output without presenting install guidance
+ ↓ server/index.test.ts > instance CLI override API > rejects overlapping provider configuration writes
+ ↓ server/index.test.ts > instance CLI override API > refuses both execution-policy routes on every surface but the desktop
+ ↓ server/index.test.ts > instance CLI override API > cannot be unlocked from the query string once the door marks the request remote
+ ↓ server/index.test.ts > instance CLI override API > refuses a forged desktop marker at every execution-class route
+ ↓ server/index.test.ts > instance CLI override API > hands a dev renderer the secret, and only ever over loopback
+ ↓ server/index.test.ts > computer control API (who is driving) > starts disengaged
+ ↓ server/index.test.ts > computer control API (who is driving) > take → held, broadcast on the wire, release → disengaged
+ ↓ server/index.test.ts > computer control API (who is driving) > atomically owns and conditionally releases a workspace lease without returning its id
+ ↓ server/index.test.ts > computer control API (who is driving) > rejects malformed workspace leases without echoing them
+ ↓ server/index.test.ts > computer control API (who is driving) > refuses an unknown action and an unknown bot
+ ↓ server/index.test.ts > computer control API (who is driving) > refuses a form-shaped POST — control mutations are JSON-only
+ ↓ server/index.test.ts > computer control API (who is driving) > keeps the internal who-is-driving endpoint behind a turn capability
+ ↓ server/index.test.ts > internal capability authority > registers verified task files through the live agent capability without accepting foreign paths
+ ↓ server/index.test.ts > internal capability authority > imports role-aware Markdown package intent without automatically appointing a Chief
+ ↓ server/index.test.ts > internal capability authority > applies all three starters through the reviewed transaction without changing existing roles
+ ↓ server/index.test.ts > internal capability authority > previews and imports reviewed packages additively with inert defaults through the actual API
+ ↓ server/index.test.ts > internal capability authority > binds the unified browser relay and exact-profile cleanup to its live computer claim on every platform
+ ↓ server/index.test.ts > internal capability authority > keeps chat account aliases distinct through cards, OAuth, status and capability expiry
+ ↓ server/index.test.ts > internal capability authority > accepts actual harness connector and computer calls from their exact live mounts
+ ↓ server/index.test.ts > internal capability authority > binds agents calls to their actual bot, thread and route family
+ ↓ server/index.test.ts > internal capability authority > rejects forged recursion depth before queueing any delegation
+ ↓ server/index.test.ts > internal capability authority > revokes stopped and replaced generations without revoking the new turn
+ ↓ server/index.test.ts > internal capability authority > revalidates a capability after a delayed HTTP body before creating a card
+ ↓ server/index.test.ts > internal capability authority > keeps an event create budget across credential resumption while ordinary human turns retain their allowance
+ ↓ server/index.test.ts > internal capability authority > bounds concurrent creates by the server-owned generation budget
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +1964ms create recipient
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +4650ms configure source
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +4849ms configure recipient
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +4938ms start source and obtain mounted capability
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +7487ms queue delegation
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +7512ms await naturally dispatched recipient mount
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8278ms confirm source settled and recipient active
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8284ms connect recipient permission broker
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8286ms permission sent; await recipient decision
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8296ms recipient card held with no answer; send owner deny
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8305ms owner deny accepted; await broker reply
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8305ms verify sender has no recipient approval
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8308ms all permission assertions passed
+N6 recipientAuto=false +8308ms cleanup recipient
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8311ms cleanup source
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8314ms delete recipient
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8381ms delete source
+
+stdout | server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…'
+N6 recipientAuto=false +8400ms cleanup complete
+
+ ✓ server/index.test.ts > internal capability authority > N6 delegated recipient permission 'holds recipient card despite sender A…' 8412ms
+ ↓ server/index.test.ts > internal capability authority > N6 delegated recipient permission 'allows recipient request despite send…'
+ ↓ server/index.test.ts > internal capability authority > rejects approval-time reuse after the source provider naturally completes
+ ↓ server/index.test.ts > internal capability authority > bounds handoffs and lets a fresh source turn read its historical receipt
+ ↓ server/index.test.ts > internal capability authority > revokes room-member authority when its room stops
+ ↓ server/index.test.ts > internal capability authority > revokes authority on delete before a retired proxy can act
+ ↓ server/index.test.ts > internal capability authority > revokes authority on model before a retired proxy can act
+ ↓ server/index.test.ts > internal capability authority > revokes authority on reload before a retired proxy can act
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > does not push a hidden bot's frames to a stream that did not opt out
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > filters the replay buffer too, so a reconnect is not the way back in
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > scopes /api/search in SQL rather than after LIMIT
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > refuses the direct reads that a harvested thread id used to unlock
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > does not lose the first messages of a brand-new conversation
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > hydrates /api/bots with the same workspace the stream describes
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > tells the renderer which surface it is on, and cannot be talked out of it
+ ↓ server/index.test.ts > remote surfaces see only the conversations a person can see > keeps a companion scoped even when it appends the desktop marker itself
+ ↓ server/index.test.ts > the Chief of Staff is not replaced by accident > refuses a second Chief and names the one already holding it
+ ↓ server/index.test.ts > the Chief of Staff is not replaced by accident > changes NOTHING when it refuses
+ ↓ server/index.test.ts > the Chief of Staff is not replaced by accident > still lets the SAME bot re-assert the role
+ ↓ server/index.test.ts > the Chief of Staff is not replaced by accident > lets the role move once the incumbent stands down
+ ↓ server/index.test.ts > the Chief of Staff is not replaced by accident > does not block a TEAM LEAD, which is an ordinary handover
+ ↓ server/index.test.ts > new-bot setup conversation > seeds one open question and nothing else to answer
+ ↓ server/index.test.ts > new-bot setup conversation > proposes a speciality on ONE question when the answer is firm
+ ↓ server/index.test.ts > new-bot setup conversation > asks a SECOND question rather than guessing a profile from a thin answer
+ ↓ server/index.test.ts > new-bot setup conversation > never asks a third question, whatever the second answer is
+ ↓ server/index.test.ts > new-bot setup conversation > reaches general chat as an outcome, and stops there
+ ↓ server/index.test.ts > new-bot setup conversation > opens the library as its own outcome, without installing anything
+ ↓ server/index.test.ts > new-bot setup conversation > answers an already-answered card once and only once
+ ↓ server/index.test.ts > new-bot setup conversation > never renames the bot and never installs anything, even on 'profile'
+ ↓ server/index.test.ts > new-bot setup conversation > builds every two-chip card through the shared helper, in the helper's order
+ ↓ server/index.test.ts > new-bot setup conversation > writes no chip label of its own into the server source
+ ↓ server/index.test.ts > new-bot setup conversation > resolves a narrow-check by POSITION, both ways
+ ↓ server/index.test.ts > new-bot setup conversation > refuses a body that names no open question
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 231 skipped (232)
+   Start at  15:58:53
+   Duration  15.40s (transform 1.40s, setup 882ms, import 1.25s, tests 12.71s, environment 0ms)
+

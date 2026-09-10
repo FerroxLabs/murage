@@ -7915,6 +7915,109 @@ describe("internal capability authority", () => {
     }
   });
 
+  it.each([
+    { senderAuto: true, recipientAuto: false, outcome: "holds recipient card despite sender Auto" },
+    { senderAuto: false, recipientAuto: true, outcome: "allows recipient request despite sender manual mode" },
+  ])("N6 delegated recipient permission $outcome", async ({ senderAuto, recipientAuto }) => {
+    const startedAt = Date.now();
+    const stage = (name: string) => console.info(`N6 recipientAuto=${recipientAuto} +${Date.now() - startedAt}ms ${name}`);
+    stage("create source");
+    const source = (await api("POST", "/api/bots", { name: "N6 sender" })).body.bot;
+    stage("create recipient");
+    const recipient = (await api("POST", "/api/bots", { name: "N6 recipient" })).body.bot;
+    let permissionClient: import("node:net").Socket | undefined;
+    try {
+      for (const [bot, autoApprove] of [[source, senderAuto], [recipient, recipientAuto]] as const) {
+        stage(bot.id === source.id ? "configure source" : "configure recipient");
+        const cwd = join(home, `n6-work-${bot.id}`);
+        mkdirSync(cwd);
+        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
+          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+          autoApprove, alwaysAllow: [], autoReview: "off", approvePeerComms: false,
+          computer: "off", browser: false, composio: false, cwd,
+        })).status).toBe(200);
+      }
+      stage("start source and obtain mounted capability");
+      const turn = await startInternalFixtureTurn(source.id);
+      stage("queue delegation");
+      const queued = await fetch(`${BASE}/api/internal/delegate-bot`, {
+        method: "POST", headers: turn.headers,
+        body: JSON.stringify({ fromBotId: source.id, fromThreadId: source.threadId,
+          toBotId: recipient.id, message: "__fixture_hold_authority__ N6 recipient permission", depth: 0 }),
+      });
+      expect(queued.status).toBe(200);
+      expect(await queued.json()).toMatchObject({ queued: true, taskId: expect.any(String) });
+      // Natural source completion is the production queue-drain trigger.
+      rmSync(fakeClaudeDump, { force: true });
+      writeFileSync(join(home, "finish-fake", String(turn.dump.pid)), "finish");
+      stage("await naturally dispatched recipient mount");
+      const recipientDump = await readJsonFileWhenReady<typeof turn.dump>(fakeClaudeDump);
+      expect(recipientDump.pid).not.toBe(turn.dump.pid);
+      const env = recipientDump.mcpConfig.mcpServers.agents.env;
+      expect(env.MURAGE_BOT_ID).toBe(recipient.id);
+      expect(env.MURAGE_THREAD_ID).toBe(recipient.threadId);
+      stage("confirm source settled and recipient active");
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return [state.bots.find((b: { id: string }) => b.id === source.id)?.busy,
+          state.bots.find((b: { id: string }) => b.id === recipient.id)?.busy];
+      }).toEqual([false, true]);
+
+      // Speak the real mounted proxy protocol; this is only an approval
+      // payload, not a file read or command executed by the fixture.
+      const socketPath = recipientDump.mcpConfig.mcpServers.muragebox?.args.at(-1);
+      expect(socketPath).toBeTruthy();
+      const { connect } = await import("node:net");
+      stage("connect recipient permission broker");
+      permissionClient = connect(socketPath!);
+      permissionClient.on("error", () => {});
+      await once(permissionClient, "connect");
+      let received = "";
+      permissionClient.on("data", chunk => { received += chunk.toString(); });
+      const requestId = `n6-recipient-${recipient.id}`;
+      permissionClient.write(JSON.stringify({ t: "ask", id: requestId, tool: "Read",
+        input: { file_path: "N6_SYNTHETIC_PERMISSION_ONLY.txt" } }) + "\n");
+      stage("permission sent; await recipient decision");
+      const messages = async (id: string) => (await api("GET", "/api/bots?messages=100")).body.bots
+        .find((bot: { id: string }) => bot.id === id).messages as Array<{
+          card?: { requestId?: string; tool?: string; title?: string }; tool?: { name?: string };
+        }>;
+      if (recipientAuto) {
+        await expect.poll(() => received).toContain("\n");
+        expect(JSON.parse(received.trim())).toMatchObject({ t: "answer", id: requestId, behavior: "allow" });
+        await expect.poll(async () => (await messages(recipient.id))
+          .some(message => message.tool?.name?.includes("auto-approved Read"))).toBe(true);
+        expect((await messages(recipient.id)).some(message => message.card?.requestId === requestId)).toBe(false);
+      } else {
+        await expect.poll(async () => (await messages(recipient.id))
+          .find(message => message.card?.requestId === requestId)?.card)
+          .toMatchObject({ requestId, tool: "Read", title: "Approval needed" });
+        expect(received).toBe("");
+        stage("recipient card held with no answer; send owner deny");
+        expect((await api("POST", `/api/threads/${recipient.threadId}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
+        stage("owner deny accepted; await broker reply");
+        await expect.poll(() => received).toContain("\n");
+        expect(JSON.parse(received.trim())).toMatchObject({ t: "answer", id: requestId, behavior: "deny" });
+      }
+      stage("verify sender has no recipient approval");
+      const senderMessages = await messages(source.id);
+      expect(senderMessages.some(message => message.card?.requestId === requestId)).toBe(false);
+      expect(senderMessages.some(message => message.tool?.name?.includes("auto-approved Read"))).toBe(false);
+      stage("all permission assertions passed");
+    } finally {
+      stage("cleanup recipient");
+      permissionClient?.destroy();
+      await api("POST", `/api/bots/${recipient.id}/interrupt`);
+      stage("cleanup source");
+      await api("POST", `/api/bots/${source.id}/interrupt`);
+      stage("delete recipient");
+      await desktopApi("DELETE", `/api/bots/${recipient.id}`);
+      stage("delete source");
+      await desktopApi("DELETE", `/api/bots/${source.id}`);
+      stage("cleanup complete");
+    }
+  });
+
   it("rejects approval-time reuse after the source provider naturally completes", async () => {
     const source = (await api("POST", "/api/bots")).body.bot;
     const target = (await api("POST", "/api/bots")).body.bot;
