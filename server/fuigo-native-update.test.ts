@@ -68,6 +68,14 @@ it.skipIf(process.platform === "darwin")("refuses an unqualified isolation platf
   await expect(probeNativeFuigo("not-executed", "1.0.10", directory)).rejects.toMatchObject({ code: "FUIGO_PROBE_UNQUALIFIED" });
   expect(await readdir(directory)).toEqual([]);
 });
+it("retains the Windows unqualified guard before any probe state or execution", async () => {
+  const directory = await root(), descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  try {
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    await expect(probeNativeFuigo("must-not-execute.exe", "1.0.10", directory)).rejects.toMatchObject({ code: "FUIGO_PROBE_UNQUALIFIED" });
+    expect(await readdir(directory)).toEqual([]);
+  } finally { Object.defineProperty(process, "platform", descriptor); }
+});
 it.skipIf(process.platform !== "darwin")("refuses an unexpected request to the synthetic listener and removes probe state", async () => {
   const directory = await root(), cli = join(directory, "fake-native-request");
   await writeFile(cli, ["#!/bin/sh", 'if test "$1" = "--version"; then printf "fuigo 1.0.10\\n"; exit 0; fi',

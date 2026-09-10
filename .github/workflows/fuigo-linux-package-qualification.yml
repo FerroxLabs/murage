@@ -1,0 +1,24 @@
+name: Fuigo Linux package resource qualification
+on:
+  push:
+    branches: [work/0150-updater-linux-integrate]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  resources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Build Linux production launcher only
+        run: node scripts/build-fuigo-probe.mjs
+      - name: Validate compiled package resource and refusal cases
+        env:
+          MURAGE_FUIGO_RESOURCE_CHECK_REAL: '1'
+        run: node --test scripts/fuigo-probe-resources.node-test.mjs
