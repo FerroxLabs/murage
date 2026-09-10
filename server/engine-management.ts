@@ -56,7 +56,7 @@ export class EngineManager {
   }
   private supported(instance: ManagedEngineInstance) {
     const platform=this.deps.platform??process.platform;
-    if (instance.driverKind === "fuigo") return platform === "darwin" && (FUIGO_TARGETS as readonly string[]).includes(`${platform}-${this.deps.arch ?? process.arch}`);
+    if (instance.driverKind === "fuigo") return (platform === "darwin" || (["linux", "win32"].includes(platform) && (this.deps.arch ?? process.arch) === "x64")) && (FUIGO_TARGETS as readonly string[]).includes(`${platform}-${this.deps.arch ?? process.arch}`);
     return instance.driverKind === "codex" && (["darwin", "linux"].includes(platform)
       ||platform==="win32"&&(this.deps.arch??process.arch)==="x64");
   }
