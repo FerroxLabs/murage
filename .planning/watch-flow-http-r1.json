@@ -1,0 +1,30 @@
+{
+  "startedAt": "2026-09-10T08:00:43.780Z",
+  "root": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-watch-http-0dN8Ib",
+  "port": 19659,
+  "node": "v24.20.0",
+  "cases": [
+    "desktop-only source selection; strict relative path; Chief-owned confirmation and duplicate confirm",
+    "real file baseline and unchanged checks produce no Inbox result",
+    "one durable Inbox result opens original Chief thread; notification quiet hours hold",
+    "actual process restart retains checkpoint and deduplicates read/result publication",
+    "four charged checks; no execution tasks/provider budgets; source bytes unchanged by watch"
+  ],
+  "processes": [
+    {
+      "pid": 52287,
+      "exitCode": 0,
+      "signalCode": null
+    },
+    {
+      "pid": 52373,
+      "exitCode": 0,
+      "signalCode": null
+    }
+  ],
+  "fixture": "real server, routine manager, file adapter, confirmations and Inbox; disabled engines; supplied routine clock and notification observer",
+  "status": "passed",
+  "stderr": "",
+  "finishedAt": "2026-09-10T08:00:48.075Z",
+  "cleaned": true
+}

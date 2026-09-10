@@ -1,0 +1,250 @@
+{
+  "config": {
+    "configFile": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e/routine-watch-picker.config.ts",
+    "rootDir": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "../../.planning/watch-picker-r1.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/.planning/watch-picker-r1",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "routine-watch-picker.human.spec.ts"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.57.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "routine-watch-picker.human.spec.ts",
+      "file": "routine-watch-picker.human.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "file choice and confirmation handoff at 390px",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3756,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-10T08:00:46.833Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6ce2de04be78f1f7658d-fff17d84117e2b375a58",
+          "file": "routine-watch-picker.human.spec.ts",
+          "line": 105,
+          "column": 39
+        },
+        {
+          "title": "file choice and confirmation handoff at 820px",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 922,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-10T08:00:51.259Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6ce2de04be78f1f7658d-2e7fe8dd2ee1666698ce",
+          "file": "routine-watch-picker.human.spec.ts",
+          "line": 105,
+          "column": 39
+        },
+        {
+          "title": "file choice and confirmation handoff at 1440px",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 921,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-10T08:00:52.190Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6ce2de04be78f1f7658d-4edb177d777c0cef1493",
+          "file": "routine-watch-picker.human.spec.ts",
+          "line": 105,
+          "column": 39
+        },
+        {
+          "title": "missing working folder is explicit and cannot activate a watch",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 255,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m\n    at /Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e/routine-watch-picker.human.spec.ts:58:125",
+                    "location": {
+                      "file": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e/routine-watch-picker.human.spec.ts",
+                      "column": 125,
+                      "line": 58
+                    },
+                    "snippet": "  56 |   await expect(page.getByRole(\"alert\")).toContainText(\"Choose an existing working folder\");\n  57 |   await expect(page.getByRole(\"button\", { name: \"Review in chat\" })).toBeDisabled(); expect(proposals).toEqual([]);\n> 58 |   await page.keyboard.press(\"Escape\"); expect(await page.evaluate(() => (window as unknown as { closed: boolean }).closed)).toBe(true);\n     |                                                                                                                             ^\n  59 | });\n  60 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e/routine-watch-picker.human.spec.ts",
+                        "column": 125,
+                        "line": 58
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m\n\n  56 |   await expect(page.getByRole(\"alert\")).toContainText(\"Choose an existing working folder\");\n  57 |   await expect(page.getByRole(\"button\", { name: \"Review in chat\" })).toBeDisabled(); expect(proposals).toEqual([]);\n> 58 |   await page.keyboard.press(\"Escape\"); expect(await page.evaluate(() => (window as unknown as { closed: boolean }).closed)).toBe(true);\n     |                                                                                                                             ^\n  59 | });\n  60 |\n    at /Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e/routine-watch-picker.human.spec.ts:58:125"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-09-10T08:00:53.122Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/.planning/watch-picker-r1/routine-watch-picker.human-f9433-and-cannot-activate-a-watch/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/.planning/watch-picker-r1/routine-watch-picker.human-f9433-and-cannot-activate-a-watch/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/Volumes/Mando/WaylandBots/murage-astra/.planning/swarm-0150-watch-flow/src/e2e/routine-watch-picker.human.spec.ts",
+                    "column": 125,
+                    "line": 58
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "6ce2de04be78f1f7658d-c7b859424a65e85bf096",
+          "file": "routine-watch-picker.human.spec.ts",
+          "line": 160,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-10T08:00:45.342Z",
+    "duration": 8214.644,
+    "expected": 3,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

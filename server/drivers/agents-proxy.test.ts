@@ -613,6 +613,18 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBeFalsy();
   });
 
+  it("forwards a strict file watch only as an unconfirmed routine proposal", async () => {
+    lastRoutineRequestBody = null;
+    const res = await callTool("propose_routine", { name: "Watch status", instructions: "Report changes", for_bot_id: "bot-helper",
+      schedule: { type: "interval", every_minutes: 15 }, watch: { relative_path: "reports/status.txt", expires_at: "2026-09-17T00:00:00Z", max_checks: 100 } });
+    expect(res.result.isError).toBeFalsy(); expect(res.result.content[0].text).toContain("has not been applied");
+    expect(lastRoutineRequestBody).toMatchObject({ action: "create", forBotId: "bot-helper", routine: { watch: { relativePath: "reports/status.txt", expiresAt: "2026-09-17T00:00:00Z", maxChecks: 100 } } });
+    lastRoutineRequestBody = null;
+    const invalid = await callTool("propose_routine", { name: "Invalid watch", instructions: "Report changes", schedule: { type: "interval", every_minutes: 15 },
+      watch: { relative_path: "status.txt", expires_at: "2026-09-17T00:00:00Z", max_checks: 100, account_permissions: "all" } });
+    expect(invalid.result.isError).toBe(true); expect(lastRoutineRequestBody).toBeNull();
+  });
+
   it("proposes a one-time routine with the explicit-offset timestamp intact", async () => {
     await callTool("propose_routine", {
       name: "Send follow-up",

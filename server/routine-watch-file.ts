@@ -7,8 +7,10 @@ import type { RoutineWatchSourceAdapter } from "../shared/routine-watch.ts";
 export const ROUTINE_WATCH_FILE_MAX_BYTES = 1024 * 1024;
 export interface RoutineWatchFileScope { botId: string; workspaceId: string; workspaceRoot: string }
 export class RoutineWatchFileError extends Error {
-  constructor(readonly code: "invalid-source" | "unavailable" | "missing" | "unsafe" | "too-large" | "changed-during-read" | "aborted") {
+  readonly code: "invalid-source" | "unavailable" | "missing" | "unsafe" | "too-large" | "changed-during-read" | "aborted";
+  constructor(code: RoutineWatchFileError["code"]) {
     super(`Watch file: ${code}`);
+    this.code = code;
   }
 }
 function fail(code: RoutineWatchFileError["code"]): never { throw new RoutineWatchFileError(code); }
