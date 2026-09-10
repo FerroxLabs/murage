@@ -17,14 +17,14 @@ int wmain(int argc,wchar_t** argv) {
     stage="pipe security/server";
     Security security(user);
     Handle pipe(CreateNamedPipeW(pipeName(nonce).c_str(),PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
-      PIPE_TYPE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,1,8192,8192,0,&security.attributes));
+      PIPE_TYPE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,2,8192,8192,0,&security.attributes));
     stage="pipe client"; Handle client(CreateFileW(pipeName(nonce).c_str(),GENERIC_READ | GENERIC_WRITE,0,nullptr,OPEN_EXISTING,SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,nullptr));
     stage="pipe connect";
     const BOOL connected=ConnectNamedPipe(pipe.h,nullptr); need(connected || GetLastError()==ERROR_PIPE_CONNECTED);
     stage="client PID binding"; need(expectedPeer(pipe.h,GetCurrentProcessId(),true)); need(!expectedPeer(pipe.h,GetCurrentProcessId()+1,true));
     stage="server PID binding"; need(expectedPeer(client.h,GetCurrentProcessId(),false)); need(!expectedPeer(client.h,GetCurrentProcessId()+1,false));
     stage="first instance refusal";
-    HANDLE duplicate=CreateNamedPipeW(pipeName(nonce).c_str(),PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_BYTE,1,8192,8192,0,&security.attributes);
+    HANDLE duplicate=CreateNamedPipeW(pipeName(nonce).c_str(),PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_BYTE,2,8192,8192,0,&security.attributes);
     const DWORD duplicateError=GetLastError();
     std::cerr<<"first-instance duplicate status "<<duplicateError<<'\n';
     need(duplicate==INVALID_HANDLE_VALUE && duplicateError==ERROR_ACCESS_DENIED);
