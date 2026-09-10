@@ -216,6 +216,26 @@ const playTurn = (prompt: JsonValue) => {
   // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model });
 
+  if (mode === "background-result") {
+    // Actual installed 0.1.49 capture: stopped task notification, init,
+    // task-notification result, then init and the user's assistant/tool work.
+    // The gate only makes the tool-approval check deterministic; it does not
+    // invent a new result shape or grant an unsolicited background turn.
+    out({ type: "system", subtype: "task_notification", task_id: "fixture-task", status: "stopped", output_file: "fixture-output", summary: "Background task stopped", session_id: sessionId });
+    out({ type: "result", subtype: "success", is_error: false, origin: { kind: "task-notification" }, session_id: sessionId });
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    out({ type: "assistant", message: { content: [{ type: "text", text: "continuing submitted user work" }] } });
+    const gate = process.env.FAKE_CLAUDE_REPLY_GATE;
+    const timer = setInterval(() => {
+      if (!gate || !existsSync(gate)) return;
+      clearInterval(timer);
+      out({ type: "result", subtype: "success", is_error: false, origin: { kind: "human" }, session_id: sessionId, stop_reason: "end_turn", total_cost_usd: 0 });
+      turnRunning = false;
+      finishIfDone();
+    }, 10);
+    return;
+  }
+
   if (mode === "hang" || promptText(prompt).includes("__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight

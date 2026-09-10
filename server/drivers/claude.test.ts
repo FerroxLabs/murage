@@ -986,6 +986,35 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     conn.end();
   });
 
+  it("keeps submitted-turn authority after a stopped background task result", async () => {
+    const gate = join(scratch, "background-finish");
+    await create("background-result", { FAKE_CLAUDE_REPLY_GATE: gate });
+    const threadId = "t-background-result";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "continue the requested work" });
+    await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
+    const conn = await connectSocket(permissionSocketPath(threadId));
+    const nextAnswer = answerQueue(conn);
+    const unsubscribe = instance.adapter.onEvent(event => {
+      if (event.type === "request.opened" && typeof event.requestId === "string") void instance.adapter.respondToRequest(threadId, event.requestId, { behavior: "allow" });
+    });
+    try {
+      for (const tool of ["Bash", "Read", "WebSearch"]) {
+        const answer = nextAnswer();
+        conn.write(JSON.stringify({ t: "ask", id: `background-${tool}`, tool, input: { fixture: "no actual tool execution" } }) + "\n");
+        await expect(answer).resolves.toMatchObject({ behavior: "allow" });
+        expect(recorder.events.find(event => event.type === "request.opened" && event.requestId === `background-${tool}`)).toMatchObject({ turnId });
+      }
+      expect(instance.adapter.hasSession(threadId)).toBe(true);
+      expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(0);
+      writeFileSync(gate, "finish");
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: true });
+      expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+      const late = nextAnswer();
+      conn.write(JSON.stringify({ t: "ask", id: "background-after-finish", tool: "Bash", input: {} }) + "\n");
+      await expect(late).resolves.toMatchObject({ behavior: "deny", message: "Murage: the turn ended" });
+    } finally { unsubscribe(); conn.destroy(); }
+  });
+
   it("keeps real broker authority across retained turns and rotated process closure", async () => {
     const threadId = "t-multi-authority";
     const dump = join(scratch, "multi-authority.json");
