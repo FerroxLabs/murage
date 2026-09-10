@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { persistentAgentsClient } from "./testing/persistent-agents-client.ts";
 import { browserSessionId } from "./browser-engine.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
@@ -1441,6 +1442,70 @@ describe("harness HTTP API", () => {
       expect(demoted.status).toBe(200); expect(demoted.body.bot.chiefOfStaff).toBe(false);
     } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
   });
+
+  it("distinguishes persistent agents capability revocation from transport loss and recovers on a fresh turn", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "MCP lifecycle fixture" })).body.bot;
+    const clients: ReturnType<typeof persistentAgentsClient>[] = [];
+    // Own the port throughout the negative control: reject connections without
+    // routing any metadata request to a provider or another local service.
+    const unavailable = createServer();
+    unavailable.on("connection", socket => socket.destroy());
+    await new Promise<void>(resolve => unavailable.listen(0, "127.0.0.1", resolve));
+    const connect = async (env: Record<string, string>) => {
+      const client = persistentAgentsClient(env); clients.push(client);
+      await client.initialize(); return client;
+    };
+    const localMethodsWork = async (client: ReturnType<typeof persistentAgentsClient>) => {
+      expect(await client.request("ping")).toEqual({});
+      const catalog = await client.request("tools/list");
+      expect(catalog.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(["list_bots", "list_image_models"]));
+      expect(client.child.exitCode).toBeNull(); expect(client.child.signalCode).toBeNull();
+    };
+    const metadataWorks = async (client: ReturnType<typeof persistentAgentsClient>) => {
+      for (const tool of ["list_bots", "list_image_models"] as const) {
+        const result = await client.call(tool);
+        expect(result.isError).toBe(false);
+        expect(result.content?.[0]?.type).toBe("text");
+      }
+    };
+    try {
+      const first = await startInternalFixtureTurn(bot.id);
+      const original = await connect(first.env), originalPid = original.child.pid;
+      await localMethodsWork(original); await metadataWorks(original);
+      // Let the fake engine complete normally, exercising terminal-event
+      // revocation rather than manufacturing a token or touching live state.
+      writeFileSync(join(home, "finish-fake", String(first.dump.pid)), "finish");
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+        .find((entry: { id: string }) => entry.id === bot.id)?.busy, { timeout: 5_000 }).toBe(false);
+      for (const path of ["/api/internal/agents", "/api/internal/image-models"]) {
+        const response = await fetch(BASE + path, { headers: first.headers });
+        expect(response.status).toBe(401); expect(await response.json()).toEqual({ error: "unauthorized" });
+      }
+      for (const tool of ["list_bots", "list_image_models"] as const) {
+        expect(await original.call(tool)).toEqual({ isError: true, content: [{ type: "text", text: "unauthorized" }] });
+      }
+      await localMethodsWork(original); expect(original.child.pid).toBe(originalPid);
+      const second = await startInternalFixtureTurn(bot.id);
+      expect(second.env.MURAGE_COMMS_TOKEN === first.env.MURAGE_COMMS_TOKEN).toBe(false);
+      const fresh = await connect(second.env);
+      await localMethodsWork(fresh); await metadataWorks(fresh);
+      // A new authority does not reauthorize the old, still-running proxy.
+      expect((await original.call("list_bots")).isError).toBe(true);
+      const disconnected = await connect({ ...second.env,
+        MURAGE_HARNESS_URL: `http://127.0.0.1:${(unavailable.address() as { port: number }).port}` });
+      for (const tool of ["list_bots", "list_image_models"] as const) {
+        const result = await disconnected.call(tool);
+        expect(result.isError).toBe(true);
+        expect(result.content?.[0]?.text).toMatch(/^MURAGE_AGENTS_UNAVAILABLE:/);
+      }
+      await localMethodsWork(disconnected);
+    } finally {
+      await Promise.all(clients.map(client => client.close()));
+      await new Promise<void>((resolve, reject) => unavailable.close(error => error ? reject(error) : resolve()));
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 30_000);
 
   it("routes approved image MCP requests into owned artifacts without exposing keys or crossing conversations", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Image fixture" })).body.bot;
