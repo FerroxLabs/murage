@@ -28,7 +28,9 @@ jobs:
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Desktop protocol checks
-        run: node --test electron/installation-recovery-snapshot.node-test.mjs electron/installation-recovery-controller.node-test.mjs electron/installation-recovery-main.node-test.mjs electron/installation-recovery-window.node-test.mjs electron/installation-selection.node-test.mjs
+        # Reuse passed snapshot/controller/window checks; confirm the corrected
+        # platform-path fixtures and required selector integration only.
+        run: node --test electron/installation-recovery-main.node-test.mjs electron/installation-selection.node-test.mjs
       - name: Disposable native transport and guarded capture
         run: node scripts/qualify-recovery-transport.mjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

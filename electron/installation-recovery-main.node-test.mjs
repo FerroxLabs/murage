@@ -60,7 +60,7 @@ test("startup selects before leasing and excludes selected roots from legacy mig
     dataDirLeasePaths: value => ({ canonicalDataDir: value }), resolveInstallationSelection: (userData, requested) => { calls.push([userData, requested]); return { dataDirectory: "/new/data", selected: true }; },
     acquireDataDirLease: value => { calls.push(value); return {}; } };
   new Function(...Object.keys(scope), "let desktopDataOwner=null,desktopDataDir=null,desktopRequestedDataDir=null,desktopSelectionActive=false;" + body + ";acquireDesktopDataOwner();")(...Object.values(scope));
-  assert.deepEqual(calls, [["/fixture/userData", "/fixture/home/.murage"], "/new/data"]);
+  assert.deepEqual(calls, [["/fixture/userData", path.join("/fixture/home", ".murage")], "/new/data"]);
   assert.ok(source.includes('enabled: process.env.MURAGE_DATA_DIR === undefined && !desktopSelectionActive'));
 });
 test("separate supervisor publishes only after worker completion and releases only its new lease", async () => {
@@ -121,13 +121,14 @@ test("failed acquisition retains location for diagnostics without granting owner
 });
 test("actual snapshot supervisor owns only the capture clone and restores its validated archive", async () => {
   const events = [], app = new EventEmitter(), window = new EventEmitter(); app.getPath = () => "/desktop";
+  const captureDirectory = path.join("/desktop", "recovery-capture-fixture");
   const plan = { id: "fixture", dataDirectory: "/desktop/new/data" };
   const scope = { canCaptureSeparateInstallation: () => true, app, recoveryWindow: window, AbortController, fs: { existsSync: () => false }, path,
     desktopRequestedDataDir: "/foreign/original", desktopDataDir: "/foreign/original", planSeparateInstallation: () => plan,
     dataDirLeasePaths: () => ({ leasePath: "/foreign/.murage-data-owner-source.lease" }), process: { resourcesPath: "/resources", env: { PATH: "/runtime", SECRET: "excluded" } }, spawn() {},
     captureRecoveryCopy: async options => { assert.equal(options.source, "/foreign/original"); assert.equal(options.env.SECRET, undefined); assert.equal(await options.confirm({ destination: options.destination }), true); events.push("capture"); return { directory: options.destination }; },
-    acquireDataDirLease: value => { assert.equal(value, "/desktop/recovery-capture-fixture"); events.push("lease-clone"); return { release: () => events.push("release-clone") }; },
-    runDesktopRecovery: async (operation, parameters, authority) => { assert.equal(operation, "backup"); assert.equal(authority.dataDirectory, "/desktop/recovery-capture-fixture"); assert.equal(parameters.output, "/desktop/recovery-capture-fixture.zip"); events.push("archive"); return { sha256: "a".repeat(64) }; },
+    acquireDataDirLease: value => { assert.equal(value, captureDirectory); events.push("lease-clone"); return { release: () => events.push("release-clone") }; },
+    runDesktopRecovery: async (operation, parameters, authority) => { assert.equal(operation, "backup"); assert.equal(authority.dataDirectory, captureDirectory); assert.equal(parameters.output, `${captureDirectory}.zip`); events.push("archive"); return { sha256: "a".repeat(64) }; },
     runSeparateDesktopRecovery: async (parameters, chosen, signal) => { assert.equal(chosen, plan); assert.equal(parameters.sha256, "a".repeat(64)); assert.equal(signal.aborted, false); events.push("restore-select"); return { status: "restored-review-required" }; } };
   const body = between("async function runSnapshotDesktopRecovery(", "async function runSeparateDesktopRecovery(");
   const run = new Function(...Object.keys(scope), "let retainedSeparateDirectory=null;" + body + ";return runSnapshotDesktopRecovery;")(...Object.values(scope));
