@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { createServer } from "node:http";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
+import { createFuigoIsolation, type FuigoIsolation } from "./fuigo-probe-isolation.ts";
 
 const exec = promisify(execFile);
 const REGISTRY = "https://registry.npmjs.org";
@@ -92,41 +92,27 @@ function probeEnvironment(home: string): NodeJS.ProcessEnv {
   return env;
 }
 export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch) => {
-  if (process.platform !== "darwin") throw Object.assign(new Error("Native Fuigo update isolation is not qualified on this platform. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
   const home = await mkdtemp(join(scratch, "probe-"));
-  let cleanupSafe = true, unexpectedRequest = false;
-  let rejectUnexpected = () => {};
-  const server = createServer((request, response) => {
-    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    if (request.method === "GET" && path === "/v1/models") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ object: "list", data: [{ id: "murage-native-probe", object: "model", owned_by: "fixture" }] }));
-    } else {
-      unexpectedRequest = true;
-      response.writeHead(403); response.end(); rejectUnexpected();
-    }
-  });
+  let cleanupSafe = true, isolation: FuigoIsolation | undefined;
   let proof: FuigoProof | undefined;
   try {
-    await new Promise<void>((resolveListen, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolveListen); });
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Private Fuigo compatibility listener is unavailable.");
     const env = probeEnvironment(home);
     await mkdir(env.FUIGO_HOME!, { mode: 0o700 });
     // This random value belongs only to a synthetic local model, never a service.
     env.MURAGE_FUIGO_PROBE_KEY = randomUUID();
     env.FUIGO_TELEMETRY_ENABLED = "false";
-    await writeFile(join(env.FUIGO_HOME!, "config.toml"), `[features]\nremote_fetch = false\n\n[model_providers.murage_native_probe]\nbase_url = "http://127.0.0.1:${address.port}/v1"\ncontext_window = 8192\nenv_key = "MURAGE_FUIGO_PROBE_KEY"\napi_backend = "chat_completions"\n\n[model.murage_native_probe]\nmodel = "murage-native-probe"\nmodel_provider = "murage_native_probe"\n`, { mode: 0o600, flag: "wx" });
-    const policy = join(home, "outbound.sb");
-    await writeFile(policy, `(version 1)\n(allow default)\n(deny network-outbound)\n`, { mode: 0o600, flag: "wx" });
-    const command = "/usr/bin/sandbox-exec", prefix = ["-f", policy];
-    try { await exec(command, [...prefix, "/usr/bin/true"], { cwd: home, env, timeout: 15000, maxBuffer: 65536 }); }
-    catch { throw Object.assign(new Error("Private Fuigo update isolation is unavailable. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" }); }
-    const result = await exec(command, [...prefix, cli, "--version"], { cwd: home, env, timeout: 15000, windowsHide: true, maxBuffer: 65536 });
+    await writeFile(join(env.FUIGO_HOME!, "config.toml"), `[features]\nremote_fetch = false\n\n[model_providers.murage_native_probe]\nbase_url = "http://127.0.0.1:9/v1"\ncontext_window = 8192\nenv_key = "MURAGE_FUIGO_PROBE_KEY"\napi_backend = "chat_completions"\n\n[model.murage_native_probe]\nmodel = "murage-native-probe"\nmodel_provider = "murage_native_probe"\n`, { mode: 0o600, flag: "wx" });
+    isolation = await createFuigoIsolation(cli, home, env);
+    const { command, prefix } = isolation;
+    let result;
+    try { result = await exec(command, [...prefix, "--version"], { cwd: home, env, timeout: 15000, windowsHide: true, maxBuffer: 65536 }); }
+    catch (error) {
+      if ((error as { code?: unknown }).code === 72) throw Object.assign(new Error("Private Fuigo update isolation is unavailable. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
+      throw error;
+    }
     const version = nativeFuigoVersion(result.stdout);
     if (!version || expectedVersion && version !== expectedVersion) throw new Error("Fuigo executable version did not match the verified release.");
-    if (unexpectedRequest) throw Object.assign(new Error("Fuigo requested an unsupported compatibility operation."), { code: "FUIGO_INCOMPATIBLE" });
-    const child = spawn(command, [...prefix, cli, "--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_native_probe", "stdio"], { cwd: home, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = spawn(command, [...prefix, "--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_native_probe", "stdio"], { cwd: home, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     let closed = false; child.once("close", () => { closed = true; });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -143,7 +129,6 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
             rpcCode: typeof rpcCode === "number" && Number.isSafeInteger(rpcCode) ? rpcCode : null,
           }));
         };
-        rejectUnexpected = () => fail("Fuigo requested an unsupported compatibility operation. The release was not activated.");
         timer = setTimeout(() => fail(), 20000);
         child.once("error", () => fail()); child.once("exit", () => fail()); child.stdin.once("error", () => fail());
         child.stderr.on("data", chunk => { total += chunk.length; if (total > 512 * 1024) fail(); });
@@ -173,24 +158,27 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
       });
     } finally {
       clearTimeout(timer); child.stdin.end();
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
       await new Promise<void>((resolveExit, rejectExit) => {
         if (closed || !child.pid) { resolveExit(); return; }
-        const kill = setTimeout(() => child.kill("SIGKILL"), 1000);
+        const stop = setTimeout(() => child.kill("SIGTERM"), 1000);
+        const kill = setTimeout(() => child.kill("SIGKILL"), 2000);
         const limit = setTimeout(() => { cleanupSafe = false; rejectExit(Object.assign(new Error("Fuigo verification process cleanup is pending."), { code: "FUIGO_PROBE_CLEANUP" })); }, 5000);
-        child.once("close", () => { clearTimeout(kill); clearTimeout(limit); resolveExit(); });
+        child.once("close", () => { clearTimeout(stop); clearTimeout(kill); clearTimeout(limit); resolveExit(); });
       });
     }
     proof = { version, protocolVersion: 1, loadSession: true, sessionCreated: true };
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "FUIGO_PROBE_CLEANUP") cleanupSafe = false;
+    throw error;
   } finally {
     try {
-      if (server.listening) await new Promise<void>((resolveClose, reject) => { server.close(error => error ? reject(error) : resolveClose()); server.closeAllConnections(); });
-    } catch {
+      await isolation?.cleanup();
+    } catch (error) {
       cleanupSafe = false;
-      throw Object.assign(new Error("Private Fuigo compatibility listener cleanup is pending."), { code: "FUIGO_PROBE_CLEANUP" });
+      throw error;
     } finally { if (cleanupSafe) await rm(home, { recursive: true, force: true }); }
   }
-  if (unexpectedRequest || !proof) throw Object.assign(new Error("Fuigo requested an unsupported compatibility operation."), { code: "FUIGO_INCOMPATIBLE" });
+  if (!proof) throw Object.assign(new Error("Fuigo compatibility could not be verified."), { code: "FUIGO_INCOMPATIBLE" });
   return proof;
 };
 export async function managedFuigoReceipt(root: string, id: string, cli?: string): Promise<FuigoReceipt | null> {
