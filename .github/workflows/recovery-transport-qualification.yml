@@ -1,5 +1,7 @@
 name: Recovery transport qualification
 on:
+  push:
+    branches: [codex/0150-recovery-transport]
   workflow_dispatch:
 permissions:
   contents: read
