@@ -42,6 +42,8 @@ jobs:
           New-Item -ItemType Directory -Force '.planning/windows-private-r1' | Out-Null
       - name: Install exact locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Verify focused concurrency and proxy behavior on Windows
+        run: pnpm exec vitest run server/bot-concurrency-api.test.ts server/host-computer-broker.test.ts server/drivers/headless-browser-proxy.test.ts
       - name: Build private Windows x64 installer and ZIP
         id: build
         shell: pwsh
