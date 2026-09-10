@@ -47,6 +47,7 @@ import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName, withSavableFile } from "./save-file.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
+import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import {
   ensureManagedComposioCredentials,
   managedComposioAccess,
@@ -2491,6 +2492,14 @@ setCuaStateListener((connection) => {
 
 const desktopStartup = app.whenReady().then(async () => {
   assertDesktopStartupActive();
+  const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
+  const serverConnections = createServerConnections({ BrowserWindow, session, onError: connectionError });
+  const serverMenu = Menu.buildFromTemplate([{ label: "Server", submenu: [{ label: "Connect to server…", click: () => openServerPrompt({ BrowserWindow, session, connections: serverConnections, parent: mainWindow ?? undefined, onError: connectionError }) }] }]);
+  const applicationMenu = Menu.getApplicationMenu();
+  if (applicationMenu) {
+    applicationMenu.append(serverMenu.items[0]);
+    Menu.setApplicationMenu(applicationMenu);
+  } else Menu.setApplicationMenu(serverMenu);
   if (app.isPackaged) acquireDesktopDataOwner();
   if (app.isPackaged) {
     assertRestoreReviewed(ownedDesktopDataDir());
