@@ -6611,13 +6611,15 @@ const engineManager = new EngineManager({
       snapshot: instance.snapshot, cli, defaultSource,
       bundledCli: instance.driverKind === "fuigoAgent" ? bundledFuigoPath() ?? undefined : undefined };
   },
-  isBusy: () => providerConfigBusy || engineWorkActive(),
-  activate: async (id, cli) => {
-    if (providerConfigBusy || engineWorkActive()) throw new Error("Tasks are still running.");
+  isBusy: () => providerConfigBusy || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0),
+  activate: async (id, cli, expectedCli) => {
+    if (providerConfigBusy || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0)) throw new Error("Tasks are still running.");
     providerConfigBusy = true;
     const current = instanceConfigs(cfg)[id]?.config;
-    const previousCli = current && typeof current === "object" && !Array.isArray(current) && "cli" in current && typeof current.cli === "string" ? current.cli : "";
+    const selectedCli = current && typeof current === "object" && !Array.isArray(current) && "cli" in current && typeof current.cli === "string" ? current.cli : undefined;
+    const previousCli = selectedCli ?? "";
     try {
+      if (expectedCli !== undefined && (selectedCli ?? null) !== expectedCli) throw new Error("The selected engine changed while verification ran. Refresh Settings before changing it again.");
       const candidate = withInstanceCli(cfg, id, cli);
       if (!candidate.ok) throw new Error("Engine not found.");
       saveConfig({ instances: candidate.config.instances });
@@ -11748,9 +11750,14 @@ const server = createServer(async (req, res) => {
     if (engineManagementRoute && (method === "GET" || method === "POST")) {
       if (method === "GET") return json(res, 200, await engineManager.status(engineManagementRoute[1]));
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
-      const parsed = z.object({ action: z.enum(["check", "install", "update"]) }).strict().safeParse(await readBody(req));
-      if (!parsed.success) return json(res, 400, { error: "Choose check, install, or update." });
-      return json(res, 200, await (parsed.data.action === "check" ? engineManager.check(engineManagementRoute[1]) : engineManager.install(engineManagementRoute[1])));
+      const parsed = z.object({ action: z.enum(["check", "install", "update", "use-managed", "rollback", "use-bundled"]) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose check, install, update, use-managed, rollback, or use-bundled." });
+      const id = engineManagementRoute[1];
+      const result = parsed.data.action === "check" ? await engineManager.check(id)
+        : parsed.data.action === "rollback" ? await engineManager.rollback(id)
+        : parsed.data.action === "use-bundled" ? await engineManager.useBundled(id)
+        : await engineManager.install(id, { allowCustom: parsed.data.action === "use-managed" });
+      return json(res, 200, result);
     }
 
     const accessRoute = /^\/api\/bots\/([\w-]+)\/access$/.exec(path);
