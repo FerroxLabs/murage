@@ -287,6 +287,16 @@ const startInternalFixtureTurn = async (botId: string, groupId?: string, text = 
   };
 };
 
+/** The memory settlement of every turn on a thread, oldest first. */
+const turnMemoryOutcomes = (threadId: string): string[] => {
+  const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+  try {
+    return db.prepare("SELECT outcome FROM memory_sources WHERE thread_id=? AND kind='turn' ORDER BY rowid").all(threadId)
+      .map((row) => String((row as { outcome: unknown }).outcome));
+  } finally {
+    db.close();
+  }
+};
 const storedMessageCount = (threadId: string): number => {
   const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
   try {
@@ -8329,12 +8339,13 @@ describe("internal capability authority", () => {
       { timeout: 5_000 }).toBe(false);
       // Idle is not teardown for the Claude driver: interrupt releases the
       // run as soon as the kill is requested (A2 kept Claude's retained
-      // sessions on that contract), and the child's close still appends its
-      // "claude exited … before result" chip afterwards. That chip is the
-      // fixture's deterministic end of teardown, so measure only after it.
-      await expect.poll(async () => (await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`)).body.messages
-        .some((message: { kind: string; tool?: { name?: string } }) => message.kind === "activity" && message.tool?.name?.startsWith("error: claude exited")),
-      { timeout: 5_000 }).toBe(true);
+      // sessions on that contract), and the child's close settles the turn
+      // afterwards. Since STOP1 that close is a user Stop — turn.completed
+      // ok:true "cancelled", no "claude exited … before result" chip — and
+      // its terminal fold records the memory outcome "cancelled". That row
+      // is the fixture's deterministic end of teardown, so measure only
+      // after it (STOP2).
+      await expect.poll(() => turnMemoryOutcomes(bot.threadId).at(-1), { timeout: 5_000 }).toBe("cancelled");
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
       expect(response.status).toBe(401);
