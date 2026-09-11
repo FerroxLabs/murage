@@ -108,7 +108,10 @@ export type RedeemFailure =
   /** Right credential, no room left in the fleet. */
   | "full"
   /** Right credential, and the registration could not be written down. */
-  | "save-failed";
+  | "save-failed"
+  /** Right credential, and the paired-device list on disk could not be read,
+   * so writing a new one would replace a fleet nobody can see. */
+  | "unavailable";
 
 /** A window that is gone, remembered only so that presenting it again gets an
  * honest answer instead of "no pairing is in progress".
@@ -263,6 +266,24 @@ export const SESSION_ABSOLUTE_MS = 90 * 24 * 60 * 60 * 1000;
  * credential and therefore the desktop. */
 export const SESSION_MAX_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 
+/** How often an unreadable paired-device list is read again on its own.
+ *
+ * A transient read failure — a locked file, too many open descriptors, a home
+ * directory that mounted late — should heal without anyone restarting the
+ * app, and a repaired file should be picked up the same way. Reading is the
+ * only thing a retry does; nothing is written until a read succeeds. Bounded
+ * so unauthenticated traffic cannot turn a broken file into a read per
+ * request. */
+export const REGISTRY_RETRY_MS = 5_000;
+
+/** Where the paired-device list stands. `problem` is a sentence for the
+ * owner's own control page: it names what went wrong, never a path or a raw
+ * system message. */
+export type RegistryStatus = { available: true } | { available: false; problem: string };
+
+/** Thrown instead of writing while the paired-device list is unreadable. */
+export class RegistryUnavailableError extends Error {}
+
 /** Hex digest. Tokens live on disk as one of these and never in the clear. */
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -366,46 +387,113 @@ export class DeviceRegistry {
    * to disk. A restart drops every stream anyway. */
   private sessionIds = new WeakMap<BrowserSession, string>();
   private sessionEndListeners = new Set<(ended: { deviceId: string; sessionId: string }) => void>();
+  /** Why the file on disk could not be used, or null when it could. */
+  private unavailable: string | null = null;
+  private lastLoadAttempt = 0;
+
+  constructor() {
+    this.load();
+  }
 
   /** Load the paired fleet, normalising as it goes.
    *
-   * Only `id` and `tokenHash` decide whether a record is a device at all —
-   * without them it can neither be revoked nor authenticate. The rest is
-   * display, and a record missing it is not worth discarding a working phone
-   * over: what a half-written or hand-edited file used to produce was a UI
-   * saying "undefined", last seen "NaN min ago". Defaults are cheaper than
-   * either dropping the device or teaching every reader to doubt the type. */
-  constructor() {
+   * Only a MISSING file is a first run. Anything else that stops the file being
+   * read — a permission error, malformed JSON, a document of the wrong shape —
+   * is the registry being unavailable, not empty. Treating it as empty is how
+   * the next successful pairing used to write a one-device file over a fleet
+   * that was merely unreadable for a moment. While unavailable the original
+   * bytes are left exactly where they are and nothing is written.
+   *
+   * Inside a readable document, only `id` and `tokenHash` decide whether a
+   * record is a device at all — without them it can neither be revoked nor
+   * authenticate. The rest is display, and a record missing it is not worth
+   * discarding a working phone over: what a half-written or hand-edited file
+   * used to produce was a UI saying "undefined", last seen "NaN min ago".
+   * Defaults are cheaper than either dropping the device or teaching every
+   * reader to doubt the type. */
+  private load(): boolean {
+    this.lastLoadAttempt = Date.now();
+    let text: string;
     try {
-      const parsed = JSON.parse(readFileSync(DEVICES_FILE, "utf8"));
-      if (Array.isArray(parsed?.devices)) {
-        this.devices = parsed.devices
-          .filter(
-            (d: unknown): d is Partial<DeviceRecord> & { id: string; tokenHash: string } =>
-              typeof (d as DeviceRecord)?.id === "string" &&
-              typeof (d as DeviceRecord)?.tokenHash === "string",
-          )
-          .map(normalizeDevice);
+      text = readFileSync(DEVICES_FILE, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        this.devices = [];
+        this.unavailable = null;
+        return true;
       }
-    } catch {
-      /* first run, or a file we can't read — start with no paired devices */
+      const code = (error as NodeJS.ErrnoException)?.code;
+      return this.markUnavailable(
+        `the list of paired devices could not be read${code && /^[A-Z0-9_]+$/.test(code) ? ` (${code})` : ""}`,
+      );
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return this.markUnavailable("the list of paired devices is damaged and could not be parsed");
+    }
+    const listed = parsed && typeof parsed === "object" ? (parsed as { devices?: unknown }).devices : undefined;
+    if (Array.isArray(parsed) || !Array.isArray(listed)) {
+      return this.markUnavailable("the list of paired devices is not in a shape this version understands");
+    }
+    this.devices = listed
+      .filter(
+        (d: unknown): d is Partial<DeviceRecord> & { id: string; tokenHash: string } =>
+          typeof (d as DeviceRecord)?.id === "string" &&
+          typeof (d as DeviceRecord)?.tokenHash === "string",
+      )
+      .map(normalizeDevice);
+    this.unavailable = null;
+    return true;
+  }
+
+  private markUnavailable(problem: string): false {
+    this.devices = [];
+    this.unavailable = problem;
+    return false;
+  }
+
+  /** Read an unavailable file again, at most once per `REGISTRY_RETRY_MS`.
+   * A registry that loaded is never re-read: its in-memory records are the
+   * truth, and replacing them would orphan every live session identity. */
+  private recover(): void {
+    if (this.unavailable && Date.now() - this.lastLoadAttempt >= REGISTRY_RETRY_MS) this.load();
+  }
+
+  /** Deliberately read an unavailable file again now — after a repair.
+   * True when the registry is available afterwards. */
+  reload(): boolean {
+    return this.unavailable ? this.load() : true;
+  }
+
+  /** Whether the paired-device list could be read, and if not, why. */
+  registryStatus(): RegistryStatus {
+    this.recover();
+    return this.unavailable ? { available: false, problem: this.unavailable } : { available: true };
   }
 
   /** Write the fleet to disk. Atomic, because a torn file reads as empty and
-   * would sign every phone out with no way to tell why. */
+   * would sign every phone out with no way to tell why.
+   *
+   * Refused outright while the file could not be read: the in-memory list is
+   * then empty for want of evidence, not because the fleet is empty, and
+   * writing it would destroy the bytes a repair needs. */
   private persist() {
+    if (this.unavailable) throw new RegistryUnavailableError(this.unavailable);
     ensureDataDir();
     writeFileAtomic(DEVICES_FILE, JSON.stringify({ devices: this.devices }, null, 2));
   }
 
   /** Every paired device, without the hash — this is what the page renders. */
   list(): PublicDevice[] {
+    this.recover();
     return this.devices.map(({ tokenHash, sessions, ...rest }) => rest);
   }
 
   /** How many phones are paired, against MAX_DEVICES. */
   count(): number {
+    this.recover();
     return this.devices.length;
   }
 
@@ -552,6 +640,7 @@ export class DeviceRegistry {
         reason: "no-pairing",
       };
     }
+    this.recover();
     if (!sameCredential(window.code, presented) && !sameCredential(window.token, presented)) {
       window.attemptsLeft -= 1;
       // A burned window is the whole point: without this, six digits is a
@@ -572,6 +661,15 @@ export class DeviceRegistry {
     // something about this machine, and costs them none of their five
     // attempts. The window survives, so removing a phone and retyping the
     // same code still works.
+    // Also after the code, for the same reason, and before the window is
+    // spent: the person holding the right code can use it again once the list
+    // is readable, rather than being sent back to the computer for a new one.
+    if (this.unavailable) {
+      return {
+        error: "this computer could not read its list of paired devices, so pairing is paused — check Phone settings on your computer",
+        reason: "unavailable",
+      };
+    }
     if (this.devices.length >= MAX_DEVICES) {
       return { error: "too many paired devices — remove one first", reason: "full" };
     }
@@ -624,6 +722,7 @@ export class DeviceRegistry {
   /** Resolve a bearer token to its device, or null. */
   authenticate(token: string | undefined): DeviceRecord | null {
     if (!token) return null;
+    this.recover();
     const hash = sha256(token);
     const device = this.devices.find((d) => sameDigest(d.tokenHash, hash));
     if (!device) return null;
@@ -715,6 +814,7 @@ export class DeviceRegistry {
    * Null when there is no such device. A session cannot outlive the device
    * it hangs off, and that is enforced by where it is stored. */
   openSession(deviceId: string, label: unknown, now = Date.now()): { value: string; session: BrowserSession } | null {
+    this.recover();
     const device = this.devices.find((candidate) => candidate.id === deviceId);
     if (!device) return null;
     const value = `murage_browser_${randomBytes(32).toString("base64url")}`;
@@ -761,6 +861,7 @@ export class DeviceRegistry {
     now = Date.now(),
   ): { device: DeviceRecord; session: BrowserSession; sessionId: string } | null {
     if (!value) return null;
+    this.recover();
     const hash = sha256(value);
     for (const device of this.devices) {
       const session = device.sessions?.find((s) => sameDigest(s.hash, hash));
@@ -857,15 +958,25 @@ export class DeviceRegistry {
    * is the difference between this and `revoke`. */
   closeSession(value: string | undefined): boolean {
     if (!value) return false;
+    this.recover();
     const hash = sha256(value);
     for (const device of this.devices) {
       const before = device.sessions?.length ?? 0;
       if (!before) continue;
-      const kept = device.sessions!.filter((s) => !sameDigest(s.hash, hash));
+      const previous = device.sessions!;
+      const kept = previous.filter((s) => !sameDigest(s.hash, hash));
       if (kept.length === before) continue;
-      const ended = device.sessions!.filter((s) => !kept.includes(s));
+      const ended = previous.filter((s) => !kept.includes(s));
       device.sessions = kept.length ? kept : undefined;
-      this.persist();
+      try {
+        this.persist();
+      } catch (error) {
+        // A sign-out is not done while the file still authorises the cookie.
+        // Put the row back so memory and disk agree, keep its streams open,
+        // and let the caller say it failed rather than that it worked.
+        device.sessions = previous;
+        throw error;
+      }
       this.sessionsEnded(device.id, ended);
       return true;
     }
@@ -873,13 +984,26 @@ export class DeviceRegistry {
   }
 
   /** Take a phone's access away. False when there was no such device — a
-   * revoke that quietly matched nothing would read as success on the page. */
+   * revoke that quietly matched nothing would read as success on the page.
+   *
+   * Throws, having changed nothing, when the removal cannot be written down:
+   * a device that is gone from memory but still in the file would be revoked
+   * until the next restart and then quietly paired again. */
   revoke(id: string): boolean {
+    this.recover();
     const removed = this.devices.find((d) => d.id === id);
     if (!removed) return false;
-    this.devices = this.devices.filter((d) => d !== removed);
+    const previous = this.devices;
+    const lastSeenWrite = this.lastSeenWrites.get(id);
+    this.devices = previous.filter((d) => d !== removed);
     this.lastSeenWrites.delete(id);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      this.devices = previous;
+      if (lastSeenWrite !== undefined) this.lastSeenWrites.set(id, lastSeenWrite);
+      throw error;
+    }
     this.sessionsEnded(id, removed.sessions ?? []);
     return true;
   }
@@ -888,6 +1012,7 @@ export class DeviceRegistry {
    * into full desktop control. This is per device so a watch-only phone does
    * not inherit a different phone's permission. */
   setCloudDesktopAccess(id: string, allowed: boolean): boolean {
+    this.recover();
     const device = this.devices.find((candidate) => candidate.id === id);
     if (!device) return false;
     const previous = device.cloudDesktopAccess;
