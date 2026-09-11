@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { claudeAccountsAfterChange, claudeAccountsFrom, type ClaudeAccount } from "./ClaudeAccountsSettings";
+import { claudeAccountsAfterChange, claudeAccountsFrom, claudeAccountsListOrder, type ClaudeAccount } from "./ClaudeAccountsSettings";
 
 const account: ClaudeAccount = {
   instanceId: "claude-work", displayName: "Work", managed: true, isDefault: false,
@@ -38,8 +38,10 @@ describe("claudeAccountsFrom", () => {
   it("stores what the server sent only through a validator", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ClaudeAccountsSettings.tsx"), "utf8");
     const setters = source.match(/setAccounts\([^;]*;/g) ?? [];
+    // CLAC2 reads the list body into `payload` so a stale answer is dropped first.
+    expect(source).toContain(`const payload = await api("/api/claude-accounts");`);
     expect(setters).toEqual([
-      `setAccounts(claudeAccountsFrom(await api("/api/claude-accounts")));`,
+      `setAccounts(claudeAccountsFrom(payload));`,
       `setAccounts(current => claudeAccountsAfterChange(current, method, id, receipt));`,
     ]);
   });
@@ -81,5 +83,48 @@ describe("claudeAccountsAfterChange", () => {
   ])("keeps the drawn list for %s and leaves it to the refresh", (_name, method, id, receipt) => {
     const accounts = [fixture, account];
     expect(claudeAccountsAfterChange(accounts, method, id, receipt)).toBe(accounts);
+  });
+});
+
+// A list answer and a change receipt both draw the section. A slow first list
+// (or a Refresh) that answered after a create used to redraw the older list over
+// the receipt's row (CLAC1 verifier, CLAC2). The human spec holds real GETs;
+// these pin the ordering rule itself.
+describe("claudeAccountsListOrder", () => {
+  it("draws a list requested after the latest change", () => {
+    const order = claudeAccountsListOrder();
+    order.receipt();
+    const fresh = order.request();
+    expect(fresh()).toBe(true);
+  });
+
+  it("drops a list requested before a change receipt was drawn", () => {
+    const order = claudeAccountsListOrder();
+    const first = order.request();
+    order.receipt();
+    const refresh = order.request();
+    expect(first()).toBe(false);
+    expect(refresh()).toBe(true);
+  });
+
+  it("drops a list overtaken by a newer list request", () => {
+    const order = claudeAccountsListOrder();
+    const older = order.request(), newer = order.request();
+    expect(older()).toBe(false);
+    expect(newer()).toBe(true);
+  });
+
+  it("keeps a stale list stale after later receipts and lists", () => {
+    const order = claudeAccountsListOrder();
+    const stale = order.request();
+    order.receipt(); order.request(); order.receipt();
+    expect(stale()).toBe(false);
+  });
+
+  it("wires every list request and every drawn receipt through the order", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ClaudeAccountsSettings.tsx"), "utf8");
+    expect(source.match(/order\.request\(\)/g)).toHaveLength(1);
+    expect(source).toMatch(/const fresh = order\.request\(\);\s+try \{\s+const payload = await api\("\/api\/claude-accounts"\);\s+if \(!fresh\(\)\) return;/);
+    expect(source).toMatch(/order\.receipt\(\);\s+setAccounts\(current => claudeAccountsAfterChange/);
   });
 });

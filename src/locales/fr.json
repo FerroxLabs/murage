@@ -4,6 +4,7 @@
   "claudeAccounts.saved": "Paramètres du compte enregistrés.",
   "claudeAccounts.refreshError": "Enregistré, mais la liste des comptes n’a pas pu être actualisée. Utilisez Actualiser les comptes pour vérifier son état actuel.",
   "claudeAccounts.changeError": "La modification du compte a échoué.",
+  "claudeAccounts.listUnreadable": "Impossible de lire la liste des comptes Claude. Utilisez Actualiser les comptes pour réessayer.",
   "claudeAccounts.copied": "Commande de connexion de {name} copiée.",
   "claudeAccounts.copyError": "Impossible de copier. Sélectionnez et copiez la commande ci-dessus.",
   "claudeAccounts.refresh": "Actualiser les comptes",
