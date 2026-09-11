@@ -103,6 +103,26 @@ describe("workspace root resolution", () => {
     }
   });
 
+  it("never lists Murage's own data folder, whatever folder a conversation was pointed at", () => {
+    const f = fixture(), task = f.bot.tasks![0]!;
+    writeFileSync(join(f.dataDir, "config.json"), "{}");
+    mkdirSync(join(f.dataDir, "artifact-files")); writeFileSync(join(f.dataDir, "artifact-files", "blob.html"), "saved");
+    for (const folder of [f.dataDir, join(f.dataDir, "workspaces"), join(f.dataDir, "artifact-files"), f.base]) {
+      task.cwd = folder;
+      expect(resolveWorkspaceRoot(f.deps, f.scope).info, folder).toEqual({ scope: f.scope, state: "no-dedicated-workspace", label: "Research bot", managed: false });
+      expect(codeOf(() => listWorkspaceDirectory(f.deps, { scope: f.scope, directory: "" })), folder).toBe("no-dedicated-workspace");
+      expect(codeOf(() => searchWorkspace(f.deps, { scope: f.scope, query: "blob" })), folder).toBe("no-dedicated-workspace");
+    }
+    // A desk under workspaces/ is still a workspace, including another bot's
+    // desk the owner chose, and a room desk.
+    const otherDesk = join(f.dataDir, "workspaces", "other-bot"); mkdirSync(otherDesk); writeFileSync(join(otherDesk, "draft.md"), "draft");
+    task.cwd = otherDesk;
+    expect(names(listWorkspaceDirectory(f.deps, { scope: f.scope, directory: "" }).entries)).toEqual(["draft.md"]);
+    task.cwd = f.taskRoot;
+    f.groups.push({ id: "room", threadId: "room-thread", memberIds: ["bot"], tasks: [{ threadId: "room-thread" }] });
+    expect(listWorkspaceDirectory(f.deps, { scope: { botId: "bot", threadId: "room-thread" }, directory: "" }).root).toMatchObject({ state: "ready", managed: false });
+  });
+
   it("refuses unknown, retained-only, unauthorized and link-swapped roots", () => {
     const f = fixture();
     expect(codeOf(() => resolveWorkspaceRoot(f.deps, { botId: "other", threadId: "thread" }))).toBe("scope-unavailable");
