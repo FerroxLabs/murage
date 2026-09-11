@@ -54,7 +54,9 @@ import {
 import { mainRendererOrigin } from "./main-trust.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
-import { defaultSaveName, withSavableFile } from "./save-file.mjs";
+import { defaultSaveName } from "./save-file.mjs";
+import { activeDesktopDataRoot, createSaveFileHandler, createSkillRecordingSaveHandler } from "./native-file-handlers.mjs";
+import { mainRendererOrigin } from "./main-trust.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
@@ -2218,8 +2220,8 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // copy of the chat UI instead of the file. Ask where to put it and copy it
 // there instead: a save dialog tells the user the file landed somewhere and
 // where, which a silent copy into ~/Downloads does not. The path is
-// renderer-controlled, so it must resolve inside ~/.murage and be a
-// regular file — never a symlink escape or directory.
+// renderer-controlled, so it must resolve inside the active owned installation
+// root and be a regular file — never a symlink escape or directory.
 ipcMain.handle("desktop:reveal-workspace", async (event, botId, threadId) => {
   const parent = BrowserWindow.fromWebContents(event.sender);
   const expectedOrigin = new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;
@@ -2258,8 +2260,32 @@ ipcMain.handle("desktop:artifact-action", async (event, id, action) => {
   else { const error = await shell.openPath(savedPath); if (error) throw new Error("The operating system could not open this file. Download it instead."); }
 });
 
-ipcMain.handle("desktop:save-file", async (event, rawPath) => {
-  return withSavableFile(rawPath, { home: os.homedir() }, async ({ defaultName, copyTo }) => {
+// Native writers use the installation this process owns (B1/B3): after a
+// separate restore that is the selected installation, never the retained
+// original that MURAGE_DATA_DIR or ~/.murage still names. Recovery and closing
+// refuse. Only the owned main window's top frame may ask (K0 main-trust).
+function activeNativeDataRoot() {
+  return activeDesktopDataRoot({
+    packaged: app.isPackaged,
+    recovery: desktopRecoveryMode,
+    closing: desktopShutdownStarted,
+    owner: desktopDataOwner,
+    dataDirectory: desktopDataDir,
+    env: process.env,
+    home: os.homedir(),
+  });
+}
+const ownedMainRenderer = {
+  window: () => mainWindow,
+  origin: () => mainRendererOrigin({ packaged: app.isPackaged, serverPort: SERVER_PORT, devUrl: DEV_URL }),
+};
+
+// Same-file saves are a no-op and other destinations are staged then renamed
+// (B2, save-file.mjs), so a save can never truncate its own source.
+ipcMain.handle("desktop:save-file", createSaveFileHandler({
+  ...ownedMainRenderer,
+  activeRoot: activeNativeDataRoot,
+  chooseDestination: async ({ event, defaultName }) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const defaultPath = await defaultSaveName(app.getPath("downloads"), defaultName);
     const choice = await dialog.showSaveDialog(parent ?? undefined, {
@@ -2269,13 +2295,10 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
       buttonLabel: "Save",
       properties: ["createDirectory", "showOverwriteConfirmation"],
     });
-    // Cancelling is a decision, not a failure — the bubble stays quiet.
-    if (choice.canceled || !choice.filePath) return null;
-    await copyTo(choice.filePath);
-    shell.showItemInFolder(choice.filePath);
-    return choice.filePath;
-  });
-});
+    return choice.canceled || !choice.filePath ? null : choice.filePath;
+  },
+  reveal: (filePath) => shell.showItemInFolder(filePath),
+}));
 
 // The renderer owns the palette. Native Windows/Linux chrome is intentionally
 // outside that surface; acknowledge the renderer handshake without creating a
@@ -2386,10 +2409,19 @@ ipcMain.handle("speech:start", (event, options) => {
     win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
     return;
   }
-  startSpeech(win, options);
+  return startSpeech(win, options);
 });
+// B5: Stop resolves only after the helper's exit is observed. A failed stop
+// marker, or a helper past the owned-work deadline, rejects to the renderer
+// and the session stays owned so the next Stop, Start or Quit retries it.
+function reportNativeHelperStop(kind, operation) {
+  return operation.catch((error) => {
+    slog(`${kind} stop incomplete (${error?.code ?? "STOP_FAILED"}); helper ownership retained`);
+    throw error;
+  });
+}
 ipcMain.handle("speech:stop", () => {
-  if (nativeActions.appleSpeech) stopSpeech();
+  if (nativeActions.appleSpeech) return reportNativeHelperStop("dictation", stopSpeech());
 });
 ipcMain.handle("speech:finish", () => {
   if (nativeActions.appleSpeech) finishSpeech();
@@ -2401,8 +2433,14 @@ ipcMain.handle("skill-recorder:start", (event) => {
   if (!win) throw new Error("The recorder window is unavailable");
   return startRecorder(win);
 });
-ipcMain.handle("skill-recorder:stop", () => stopRecorder());
-ipcMain.handle("skill-recorder:save", (_event, payload) => saveSkillRecording(payload));
+ipcMain.handle("skill-recorder:stop", () => reportNativeHelperStop("recorder", stopRecorder()));
+// B1: the recording lands under the installation this process owns (the
+// selected one after a separate restore), never the env/default original.
+ipcMain.handle("skill-recorder:save", createSkillRecordingSaveHandler({
+  ...ownedMainRenderer,
+  activeRoot: activeNativeDataRoot,
+  saveRecording: saveSkillRecording,
+}));
 
 // ── companion sidecar ──────────────────────────────────────────────────
 // The renderer gets these and nothing else: it can turn the companion on and
@@ -2883,14 +2921,23 @@ function cleanupDesktopForExit() {
   if (desktopCleanup) return desktopCleanup;
   // Release the sleep blocker synchronously; child shutdown is awaited below.
   syncCompanionKeepAwake(false, false);
-  // a live dictation session runs its own helper child that holds the mic —
-  // stop it here so quitting never orphans a recording process
-  if (nativeActions.appleSpeech) stopSpeech();
-  stopRecorder();
+  // A live dictation or recorder session runs its own helper app that holds
+  // the mic or a global event tap. Signal both now so they exit in parallel
+  // with the harness. The first stage below keeps cleanup, and installation
+  // ownership, pending until each helper's exit is observed (B5). A failed
+  // stop marker or the owned-work deadline rejects that stage and is reported;
+  // the next Quit signals the still-owned helper again.
+  const nativeHelpersStopped = Promise.all([
+    nativeActions.appleSpeech ? stopSpeech() : undefined,
+    stopRecorder(),
+  ]);
+  nativeHelpersStopped.catch(() => {});
   try {
     browserSurface?.closeAll();
   } catch {}
   desktopCleanup = (async () => {
+    desktopCleanupStage = "native speech and recorder helpers";
+    await awaitOwnedWork(nativeHelpersStopped, "Native speech or recorder helpers have not exited");
     // Children are registered before their first await, including failed
     // port attempts that never became serverProc. Stop those first so boot
     // identity polling can settle, then drain any in-flight parent writers.

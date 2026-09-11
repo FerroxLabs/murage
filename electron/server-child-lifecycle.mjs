@@ -1,6 +1,10 @@
+/** The bounded wait for owned work (harness children, quit stages, native
+ * helper exits). A deadline reports uncertainty; it never releases ownership. */
+export const OWNED_WORK_TIMEOUT_MS = 10_000;
+
 /** Observe an exact owned child from the instant it is forked. A successful
  * kill call is only a request: only exit permits another persistent writer. */
-export function createServerChildLifecycle(child, { timeoutMs = 10_000 } = {}) {
+export function createServerChildLifecycle(child, { timeoutMs = OWNED_WORK_TIMEOUT_MS } = {}) {
   let exited = child.exitCode != null || child.signalCode != null;
   let failed = false;
   let resolveExit;
@@ -32,7 +36,7 @@ export function createServerChildLifecycle(child, { timeoutMs = 10_000 } = {}) {
 
 /** A deadline reports uncertainty, never successful cleanup. Keep the work
  * observed so its late rejection cannot escape after the caller retries. */
-export async function awaitOwnedWork(work, label, timeoutMs = 10_000) {
+export async function awaitOwnedWork(work, label, timeoutMs = OWNED_WORK_TIMEOUT_MS) {
   let timer;
   try {
     await Promise.race([
