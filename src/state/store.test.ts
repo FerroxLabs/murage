@@ -471,6 +471,50 @@ describe("where a fresh sign-in lands", () => {
   });
 });
 
+describe("workspace pane (F4-T3)", () => {
+  const member = (id: string, name: string) => ({
+    id, threadId: `t-${id}`, name, title: "", description: "", notifications: true, color: "green", unread: false,
+    modelSelection: { instanceId: "x", model: "y" }, messages: [],
+  }) as unknown as Bot;
+
+  it("starts closed with no tabs", () => {
+    expect(initialState.workspacePane).toEqual({ open: false, width: 440, expanded: false, compactView: "chat", tabs: [], activeTabId: null, closeRequest: null });
+  });
+
+  it("routes pane actions to the pane reducer and touches nothing else", () => {
+    const state = { ...initialState, bots: [member("a", "A")], selectedId: "a" };
+    const next = reducer(state, { type: "workspacePane", action: { type: "open", id: "t1", scope: { botId: "a", threadId: "t-a" }, relativePath: "outputs/report.md" } });
+    expect(next.workspacePane.open).toBe(true);
+    expect(next.workspacePane.tabs.map((tab) => tab.relativePath)).toEqual(["outputs/report.md"]);
+    // Everything but the pane is the same object: the pane is not a reason
+    // to re-render the transcript.
+    expect(next.bots).toBe(state.bots);
+    expect(next.selectedId).toBe("a");
+    expect(reducer(next, { type: "workspacePane", action: { type: "activate", id: "missing" } })).toBe(next);
+  });
+
+  it("keeps the tabs, their own conversation and the width when another bot is selected", () => {
+    const state = { ...initialState, bots: [member("a", "A"), member("b", "B")], selectedId: "a" };
+    const opened = reducer(reducer(state,
+      { type: "workspacePane", action: { type: "open", id: "t1", scope: { botId: "a", threadId: "t-a" }, relativePath: "notes.md", mode: "edit" } }),
+      { type: "workspacePane", action: { type: "setWidth", width: 520 } });
+    const switched = reducer(opened, { type: "select", id: "b" });
+    expect(switched.selectedId).toBe("b");
+    expect(switched.workspacePane).toBe(opened.workspacePane);
+    expect(switched.workspacePane.tabs[0]).toMatchObject({ scope: { botId: "a", threadId: "t-a" }, mode: "edit", pinned: true });
+    expect(switched.workspacePane.width).toBe(520);
+  });
+
+  it("does not take the right slot from the inspector, the computer panel or settings", () => {
+    const state = reducer(initialState, { type: "workspacePane", action: { type: "show" } });
+    const inspector = reducer(state, { type: "toggleInspector", open: true });
+    expect(inspector.inspectorOpen).toBe(true);
+    expect(inspector.workspacePane.open).toBe(true);
+    const settings = reducer(inspector, { type: "toggleSettings", open: true });
+    expect(settings.workspacePane.open).toBe(true);
+  });
+});
+
 describe("cross-client bot creation", () => {
   it("adds an announced bot before its greeting frames arrive", () => {
     const announced = {

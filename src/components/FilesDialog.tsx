@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, useStore } from "@/state/store";
 import { Files, artifactNativeAction, type FilesOpenDetail } from "./Files";
 import type { Artifact } from "../../shared/artifacts";
+import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 import { t } from "@/lib/i18n";
 
 export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose: () => void }) {
@@ -27,6 +28,19 @@ export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose
     } catch (reason) { setError(reason instanceof Error ? reason.message : t("source.openError")); } finally { gate.current = false; }
   };
   const native = artifactNativeAction();
+  // Open beside chat (F4-T3): the pane names the file by the browsed
+  // conversation's scope and the listed relative path. The selected
+  // conversation is left alone — a tab carries its own scope — and the
+  // dialog closes so the pane is what the owner sees next.
+  const openInPane = (scope: WorkspaceScopeRef, relativePath: string, mode: "preview" | "edit") => {
+    dispatch({ type: "workspacePane", action: { type: "open", scope, relativePath, mode } });
+    onClose();
+  };
+  const showPane = (scope: WorkspaceScopeRef) => {
+    dispatch({ type: "workspacePane", action: { type: "show" } });
+    if (scope.botId !== state.selectedId) dispatch({ type: "select", id: scope.botId });
+    onClose();
+  };
   // The folder shown belongs to whichever conversation Files is browsing now,
   // not the one it was opened from, so Show folder can never open another
   // conversation's workspace.
@@ -35,6 +49,7 @@ export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose
     {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{error}</p>}
     <Files bots={state.bots} initialBotId={initial.botId} initialThreadId={initial.threadId} initialArtifactId={initial.artifactId} onClose={onClose} onSource={artifact => { void source(artifact); }}
       onRevealFolder={reveal ? scope => { void reveal(scope.botId, scope.threadId).catch(() => setError(t("files.workingFolderError"))); } : undefined}
+      onOpenInPane={openInPane} onShowPane={showPane}
       onNativeAction={native ? async (artifact, action) => { try { await native(artifact, action); } catch (reason) { setError(reason instanceof Error ? reason.message : t("files.nativeActionError")); } } : undefined} />
   </dialog>;
 }
