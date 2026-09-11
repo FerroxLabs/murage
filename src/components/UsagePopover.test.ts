@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest";
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
 const popover = read("./UsagePopover.tsx");
-const chat = read("./ChatView.tsx");
+// UsageChip moved to ChatHeader.tsx with the rest of the header (U0-T1);
+// every assertion below is the one that was already here.
+const chat = read("./ChatHeader.tsx");
 const skillsPanel = read("./BotSkillsPanel.tsx");
 
 /** The `UsageChip` function alone, so an assertion about the chip cannot be
@@ -85,15 +87,16 @@ describe("the token chip has a real popover, not a title attribute", () => {
   });
 
   it("keeps the folded and narrow variants working", () => {
-    // The header's container queries: the chip folds to one figure below
-    // `4xl` and leaves the header entirely below `md`, where the conversation
-    // name needs every pixel. The fold now sits on the popover wrapper so the
-    // anchor folds away with the chip rather than leaving an empty box in the
-    // flex row's `gap-2`.
-    expect(usageChipSource).toContain('className="@max-md/chathead:hidden"');
-    expect(usageChipSource).toContain("@max-4xl/chathead:px-2");
-    expect(usageChipSource).toContain('<span className="@max-4xl/chathead:hidden">{text}</span>');
-    expect(usageChipSource).toContain('<span className="hidden @max-4xl/chathead:inline">{short}</span>');
+    // The chip folds to one figure when the header's measured layout says so
+    // (`chip-fold:`, U0-T1), and leaves the header entirely — into the More
+    // menu, figure intact — when the conversation name needs every pixel.
+    // Neither is a container breakpoint of the chip's own any more.
+    expect(usageChipSource).not.toMatch(/@max-\w+\/chathead/);
+    expect(usageChipSource).toContain("chip-trim:px-2");
+    expect(usageChipSource).toContain('<span className="chip-trim:hidden">{text}</span>');
+    expect(usageChipSource).toContain('<span className="hidden chip-trim:inline">{short}</span>');
+    expect(chat).toContain('{inHeader("usage") && <UsageChip bot={bot} />}');
+    expect(chat).toContain('label: t("chatHeader.usageMenu", { usage: usageText })');
   });
 
   it("names the open panel to a screen reader", () => {
