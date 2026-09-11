@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test as base } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -8,32 +8,47 @@ import { fileURLToPath } from "node:url";
 import type { ClaudeAccount } from "../components/ClaudeAccountsSettings";
 
 type Fixture = { info: { url: string; dataDir: string }; fixtureDumpPath: string; close(): Promise<void> };
-let fixture: Fixture, vite: ViteDevServer, origin: string, headers: Record<string, string>;
+let fixture: Fixture, vite: ViteDevServer | undefined, origin: string, headers: Record<string, string>;
 async function request(path: string, method = "GET", body?: unknown) {
   return fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15000) });
 }
 async function api(path: string, method = "GET", body?: unknown): Promise<any> {
   const response = await request(path, method, body); expect(response.ok, `${method} ${path}: ${response.status}`).toBe(true); return response.json();
 }
-test.beforeAll(async () => {
+async function launch() {
   const { launchVerificationServer } = await import(new URL("../../scripts/control-murage.ts", import.meta.url).href) as { launchVerificationServer(): Promise<Fixture> };
-  fixture = await launchVerificationServer();
+  fixture = await launchVerificationServer(); vite = undefined;
   try {
     const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
     const root = fileURLToPath(new URL("../../", import.meta.url));
-    vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "accounts-vite"), resolve: { alias: { "@": join(root, "src") } }, server: { host: "127.0.0.1", hmr: false, watch: null, proxy: { "/api": { target: fixture.info.url, headers } } }, plugins: [react(), tailwindcss(), {
+    const ui = vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "accounts-vite"), resolve: { alias: { "@": join(root, "src") } }, server: { host: "127.0.0.1", hmr: false, watch: null, proxy: { "/api": { target: fixture.info.url, headers } } }, plugins: [react(), tailwindcss(), {
       name: "accounts-fixture", resolveId(id) { if (id === "/__accounts.js") return "\0accounts-fixture"; },
       load(id) { if (id !== "\0accounts-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {ClaudeAccountsSettings} from '/src/components/ClaudeAccountsSettings.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'light';window.copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>window.copied.push(value)},configurable:true});createRoot(document.getElementById('root')).render(React.createElement(ClaudeAccountsSettings));`; },
       configureServer(server) { server.middlewares.use((req, res, next) => { if (!req.url?.startsWith("/__accounts?")) return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app);color:var(--color-ink)"><main id="root" style="max-width:760px;height:calc(100dvh - 48px);overflow-y:auto;margin:24px auto;padding:16px"></main><script type="module" src="/__accounts.js"></script>'); }); },
     }] });
-    await vite.listen(Number(process.env.MURAGE_E2E_UI_PORT) || 0); const address = vite.httpServer!.address(); if (!address || typeof address === "string") throw Error("Accounts UI fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
+    await ui.listen(Number(process.env.MURAGE_E2E_UI_PORT) || 0); const address = ui.httpServer!.address(); if (!address || typeof address === "string") throw Error("Accounts UI fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
   } catch (error) { await vite?.close(); await fixture.close(); throw error; }
+}
+// Each test owns a fresh verification server and UI fixture. One beforeAll
+// server let the held-refresh test see the CRUD test's "Work renamed" account
+// and its bound bot, so one test's outcome or order changed what the next saw
+// (CLAC1 verifier, CLAC2). The setup keeps its own budget, as beforeAll had.
+const test = base.extend<{ isolatedAccounts: void }>({
+  // oxlint-disable-next-line no-empty-pattern -- Playwright reads fixture dependencies from this destructuring
+  isolatedAccounts: [async ({}, use) => {
+    await launch();
+    try { await use(); } finally { try { await vite?.close(); } finally { await fixture.close(); } }
+  }, { auto: true, timeout: 60_000 }],
 });
-test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
+/** Isolation proof: every test starts with no named account on its own server. */
+async function expectNoNamedAccounts() {
+  expect(((await api("/api/claude-accounts")).accounts as ClaudeAccount[]).filter(account => account.managed || account.displayName !== "Verification fixture")).toEqual([]);
+}
 
 test("owner account CRUD preserves credentials, selected identity and active work", async ({ page }, info) => {
   expect((await fetch(fixture.info.url + "/api/claude-accounts")).status).toBe(404);
+  await expectNoNamedAccounts();
   await page.goto(origin + "/__accounts?skin=" + (info.project.name === "narrow" ? "dark" : "light"));
   await expect(page.getByText("Verification fixture", { exact: true })).toBeVisible();
   for (const name of ["Work", "Personal"]) {
@@ -94,6 +109,7 @@ test("a created, renamed or removed account shows before the engine re-probe ans
   });
   const holdNextRefresh = () => { held = 0; gate = new Promise(resolve => { open = () => { gate = undefined; resolve(); }; }); };
   const releaseRefresh = () => open();
+  await expectNoNamedAccounts();
   await page.goto(origin + "/__accounts?skin=" + (info.project.name === "narrow" ? "dark" : "light"));
   await expect(page.getByText("Verification fixture", { exact: true })).toBeVisible();
   const add = page.getByRole("button", { name: "Add Claude account", exact: true });
@@ -132,4 +148,65 @@ test("a created, renamed or removed account shows before the engine re-probe ans
   await expect(add).toBeEnabled();
   expect(((await api("/api/claude-accounts")).accounts as ClaudeAccount[]).some(account => account.instanceId === created.instanceId)).toBe(false);
   await expect(page.locator(`[data-claude-account="${created.instanceId}"]`)).toHaveCount(0);
+});
+
+// The section takes a change before its first list arrives, and Refresh does
+// not lock it. A list response that left before a change's receipt used to
+// land after it and redraw the older list over the receipt's row (CLAC1
+// verifier). Each held GET is answered by the server first and delivered to the
+// page only after the change is drawn, so the late body is genuinely older.
+test("a list that left before a change cannot redraw over it", async ({ page }, info) => {
+  await expectNoNamedAccounts();
+  const late: Array<() => void> = []; let holdNext = true;
+  await page.route(url => url.pathname === "/api/claude-accounts", async route => {
+    if (route.request().method() !== "GET" || !holdNext) return route.continue();
+    holdNext = false;
+    const response = await route.fetch();
+    await new Promise<void>(resolve => late.push(resolve));
+    await route.fulfill({ response });
+  });
+  const deliverLate = async () => {
+    const answered = page.waitForResponse(response => new URL(response.url()).pathname === "/api/claude-accounts" && response.request().method() === "GET");
+    late.shift()!();
+    await (await answered).finished();
+    // Let the page read the late body and commit whatever it does with it.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  };
+  const accountNamed = async (name: string) => ((await api("/api/claude-accounts")).accounts as ClaudeAccount[]).find(account => account.displayName === name)!;
+
+  await page.goto(origin + "/__accounts?skin=" + (info.project.name === "narrow" ? "dark" : "light"));
+  await expect.poll(() => late.length).toBe(1);
+  await expect(page.getByText("Loading accounts...", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add Claude account", exact: true }).click();
+  await page.getByLabel("Account name", { exact: true }).fill("Early");
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Sign in explicitly" })).toBeVisible();
+  const early = await accountNamed("Early"), earlyRow = page.locator(`[data-claude-account="${early.instanceId}"]`);
+  await expect(earlyRow).toHaveCount(1);
+  await expect(page.getByText("Verification fixture", { exact: true })).toBeVisible();
+  await page.screenshot({ path: info.outputPath("accounts-late-first-list-" + info.project.name + ".png"), fullPage: true });
+  await deliverLate();
+  await expect(earlyRow).toHaveCount(1);
+  await expect(earlyRow).toContainText("Early");
+  await expect(page.getByText("Verification fixture", { exact: true })).toBeVisible();
+
+  holdNext = true;
+  await page.getByRole("button", { name: "Refresh accounts", exact: true }).click();
+  await expect.poll(() => late.length).toBe(1);
+  await page.getByRole("button", { name: "Edit Early account", exact: true }).click();
+  await page.getByLabel("Account name", { exact: true }).fill("Early renamed");
+  await page.getByRole("button", { name: "Save account", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Account settings saved." })).toBeVisible();
+  await expect(page.getByText("Early renamed", { exact: true })).toBeVisible();
+  await deliverLate();
+  await expect(page.getByText("Early renamed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Early", { exact: true })).toHaveCount(0);
+
+  // A list requested after the change still draws what the server holds now.
+  await api(`/api/claude-accounts/${early.instanceId}`, "PATCH", { displayName: "Early outside" });
+  await page.getByRole("button", { name: "Refresh accounts", exact: true }).click();
+  await expect(page.getByText("Early outside", { exact: true })).toBeVisible();
+  await expect(page.getByText("Early renamed", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add Claude account", exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
