@@ -20,8 +20,22 @@ the IDs in `wrangler.jsonc`, deploy under their own Worker name, and set
 `MURAGE_COMPOSIO_BROKER_URL` in their packaged build. Running only the local
 server with a Composio project key remains the no-Cloudflare self-host path.
 
-Set `REGISTRATION_MODE` to `closed` to stop issuing new installation tokens
-without affecting existing users.
+The committed `vars` in `wrangler.jsonc` are the live state after FluxRouter
+rollout step 8 (the day the 0.1.52 desktop moves to FluxRouter): registration
+closed, claims open, `MIGRATION_GATE` on, a 15-minute claim grace, the 7-day
+issuance fallback, the call ceiling off, and no cut-off yet
+(`LEGACY_BROKER_UNTIL` and `CLAIM_UNTIL` are set at step 9). A `--var` override
+lasts only for that deploy: the next plain `pnpm broker:deploy` ships the
+committed values again, so commit any value you mean to keep.
+`src/wrangler-config.test.ts` fails if `CLAIM_MODE` or `REGISTRATION_MODE`
+drifts back.
+
+- `REGISTRATION_MODE` `closed` stops issuing new installation tokens without
+  affecting existing users; `--var REGISTRATION_MODE:open` reopens it.
+- Pause claims: `--var CLAIM_MODE:closed` (add `--var MIGRATION_GATE:off` if
+  they stay paused longer than 7 days).
+- FluxRouter broker dark: `--var MIGRATION_GATE:off` in the same step, so every
+  install with a Worker token is served again, claimed or not.
 
 Registration is throttled per source address as Cloudflare observed it
 (`cf-connecting-ip`): IPv4 exactly, IPv6 by its /64, IPv4-mapped IPv6 as
