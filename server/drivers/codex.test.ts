@@ -849,3 +849,71 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(turnStart.params).not.toHaveProperty("effort");
   });
 });
+
+// A4: app-server stdout is framed with a byte bound before any parse.
+describe("CodexDriver bounded ingress (A4)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+
+  const create = async () => {
+    instance = await CodexDriver.create({
+      instanceId: "codex-bounded",
+      displayName: "Codex Bounded",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+  /** No event on the thread may carry the dropped frame's content. */
+  const noLargePayload = (threadId: string) =>
+    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
+
+  beforeEach(() => {
+    chmodSync(FAKE_CLI, 0o755);
+  });
+  afterEach(async () => {
+    recorder?.stop();
+    await instance?.dispose();
+  });
+
+  it("fails only the turn whose frame is over the limit, even when turn/completed follows it", async () => {
+    await create();
+    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__" });
+    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hello" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "runtime.error",
+      threadId: "t-oversize",
+      message: expect.stringMatching(/^Codex sent a protocol message larger than 32 MiB/),
+    }));
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "item.completed", itemType: "assistant_text", threadId: "t-ordinary", text: "done from fake codex",
+    }));
+    expect(noLargePayload("t-oversize")).toBe(true);
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+  });
+
+  it("fails an unterminated oversized frame without waiting for a newline", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(noLargePayload("t-open")).toBe(true);
+  });
+
+  it("still carries a generated image at the 10 MiB image cap", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: true });
+    const image = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_image" && e.itemId === "img-large");
+    expect((image as { data: string } | undefined)?.data).toHaveLength(4 * Math.ceil((10 * 1024 * 1024) / 3));
+  });
+});

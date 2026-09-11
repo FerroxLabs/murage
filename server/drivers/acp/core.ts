@@ -118,6 +118,7 @@ import { isHarnessOwnedMcpEnvName } from "../../mcp-registry.ts";
 // packaged server dir entirely. See server/proxy-paths.ts.
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
+import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "../bounded-lines.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 
 export interface AcpConfig {
@@ -685,49 +686,53 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
-        let buf = "";
-        // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
-        // multibyte characters that straddle two reads and corrupts the text
-        child.stdout.setEncoding("utf8");
-        child.stdout.on("data", (chunk) => {
-          buf += chunk;
-          let nl;
-          while ((nl = buf.indexOf("\n")) !== -1) {
-            const line = buf.slice(0, nl);
-            buf = buf.slice(nl + 1);
-            if (!line.trim()) continue;
-            let msg: any;
-            try {
-              msg = JSON.parse(line);
-            } catch {
-              continue;
-            }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
-            if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
-              const pend = rpcPending.get(msg.id);
-              if (!pend && msg.error) {
-                // No pending request matches: never attach a method to it.
-                lifecycle.record("rpc_rejected", lifecycleRejection(msg.error, msg.id));
-              }
-              if (pend) {
-                rpcPending.delete(msg.id);
-                if (pend.timer) clearTimeout(pend.timer);
-                if (msg.error) {
-                  lifecycle.record("rpc_rejected", lifecycleRejection(msg.error, msg.id, pend.method));
-                  const error = new Error(acpRpcErrorMessage(msg.error));
-                  Object.assign(error, { code: msg.error.code, data: msg.error.data, acpMethod: pend.method });
-                  pend.reject(error);
-                } else {
-                  pend.resolve(msg.result);
-                }
-              }
-            } else if (msg.id !== undefined && msg.method) {
-              handleServerRequest(msg);
-            } else if (msg.method) {
-              handleNotification(msg);
-            }
-          }
+        // Byte-bounded framing (A4): the splitter decodes UTF-8 only for
+        // complete lines, so multibyte characters that straddle two reads stay
+        // intact, and one frame can never hold more than ENGINE_FRAME_MAX_BYTES
+        // of this shared process's memory.
+        const stdoutLines = createBoundedLineSplitter({
+          onLine: (line) => handleStdoutLine(line),
+          onOverflow: (overflow) => {
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: { frameOverflow: overflow } });
+            if (state.settled) return;
+            emit({ ...base(threadId, turnId), type: "runtime.error", message: frameOverflowMessage(support.displayName, overflow) });
+            settle(false, FRAME_TOO_LARGE);
+          },
         });
+        child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
+        const handleStdoutLine = (line: string) => {
+          if (!line.trim()) return;
+          let msg: any;
+          try {
+            msg = JSON.parse(line);
+          } catch {
+            return;
+          }
+          appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
+          if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
+            const pend = rpcPending.get(msg.id);
+            if (!pend && msg.error) {
+              // No pending request matches: never attach a method to it.
+              lifecycle.record("rpc_rejected", lifecycleRejection(msg.error, msg.id));
+            }
+            if (pend) {
+              rpcPending.delete(msg.id);
+              if (pend.timer) clearTimeout(pend.timer);
+              if (msg.error) {
+                lifecycle.record("rpc_rejected", lifecycleRejection(msg.error, msg.id, pend.method));
+                const error = new Error(acpRpcErrorMessage(msg.error));
+                Object.assign(error, { code: msg.error.code, data: msg.error.data, acpMethod: pend.method });
+                pend.reject(error);
+              } else {
+                pend.resolve(msg.result);
+              }
+            }
+          } else if (msg.id !== undefined && msg.method) {
+            handleServerRequest(msg);
+          } else if (msg.method) {
+            handleNotification(msg);
+          }
+        };
 
         let stderr = "";
         child.stderr.on("data", (c) => {

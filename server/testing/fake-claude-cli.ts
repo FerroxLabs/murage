@@ -73,6 +73,12 @@ const argAfter = (flag: string): string | null => {
 };
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+// Mirrors ENGINE_FRAME_MAX_BYTES in server/drivers/bounded-lines.ts. "é" is
+// two UTF-8 bytes: the oversize text alone is one KiB over the limit, and the
+// large text is 14 MiB, the size of a 10 MiB image as base64.
+const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
+const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
+const fixtureLargeText = () => "é".repeat(7 * 1024 * 1024);
 
 // Snapshot probes: both answer on argv alone and exit without reading stdin.
 if (argv[0] === "--version") {
@@ -221,6 +227,30 @@ const playTurn = (prompt: JsonValue) => {
   if (mode === "exit-early") {
     process.stderr.write("fake-claude: simulated crash before result\n");
     process.exit(3);
+  }
+  // Bounded-ingress fixtures (A4), keyed on the prompt text.
+  if (promptText(prompt).includes("__fixture_oversize_frame__")) {
+    // a VALID frame one KiB over the limit, then a clean success result:
+    // the driver must fail the turn rather than read past the dropped frame
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    out({ type: "assistant", message: { content: [{ type: "text", text: fixtureOversizeText() }] } });
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
+  if (promptText(prompt).includes("__fixture_oversize_open_frame__")) {
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    process.stdout.write(`{"type":"assistant","message":{"content":[{"type":"text","text":"${fixtureOversizeText()}`);
+    return;
+  }
+  if (promptText(prompt).includes("__fixture_large_frame__")) {
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    out({ type: "assistant", message: { content: [{ type: "text", text: fixtureLargeText() }] } });
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+    turnRunning = false;
+    finishIfDone();
+    return;
   }
   // transient-failure script for retry tests. FAKE_CLAUDE_TRANSIENTS is how
   // many launches fail transiently (503-shaped stderr, exit 5); the count of

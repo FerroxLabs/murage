@@ -1402,3 +1402,81 @@ describe("ACP snapshot", () => {
     }
   });
 });
+
+// A4: engine stdout is framed with a byte bound before any parse. One engine
+// that sends an oversized frame fails its own turn and loses its child; a
+// turn on another thread of the same instance completes normally.
+describe("ACP bounded ingress (A4)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+  let scratch: string;
+
+  const create = async () => {
+    instance = await GrokAgentDriver.create({
+      instanceId: "acp-bounded",
+      displayName: "ACP Bounded",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+  /** No event on the thread may carry the dropped frame's content. */
+  const noLargePayload = (threadId: string) =>
+    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    scratch = mkdtempSync(join(tmpdir(), "murage-acp-bounded-"));
+  });
+  afterEach(async () => {
+    delete process.env.FAKE_ACP_PID_FILE;
+    recorder?.stop();
+    await instance?.dispose();
+    await removeTempDir(scratch);
+  });
+
+  it("fails only the turn whose frame is over the limit, even when a clean result follows it", async () => {
+    await create();
+    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__" });
+    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hi" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "runtime.error",
+      threadId: "t-oversize",
+      message: expect.stringMatching(/larger than 32 MiB/),
+    }));
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "content.delta", threadId: "t-ordinary" }));
+    expect(noLargePayload("t-oversize")).toBe(true);
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === oversized.turnId)).toHaveLength(1);
+  });
+
+  it("fails an unterminated oversized frame without waiting for a newline, and stops that child", async () => {
+    const pidFile = join(scratch, "pid");
+    process.env.FAKE_ACP_PID_FILE = pidFile;
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(noLargePayload("t-open")).toBe(true);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    await expect.poll(() => processAlive(pid), { timeout: 5_000 }).toBe(false);
+  });
+
+  it("still carries a valid image frame at the 10 MiB image cap", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: true });
+    const image = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_image");
+    expect(image).toMatchObject({ threadId: "t-large", data: expect.any(String) });
+    expect((image as { data: string }).data).toHaveLength(4 * Math.ceil((10 * 1024 * 1024) / 3));
+  });
+});
