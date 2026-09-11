@@ -4,12 +4,13 @@
 //
 // FLUX ROUTING IS ENV-ONLY, AND NOTHING BELOW MAY WRITE THE KEY TO DISK.
 // `ensureQwenInjectModel` upserts the provider key in PLAINTEXT into
-// ~/.qwen/settings.json (`envMap[keyName] = key`, :60; `writeFileSync`, :85)
+// ~/.qwen/settings.json (the `env[keyName]` entry and the final
+// `writeFileSync` in ensureQwenInjectModel)
 // with no rollback — it survives turning Flux off, uninstalling the bot, and
 // changing the model. That is Kimi finding B
 // (docs/plans/flux-router-integration.md), and it is why a Flux id short-
 // circuits `resolveTurnModel` below instead of falling through to the writer.
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +19,7 @@ import { fluxKey } from "../../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../../flux-routing.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { displayConfigPath, isPlainObject, NativeConfigRefusal, readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
@@ -30,7 +32,14 @@ function envKeyFor(hostId: string): string {
   return `MURAGE_QWEN_${hostId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
 }
 
-/** Upsert an OpenAI-compatible provider row so `qwen -m` can reach the host. */
+/** Upsert an OpenAI-compatible provider row so `qwen -m` can reach the host.
+ *
+ * An existing settings.json that cannot be read, is not a plain JSON object
+ * (Qwen Code also accepts comments there, which a rewrite would delete), or
+ * holds an unexpected `env` / `modelProviders` shape is REFUSED: this throws a
+ * NativeConfigRefusal with repair guidance before anything is written, so the
+ * file keeps its bytes and the turn fails before the CLI is spawned (0.1.52
+ * A8). An absent file is created. */
 export function ensureQwenInjectModel(
   modelId: string,
   env: Record<string, string | undefined> = process.env,
@@ -40,30 +49,20 @@ export function ensureQwenInjectModel(
   const host = localHost(inject.host);
   if (!host) return modelId;
 
+  const home = env.HOME || env.USERPROFILE || homedir();
   const dir = qwenHome(env);
-  mkdirSync(dir, { recursive: true });
   const path = join(dir, "settings.json");
-  let settings: Record<string, unknown> = {};
-  if (existsSync(path)) {
-    try {
-      settings = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-    } catch {
-      // Malformed user config — inject into a fresh object rather than fail the turn.
-    }
-  }
+  const settings: Record<string, unknown> = readNativeJsonConfig(path, home)?.value ?? {};
+  const refuse = (field: string) => new NativeConfigRefusal(displayConfigPath(path, home), "unexpected-shape", field);
+  if (settings.env !== undefined && !isPlainObject(settings.env)) throw refuse("env");
+  if (settings.modelProviders !== undefined && !isPlainObject(settings.modelProviders)) throw refuse("modelProviders");
+  const providers: Record<string, unknown> = { ...(settings.modelProviders as Record<string, unknown> | undefined) };
+  if (providers.openai !== undefined && !Array.isArray(providers.openai)) throw refuse("modelProviders.openai");
+
   const keyName = envKeyFor(inject.host);
   const key = hostApiKey(host, env);
-  const envMap =
-    settings.env && typeof settings.env === "object" && !Array.isArray(settings.env)
-      ? { ...(settings.env as Record<string, unknown>) }
-      : {};
-  envMap[keyName] = key;
-  settings.env = envMap;
+  settings.env = { ...(settings.env as Record<string, unknown> | undefined), [keyName]: key };
 
-  const providers =
-    settings.modelProviders && typeof settings.modelProviders === "object" && !Array.isArray(settings.modelProviders)
-      ? { ...(settings.modelProviders as Record<string, unknown>) }
-      : {};
   const openai = Array.isArray(providers.openai) ? [...providers.openai] : [];
   const match = openai.find(
     (row) =>
@@ -82,6 +81,7 @@ export function ensureQwenInjectModel(
     providers.openai = openai;
     settings.modelProviders = providers;
   }
+  mkdirSync(dir, { recursive: true });
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
   try {
     chmodSync(path, 0o600);
@@ -125,7 +125,7 @@ const support: AcpSupport = {
   resolveModels,
   // A Flux id must never reach `ensureQwenInjectModel` — see the file header.
   // `decodeInjectId` already returns null for `flux-*` so the writer would
-  // early-return at :39 and touch nothing, but the guard is explicit rather
+  // early-return and touch nothing, but the guard is explicit rather
   // than a property of another module: a settings.json write is unrecoverable.
   //
   // The id is also settled HERE and not in `applyTurnEnv`, because argv is

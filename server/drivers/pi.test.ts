@@ -5,14 +5,16 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly; spawnCli
 // resolves it to `node <script>`, so these run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ensureDirs } from "../config.ts";
-import type { ProviderInstance } from "../contracts.ts";
+import { approvalKey, autoVerdict } from "../auto-approve.ts";
+import { shouldReview } from "../auto-review.ts";
+import { ensureDirs, NATIVE_DIR } from "../config.ts";
+import { newId, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { encodeInjectId, localHost } from "./local-inject.ts";
 import {
@@ -288,6 +290,140 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-turn-error")).toBe(false);
   });
 
+  /** Every RPC command the driver wrote to this thread's pi child, in order,
+   * read back from the driver's own native trace (not the child's side). */
+  const outboundCommands = (threadId: string) => {
+    const file = join(NATIVE_DIR, `${threadId}.ndjson`);
+    if (!existsSync(file)) return [];
+    return readFileSync(file, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { dir?: string; source?: string; msg?: { type?: string } })
+      .filter((row) => row.dir === "out" && row.source === "pi.rpc")
+      .map((row) => row.msg?.type);
+  };
+  const dumpRows = (dump: string) =>
+    existsSync(dump)
+      ? readFileSync(dump, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as { setModel?: { provider: string; modelId: string }; prompt?: boolean })
+      : [];
+  const turnEventTypes = (turnId: string) => recorder.events.filter((e) => e.turnId === turnId).map((e) => e.type);
+
+  it("fails before the prompt when pi rejects the selected model", async () => {
+    const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-model-reject-")), "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump, FAKE_PI_SET_MODEL: "reject" });
+    const threadId = `t-model-reject-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "openai/gpt-4o" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(turnEventTypes(turnId)).toEqual(["turn.started", "session.started", "runtime.error", "turn.completed"]);
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message: 'pi could not select model "openai/gpt-4o": pi set_model failed: Model not found: openai/gpt-4o',
+    });
+    expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
+    expect(dumpRows(dump).filter((row) => row.setModel)).toEqual([{ setModel: { provider: "openai", modelId: "gpt-4o" } }]);
+    expect(dumpRows(dump).filter((row) => row.prompt)).toEqual([]);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
+  it("fails before the prompt when set_model never answers", async () => {
+    await create(undefined, { FAKE_PI_SET_MODEL: "silent" });
+    const threadId = `t-model-timeout-${newId()}`;
+    // Only the driver's RPC timers are faked; child-process I/O stays real.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const sent = instance.adapter.sendTurn({ threadId, text: "hi", model: "ollama-cloud/glm-5.2" });
+      // session.started is emitted in the same synchronous continuation that
+      // arms the set_model response timer and writes set_model.
+      await recorder.until((e) => e.type === "session.started" && e.threadId === threadId);
+      expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
+      await vi.advanceTimersByTimeAsync(20_000);
+      const { turnId } = await sent;
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+      expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+      expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+        message: 'pi could not select model "ollama-cloud/glm-5.2": pi set_model timed out',
+      });
+      expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
+      expect(instance.adapter.hasSession(threadId)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails before model selection or the prompt when a new session cannot start", async () => {
+    await create(undefined, { FAKE_PI_SESSION: "reject" });
+    const threadId = `t-session-reject-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "openai/gpt-4o" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(turnEventTypes(turnId)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message: "pi could not start a session: pi new_session failed: Could not create session directory",
+    });
+    expect(outboundCommands(threadId)).toEqual(["new_session"]);
+  });
+
+  it("fails instead of silently dropping history when a saved session cannot be resumed", async () => {
+    await create(undefined, { FAKE_PI_SESSION: "reject" });
+    const threadId = `t-resume-reject-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId,
+      text: "hi",
+      resumeCursor: "/fake/missing-session.json",
+    });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message:
+        "pi could not resume this thread's session: pi switch_session failed: Session file not found: /fake/missing-session.json",
+    });
+    expect(outboundCommands(threadId)).toEqual(["switch_session"]);
+  });
+
+  it("fails a bare model id before spawning instead of running pi's default", async () => {
+    const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-bare-model-")), "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump });
+    const rowsAfterCatalogProbe = dumpRows(dump).length;
+    const threadId = `t-bare-model-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "gpt-4o" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(turnEventTypes(turnId)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message: expect.stringContaining('pi could not select model "gpt-4o": pi needs a provider/model id'),
+    });
+    expect(outboundCommands(threadId)).toEqual([]);
+    // no pi child was spawned for the turn, so nothing new reached the fake
+    expect(dumpRows(dump)).toHaveLength(rowsAfterCatalogProbe);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
+  it("pins a selected model once before one prompt, and leaves an unselected turn on pi's default", async () => {
+    const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-model-ok-")), "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump });
+    const picked = `t-model-picked-${newId()}`;
+    const first = await instance.adapter.sendTurn({ threadId: picked, text: "hi", model: "openai/gpt-4o" });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId)).toMatchObject({ ok: true });
+    expect(outboundCommands(picked)).toEqual(["new_session", "set_model", "prompt"]);
+
+    const plain = `t-model-default-${newId()}`;
+    const second = await instance.adapter.sendTurn({ threadId: plain, text: "hi" });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId)).toMatchObject({ ok: true });
+    expect(outboundCommands(plain)).toEqual(["new_session", "prompt"]);
+
+    expect(dumpRows(dump).filter((row) => row.setModel)).toEqual([{ setModel: { provider: "openai", modelId: "gpt-4o" } }]);
+    expect(dumpRows(dump).filter((row) => row.prompt)).toHaveLength(2);
+  });
+
   it("advertises images and every harness effort level", async () => {
     await create();
     expect(instance.adapter.capabilities.images).toBe(true);
@@ -525,6 +661,117 @@ describe("PiDriver turns (fake CLI)", () => {
     unsubscribe();
     const done = await recorder.until((event) => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+  });
+
+  type OpenedAsk = { requestId: string; requestType: string; tool: string; summary: string; approvalScope?: "local-computer" };
+  const hostControl = {
+    localComputer: { command: process.execPath, args: ["host-mcp.js"], env: {}, scope: "local-computer" as const },
+  };
+
+  it("carries local-computer scope on a host-control confirmation from open through resolve", async () => {
+    await create("host-confirm");
+    const threadId = `t-host-scope-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "click it", integrations: hostControl });
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    expect(opened).toMatchObject({
+      requestId: "ask-host",
+      requestType: "permission",
+      tool: "Allow click on your computer?",
+      approvalScope: "local-computer",
+    });
+
+    await expect(instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" })).resolves.toBe("allowed-once");
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === turnId)).toMatchObject({
+      behavior: "allow",
+      source: "user",
+      approvalScope: "local-computer",
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true });
+  });
+
+  it("keeps remembered grants from auto-approving a Pi host action and keeps it out of AI review", async () => {
+    await create("host-confirm");
+    const threadId = `t-host-policy-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "click it", integrations: hostControl });
+    const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as unknown as OpenedAsk;
+
+    // Every grant a user could have remembered for this card, with Auto off —
+    // run through the same join server/index.ts applies to request.opened.
+    const remembered = {
+      autoApprove: false,
+      alwaysAllow: [
+        opened.tool,
+        approvalKey(opened.tool, opened.summary)!,
+        approvalKey(opened.tool, opened.summary, "local-computer")!,
+      ],
+    };
+    const verdict = autoVerdict(remembered, opened.tool, opened.summary, { scope: opened.approvalScope });
+    expect(verdict).toMatchObject({ approve: null, source: "local-computer-block" });
+    expect(shouldReview({ source: verdict.source, mode: "enforce", unattended: false, approvalScope: opened.approvalScope })).toBe(false);
+    expect(shouldReview({ source: "no-grant", mode: "enforce", unattended: false, approvalScope: opened.approvalScope })).toBe(false);
+    // Explicit Auto on this computer keeps its separate, warned-about behavior.
+    expect(autoVerdict({ autoApprove: true }, opened.tool, opened.summary, { scope: opened.approvalScope }).approve).toBe(
+      `auto-approved ${opened.tool}`,
+    );
+
+    await expect(instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" })).resolves.toBe("rejected");
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === turnId)).toMatchObject({
+      behavior: "deny",
+      approvalScope: "local-computer",
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+  });
+
+  it("leaves ordinary asks, isolated computers and questions unscoped so ordinary grants still work", async () => {
+    // An ordinary permission ask with no host control.
+    await create("permission");
+    const plain = `t-plain-scope-${newId()}`;
+    const first = await instance.adapter.sendTurn({ threadId: plain, text: "go" });
+    const ordinary = (await recorder.until((e) => e.type === "request.opened" && e.turnId === first.turnId)) as unknown as OpenedAsk;
+    expect(ordinary).not.toHaveProperty("approvalScope");
+    expect(
+      autoVerdict({ alwaysAllow: [approvalKey(ordinary.tool, ordinary.summary)!] }, ordinary.tool, ordinary.summary, {
+        scope: ordinary.approvalScope,
+      }),
+    ).toMatchObject({ source: "always-allow" });
+    await instance.adapter.respondToRequest(plain, "ask-1", { behavior: "allow" });
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === first.turnId)).not.toHaveProperty(
+      "approvalScope",
+    );
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    recorder.stop();
+    await instance.dispose();
+
+    // An isolated computer (Cua VM / VPS) mounts without host-control scope.
+    await create("host-confirm");
+    const vm = `t-vm-scope-${newId()}`;
+    const second = await instance.adapter.sendTurn({
+      threadId: vm,
+      text: "click it",
+      integrations: { localComputer: { command: process.execPath, args: ["vm-mcp.js"], env: {} } },
+    });
+    expect(await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId)).not.toHaveProperty(
+      "approvalScope",
+    );
+    await instance.adapter.respondToRequest(vm, "ask-host", { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    recorder.stop();
+    await instance.dispose();
+
+    // A question on a host-controlling turn is not a permission.
+    await create("question");
+    const asked = `t-question-scope-${newId()}`;
+    const third = await instance.adapter.sendTurn({ threadId: asked, text: "go", integrations: hostControl });
+    const question = await recorder.until((e) => e.type === "request.opened" && e.turnId === third.turnId);
+    expect(question).toMatchObject({ requestType: "question" });
+    expect(question).not.toHaveProperty("approvalScope");
+    await expect(
+      instance.adapter.respondToRequest(asked, "ask-q", { behavior: "answer", message: "main" }),
+    ).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === third.turnId)).not.toHaveProperty(
+      "approvalScope",
+    );
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === third.turnId);
   });
 
   it("respondToRequest is unavailable for an ask that is not pending", async () => {

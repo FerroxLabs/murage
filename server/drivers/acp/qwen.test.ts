@@ -18,8 +18,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ensureDirs } from "../../config.ts";
-import type { ProviderInstance } from "../../contracts.ts";
+import { ensureDirs, NATIVE_DIR } from "../../config.ts";
+import { newId, type ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { QwenAgentDriver } from "./qwen.ts";
@@ -139,6 +139,30 @@ describe("qwen Flux routing — the gate", () => {
     // the writer still runs is what makes the Flux assertions above mean
     // something, rather than passing because nothing writes at all.
     expect(JSON.parse(readFileSync(settingsPath(), "utf8")).modelProviders.openai[0].id).toBe("GLM-5.2-fp8");
+  });
+
+  it("fails a local-inject turn before spawning when settings.json cannot be merged, leaving it byte-identical", async () => {
+    // 0.1.52 A8: the writer used to replace an unparseable settings.json.
+    mkdirSync(join(home, ".qwen"), { recursive: true });
+    const before = '{\n  "model": { "name": "qwen3" },\n  broken\n}\n';
+    writeFileSync(settingsPath(), before);
+    instance = await QwenAgentDriver.create({
+      instanceId: "qwen-bad-settings",
+      displayName: "Qwen",
+      environment: { HOME: home },
+      enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    const threadId = `t-bad-settings-${newId()}`;
+    await expect(instance.adapter.sendTurn({ threadId, text: "hi", model: "omlx::GLM-5.2-fp8" })).rejects.toThrow(
+      `${join("~", ".qwen", "settings.json")} is not valid JSON, so Murage left it unchanged.`,
+    );
+    expect(readFileSync(settingsPath(), "utf8")).toBe(before);
+    // no child and no prompt: nothing was emitted and no RPC was written
+    expect(recorder.events).toEqual([]);
+    expect(existsSync(join(NATIVE_DIR, `${threadId}.ndjson`))).toBe(false);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
   });
 
   it("strips an ambient OPENAI_BASE_URL from a native turn", async () => {
