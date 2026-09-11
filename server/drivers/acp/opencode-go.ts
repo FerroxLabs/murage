@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
@@ -243,6 +243,22 @@ export function ensureOpenCodeInjectModel(
   mkdirSync(opencodeConfigDir(env), { recursive: true });
   writeFileAtomic(path, renderOpenCodeConfig(config, existing?.text ?? null));
   return native;
+}
+
+/** Spec A3: drop the provider Murage wrote for a removed local server. */
+export function removeOpenCodeLocalHost(
+  host: LocalHost,
+  env: Record<string, string | undefined> = process.env,
+): "removed" | "absent" {
+  const path = opencodeConfigPath(env);
+  const existing = readNativeJsonConfig(path, env.HOME || env.USERPROFILE || homedir());
+  if (!existing) return "absent";
+  const provider = existing.value.provider;
+  if (!provider || typeof provider !== "object" || Array.isArray(provider) || !Object.hasOwn(provider, host.id)) return "absent";
+  const next = { ...(provider as Record<string, unknown>) };
+  delete next[host.id];
+  writeFileAtomic(path, renderOpenCodeConfig({ ...existing.value, provider: next }, existing.text));
+  return "removed";
 }
 
 /** Every path the OpenCode CLI may keep auth.json at.

@@ -18,6 +18,8 @@ import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+import type { LocalHost } from "../local-inject.ts";
+import { displayConfigPath, NativeConfigRefusal } from "../native-config-file.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
 
@@ -175,6 +177,29 @@ function replaceHermesHostBlock(text: string, hostId: string, block: string): st
   }
   while (end > start + 1 && lines[end - 1] === "") end--;
   return [...lines.slice(0, start), ...block.replace(/\n$/, "").split("\n"), ...lines.slice(end)].join("\n");
+}
+
+/** Spec A3: drop the `providers.<host>` block Murage wrote for a removed server. */
+export function removeHermesLocalHost(
+  host: LocalHost,
+  env: Record<string, string | undefined> = process.env,
+): "removed" | "absent" {
+  const path = join(hermesHome(env), "config.yaml");
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return "absent";
+    throw new NativeConfigRefusal(displayConfigPath(path, env.HOME || env.USERPROFILE || homedir()), "unreadable", code);
+  }
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => line === `  ${host.id}:`);
+  if (start < 0) return "absent";
+  let end = start + 1;
+  while (end < lines.length && !/^ {2}\S/.test(lines[end]!) && !/^\S/.test(lines[end]!)) end++;
+  writeFileSync(path, [...lines.slice(0, start), ...lines.slice(end)].join("\n"));
+  return "removed";
 }
 
 /** Register an OpenAI-compatible host so ACP can `session/set_model custom:host:model`. */
