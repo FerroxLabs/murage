@@ -53,6 +53,21 @@ describe("package batch preparation seams", () => {
     expect(f.store.messagesFor(f.existing.threadId)).toEqual(history);
     expect(f.emitted).toHaveBeenCalledTimes(2);
   });
+  it("serializes the same durable shape as ordinary saves, never runtime activity", () => {
+    const f = fixture();
+    // Runtime state on an existing bot and its task is transient (N7): an
+    // import must leave that bot's persisted record exactly as a save would.
+    f.store.setTaskActivity(f.existing.id, f.existing.threadId, "working");
+    expect(f.store.bot(f.existing.id)?.busy).toBe(true);
+    const oldBots = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    const prepared = JSON.parse(f.store.preparePackageAddition([f.added], [f.group]).files.get("bots.json")!.toString());
+    expect(prepared).toHaveLength(2);
+    expect(prepared[0]).toEqual(oldBots[0]);
+    for (const bot of prepared) {
+      expect(bot).not.toHaveProperty("busy"); expect(bot).not.toHaveProperty("activity");
+      for (const task of bot.tasks ?? []) { expect(task).not.toHaveProperty("busy"); expect(task).not.toHaveProperty("activity"); }
+    }
+  });
   it("rejects reused bot identities and imported permission grants", () => {
     const f = fixture();
     for (const patch of [
