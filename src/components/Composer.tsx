@@ -1,5 +1,5 @@
 import { track } from "@/lib/analytics";
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, Square, Target, Users, X } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -52,6 +52,8 @@ import { ReplyQuote } from "./ReplyQuote";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
+import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
+import { isMessageSizeRefusal, messageIsTooLarge, messageTextBytes } from "../../shared/message-limits";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -246,9 +248,16 @@ export function Composer({
   // Goal mode is opt-in and one-shot so the next ordinary channel message
   // cannot accidentally start another multi-turn team run.
   const [channelMode, setChannelMode] = useComposerChannelMode(draftId);
+  // Why the last send stayed in the box. Any edit clears it: the person is
+  // acting on it, and the next Enter checks again. It belongs to one draft,
+  // so switching conversations drops it.
+  const [sendNotice, setSendNotice] = useState<ComposerSendNoticeState | null>(null);
+  const sendNoticeId = useId();
+  useEffect(() => setSendNotice(null), [draftId]);
   const editText = useCallback(
     (next: string) => {
       markDraftEdited(draftId);
+      setSendNotice(null);
       setText(next);
     },
     [draftId, setText],
@@ -256,6 +265,7 @@ export function Composer({
   const editAttachments = useCallback(
     (next: SetStateAction<Attachment[]>) => {
       markDraftEdited(draftId);
+      setSendNotice(null);
       setAttachments(next);
     },
     [draftId, setAttachments],
@@ -515,6 +525,22 @@ export function Composer({
     }
     const t = composeMessage(effectiveText, attachments);
     if (!t) return;
+    // Checked here, before any request and before the draft is cleared. An
+    // over-limit message used to leave the renderer, come back as a 413 the
+    // store showed for six seconds, and land in the box again with nothing
+    // on screen to say why.
+    if (messageIsTooLarge(t)) {
+      setSendNotice({ kind: "too-large", sizeBytes: messageTextBytes(t) });
+      return;
+    }
+    // The harness can still answer 413 (a different bound, or a body JSON
+    // escaping pushed past it). That failure is shown here, beside the text
+    // it kept, instead of as a passing toast.
+    const refusedForSize = (error: unknown) => {
+      if (!isMessageSizeRefusal(error)) return false;
+      setSendNotice({ kind: "refused", sizeBytes: messageTextBytes(t) });
+      return true;
+    };
     const sentDraft: ComposerDraftSnapshot = {
       draftId,
       revision: draftRevision(draftId),
@@ -536,7 +562,10 @@ export function Composer({
         replyToId: replyTo?.id,
         threadId,
         mode: effectiveChannelMode,
-        onError: () => restoreDraft(sentDraft),
+        onError: (error: unknown) => {
+          restoreDraft(sentDraft);
+          return refusedForSize(error);
+        },
       });
       track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
@@ -555,9 +584,13 @@ export function Composer({
       // reading the answer.
       const question = openIntakeCard(visibleMessages(bot));
       if (question) {
-        void replyToIntake(bot.id, question.id, t, api).catch(() => restoreDraft(sentDraft));
+        void replyToIntake(bot.id, question.id, t, api).catch((error: unknown) => {
+          restoreDraft(sentDraft);
+          refusedForSize(error);
+        });
         setText("");
         setAttachments([]);
+        setSendNotice(null);
         onConsumeReply?.();
         return;
       }
@@ -568,12 +601,16 @@ export function Composer({
         sendId: sentDraft.sendId,
         replyToId: replyTo?.id,
         threadId,
-        onError: () => restoreDraft(sentDraft),
+        onError: (error: unknown) => {
+          restoreDraft(sentDraft);
+          return refusedForSize(error);
+        },
       });
       track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
     setText("");
     setAttachments([]);
+    setSendNotice(null);
     onConsumeReply?.();
     if (group) setChannelMode("chat");
   };
@@ -659,6 +696,7 @@ export function Composer({
             </button>
           </div>
         ))}
+        <ComposerSendNotice id={sendNoticeId} notice={sendNotice} onDismiss={() => setSendNotice(null)} />
         {commandPickerOpen && (
           <div
             role="listbox"
@@ -939,6 +977,8 @@ export function Composer({
                   : `Message ${bot?.name ?? ""}`
           }
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
+          aria-invalid={sendNotice ? true : undefined}
+          aria-describedby={sendNotice ? sendNoticeId : undefined}
             className="max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
           />
           {/* One controls row: chips on the left, send and dictation on the

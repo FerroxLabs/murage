@@ -880,6 +880,8 @@ describe("PiDriver turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-interrupt");
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    // a user Stop never surfaces as a runtime error card (STOP1)
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
   });
 
   it("close-confirmed stop: interruptTurn resolves only after the pi child has exited", async () => {

@@ -524,5 +524,8 @@
   "chatHeader.botFolderAt": "このボットのフォルダ: {path}",
   "chatHeader.noDedicatedWorkspace": "専用のワークスペースフォルダはありません。代わりに、このボット用に保存されたファイルが表示されます。",
   "chatHeader.usageMenu": "使用状況: {usage}",
-  "chatHeader.usageDetail": "エージェントのプロフィールを開きます。「使用状況」カードに詳しい内訳があります。"
+  "chatHeader.usageDetail": "エージェントのプロフィールを開きます。「使用状況」カードに詳しい内訳があります。",
+  "composer.tooLarge": "送信されませんでした: このメッセージは {size} で、1件のメッセージは最大 {limit} までです。短くするか、複数の小さいメッセージに分けてください。入力したテキストはそのまま残っています。",
+  "composer.refusedTooLarge": "送信されませんでした: このメッセージは大きすぎるため ({size})、Murage が受け付けませんでした。短くするか、複数の小さいメッセージに分けてください。入力したテキストはそのまま残っています。",
+  "composer.dismissNotice": "閉じる"
 }

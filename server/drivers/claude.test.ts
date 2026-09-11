@@ -876,14 +876,57 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
   });
 
-  it("interrupt kills the turn and settles it as failed, not hung", async () => {
+  it("a user Stop kills the turn and settles it as cancelled, not failed or hung (STOP1)", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     await instance.adapter.interruptTurn("t-int");
     const done = await recorder.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    // A requested stop is the same terminal state the ACP and Pi drivers
+    // report. It must not surface as a runtime error card with Retry.
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(instance.adapter.hasSession("t-int")).toBe(false);
+  });
+
+  it("a user Stop on a retained live process settles that turn as cancelled (STOP1)", async () => {
+    await create();
+    const dump = join(scratch, "retained-stop.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const first = await instance.adapter.sendTurn({ threadId: "t-live-stop", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const dumpBefore = readFileSync(dump, "utf8");
+    const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+    const second = await instance.adapter.sendTurn({
+      threadId: "t-live-stop",
+      text: "__fixture_hold_authority__ keep working",
+      resumeCursor: announced,
+    });
+    expect(instance.adapter.hasSession("t-live-stop")).toBe(true);
+    // the second turn runs on the first turn's process: no fresh launch
+    expect(readFileSync(dump, "utf8")).toBe(dumpBefore);
+
+    await instance.adapter.interruptTurn("t-live-stop");
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  });
+
+  it("an error result the CLI writes for a stopped turn settles as cancelled, not failed (STOP1)", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId: "t-stop-result",
+      text: "__fixture_hold_authority__ __fixture_error_result_on_stop__ keep working",
+    });
+    await recorder.until((e) => e.type === "session.started");
+
+    await instance.adapter.interruptTurn("t-stop-result");
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
   });
 
   it("a message sent mid-turn is steered into the running turn", async () => {
@@ -1323,7 +1366,10 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     await recorder.until((e) => e.type === "turn.retrying");
     await instance.adapter.interruptTurn("t-cancel-backoff");
-    await recorder.until((e) => e.type === "turn.completed");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    // a Stop during the backoff is a user cancellation, not a failed turn (STOP1)
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
     // no second launch ever happened: no further retries, no extra replies
     expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
     expect(recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text")).toHaveLength(0);

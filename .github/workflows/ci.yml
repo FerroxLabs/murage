@@ -90,6 +90,11 @@ jobs:
         # timeout.
         run: node --input-type=commonjs -e "require('electron')"
       - run: pnpm typecheck
+      - name: Typecheck the Composio broker Worker
+        # `pnpm test` runs the Worker's Vitest suite, but the suite does not
+        # compile the Worker: wrangler types + tsc catch a binding or
+        # Env-shape regression the tests never touch. Same job, same Node.
+        run: pnpm broker:check
       - name: Run tests
         if: inputs.vitest_file == ''
         run: pnpm test
@@ -110,6 +115,7 @@ jobs:
           test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
           pnpm check:contrast
           pnpm exec vitest run "${test_paths[@]}"
+          pnpm broker:check
           pnpm broker:test
           pnpm test:electron
           pnpm test:packaged-server
