@@ -18,6 +18,17 @@
  *  - a file that replaces another is written beside it under a random name and
  *    renamed over it, so a reader sees the old complete file or the new
  *    complete file and never a truncated one.
+ *
+ * Root preparing files for the service account adds a fourth rule. The data
+ * directory belongs to that account, which runs the agent runtime. Anything
+ * root does there by path, the account can redirect between the check and the
+ * use: it can rename the directory away and plant a symlink, or swap a file
+ * for a link to /etc/shadow. Node has no openat(), so no amount of checking by
+ * path closes that race. `asAccount` closes it: root takes the account's
+ * effective uid, gid and groups for the duration of the file work, so the
+ * worst any redirect reaches is what that account could already reach itself.
+ * `readRegularFile` and `openOwnedDir` add a check that works from an fd
+ * rather than from a path, so the object that was checked is the object used.
  */
 
 import { randomBytes } from "node:crypto";
@@ -27,11 +38,13 @@ import {
   constants,
   fchmodSync,
   fchownSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
+  readSync,
   renameSync,
   rmSync,
   writeSync,
@@ -40,6 +53,129 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const NONBLOCK = constants.O_NONBLOCK ?? 0;
+const DIRECTORY = constants.O_DIRECTORY ?? 0;
+
+/** The errno a NOFOLLOW open of a symlink fails with (ELOOP on Linux and
+ * macOS; EMLINK on FreeBSD), and ENOTDIR for an O_DIRECTORY open of a file. */
+const NOT_PLAIN = new Set(["ELOOP", "EMLINK", "ENOTDIR", "EFTYPE"]);
+
+export class NotPlainFile extends Error {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = "NotPlainFile";
+    this.code = "NOT_PLAIN_FILE";
+  }
+}
+
+/**
+ * Read a regular file through an fd opened without following a final
+ * symlink, and check the object the fd refers to, not the path. O_NONBLOCK
+ * keeps a FIFO planted at the path from hanging the open. Returns null when
+ * the path does not exist.
+ * @param {string} path
+ * @param {{ uid?: number | null }} [opts] the owner the file must have
+ * @returns {{ bytes: Buffer, uid: number, mode: number } | null}
+ */
+export function readRegularFile(path, { uid = null } = {}) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | NOFOLLOW | NONBLOCK);
+  } catch (error) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+    if (code === "ENOENT") return null;
+    if (code && NOT_PLAIN.has(code)) throw new NotPlainFile(`${path} is not a regular file (a symlink or something else)`);
+    throw error;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw new NotPlainFile(`${path} is not a regular file (a symlink or something else)`);
+    if (uid !== null && st.uid !== uid) throw new NotPlainFile(`${path} is owned by uid ${st.uid}, not by uid ${uid}`);
+    const chunks = [];
+    const chunk = Buffer.alloc(64 * 1024);
+    for (;;) {
+      const n = readSync(fd, chunk, 0, chunk.length, null);
+      if (n === 0) break;
+      chunks.push(Buffer.from(chunk.subarray(0, n)));
+    }
+    return { bytes: Buffer.concat(chunks), uid: st.uid, mode: st.mode & 0o777 };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Check an existing directory before writing into it, through an fd opened
+ * without following a final symlink: it must be a real directory, owned by
+ * `uid`, and writable by nobody else (otherwise somebody else could replace
+ * what is written there). Returns the open fd, which the caller closes; any
+ * change of mode goes through that fd, never back through the path.
+ * @param {string} dir
+ * @param {{ uid?: number | null }} [opts]
+ * @returns {{ fd: number, mode: number }}
+ */
+export function openOwnedDir(dir, { uid = effectiveUid() } = {}) {
+  let fd;
+  try {
+    fd = openSync(dir, constants.O_RDONLY | NOFOLLOW | DIRECTORY);
+  } catch (error) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+    if (code && NOT_PLAIN.has(code)) throw new NotPlainFile(`${dir} is not a plain directory (a symlink or something else); nothing is written through it`);
+    throw error;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isDirectory()) throw new NotPlainFile(`${dir} is not a plain directory; nothing is written through it`);
+    if (uid !== null && st.uid !== uid) {
+      throw new NotPlainFile(`${dir} is owned by uid ${st.uid}, not by uid ${uid}; nothing is written into it`);
+    }
+    if (process.platform !== "win32" && (st.mode & 0o022) !== 0) {
+      throw new NotPlainFile(`${dir} is writable by other accounts (mode 0${(st.mode & 0o777).toString(8)}); nothing is written into it`);
+    }
+    return { fd, mode: st.mode & 0o777 };
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+}
+
+/**
+ * Run `fn` with the effective uid, gid and groups of `account`, when this
+ * process is root and `account` is not; otherwise just run it. The identity
+ * is restored before this returns or throws. `fn` must be synchronous: every
+ * file operation it makes is checked by the kernel against the account, not
+ * against root.
+ *
+ * The real and saved uids stay 0, which is what allows the way back, and
+ * which also keeps the account from ptracing or signalling the process while
+ * it wears the account's identity.
+ * @template T
+ * @param {{ uid: number, gid: number, groups?: number[] } | null | undefined} account
+ * @param {() => T} fn
+ * @param {{ proc?: Pick<NodeJS.Process, "geteuid" | "getegid" | "getgroups" | "setgroups" | "setegid" | "seteuid"> }} [seams]
+ * @returns {T}
+ */
+export function asAccount(account, fn, { proc = process } = {}) {
+  if (!account || typeof proc.geteuid !== "function" || proc.geteuid() !== 0 || account.uid === 0) return fn();
+  const egid = proc.getegid();
+  const groups = proc.getgroups();
+  const wanted = [...new Set([account.gid, ...(account.groups ?? [])])];
+  /** @type {Array<() => void>} */
+  const undo = [];
+  try {
+    proc.setgroups(wanted);
+    undo.push(() => proc.setgroups(groups));
+    proc.setegid(account.gid);
+    undo.push(() => proc.setegid(egid));
+    proc.seteuid(account.uid);
+    undo.push(() => proc.seteuid(0));
+    return fn();
+  } finally {
+    // Reverse order: euid 0 first, since only root can restore gid and groups.
+    for (const step of undo.reverse()) step();
+  }
+}
 
 /** @returns {number | null} */
 function effectiveUid() {

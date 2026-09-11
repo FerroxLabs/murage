@@ -123,6 +123,13 @@ run the whole agent stack as root, so setup never stages one.
 
   The data then lives in that account's home (`~murage/.murage-server`), is
   created owned by it with mode `0700`, and the setup-time sidecar runs as it.
+  Setup reads, copies and writes the env file there *as that account* (its
+  effective uid, gid and groups), not as root, and checks the file and its
+  directory through a file descriptor rather than by path. The account owns
+  that directory, so it could otherwise swap the file or the directory for a
+  symlink during the prompts and have root copy or chmod whatever the link
+  points at. An env file or directory that is a symlink, belongs to another
+  account, or is writable by other accounts is refused, and nothing is written.
   Under `sudo`, the refusal names `$SUDO_USER` as the value to pass. Root, or
   any account with uid 0, is refused as a service account.
 - An existing data directory owned by a different account is refused, not
