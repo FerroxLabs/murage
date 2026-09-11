@@ -4244,7 +4244,10 @@ async function startTurn(
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
-        let bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        // The just-appended user message is already captured; keep its own
+        // chunk out of this turn's recall (MEMJSON2).
+        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript]};
+        let bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);
         let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
           memoryRefreshed=true;
@@ -4262,7 +4265,7 @@ async function startTurn(
           bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
             if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
             else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-          },{availableContextTokens});
+          },memoryOptions);
           // The same await can invalidate disclosed history; re-filter with the
           // original authority rather than replaying a pre-reset snapshot.
           const allowed=filterMemoryReplay(threadId,activeMessages,access);
@@ -5428,7 +5431,7 @@ async function runGroupMemberTurn(
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-    },{availableContextTokens});
+    },{availableContextTokens,excludeMessageIds:latestUser?[latestUser.id]:[]});
     const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
     text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
@@ -7955,7 +7958,9 @@ const server = createServer(async (req, res) => {
       if(requiredKind==="memory") {
         if(method!=="POST")return json(res,405,{error:"memory routes require POST"});
         const access=memoryAccess(internalCapabilities,internalClaim,()=>({bots:store.bots,groups:store.groups}));
-        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker));
+        // Turn-local handles (m1, m2, …) resolve only through the receipt of
+        // the dispatch this capability was minted for (MEMJSON2).
+        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker,memoryDispatches.get(internalClaim.threadId)));
       }
       const internalEventId = internalOwner.eventId;
       const admitEventAction = (kind: "create" | "handoff", admissionId: string) => {
