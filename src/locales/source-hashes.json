@@ -527,7 +527,10 @@
       "chatHeader.botFolderAt": "dba0e5b809f69b31163e1832be4cb6140d6b4df98340b27f445ef8191ee8248c",
       "chatHeader.noDedicatedWorkspace": "b326ca22bca62e75d0e13f8475343d41afee93eefa2ee10d27562badb23f7c8c",
       "chatHeader.usageMenu": "ee331bc5b94e77ab126f761894d11b1a129454deb63a5a55cf92046f2ba45783",
-      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1"
+      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1",
+      "composer.tooLarge": "1c451f4bab33a48bf6ab9a7cb438fcf2a92b64638bca2a4c9b819b9a67093657",
+      "composer.refusedTooLarge": "9e3d49e7ffb8bd5fdeece3d0600a1fa203036b327b9b0c362b252541502bd5cb",
+      "composer.dismissNotice": "48845bff334a50a59aaecf499f28a7a24c3b4b891b8b18a9f1169ad8e8a6b261"
     },
     "es": {
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
@@ -1055,7 +1058,10 @@
       "chatHeader.botFolderAt": "dba0e5b809f69b31163e1832be4cb6140d6b4df98340b27f445ef8191ee8248c",
       "chatHeader.noDedicatedWorkspace": "b326ca22bca62e75d0e13f8475343d41afee93eefa2ee10d27562badb23f7c8c",
       "chatHeader.usageMenu": "ee331bc5b94e77ab126f761894d11b1a129454deb63a5a55cf92046f2ba45783",
-      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1"
+      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1",
+      "composer.tooLarge": "1c451f4bab33a48bf6ab9a7cb438fcf2a92b64638bca2a4c9b819b9a67093657",
+      "composer.refusedTooLarge": "9e3d49e7ffb8bd5fdeece3d0600a1fa203036b327b9b0c362b252541502bd5cb",
+      "composer.dismissNotice": "48845bff334a50a59aaecf499f28a7a24c3b4b891b8b18a9f1169ad8e8a6b261"
     },
     "fr": {
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
@@ -1583,7 +1589,10 @@
       "chatHeader.botFolderAt": "dba0e5b809f69b31163e1832be4cb6140d6b4df98340b27f445ef8191ee8248c",
       "chatHeader.noDedicatedWorkspace": "b326ca22bca62e75d0e13f8475343d41afee93eefa2ee10d27562badb23f7c8c",
       "chatHeader.usageMenu": "ee331bc5b94e77ab126f761894d11b1a129454deb63a5a55cf92046f2ba45783",
-      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1"
+      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1",
+      "composer.tooLarge": "1c451f4bab33a48bf6ab9a7cb438fcf2a92b64638bca2a4c9b819b9a67093657",
+      "composer.refusedTooLarge": "9e3d49e7ffb8bd5fdeece3d0600a1fa203036b327b9b0c362b252541502bd5cb",
+      "composer.dismissNotice": "48845bff334a50a59aaecf499f28a7a24c3b4b891b8b18a9f1169ad8e8a6b261"
     },
     "hi": {
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
@@ -2111,7 +2120,10 @@
       "chatHeader.botFolderAt": "dba0e5b809f69b31163e1832be4cb6140d6b4df98340b27f445ef8191ee8248c",
       "chatHeader.noDedicatedWorkspace": "b326ca22bca62e75d0e13f8475343d41afee93eefa2ee10d27562badb23f7c8c",
       "chatHeader.usageMenu": "ee331bc5b94e77ab126f761894d11b1a129454deb63a5a55cf92046f2ba45783",
-      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1"
+      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1",
+      "composer.tooLarge": "1c451f4bab33a48bf6ab9a7cb438fcf2a92b64638bca2a4c9b819b9a67093657",
+      "composer.refusedTooLarge": "9e3d49e7ffb8bd5fdeece3d0600a1fa203036b327b9b0c362b252541502bd5cb",
+      "composer.dismissNotice": "48845bff334a50a59aaecf499f28a7a24c3b4b891b8b18a9f1169ad8e8a6b261"
     },
     "ja": {
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
@@ -2639,7 +2651,10 @@
       "chatHeader.botFolderAt": "dba0e5b809f69b31163e1832be4cb6140d6b4df98340b27f445ef8191ee8248c",
       "chatHeader.noDedicatedWorkspace": "b326ca22bca62e75d0e13f8475343d41afee93eefa2ee10d27562badb23f7c8c",
       "chatHeader.usageMenu": "ee331bc5b94e77ab126f761894d11b1a129454deb63a5a55cf92046f2ba45783",
-      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1"
+      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1",
+      "composer.tooLarge": "1c451f4bab33a48bf6ab9a7cb438fcf2a92b64638bca2a4c9b819b9a67093657",
+      "composer.refusedTooLarge": "9e3d49e7ffb8bd5fdeece3d0600a1fa203036b327b9b0c362b252541502bd5cb",
+      "composer.dismissNotice": "48845bff334a50a59aaecf499f28a7a24c3b4b891b8b18a9f1169ad8e8a6b261"
     },
     "pt-br": {
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
@@ -3167,7 +3182,10 @@
       "chatHeader.botFolderAt": "dba0e5b809f69b31163e1832be4cb6140d6b4df98340b27f445ef8191ee8248c",
       "chatHeader.noDedicatedWorkspace": "b326ca22bca62e75d0e13f8475343d41afee93eefa2ee10d27562badb23f7c8c",
       "chatHeader.usageMenu": "ee331bc5b94e77ab126f761894d11b1a129454deb63a5a55cf92046f2ba45783",
-      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1"
+      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1",
+      "composer.tooLarge": "1c451f4bab33a48bf6ab9a7cb438fcf2a92b64638bca2a4c9b819b9a67093657",
+      "composer.refusedTooLarge": "9e3d49e7ffb8bd5fdeece3d0600a1fa203036b327b9b0c362b252541502bd5cb",
+      "composer.dismissNotice": "48845bff334a50a59aaecf499f28a7a24c3b4b891b8b18a9f1169ad8e8a6b261"
     },
     "zh": {
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
@@ -3695,7 +3713,10 @@
       "chatHeader.botFolderAt": "dba0e5b809f69b31163e1832be4cb6140d6b4df98340b27f445ef8191ee8248c",
       "chatHeader.noDedicatedWorkspace": "b326ca22bca62e75d0e13f8475343d41afee93eefa2ee10d27562badb23f7c8c",
       "chatHeader.usageMenu": "ee331bc5b94e77ab126f761894d11b1a129454deb63a5a55cf92046f2ba45783",
-      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1"
+      "chatHeader.usageDetail": "54366be186da8fe23cae2c63d428619b773e5c31d5abd3a3f3033289fa368fa1",
+      "composer.tooLarge": "1c451f4bab33a48bf6ab9a7cb438fcf2a92b64638bca2a4c9b819b9a67093657",
+      "composer.refusedTooLarge": "9e3d49e7ffb8bd5fdeece3d0600a1fa203036b327b9b0c362b252541502bd5cb",
+      "composer.dismissNotice": "48845bff334a50a59aaecf499f28a7a24c3b4b891b8b18a9f1169ad8e8a6b261"
     }
   }
 }

@@ -524,5 +524,8 @@
   "chatHeader.botFolderAt": "Carpeta de este bot: {path}",
   "chatHeader.noDedicatedWorkspace": "No hay una carpeta de espacio de trabajo dedicada; en su lugar se muestran los archivos guardados para este bot.",
   "chatHeader.usageMenu": "Uso: {usage}",
-  "chatHeader.usageDetail": "Abre el perfil del agente, donde la tarjeta de Uso muestra el desglose completo."
+  "chatHeader.usageDetail": "Abre el perfil del agente, donde la tarjeta de Uso muestra el desglose completo.",
+  "composer.tooLarge": "No enviado: este mensaje ocupa {size} y un mensaje puede tener como máximo {limit}. Acórtalo o divídelo en mensajes más pequeños. Tu texto sigue aquí.",
+  "composer.refusedTooLarge": "No enviado: Murage rechazó este mensaje porque es demasiado grande ({size}). Acórtalo o divídelo en mensajes más pequeños. Tu texto sigue aquí.",
+  "composer.dismissNotice": "Descartar"
 }

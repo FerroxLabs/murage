@@ -77,6 +77,7 @@ import {
   type IntakeCandidate,
   type IntakeCardData,
 } from "../shared/intake-turn.ts";
+import { MESSAGE_REQUEST_MAX_BYTES, messageTooLargeRefusal } from "../shared/message-limits.ts";
 import {
   CREDENTIAL_TARGETS,
   credentialResumeOutcome,
@@ -10265,12 +10266,16 @@ const server = createServer(async (req, res) => {
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
-      const body = await readBody(req);
+      // One message's bound (shared/message-limits.ts), not the generic
+      // 1 MB body limit: the composer checks the same number before sending.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      const tooLarge = messageTooLargeRefusal(text);
+      if (tooLarge) return json(res, 413, tooLarge);
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such group" });
       if (body.mode !== undefined && body.mode !== "chat" && body.mode !== "goal") {
@@ -11371,10 +11376,13 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const body = await readBody(req);
+      // The composer routes a typed answer here, so it carries a message's bound.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
+      const tooLarge = typeof body.text === "string" ? messageTooLargeRefusal(body.text) : null;
+      if (tooLarge) return json(res, 413, tooLarge);
       const messageId = typeof body.messageId === "string" ? body.messageId : "";
       if (!/^[\w-]+$/.test(messageId)) return json(res, 400, { error: "messageId required" });
       const message = store.messagesFor(bot.threadId).find((entry) => entry.id === messageId);
@@ -11453,12 +11461,16 @@ const server = createServer(async (req, res) => {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
-      const body = await readBody(req);
+      // One message's bound (shared/message-limits.ts), not the generic
+      // 1 MB body limit: the composer checks the same number before sending.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      const tooLarge = messageTooLargeRefusal(text);
+      if (tooLarge) return json(res, 413, tooLarge);
       const bot = requestedDirectBot(m[1],body.threadId);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
@@ -11593,10 +11605,13 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages\/([\w-]+)\/edit$/);
     if (m && method === "POST") {
       const messageId = m[2];
-      const body = await readBody(req);
+      // An edit replaces a message, so it has the same bound as a send.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       const bot = requestedDirectBot(m[1],body.threadId);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      const tooLarge = messageTooLargeRefusal(text);
+      if (tooLarge) return json(res, 413, tooLarge);
       // everything from here down is synchronous, so two racing edits can
       // never both get past this check: startTurn flips busy before the
       // next request is handled
