@@ -298,7 +298,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(JSON.stringify(events)).not.toContain(SECRET);
   });
 
-  it("reports an interrupt mid-stream as interrupted without inventing a reply", async () => {
+  it("reports an interrupt mid-stream as cancelled without inventing a reply", async () => {
     responders = [(signal) => {
       let sent = false;
       return new Response(
@@ -332,7 +332,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
 
-    expect(completed).toMatchObject({ ok: false, stopReason: "interrupted" });
+    // STOP1: a user Stop is the shared cancelled state, never a failed turn
+    expect(completed).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(errors(recorder.events)).toEqual([]);
     expect(replies(recorder.events)).toEqual([]);
   });

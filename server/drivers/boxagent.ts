@@ -208,7 +208,11 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               if (/failed|error|cancelled|interrupted/i.test(state)) {
                 flushAssistantText();
                 active.delete(threadId);
-                emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: state, cost: null });
+                // A box run that ended because Murage interrupted it is the
+                // user's Stop, not a failure (STOP1); a box that stopped on
+                // its own keeps its own state as the failure reason.
+                if (cancelled) emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
+                else emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: state, cost: null });
                 return;
               }
             }
@@ -216,10 +220,11 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               throw new Error("box run exceeded 30 minutes — interrupted");
             }
           }
-          // cancelled
+          // Murage stopped the turn: the shared cancelled state every driver
+          // settles a user Stop with (STOP1), not an engine failure.
           flushAssistantText();
           active.delete(threadId);
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "interrupted", cost: null });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
         } catch (e) {
           flushAssistantText();
           active.delete(threadId);

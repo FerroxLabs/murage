@@ -377,6 +377,7 @@ import { shouldMountLocalComputer } from "./local-routing.ts";
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
+import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";
@@ -473,12 +474,28 @@ function selectedProviderRoute(selection: ModelSelection, driverKind: string): P
   const route = { connectionId: connection.id, preset: connection.preset, protocol, baseUrl: connection.baseUrl, apiKey: connection.key, model: selection.model, revision: connection.revision };
   validateProviderTurnRoute(driverKind, route); return route;
 }
+/** A turn the host stops on its own (not the user's Stop) settles as cancelled
+ * with no error card, so the conversation says why it ended (STOP1). */
+function noteHostStoppedTurn(threadId: string, botId: string, reason: string): void {
+  const bot = store.bot(botId);
+  try {
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      ...(bot && store.groupByThread(threadId) ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}),
+      // ok:false: a settled, not-successful chip. No "error:" prefix, so no
+      // error card and no Retry.
+      tool: { name: `Stopped — ${reason}`, ok: false },
+    });
+  } catch { /* the thread may already be gone */ }
+}
 function providerRouteIsCurrent(route: ProviderTurnRoute | undefined): boolean { return !route || providerConnections.isCurrent(route.connectionId, route.revision); }
 providerConnections.subscribe(changedIds => {
   for (const [threadId, active] of activeProviderSelections) if (changedIds.includes(active.route.connectionId) && !providerRouteIsCurrent(active.route)) {
     cancelDirectTurnDispatch(active.botId, threadId); revokeInternalThread(threadId);
     void registry.get(active.instanceId)?.adapter.interruptTurn(threadId).catch(() => {});
     activeProviderSelections.delete(threadId);
+    noteHostStoppedTurn(threadId, active.botId, "the model connection it was using was changed or turned off");
   }
 });
 
@@ -1105,7 +1122,8 @@ function hostComputerIntegration(botId: string, threadId: string, generation: st
  * synchronous half of ask_bot. Subscribes to the bus, folds assistant_text
  * for that thread, resolves on turn.completed (or a 4-min ceiling). */
 type AskBotOutcome = {
-  status: "reply" | "failed" | "timeout" | "error";
+  /** "stopped": the target's turn was stopped before it finished (STOP1). */
+  status: "reply" | "failed" | "stopped" | "timeout" | "error";
   text: string;
   /** Provider's stop reason when the turn completed not-ok. */
   stopReason?: string | null;
@@ -1135,7 +1153,8 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
       if (e.type === "item.completed" && e.itemType === "assistant_text") {
         text += (text ? "\n" : "") + e.text;
       } else if (e.type === "turn.completed") {
-        if (e.ok) finish({ status: "reply", text: text || "(the bot finished without a text reply)" });
+        if (turnSucceeded(e)) finish({ status: "reply", text: text || "(the bot finished without a text reply)" });
+        else if (turnStopped(e)) finish({ status: "stopped", text, stopReason: e.stopReason ?? null });
         else finish({ status: "failed", text, stopReason: e.stopReason ?? null });
       }
     });
@@ -3041,8 +3060,12 @@ bus.subscribe((event: RuntimeEvent) => {
           });
         }
       }
-      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, event.ok ? "completed" : event.stopReason === "cancelled" ? "cancelled" : "failed");
-      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, event.ok ? "completed" : "failed");
+      // A stopped turn settles ok:true with stopReason "cancelled" (ACP, Pi,
+      // Claude, Codex). It is still not a completed turn: memory must drop
+      // its unfinished assistant intentions (STOP1).
+      const terminalOutcome = turnOutcome(event);
+      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, terminalOutcome);
+      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, terminalOutcome);
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
       const reply = lastReply.get(event.threadId) ?? "";
@@ -3152,10 +3175,15 @@ bus.subscribe((event: RuntimeEvent) => {
       // the request was mirrored there when the delegation drained, and a
       // channel that only ever shows requests is half a record. Mirror the
       // reply on success; mirror a failed/stopped terminal chip otherwise.
-      const delegationFailureName = !event.ok && event.stopReason?.trim()
-        ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
-        : undefined;
-      finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
+      // A stopped turn settles ok:true "cancelled" but is not a finished
+      // delegation: the receipt must not read "done" (STOP1).
+      const delegationStopped = turnStopped(event);
+      const delegationFailureName = delegationStopped
+        ? DELEGATION_STOPPED_NAME
+        : !event.ok && event.stopReason?.trim()
+          ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
+          : undefined;
+      finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -3221,11 +3249,14 @@ function delegationSource(
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
  * Some harness paths settle a busy bot without a provider turn.completed
  * event, so they call this same finalizer explicitly. */
+const DELEGATION_STOPPED_NAME = "Delegated turn was stopped before it finished";
+
 function finalizeDelegationWatch(
   threadId: string,
   ok: boolean,
   reply = "",
   failureName = "Delegated turn did not finish",
+  stopped = false,
 ): boolean {
   const watched = delegationWatch.get(threadId);
   if (!watched) return false;
@@ -3262,7 +3293,9 @@ function finalizeDelegationWatch(
         tool: {
           name: ok
             ? `Delegation to @${targetName} completed without a text reply`
-            : `Delegation to @${targetName} failed — ${failureName}`,
+            : stopped
+              ? `Delegation to @${targetName} was stopped before it finished`
+              : `Delegation to @${targetName} failed — ${failureName}`,
           ok,
         },
       });
@@ -3414,7 +3447,7 @@ bus.subscribe((event: RuntimeEvent) => {
   // no owner, so the discard falls back to thread-wide there — bounded by
   // the rule in discardDelegations that an item which has already outlived a
   // turn is never collateral.
-  if (!event.ok) discardDelegations(commsBus, event.threadId, store.botByThread(event.threadId)?.id);
+  if (!turnSucceeded(event)) discardDelegations(commsBus, event.threadId, store.botByThread(event.threadId)?.id);
   else drainDelegations(commsBus, approvalBus, event.threadId, runDelegatedTurn);
   // A settling bot frees itself as a delegation TARGET too: handoffs that
   // found it busy earlier were kept queued (bounded retries) on their own
@@ -5356,7 +5389,7 @@ async function runGroupMemberTurn(
       if (providerTurnId && e.turnId && e.turnId !== providerTurnId) return;
       if (e.type === "item.completed" && e.itemType === "assistant_text") replyText += `\n${e.text}`;
       else if (e.type === "turn.completed") {
-        if (orchestration && !e.ok) {
+        if (orchestration && !turnSucceeded(e)) {
           orchestration.result.stopReason = e.stopReason ?? null;
           finish("provider_failed");
         } else {
@@ -8344,6 +8377,15 @@ const server = createServer(async (req, res) => {
           });
           return json(res, 200, { timeout: true, taskId, toBotName: currentTarget.name, waitedMs: ASK_BOT_TIMEOUT_MS });
         }
+        if (outcome.status === "stopped") {
+          // A stopped turn is not a reply (STOP1): say so where the exchange
+          // lives, and hand back any partial text marked as unfinished.
+          mirrorActivity(commsBus, currentTarget, channel, "Turn was stopped before it finished", false);
+          const partial = outcome.text.trim();
+          return json(res, 200, { botName: currentTarget.name, text: partial
+            ? `(the bot's turn was stopped before it finished; partial reply follows)\n\n${partial}`
+            : "(the bot's turn was stopped before it finished)" });
+        }
         if (outcome.status === "failed" && !outcome.text.trim()) {
           // No partial answer to hand back — mirror the failure where the
           // exchange lives, with the provider's reason instead of silence.
@@ -10842,6 +10884,7 @@ const server = createServer(async (req, res) => {
         patch.alwaysAllow = withoutQuestionGrants([...new Set(body.alwaysAllow as string[])]).slice(0, 200);
       }
       if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
+        if (existingBot.busy) noteHostStoppedTurn(existingBot.threadId, existingBot.id, "this computer was switched off for the bot");
         cancelDirectTurnDispatch(existingBot.id, existingBot.threadId);
         await registry
           .get(existingBot.modelSelection.instanceId)

@@ -28,6 +28,7 @@ import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, ArtifactError, ar
 import { IMAGE_MAX_BYTES, saveImage, type SavedAttachment } from "./attachments.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
+import { turnSucceeded } from "./turn-outcome.ts";
 
 export type TerminalTurnEvent = Extract<RuntimeEvent, { type: "turn.completed" }>;
 
@@ -256,6 +257,7 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
   const snapshots = new Map<string, OutputSnapshot>();
 
   const sweep = async (snapshot: OutputSnapshot, event: TerminalTurnEvent) => {
+    const succeeded = turnSucceeded(event);
     const after = listOutputs(snapshot.root);
     if (!after || after.directory.dev !== snapshot.directory.dev || after.directory.ino !== snapshot.directory.ino) { log("output folder was replaced during the turn; nothing was published automatically"); return; }
     if (snapshot.incomplete) { log("output folder exceeded the sweep budget before the turn; nothing was published automatically"); return; }
@@ -280,8 +282,9 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
       let receipt: LocalOutputReceipt;
       try { receipt = recordOutputReceipt(db, { producer: "shell-output", botId: snapshot.botId, threadId: snapshot.threadId, runId: snapshot.runId, pathToken: path, sha256: sha256(bytes), mime: mimeFor(path, bytes), bytes: bytes.length }); }
       catch { notSaved++; continue; }
-      // U-02: cancelled or failed turns keep verified receipts only.
-      if (!event.ok) continue;
+      // U-02: cancelled or failed turns keep verified receipts only. A stopped
+      // turn settles ok:true with stopReason "cancelled", so `ok` is not enough.
+      if (!succeeded) continue;
       if (receipt.stage === "registered") continue;
       if (!scope || !scopeMatches) { failReceipt(db, receipt.id, "scope"); notSaved++; continue; }
       // A later run that rewrote identical bytes at the same path reuses the
@@ -299,7 +302,7 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
         failReceipt(db, receipt.id, outputErrorCategory(error, "database")); notSaved++;
       }
     }
-    if (!event.ok) return;
+    if (!succeeded) return;
     // One host-authored card per turn. An artifact the bot already registered
     // with register_artifact in this run already has its own card.
     let referenced: Set<string>;
