@@ -566,6 +566,9 @@
   "folderTrust.statusUndecided": "尚未决定 — 在此进行的第一个回合将会询问",
   "folderTrust.statusUpstream": "已由你自己安装的 Fuigo 信任（fuigo --trust）— 无论 Murage 记录如何，其文件都会被应用",
   "folderTrust.statusNothing": "此处暂无可信任的内容",
+  "folderTrust.statusRefused": "此机器人的回合无法启动：{reason}",
+  "folderTrust.statusNotGated": "不受此机器人引擎的限制 — 文件夹中的文件照常生效",
+  "folderTrust.perMember": "按成员 — 由每个成员各自的引擎决定：",
   "folderTrust.forget": "忘记",
   "folderTrust.forgetError": "无法忘记此文件夹的信任决定。"
 }

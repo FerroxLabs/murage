@@ -566,6 +566,9 @@
   "folderTrust.statusUndecided": "未決定 — ここでの最初のターンで確認されます",
   "folderTrust.statusUpstream": "ご自身の Fuigo インストール（fuigo --trust）によって信頼されています — Murage の記憶にかかわらず、そのファイルが適用されます",
   "folderTrust.statusNothing": "ここにはまだ信頼するものがありません",
+  "folderTrust.statusRefused": "このボットのターンは開始されません: {reason}",
+  "folderTrust.statusNotGated": "このボットのエンジンでは制限されません — フォルダーのファイルはこれまで通り適用されます",
+  "folderTrust.perMember": "メンバーごと — 各メンバーのエンジンがそれぞれ判断します:",
   "folderTrust.forget": "忘れる",
   "folderTrust.forgetError": "このフォルダーの信頼の判断を忘れることができませんでした。"
 }

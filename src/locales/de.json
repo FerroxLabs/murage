@@ -566,6 +566,9 @@
   "folderTrust.statusUndecided": "Noch nicht entschieden – der erste Zug hier wird nachfragen",
   "folderTrust.statusUpstream": "Vertrauenswürdig durch Ihre eigene Fuigo-Installation (fuigo --trust) – seine Dateien gelten unabhängig davon, was Murage gespeichert hat",
   "folderTrust.statusNothing": "Hier gibt es noch nichts, dem vertraut werden könnte",
+  "folderTrust.statusRefused": "Die Züge dieses Bots würden nicht starten: {reason}",
+  "folderTrust.statusNotGated": "Von der Engine dieses Bots nicht gesperrt — die Dateien des Ordners gelten wie bisher",
+  "folderTrust.perMember": "Pro Mitglied — die Engine jedes Mitglieds entscheidet selbst:",
   "folderTrust.forget": "Vergessen",
   "folderTrust.forgetError": "Die Vertrauensentscheidung für diesen Ordner konnte nicht vergessen werden."
 }
