@@ -731,6 +731,37 @@ describe("ACP turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
   });
 
+  it("answers Fuigo's MCP elicitation bridge with its outcome-tagged reply (ASK3)", async () => {
+    const dump = join(scratch, "fuigo-elicit.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "fuigo-elicit");
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-elicit", text: "deploy" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({
+      requestType: "question",
+      tool: "elicitation",
+      questions: [{ id: "environment", question: "Which environment?", options: [{ label: "staging" }, { label: "production" }], allowOther: false }],
+    });
+    await expect(
+      instance.adapter.respondToRequest("t-fuigo-elicit", (opened as any).requestId, {
+        behavior: "answer", message: "staging", answers: [{ id: "environment", selected: ["staging"] }],
+      }),
+    ).resolves.toBe("answered");
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: "accept", content: { environment: "staging" } });
+    recorder.stop();
+    await instance.dispose();
+
+    const dump2 = join(scratch, "fuigo-elicit-decline.json");
+    process.env.FAKE_ACP_DUMP = dump2;
+    await create(GrokAgentDriver, "fuigo-elicit");
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-elicit-skip", text: "deploy" });
+    const skipped = await recorder.until((e) => e.type === "request.opened");
+    await expect(instance.adapter.respondToRequest("t-fuigo-elicit-skip", (skipped as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump2, "utf8")).decision).toEqual({ outcome: "decline" });
+  });
+
   it("maps an ACP form elicitation to questions and accepts typed content, under both method spellings (ASK3)", async () => {
     for (const mode of ["elicitation-form", "elicitation-legacy"] as const) {
       const dump = join(scratch, `${mode}.json`);

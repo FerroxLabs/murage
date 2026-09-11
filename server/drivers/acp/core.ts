@@ -255,6 +255,11 @@ type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", a
  * prefixes extension methods with `_`; the leader gateway may nest the real
  * params as `{method, params}`, which fromFuigo tolerates. */
 const FUIGO_ASK_METHOD = "_fuigo/ask_user_question";
+/** Fuigo forwards an MCP server's elicitation as its own extension request
+ * (`fuigo-tools/src/mcp_elicitation/types.rs`): the ACP form/url fields plus
+ * `serverName`, answered `{outcome: "accept", content}` / `decline` /
+ * `cancel`. */
+const FUIGO_ELICIT_METHOD = "_fuigo/mcp/elicit";
 /** ACP v1 names it `elicitation/create`; the Rust crate that some agents
  * embed still spells it `session/elicitation`. Both are the same request. */
 const ELICITATION_METHODS = new Set(["elicitation/create", "session/elicitation"]);
@@ -587,16 +592,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // `questions`. Never auto-answered in any mode; a skip, the 30-minute
         // timeout or the turn ending sends the engine its own honest
         // no-answer (Fuigo `cancelled`, elicitation `decline`/`cancel`).
-        const handleQuestionRequest = (msg: any, kind: "fuigo" | "elicitation") => {
+        const handleQuestionRequest = (msg: any, kind: "fuigo" | "elicitation" | "fuigo-elicit") => {
           const params = msg.params ?? {};
-          const urlMode = kind === "elicitation" && params.mode === "url";
+          const urlMode = kind !== "fuigo" && params.mode === "url";
           const normalized =
             kind === "fuigo"
               ? fromFuigo(params)
               : urlMode
                 ? fromElicitationUrl(params.message, params.url)
                 : fromElicitationForm(params.message, params.requestedSchema);
-          const cancelled = kind === "fuigo" ? { outcome: "cancelled" } : { action: "cancel" };
+          // the three reply vocabularies: Fuigo's ask tool, ACP elicitation, Fuigo's MCP bridge
+          const reply = (action: "accept" | "decline" | "cancel", content?: unknown) =>
+            kind === "fuigo"
+              ? action === "accept" ? content : { outcome: "cancelled" }
+              : kind === "fuigo-elicit"
+                ? { outcome: action, ...(content !== undefined ? { content } : {}) }
+                : { action, ...(content !== undefined ? { content } : {}) };
+          const cancelled = reply("cancel");
           if (!normalized.ok) {
             emit({
               ...base(threadId, turnId),
@@ -616,12 +628,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (answered) {
               result =
                 kind === "fuigo"
-                  ? toFuigoAnswers(questions, answered)
+                  ? reply("accept", toFuigoAnswers(questions, answered))
                   : urlMode
-                    ? { action: "accept" }
-                    : { action: "accept", content: toElicitationContent(params.requestedSchema, questions, answered) };
-            } else if (kind === "elicitation" && source === "user") {
-              result = { action: "decline" };
+                    ? reply("accept")
+                    : reply("accept", toElicitationContent(params.requestedSchema, questions, answered));
+            } else if (kind !== "fuigo" && source === "user") {
+              result = reply("decline");
             } else {
               result = cancelled;
             }
@@ -653,6 +665,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // server→client permission request → canonical request.opened
         const handleServerRequest = (msg: any) => {
           if (msg.method === FUIGO_ASK_METHOD) return handleQuestionRequest(msg, "fuigo");
+          if (msg.method === FUIGO_ELICIT_METHOD) return handleQuestionRequest(msg, "fuigo-elicit");
           if (ELICITATION_METHODS.has(msg.method)) return handleQuestionRequest(msg, "elicitation");
           if (msg.method !== "session/request_permission") {
             // never leave an unknown server request hanging — the agent blocks
