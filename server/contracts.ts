@@ -153,6 +153,14 @@ export type RuntimeEvent = RuntimeEventBase &
          * was already gone and the action never ran */
         source: "user" | "auto" | "timeout" | "system" | "unavailable" | "peer";
         approvalScope?: "local-computer";
+        /** 0.1.52 FUIGOTRUST2 (additive): a folder-trust card raised from
+         * the engine's own request AFTER the engine had started (the
+         * server's scan named nothing) closed without a decision — the turn
+         * `finished` on its own, was `stopped`, or the ask hit its
+         * `timeout` while the turn ran on. The engine ran this turn
+         * untrusted either way; the card says which, never "the turn was
+         * stopped because nobody decided". */
+        folderTrustLate?: "finished" | "stopped" | "timeout";
       }
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
@@ -263,6 +271,13 @@ export interface FolderTrustTurnInput {
   folder: string;
   decision?: "trust" | "reject";
   sources: string[];
+  /** 0.1.52 FUIGOTRUST2 (additive): the user's own Fuigo install already
+   * trusts this workspace (`<FUIGO_HOME>/trusted_folders.toml`), so the
+   * engine will run the turn trusted whatever `decision` says and never
+   * ask: the driver raises no card and shows no "untrusted folder" chip.
+   * Only ever set for a native-login turn; a provider-routed turn runs
+   * under a per-turn temporary home that trusts nothing. */
+  upstreamTrusted?: true;
 }
 
 export interface TurnStartResult {
