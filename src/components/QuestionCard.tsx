@@ -9,12 +9,12 @@
 // A question never silently disappears. Answered and skipped cards stay as a
 // read-only record; an expired one (the bot stopped waiting) keeps its
 // inputs and offers "Send as a message", so a late answer still arrives.
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Check, Clock, CornerDownLeft, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { useStore, type Message, type OptionCardData } from "@/state/store";
+import { formatTime, useStore, type Message, type OptionCardData } from "@/state/store";
 import {
   answerComplete,
   answersAsMessage,
@@ -106,12 +106,35 @@ export interface QuestionCardViewProps {
   botName?: string;
   busy?: boolean;
   error?: string | null;
+  /** when the answer was confirmed, for the "Answered · 6:33 PM" footer;
+   * the persisted card carries no clock, so a reloaded card shows none */
+  settledAt?: number | null;
   onSubmit: (answers: QuestionAnswer[]) => void;
   onSkip: () => void;
   onSendAsMessage: (answers: QuestionAnswer[], text: string) => void;
 }
 
-export function QuestionCardView({ card, botName, busy = false, error, onSubmit, onSkip, onSendAsMessage }: QuestionCardViewProps) {
+// The shapes every card in the transcript shares (ApprovalCard, OptionCard):
+// a 16px-radius card with 16px padding and an accent edge while it waits.
+// Inside it each question is its own sub-card, recessed one tone, with the
+// same 16px of air; the answer rows are separate pills so a pick reads as a
+// pick — accent edge and tint — never as a grey slab.
+const primaryButton =
+  "inline-flex min-h-9 items-center gap-1.5 rounded-full bg-accent px-4 py-1.5 text-[13.5px] font-medium text-white hover:brightness-110 disabled:cursor-not-allowed";
+const secondaryButton =
+  "inline-flex min-h-9 items-center rounded-full border border-hairline/50 px-4 py-1.5 text-[13.5px] text-ink hover:bg-control";
+const footerRow = "mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-hairline/30 pt-3";
+
+export function QuestionCardView({
+  card,
+  botName,
+  busy = false,
+  error,
+  settledAt,
+  onSubmit,
+  onSkip,
+  onSendAsMessage,
+}: QuestionCardViewProps) {
   const questions = questionsForCard(card);
   const state = questionCardState(card);
   const [drafts, setDrafts] = useState<Drafts>(() => initialDrafts(questions, card.answers));
@@ -121,6 +144,7 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
   const complete = draftsComplete(questions, drafts);
   const secret = questions.some((question) => question.secret);
   const name = botName ?? t("questions.yourBot");
+  const settledLabel = (label: string) => (settledAt ? t("questions.settledAt", { label, time: formatTime(settledAt) }) : label);
 
   const submit = () => {
     if (!editable || !complete) return;
@@ -159,11 +183,11 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
         state === "open" ? "border-accent/40" : state === "expired" ? "border-warning/40" : "border-hairline/30",
       )}
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-[13px] font-medium text-ink-secondary">{t("questions.asks", { name })}</span>
           {state === "expired" && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
               <Clock size={11} aria-hidden /> {t("questions.expired")}
             </span>
           )}
@@ -175,39 +199,44 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
             title={t("questions.skip")}
             onClick={() => setConfirmingSkip(true)}
             disabled={busy}
-            className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-40"
+            className="-m-1 shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-40"
           >
             <X size={16} />
           </button>
         )}
       </div>
 
-      <div className="mt-2 flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
         {questions.map((question, questionIndex) => {
           const draft = drafts[question.id] ?? emptyDraft;
           const labelId = `${baseId}-q${questionIndex}`;
           const otherOn = draft.other.trim() !== "";
           return (
+            // No outline-none here: the app's :focus-visible outline (2px
+            // accent, 2px offset) lands outside this sub-card's border, so a
+            // keyboard user's ring never touches the words inside it.
             <div
               key={question.id}
               role={question.multiSelect ? "group" : "radiogroup"}
               aria-labelledby={labelId}
               tabIndex={editable ? 0 : -1}
               onKeyDown={(event) => onQuestionKey(event, question)}
-              className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              className="rounded-xl border border-hairline/40 bg-inset/40 p-4"
             >
               {question.header && (
-                <span className="mb-1.5 inline-block rounded-full border border-hairline/50 bg-control px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-                  {question.header}
-                </span>
+                <div className="mb-2">
+                  <span className="inline-block rounded-md border border-hairline/40 bg-control/60 px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-secondary">
+                    {question.header}
+                  </span>
+                </div>
               )}
-              <p id={labelId} className="text-[15.5px] font-semibold leading-snug text-ink">
+              <p id={labelId} className="text-[15px] font-semibold leading-snug text-ink">
                 {question.question}
               </p>
-              <p className="mt-0.5 text-[12px] text-ink-secondary">
+              <p className="mt-1 text-[12px] text-ink-secondary">
                 {question.multiSelect ? t("questions.chooseAny") : t("questions.chooseOne")}
               </p>
-              <div className="mt-2 overflow-hidden rounded-lg border border-hairline/40">
+              <div className="mt-3 flex flex-col gap-2">
                 {question.options.map((option, optionIndex) => {
                   const checked = draft.selected.includes(option.label);
                   return (
@@ -220,21 +249,22 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
                       disabled={!editable}
                       onClick={() => setDrafts((current) => toggleOption(current, question, option.label))}
                       className={cn(
-                        "flex w-full items-start gap-3 px-3 py-2.5 text-left",
-                        optionIndex > 0 && "border-t border-hairline/40",
-                        checked ? "bg-raised-hover" : "hover:bg-raised-hover/60 disabled:hover:bg-transparent",
-                        !editable && !checked && "opacity-60",
+                        "flex w-full items-start gap-3 rounded-[10px] border px-3 py-3 text-left transition-colors",
+                        checked
+                          ? "border-accent-border bg-accent/10"
+                          : "border-hairline/40 bg-card hover:bg-raised-hover/60 disabled:hover:bg-card",
+                        !editable && !checked && "opacity-50",
                       )}
                     >
                       <Indicator multi={question.multiSelect} checked={checked} />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[14.5px] text-ink">{option.label}</span>
+                        <span className="block text-[14px] font-medium leading-5 text-ink">{option.label}</span>
                         {option.description && (
                           <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-secondary">{option.description}</span>
                         )}
                       </span>
                       {optionIndex < 9 && editable && (
-                        <kbd className="mt-0.5 shrink-0 rounded border border-hairline/50 bg-control px-1.5 text-[11px] text-ink-secondary">
+                        <kbd className="mt-0.5 hidden shrink-0 rounded border border-hairline/40 px-1.5 text-[10.5px] tabular-nums text-ink-secondary/80 sm:inline-block">
                           {optionIndex + 1}
                         </kbd>
                       )}
@@ -244,13 +274,12 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
                 {question.allowOther && (editable || otherOn) && (
                   <label
                     className={cn(
-                      "flex w-full items-center gap-3 px-3 py-2",
-                      question.options.length > 0 && "border-t border-hairline/40",
-                      otherOn && "bg-raised-hover",
+                      "flex w-full items-center gap-3 rounded-[10px] border px-3 py-2 transition-colors",
+                      otherOn ? "border-accent-border bg-accent/10" : "border-hairline/40 bg-card",
                     )}
                   >
-                    <Indicator multi={question.multiSelect} checked={otherOn} />
-                    <span className="shrink-0 text-[14.5px] text-ink">{t("questions.other")}</span>
+                    <Indicator multi={question.multiSelect} checked={otherOn} inline />
+                    <span className="shrink-0 text-[14px] font-medium text-ink">{t("questions.other")}</span>
                     <input
                       type={question.secret ? "password" : "text"}
                       value={draft.other}
@@ -262,7 +291,8 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
                         const text = event.target.value;
                         setDrafts((current) => setOther(current, question, text));
                       }}
-                      className="min-w-0 flex-1 rounded-md border border-hairline/40 bg-inset px-2.5 py-1.5 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none disabled:opacity-60"
+                      // the composer's own pill: rounded, raised, a hairline that brightens on focus
+                      className="min-w-0 flex-1 rounded-full border border-hairline/40 bg-raised px-3.5 py-1.5 text-[14px] text-ink placeholder:text-ink-secondary focus:border-accent-border disabled:opacity-60"
                     />
                   </label>
                 )}
@@ -273,69 +303,66 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
       </div>
 
       {state === "expired" && (
-        <p className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
+        <p className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] leading-snug text-warning">
           {secret ? t("questions.secretExpired") : t("questions.expiredNote", { name })}
         </p>
       )}
       {error && (
-        <p role="alert" className="mt-3 text-[12.5px] text-danger">
+        <p role="alert" className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12.5px] leading-snug text-danger">
           {error}
         </p>
       )}
 
       {confirmingSkip && state === "open" ? (
-        <div role="alertdialog" aria-label={t("questions.skip")} className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <div role="alertdialog" aria-label={t("questions.skip")} className={footerRow}>
           <span className="mr-auto text-[13px] text-ink-secondary">{t("questions.skipConfirm", { name })}</span>
           <button
             type="button"
             autoFocus
             onClick={() => setConfirmingSkip(false)}
             onKeyDown={(event) => { if (event.key === "Escape") setConfirmingSkip(false); }}
-            className="rounded-full border border-hairline/50 px-3.5 py-1.5 text-[13.5px] text-ink hover:bg-control"
+            className={secondaryButton}
           >
             {t("questions.keepAnswering")}
           </button>
           <button
             type="button"
             onClick={() => { setConfirmingSkip(false); onSkip(); }}
-            className="rounded-full border border-danger/40 px-3.5 py-1.5 text-[13.5px] text-danger hover:bg-danger/10"
+            className="inline-flex min-h-9 items-center rounded-full border border-danger/40 px-4 py-1.5 text-[13.5px] text-danger hover:bg-danger/10"
           >
             {t("questions.skip")}
           </button>
         </div>
       ) : (
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-[13px] text-ink-secondary">
+        <div className={cn(footerRow, "text-[12.5px] text-ink-secondary")}>
           {state === "open" && (
-            <>
-              <span className="mr-auto hidden text-[12px] sm:inline">{t("questions.keys")}</span>
-              <button
-                type="button"
-                onClick={submit}
-                disabled={!complete || busy}
-                className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-[13.5px] font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {busy ? t("questions.sending") : t("questions.submit")}
-                {!busy && <CornerDownLeft size={13} aria-hidden />}
-              </button>
-            </>
+            // the key map rides the button as a tooltip instead of a line of
+            // its own; the digits on the rows already say the rest
+            <button type="button" onClick={submit} disabled={!complete || busy} title={t("questions.keys")} className={primaryButton}>
+              {busy ? t("questions.sending") : t("questions.submit")}
+              {!busy && <CornerDownLeft size={13} aria-hidden />}
+            </button>
           )}
           {state === "expired" && !secret && (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!complete || busy}
-              className="rounded-full bg-accent px-3.5 py-1.5 text-[13.5px] font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-            >
+            <button type="button" onClick={submit} disabled={!complete || busy} title={t("questions.keys")} className={primaryButton}>
               {busy ? t("questions.sending") : t("questions.sendAsMessage")}
             </button>
           )}
           {state === "answered" && (
-            <span className="inline-flex items-center gap-1.5"><Check size={14} className="text-success" /> {t("questions.answered")}</span>
+            <span className="inline-flex items-center gap-1.5">
+              <Check size={14} className="text-success" aria-hidden /> {settledLabel(t("questions.answered"))}
+            </span>
           )}
           {state === "sent" && (
-            <span className="inline-flex items-center gap-1.5"><Check size={14} className="text-success" /> {t("questions.sent")}</span>
+            <span className="inline-flex items-center gap-1.5">
+              <Check size={14} className="text-success" aria-hidden /> {settledLabel(t("questions.sent"))}
+            </span>
           )}
-          {state === "skipped" && <span className="inline-flex items-center gap-1.5"><X size={14} /> {t("questions.skipped")}</span>}
+          {state === "skipped" && (
+            <span className="inline-flex items-center gap-1.5">
+              <X size={14} aria-hidden /> {settledLabel(t("questions.skipped"))}
+            </span>
+          )}
           {state === "closed" && <span>{t("questions.closed")}</span>}
         </div>
       )}
@@ -343,17 +370,20 @@ export function QuestionCardView({ card, botName, busy = false, error, onSubmit,
   );
 }
 
-function Indicator({ multi, checked }: { multi: boolean; checked: boolean }) {
+/** The radio or checkbox glyph: 18px, sitting on the label's first line
+ * (`inline` centres it on a one-line row instead). */
+function Indicator({ multi, checked, inline = false }: { multi: boolean; checked: boolean; inline?: boolean }) {
   return (
     <span
       aria-hidden
       className={cn(
-        "mt-0.5 flex size-4 shrink-0 items-center justify-center border",
-        multi ? "rounded-[4px]" : "rounded-full",
-        checked ? "border-accent bg-accent text-white" : "border-hairline bg-inset",
+        "flex size-[18px] shrink-0 items-center justify-center border transition-colors",
+        !inline && "mt-px",
+        multi ? "rounded-[5px]" : "rounded-full",
+        checked ? "border-accent bg-accent text-white" : "border-hairline bg-raised",
       )}
     >
-      {checked && (multi ? <Check size={11} strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-white" />)}
+      {checked && (multi ? <Check size={12} strokeWidth={3} /> : <span className="size-2 rounded-full bg-current" />)}
     </span>
   );
 }
@@ -379,10 +409,19 @@ export function QuestionCard({
   const { dispatch } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // the clock on the "Answered" footer: the moment this session's own
+  // answer was confirmed. The persisted card carries no such time, so a
+  // reloaded card shows the label alone rather than a made-up hour.
+  const [settledAt, setSettledAt] = useState<number | null>(null);
+  const waiting = useRef(false);
+  waiting.current = busy;
   const card = message.card;
   const settledKey = `${card?.answered ?? ""}:${card?.expired ? 1 : 0}:${card?.sentAsMessage ? 1 : 0}`;
   // the server's message.patch is the confirmation; a changed card ends the wait
-  useEffect(() => setBusy(false), [settledKey]);
+  useEffect(() => {
+    if (waiting.current) setSettledAt(Date.now());
+    setBusy(false);
+  }, [settledKey]);
   if (!card?.requestId) return null;
   const requestId = card.requestId;
   const failed = (text: string) => {
@@ -395,6 +434,7 @@ export function QuestionCard({
       botName={botName}
       busy={busy}
       error={error}
+      settledAt={settledAt}
       onSubmit={(answers) => {
         setBusy(true);
         setError(null);
