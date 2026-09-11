@@ -8526,20 +8526,13 @@ describe("internal capability authority", () => {
         fromBotId: bot.id, fromThreadId: bot.threadId,
         credentialId: "openaiImageApiKey", reason: "must not append after revocation",
       }, turn.headers);
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
-      // Interrupt acknowledges cancellation; provider teardown can still append
-      // its terminal activity. Settle that before measuring rejected-body writes.
-      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
-        .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
-      { timeout: 5_000 }).toBe(false);
       // Idle is not teardown for the Claude driver: interrupt releases the
       // run as soon as the kill is requested (A2 kept Claude's retained
-      // sessions on that contract), and the child's close still appends its
-      // "claude exited … before result" chip afterwards. That chip is the
-      // fixture's deterministic end of teardown, so measure only after it.
-      await expect.poll(async () => (await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`)).body.messages
-        .some((message: { kind: string; tool?: { name?: string } }) => message.kind === "activity" && message.tool?.name?.startsWith("error: claude exited")),
-      { timeout: 5_000 }).toBe(true);
+      // sessions on that contract) and the child closes afterwards. Since
+      // STOP1 a user Stop settles as cancelled with no "claude exited" chip,
+      // so the fixture's end of teardown is the stopped engine process being
+      // gone (stopFixtureTurn); measure only after it.
+      await stopFixtureTurn(bot.id, turn);
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
       expect(response.status).toBe(401);
