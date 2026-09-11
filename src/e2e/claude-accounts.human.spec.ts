@@ -27,7 +27,7 @@ test.beforeAll(async () => {
       load(id) { if (id !== "\0accounts-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {ClaudeAccountsSettings} from '/src/components/ClaudeAccountsSettings.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'light';window.copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>window.copied.push(value)},configurable:true});createRoot(document.getElementById('root')).render(React.createElement(ClaudeAccountsSettings));`; },
       configureServer(server) { server.middlewares.use((req, res, next) => { if (!req.url?.startsWith("/__accounts?")) return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app);color:var(--color-ink)"><main id="root" style="max-width:760px;height:calc(100dvh - 48px);overflow-y:auto;margin:24px auto;padding:16px"></main><script type="module" src="/__accounts.js"></script>'); }); },
     }] });
-    await vite.listen(0); const address = vite.httpServer!.address(); if (!address || typeof address === "string") throw Error("Accounts UI fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
+    await vite.listen(Number(process.env.MURAGE_E2E_UI_PORT) || 0); const address = vite.httpServer!.address(); if (!address || typeof address === "string") throw Error("Accounts UI fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
   } catch (error) { await vite?.close(); await fixture.close(); throw error; }
 });
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
@@ -78,4 +78,58 @@ test("owner account CRUD preserves credentials, selected identity and active wor
   expect((await api("/api/bots?messages=0")).bots.find((entry: any) => entry.id === bot.id).modelSelection.instanceId).toBe(work.instanceId);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath("accounts-" + info.project.name + ".png"), fullPage: true });
+});
+
+// POST/PATCH already answer with the account after a full engine probe, yet the
+// section used to wait for a second full probe (GET re-runs every engine's
+// snapshot) before drawing the change. On a loaded machine that GET outlived
+// the create: "Account added. Sign in explicitly below" pointed at a row that
+// was not there (CLAC1, RED2F verifier trace: POST 3.5 s, GET still pending
+// after 5 s). Holding that GET makes the wait deterministic instead of load-bound.
+test("a created, renamed or removed account shows before the engine re-probe answers", async ({ page }, info) => {
+  let gate: Promise<void> | undefined, open = () => {}, held = 0;
+  await page.route(url => url.pathname === "/api/claude-accounts", async route => {
+    if (route.request().method() === "GET" && gate) { held++; await gate; }
+    await route.continue();
+  });
+  const holdNextRefresh = () => { held = 0; gate = new Promise(resolve => { open = () => { gate = undefined; resolve(); }; }); };
+  const releaseRefresh = () => open();
+  await page.goto(origin + "/__accounts?skin=" + (info.project.name === "narrow" ? "dark" : "light"));
+  await expect(page.getByText("Verification fixture", { exact: true })).toBeVisible();
+  const add = page.getByRole("button", { name: "Add Claude account", exact: true });
+
+  await add.click();
+  await page.getByLabel("Account name", { exact: true }).fill("Held refresh");
+  holdNextRefresh();
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page.getByText("Held refresh", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Sign in explicitly");
+  await expect.poll(() => held).toBe(1);
+  await expect(add).toBeDisabled();
+  await page.screenshot({ path: info.outputPath("accounts-held-refresh-" + info.project.name + ".png"), fullPage: true });
+  releaseRefresh();
+  await expect(add).toBeEnabled();
+  const created = ((await api("/api/claude-accounts")).accounts as ClaudeAccount[]).find(account => account.displayName === "Held refresh")!;
+  await expect(page.locator(`[data-claude-account="${created.instanceId}"]`)).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Edit Held refresh account", exact: true }).click();
+  await page.getByLabel("Account name", { exact: true }).fill("Held renamed");
+  holdNextRefresh();
+  await page.getByRole("button", { name: "Save account", exact: true }).click();
+  await expect(page.getByText("Held renamed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Held refresh", { exact: true })).toHaveCount(0);
+  await expect.poll(() => held).toBe(1);
+  releaseRefresh();
+  await expect(add).toBeEnabled();
+
+  await page.getByRole("button", { name: "Remove Held renamed account", exact: true }).click();
+  holdNextRefresh();
+  await page.getByRole("button", { name: "Confirm removal of Held renamed", exact: true }).click();
+  await expect(page.locator(`[data-claude-account="${created.instanceId}"]`)).toHaveCount(0);
+  await expect(page.getByRole("status")).toContainText("Login and credential files were retained");
+  await expect.poll(() => held).toBe(1);
+  releaseRefresh();
+  await expect(add).toBeEnabled();
+  expect(((await api("/api/claude-accounts")).accounts as ClaudeAccount[]).some(account => account.instanceId === created.instanceId)).toBe(false);
+  await expect(page.locator(`[data-claude-account="${created.instanceId}"]`)).toHaveCount(0);
 });
