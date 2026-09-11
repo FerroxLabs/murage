@@ -11,6 +11,7 @@ import {
   openNotificationTarget,
   reducer,
   useStore,
+  viewedTaskBot,
   visibleNotificationThread,
   type Action,
   type Bot,
@@ -95,6 +96,44 @@ describe("replacement snapshot boundary", () => {
     expect(sources).toHaveLength(1);
     expect(sources[0]!.close).not.toHaveBeenCalled();
     stop();
+  });
+});
+
+describe("Chief-created operators (AUTOOP1)", () => {
+  // The harness writes the inherited Auto bit to both the profile and the
+  // operator's first task. The composer's mode chip reads the projection
+  // below, so this is the shape the person actually sees.
+  const operator = {
+    id: "op",
+    threadId: "op-t1",
+    name: "Auto operator",
+    title: "Research operator",
+    description: "",
+    notifications: true,
+    color: "green",
+    unread: false,
+    autoApprove: true,
+    computer: "off",
+    approvePeerComms: false,
+    modelSelection: { instanceId: "x", model: "y" },
+    tasks: [{ threadId: "op-t1", title: "Untitled", createdAt: 1, autoApprove: true, alwaysAllow: [], unread: false }],
+    messages: [],
+  } as unknown as Bot;
+
+  it("shows an inherited-Auto operator as Auto on its first thread, computer off", () => {
+    const viewed = viewedTaskBot(operator);
+    expect(viewed.autoApprove).toBe(true);
+    expect(viewed.computer).toBe("off");
+    expect(viewed.alwaysAllow ?? []).toEqual([]);
+  });
+
+  it("shows an operator created from an Ask-mode or unattended Chief as Ask", () => {
+    const asking = {
+      ...operator,
+      autoApprove: false,
+      tasks: [{ ...operator.tasks![0], autoApprove: false }],
+    } as Bot;
+    expect(viewedTaskBot(asking).autoApprove).toBe(false);
   });
 });
 

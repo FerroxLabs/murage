@@ -30,6 +30,7 @@ let lastDelegationUrl: string | null = null;
 let delegationStatusResponse: unknown = { status: "done", toBotName: "Helper", result: "All done." };
 let delegateResponse: unknown = { queued: true, message: "Delegation queued." };
 let lastCreateBody: any = null;
+let createResponseExtra: Record<string, unknown> = {};
 let lastCredentialBody: any = null;
 let lastRoutineQuery = "";
 let routinesResponse: unknown = {
@@ -150,7 +151,7 @@ beforeAll(async () => {
       req.on("end", () => {
         lastCreateBody = JSON.parse(data);
         res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id: "bot-designer", name: "Pixel", section: "Work" }));
+        res.end(JSON.stringify({ id: "bot-designer", name: "Pixel", section: "Work", ...createResponseExtra }));
       });
       return;
     }
@@ -480,6 +481,10 @@ describe("agents-proxy MCP surface", () => {
       model_selection: { instanceId: "fixture", model: "model", connectionId: "provider-account" },
     });
     expect(res.result.content[0].text).toContain("Created @Pixel in Work");
+    // the harness did not say the operator inherited Auto, so the Chief is
+    // told it asks (AUTOOP1)
+    expect(res.result.content[0].text).toContain("Ask mode");
+    expect(res.result.content[0].text).not.toContain("Auto mode");
     expect(lastCreateBody).toEqual({
       fromBotId: "bot-asker",
       fromThreadId: "thread-asker-routine",
@@ -488,6 +493,22 @@ describe("agents-proxy MCP surface", () => {
       instructions: "Design and review the user experience.",
       modelSelection: { instanceId: "fixture", model: "model", connectionId: "provider-account" },
     });
+  });
+
+  it("tells the Chief when a created specialist inherited Auto (AUTOOP1)", async () => {
+    createResponseExtra = { auto: true };
+    try {
+      const res = await callTool("create_bot", {
+        name: "Pixel",
+        role: "Product designer",
+        instructions: "Design and review the user experience.",
+      });
+      expect(res.result.content[0].text).toContain("Created @Pixel in Work");
+      expect(res.result.content[0].text).toContain("Auto mode (inherited from you; computer off");
+      expect(res.result.content[0].text).not.toContain("Ask mode");
+    } finally {
+      createResponseExtra = {};
+    }
   });
 
   it("requests an allowlisted credential without putting a secret in the request", async () => {

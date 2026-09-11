@@ -347,7 +347,7 @@ const TOOLS = [
   {
     name: "create_bot",
     description:
-      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the Chief's engine; connected apps and automatic approvals start disabled. A section's Chief creates into its own section. The workspace Chief must name the destination team; pass lead: true to create its lead first if the team is missing. Create only the smallest useful team (maximum four per turn).",
+      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the Chief's engine; connected apps, peer-comms approval and computer control start disabled. It starts in Auto mode only if you are in Auto mode in this conversation (and never from an unattended turn); otherwise it asks the user before every action. Questions and credential requests always reach the user either way. A section's Chief creates into its own section. The workspace Chief must name the destination team; pass lead: true to create its lead first if the team is missing. Create only the smallest useful team (maximum four per turn).",
     inputSchema: {
       type: "object",
       properties: {
@@ -750,8 +750,11 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       }),
     });
     createdThisTurn += 1;
+    const mode = r.auto === true
+      ? "Auto mode (inherited from you; computer off, destructive and sensitive actions still ask)"
+      : "Ask mode (the user approves each action)";
     return {
-      text: `Created @${r.name ?? botName} in ${r.section ?? "General"} [id: ${r.id}]. Assign work with delegate_bot.`,
+      text: `Created @${r.name ?? botName} in ${r.section ?? "General"} [id: ${r.id}], ${mode}. Assign work with delegate_bot.`,
     };
   }
   if (name === "request_credential") {
