@@ -39,6 +39,19 @@ export function claudeAccountsAfterChange(accounts: ClaudeAccount[], method: str
   if (index >= 0) return accounts.map((entry, position) => position === index ? account : entry);
   return method === "POST" ? [...accounts, account] : accounts;
 }
+/** Orders the section's two list writers. A list response may draw only when
+ * no newer list was requested and no change receipt was drawn after it was
+ * requested. A slow first list, or a Refresh, that answered after a create or
+ * rename used to redraw the older list over the receipt's row (CLAC2). */
+export function claudeAccountsListOrder() {
+  let requests = 0, receipts = 0;
+  return {
+    /** Call when a list request leaves; the returned check says whether its answer may still draw. */
+    request() { const request = ++requests, drawn = receipts; return () => request === requests && drawn === receipts; },
+    /** Call as a change receipt is drawn: every list requested before it is now older than the section. */
+    receipt() { receipts++; },
+  };
+}
 const button = "rounded-lg border border-hairline/40 px-3 py-2 text-xs text-ink hover:bg-raised/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
 const input = "mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
 
@@ -48,9 +61,14 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<string | null>(null), [removing, setRemoving] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(""), [configDir, setConfigDir] = useState("");
-  const gate = useRef(false);
+  const gate = useRef(false), [order] = useState(claudeAccountsListOrder);
   const load = async () => {
-    setAccounts(claudeAccountsFrom(await api("/api/claude-accounts"))); setLoaded(true);
+    const fresh = order.request();
+    try {
+      const payload = await api("/api/claude-accounts");
+      if (!fresh()) return;
+      setAccounts(claudeAccountsFrom(payload)); setLoaded(true);
+    } catch (cause) { if (fresh()) throw cause; }
   };
   useEffect(() => { void load().catch(cause => setError(cause.message)); }, []);
   const change = async (method: string, id?: string, body?: unknown) => {
@@ -59,6 +77,7 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     try {
       const receipt = await api(`/api/claude-accounts${id ? `/${encodeURIComponent(id)}` : ""}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
       setEditing(null); setRemoving(null);
+      order.receipt();
       setAccounts(current => claudeAccountsAfterChange(current, method, id, receipt));
       setNotice(t(method === "POST" ? "claudeAccounts.added" : method === "DELETE" ? "claudeAccounts.removed" : "claudeAccounts.saved"));
       try { await load(); await onChanged?.(); }
