@@ -141,6 +141,10 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Run human specs
         if: matrix.os == 'ubuntu-latest'
+        env:
+          # Required, no default: the rig wipes this directory, and the name
+          # carries the "scratch" segment safe-wipe admits (data-safety.md).
+          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
         run: pnpm test:human
       - name: Upload human spec traces on failure
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -201,6 +205,7 @@ jobs:
         shell: bash
         env:
           HUMAN_FILES: ${{ inputs.human_files }}
+          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
         run: |
           human_paths=()
           while IFS= read -r human_path; do human_paths+=("$human_path"); done <<< "$HUMAN_FILES"
