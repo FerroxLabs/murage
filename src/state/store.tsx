@@ -17,6 +17,7 @@ import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
+import { initialWorkspacePaneState, workspacePaneReducer, type WorkspacePaneAction, type WorkspacePaneState } from "@/lib/workspace-pane";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
@@ -518,6 +519,11 @@ export interface AppState {
   computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
   inspectorOpen: boolean;
+  /** The workspace rail beside the chat and its preview/editor tabs
+   * (F4-T3). Tabs carry their own conversation, so browsing another bot's
+   * file never changes `selectedId`; the reducer lives in
+   * src/lib/workspace-pane.ts and only `workspacePane` actions touch it. */
+  workspacePane: WorkspacePaneState;
   appSettingsOpen: boolean;
   appSettingsSection: AppSettingsSection;
   /** latest live frame of a bot's computer, per botId */
@@ -752,6 +758,7 @@ export type Action =
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
+  | { type: "workspacePane"; action: WorkspacePaneAction }
   | { type: "focusMessage"; threadId: string; messageId: string }
   | { type: "focusMessageConsumed"; nonce: number }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection }
@@ -1305,6 +1312,10 @@ export function reducer(state: AppState, action: Action): AppState {
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
+    case "workspacePane": {
+      const workspacePane = workspacePaneReducer(state.workspacePane, action.action);
+      return workspacePane === state.workspacePane ? state : { ...state, workspacePane };
+    }
     case "toggleInspector": {
       const open = action.open ?? !state.inspectorOpen;
       return {
@@ -1533,6 +1544,7 @@ export const initialState: AppState = {
   pluginsOpen: false,
   computerOpen: false,
   inspectorOpen: false,
+  workspacePane: initialWorkspacePaneState,
   appSettingsOpen: false,
   appSettingsSection: "general",
   screens: {},

@@ -26,7 +26,9 @@ interface Place { key: string; directory: string; query: string }
 const reasonText = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
 const statusOf = (reason: unknown) => (reason as { status?: unknown } | null)?.status;
 
-export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, onSaved, onRevealFolder, onNativeAction = workspaceNativeAction() }: {
+export type WorkspaceOpenInPane = (scope: WorkspaceScopeRef, relativePath: string, mode: "preview" | "edit") => void;
+
+export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, onSaved, onRevealFolder, onNativeAction = workspaceNativeAction(), onOpenInPane }: {
   scope: WorkspaceScopeRef | null;
   /** "Bot · task" the owner chose; shown so the browsed workspace is explicit. */
   scopeLabel: string;
@@ -38,6 +40,9 @@ export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, on
   /** Open in app / Show in folder for one live file (F4-T5). Defaults to the
    * desktop bridge and is absent in a browser, where the buttons do not show. */
   onNativeAction?: WorkspaceNativeAction;
+  /** Open one live file in the workspace pane beside the chat (F4-T3).
+   * The pane names the file by scope + relative path, never by a path. */
+  onOpenInPane?: WorkspaceOpenInPane;
 }) {
   const scopeKey = scope ? `${scope.botId}\n${scope.threadId}` : "";
   // A different conversation always starts at its own root, with no search.
@@ -154,7 +159,7 @@ export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, on
           </span>)}
         </nav>}
       {entries.length > 0 && <ul aria-label={found ? t("filesWorkspace.resultsList") : t("filesWorkspace.folderList", { folder: crumbs.at(-1)!.label })} className="mt-2 max-h-[28rem] divide-y divide-hairline/40 overflow-y-auto rounded-lg border border-hairline/40">
-        {entries.map(entry => <WorkspaceRow key={entry.relativePath} entry={entry} showPath={Boolean(found)} busy={busy} onOpen={() => navigate(entry.relativePath)} onView={() => void view(entry)} onSave={() => void save(entry)} onNative={onNativeAction ? action => void native(entry, action) : undefined} />)}
+        {entries.map(entry => <WorkspaceRow key={entry.relativePath} entry={entry} showPath={Boolean(found)} busy={busy} onOpen={() => navigate(entry.relativePath)} onView={() => void view(entry)} onSave={() => void save(entry)} onNative={onNativeAction ? action => void native(entry, action) : undefined} onOpenInPane={onOpenInPane && scope ? mode => onOpenInPane(scope, entry.relativePath, mode) : undefined} />)}
       </ul>}
       {!loading && !entries.length && (listing || found) && <p className="mt-3 text-[13px] text-ink-secondary">{found ? t("filesWorkspace.searchEmpty") : place.directory ? t("filesWorkspace.folderEmpty") : t("filesWorkspace.rootEmpty")}</p>}
       {found?.cursor && <p className="mt-2 text-[12px] text-ink-secondary">{t("filesWorkspace.searchPartial", { scanned: found.scanned.toLocaleString() })}</p>}
@@ -166,6 +171,7 @@ export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, on
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="min-w-0 break-all text-[14px] font-medium">{viewing.entry.relativePath}</h3>
         <div className="flex flex-wrap gap-2">
+          {onOpenInPane && scope && canSaveEntry(viewing.entry) && <PaneButtons entry={viewing.entry} onOpenInPane={mode => onOpenInPane(scope, viewing.entry.relativePath, mode)} />}
           {canSaveEntry(viewing.entry) && <button type="button" className={button} disabled={busy} onClick={() => void save(viewing.entry)}>{t("filesWorkspace.saveThisVersion")}</button>}
           {onNativeAction && canSaveEntry(viewing.entry) && <NativeButtons entry={viewing.entry} busy={busy} onNative={action => void native(viewing.entry, action)} />}
           <button type="button" className={button} onClick={() => setViewing(null)}>{t("filesWorkspace.closeView")}</button>
@@ -181,10 +187,12 @@ export function WorkspaceFiles({ scope, scopeLabel, refreshToken, renderHtml, on
   </section>;
 }
 
-export function WorkspaceRow({ entry, showPath, busy, onOpen, onView, onSave, onNative }: {
+export function WorkspaceRow({ entry, showPath, busy, onOpen, onView, onSave, onNative, onOpenInPane }: {
   entry: WorkspaceEntry; showPath: boolean; busy: boolean; onOpen: () => void; onView: () => void; onSave: () => void;
   /** Absent outside the desktop shell: no native buttons are shown. */
   onNative?: (action: "open" | "reveal") => void;
+  /** Absent when no chat pane can host the file (F4-T3). */
+  onOpenInPane?: (mode: "preview" | "edit") => void;
 }) {
   const note = entryNotice(entry), folder = entry.kind === "directory" && entry.state === "local";
   const meta = folder ? t("filesWorkspace.folder")
@@ -200,6 +208,7 @@ export function WorkspaceRow({ entry, showPath, busy, onOpen, onView, onSave, on
       {note && <p className="text-[12px] text-ink-secondary">{t(note)}</p>}
     </div>
     {canSaveEntry(entry) && <div className="flex flex-wrap gap-2">
+      {onOpenInPane && <PaneButtons entry={entry} onOpenInPane={onOpenInPane} />}
       <button type="button" className={button} disabled={busy} aria-label={t("filesWorkspace.viewCurrentNamed", { name: entry.name })} onClick={onView}>{t("filesWorkspace.viewCurrent")}</button>
       <button type="button" className={button} disabled={busy} aria-label={t("filesWorkspace.saveVersionNamed", { name: entry.name })} onClick={onSave}>{t("filesWorkspace.saveVersion")}</button>
       {onNative && <NativeButtons entry={entry} busy={busy} onNative={onNative} />}
@@ -214,5 +223,14 @@ function NativeButtons({ entry, busy, onNative }: { entry: WorkspaceEntry; busy:
   return <>
     <button type="button" data-native-action="open" className={button} disabled={busy} aria-label={t("filesWorkspace.openInAppNamed", { name: entry.name })} onClick={() => onNative("open")}>{t("filesWorkspace.openInApp")}</button>
     <button type="button" data-native-action="reveal" className={button} disabled={busy} aria-label={t("filesWorkspace.showInFolderNamed", { name: entry.name })} onClick={() => onNative("reveal")}>{t("filesWorkspace.showInFolder")}</button>
+  </>;
+}
+
+/** Open beside chat / Edit beside chat (F4-T3). Edit is offered for Markdown
+ * only; everything else previews. */
+function PaneButtons({ entry, onOpenInPane }: { entry: WorkspaceEntry; onOpenInPane: (mode: "preview" | "edit") => void }) {
+  return <>
+    <button type="button" data-pane-action="preview" className={button} aria-label={t("workspacePane.openInPaneNamed", { name: entry.name })} onClick={() => onOpenInPane("preview")}>{t("workspacePane.openInPane")}</button>
+    {/\.(md|markdown)$/i.test(entry.relativePath) && <button type="button" data-pane-action="edit" className={button} aria-label={t("workspacePane.editInPaneNamed", { name: entry.name })} onClick={() => onOpenInPane("edit")}>{t("workspacePane.editInPane")}</button>}
   </>;
 }
