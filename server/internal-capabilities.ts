@@ -108,6 +108,12 @@ export class InternalCapabilities {
     if (owner) this.revokeGeneration(owner.threadId, owner.generation);
   }
 
+  /** The generation that currently owns `threadId`, or undefined once it was
+   * revoked (a bound provider turn completed, or an explicit revocation). */
+  activeGeneration(threadId: string): string | undefined {
+    return this.#generations.get(threadId)?.id;
+  }
+
   revokeGeneration(threadId: string, generation: string): void {
     for (const [token, claim] of this.#tokens) {
       if (claim.threadId === threadId && claim.generation === generation) this.#tokens.delete(token);
