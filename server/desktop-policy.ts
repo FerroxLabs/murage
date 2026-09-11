@@ -21,6 +21,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/memory(?:\/|$)/, purpose: "memory authority, sharing, retention and configuration" },
   { methods: ["PATCH", "PUT"], path: /^\/api\/config$/, purpose: "application, credentials, browser and computer configuration" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+$/, purpose: "bot authority, engine, working folder and deletion" },
+  { methods: ["GET", "DELETE"], path: /^\/api\/folder-trust$/, purpose: "per-folder trust record for an engine that gates repo-local files" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/always-allow$/, purpose: "persistent permission grants" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/groups\/[\w-]+$/, purpose: "room configuration and deletion" },
   { methods: ["PATCH"], path: /^\/api\/groups\/[\w-]+\/setup$/, purpose: "room working folder and execution setup" },

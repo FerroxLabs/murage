@@ -140,7 +140,11 @@ export function QuestionCardView({
   const [drafts, setDrafts] = useState<Drafts>(() => initialDrafts(questions, card.answers));
   const [confirmingSkip, setConfirmingSkip] = useState(false);
   const baseId = useId();
-  const editable = (state === "open" || state === "expired") && !busy;
+  // A folder-trust card (FUIGOTRUST1) is a decision, not conversation: an
+  // expired one takes no late answer — the turn was stopped, and sending it
+  // again asks again — so it is read-only once it expires.
+  const trust = Boolean(card.folderTrust);
+  const editable = (state === "open" || (state === "expired" && !trust)) && !busy;
   const complete = draftsComplete(questions, drafts);
   const secret = questions.some((question) => question.secret);
   const name = botName ?? t("questions.yourBot");
@@ -150,7 +154,7 @@ export function QuestionCardView({
     if (!editable || !complete) return;
     const answers = draftAnswers(questions, drafts);
     if (state === "expired") {
-      if (!secret) onSendAsMessage(answers, answersAsMessage(questions, answers));
+      if (!secret && !trust) onSendAsMessage(answers, answersAsMessage(questions, answers));
     } else onSubmit(answers);
   };
 
@@ -185,7 +189,7 @@ export function QuestionCardView({
     >
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[13px] font-medium text-ink-secondary">{t("questions.asks", { name })}</span>
+          <span className="truncate text-[13px] font-medium text-ink-secondary">{trust ? t("folderTrust.asks", { name }) : t("questions.asks", { name })}</span>
           {state === "expired" && (
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
               <Clock size={11} aria-hidden /> {t("questions.expired")}
@@ -304,7 +308,7 @@ export function QuestionCardView({
 
       {state === "expired" && (
         <p className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] leading-snug text-warning">
-          {secret ? t("questions.secretExpired") : t("questions.expiredNote", { name })}
+          {trust ? t("folderTrust.expiredNote") : secret ? t("questions.secretExpired") : t("questions.expiredNote", { name })}
         </p>
       )}
       {error && (
@@ -343,7 +347,7 @@ export function QuestionCardView({
               {!busy && <CornerDownLeft size={13} aria-hidden />}
             </button>
           )}
-          {state === "expired" && !secret && (
+          {state === "expired" && !secret && !trust && (
             <button type="button" onClick={submit} disabled={!complete || busy} title={t("questions.keys")} className={primaryButton}>
               {busy ? t("questions.sending") : t("questions.sendAsMessage")}
             </button>

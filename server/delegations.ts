@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { hostStoppedDisplayName } from "../shared/host-stop.ts";
+import { folderTrustDisplayName } from "../shared/folder-trust.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
 import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visibility.ts";
@@ -734,7 +735,7 @@ export function summarizeDelegatedActivity(
       const name = (message.tool?.name ?? "").trim();
       // a host stop is not a tool run: the caller sees the stop as the
       // transcript spells it, not the raw "stopped:" prefix (STOP2)
-      const stopped = hostStoppedDisplayName(name);
+      const stopped = hostStoppedDisplayName(name) ?? folderTrustDisplayName(name);
       if (stopped) lines.push(stopped);
       else if (name) lines.push(`tool: ${name}`);
       continue;

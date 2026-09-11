@@ -549,5 +549,18 @@
   "composer.refusedTooLarge": "Not sent: Murage refused this message because it is too large ({size}). Shorten it or split it into smaller messages. Your text is still here.",
   "composer.dismissNotice": "Dismiss",
   "hostStop.label": "Stopped — {reason}",
-  "hostStop.description": "Murage stopped this turn. Send another message to continue."
+  "hostStop.description": "Murage stopped this turn. Send another message to continue.",
+  "folderTrust.withheldLabel": "Folder not trusted — {sources} left out",
+  "folderTrust.withheldDescription": "This folder's own instructions, tools or skills were not applied, because it is not trusted. The bot still works here.",
+  "folderTrust.lateLabel": "Folder trusted — {sources} apply from the next turn",
+  "folderTrust.lateDescription": "The engine reads a folder's instructions and skills when it starts, so this turn ran without them; the next one will have them.",
+  "folderTrust.asks": "{name} needs a decision",
+  "folderTrust.expiredNote": "Nobody decided in time, so this turn was stopped. Send the message again to be asked.",
+  "folderTrust.pickerNote": "A folder you choose here is trusted: its AGENTS.md, CLAUDE.md, .mcp.json and skills apply to the bot's turns.",
+  "folderTrust.statusTrusted": "Trusted",
+  "folderTrust.statusUntrusted": "Not trusted",
+  "folderTrust.statusUndecided": "Not decided yet — the first turn here will ask",
+  "folderTrust.statusNothing": "Nothing to trust here yet",
+  "folderTrust.forget": "Forget",
+  "folderTrust.forgetError": "Could not forget this folder's trust decision."
 }

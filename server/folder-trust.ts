@@ -83,7 +83,7 @@ const canonicalHome = () => canonicalFolder(homedir());
 export function isUnrecordableTrustRoot(key: string): boolean {
   if (!key || key !== resolve(key)) return true;
   if (parse(key).root === key) return true;
-  return key === canonicalHome();
+  return canonicalFolder(key) === canonicalHome();
 }
 
 /** The trust key for a folder: the canonical git root when the folder sits in
@@ -128,10 +128,13 @@ export function scanFolderTrustSources(folder: string): FolderTrustScan {
   const start = canonicalFolder(folder);
   const key = folderTrustKey(start);
   const sources: string[] = [];
+  // deduplicated case-insensitively: on a case-insensitive filesystem (macOS
+  // APFS, Windows) "AGENTS.md" and "Agents.md" stat as the same file
   const seen = new Set<string>();
   const hit = (name: string) => {
-    if (seen.has(name)) return;
-    seen.add(name);
+    const lowered = name.toLowerCase();
+    if (seen.has(lowered)) return;
+    seen.add(lowered);
     sources.push(name);
   };
   if (isUnrecordableTrustRoot(key)) return { key, folder: start, sources };
@@ -197,8 +200,10 @@ const isRecord = (value: unknown): value is FolderTrustRecord =>
  * a reset would re-ask the human questions they already answered. */
 export class FolderTrustStore {
   private folders = new Map<string, FolderTrustRecord>();
+  private readonly file: string;
 
-  constructor(private readonly file: string) {
+  constructor(file: string) {
+    this.file = file;
     const parsed = readPersistedJson(file);
     if (parsed === undefined) return;
     const raw = parsed as Partial<PersistedFolderTrust> | null;

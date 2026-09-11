@@ -41,8 +41,12 @@ import { groupActivityRuns } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import { StoppedRow } from "./StoppedRow";
 import { hostStoppedReason } from "../../shared/host-stop";
+import { folderTrustNotice } from "../../shared/folder-trust";
+import { FolderTrustRow } from "./FolderTrustRow";
+import { FolderTrustNote } from "./FolderTrustNote";
 import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
@@ -260,6 +264,8 @@ const Transcript = memo(function Transcript({
           ) : m.kind === "activity" && m.tool ? (
             hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
+            ) : folderTrustNotice(m.tool.name) ? (
+              <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} />
             ) : m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
               <RoomToolChip message={m} />
             ) : null
@@ -545,6 +551,7 @@ function RoomWorkingFolder({ group }: { group: Group }) {
         </form>
       )}
       {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
+      <FolderTrustNote folder={shownCwd} />
     </div>
   );
 }
@@ -717,7 +724,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
       >
         <label className="block">
           <span className="text-[13px] font-semibold text-ink">Working folder</span>
-          <span className="mt-1 block text-[12px] text-ink-secondary">Where room members run file and shell tools.</span>
+          <span className="mt-1 block text-[12px] text-ink-secondary">Where room members run file and shell tools. {t("folderTrust.pickerNote")}</span>
           <div className="mt-2 flex gap-2">
             <input
               value={folder}
