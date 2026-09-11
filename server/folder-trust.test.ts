@@ -12,9 +12,13 @@ import {
   canonicalFolder,
   folderTrustKey,
   folderTrustKindNames,
+  fuigoHomeFromEnv,
   gitRootOf,
   isUnrecordableTrustRoot,
+  parseUpstreamTrustedFolders,
+  readUpstreamTrustedFolders,
   scanFolderTrustSources,
+  upstreamTrustsFolder,
 } from "./folder-trust.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { PersistedStateRecoveryError } from "./persisted-state.ts";
@@ -121,6 +125,98 @@ describe("trust keys", () => {
   });
 });
 
+// FUIGOTRUST2 (2): the user's own Fuigo store. The engine answers Trusted
+// from `<FUIGO_HOME>/trusted_folders.toml` before it ever asks, so Murage
+// reads the same file (read-only) and neither asks nor claims "untrusted"
+// for a folder the engine will trust anyway.
+describe("the upstream trusted_folders.toml (read-only)", () => {
+  const fuigoHomeIn = (name: string) => {
+    const dir = join(root, name);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+
+  it("resolves the Fuigo home the way the engine does: FUIGO_HOME verbatim, else <home>/.fuigo", () => {
+    expect(fuigoHomeFromEnv({ FUIGO_HOME: "/custom/home", HOME: "/Users/x" })).toBe("/custom/home");
+    expect(fuigoHomeFromEnv({ FUIGO_HOME: "", HOME: "/Users/x" })).toBe(join("/Users/x", ".fuigo"));
+    expect(fuigoHomeFromEnv({ HOME: "/Users/x" })).toBe(join("/Users/x", ".fuigo"));
+  });
+
+  it("parses what the engine's serializer writes, and the hand-edit spellings a TOML reader accepts", () => {
+    const written = `[folders."/Volumes/Mando/picked project"]\ntrusted = true\ndecided_at = 1789152451\n\n[folders."/tmp/declined"]\ntrusted = false\ndecided_at = 1789152424\n`;
+    expect(parseUpstreamTrustedFolders(written)).toEqual(new Map([["/Volumes/Mando/picked project", true], ["/tmp/declined", false]]));
+    // no decided_at, a comment, a literal-string key, a Windows key with escapes
+    const sparse = `# grants\n[folders.'/a/b']\ntrusted = true # standalone\n[folders."C:\\\\Users\\\\x\\\\repo"]\ntrusted = true\n`;
+    expect(parseUpstreamTrustedFolders(sparse)).toEqual(new Map([["/a/b", true], ["C:\\Users\\x\\repo", true]]));
+    const inline = `[folders]\n"/x/y" = { trusted = true, decided_at = 1 }\n"/x/z".trusted = false\n"/x/z".decided_at = 2\n`;
+    expect(parseUpstreamTrustedFolders(inline)).toEqual(new Map([["/x/y", true], ["/x/z", false]]));
+    // a section this reader does not know is skipped, not a failure
+    expect(parseUpstreamTrustedFolders(`[meta]\nversion = 2\n[folders."/p"]\ntrusted = true\n`)).toEqual(new Map([["/p", true]]));
+  });
+
+  it("treats a document it cannot read exactly as empty — never a grant the engine might not give", () => {
+    for (const bad of [
+      `[folders."/p"]\ntrusted = yes\n`,
+      `[folders."/p"]\ntrusted = true\nextra = 1\n`,
+      `[folders."/p"\ntrusted = true\n`,
+      `[folders."/p"]\ntrusted = true\nthis is not toml\n`,
+      `[[folders]]\ntrusted = true\n`,
+      `trusted = true\n`,
+      `[folders."/p"]\ntrusted = true\ndecided_at = soon\n`,
+    ]) expect(parseUpstreamTrustedFolders(bad), bad).toBeNull();
+    const home = fuigoHomeIn("bad-home");
+    writeFileSync(join(home, "trusted_folders.toml"), `[folders."/p"]\ntrusted = maybe\n`);
+    expect(readUpstreamTrustedFolders(home)).toEqual(new Map());
+    expect(readUpstreamTrustedFolders(join(root, "no-such-home"))).toEqual(new Map());
+    writeFileSync(join(home, "trusted_folders.toml"), "   \n");
+    expect(readUpstreamTrustedFolders(home)).toEqual(new Map());
+  });
+
+  it("decides like upstream is_trusted: the deepest covering record of the same workspace; a nested repo is not covered; ties fail closed; broad keys are ignored", () => {
+    const repoDir = repo("mono");
+    const pkg = join(repoDir, "packages", "app");
+    mkdirSync(pkg, { recursive: true });
+    const nested = join(repoDir, "vendor", "lib");
+    mkdirSync(join(nested, ".git"), { recursive: true });
+    const plain = join(root, "plain");
+    mkdirSync(plain, { recursive: true });
+
+    expect(upstreamTrustsFolder(new Map([[repoDir, true]]), repoDir)).toBe(true);
+    // a grant on the root covers a package inside the same repo…
+    expect(upstreamTrustsFolder(new Map([[repoDir, true]]), pkg)).toBe(true);
+    // …but not a nested repository with its own workspace key
+    expect(upstreamTrustsFolder(new Map([[repoDir, true]]), nested)).toBe(false);
+    expect(upstreamTrustsFolder(new Map([[nested, true]]), nested)).toBe(true);
+    // the nearer decision wins: an explicit child untrust overrides the root's grant
+    expect(upstreamTrustsFolder(new Map([[repoDir, true], [pkg, false]]), pkg)).toBe(false);
+    expect(upstreamTrustsFolder(new Map([[repoDir, true], [pkg, false]]), join(repoDir, "packages"))).toBe(true);
+    // a hand-edited alias that ties on depth and contradicts fails closed
+    expect(upstreamTrustsFolder(new Map([[plain, true], [`${plain}/`, false]]), plain)).toBe(false);
+    expect(upstreamTrustsFolder(new Map([[plain, true], [`${plain}/`, true]]), plain)).toBe(true);
+    // over-broad keys never trust anything, whatever the file says
+    expect(upstreamTrustsFolder(new Map([[parse(root).root, true], [homedir(), true], ["relative/path", true]]), plain)).toBe(false);
+    // a sibling is not covered, and an empty store trusts nothing
+    expect(upstreamTrustsFolder(new Map([[plain, true]]), repoDir)).toBe(false);
+    expect(upstreamTrustsFolder(new Map(), plain)).toBe(false);
+  });
+
+  it("the scan reports upstreamTrusted only when a Fuigo home is given and its store trusts the workspace", () => {
+    const dir = repo("granted");
+    writeFileSync(join(dir, "AGENTS.md"), "# a");
+    const home = fuigoHomeIn("fuigo-home");
+    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${dir}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    expect(scanFolderTrustSources(dir)).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
+    expect(scanFolderTrustSources(dir, { fuigoHome: null })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
+    expect(scanFolderTrustSources(dir, { fuigoHome: home })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"], upstreamTrusted: true });
+    expect(scanFolderTrustSources(join(dir, "sub"), { fuigoHome: home })).toMatchObject({ upstreamTrusted: true });
+    // a declined record upstream is no grant; Murage's own record still governs
+    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${dir}"]\ntrusted = false\n`);
+    expect(scanFolderTrustSources(dir, { fuigoHome: home })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
+    // an empty (provider-routed) home trusts nothing
+    expect(scanFolderTrustSources(dir, { fuigoHome: fuigoHomeIn("routed-turn-home") })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
+  });
+});
+
 describe("FolderTrustStore", () => {
   it("remembers a decision for the folder's whole workspace and persists it with the data", () => {
     const dir = repo("kept");
@@ -151,6 +247,41 @@ describe("FolderTrustStore", () => {
     expect(store.decision(homedir())).toBeUndefined();
     writeFileSync(file, "{not json");
     expect(() => new FolderTrustStore(file)).toThrow(PersistedStateRecoveryError);
+  });
+
+  it("seeds pre-0.1.52 working folders once, never overrides a later Forget, and never re-runs (FUIGOTRUST2)", () => {
+    const picked = repo("picked-before-upgrade");
+    const other = join(root, "other-before-upgrade");
+    mkdirSync(join(other, "sub"), { recursive: true });
+    const decided = repo("already-decided");
+    const file = join(root, "folder-trust.json");
+    const store = new FolderTrustStore(file);
+    store.remember(decided, "reject", "card");
+    // first boot: every folder recorded, keyed on its workspace; an already
+    // decided folder keeps its decision; home is never recorded
+    expect(store.seedOnce([join(picked, "src"), join(other, "sub"), other, decided, homedir()], "0.1.52")).toBe(3);
+    expect(store.record(picked)).toMatchObject({ decision: "trust", source: "upgrade", folder: join(picked, "src") });
+    // outside a repository each folder is its own key
+    expect(store.record(join(other, "sub"))).toMatchObject({ decision: "trust", source: "upgrade", folder: join(other, "sub") });
+    expect(store.record(other)).toMatchObject({ decision: "trust", source: "upgrade", folder: other });
+    expect(store.record(decided)).toMatchObject({ decision: "reject", source: "card" });
+    expect(store.seeded).toBe("0.1.52");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ version: 1, seededFrom: "0.1.52" });
+    // a second boot with the same store changes nothing
+    const second = new FolderTrustStore(file);
+    expect(second.seeded).toBe("0.1.52");
+    expect(second.seedOnce([picked, join(root, "new-folder")], "0.1.52")).toBe(-1);
+    expect(second.record(join(root, "new-folder"))).toBeUndefined();
+    // Forget survives a restart: the seed does not put the folder back
+    expect(second.forget(picked)).toBe(true);
+    const third = new FolderTrustStore(file);
+    expect(third.seedOnce([picked], "0.1.52")).toBe(-1);
+    expect(third.record(picked)).toBeUndefined();
+    expect(third.seeded).toBe("0.1.52");
+    // a store with nothing to seed still writes the marker so it never re-runs
+    const empty = new FolderTrustStore(join(root, "empty-trust.json"));
+    expect(empty.seedOnce([], "0.1.52")).toBe(0);
+    expect(new FolderTrustStore(join(root, "empty-trust.json")).seeded).toBe("0.1.52");
   });
 
   it("ignores records that do not carry a decision", () => {
