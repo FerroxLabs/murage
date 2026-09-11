@@ -23,8 +23,19 @@
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
 //
+//   FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS how many launches die with transient
+//                      stderr at startup WITHOUT reading stdin (counted in
+//                      FAKE_CLAUDE_STATE). The driver only sees its write
+//                      refused when the prompt cannot fit in the OS pipe
+//                      buffer, so tests pair it with a very large prompt.
+//   FAKE_CLAUDE_FAIL_AFTER tool | text | reasoning — every launch accepts the
+//                      prompt, does that work, then dies with ECONNRESET.
+//                      FAKE_CLAUDE_STATE counts launches and
+//                      FAKE_CLAUDE_SIDE_EFFECTS gets one line per sentinel
+//                      tool action, so a replay is directly observable.
+//
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
@@ -104,6 +115,28 @@ if (argAfter("--output-format") === "text") {
   }
   process.stdout.write("fake generated text\n");
   process.exit(0);
+}
+
+const countLaunch = (): number => {
+  const stateFile = process.env.FAKE_CLAUDE_STATE;
+  if (!stateFile) return 0;
+  let launched = 0;
+  try {
+    launched = Number(readFileSync(stateFile, "utf8")) || 0;
+  } catch {}
+  writeFileSync(stateFile, String(launched + 1));
+  return launched;
+};
+
+// Pre-accept transient failure (U-17): die before ever reading stdin, the way
+// a CLI that fails during startup behaves. The stdin reader below is never
+// attached, so the driver's prompt is never consumed.
+if (process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS && process.env.FAKE_CLAUDE_STATE) {
+  const launched = countLaunch();
+  if (launched < (Number(process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS) || 0)) {
+    process.stderr.write("claude: API error: read ECONNRESET\n", () => process.exit(5));
+    await new Promise(() => {});
+  }
 }
 
 // Line-driven, like the real CLI under --input-format stream-json: each user
@@ -211,6 +244,36 @@ const playTurn = (prompt: JsonValue) => {
       process.stderr.write("claude: API error (503): service temporarily unavailable\n");
       process.exit(5);
     }
+  }
+
+  // Post-accept failure (A1): the prompt was read and work happened, then
+  // the connection dropped before the result. Every launch fails the same
+  // way, so a replay shows up as a second launch and, for `tool`, a second
+  // sentinel side effect. The final frame's write callback gates exit so no
+  // stdout is lost.
+  const failAfter = process.env.FAKE_CLAUDE_FAIL_AFTER;
+  if (failAfter === "tool" || failAfter === "text" || failAfter === "reasoning") {
+    countLaunch();
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    const delta = (d: unknown) => ({ type: "stream_event", event: { type: "content_block_delta", delta: d } });
+    let last: unknown;
+    if (failAfter === "tool") {
+      out({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu-sentinel", name: "Bash" }] } });
+      if (process.env.FAKE_CLAUDE_SIDE_EFFECTS) {
+        appendFileSync(process.env.FAKE_CLAUDE_SIDE_EFFECTS, `${promptText(prompt).length}\n`);
+      }
+      last = { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-sentinel", is_error: false }] } };
+    } else if (failAfter === "text") {
+      out(delta({ type: "text_delta", text: "partial answer" }));
+      // the completed block resets the driver's UI de-dup flag
+      last = { type: "assistant", message: { content: [{ type: "text", text: "partial answer" }] } };
+    } else {
+      last = delta({ type: "thinking_delta", thinking: "weighing the options" });
+    }
+    process.stdout.write(JSON.stringify(last) + "\n", () => {
+      process.stderr.write("claude: API error: read ECONNRESET\n", () => process.exit(5));
+    });
+    return;
   }
 
   // the real CLI re-announces init on every turn of a live process

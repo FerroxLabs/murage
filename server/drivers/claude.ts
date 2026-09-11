@@ -36,7 +36,15 @@ import type {
 } from "../contracts.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
-import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import {
+  classifyError,
+  computeBackoff,
+  createAttemptBoundary,
+  interruptibleDelay,
+  isPreAcceptFailure,
+  RETRY_MAX_ATTEMPTS,
+  type AttemptBoundary,
+} from "./retry.ts";
 import {
   applyClaudeInject,
   decodeInjectId,
@@ -629,6 +637,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     // is what "steer" is). So a session is spawned once, reused while its
     // spawn contract (args, MCP config, cwd, model) is unchanged, closed
     // after SESSION_IDLE_MS of quiet, and resumed by --resume when needed.
+    /** One user turn on a session. `sawStreamDelta` is UI de-dup state only
+     * and resets after each completed assistant block. `boundary` is the
+     * monotonic accepted/output record that the retry guard reads (A1, U-17). */
+    interface SessionTurn {
+      turnId: string;
+      settled: boolean;
+      sawStreamDelta: boolean;
+      authFailed?: boolean;
+      boundary: AttemptBoundary;
+      /** this turn's own user-message write; null until it is attempted */
+      submission: Promise<boolean> | null;
+    }
     interface Session {
       child: ReturnType<typeof spawnCli>;
       broker?: Awaited<ReturnType<typeof createPermissionBroker>>;
@@ -639,7 +659,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       /** the CLI's session id from `init`, what --resume takes later */
       sessionId: string | null;
       /** the running turn, or null between turns */
-      turn: { turnId: string; settled: boolean; sawStreamDelta: boolean; authFailed?: boolean } | null;
+      turn: SessionTurn | null;
       idleTimer: ReturnType<typeof setTimeout> | null;
       closing: boolean;
       stderr: string;
@@ -679,17 +699,30 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       s.idleTimer = setTimeout(() => closeSession(threadId, "idle"), SESSION_IDLE_MS);
       s.idleTimer.unref?.();
     };
-    const writeUser = (s: Session, threadId: string, text: string): Promise<boolean> => {
+    /** Writes one user message. With a boundary, the turn's submission state
+     * follows the write: in-flight once bytes are handed over, then written or
+     * refused when the write reports. A refused write never delivered the
+     * trailing newline, so the CLI cannot have read the message whole. */
+    const writeUser = (s: Session, threadId: string, text: string, boundary?: AttemptBoundary): Promise<boolean> => {
       const promptMsg = { type: "user", message: { role: "user", content: text } };
-      if (!s.child.stdin.writable || s.child.stdin.destroyed) return Promise.resolve(false);
+      if (!s.child.stdin.writable || s.child.stdin.destroyed) {
+        boundary?.markRefused();
+        return Promise.resolve(false);
+      }
       return new Promise((resolve) => {
         try {
+          boundary?.markInFlight();
           s.child.stdin.write(JSON.stringify(promptMsg) + "\n", (error) => {
-            if (error) return resolve(false);
+            if (error) {
+              boundary?.markRefused();
+              return resolve(false);
+            }
+            boundary?.markWritten();
             appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: promptMsg });
             resolve(true);
           });
         } catch {
+          boundary?.markRefused();
           resolve(false);
         }
       });
@@ -880,10 +913,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const live = sessions.get(threadId);
       if (live && !live.turn && !live.closing && live.child.exitCode === null && live.argsKey === argsKey && (!sessionId || sessionId === live.sessionId)) {
         if (live.idleTimer) clearTimeout(live.idleTimer);
-        live.turn = { turnId, settled: false, sawStreamDelta: false };
+        const liveTurn: SessionTurn = {
+          turnId,
+          settled: false,
+          sawStreamDelta: false,
+          boundary: createAttemptBoundary(),
+          submission: null,
+        };
+        live.turn = liveTurn;
         active.set(threadId, { stop: () => killCliTree(live.child), turnId, broker: live.broker });
         emit({ ...base(threadId, turnId), type: "turn.started" });
-        const written = await writeUser(live, threadId, turn.text);
+        liveTurn.submission = writeUser(live, threadId, turn.text, liveTurn.boundary);
+        const written = await liveTurn.submission;
         if (!written) {
           active.delete(threadId);
           live.turn = null;
@@ -1005,6 +1046,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         cleanupUnownedLaunch();
         throw error;
       }
+      const launchTurn: SessionTurn = {
+        turnId,
+        settled: false,
+        sawStreamDelta: false,
+        boundary: createAttemptBoundary(),
+        submission: null,
+      };
       const session: Session = {
         child,
         broker,
@@ -1012,7 +1060,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         systemPromptPath,
         argsKey,
         sessionId: sessionId ?? newSessionId,
-        turn: { turnId, settled: false, sawStreamDelta: false },
+        turn: launchTurn,
         idleTimer: null,
         closing: false,
         stderr: "",
@@ -1063,6 +1111,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return;
         }
         appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o });
+        // Any model or tool frame (text, reasoning, a completed block, tool
+        // use, tool result) proves the CLI took up the turn. Record it on the
+        // one-way boundary; sawStreamDelta below stays UI de-dup state only.
+        if (
+          session.turn &&
+          (o.type === "stream_event" ||
+            o.type === "assistant" ||
+            o.type === "user" ||
+            (o.type === "system" && o.subtype === "thinking_tokens"))
+        ) {
+          session.turn.boundary.markOutput();
+        }
         switch (o.type) {
           case "system":
             if (o.subtype === "init") {
@@ -1185,18 +1245,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         settle(false, "spawn_error");
       });
 
-      child.on("close", (code) => {
-        // a turn still running when the process died is a failed turn; a
-        // process that exited between turns (idle close, contract change)
-        // is just a session ending
+      // a turn still running when the process died is a failed turn; a
+      // process that exited between turns (idle close, contract change)
+      // is just a session ending
+      const onChildClose = (code: number | null) => {
         if (session.turn && !session.turn.settled) {
+          const closingTurn = session.turn;
           const message = `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`;
           const verdict = classifyError({ exitCode: code, stderr: message });
           if (
             !retry.cancelled &&
             code !== 0 &&
             verdict.transient &&
-            !session.turn.sawStreamDelta &&
+            // Only the turn that launched this process owns its relaunch. A
+            // later turn on the retained session must never replay this
+            // launch's text.
+            closingTurn.turnId === turnId &&
+            // U-17: replay only a proven pre-accept failure. Once the user
+            // message was written, or any output or tool activity was seen,
+            // the CLI may already have acted, so the turn fails visibly.
+            isPreAcceptFailure(closingTurn.boundary) &&
             retry.attempt < RETRY_MAX_ATTEMPTS - 1
           ) {
             // the CLI is gone but the TURN continues: keep the thread busy,
@@ -1275,7 +1343,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             type: "runtime.error",
             message,
           });
-          settle(false, "exit_before_result");
+          settle(false, closingTurn.boundary.submission === "refused" ? "stdin_write_failed" : "exit_before_result");
         }
         if (session.idleTimer) clearTimeout(session.idleTimer);
         session.broker?.close();
@@ -1286,6 +1354,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         removePrivateTempDir(session.systemPromptPath);
         if (sessions.get(threadId) === session) sessions.delete(threadId);
+      };
+      child.on("close", (code) => {
+        // A user-message write still in flight when the process died has an
+        // unknown outcome until its callback reports. Node destroys stdin on
+        // exit, so it reports promptly; decide only after it has, so the
+        // guard never guesses whether the message was delivered.
+        const closingTurn = session.turn;
+        if (
+          closingTurn &&
+          !closingTurn.settled &&
+          closingTurn.boundary.submission === "in-flight" &&
+          closingTurn.submission
+        ) {
+          void closingTurn.submission.then(() => onChildClose(code));
+          return;
+        }
+        onChildClose(code);
       });
 
       const stop = () => {
@@ -1299,9 +1384,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // prompt over stdin as a stream-json message — never argv (ARG_MAX).
       // stdin stays OPEN: that is what keeps the session alive for a
       // mid-turn steer or the next turn; closeSession() ends it.
-      if (!(await writeUser(session, threadId, turn.text))) {
-        settle(false, "stdin_write_failed");
+      launchTurn.submission = writeUser(session, threadId, turn.text, launchTurn.boundary);
+      if (!(await launchTurn.submission)) {
+        // The message never reached the CLI whole. End the session and let
+        // its close decide: a transient pre-accept failure may relaunch
+        // (U-17), anything else settles as stdin_write_failed. The fallback
+        // only settles a child that somehow outlives closeSession's kill.
         closeSession(threadId, "stdin write failed");
+        const fallback = setTimeout(() => {
+          if (session.turn === launchTurn) settle(false, "stdin_write_failed");
+        }, 10_000);
+        fallback.unref?.();
       }
 
       return { turnId };
