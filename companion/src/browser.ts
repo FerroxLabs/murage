@@ -63,9 +63,19 @@ export interface BrowserDeviceStore {
     pairRequestId?: unknown,
   ): { device: PublicDevice; token: string } | { error: string; reason?: string };
   openSession(deviceId: string, label: unknown): { value: string; session: { expiresAt: number } } | null;
+  /** `sessionId` names the session RECORD, which survives renewal; the cookie
+   * does not. Long-lived streams are bound to it. */
   resolveSession(
     value: string | undefined,
-  ): { device: { id: string; name: string; cloudDesktopAccess: boolean }; session: { expiresAt: number } } | null;
+  ): {
+    device: { id: string; name: string; cloudDesktopAccess: boolean };
+    session: { expiresAt: number };
+    sessionId: string;
+  } | null;
+  /** When a session must next be checked again, or null once it is no longer
+   * an authorisation (signed out, evicted, expired, or its device revoked).
+   * Never extends or revives anything. */
+  sessionDeadline(sessionId: string): number | null;
   closeSession(value: string | undefined): boolean;
   /** Rotate the credential of a live session, inside its existing device
    * record. `null` for anything that is not a live session — the door turns
@@ -84,10 +94,11 @@ export interface BrowserDoorOptions {
    * running sidecar and the door re-binds rather than restarting. */
   identity: () => BoundIdentity;
   devices: BrowserDeviceStore;
-  /** Register one authenticated live stream against its device, so revoking
-   * that device terminates it in flight — the same tracker the device port
+  /** Register one authenticated live stream against its device and the
+   * browser session that opened it, so revoking that device — or ending that
+   * one session — terminates it in flight. The same tracker the device port
    * uses, for the same reason and with the same disposer contract. */
-  connected?: (deviceId: string, disconnect: () => void) => () => void;
+  connected?: (deviceId: string, disconnect: () => void, sessionId?: string) => () => void;
   /** How long the harness may take to produce response *headers*. Tests only. */
   headersTimeoutMs?: number;
   /** The sign-in rate limiter. Injectable so a test can drive its clock;
@@ -1346,7 +1357,8 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           if (staticType) return relayStatic(harness, res, staticType, path);
 
           if (contentType.includes("text/event-stream")) {
-            return relayStream(harness, req, res, method, path, device, options);
+            const auth = resolved ? { deviceId: resolved.device.id, sessionId: resolved.sessionId } : null;
+            return relayStream(harness, res, method, path, auth, options);
           }
 
           const encoding = String(harness.headers["content-encoding"] ?? "").trim().toLowerCase();
@@ -1557,43 +1569,86 @@ function relayShell(harness: IncomingMessage, res: ServerResponse, expected: str
   });
 }
 
-/** Relay one SSE stream, registered against its device.
+/** The longest a live stream goes without its session being looked at again
+ * when no frame arrives to prompt it. Session deadlines are days away, and a
+ * timer cannot be set that far (`setTimeout` tops out near 25 days); an hour
+ * also bounds how late the check can be after a laptop sleeps, since timers
+ * follow a clock that stops while the wall clock does not. Every frame is
+ * checked as well, so this only governs a stream with nothing to say. */
+const SESSION_RECHECK_MAX_MS = 60 * 60_000;
+
+/** Relay one SSE stream, bound to the device and the session that opened it.
  *
  * Registration is the point: `connectedDeviceTracker` is what lets
- * `control.ts` terminate a revoked device's live streams synchronously
- * (`control.ts` → `connected-devices.ts:28`). Without this the browser's
- * stream would outlive the revocation that was supposed to kill it, which is
- * the failure that makes a revoke button a lie. */
+ * `control.ts` terminate a revoked device's live streams synchronously, and
+ * what lets the registry terminate one signed-out, evicted or expired
+ * session's streams without touching the other browsers on that device.
+ * Without it the browser's stream would outlive the revocation that was
+ * supposed to kill it, which is the failure that makes a revoke button — or a
+ * sign-out button — a lie.
+ *
+ * The session is followed by its identity, never by re-presenting the cookie:
+ * renewal rotates the cookie while the session carries on, so a check against
+ * the old value would cut off a browser that did everything right. The same
+ * identity is checked when the stream opens, before every frame, and on a
+ * timer that follows legitimate renewal forward. None of those checks counts
+ * as use of the session, so a connection that is merely held open does not
+ * keep an idle session alive. */
 function relayStream(
   harness: IncomingMessage,
-  req: IncomingMessage,
   res: ServerResponse,
   method: string,
   path: string,
-  device: { id: string } | null,
+  auth: { deviceId: string; sessionId: string } | null,
   options: BrowserDoorOptions,
 ): void {
   const status = harness.statusCode ?? 500;
-  const tracks = method === "GET" && path === "/api/events" && status >= 200 && status < 300 && Boolean(device?.id);
+  const tracks = method === "GET" && path === "/api/events" && status >= 200 && status < 300 && auth !== null;
 
-  // Re-resolve at the moment the stream opens. A session revoked during the
-  // round trip must not get a stream that then lives for hours.
-  const current = tracks
-    ? options.devices.resolveSession(readCookie(req.headers.cookie, cookieName(options.identity().scheme)))
-    : null;
-  if (tracks && current?.device.id !== device?.id) {
+  // Checked at the moment the stream opens. A session signed out, evicted or
+  // revoked during the round trip must not get a stream that then lives for
+  // hours; one renewed during it must not lose its stream.
+  if (auth && options.devices.sessionDeadline(auth.sessionId) === null) {
     harness.destroy();
     return sendJson(res, 401, { error: "sign in", signIn: "/enter" });
   }
 
+  let recheck: ReturnType<typeof setTimeout> | null = null;
+  const stopRecheck = () => {
+    if (recheck) clearTimeout(recheck);
+    recheck = null;
+  };
   const disconnect = () => {
+    stopRecheck();
     if (!harness.destroyed) harness.destroy();
     if (!res.destroyed) res.destroy();
   };
-  let releaseConnection = tracks && device?.id ? options.connected?.(device.id, disconnect) ?? null : null;
+  let releaseConnection = tracks && auth
+    ? options.connected?.(auth.deviceId, disconnect, auth.sessionId) ?? null
+    : null;
   const release = () => {
+    stopRecheck();
     releaseConnection?.();
     releaseConnection = null;
+  };
+  /** False, having closed the stream, once the session is over. */
+  const sessionLive = (): boolean => {
+    if (!auth || options.devices.sessionDeadline(auth.sessionId) !== null) return true;
+    release();
+    disconnect();
+    return false;
+  };
+  const armRecheck = () => {
+    if (!auth) return;
+    const deadline = options.devices.sessionDeadline(auth.sessionId);
+    if (deadline === null) {
+      release();
+      disconnect();
+      return;
+    }
+    const delay = Math.min(Math.max(deadline - Date.now(), 1), SESSION_RECHECK_MAX_MS);
+    recheck = setTimeout(armRecheck, delay);
+    recheck.unref?.();
   };
 
   res.writeHead(status, {
@@ -1609,9 +1664,14 @@ function relayStream(
   res.socket?.setNoDelay(true);
   res.socket?.setKeepAlive(true, 30_000);
 
+  armRecheck();
+
   const scrubStream = createSseScrubber();
   harness.setEncoding("utf8");
   harness.on("data", (chunk: string) => {
+    // Before anything is forwarded: a frame that arrives after the session
+    // ended is exactly what must not reach this browser.
+    if (!sessionLive()) return;
     let rewritten: string;
     try {
       rewritten = scrubStream(chunk);
