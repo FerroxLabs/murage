@@ -13,6 +13,82 @@ endpoints with Ferrox Labs infrastructure; and integration with Wayland Core.
 Murage is not affiliated with, endorsed by, or sponsored by the OpenMausBot
 project or its contributors.
 
+Murage's common ancestor with OpenMausBot is the 0.1.44 source (commit
+6140532e). Everything after that point is selective adaptation, not parity.
+Murage does not import whole upstream releases, and no upstream release
+should be described as having been imported into Murage.
+
+--------------------------------------------------------------------------
+Upstream adaptations in Murage 0.1.52
+--------------------------------------------------------------------------
+
+The changes listed below are derived from work in the OpenMausBot project
+(Apache License, Version 2.0). Each entry names the upstream pull request,
+the exact upstream commit that was reviewed, and the Murage files that carry
+the derived behaviour.
+
+Adapted from upstream source:
+
+  OpenMausBot PR #987
+    merge 391f0b2b4c8778360191820b6604fe0d4cad217f
+    Bare xAI, Groq and Hugging Face API-key patterns for log redaction.
+    Murage: server/redact.ts
+
+  OpenMausBot PR #986
+    merge 7aa86499bca77253d971c52826956d8c1bb639d9
+    Main-application permission allowlist and credential-free handling of
+    external web URLs.
+    Murage: electron/app-permissions.mjs, electron/main.mjs
+
+  OpenMausBot PR #1023
+    commit a4352595a9d4d8b8df0722c3f8a5b05b6d0c25cb
+    Containment of long inline code and link labels inside chat bubbles.
+    Murage: src/components/ChatMarkdown.tsx
+
+  OpenMausBot PR #762
+    merge 7b73664c0ce3c72b9803347926d8bd2ada2e5f1f
+    (production commit 03d9fb3f4942259ecac44d7d94571bb53260d894)
+  OpenMausBot PR #767
+    merge 1df832d3dc256461a90041c89bd51fce9425a495
+    (production commit 2eb4c7c5d32c85d8e0ae3e43d7f7861e81c2977f)
+    Sidebar bot-row hit areas during rename and for unavailable archive
+    actions.
+    Murage: src/components/Sidebar.tsx, src/lib/sidebar-selection.ts
+
+  OpenMausBot PR #758
+    merge 86b19df10a0aaebdc66f9da41c46f42d26dd3843
+    (earlier duplicate production commit
+     70a29ffd89eb17a8444af0941213a992a078a1cc)
+    Account label captured before the first OAuth connect for connected
+    applications.
+    Murage: src/components/PluginsPanel.tsx
+
+  OpenMausBot PR #979
+    merge b5a8a1bbf9517dba9b9ec07e6b5b23bf65d052a9
+    Saving a chat code block as a local file.
+    Murage: src/lib/code-block.ts, src/components/ChatMarkdown.tsx
+
+Behaviour taken from upstream, implemented independently in Murage code:
+
+  OpenMausBot PR #988
+    commit 1e6737b0db71f65ec22644756be9ac2b7bf3e20f
+    The schedule-preservation part only: a metadata-only routine edit keeps
+    a due nextRunAt. Upstream's delegation and FIFO changes were not taken.
+    Murage: server/routines.ts
+
+  OpenMausBot PR #920
+    merge 368f653fecce3930f9a374a80ec1b3b9a27245d3
+    Normalization of double-underscore tool-namespace spellings at the
+    screen-frame gate.
+    Murage: server/screen-frame-gate.ts
+
+These nine pull requests are the complete set of OpenMausBot changes adapted
+into Murage 0.1.52. Every other reviewed upstream candidate was recorded and
+not selected; that disposition ledger is kept in the project's planning
+records and summarized in docs/plans/0152-CONTRACTS.md.
+
+--------------------------------------------------------------------------
+
 This distribution also includes third-party components under third_party/,
 each retaining its own license and notices. See the LICENSE and NOTICE files
 within those directories for details.

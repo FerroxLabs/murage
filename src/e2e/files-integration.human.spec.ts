@@ -13,7 +13,7 @@ import type { Artifact } from "../../shared/artifacts.ts";
 interface Fixture { info: { url: string; dataDir: string; logPath: string }; fixtureDumpPath: string; child: ChildProcess; close(): Promise<void> }
 type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<Fixture>;
 let fixture: Fixture, vite: ViteDevServer, origin: string, headers: Record<string, string>, restartEnv: NodeJS.ProcessEnv;
-let restarted: ChildProcess | undefined, proxy: ChildProcess | undefined, bot: { id: string; threadId: string }, artifact: Artifact;
+let restarted: ChildProcess | undefined, proxy: ChildProcess | undefined, bot: { id: string; threadId: string }, artifact: Artifact, workspace: string;
 const html = "<!doctype html><style>body{font:18px system-ui;padding:24px;color:#173047}</style><h1>Registered task report</h1><p>FILES_INTEGRATED_RESULT: three verified findings.</p>";
 test.describe.configure({ mode: "serial" });
 async function request(path: string, method = "GET", body?: unknown) {
@@ -39,7 +39,11 @@ test.beforeAll(async () => {
     let mount: { command: string; args: string[]; env: Record<string, string> } | undefined;
     await expect.poll(() => { try { mount = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).mcpConfig.mcpServers.agents; return Boolean(mount?.env.MURAGE_COMMS_TOKEN); } catch { return false; } }, { timeout: 15_000 }).toBe(true);
     expect(mount!.env.MURAGE_BOT_ID).toBe(bot.id);
-    const workspace = join(fixture.info.dataDir, "workspaces", bot.id); mkdirSync(join(workspace, "reports"), { recursive: true });
+    // Ask the server which folder this conversation actually resolved to
+    // rather than assuming one: a task can own a folder of its own, and a
+    // wrong guess here fails as "not found inside this task's workspace".
+    workspace = (await api(`/api/artifacts/workspace?botId=${bot.id}&threadId=${bot.threadId}`)).path as string;
+    mkdirSync(join(workspace, "reports"), { recursive: true });
     writeFileSync(join(workspace, "reports", "task.html"), html);
     // Exercise the real mounted MCP proxy with its active, fixture-only claim.
     // No bearer or environment is printed or passed through command arguments.
@@ -50,7 +54,7 @@ test.beforeAll(async () => {
     const rpc = async (id: number, method: string, params: Record<string, unknown>) => { proxy!.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n"); await expect.poll(() => replies.has(id), { timeout: 15_000 }).toBe(true); return replies.get(id); };
     await rpc(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "files-fixture", version: "1" } });
     const saved = await rpc(2, "tools/call", { name: "register_artifact", arguments: { relative_path: "reports/task.html", name: "Registered task report" } });
-    expect(saved.result.isError).not.toBe(true); artifact = JSON.parse(saved.result.content[0].text).artifact;
+    expect(saved.result.isError, JSON.stringify(saved.result)).not.toBe(true); artifact = JSON.parse(saved.result.content[0].text).artifact;
     expect(artifact.sha256).toBe(createHash("sha256").update(html).digest("hex"));
     const repeated = await rpc(3, "tools/call", { name: "register_artifact", arguments: { relative_path: "reports/task.html", name: "Registered task report" } });
     expect(JSON.parse(repeated.result.content[0].text).artifact.id).toBe(artifact.id);
@@ -77,8 +81,18 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
   const sidebar = await openSidebar(page); await sidebar.getByRole("button", { name: /^Files proof bot/ }).first().click();
   const card = page.locator(`[data-artifact-id="${artifact.id}"]`); await expect(card).toHaveCount(1); await expect(card).toBeVisible();
   await card.getByRole("button", { name: "Preview", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Files", exact: true })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Files", exact: true });
+  await expect(dialog).toBeVisible();
   await expect(page.frameLocator('iframe[title="Preview Registered task report"]').getByText("FILES_INTEGRATED_RESULT: three verified findings.", { exact: true })).toBeVisible();
+  // R3-T2: the same report is reachable a second way — as the live workspace
+  // file it still is, through the real server's own workspace resolver, and
+  // labelled so it can never be mistaken for the saved copy beside it.
+  const workspaceHalf = dialog.locator('[data-testid="files-workspace"]');
+  await expect(dialog.locator('[data-testid="files-effective-root"]')).toContainText("Browsing Files proof bot");
+  await workspaceHalf.getByRole("button", { name: "Open folder reports", exact: true }).click();
+  const workspaceRow = workspaceHalf.locator('[data-workspace-path="reports/task.html"]');
+  await expect(workspaceRow).toContainText("Workspace file ·");
+  await expect(workspaceRow).not.toContainText("Saved copy");
   await page.screenshot({ path: testInfo.outputPath("files-focused-desktop-light.png"), fullPage: true });
   const download = page.waitForEvent("download"); await page.getByRole("button", { name: "Download saved copy", exact: true }).click();
   expect(createHash("sha256").update(readFileSync((await (await download).path())!)).digest("hex")).toBe(artifact.sha256);
@@ -94,7 +108,7 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
 test("saved copy survives a real fixture restart and task deletion; narrow Files remains scoped", async ({ page }, testInfo) => {
   const inbox = await api("/api/inbox?view=results"), item = inbox.items.find((item: { link: { artifactId?: string } }) => item.link.artifactId === artifact.id);
   await api("/api/inbox/state", "POST", { id: item.id, version: item.version, read: true });
-  writeFileSync(join(fixture.info.dataDir, "workspaces", bot.id, "reports", "task.html"), "changed original after saved report");
+  writeFileSync(join(workspace, "reports", "task.html"), "changed original after saved report");
   await stop(fixture.child);
   const log = openSync(fixture.info.logPath, "a");
   restarted = spawn(fixture.child.spawnargs[0], fixture.child.spawnargs.slice(1), { env: restartEnv, stdio: ["ignore", log, log] }); closeSync(log);

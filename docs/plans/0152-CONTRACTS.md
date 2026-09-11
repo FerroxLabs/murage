@@ -94,3 +94,27 @@ Additive only; every field is optional and older consumers keep working.
 - **Bot-active hold.** `featureRouteDeps` gained `projectFolders: projectTurnLeases.folders`. Every local bot turn already holds a writer lease on its working folder. An overwrite takes a restore-mode lease on the workspace for its synchronous commit window: an overlapping bot turn answers 423 `bot-writing` (nothing written), and no bot turn can start inside the window. Without `projectFolders` an overwrite fails closed with `bot-writing`. `baseRevision: null` (Save a copy) is an exclusive create (`link`, never replaces) and is allowed while a bot works. External programs do not take Murage leases; the identity recheck just before `rename` narrows but cannot close that race.
 - **`SaveReceipt.artifactId`.** Before every overwrite, the revision being replaced is kept as a saved version in Files through `registerArtifact` (idempotent, no producer/run). `artifactId` names that saved version. If it cannot be kept (507 `quota-exceeded`, or `write-failed`), nothing is overwritten. A save of the unchanged bytes rewrites nothing and returns the same revision with no `artifactId`. A create has no prior revision and no `artifactId`.
 - **Scope of writes.** Only `.md`/`.markdown`, ≤ 2 MiB including the BOM, well-formed Unicode (a lone surrogate is refused rather than written as U+FFFD), in a root Files already authorizes for that exact conversation (a managed workspace dispatch has not pinned yet is `scope-unavailable`). Files and folders are never created implicitly; the existing file mode is preserved and a new file is 0600. Reads accept any strict UTF-8 regular file ≤ 2 MiB. Hard-linked files answer `not-regular-file` (discovery gives them no revision). A file that changes while it is read answers `revision-conflict` without `currentRevision`.
+
+## U1-T1 — upstream attribution and final disposition ledger (lane W_U1)
+
+`NOTICE` now carries the Apache-2.0 attribution for every OpenMausBot change adapted into 0.1.52, with the exact upstream commit for each. The SHAs come from the lane commit bodies on `release/v0.1.52` and from `0152-UPSTREAM-RESEARCH.md` / `0152-UPSTREAM-SECURITY.md`.
+
+**Taken (9 pull requests, 8 Murage commits).** All eight are ancestors of `release/v0.1.52`.
+
+| Upstream | Upstream commit | Murage commit | Murage area | Kind |
+|---|---|---|---|---|
+| #987 | merge `391f0b2b4c8778360191820b6604fe0d4cad217f` | `e0332d62` (S1-T1) | `server/redact.ts` | adapted from source |
+| #986 | merge `7aa86499bca77253d971c52826956d8c1bb639d9` | `42358cc4` (S1-T2) | `electron/app-permissions.mjs`, `electron/main.mjs` | adapted from source |
+| #1023 | `a4352595a9d4d8b8df0722c3f8a5b05b6d0c25cb` | `1f708d31` (U0-T3) | `src/components/ChatMarkdown.tsx` | adapted from source |
+| #762 | merge `7b73664c0ce3c72b9803347926d8bd2ada2e5f1f` (production `03d9fb3f4942259ecac44d7d94571bb53260d894`) | `f2878c5f` (U0-T2) | `src/components/Sidebar.tsx`, `src/lib/sidebar-selection.ts` | adapted from source |
+| #767 | merge `1df832d3dc256461a90041c89bd51fce9425a495` (production `2eb4c7c5d32c85d8e0ae3e43d7f7861e81c2977f`) | `f2878c5f` (U0-T2) | same | adapted from source |
+| #758 | merge `86b19df10a0aaebdc66f9da41c46f42d26dd3843` (earlier duplicate production `70a29ffd89eb17a8444af0941213a992a078a1cc`) | `a73d3346` (F3-T4) | `src/components/PluginsPanel.tsx` | adapted from source |
+| #979 | merge `b5a8a1bbf9517dba9b9ec07e6b5b23bf65d052a9` | `b3c87e68` (F4-T6) | `src/lib/code-block.ts`, `src/components/ChatMarkdown.tsx` | adapted from source |
+| #988 | `1e6737b0db71f65ec22644756be9ac2b7bf3e20f` | `692c0c99` (R0-T2) | `server/routines.ts` | schedule-preservation slice only, written independently |
+| #920 | merge `368f653fecce3930f9a374a80ec1b3b9a27245d3` | `4b350ff3` (R0-T3) | `server/screen-frame-gate.ts` | namespace handling only, written independently |
+
+A scan of every commit in `acaee1db..release/v0.1.52` for `OpenMausBot`/`upstream` finds no other upstream adaptation in this release, so the NOTICE list is complete for 0.1.52. Two of the nine were written independently against the upstream behaviour rather than copied: the NOTICE says so per item instead of claiming a uniform code lineage.
+
+**Reviewed and not selected (ledger preserved, nothing silently dropped).** #836 Codex native instruction separation (needs a supported protocol/resume decision) · #1038 resume recovery (absence of `init` is not proof of a replayable state) · #1031 / #1037 context and CLI configuration changes · #996 Qwen configured routes · #994 RTL · #978 raw Markdown toggle · #1027 table normalization · #733 interval schedule windows · #849 / #856 / #857 Podman ownership, sandbox and font work · the new inspector, Verify, room-management and mobile features · the delegation-completion half of #988. U1-T2 (oldest-first detached routine order, the FIFO half of #988) stays a product policy choice and is **not selected** for 0.1.52 per U-27; nothing in this release changes detached traversal order, and no Murage change may be described as fixing channel FIFO.
+
+**Framing rule for release copy.** Murage's common ancestor with OpenMausBot is the 0.1.44 source (`6140532e`). 0.1.52 adapts the nine items above and nothing else. Do not describe any upstream release as imported, and do not present the release-mirror SHA (`436271a`) as application source — the 0.1.71 app source is `32b47b03f8a327ce081f3bd33c55cab061078268`.
