@@ -155,7 +155,7 @@ describe.skipIf(process.platform === "win32")("packaged fuigo resource", () => {
     );
   });
 
-  it("refuses bytes that are not the pinned 1.0.1 engine", async () => {
+  it("refuses bytes that are not the pinned engine", async () => {
     const { appOutDir } = withFuigo("linux", elf64());
     await expect(afterPack({ electronPlatformName: "linux", appOutDir })).rejects.toThrow(
       /SHA-256 verification/,
