@@ -645,6 +645,44 @@ test("a flag carrying a secret is refused by the CLI before anything happens, wi
   assert.equal(existsSync(join(home, ".murage-server")), false, "nothing was created");
 });
 
+test("a Tailscale install that fails leaves a deployed, unsecured box and exits 3 — not 1", async () => {
+  // Seen on a real box (LXD, Ubuntu 24.04): the installer's `curl … | sh` died
+  // under an apt mirror stall. Setup did not abort: it wrote the env file,
+  // staged the unit and exited 3 with "tailscale not installed" as the reason,
+  // which is the truthful code for "deployed, reachable only by SSH tunnel".
+  // The README's exit table filed a failed install under 1 ("this environment
+  // cannot run it"); a provisioning script following it would have misread a
+  // finished deployment as one that never happened. This pins the code and
+  // the message on both branches of ensureTailscaleInstalled: on Linux the
+  // install command runs and fails (a `curl` on PATH that exits 22, and no
+  // `tailscale` afterwards); elsewhere the automatic install is refused as
+  // Linux-only. Either way, exit 3, env file written, nothing prompted.
+  const { home, env } = box();
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "curl"), "#!/bin/sh\nexit 22\n", { mode: 0o755 });
+  writeFileSync(join(home, "ts.key"), `${AUTH_SECRET}\n`, { mode: 0o600 });
+  const { status, out } = await runCli(["setup", "--non-interactive", "--no-provider-key"], {
+    ...env,
+    PATH: `${bin}:${env.PATH}`,
+    MURAGE_TAILSCALE_BIN: join(home, "no-such-tailscale"),
+    MURAGE_TAILSCALE_AUTHKEY_FILE: join(home, "ts.key"),
+  });
+  assert.equal(status, 3, out);
+  assert.match(out, /Tailscale is not installed/, out);
+  assert.match(out, process.platform === "linux" ? /Tailscale install failed\. Install it manually/ : /Automatic install is Linux-only here/, out);
+  assert.match(out, /NOT secured/, out);
+  assert.match(out, /tailscale not installed/, "the reason names the install, so the operator knows what to fix before the rerun");
+  assert.match(out, /ssh -N -L/, out);
+  assert.ok(!out.includes("NEVERINARGV"), out);
+  assert.ok(!/\[Y\/n\]|\[y\/N\]/.test(out), "nothing was prompted");
+  // It is a deployment, which is why the code is 3 and not 1: the env file is
+  // there, private, and a rerun after `tailscale` is installed by hand picks
+  // it up rather than starting over.
+  assert.equal(envFilePermissions(join(home, ".murage-server", "murage.env")).private, true);
+  assert.equal(readEnvFile(join(home, ".murage-server", "murage.env")).MURAGE_BIND_MODE, "loopback");
+});
+
 test("--no-tailscale deploys an unsecured box, says so, and exits 3", async () => {
   const { home, env } = box();
   const log = join(home, "argv.log");

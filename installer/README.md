@@ -313,9 +313,9 @@ the logged-out daemon, and the rerun that fixes the tag is refused with
 | Code | Meaning |
 | --- | --- |
 | `0` | done, and the box is on your tailnet |
-| `1` | this environment cannot run it: no server payload, an unusable node, a failed Tailscale install |
+| `1` | this environment cannot run it: no server payload, an unusable node |
 | `2` | the request was wrong or incomplete — a bad flag, a missing unattended input, an env file that could not be carried over. **Nothing was changed** |
-| `3` | setup finished, but the box is **not** on the tailnet. It is reachable only through an SSH tunnel |
+| `3` | setup finished, but the box is **not** on the tailnet — the enrolment was refused, Tailscale could not be installed, or `--no-tailscale` was given. The env file is written and the unit staged; the box is reachable only through an SSH tunnel. Fix the cause and re-run setup, which keeps what this run wrote |
 
 ## After a reboot
 
