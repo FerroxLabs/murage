@@ -149,6 +149,27 @@ it("restore admission refuses when one holder is stopped but another is live, or
   await expect(alone.leases.acquireRestoreWhenStopped("restore:first", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "owner-in-use" });
 });
 
+// FOLLOW2 (STOPRESTORE2 verifier note): the registry throws only its own
+// refusals, but a throw of anything else is not a busy folder and must not
+// read as one (`code: "conflict"` sent the workspace editor to `bot-writing`
+// where its synchronous path answers `root-changed`). It is reported apart,
+// with the error, and never waited on.
+it("restore admission reports a throw that is not the registry's own refusal as an error, not a conflict", async () => {
+  const { cwd, leases } = fixture();
+  const exploded = new TypeError("registry exploded");
+  const acquireRestore = leases.folders.acquireRestore;
+  leases.folders.acquireRestore = () => { throw exploded; };
+  const started = Date.now();
+  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "error", error: exploded });
+  expect(Date.now() - started).toBeLessThan(1_000);
+  // The same from the conflict check that follows a `conflict` refusal.
+  leases.folders.acquireRestore = acquireRestore;
+  leases.acquire("thread", "generation", cwd);
+  leases.markDispatched("generation");
+  leases.folders.conflicts = () => { throw exploded; };
+  await expect(leases.acquireRestoreWhenStopped("restore:2", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "error", error: exploded });
+});
+
 it("restore admission reports a stopped writer that does not release within the bound as still closing", async () => {
   const { cwd, leases, owners } = fixture();
   leases.acquire("thread", "generation", cwd);

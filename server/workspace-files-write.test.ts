@@ -438,6 +438,78 @@ describe("bot-active hold", () => {
     expect(readFileSync(path, "utf8")).toBe("# Base\n");
     expect((await writeWorkspaceMarkdown(deps, { ...request, relativePath: "copy.md", baseRevision: null })).previousRevision).toBeNull();
   });
+
+  // FOLLOW2 (STOPRESTORE2 verifier notes). The registry only ever throws its
+  // own refusals, but a save must answer the same way on both admission
+  // paths if it ever throws anything else: an unusable folder, never a
+  // writing bot. The turn-aware path used to fold such a throw into
+  // `bot-writing` (423) while the synchronous path answered `root-changed`.
+  it("answers root-changed, not bot-writing, when the registry throws something other than its own refusal, on either admission path", async () => {
+    const f = fixture();
+    const path = f.put("a.md", "# Base\n");
+    const opened = f.read("a.md");
+    const request = { scope: f.scope, relativePath: "a.md", baseRevision: opened.revision, requestId: "r", content: "# Edit\n", bom: false };
+    const broken = { acquireRestore: () => { throw new TypeError("registry exploded"); }, release: () => false };
+    // Synchronous path (no projectTurns): the pre-STOPRESTORE2 behavior.
+    const sync = await refusal(() => writeWorkspaceMarkdown({ ...f.deps, projectFolders: broken }, request));
+    expect([sync.code, sync.status]).toEqual(["root-changed", 409]);
+    // Turn-aware path: the same throw, through acquireRestoreWhenStopped.
+    const turns = new ProjectTurnLeases();
+    Object.defineProperty(turns, "folders", { value: broken });
+    const aware = await refusal(() => writeWorkspaceMarkdown({ ...f.deps, projectFolders: broken, projectTurns: turns, stoppedTurnCloseMs: () => 5_000 }, request));
+    expect([aware.code, aware.status]).toEqual(["root-changed", 409]);
+    // The registry's own refusals keep their meaning on that path.
+    const conflicting = { acquireRestore: () => { throw new ProjectFolderLeaseError("conflict"); }, release: () => false, conflicts: () => { throw new ProjectFolderLeaseError("conflict"); } };
+    Object.defineProperty(turns, "folders", { value: conflicting });
+    expect(await codeOf(() => writeWorkspaceMarkdown({ ...f.deps, projectFolders: conflicting, projectTurns: turns, stoppedTurnCloseMs: () => 5_000 }, request))).toBe("bot-writing");
+    const unusable = { acquireRestore: () => { throw new ProjectFolderLeaseError("invalid-path"); }, release: () => false };
+    Object.defineProperty(turns, "folders", { value: unusable });
+    expect(await codeOf(() => writeWorkspaceMarkdown({ ...f.deps, projectFolders: unusable, projectTurns: turns, stoppedTurnCloseMs: () => 5_000 }, request))).toBe("root-changed");
+    expect(readFileSync(path, "utf8")).toBe("# Base\n");
+    expect(f.artifactCount()).toBe(0);
+    expect(f.leftovers()).toEqual([]);
+  });
+
+  // FOLLOW2 (STOPRESTORE2 verifier notes). `stoppedTurnCloseMs` is optional;
+  // without it the wait budget was 0 and a stopped turn answered
+  // workspace_stopped_turn_closing at once, as if the engine's close budget
+  // had already run out. The default is that budget, providerCloseDeadlineMs
+  // (MURAGE_PROVIDER_CLOSE_MS, read at each save).
+  it("waits for a stopped turn up to the engine's close budget when stoppedTurnCloseMs is not passed", async () => {
+    const previous = process.env.MURAGE_PROVIDER_CLOSE_MS;
+    try {
+      const f = turnAware(0);
+      const deps: WorkspaceFilesDeps = { ...f.deps, stoppedTurnCloseMs: undefined };
+      const path = f.put("a.md", "# Base\n");
+      const opened = f.read("a.md");
+      const request = { scope: f.scope, relativePath: "a.md", baseRevision: opened.revision, requestId: "r", content: "# Edit\n", bom: false };
+      f.hold("stopped", true);
+      // The default budget (5 s): the save is still waiting after 60 ms,
+      // and goes through once the engine's terminal event releases the lease.
+      delete process.env.MURAGE_PROVIDER_CLOSE_MS;
+      let settled: SaveReceipt | undefined;
+      const save = writeWorkspaceMarkdown(deps, request);
+      save.then(receipt => { settled = receipt; }, () => undefined);
+      await new Promise(resolve => setTimeout(resolve, 60));
+      expect(settled).toBeUndefined();
+      expect(readFileSync(path, "utf8")).toBe("# Base\n");
+      f.turns.complete("thread", "turn-stopped");
+      expect((await save).previousRevision).toBe(opened.revision);
+      expect(readFileSync(path, "utf8")).toBe("# Edit\n");
+      // The budget is the engine's, read at save time: shortened, the wait
+      // ends on workspace_stopped_turn_closing instead of at once.
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "50";
+      const reopened = f.read("a.md");
+      f.hold("stopped-again", true);
+      const started = Date.now();
+      const error = await refusal(() => writeWorkspaceMarkdown(deps, { ...request, baseRevision: reopened.revision, content: "# Again\n" }));
+      expect([error.code, error.status]).toEqual(["workspace_stopped_turn_closing", 423]);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(45);
+      expect(readFileSync(path, "utf8")).toBe("# Edit\n");
+    } finally {
+      if (previous === undefined) delete process.env.MURAGE_PROVIDER_CLOSE_MS; else process.env.MURAGE_PROVIDER_CLOSE_MS = previous;
+    }
+  });
 });
 
 describe("previous revision must be kept", () => {
