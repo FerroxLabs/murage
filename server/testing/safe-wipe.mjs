@@ -347,15 +347,22 @@ export async function safeWipe(target, options = {}) {
 }
 
 /** Mirror of node:fs's own URL test (internal/url isURL, used by
- * toPathIfFileURL): fs never checks `instanceof URL`, it duck-types any
- * object with a truthy href and protocol that is not a legacy url.parse
- * result (`auth`/`path` defined). A cross-realm URL or a hand-rolled
- * { href, protocol, hostname, pathname } therefore reaches the real delete.
+ * toPathIfFileURL and by fileURLToPath itself):
+ *   Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined)
+ * fs never checks `instanceof URL` and never checks the *type* of href or
+ * protocol, only their truthiness; fileURLToPath then reads hostname and
+ * pathname and ignores href entirely. So a cross-realm URL, a hand-rolled
+ * { href, protocol, hostname, pathname }, and an object whose href is a
+ * number, boolean, object or Buffer all reach the real delete, and the
+ * test here must be exactly as loose as fs's (a stricter `typeof href ===
+ * "string"` let the odd-href shapes fall through to "[object Object]" and
+ * past the guard, fix round 1). The only thing this adds is the object
+ * check, which fs applies before it gets here (a string or Buffer is never
+ * passed to isURL).
  * @param {unknown} target
- * @returns {target is { href: string; protocol: string }} */
+ * @returns {target is { href: unknown; protocol: unknown }} */
 const isUrlLike = (target) => Boolean(target) && typeof target === "object"
-  && typeof target.href === "string" && target.href !== ""
-  && typeof target.protocol === "string" && target.protocol !== ""
+  && Boolean(target.href) && Boolean(target.protocol)
   && target.auth === undefined && target.path === undefined;
 
 /**
@@ -368,7 +375,9 @@ const isUrlLike = (target) => Boolean(target) && typeof target === "object"
  * `new URL(target.href)` because fs deletes what the object's hostname and
  * pathname name, not what its href says; and it throws the same
  * ERR_INVALID_FILE_URL_HOST fs would for a shape fs cannot turn into a path,
- * so nothing is deleted in that case either.
+ * so nothing is deleted in that case either. A URL-like object with a
+ * non-file scheme is handed on as String(href): fs then throws its own
+ * ERR_INVALID_URL_SCHEME before touching anything.
  * @param {string | URL | Buffer | unknown} target
  * @returns {string}
  */
