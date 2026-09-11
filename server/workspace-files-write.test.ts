@@ -2,7 +2,7 @@
 // hold and save-version. Every assertion observes the bytes on disk, not only
 // the answer.
 import { createHash } from "node:crypto";
-import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -220,8 +220,14 @@ describe("revision-conditioned Markdown write", () => {
     expect(lstatSync(path).isSymbolicLink()).toBe(true);
     unlinkSync(path);
     const moved = f.put("b.md", "# Base\n"), movedRevision = f.read("b.md").revision;
-    // A different file at the same name is a different revision.
-    unlinkSync(moved); writeFileSync(moved, "# Base\n");
+    // A different file at the same name is a different revision. The original
+    // is moved away and kept, so the replacement really is another file:
+    // Linux hands a freed inode number straight back, and inside one timestamp
+    // tick an unlink + recreate with the same bytes is the same dev, ino, size,
+    // mtime, ctime and content — no observable property says it is different.
+    const away = join(f.base, "b-moved-away.md");
+    renameSync(moved, away); writeFileSync(moved, "# Base\n");
+    expect(lstatSync(moved).ino).not.toBe(lstatSync(away).ino);
     expect(codeOf(() => f.save("b.md", "# Edit\n", movedRevision))).toBe("revision-conflict");
     expect(readFileSync(moved, "utf8")).toBe("# Base\n");
     expect(f.leftovers()).toEqual([]);
