@@ -446,6 +446,81 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     // the turn was not stopped: no "stopped:" chip
     expect((await activities(bot.threadId)).filter((name) => name.startsWith("stopped:"))).toEqual([]);
   });
+
+  // FINAL1: a thread's second turn is either RESUMED (session/load on the
+  // cursor) or FRESH (session/new with the history replayed), and with memory
+  // active which one depends on whether the memory worker indexed the first
+  // turn before the second dispatched (memoryContinuationChanged: a changed
+  // bundle drops the cursor). That is legitimate product behaviour, but it
+  // made (2) timing-dependent: under the 48-worker full run (locale1-fix1)
+  // the resumed path won, and the fake engine of the day ran its trust
+  // prompt after session/new only, so the dump carried no folderTrust and
+  // the case failed; the rerun took the fresh path and passed. The fake now
+  // asks after session/load too, as the engine does (FUIGOTRUST3). This
+  // case pins the resumed path deterministically — memory off, so the
+  // dispatch keeps the cursor and the driver always sends session/load —
+  // so that branch of the fixture cannot regress behind memory timing again.
+  it("(7) a resumed turn (session/load) is gated like a fresh one: the engine's own grant is honoured with no card, and a remembered 'Don't trust' is answered from the record with a chip", async () => {
+    const memory = (mode: "off" | "active") => request("POST", "/api/memory/action", { action: "configure", mode });
+    expect((await memory("off")).status).toBe(200);
+    const bot = await makeBot("Resume bot");
+    const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, "AGENTS.md"), "# planted\ncanary-resume-plover\n");
+    const toml = join(home, ".fuigo", "trusted_folders.toml");
+    const chips = async () => (await activities(bot.threadId)).filter((name) => name === "untrusted folder: AGENTS.md");
+    const cards = async () => (await messages(bot.threadId)).filter((m) => m.card?.folderTrust);
+    try {
+      // first turn: a fresh session (session/new writes the mcpServers the
+      // fake was handed), the card, Don't trust — the engine then asks after
+      // session/new and Murage answers from the record it just wrote
+      await send(bot);
+      await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
+      const card = (await openTrustCard(bot.threadId))!;
+      expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
+      await settled(bot);
+      const first = readDump();
+      expect(first.mcpServers).toBeDefined();
+      expect(first.folderTrust).toMatchObject({ trustedAtBuild: false, requested: true });
+      expect(first.decision).toEqual({ outcome: "reject" });
+      expect(await chips()).toHaveLength(1);
+
+      // second turn, RESUMED (no mcpServers: the fake answered session/load,
+      // never session/new): the person's own `fuigo --trust` grant is read
+      // by the engine at build, so no prompt, no card, no chip, and the
+      // instruction reaches the reply — the (2) contract on the other path
+      writeFileSync(toml, `[folders."${realpathSync.native(workspace)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+      await send(bot, "again");
+      await settled(bot);
+      const resumed = readDump();
+      expect(resumed.mcpServers, JSON.stringify(Object.keys(resumed))).toBeUndefined();
+      expect(resumed.argv).not.toContain("--trust");
+      expect(resumed.folderTrust, JSON.stringify(resumed)).toMatchObject({ trustedAtBuild: true, requested: false });
+      expect(resumed.decision).toBeUndefined();
+      expect(await cards()).toHaveLength(1);
+      expect(await chips()).toHaveLength(1);
+      expect(await botText(bot.threadId)).toContain("canary-resume-plover");
+      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject", source: "card" } });
+
+      // third turn, still resumed, grant gone: the engine asks after
+      // session/load and Murage answers from its remembered Don't trust —
+      // a chip, no second card, the instruction withheld
+      rmSync(toml, { force: true });
+      await send(bot, "third");
+      await settled(bot);
+      const third = readDump();
+      expect(third.mcpServers).toBeUndefined();
+      expect(third.argv).not.toContain("--trust");
+      expect(third.folderTrust).toMatchObject({ trustedAtBuild: false, requested: true });
+      expect(third.decision).toEqual({ outcome: "reject" });
+      expect(await cards()).toHaveLength(1);
+      expect(await chips()).toHaveLength(2);
+      expect((await activities(bot.threadId)).filter((name) => name.startsWith("error:"))).toEqual([]);
+    } finally {
+      rmSync(toml, { force: true });
+      expect((await memory("active")).status).toBe(200);
+    }
+  });
 });
 
 // (5) upgrade: folders bots, tasks and rooms already worked in before 0.1.52
