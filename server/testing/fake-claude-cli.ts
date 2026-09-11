@@ -7,6 +7,15 @@
 //   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed
 //                      | stream (partial-message text deltas before the
 //                        whole-message frame, plus subagent noise to drop)
+//                      | ask-user-question (also: a prompt whose last line
+//                        holds __fixture_ask_user_question__) — calls
+//                        AskUserQuestion through the real --permission-prompt-tool
+//                        MCP server from --mcp-config, the way Claude Code
+//                        2.1.268 does, then reports the tool_result text
+//                        Claude would see. FAKE_CLAUDE_AUQ_INPUT overrides the
+//                        questions (JSON {questions:[…]}).
+//   FAKE_CLAUDE_REVIEW_LOG path that gets one line per one-shot review call,
+//                      so a test can prove the AI reviewer was never asked.
 //   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt, systemPrompt,
 //                      mcpConfig} as JSON,
 //                      so the test can assert on argv shape and env hygiene.
@@ -35,6 +44,7 @@
 //                      tool action, so a replay is directly observable.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -123,6 +133,7 @@ if (argAfter("--output-format") === "text") {
       JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, mcpConfig: null }, null, 2),
     );
   }
+  if (process.env.FAKE_CLAUDE_REVIEW_LOG) appendFileSync(process.env.FAKE_CLAUDE_REVIEW_LOG, "one-shot\n");
   process.stdout.write("fake generated text\n");
   process.exit(0);
 }
@@ -183,6 +194,130 @@ const armSteerGate = () => {
 const promptText = (prompt: JsonValue): string => {
   const m = prompt && typeof prompt === "object" && !Array.isArray(prompt) ? (prompt as { message?: { content?: unknown } }).message : undefined;
   return typeof m?.content === "string" ? m.content : "";
+};
+
+// ── AskUserQuestion through the real permission host ─────────────────────
+type AuqQuestion = { question: string; header?: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean };
+const DEFAULT_AUQ: { questions: AuqQuestion[] } = {
+  questions: [
+    {
+      question: "Which format should the report use?",
+      header: "Format",
+      options: [
+        { label: "Summary", description: "A short overview" },
+        { label: "Detailed", description: "Every finding with its evidence" },
+      ],
+      multiSelect: false,
+    },
+    {
+      question: "Which sections should it include?",
+      header: "Sections",
+      options: [
+        { label: "Intro", description: "Opening context" },
+        { label: "Findings", description: "What was found" },
+        { label: "Outro", description: "Next steps" },
+      ],
+      multiSelect: true,
+    },
+  ],
+};
+
+/** The tool_result text Claude Code 2.1.268 builds from an AskUserQuestion
+ * allow (mapToolResultToToolResultBlockParam in the shipped binary). The
+ * per-answer list is formatted `"Q"="A"` here; the three sentence templates
+ * and the label check are the binary's own. */
+const auqResultText = (questions: AuqQuestion[], answers: Record<string, unknown>, response?: unknown): string => {
+  if (typeof response === "string" && response.trim()) return `The user responded: ${response}`;
+  const given = questions.filter((q) => answers[q.question] !== undefined && answers[q.question] !== "");
+  if (!given.length) return "The user did not answer the questions.";
+  const list = given
+    .map((q) => {
+      const a = answers[q.question];
+      return `"${q.question}"="${Array.isArray(a) ? a.join(", ") : String(a)}"`;
+    })
+    .join(", ");
+  const labelsOnly = given.every((q) => {
+    const a = answers[q.question];
+    const labels = new Set(q.options.map((option) => option.label));
+    if (Array.isArray(a)) return q.multiSelect === true && a.length > 0 && a.every((label) => labels.has(String(label)));
+    if (labels.has(String(a))) return true;
+    return q.multiSelect === true && String(a).split(", ").every((label) => labels.has(label));
+  });
+  return labelsOnly
+    ? `Your questions have been answered: ${list}. You can now continue with these answers in mind.`
+    : `The user answered: ${list}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
+};
+
+/** Call the --permission-prompt-tool exactly as the CLI does: spawn its MCP
+ * server from --mcp-config, initialize, tools/call, read the text result. */
+const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string | null> => {
+  const promptTool = argAfter("--permission-prompt-tool");
+  const configPath = argAfter("--mcp-config");
+  const match = promptTool ? /^mcp__(.+?)__(.+)$/.exec(promptTool) : null;
+  if (!match || !configPath) return Promise.resolve(null);
+  const config = JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }> };
+  const server = config.mcpServers?.[match[1]!];
+  if (!server) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const child = spawn(server.command, server.args ?? [], { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "ignore"] });
+    let buffered = "";
+    const send = (message: unknown) => child.stdin.write(JSON.stringify(message) + "\n");
+    child.on("error", reject);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      buffered += chunk;
+      let nl;
+      while ((nl = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, nl);
+        buffered = buffered.slice(nl + 1);
+        let message: { id?: number; result?: { content?: Array<{ text?: string }> } };
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (message.id === 1) {
+          send({ jsonrpc: "2.0", method: "notifications/initialized" });
+          send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: match[2], arguments: args } });
+        } else if (message.id === 2) {
+          child.stdin.end();
+          resolve(message.result?.content?.[0]?.text ?? "");
+        }
+      }
+    });
+    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fake-claude", version: "1" } } });
+  });
+};
+
+const playAskUserQuestion = async (): Promise<void> => {
+  const input = process.env.FAKE_CLAUDE_AUQ_INPUT ? (JSON.parse(process.env.FAKE_CLAUDE_AUQ_INPUT) as { questions: AuqQuestion[] }) : DEFAULT_AUQ;
+  const toolUseId = `toolu_fake_auq_${process.pid}_${Date.now()}`;
+  out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: "AskUserQuestion", input }] } });
+  let content: string;
+  let isError = false;
+  try {
+    const reply = await callPermissionPromptTool({ tool_name: "AskUserQuestion", input, tool_use_id: toolUseId });
+    if (reply === null) {
+      // the real CLI denies a permission-gated tool when no host is mounted
+      content = "AskUserQuestion needs a permission prompt tool, and none is configured.";
+      isError = true;
+    } else {
+      const decision = JSON.parse(reply) as { behavior?: string; message?: string; updatedInput?: { answers?: Record<string, unknown>; response?: unknown } };
+      if (decision.behavior === "allow") content = auqResultText(input.questions, decision.updatedInput?.answers ?? {}, decision.updatedInput?.response);
+      else {
+        content = String(decision.message ?? "Permission denied");
+        isError = true;
+      }
+    }
+  } catch (error) {
+    content = `permission prompt tool failed: ${error instanceof Error ? error.message : String(error)}`;
+    isError = true;
+  }
+  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: isError, content }] } });
+  out({ type: "assistant", message: { content: [{ type: "text", text: `AskUserQuestion result: ${content}` }] } });
+  out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  turnRunning = false;
+  finishIfDone();
 };
 
 let exitGateTimer: ReturnType<typeof setInterval> | undefined;
@@ -368,6 +503,11 @@ const playTurn = (prompt: JsonValue) => {
       turnRunning = false;
       finishIfDone();
     }, gate ? 10 : 1_000);
+    return;
+  }
+
+  if (mode === "ask-user-question" || fixtureRequested(promptText(prompt), "__fixture_ask_user_question__")) {
+    void playAskUserQuestion();
     return;
   }
 

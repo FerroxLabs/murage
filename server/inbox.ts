@@ -36,7 +36,10 @@ const SOURCE = `WITH raw AS (
       WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')
       ELSE m.id END) AS source_key,
     CASE m.kind
-      WHEN 'options' THEN CASE WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved' ELSE 'pending' END
+      WHEN 'options' THEN CASE
+        WHEN json_extract(m.json,'$.card.expired')=1 AND json_extract(m.json,'$.card.unattended')=1
+          AND COALESCE(json_extract(m.json,'$.card.sentAsMessage'),0)=0 AND COALESCE(json_extract(m.json,'$.card.dismissed'),0)=0 THEN 'missed'
+        WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))
@@ -46,6 +49,7 @@ const SOURCE = `WITH raw AS (
     CASE m.kind WHEN 'options' THEN CASE
       WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'
       WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'
+      WHEN json_extract(m.json,'$.card.expired')=1 THEN 'Question expired'
       WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END
       WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')

@@ -34,6 +34,8 @@ import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 
 import { ApprovalCard } from "./ApprovalCard";
+import { QuestionCard } from "./QuestionCard";
+import { isQuestionCard } from "../../shared/questions";
 import { ManageMembersPanel } from "./ManageMembersPanel";
 import { groupActivityRuns } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
@@ -230,6 +232,12 @@ const Transcript = memo(function Transcript({
             <SecretRequestCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "connector" && m.connector && m.from?.botId ? (
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.kind === "options" && isQuestionCard(m.card) ? (
+            // a member's question: same card as a 1:1 chat, answered by
+            // the room's thread; a late answer goes out as a room message
+            <div className="flex justify-start">
+              <QuestionCard message={m} threadId={group.threadId} groupId={group.id} botName={memberOf(m.from?.botId)?.name} />
+            </div>
           ) : m.kind === "options" && m.card?.requestId && m.card.tool ? (
             <div className="flex justify-start">
               <ApprovalCard bot={memberOf(m.from?.botId)} message={m} />

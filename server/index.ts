@@ -204,7 +204,17 @@ import type { GroupGoalRunCardData, GroupGoalRunStatus } from "../shared/group-g
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { closeMessageDb, searchMessages } from "./message-db.ts";
+import { closeMessageDb, openQuestionCardMessages, searchMessages } from "./message-db.ts";
+import {
+  QUESTION_NOTES,
+  answersFromMessage,
+  parseAnswers,
+  recordableAnswers,
+  toMessageText,
+  validateAnswers,
+  type QuestionAnswer,
+} from "./question-normalize.ts";
+import { isQuestionCard, questionFromChoices, questionsForCard } from "../shared/questions.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
 import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
 import {
@@ -1993,6 +2003,8 @@ async function answerRequest(
   behavior: "allow" | "deny" | "answer",
   message?: string,
   decidedFor?: { id: string; name: string },
+  /** A question's validated answers (see questionReply). */
+  answers?: QuestionAnswer[],
 ): Promise<RequestOutcome> {
   // Snapshot the card BEFORE delivering the answer: a delivered answer
   // resolves the request synchronously through the fold, which consumes
@@ -2010,17 +2022,40 @@ async function answerRequest(
   let outcome: RequestOutcome = imageOperations.resolve(threadId, requestId, behavior) ?? "unavailable";
   if (!requestId.startsWith("image-") && instance) {
     try {
-      outcome = await instance.adapter.respondToRequest(threadId, requestId, { behavior, message });
+      outcome = await instance.adapter.respondToRequest(threadId, requestId, { behavior, message, ...(answers ? { answers } : {}) });
     } catch {
       outcome = "unavailable";
     }
+  }
+  const question = isQuestionCard(card) ? card : undefined;
+  if (question && outcome === "answered" && answers?.length && cardMessage) {
+    // The fold already marked it answered; keep what was chosen so the card
+    // can show it read-only (never a secret question's answer).
+    const current = store.messagesFor(threadId).find((m) => m.id === cardMessage.id);
+    if (current?.card) {
+      store.patchMessage(threadId, current.id, {
+        card: { ...current.card, answers: recordableAnswers(questionsForCard(current.card), answers) },
+      });
+    }
+  }
+  if (question && outcome !== "unavailable" && behavior === "deny") {
+    appendDecision(DATA_DIR, {
+      threadId,
+      requestId,
+      botId: decidedFor?.id,
+      botName: decidedFor?.name,
+      tool: card?.tool,
+      summary: card?.subtitle,
+      decision: "question-skipped",
+      source: "user",
+    });
   }
   // The human's verdict, recorded only when it actually reached the engine:
   // `unavailable` means the action never ran, and a "user-approved" row
   // over a request nothing answered would be the audit log lying. A
   // question's `answer` is conversation, not authorization, so it is not a
   // decision either.
-  if (outcome !== "unavailable" && behavior !== "answer") {
+  if (!question && outcome !== "unavailable" && behavior !== "answer") {
     appendDecision(DATA_DIR, {
       threadId,
       requestId,
@@ -2041,17 +2076,141 @@ async function answerRequest(
     const existing = messageId
       ? thread.find((m) => m.id === messageId)
       : thread.find((m) => m.card?.requestId === requestId);
-    if (existing?.card && !existing.card.answered) {
+    if (existing?.card && !existing.card.answered && isQuestionCard(existing.card)) {
+      // The engine is no longer waiting (it timed out, the turn ended, or
+      // Murage restarted). The answer is not lost: the card turns Expired
+      // and offers to send it as an ordinary message.
+      expireQuestionCard(threadId, existing);
+    } else if (existing?.card && !existing.card.answered) {
       store.patchMessage(threadId, existing.id, { card: { ...existing.card, answered: "unavailable", dismissed: true } });
     }
     if (messageId) askMessageByRequest.delete(`${threadId}:${requestId}`);
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: "Couldn't deliver that answer — the request is no longer open, so the action was not run", ok: false },
+      tool: {
+        name: question
+          ? "The bot stopped waiting for this answer — send it as a message from the question card"
+          : "Couldn't deliver that answer — the request is no longer open, so the action was not run",
+        ok: false,
+      },
     });
   }
   return outcome;
+}
+
+/** A question nobody answered while the engine was waiting: the engine was
+ * told so honestly (or is gone), the card stays visible as Expired with
+ * "Send as a message", and an unattended one keeps needing the owner in the
+ * Inbox and buzzes once more. Idempotent: a settled card is left alone. */
+function expireQuestionCard(threadId: string, message: Message): void {
+  const card = message.card;
+  if (!card || card.answered || !isQuestionCard(card)) return;
+  store.patchMessage(threadId, message.id, {
+    card: { ...card, answered: "expired", expired: true, dismissed: false },
+  });
+  if (card.requestId) askMessageByRequest.delete(`${threadId}:${card.requestId}`);
+  const owner = (message.from?.botId ? store.bot(message.from.botId) : null) ?? store.botByThread(threadId);
+  appendDecision(DATA_DIR, {
+    threadId,
+    requestId: card.requestId,
+    botId: owner?.id,
+    botName: owner?.name,
+    summary: card.subtitle,
+    decision: "question-expired",
+    source: "question",
+    unattended: card.unattended || undefined,
+  });
+  if (card.unattended && owner) {
+    notify(buildNotification("question", owner, threadId, `No answer reached ${owner.name} in time: ${card.subtitle}`));
+  }
+}
+
+type QuestionReply =
+  | { kind: "none" }
+  | { kind: "error"; status: number; error: string; code?: string }
+  | { kind: "deliver"; behavior: "answer" | "deny"; message: string; answers?: QuestionAnswer[] }
+  | { kind: "late"; outcome: "sent-as-message" };
+
+/** Both /respond routes: decide what a reply to a QUESTION card means, and
+ * validate it against the questions that were actually shown. A skip (or an
+ * older client's deny) is an explicit, immediate "no answer". An expired
+ * question takes no engine answer; its late answer is recorded once the
+ * client has sent it as an ordinary message. */
+function questionReply(threadId: string, requestId: string, body: Record<string, unknown>, skip: boolean): QuestionReply {
+  const message = store.messagesFor(threadId).find((m) => m.card?.requestId === requestId && isQuestionCard(m.card));
+  const card = message?.card;
+  if (!message || !card) {
+    if (skip || body.answers !== undefined || body.sentAsMessage !== undefined) {
+      return { kind: "error", status: 400, error: "only a question takes answers or a skip" };
+    }
+    return { kind: "none" };
+  }
+  const questions = questionsForCard(card);
+  if (!skip && body.behavior === "allow") {
+    return { kind: "error", status: 400, error: "a question takes an answer or a skip, not an approval" };
+  }
+  const checkedAnswers = (): { ok: true; answers: QuestionAnswer[] } | { ok: false; error: string } => {
+    const parsed = body.answers !== undefined
+      ? parseAnswers(body.answers)
+      : (() => {
+          const fromText = answersFromMessage(questions, body.message);
+          return fromText ? { ok: true as const, answers: fromText } : { ok: false as const, error: "answers are required" };
+        })();
+    return parsed.ok ? validateAnswers(questions, parsed.answers) : parsed;
+  };
+  if (body.sentAsMessage !== undefined) {
+    if (body.sentAsMessage !== true || skip || body.behavior !== "answer") {
+      return { kind: "error", status: 400, error: "sentAsMessage records an answer" };
+    }
+    if (!card.expired || card.sentAsMessage) {
+      return { kind: "error", status: 409, error: "only an expired question's answer can be sent as a message" };
+    }
+    if (questions.some((question) => question.secret)) {
+      return { kind: "error", status: 409, error: "a secret answer is never written into the conversation" };
+    }
+    const checked = checkedAnswers();
+    if (!checked.ok) return { kind: "error", status: 400, error: checked.error };
+    store.patchMessage(threadId, message.id, {
+      card: { ...card, sentAsMessage: true, answers: recordableAnswers(questions, checked.answers) },
+    });
+    return { kind: "late", outcome: "sent-as-message" };
+  }
+  if (card.expired) {
+    return {
+      kind: "error",
+      status: 409,
+      code: "question_expired",
+      error: "This question expired before it was answered. Send your answer as a message instead.",
+    };
+  }
+  if (card.answered) return { kind: "error", status: 409, error: "This question was already settled." };
+  if (skip || body.behavior === "deny") return { kind: "deliver", behavior: "deny", message: QUESTION_NOTES.skipped };
+  const checked = checkedAnswers();
+  if (!checked.ok) return { kind: "error", status: 400, error: checked.error };
+  return { kind: "deliver", behavior: "answer", message: toMessageText(questions, checked.answers), answers: checked.answers };
+}
+
+/** Who answers a request raised on a thread, for `/api/threads/:id/respond`.
+ * busyBotId is in-memory only, so an approval that outlives its turn — or the
+ * process — leaves a durable card with no speaker behind it. Fall back to the
+ * member that raised it, and answer even when that member is gone:
+ * answerRequest closes an unreachable card, and a pending approval owns the
+ * composer, so a dead end here would lock the room for good. */
+function threadRequestOwner(threadId: string, requestId: string) {
+  const group = store.groupByThread(threadId);
+  const pending = store.messagesFor(threadId).find((message) => message.card?.requestId === requestId);
+  const owner = group
+    ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) ??
+      (pending?.from ? store.bot(pending.from.botId) : undefined)
+    : store.botByThread(threadId);
+  const requestOwner = owner ? botForDirectThread(owner.id, threadId) ?? owner : null;
+  return {
+    owner,
+    pending,
+    instanceId: requestOwner?.modelSelection.instanceId ?? "",
+    decidedFor: owner ? { id: owner.id, name: owner.name } : undefined,
+  };
 }
 
 /** Close every provider-owned approval still open on a thread. Interrupting a
@@ -2067,6 +2226,11 @@ function closeOpenApprovals(threadId: string): void {
     const card = message.card;
     if (!card?.requestId || card.answered || card.dismissed) continue;
     if (card.routineRequest || card.skillRequest) continue;
+    // a question outlives its turn as Expired, never silently closed
+    if (isQuestionCard(card)) {
+      expireQuestionCard(threadId, message);
+      continue;
+    }
     store.patchMessage(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } });
     askMessageByRequest.delete(`${threadId}:${card.requestId}`);
   }
@@ -2662,6 +2826,13 @@ bus.subscribe((event: RuntimeEvent) => {
         })();
         break;
       }
+      // One question card for every engine: structured questions when the
+      // driver sends them, otherwise the older summary + choices as one
+      // question. Persisted with the card so a reload or restart keeps it.
+      const questions = !permission && event.requestId
+        ? event.questions?.length ? event.questions : [questionFromChoices(event.summary, event.choices)]
+        : undefined;
+      const questionUnattended = questions ? isUnattended(event.threadId) || Boolean(routineRun) : false;
       const message = pushMessage({
         role: "bot",
         kind: "options",
@@ -2675,6 +2846,8 @@ bus.subscribe((event: RuntimeEvent) => {
           subtitle: event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
+          ...(questions ? { questions } : {}),
+          ...(questionUnattended ? { unattended: true } : {}),
           tool: permission ? event.tool : undefined,
           // the exact grant "always allow" would remember, decided here so
           // client and server can never derive it differently
@@ -2778,9 +2951,22 @@ bus.subscribe((event: RuntimeEvent) => {
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
-          store.patchMessage(event.threadId, messageId, {
-            card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
-          });
+          if (isQuestionCard(existing.card)) {
+            // A question stays visible whatever happened to it. The owner's
+            // own answer or skip settles it; anything else (the engine's
+            // timeout, the turn ending) means nobody answered: Expired.
+            if (event.source === "user") {
+              store.patchMessage(event.threadId, messageId, {
+                card: { ...existing.card, answered: event.behavior === "answer" ? "answer" : "skipped", dismissed: false },
+              });
+            } else {
+              expireQuestionCard(event.threadId, existing);
+            }
+          } else {
+            store.patchMessage(event.threadId, messageId, {
+              card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
+            });
+          }
         }
         if (event.requestId) askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
       }
@@ -4721,6 +4907,21 @@ const approvalBus: ApprovalBus = { store, broadcast };
 {
   const stale = dismissStalePeerCards(approvalBus);
   if (stale) console.log(`peer approvals: dismissed ${stale} card(s) left by a previous run`);
+}
+
+// Engines wait on questions only in memory, so a question still open on disk
+// can never reach the engine that asked it. It is not dropped: it becomes
+// Expired, keeps its questions, and offers "Send as a message" (0.1.52 ASK2).
+{
+  let expired = 0;
+  for (const { threadId, message } of openQuestionCardMessages()) {
+    if (message.card?.requestId?.startsWith("image-")) continue;
+    const current = store.messagesFor(threadId).find((candidate) => candidate.id === message.id);
+    if (!current?.card || current.card.answered || current.card.dismissed || !isQuestionCard(current.card)) continue;
+    expireQuestionCard(threadId, current);
+    expired += 1;
+  }
+  if (expired) console.log(`questions: marked ${expired} unanswered question(s) from a previous run as expired`);
 }
 
 // Handoffs a previous process queued but never ran: the source turn is
@@ -11371,6 +11572,15 @@ const server = createServer(async (req, res) => {
       const bot = requestedDirectBot(m[1],body.threadId);
       const behavior = requestBehavior(body.behavior);
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
+      const skip = body.behavior === "skip";
+      if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+      const question = questionReply(bot.threadId, String(body.requestId), body, skip);
+      if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
+      if (question.kind === "late") return json(res, 200, { ok: true, outcome: question.outcome });
+      if (question.kind === "deliver") {
+        const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), question.behavior, question.message, { id: bot.id, name: bot.name }, question.answers);
+        return json(res, 200, { ok: true, outcome });
+      }
       if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
       if (resolveAndSendRoutine(res, {
         botId: bot.id,
@@ -11405,8 +11615,21 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const behavior = requestBehavior(body.behavior);
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
-      if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
+      const skip = body.behavior === "skip";
+      if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
       const requestId = String(body.requestId);
+      const question = questionReply(threadId, requestId, body, skip);
+      if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
+      if (question.kind === "late") return json(res, 200, { ok: true, outcome: question.outcome });
+      // A question card is never a skill, routine or peer proposal
+      // (isQuestionCard excludes all three), so it is answered here and the
+      // harness-owned branches below are left alone.
+      if (question.kind === "deliver") {
+        const asked = threadRequestOwner(threadId, requestId);
+        const outcome = await answerRequest(threadId, asked.instanceId, requestId, question.behavior, question.message, asked.decidedFor, question.answers);
+        return json(res, 200, { ok: true, outcome });
+      }
+      if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
       const skillCard = store.messagesFor(threadId).find(
         (message) => message.card?.requestId === requestId && message.card.skillRequest,
       );
@@ -11447,20 +11670,9 @@ const server = createServer(async (req, res) => {
       if (resolvePeerComms(approvalBus, requestId, behavior)) {
         return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
       }
-      const group = store.groupByThread(threadId);
-      // busyBotId is in-memory only, so an approval that outlives its turn — or
-      // the process — leaves a durable card with no speaker behind it. Fall back
-      // to the member that raised it, and answer even when that member is gone:
-      // answerRequest closes an unreachable card, and a pending approval owns
-      // the composer, so a dead end here locks the room for good.
-      const pending = store.messagesFor(threadId).find((message) => message.card?.requestId === requestId);
-      const owner = group
-        ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) ??
-          (pending?.from ? store.bot(pending.from.botId) : undefined)
-        : store.botByThread(threadId);
-      if (!owner && !pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
-      const requestOwner=owner?botForDirectThread(owner.id,threadId)??owner:null;
-      const outcome = await answerRequest(threadId, requestOwner?.modelSelection.instanceId ?? "", requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined);
+      const asked = threadRequestOwner(threadId, requestId);
+      if (!asked.owner && !asked.pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+      const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message, asked.decidedFor);
       return json(res, 200, { ok: true, outcome });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
