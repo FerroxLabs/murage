@@ -1,7 +1,7 @@
 // Companion device registry contract. The three properties that matter:
 // a token is never recoverable from disk, pairing credentials are one-time,
 // a manual code cannot be ground down by guessing, and revocation works.
-import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +12,7 @@ import {
   DeviceRegistry,
   MAX_PAIRING_ATTEMPTS,
   PAIRING_TTL_MS,
+  REGISTRY_RETRY_MS,
 } from "../src/devices.ts";
 
 const pair = (registry: DeviceRegistry, name = "iPhone") => {
@@ -299,10 +300,173 @@ describe("DeviceRegistry", () => {
     expect(new DeviceRegistry().authenticate(phone.token)).toBeNull();
   });
 
-  it("treats a corrupt devices.json as no paired devices", () => {
-    pair(new DeviceRegistry());
+  // CP2 (adopted): a corrupt file is no longer a trustworthy empty fleet. No
+  // device authenticates from it, exactly as before, and the registry now
+  // also says it is unavailable instead of presenting the empty list as true.
+  it("treats a corrupt devices.json as unavailable, not as an empty fleet", () => {
+    const { token } = pair(new DeviceRegistry());
     writeFileSync(join(DATA_DIR, "devices.json"), "{ not json");
-    expect(new DeviceRegistry().count()).toBe(0);
+    const registry = new DeviceRegistry();
+    expect(registry.count()).toBe(0);
+    expect(registry.authenticate(token)).toBeNull();
+    expect(registry.registryStatus().available).toBe(false);
+  });
+});
+
+describe("a paired-device list that cannot be read", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    vi.useRealTimers();
+  });
+
+  const file = () => join(DATA_DIR, "devices.json");
+
+  it("is a first run, available and empty, only when there is no file at all", () => {
+    const registry = new DeviceRegistry();
+    expect(registry.registryStatus()).toEqual({ available: true });
+    const { token } = pair(registry);
+    expect(new DeviceRegistry().authenticate(token)).not.toBeNull();
+  });
+
+  it.each([
+    ["malformed JSON", "{ not json"],
+    ["an empty file", ""],
+    ["a top-level array", "[]"],
+    ["a top-level null", "null"],
+    ["a document with no devices", "{}"],
+    ["devices that are not a list", '{"devices":{"id":"x"}}'],
+  ])("refuses to pair over %s and leaves its bytes alone", (_label, bytes) => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(file(), bytes);
+    const registry = new DeviceRegistry();
+    expect(registry.registryStatus()).toMatchObject({ available: false, problem: expect.any(String) });
+
+    const { code } = registry.openPairing();
+    expect(registry.redeem(code, "iPhone")).toMatchObject({ reason: "unavailable" });
+    // Not spent: the person holding the right code can use it once the list
+    // is readable again, instead of going back to the computer for another.
+    expect(registry.pairing()?.code).toBe(code);
+    expect(registry.count()).toBe(0);
+    expect(readFileSync(file(), "utf8")).toBe(bytes);
+  });
+
+  it("treats a read failure other than a missing file as unavailable", () => {
+    // A directory where the file should be: a real read error, on every
+    // platform, without pretending to be one.
+    mkdirSync(file(), { recursive: true });
+    const registry = new DeviceRegistry();
+    const status = registry.registryStatus();
+    expect(status.available).toBe(false);
+    expect(status.available === false && status.problem).toMatch(/could not be read/);
+    // The system message names a path; the status does not carry it.
+    expect(JSON.stringify(status)).not.toContain(DATA_DIR);
+
+    const { code } = registry.openPairing();
+    expect(registry.redeem(code, "iPhone")).toMatchObject({ reason: "unavailable" });
+    expect(statSync(file()).isDirectory()).toBe(true);
+  });
+
+  it("reloads the original fleet once the file is readable again, and grows from there", () => {
+    const phone = pair(new DeviceRegistry(), "iPhone");
+    const bytes = readFileSync(file(), "utf8");
+    writeFileSync(file(), "{ torn");
+
+    const registry = new DeviceRegistry();
+    expect(registry.authenticate(phone.token)).toBeNull();
+
+    writeFileSync(file(), bytes);
+    expect(registry.reload()).toBe(true);
+    expect(registry.registryStatus()).toEqual({ available: true });
+    expect(registry.authenticate(phone.token)?.id).toBe(phone.device.id);
+
+    const tablet = pair(registry, "iPad");
+    const reread = new DeviceRegistry();
+    expect(reread.count()).toBe(2);
+    expect(reread.authenticate(phone.token)?.id).toBe(phone.device.id);
+    // still hashes only
+    expect(readFileSync(file(), "utf8")).not.toContain(tablet.token);
+  });
+
+  it("reads an unavailable file again on its own, no more often than the retry interval", () => {
+    const phone = pair(new DeviceRegistry());
+    const bytes = readFileSync(file(), "utf8");
+    vi.useFakeTimers();
+    try {
+      writeFileSync(file(), "{ torn");
+      const registry = new DeviceRegistry();
+      writeFileSync(file(), bytes);
+
+      vi.setSystemTime(Date.now() + REGISTRY_RETRY_MS - 1);
+      expect(registry.authenticate(phone.token)).toBeNull();
+      vi.setSystemTime(Date.now() + 1);
+      expect(registry.authenticate(phone.token)?.id).toBe(phone.device.id);
+      expect(registry.registryStatus()).toEqual({ available: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("revocation that cannot be saved", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  /** A full disk for this one registry. Returns the repair. */
+  const failWrites = (registry: DeviceRegistry): (() => void) => {
+    // SAFETY: `persist` is private; shadowed on this instance only, as in the
+    // failing-disk suites above. Deleting the shadow restores the prototype.
+    const target = registry as unknown as { persist?: () => void };
+    target.persist = () => {
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+    return () => {
+      delete target.persist;
+    };
+  };
+
+  it("keeps a device paired, in memory and on disk, until its removal is written", () => {
+    const registry = new DeviceRegistry();
+    const phone = pair(registry, "iPhone");
+    const other = pair(registry, "iPad");
+    const { value } = registry.openSession(phone.device.id, "Safari on iPhone")!;
+    const { sessionId } = registry.resolveSession(value)!;
+    const ended: string[] = [];
+    registry.onSessionEnded((event) => ended.push(event.sessionId));
+
+    const repair = failWrites(registry);
+    expect(() => registry.revoke(phone.device.id)).toThrow(/ENOSPC/);
+    expect(registry.authenticate(phone.token)?.id).toBe(phone.device.id);
+    expect(registry.list().map((d) => d.id)).toEqual([phone.device.id, other.device.id]);
+    expect(registry.sessionDeadline(sessionId)).not.toBeNull();
+    expect(ended).toEqual([]);
+    expect(new DeviceRegistry().authenticate(phone.token)?.id).toBe(phone.device.id);
+
+    repair();
+    expect(registry.revoke(phone.device.id)).toBe(true);
+    expect(ended).toEqual([sessionId]);
+    expect(registry.authenticate(other.token)?.id).toBe(other.device.id);
+    expect(new DeviceRegistry().authenticate(phone.token)).toBeNull();
+  });
+
+  it("keeps a browser signed in, in memory and on disk, until its sign-out is written", () => {
+    const registry = new DeviceRegistry();
+    const phone = pair(registry);
+    const { value } = registry.openSession(phone.device.id, "Safari on iPhone")!;
+    const { sessionId } = registry.resolveSession(value)!;
+    const ended: string[] = [];
+    registry.onSessionEnded((event) => ended.push(event.sessionId));
+
+    const repair = failWrites(registry);
+    expect(() => registry.closeSession(value)).toThrow(/ENOSPC/);
+    expect(registry.resolveSession(value)?.sessionId).toBe(sessionId);
+    expect(ended).toEqual([]);
+    expect(new DeviceRegistry().resolveSession(value)).not.toBeNull();
+
+    repair();
+    expect(registry.closeSession(value)).toBe(true);
+    expect(ended).toEqual([sessionId]);
+    expect(new DeviceRegistry().resolveSession(value)).toBeNull();
   });
 });
 

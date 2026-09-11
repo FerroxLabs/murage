@@ -201,10 +201,17 @@ export function hostCandidates(
 /** Everything the page shows, in one object: where to connect, whether a
  * pairing window is open, and which phones are paired. Recomputed per request
  * rather than cached — addresses change when you join another network. */
+/** The sentence the owner sees while the paired-device list cannot be read. */
+const registryPaused = (problem: string): string =>
+  `Phone pairing is paused because ${problem}. The file was left untouched so it can be repaired or restored.`;
+
 export function companionState(options: ControlOptions) {
   const addresses = lanAddresses();
   const tailscale = tailscaleAddress(addresses);
   const name = tailnetName();
+  // First, so an unreadable file that has since become readable is loaded
+  // before the device list below is read.
+  const registry = options.devices.registryStatus();
   const pairing = options.devices.pairing();
   return {
     // Whoever starts this sidecar as a child process needs to be able to tell
@@ -229,6 +236,11 @@ export function companionState(options: ControlOptions) {
     ),
     pairing: pairing ? { code: pairing.code, token: pairing.token, expiresAt: pairing.expiresAt } : null,
     devices: options.devices.list(),
+    // An empty `devices` is only trustworthy when the list could be read. When
+    // it could not, say so in the field the panel already renders as needing
+    // attention, rather than showing an empty fleet as if it were true.
+    registry,
+    ...(registry.available ? {} : { error: registryPaused(registry.problem) }),
     connectedDeviceIds: options.connectedDeviceIds?.() ?? [],
     discovery: options.discovery(),
     // Always a key, never an absence. `null` is the door saying it is not
@@ -311,6 +323,19 @@ export function createControlServer(options: ControlOptions): Server {
       );
       return;
     }
+    // Pairing and device changes all end in a write to a list that could not
+    // be read. Refused up front with the reason, rather than accepted and then
+    // failing at the phone, or answering "no such device" about a fleet that
+    // is merely invisible.
+    const registry = options.devices.registryStatus();
+    const changesDevices =
+      (method === "POST" && path === "/pairing") ||
+      (method === "DELETE" && /^\/devices\/[\w-]+$/.test(path)) ||
+      ((method === "POST" || method === "DELETE") && /^\/devices\/[\w-]+\/cloud-desktop$/.test(path));
+    if (changesDevices && !registry.available) {
+      return json(res, 503, { error: registryPaused(registry.problem) });
+    }
+
     if (method === "POST" && path === "/pairing") {
       const window = options.devices.openPairing();
       // Keep the freshly issued credentials at the top level as well as in
@@ -356,7 +381,17 @@ export function createControlServer(options: ControlOptions): Server {
     }
     const revoke = path.match(/^\/devices\/([\w-]+)$/);
     if (revoke && method === "DELETE") {
-      if (!options.devices.revoke(revoke[1])) return json(res, 404, { error: "no such device" });
+      let removed: boolean;
+      try {
+        removed = options.devices.revoke(revoke[1]);
+      } catch {
+        // The removal could not be written down. The registry kept the device,
+        // in memory and on disk, so its streams stay exactly as they are and
+        // the page is told the truth: nothing was removed. The detail stays
+        // out of the response, as with cloud desktop access above.
+        return json(res, 500, { error: "could not remove the device" });
+      }
+      if (!removed) return json(res, 404, { error: "no such device" });
       options.disconnectDevice?.(revoke[1]);
       return json(res, 200, companionState(options));
     }

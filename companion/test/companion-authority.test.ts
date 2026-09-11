@@ -38,7 +38,9 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
       redeem:()=>({error:"unused"}), openSession:()=>null, closeSession:()=>false, renewSession:()=>null,
       resolveSession:value=>value === "paired-session" ? {
         device:{id:"paired",name:"Fixture",cloudDesktopAccess:capability},session:{expiresAt:Date.now()+60_000},
+        sessionId:"paired-session-record",
       } : null,
+      sessionDeadline:id=>id === "paired-session-record" ? Date.now()+60_000 : null,
     };
     const options = {harnessPort,companionToken:PRIVATE_TOKEN};
     const door = createServer(surface === "device" ? createProxyHandler({
@@ -85,7 +87,8 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
   it("fails join helpfully when independently launched without private proof", async () => {
     const devices: BrowserDeviceStore = {
       redeem:()=>({error:"unused"}),openSession:()=>null,closeSession:()=>false,renewSession:()=>null,
-      resolveSession:()=>({device:{id:"paired",name:"Fixture",cloudDesktopAccess:true},session:{expiresAt:Date.now()+60_000}}),
+      resolveSession:()=>({device:{id:"paired",name:"Fixture",cloudDesktopAccess:true},session:{expiresAt:Date.now()+60_000},sessionId:"paired-session-record"}),
+      sessionDeadline:()=>Date.now()+60_000,
     };
     const door = createServer(surface === "device" ? createProxyHandler({
       harnessPort:1,authenticate:()=>({cloudDesktopAccess:true}),redeem:()=>({error:"unused"}),serverName:()=>"Fixture",

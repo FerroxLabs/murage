@@ -5,7 +5,7 @@
 // which version is checked out. That is what these pin.
 import { describe, expect, it } from "vitest";
 
-import { createSseScrubber, isJson, MAX_SSE_EVENT_BYTES, scrub } from "../src/wire.ts";
+import { createSseScrubber, isJson, MAX_SSE_EVENT_BYTES, scrub, SseScrubError } from "../src/wire.ts";
 
 describe("scrub", () => {
   it("removes resumeCursors wherever it is nested", () => {
@@ -164,5 +164,66 @@ describe("createSseScrubber", () => {
 
   it("still handles a bare CR, which the spec also allows", () => {
     expect(createSseScrubber()('data: {"a":1,"resumeCursors":{}}\r\r')).toBe('data: {"a":1}\r\r');
+  });
+});
+
+describe("an SSE event that parses but cannot be scrubbed", () => {
+  /** Nested far past any stack: JSON.parse is iterative and accepts it, the
+   * recursive scrub cannot. Arrays keep it well under the event ceiling. */
+  const DEPTH = 200_000;
+  const tooDeep = `${"[".repeat(DEPTH)}${JSON.stringify({ resumeCursors: { g: "cursor-value" }, vps: { sshAlias: "prod-vps" } })}${"]".repeat(DEPTH)}`;
+
+  it("is really the case the fix is for: it parses, and the scrub throws", () => {
+    // Stated, not assumed, so this suite is about the branch it claims to be.
+    expect(tooDeep.length).toBeLessThan(MAX_SSE_EVENT_BYTES);
+    const parsed = JSON.parse(tooDeep);
+    expect(() => scrub(parsed)).toThrow(RangeError);
+  });
+
+  it("throws instead of forwarding the raw line", () => {
+    let out: string | undefined;
+    expect(() => {
+      out = createSseScrubber()(`id: a:1\ndata: ${tooDeep}\n\n`);
+    }).toThrow(SseScrubError);
+    expect(out).toBeUndefined();
+  });
+
+  it("does not release an earlier event from the same chunk with it", () => {
+    // All or nothing per call: the relay ends the stream on the throw, and
+    // the client resumes from the last id it actually received.
+    expect(() =>
+      createSseScrubber()(`id: a:1\ndata: {"ok":true}\n\nid: a:2\ndata: ${tooDeep}\n\n`),
+    ).toThrow(SseScrubError);
+  });
+
+  it("carries no part of the payload in the error", () => {
+    try {
+      createSseScrubber()(`data: ${tooDeep}\n\n`);
+      expect.unreachable("the scrubber should have thrown");
+    } catch (error) {
+      expect(String((error as Error).message)).not.toContain("cursor-value");
+      expect(String((error as Error).stack)).not.toContain("prod-vps");
+    }
+  });
+
+  it("still passes data that never was JSON through untouched", () => {
+    const scrubStream = createSseScrubber();
+    expect(scrubStream("data: [[[not json\n\n")).toBe("data: [[[not json\n\n");
+    expect(scrubStream('data: {"resumeCursors": oops}\n\n')).toBe('data: {"resumeCursors": oops}\n\n');
+  });
+
+  it("never emits the withheld fields for the 6,000-level fixture the JSON path uses", () => {
+    // Whether 6,000 levels overflow depends on the runtime's stack. Either the
+    // event is scrubbed or the scrubber throws; the raw fields are never output.
+    let body = JSON.stringify({ resumeCursors: { agent: "cursor-value" } });
+    for (let i = 0; i < 6_000; i++) body = `{"a":${body}}`;
+    let out = "";
+    try {
+      out = createSseScrubber()(`data: ${body}\n\n`);
+    } catch (error) {
+      expect(error).toBeInstanceOf(SseScrubError);
+    }
+    expect(out).not.toContain("cursor-value");
+    expect(out).not.toContain("resumeCursors");
   });
 });
