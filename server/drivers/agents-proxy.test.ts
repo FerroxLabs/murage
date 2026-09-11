@@ -273,6 +273,14 @@ describe("agents-proxy MCP surface", () => {
     expect(wait.description).toContain("Never call it in the same turn as delegate_bot");
   });
 
+  it("tells bots that managed outputs/ files are saved automatically and other files need register_artifact", async () => {
+    const list = await rpc("tools/list");
+    const register = list.result.tools.find((tool: { name: string }) => tool.name === "register_artifact");
+    expect(register.description).toContain("under outputs/ are saved to Files automatically when the turn completes successfully");
+    expect(register.description).toContain("use this tool for other files and custom project folders");
+    expect(register.description).toContain("A filename in prose is not a saved deliverable.");
+  });
+
   it("registers a relative deliverable through the authenticated harness", async () => {
     const result = await callTool("register_artifact", { relative_path: "reports/morning.html", name: "Morning brief" });
     expect(lastArtifactBody).toEqual({ relativePath: "reports/morning.html", name: "Morning brief" });
