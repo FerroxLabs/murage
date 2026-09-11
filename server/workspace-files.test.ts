@@ -1,11 +1,11 @@
-import { existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ArtifactScope } from "./artifacts.ts";
 import { hiddenRoute } from "./route-delegation.ts";
 import {
-  WORKSPACE_DIRECTORY_SCAN_LIMIT, WorkspaceFileError, listWorkspaceDirectory, resolveWorkspaceRoot, searchWorkspace, workspaceFilesRoute,
+  WORKSPACE_DIRECTORY_SCAN_LIMIT, WorkspaceFileError, listWorkspaceDirectory, nativeWorkspaceFile, resolveWorkspaceRoot, searchWorkspace, workspaceFilesRoute,
   type WorkspaceFilesDeps,
 } from "./workspace-files.ts";
 import { WORKSPACE_LIST_PAGE_SIZE, WORKSPACE_SEARCH_MAX_ENTRIES, isFileRevision, type WorkspaceEntry } from "../shared/workspace-files.ts";
@@ -350,5 +350,53 @@ describe("workspace-files route", () => {
     for (const path of ["/api/workspace-files", "/api/workspace-files/elsewhere"]) {
       expect(await call(f.deps, path), path).toMatchObject({ status: 404, body: { code: "not-found" } });
     }
+  });
+});
+
+describe("native open/reveal authorization (F4-T5)", () => {
+  it("answers the canonical root, revision and observed identity for a regular file", async () => {
+    const f = fixture();
+    const path = f.write("outputs/report.html", "<h1>ok</h1>");
+    const answer = nativeWorkspaceFile(f.deps, { scope: f.scope, relativePath: "outputs/report.html" });
+    const stat = statSync(path);
+    expect(answer).toEqual({
+      scope: f.scope, relativePath: "outputs/report.html", root: f.taskRoot, revision: expect.any(String),
+      bytes: stat.size, identity: JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]),
+    });
+    expect(isFileRevision(answer.revision)).toBe(true);
+    // The same file read through the read route reports the same revision, so
+    // a client can tell the two answers describe one state.
+    expect(nativeWorkspaceFile(f.deps, { scope: f.scope, relativePath: "outputs/report.html" }).revision).toBe(answer.revision);
+  });
+
+  it("refuses private, missing, traversing, linked, hard-linked and non-file paths", () => {
+    const f = fixture();
+    f.write("notes.md");
+    mkdirSync(join(f.taskRoot, "folder"), { recursive: true });
+    linkSync(join(f.taskRoot, "notes.md"), join(f.taskRoot, "hard.md"));
+    const outside = join(f.base, "private.md"); writeFileSync(outside, "private");
+    symlinkSync(outside, join(f.taskRoot, "link.md"));
+    const cases: Array<[string, string]> = [
+      ["MEMORY.md", "private-file"], ["credentials/key.md", "private-file"],
+      ["../escape.md", "invalid-path"], [".hidden.md", "invalid-path"], ["", "invalid-path"],
+      ["gone.md", "not-found"], ["folder", "not-regular-file"], ["hard.md", "not-regular-file"], ["link.md", "linked-file"],
+    ];
+    for (const [relativePath, code] of cases) {
+      expect(codeOf(() => nativeWorkspaceFile(f.deps, { scope: f.scope, relativePath })), relativePath).toBe(code);
+    }
+    expect(codeOf(() => nativeWorkspaceFile(f.deps, { scope: { botId: "nobody", threadId: "thread" }, relativePath: "notes.md" }))).toBe("scope-unavailable");
+  });
+
+  it("is desktop-only, GET-only and reachable at the frozen route", async () => {
+    const f = fixture();
+    f.write("notes.md");
+    const q = "botId=bot&threadId=thread";
+    expect(await call(f.deps, `/api/workspace-files/native?${q}&path=notes.md`, { desktop: false })).toEqual(hiddenRoute());
+    expect(await call(f.deps, `/api/workspace-files/native?${q}&path=notes.md`, { method: "POST" })).toMatchObject({ status: 400, body: { code: "invalid-request" } });
+    expect(await call(f.deps, `/api/workspace-files/native?${q}&path=notes.md&extra=1`)).toMatchObject({ status: 400, body: { code: "invalid-request" } });
+    expect(await call(f.deps, `/api/workspace-files/native?${q}&path=notes.md`)).toMatchObject({
+      status: 200, headers: { "cache-control": "no-store" }, body: { relativePath: "notes.md", root: f.taskRoot },
+    });
+    expect(await call(f.deps, `/api/workspace-files/native?${q}&path=MEMORY.md`)).toMatchObject({ status: 403, body: { code: "private-file" } });
   });
 });

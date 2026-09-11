@@ -257,6 +257,15 @@ contextBridge.exposeInMainWorld("muragebox", {
   exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
   artifactAction: (id, action) => ipcRenderer.invoke("desktop:artifact-action", id, action),
   revealWorkspace: (botId, threadId) => ipcRenderer.invoke("desktop:reveal-workspace", botId, threadId),
+  /** Open or reveal one live workspace file. The renderer names the
+   * conversation and a relative path only; the main process resolves and
+   * revalidates the real path (F4-T5). The refusal text is shown verbatim, so
+   * strip the wrapper ipcRenderer adds around a main-process throw. */
+  workspaceFileAction: (scope, relativePath, action) =>
+    ipcRenderer.invoke("desktop:workspace-file-action", scope, relativePath, action).catch((error) => {
+      const message = String(error?.message ?? error);
+      throw new Error(message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, ""));
+    }),
   /** Ask where to save a bot-created file (inside ~/.murage), copy it
    * there and reveal it. Returns the chosen path, or null if the user
    * cancelled the dialog. The chat bubble shows the
