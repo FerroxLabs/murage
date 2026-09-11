@@ -112,6 +112,9 @@ async function makePermissionBot(patch: Record<string, unknown>) {
   const patched = await desktopApi("PATCH", `/api/bots/${bot.id}`, {
     ...patch,
     modelSelection: { instanceId: "grok", model: "fake-model" },
+    // Auto on a bot that never chose a computer drives this Mac, so the
+    // desktop dialog's acknowledgement rides along (AUTOOP2 finding 1).
+    ...(patch.autoApprove === true ? { acknowledgeLocalAuto: true } : {}),
   });
   expect(patched.status).toBe(200);
   return patched.body.bot ?? bot;
@@ -294,6 +297,7 @@ posixOnly("authorization decisions are logged", () => {
       const patched = await desktopApi("PATCH", `/api/bots/${created.body.bot.id}`, {
         name: "Curious",
         autoApprove: true,
+        acknowledgeLocalAuto: true, // default computer = this Mac (AUTOOP2 finding 1)
         autoReview: "enforce",
         alwaysAllow: ["AskUserQuestion", "local-computer:AskUserQuestion", "shell:echo"],
         modelSelection: { instanceId: "asker", model: "fake-model" },
