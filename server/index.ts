@@ -865,6 +865,9 @@ type DirectTurnDispatchClaim = {
   phase: "setup" | "dispatching";
 };
 class DirectTurnSetupCancelled extends Error {}
+/** server/memory: assertMemoryAccess and deliverMemoryDisclosure refuse with
+ * exactly this message when the authority a dispatch prepared under has moved. */
+const isMemoryContextRevoked = (error: unknown) => error instanceof Error && error.message === "MEMORY_CONTEXT_REVOKED";
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directRuns = new IndependentThreadRuns<BotRecord>();
 function botForDirectThread(botId:string,threadId:string):BotRecord|null {
@@ -3661,6 +3664,10 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
+    /** Server-owned: this is the single re-dispatch of a turn whose prepared
+     * memory context was revoked before the provider accepted it (see the
+     * catch below). Never taken from a request body. */
+    memoryRedispatch?: boolean;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -4363,7 +4370,27 @@ async function startTurn(
       }
       if (!ownsLatestGeneration) return;
       recordMemorySettlement(threadId, dispatchClaimId, "setup-failed");
-      const message = e instanceof Error ? e.message : String(e);
+      // The memory context this dispatch prepared was revoked before the
+      // provider accepted it: the authority moved under the turn. The usual
+      // cause is a task created for this bot while a sibling turn sat in its
+      // dispatch window — a new thread changes the roster, and the roster
+      // policy revokes every disclosure for that (p02, "existing-task" still
+      // revokes) — or another bot, room or owner memory change in the same
+      // window. The guarantee is that no turn runs on revoked context, and
+      // the provider turn was stopped above before anything could; it is not
+      // that the person's message is lost. Re-prepare under the current
+      // authority and dispatch once more with the same user message; a
+      // second refusal, or an admission refusal now, reports as before.
+      let failure: unknown = e;
+      if (isMemoryContextRevoked(e) && !opts?.memoryRedispatch) {
+        console.warn(`[memory] context revoked during dispatch on thread ${threadId}; re-preparing once`);
+        store.setTaskActivity(bot.id, threadId, "idle");
+        try {
+          await startTurn(botId, text, { ...opts, threadId, userMessage, memoryRedispatch: true });
+          return;
+        } catch (redispatchError) { failure = redispatchError; }
+      }
+      const message = failure instanceof Error ? failure.message : String(failure);
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
