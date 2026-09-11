@@ -221,10 +221,14 @@ it("skips a question as soon as the card is closed, instead of leaving the bot w
   await expect
     .poll(async () => (await questionCard(bot.threadId))!.card.answered, { timeout: 10000 })
     .toBe("skipped");
+  // the engine hears a plain "nobody answered", never a guess in the owner's
+  // name. The card settles the moment the skip is delivered; the fake CLI's
+  // tool_result echo follows through the stream, so wait for it.
+  await expect
+    .poll(async () => await transcript(bot.threadId), { timeout: 15000 })
+    .toContain("skipped this question");
   const said = await transcript(bot.threadId);
   expect(said).not.toContain("Couldn't deliver that answer");
-  // the engine hears a plain "nobody answered", never a guess in the owner's name
-  expect(said).toContain("skipped this question");
   expect(said).not.toContain("best judgment");
   expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "question-skipped")).toBe(true);
 }, 40000);
