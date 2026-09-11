@@ -8478,12 +8478,24 @@ const server = createServer(async (req, res) => {
         const chief = store.bot(fromBotId);
         if (!chief) return json(res, 403, { error: "unknown sender" });
         const fromThreadId = String(body.fromThreadId ?? chief.threadId);
-        if (!connectorThread(chief.id, fromThreadId)) {
+        const chiefConversation = connectorThread(chief.id, fromThreadId);
+        if (!chiefConversation) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
         if (!chief.chiefOfStaff) {
           return json(res, 403, { error: "only a section's Chief of Staff can create operator bots" });
         }
+        // Whether the new operator starts in Auto is INHERITED, never
+        // granted: it is exactly the Auto bit a person switched on for the
+        // Chief in the conversation making this call, resolved the way the
+        // permission host resolves it (the task in a 1:1, the profile in a
+        // channel — see `request.opened`). A Chief in Ask mode creates
+        // operators in Ask mode, so a model cannot hand out an Auto the human
+        // never enabled on this computer. An unattended turn (a webhook, a
+        // channel automation, or a hop from one) inherits nothing: Auto is
+        // something a person switched on for turns they are present for.
+        const chiefAsSeenByPermissions = chiefConversation.group ? chief : store.projectBotForTask(chief.id, fromThreadId);
+        const inheritedAuto = chiefAsSeenByPermissions?.autoApprove === true && !isUnattended(fromThreadId);
         // Which team the specialist joins. A section Chief keeps verbatim
         // inheritance (today's behaviour). The WORKSPACE Chief must name a
         // team: inheriting her own section would make her the direct manager
@@ -8595,10 +8607,17 @@ const server = createServer(async (req, res) => {
           { seedMessages: false },
         );
         createSlot.commit();
+        // The operator's Auto is bounded to what Auto already means for a
+        // bot the person enabled it on: the destructive/sensitive guards,
+        // question tools, credential cards and peer comms still reach the
+        // human. It is narrower than the Chief's — the computer is OFF, so
+        // this Auto can never click or type on the person's own desktop and
+        // never needs the local-computer acknowledgement.
         const safeBot = store.patchBot(created.id, {
           composio: false,
-          autoApprove: false,
+          autoApprove: inheritedAuto,
           approvePeerComms: false,
+          computer: "off",
         })!;
         // Elected after the record exists, and as a SECTION lead: the scope
         // argument is what keeps this from reaching the workspace tier.
@@ -8613,6 +8632,9 @@ const server = createServer(async (req, res) => {
           // So the caller's next create_bot knows the team now has a lead
           // rather than having to re-read list_bots to find out.
           lead: finalBot.chiefOfStaff === true,
+          // Whether the operator inherited the Chief's Auto, so the caller
+          // can tell the person which of its team will ask before acting.
+          auto: finalBot.autoApprove === true,
         });
         } finally { createSlot.release(); }
       }
