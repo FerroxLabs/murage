@@ -124,16 +124,20 @@ test("simple paths keep their plain spelling", () => {
 
 test("spaces, apostrophes, percent and dollar signs reach systemd as the same paths", () => {
   const opts = unitOpts({
-    execPath: "/opt/my node/100% real/bin/node",
+    execPath: "/opt/my node/100% real $HOME/bin/node",
     cliPath: "/srv/it's here/$HOME/murage.mjs",
     dataDir: "/home/deploy/data dir %h $USER",
     envFile: "/home/deploy/data dir %h $USER/murage.env",
   });
   const text = unitText(opts);
 
+  // The executable: `%` doubled, `$` left alone (systemd does not expand
+  // variables in it). Its arguments: both doubled.
   const exec = lineOf(text, "ExecStart=");
-  assert.equal(exec, `ExecStart="/opt/my node/100%% real/bin/node" "/srv/it's here/$$HOME/murage.mjs" start`);
-  assert.deepEqual(unitWords(exec.slice("ExecStart=".length), { dollars: true }), [opts.execPath, opts.cliPath, "start"]);
+  assert.equal(exec, `ExecStart="/opt/my node/100%% real $HOME/bin/node" "/srv/it's here/$$HOME/murage.mjs" start`);
+  const [executable, ...args] = unitWords(exec.slice("ExecStart=".length));
+  assert.equal(executable, opts.execPath);
+  assert.deepEqual(args.map((word) => word.replace(/\$\$/g, () => "$")), [opts.cliPath, "start"]);
 
   // `$` means nothing in Environment= and ReadWritePaths=, so it stays single.
   const data = lineOf(text, "Environment=\"MURAGE_DATA_DIR");
@@ -143,7 +147,7 @@ test("spaces, apostrophes, percent and dollar signs reach systemd as the same pa
     `MURAGE_ENV_FILE=${opts.envFile}`,
   ]);
   assert.deepEqual(unitWords(lineOf(text, "Environment=\"PATH").slice("Environment=".length)), [
-    "PATH=/opt/my node/100% real/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "PATH=/opt/my node/100% real $HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
   ]);
 
   const rw = lineOf(text, "ReadWritePaths=");
@@ -161,6 +165,11 @@ test("backslashes, double quotes and control characters are refused rather than 
   for (const home of bad) {
     assert.throws(() => unitText(unitOpts({ account: { ...DEPLOY, home } })), UnitRefused, JSON.stringify(home));
   }
+});
+
+test("an apostrophe is refused in the executable path, where systemd refuses it, and allowed in an argument", () => {
+  assert.throws(() => unitText(unitOpts({ execPath: "/opt/it's/bin/node" })), (e) => e instanceof UnitRefused && /apostrophe/.test(e.message));
+  assert.match(unitText(unitOpts({ cliPath: "/srv/it's/murage.mjs" })), /^ExecStart=\/usr\/bin\/node "\/srv\/it's\/murage\.mjs" start$/m);
 });
 
 test("relative paths, and a node directory PATH cannot hold, are refused", () => {
