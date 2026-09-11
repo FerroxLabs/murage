@@ -120,6 +120,31 @@ it("Stop on a direct Claude turn leaves the normal stopped state, not an error c
   expect(published).toEqual([]);
 }, 60_000);
 
+it("a host stop (this computer switched off for the bot) leaves a stopped notice with the reason, not an error card", async () => {
+  // STOP2: the host, not the person, ends the turn. The conversation must
+  // say why — as a "stopped:" notice the 1:1 transcript shows even with
+  // Tool calls off — and the turn settles exactly like a user Stop.
+  const bot = await createBot("Host stop fixture");
+  const text = "__fixture_hold_authority__ host stop request";
+  rmSync(fixture.fixtureDumpPath, { force: true });
+  expect((await api("POST", `/api/bots/${bot.id}/messages`, { text, threadId: bot.threadId })).status).toBe(202);
+  await promptReachedEngine(text);
+  expect(await isBusy(bot.id)).toBe(true);
+  // The person points the bot at this computer, then switches it off again
+  // while the turn is still running: the switch-off is the host stop.
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(200);
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
+
+  await expect.poll(() => isBusy(bot.id), { timeout: 10_000 }).toBe(false);
+  await expect.poll(() => turnOutcomes(bot.threadId).at(-1), { timeout: 10_000 }).toBe("cancelled");
+  expect(turnOutcomes(bot.threadId)).not.toContain("failed");
+  expect(await errorActivities(bot.threadId)).toEqual([]);
+  const notices = (await messages(bot.threadId)).filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith("stopped:"));
+  expect(notices).toHaveLength(1);
+  expect(notices[0].tool).toEqual({ name: "stopped: this computer was switched off for the bot", ok: false });
+  expect(notices[0].from).toBeUndefined();
+}, 60_000);
+
 it("Stop on a source turn drops the delegation it queued instead of running it", async () => {
   const source = await createBot("Stop drop source");
   const target = await createBot("Stop drop target");
