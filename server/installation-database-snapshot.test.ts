@@ -66,6 +66,14 @@ it.each([
   ["an unknown index on a known table", "CREATE INDEX hostile ON artifacts(name)"],
   ["a known table with a foreign column", "ALTER TABLE inbox_item_state ADD COLUMN extra TEXT"],
   ["a migrated column out of order", "ALTER TABLE artifacts DROP COLUMN producer"],
+  // Names every plain object inherits must not pass as allowlisted tables.
+  ["a table named constructor", `CREATE TABLE "constructor"(payload TEXT)`],
+  ["a table named __proto__", `CREATE TABLE "__proto__"(payload TEXT)`],
+  ["a table named toString", `CREATE TABLE "toString"(payload TEXT)`],
+  ["a table named hasOwnProperty", `CREATE TABLE "hasOwnProperty"(payload TEXT)`],
+  ["a table named valueOf", `CREATE TABLE "valueOf"(payload TEXT)`],
+  ["an autoindex on a table named constructor", `CREATE TABLE "constructor"(id TEXT PRIMARY KEY)`],
+  ["a named index on a table named constructor", `CREATE TABLE "constructor"(payload TEXT); CREATE INDEX messages_thread_ctor ON "constructor"(payload)`],
 ])("still refuses %s", async (_name, sql) => {
   const f = fixture();
   initializeInbox(f.db); initializeArtifacts(f.db);
