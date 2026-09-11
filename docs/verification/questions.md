@@ -1,7 +1,10 @@
 # Agent questions
 
 A bot's "ask the owner" — Claude Code's `AskUserQuestion`, the muragebox
-`ask_user` tool — becomes one question card in chat. A question is never
+`ask_user` tool, Codex's `item/tool/requestUserInput` and MCP form
+elicitations, Fuigo's `_fuigo/ask_user_question` and `_fuigo/mcp/elicit`, an
+ACP agent's `elicitation/create` (form or URL), and a pi extension's
+`select`/`input`/`editor` dialog — becomes one question card in chat. A question is never
 auto-approved, never remembered as a grant, and never answered by the AI
 reviewer: the whole point of asking is that a person decides.
 
@@ -16,6 +19,17 @@ reviewer: the whole point of asking is that a person decides.
   reaches the bot.
 - Cards persist in `messages.db`. Interrupting a turn, or restarting Murage,
   expires an open question rather than dropping it.
+- Each engine gets its own reply shape, built only from the owner's validated
+  picks: Codex `{answers:{<id>:{answers:[…]}}}` (empty arrays when nobody
+  answered), Fuigo `{outcome:"accepted", answers:{<question>:[labels]},
+  annotations:{<question>:{notes}}}` or `{outcome:"cancelled"}`, ACP
+  elicitation `{action:"accept", content}` typed per the schema / `decline`
+  (skip) / `cancel` (timeout, turn end), pi `{value}` / `{cancelled:true}`.
+  A URL elicitation is shown as a link; Murage never opens or fetches it.
+- Over Telegram the paired owner gets the question with one button per
+  option (multi-select toggles plus Submit, "Reply with text" for free text,
+  Skip). The tap goes through the same validation as the desktop card. Secret
+  questions stay in-app.
 
 ## User path
 
@@ -31,6 +45,12 @@ Node suites, no network:
 pnpm exec vitest run server/question-normalize.test.ts server/ask-user-question-api.test.ts \
   src/components/QuestionCard.test.ts --maxWorkers=2
 pnpm exec vitest run server/drivers/claude.test.ts --maxWorkers=2 -t question
+# the other engines, against their fake CLIs, and end to end through the server
+pnpm exec vitest run server/drivers/codex.test.ts server/drivers/acp/acp.test.ts server/drivers/pi.test.ts --maxWorkers=2 -t ASK3
+pnpm exec vitest run server/engine-questions-api.test.ts --maxWorkers=1
+# Telegram buttons, text capture and the wiring into the real approvals expression
+pnpm exec vitest run server/telegram-approvals.test.ts server/telegram-transport.test.ts \
+  server/telegram-channel.test.ts server/telegram-permission-wiring.test.ts --maxWorkers=2
 ```
 
 The card in a real browser (keyboard, both skins, phone width, screenshots):
@@ -51,6 +71,13 @@ It passes only when the model is told
 `Your questions have been answered: "…"="…"` with the label that was picked,
 and then acts on it. Needs `claude` on `PATH` and the login that binary already
 has; it starts no Murage server and never touches `~/.murage`.
+
+Live proofs still open for the ASK3 engines: a real Fuigo turn that calls its
+ask tool (a paid model call — only with a FluxRouter key Sean provides), and a
+real Telegram bot tapping the buttons and replying with text. Both are gated
+on Sean's resources; the fakes above pin the exact wire shapes taken from the
+engines' own sources (openai/codex `v2/item.rs`, Fuigo `ask_user_question/
+types.rs`, ACP `schema/v1/schema.json`, pi `docs/rpc.md`).
 
 ## Gotchas
 
