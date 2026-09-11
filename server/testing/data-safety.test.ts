@@ -130,7 +130,7 @@ describe("data safety: recursive deletes", () => {
   it("human specs and configs read MURAGE_E2E_DATA_DIR only through lane-data-dir.ts, with no fallback", () => {
     const offenders: string[] = [];
     // evidence.test.ts is a vitest test of that contract and sets the variable on purpose.
-    for (const file of files.filter(f => f.startsWith("src/e2e/") && f !== "src/e2e/lane-data-dir.ts" && !/\.test\.ts$/.test(f))) {
+    for (const file of files.filter(f => f.startsWith("src/e2e/") && f !== "src/e2e/lane-data-dir.ts" && !f.endsWith(".test.ts"))) {
       const text = readFileSync(join(ROOT, file), "utf8");
       text.split("\n").forEach((line, index) => {
         if (/process\.env\.MURAGE_E2E_DATA_DIR/.test(line)) offenders.push(`${file}:${index + 1}: ${line.trim().slice(0, 120)}`);

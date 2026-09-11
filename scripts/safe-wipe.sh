@@ -12,7 +12,8 @@
 # path strictly inside SAFE_WIPE_WITHIN.
 # Refused, whatever the above says: "/", $HOME or any parent of it, $HOME/.murage,
 # $HOME/.opengrokbot, $HOME/.murage-companion (and anything inside or containing
-# them), a MURAGE_DATA_DIR that is not itself a scratch location, the working
+# them; the account home from the passwd database is protected the same way even
+# when HOME is faked or TMPDIR covers it), a MURAGE_DATA_DIR that is not itself a scratch location, the working
 # directory or any parent of it, and any directory that has a live
 # .murage-data-owner-*.lease beside it or inside it (up to three levels).
 # A refusal prints "safe-wipe REFUSED ..." and returns 2. Nothing is deleted.
@@ -27,9 +28,10 @@ _safe_wipe_canon() {
   while [ ! -e "$p" ] && [ "$p" != "/" ] && [ -n "$p" ]; do
     suffix="/$(basename "$p")$suffix"; p=$(dirname "$p")
   done
-  local real
+  local real out
   real=$(cd "$p" 2>/dev/null && pwd -P) || real=$p
-  printf '%s%s\n' "${real%/}" "$suffix"
+  out="${real%/}$suffix"
+  printf '%s\n' "${out:-/}"
 }
 
 _safe_wipe_inside() { # $1 child, $2 parent — child strictly inside parent
@@ -56,6 +58,26 @@ _safe_wipe_under_tmp() {
   return 1
 }
 
+_safe_wipe_strictly_under_tmp() {
+  local p=$1 t
+  for t in "${TMPDIR:-}" /tmp /private/tmp /var/tmp /private/var/tmp /var/folders /private/var/folders; do
+    [ -n "$t" ] || continue
+    t=$(_safe_wipe_canon "${t%/}")
+    [ "$t" != "/" ] && _safe_wipe_inside "$p" "$t" && return 0
+  done
+  return 1
+}
+
+# $1 canonical home, $2 canonical account home. The account home is never
+# disposable, whatever TMPDIR says (TMPDIR=$HOME or TMPDIR=/Users must not admit
+# ~/.murage as "tmpdir"). A different $HOME is disposable only when it sits
+# strictly inside the temp dir: the throwaway home a test runner makes with
+# mktemp -d, never one that *equals* the temp dir.
+_safe_wipe_disposable_home() {
+  [ "$1" != "$2" ] || return 1
+  _safe_wipe_strictly_under_tmp "$1"
+}
+
 _safe_wipe_live_lease() { # $1 lease file -> 0 when it names a live foreign process (or is unreadable)
   local pid
   pid=$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -1)
@@ -76,10 +98,11 @@ safe_wipe() {
   cwd=$(pwd -P)
   if _safe_wipe_same_or_inside "$cwd" "$path"; then echo "safe-wipe REFUSED to delete $path: is or contains the working directory $cwd" >&2; return 2; fi
   acct=$(eval echo "~$(id -un)" 2>/dev/null)
+  [ -n "$acct" ] && acct=$(_safe_wipe_canon "$acct")
   for home in "${HOME:-}" "$acct"; do
     [ -n "$home" ] || continue
     home=$(_safe_wipe_canon "$home")
-    _safe_wipe_under_tmp "$home" && continue
+    _safe_wipe_disposable_home "$home" "$acct" && continue
     if _safe_wipe_same_or_inside "$home" "$path"; then echo "safe-wipe REFUSED to delete $path: is or contains the home directory $home" >&2; return 2; fi
     for name in .murage .opengrokbot .murage-companion; do
       d="$home/$name"
@@ -105,7 +128,6 @@ safe_wipe() {
     for home in "${HOME:-}" "$acct"; do
       [ -n "$home" ] || continue
       home=$(_safe_wipe_canon "$home")
-      _safe_wipe_under_tmp "$home" && continue
       if _safe_wipe_same_or_inside "$home" "$d"; then echo "safe-wipe REFUSED to delete $path: SAFE_WIPE_WITHIN $d is or contains a home directory" >&2; return 2; fi
     done
     if _safe_wipe_inside "$path" "$d"; then admitted=within
