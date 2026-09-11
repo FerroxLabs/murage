@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -57,6 +57,40 @@ test("the auth key file is 0600 in a 0700 directory, and is shredded after", () 
 
 test("writeAuthKeyFile refuses an empty key rather than writing a useless file", () => {
   assert.throws(() => writeAuthKeyFile("   "), /empty auth key/);
+});
+
+test("the default auth key directory is new and randomly named, never a predictable per-pid one", () => {
+  const a = writeAuthKeyFile(SECRET);
+  const b = writeAuthKeyFile(SECRET);
+  try {
+    assert.notEqual(dirname(a), dirname(b), "two enrolments never share a directory");
+    assert.ok(!dirname(a).endsWith(`murage-tsauth-${process.pid}`), dirname(a));
+    const dir = lstatSync(dirname(a));
+    assert.ok(dir.isDirectory() && !dir.isSymbolicLink());
+    assert.equal(dir.mode & 0o777, 0o700);
+    assert.equal(dir.uid, process.getuid());
+    assert.equal(statSync(a).mode & 0o777, 0o600);
+  } finally {
+    shredAuthKeyFile(a);
+    shredAuthKeyFile(b);
+  }
+  assert.equal(existsSync(dirname(a)), false, "the whole private directory is removed");
+});
+
+test("an auth key directory that already exists is refused and left exactly as it was", () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-key-plant-"));
+  const planted = join(root, "planted");
+  mkdirSync(planted);
+  writeFileSync(join(planted, "authkey"), "planted by someone else");
+  assert.throws(() => writeAuthKeyFile(SECRET, planted), { code: "EEXIST" });
+  assert.equal(readFileSync(join(planted, "authkey"), "utf8"), "planted by someone else");
+
+  const target = join(root, "target");
+  mkdirSync(target);
+  const link = join(root, "link");
+  symlinkSync(target, link);
+  assert.throws(() => writeAuthKeyFile(SECRET, link), { code: "EEXIST" });
+  assert.deepEqual(readdirSync(target), [], "nothing was written through the symlink");
 });
 
 test("readAuthKey reads env vars, then the no-echo prompt — never argv", async () => {

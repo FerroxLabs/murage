@@ -59,6 +59,43 @@ deployment uses. If you ever *do* want the device door on a box like this, set
 that address) rather than to `lan`; an unrecognised value makes the sidecar
 refuse to start rather than fall back to `0.0.0.0`.
 
+## Running it 24/7: the service account
+
+On Linux, `setup` offers to stage a systemd unit. The unit always names the
+account it runs as (`User=`, `Group=`, `HOME=`); a unit with no `User=` would
+run the whole agent stack as root, so setup never stages one.
+
+- Run as an ordinary account, the service runs as that account and its data
+  stays in that account's home.
+- Run as root, setup **refuses to start** unless you name the account:
+
+  ```sh
+  useradd --create-home --shell /usr/sbin/nologin murage   # once, if you need one
+  murage setup --service-user murage
+  ```
+
+  The data then lives in that account's home (`~murage/.murage-server`), is
+  created owned by it with mode `0700`, and the setup-time sidecar runs as it.
+  Under `sudo`, the refusal names `$SUDO_USER` as the value to pass. Root, or
+  any account with uid 0, is refused as a service account.
+- An existing data directory owned by a different account is refused, not
+  re-owned. Setup also checks that the service account can actually reach the
+  node runtime and the installer before it stages a unit that would fail at
+  boot (a runtime under `/root/.nvm` cannot be run by `murage`).
+
+The unit is staged in a fresh private directory (`$TMPDIR/murage-unit-XXXXXX`,
+mode `0700`), never at a fixed shared path. Setup prints the sha256 of what it
+generated, and the install command it prints copies the file into place only if
+the staged bytes still match:
+
+```sh
+echo '<sha256>  /tmp/murage-unit-XXXXXX/murage.service' | sha256sum --check --strict - && sudo install -o root -g root -m 0644 /tmp/murage-unit-XXXXXX/murage.service /etc/systemd/system/murage.service
+```
+
+Paths with spaces, apostrophes, `%` or `$` are quoted and escaped for systemd
+(`%%`, and `$$` in `ExecStart=`). A path containing a newline or other control
+character, a double quote or a backslash is refused rather than encoded.
+
 ## The auth key
 
 Never pass it as an argument. There is no flag for it, on purpose: `/proc/<pid>/cmdline`
@@ -85,7 +122,7 @@ tailnet instead of lingering as a dead entry.
 | `MURAGE_BIND_ADDRESS` | explicit address; must be loopback or a tailnet address of this host |
 | `MURAGE_PORT` | default `8799` — the **harness** listener |
 | `MURAGE_BROWSER_PORT` | default `8813` — the companion's **browser door**, and the only thing the tailnet proxy is ever pointed at (the harness refuses a non-loopback `Host`, so a proxy aimed at 8799 answers 403). Setup will not configure the proxy at all unless `GET http://127.0.0.1:8813/enter` answers |
-| `MURAGE_DATA_DIR` | default `~/.murage-server` |
+| `MURAGE_DATA_DIR` | default `~/.murage-server` for the account setup runs as, or the `--service-user` account's home when setup runs as root |
 | `MURAGE_ENV_FILE` | default `$MURAGE_DATA_DIR/murage.env`, mode `0600` |
 | `MURAGE_SERVER_ENTRY` | explicit path to the bundled server |
 | `MURAGE_COMPANION_ENTRY` | explicit path to the sidecar; otherwise `payload/companion/index.js`, then `dist-companion/index.js` (`pnpm build:companion`), then `companion/src/index.ts` |
