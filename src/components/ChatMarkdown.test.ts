@@ -52,3 +52,25 @@ it("keeps fenced code off the inline wrap utility so its scroll, wrap toggle and
   expect(pre?.[2]).toBe(code.replace(/"/g, "&quot;"));
   expect(html).not.toContain("break-words");
 });
+// F5-T2: Markdown images go through the shared image surface. Only the
+// attachment server's own URL and raster bytes already in the text render;
+// a remote image waits for a click and a local path is never requested.
+it("renders a generated attachment and embedded raster bytes as enlargeable images", () => {
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: `![Weekly chart](/api/attachments/abc-123.png)\n\n![](${png})` }));
+  expect(html).toContain('aria-label="Enlarge image Weekly chart"');
+  expect(html).toContain('<img src="/api/attachments/abc-123.png" alt="Weekly chart"');
+  expect(html).toContain(`src="${png}"`);
+  expect(html.match(/aria-haspopup="dialog"/g)).toHaveLength(2);
+});
+it("never requests a remote, local-path, file or SVG image from model text", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+    text: "![pixel](https://tracker.example/p.gif) ![secret](/Users/sean/secret.png) ![f](file:///etc/x.png) ![s](data:image/svg+xml;base64,PHN2Zz4=) ![r](abc-123.png)",
+  }));
+  expect(html).not.toContain("<img");
+  expect(html).toContain("Image from tracker.example not loaded.");
+  expect(html.match(/Local image paths are not loaded in chat\./g)).toHaveLength(4);
+  // the data: allowance is images only: a data: link is still stripped
+  const link = renderToStaticMarkup(createElement(ChatMarkdown, { text: "[x](data:text/html;base64,PGgxPg==)" }));
+  expect(link).not.toContain("data:text/html");
+});

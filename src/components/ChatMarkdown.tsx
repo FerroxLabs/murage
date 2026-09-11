@@ -8,10 +8,17 @@
 // bubble, a fresh component instance, mounts straight from cache instead of
 // popping from plain to highlighted.
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy, WrapText } from "lucide-react";
 import { codeLanguageLabel, codeLineLabel } from "@/lib/code-block";
+import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
+
+// react-markdown drops every data: URL. Raster image bytes already inside the
+// message are the one exception worth keeping (they cost no request); links,
+// SVG and every other scheme keep the default treatment.
+const urlTransform: UrlTransform = (url, key, node) =>
+  key === "src" && node.tagName === "img" && isRasterDataUrl(url) ? url : defaultUrlTransform(url);
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed and capped. Streamed partials may land here
@@ -260,6 +267,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
       <Markdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={urlTransform}
         components={{
           pre({ children }: { children?: ReactNode }) {
             // fenced code arrives as <pre><code class="language-x">…</code></pre>
@@ -274,14 +282,9 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             return <CodeBlock code={code} lang={lang} streaming={streaming} />;
           },
           img({ src, alt }: { src?: string; alt?: string }) {
-            return (
-              <img
-                src={src}
-                alt={alt ?? ""}
-                loading="lazy"
-                className="max-h-96 max-w-full rounded-lg border border-hairline/30"
-              />
-            );
+            // F5-T2: the shared image surface decides what may load; a path
+            // or remote URL in model text is never fetched on sight
+            return <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />;
           },
           code({ children }: { children?: ReactNode }) {
             // Adapted from OpenMausBot #1023: a path or identifier can be wider

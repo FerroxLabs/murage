@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview } from "../../shared/artifacts";
+import { ArtifactImageMedia } from "./ImageMedia";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 const field = "min-h-10 min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
@@ -132,7 +133,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     {preview && <section ref={previewPanel} role="region" aria-label="File preview" className="mt-5 rounded-xl border border-hairline p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><div className="flex gap-2"><button className={button} disabled={busy} onClick={() => void download(preview.artifact)}>Download saved copy</button><button className={button} onClick={() => setPreview(null)}>Close preview</button></div></div>
       {preview.mode === "html" && <><p className="my-2 text-[12px] text-ink-secondary">Protected preview: scripts, external resources and app access are blocked.</p><iframe title={`Preview ${preview.artifact.name}`} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactPreviewHtml(preview.content ?? "")} className="h-[420px] w-full rounded-lg bg-white" /></>}
       {preview.mode === "text" && <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-[12px]">{preview.content}</pre>}
-      {preview.mode === "image" && <img className="mt-3 max-h-96 max-w-full object-contain" src={preview.content} alt={preview.artifact.name} />}
+      {preview.mode === "image" && <ArtifactImageMedia artifact={preview.artifact} content={preview.content} />}
       {preview.mode === "download" && <p className="mt-3 text-[13px] text-ink-secondary">Preview is unavailable for this format or size. Download the saved copy to review it.</p>}
     </section>}
   </section>;
