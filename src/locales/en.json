@@ -143,5 +143,16 @@
   "calls.call": "Call {name}",
   "calls.hangUpOn": "Hang up on {name}",
   "calls.checkingAvailability": "Checking call availability",
-  "calls.macOnly": "Calls currently need the macOS desktop app"
+  "calls.macOnly": "Calls currently need the macOS desktop app",
+  "memoryCorrection.title": "Proposed correction",
+  "memoryCorrection.replaces": "Replaces version {version} of this memory:",
+  "memoryCorrection.effect": "Approving makes this candidate the current memory. The replaced version stops being used for recall and stays in history.",
+  "memoryCorrection.changed": "The memory this proposal corrects has changed since it was proposed, so it cannot be approved. Inspect the current memory instead.",
+  "memoryCorrection.unavailable": "The memory this proposal corrects is no longer available (it was forgotten, archived or removed), so it cannot be approved.",
+  "memoryCorrection.pinLegend": "The memory being replaced is pinned. Choose what happens to its pin:",
+  "memoryCorrection.pinTransfer": "Pin the correction instead",
+  "memoryCorrection.pinUnpin": "Leave the correction unpinned",
+  "memoryCorrection.pinRequired": "Choose a pin option to approve this correction.",
+  "memoryCorrection.approve": "Approve correction",
+  "memoryCorrection.approved": "Correction approved. The replaced version is kept in history."
 }

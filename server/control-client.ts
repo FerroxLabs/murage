@@ -5,22 +5,33 @@
 // straight to the box's REST API, and a Local VM / VPS click rides a
 // transparent stdio bridge into Cua Driver.
 //
-// Failure posture: OPEN. Control is cooperation between the person and
-// their own bot — "hold my hands while you're driving" — not a security
-// boundary against a hostile agent (a hostile agent could reach the same
-// REST endpoint without this proxy). Failing closed would mean a harness
-// hiccup bricks every computer mid-turn, which costs more than the race
-// it would prevent: while the person is driving they are watching the
-// screen, and the panel shows the hold either way.
+// Failure posture: the client never guesses. A timeout, a non-2xx answer or
+// a malformed body is reported as `available: false` (with `held: false`),
+// so each caller decides explicitly. Control is still cooperation between the
+// person and their own bot, not a security boundary against a hostile agent.
 //
-// The state is cached briefly so a computer_batch of two dozen actions
-// doesn't turn into two dozen loopback round trips.
+// - The bridge-gated Local VM / VPS computers (mcp-bridge.ts) fail CLOSED
+//   while a configured endpoint is unavailable (0.1.52 decision U-11, audit
+//   A5): a person who took the wheel was promised exclusive control, so an
+//   unknown hold refuses the tool call with reconnect guidance.
+// - An unconfigured client (no URL or token: the legacy, ungated setup)
+//   reports a known, disengaged state and changes nothing.
+// - Callers that only read `held` keep their previous behaviour.
+//
+// A known state is cached briefly so a computer_batch of two dozen actions
+// doesn't turn into two dozen loopback round trips. An unavailable reading
+// is never cached: the next call asks again.
 
 export interface ControlState {
   /** The person is driving; actions must be refused, not queued. */
   held: boolean;
   /** A help request the person has neither answered nor dismissed. */
   helpOpen: boolean;
+  /** False when a configured control endpoint could not give a well-formed
+   * answer (timeout, non-2xx, malformed body). `held` is then unknown, not
+   * false; gates that promise exclusive control must refuse. Always true for
+   * an unconfigured client. */
+  available: boolean;
 }
 
 export interface ControlClient {
@@ -36,17 +47,21 @@ export interface ControlClient {
   readonly configured: boolean;
 }
 
-const DISENGAGED: ControlState = { held: false, helpOpen: false };
+const DISENGAGED: ControlState = Object.freeze({ held: false, helpOpen: false, available: true });
+const UNAVAILABLE: ControlState = Object.freeze({ held: false, helpOpen: false, available: false });
 
 export function createControlClient(options?: {
   url?: string;
   token?: string;
   cacheMs?: number;
+  /** Per-request deadline for the loopback read; defaults to 2 s. */
+  timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }): ControlClient {
   const url = options?.url ?? process.env.MURAGE_CONTROL_URL ?? "";
   const token = options?.token ?? process.env.MURAGE_CONTROL_TOKEN ?? "";
   const cacheMs = options?.cacheMs ?? 750;
+  const timeoutMs = options?.timeoutMs ?? 2_000;
   const fetchImpl = options?.fetchImpl ?? fetch;
   const configured = Boolean(url && token);
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
@@ -56,12 +71,17 @@ export function createControlClient(options?: {
 
   async function read(): Promise<ControlState> {
     try {
-      const res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(2_000) });
-      if (!res.ok) return DISENGAGED;
-      const body: any = await res.json().catch(() => null);
-      return { held: body?.held === true, helpOpen: body?.helpOpen === true };
+      const res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) return UNAVAILABLE;
+      const body: unknown = await res.json().catch(() => null);
+      // The harness always answers {held: boolean, helpOpen: boolean}. Any
+      // other shape is not evidence that nobody is driving.
+      if (!body || typeof body !== "object") return UNAVAILABLE;
+      const { held, helpOpen } = body as { held?: unknown; helpOpen?: unknown };
+      if (typeof held !== "boolean" || typeof helpOpen !== "boolean") return UNAVAILABLE;
+      return { held, helpOpen, available: true };
     } catch {
-      return DISENGAGED;
+      return UNAVAILABLE;
     }
   }
 
@@ -70,10 +90,15 @@ export function createControlClient(options?: {
     async state(fresh = false): Promise<ControlState> {
       if (!configured) return DISENGAGED;
       const now = Date.now();
-      if (!fresh && now - cachedAt < cacheMs) return cached;
-      cached = await read();
-      cachedAt = Date.now();
-      return cached;
+      if (!fresh && cachedAt !== 0 && now - cachedAt < cacheMs) return cached;
+      const reading = await read();
+      if (reading.available) {
+        cached = reading;
+        cachedAt = Date.now();
+      } else {
+        cachedAt = 0;
+      }
+      return reading;
     },
     async requestHelp(reason: string): Promise<string | null> {
       if (!configured) return null;
@@ -125,3 +150,23 @@ export const CONTROL_REFUSAL_PLAIN =
   "Do not retry it — the screen is changing under their hands. " +
   "Pause this task, tell the person you are waiting for them to hand control back, " +
   "and take a fresh screenshot before your next action once they have.";
+
+/** What a bridge-gated computer (Local VM, VPS) answers while its configured
+ * control endpoint cannot say whether a person is driving. Fail closed: the
+ * call did not run, retrying in a loop will not help, and the person has to
+ * reconnect before the bot can act again. */
+export const CONTROL_UNAVAILABLE_PLAIN =
+  "Murage could not confirm whether a person is controlling this computer, so this call was NOT performed. " +
+  "Do not retry it in a loop. " +
+  "Pause this task and tell the person that the computer's control connection needs to reconnect: " +
+  "keep Murage open, reopen this computer in Murage (or restart the task), " +
+  "then take a fresh screenshot before your next action once it is back.";
+
+/** Thrown by a gate's held-check when the configured control endpoint is
+ * unavailable, so the gate refuses with reconnect guidance. */
+export class ControlUnavailableError extends Error {
+  constructor() {
+    super("computer control state unavailable");
+    this.name = "ControlUnavailableError";
+  }
+}

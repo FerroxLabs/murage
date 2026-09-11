@@ -47,6 +47,12 @@ const KEY_PREFIXES: RegExp[] = [
   /\bAKIA[0-9A-Z]{16}\b/g, // aws access key id
   /\bAIza[0-9A-Za-z_-]{30,}/g, // google api key
   /\bnpm_[A-Za-z0-9]{20,}/g, // npm
+  // Bare provider keys adapted from OpenMausBot PR #987 (Apache-2.0,
+  // merge 391f0b2b). Minimum suffix lengths follow upstream exactly: Groq's
+  // is 40, not a weaker 36, so shorter look-alikes in prose stay readable.
+  /\bxai-[A-Za-z0-9_-]{20,}/g, // xAI
+  /\bgsk_[A-Za-z0-9]{40,}/g, // Groq
+  /\bhf_[A-Za-z0-9]{30,}/g, // Hugging Face
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, // jwt
 ];
 const BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;

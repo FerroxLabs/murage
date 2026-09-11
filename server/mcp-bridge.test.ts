@@ -4,8 +4,11 @@
 // silence PLUS a failed liveness probe does, and traffic always vetoes.
 import { describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { PassThrough, Writable } from "node:stream";
 
+import { CONTROL_REFUSAL_PLAIN, CONTROL_UNAVAILABLE_PLAIN } from "./control-client.ts";
 import {
   createGateInterceptor,
   createInactivityWatchdog,
@@ -336,13 +339,119 @@ describe("createGateInterceptor", () => {
     expect(order).toEqual(["fwd:1", "fwd:2", "fwd:drained"]);
   });
 
-  it("fails open: a broken held-check forwards rather than wedging the computer", async () => {
+  // 0.1.52 decision U-11 (audit A5) changed the intended behaviour here: this
+  // case used to assert fail-open forwarding. A configured gate that cannot
+  // read the hold now refuses the tool call with reconnect guidance.
+  it("fails closed: a broken held-check refuses tools/call with reconnect guidance", async () => {
     const { forwarded, refused, intercept } = harness(async () => {
       throw new Error("harness went away");
     });
     intercept(frame("tools/call", 1));
+    intercept(frame("tools/list", 2));
     await drain();
-    expect(refused).toEqual([]);
-    expect(forwarded).toHaveLength(1);
+    expect(forwarded).toEqual([frame("tools/list", 2)]);
+    expect(refused).toHaveLength(1);
+    const answer = JSON.parse(refused[0]!);
+    expect(answer.id).toBe(1);
+    expect(answer.result.isError).toBe(true);
+    expect(answer.result.content[0].text).toBe(CONTROL_UNAVAILABLE_PLAIN);
+    expect(answer.result.content[0].text).toMatch(/NOT performed/);
+    expect(answer.result.content[0].text).toMatch(/reconnect/);
+  });
+});
+
+// Failure injection through the real bridge process: a configured control
+// endpoint that is down, erroring or malformed must never let a tools/call
+// reach the driver; a well-formed answer keeps the old held/free behaviour.
+describe("runMcpBridge held-control gate", () => {
+  const driver = `let input = ''; process.stdin.on('data', c => input += c);
+    process.stdin.on('end', () => {
+      const frames = input.trim().split('\\n').filter(Boolean).map(JSON.parse);
+      process.stdout.write(JSON.stringify({jsonrpc:'2.0', id:9, result:{methods:frames.map(f=>f.method)}}) + '\\n');
+    });`;
+
+  async function controlServer(respond: (res: import("node:http").ServerResponse) => void): Promise<{ server: Server; url: string; hits: string[] }> {
+    const hits: string[] = [];
+    const server = createServer((req, res) => {
+      hits.push(String(req.headers.authorization ?? ""));
+      respond(res);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    return { server, url: `http://127.0.0.1:${port}/api/internal/computer-control?botId=fixture`, hits };
+  }
+
+  async function runGated(url: string) {
+    const script = `import {runMcpBridge} from './server/mcp-bridge.ts';
+      runMcpBridge({command:process.execPath,args:['-e',${JSON.stringify(driver)}],label:'fixture',
+        gate:{url:${JSON.stringify(url)},token:'fixture-token'}});`;
+    const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
+      { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MURAGE_CONTROL_URL: "", MURAGE_CONTROL_TOKEN: "" } });
+    let output = "";
+    let errors = "";
+    bridge.stdout.on("data", (chunk) => { output += chunk; });
+    bridge.stderr.on("data", (chunk) => { errors += chunk; });
+    const timer = setTimeout(() => bridge.kill("SIGKILL"), 8000);
+    try {
+      const closed = new Promise<number | null>((resolve, reject) => {
+        bridge.on("error", reject);
+        bridge.on("close", resolve);
+      });
+      bridge.stdin.end('{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"click"}}\n' +
+        '{"jsonrpc":"2.0","id":6,"method":"tools/list"}\n');
+      expect(await closed, errors).toBe(0);
+      return output.trim().split("\n").map((line) => JSON.parse(line));
+    } finally {
+      clearTimeout(timer);
+      if (bridge.exitCode === null && bridge.signalCode === null) bridge.kill("SIGKILL");
+    }
+  }
+
+  const unavailable = [
+    ["a non-2xx answer", (res: import("node:http").ServerResponse) => { res.writeHead(503).end("{}"); }],
+    ["a malformed body", (res: import("node:http").ServerResponse) => { res.writeHead(200, { "content-type": "application/json" }).end('{"held":"no"}'); }],
+    ["a non-JSON body", (res: import("node:http").ServerResponse) => { res.writeHead(200).end("<html>proxy error</html>"); }],
+  ] as const;
+
+  it.each(unavailable)("refuses tools/call with reconnect guidance on %s and still forwards other frames", async (_label, respond) => {
+    const control = await controlServer(respond);
+    try {
+      const frames = await runGated(control.url);
+      expect(frames).toEqual([
+        { jsonrpc: "2.0", id: 5, result: { content: [{ type: "text", text: CONTROL_UNAVAILABLE_PLAIN }], isError: true } },
+        { jsonrpc: "2.0", id: 9, result: { methods: ["tools/list"] } },
+      ]);
+      expect(control.hits).toEqual(["Bearer fixture-token"]);
+    } finally {
+      await new Promise((resolve) => control.server.close(resolve));
+    }
+  });
+
+  it("refuses tools/call with reconnect guidance when the control endpoint is unreachable", async () => {
+    const control = await controlServer((res) => { res.end(); });
+    await new Promise((resolve) => control.server.close(resolve));
+    const frames = await runGated(control.url);
+    expect(frames).toEqual([
+      { jsonrpc: "2.0", id: 5, result: { content: [{ type: "text", text: CONTROL_UNAVAILABLE_PLAIN }], isError: true } },
+      { jsonrpc: "2.0", id: 9, result: { methods: ["tools/list"] } },
+    ]);
+  });
+
+  it("keeps the known held and free behaviour for a well-formed answer", async () => {
+    const free = await controlServer((res) => { res.writeHead(200, { "content-type": "application/json" }).end('{"held":false,"helpOpen":false}'); });
+    try {
+      expect(await runGated(free.url)).toEqual([{ jsonrpc: "2.0", id: 9, result: { methods: ["tools/call", "tools/list"] } }]);
+    } finally {
+      await new Promise((resolve) => free.server.close(resolve));
+    }
+    const held = await controlServer((res) => { res.writeHead(200, { "content-type": "application/json" }).end('{"held":true,"helpOpen":false}'); });
+    try {
+      expect(await runGated(held.url)).toEqual([
+        { jsonrpc: "2.0", id: 5, result: { content: [{ type: "text", text: CONTROL_REFUSAL_PLAIN }], isError: true } },
+        { jsonrpc: "2.0", id: 9, result: { methods: ["tools/list"] } },
+      ]);
+    } finally {
+      await new Promise((resolve) => held.server.close(resolve));
+    }
   });
 });
