@@ -64,6 +64,27 @@ describe("internal turn capabilities", () => {
     expect(registry.isActive(next.claim)).toBe(true);
   });
 
+  // RED2I: the harness fold clears a thread's internal turn owner only when
+  // its generation ended. A late terminal event of a stopped, unbound turn
+  // must leave the replacement generation active — token minted or not.
+  it("reports the active generation until its own bound provider turn completes", () => {
+    const registry = new InternalCapabilities();
+    expect(registry.activeGeneration("thread")).toBeUndefined();
+    registry.begin("bot", "thread", "generation");
+    registry.bindProviderTurn("thread", "generation", "refused-turn");
+    registry.revokeGeneration("thread", "generation");
+    registry.begin("bot", "thread", "next");
+    // No token minted yet by "next"; the refused child's terminal event lands.
+    registry.completeProviderTurn("thread", "refused-turn");
+    expect(registry.activeGeneration("thread")).toBe("next");
+    const next = mint(registry, "thread", "next");
+    expect(registry.isActive(next.claim)).toBe(true);
+    expect(registry.bindProviderTurn("thread", "next", "next-turn")).toBe(true);
+    registry.completeProviderTurn("thread", "next-turn");
+    expect(registry.activeGeneration("thread")).toBeUndefined();
+    expect(registry.isActive(next.claim)).toBe(false);
+  });
+
   it("bounds terminal tombstones", () => {
     const registry = new InternalCapabilities({ tombstoneLimit: 2 });
     for (const id of ["old", "middle", "new"]) registry.completeProviderTurn("thread", id);

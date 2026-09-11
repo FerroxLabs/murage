@@ -2499,9 +2499,21 @@ bus.subscribe((event: RuntimeEvent) => {
   if ((event.type === "turn.completed" || event.type === "session.exited") && event.turnId) {
     projectTurnLeases.complete(event.threadId, event.turnId);
     internalCapabilities.completeProviderTurn(event.threadId, event.turnId);
+    // Owner-aware fold (RED2I): the thread's internal turn owner is cleared
+    // only when its own generation ended — completeProviderTurn revokes the
+    // generation this provider turn was bound to, and nothing else. The
+    // previous "no resolvable token" test also matched an owner that had not
+    // minted one yet: a refused child's late terminal event (a driver whose
+    // interruptTurn returns before its process closes) landing after the
+    // re-dispatch began its generation but before that generation minted its
+    // memory token deleted the re-dispatch's entry, and the turn then failed
+    // before memory dispatch. That event is a stale one for this owner: it
+    // is ignored here, and its leases were released above.
     const owner = internalTurnOwners.get(event.threadId);
-    if (owner && !Object.values(owner.tokens).some((token) => internalCapabilities.resolve(`Bearer ${token}`))) {
+    if (owner && internalCapabilities.activeGeneration(event.threadId) !== owner.generation) {
       internalTurnOwners.delete(event.threadId);
+    } else if (owner) {
+      console.debug(`[turns] ${event.type} for provider turn ${event.turnId} on thread ${event.threadId} is not bound to the current internal turn owner (generation ${owner.generation}); ignored`);
     }
   }
   if (shouldIgnoreProviderEvent(event)) return;
