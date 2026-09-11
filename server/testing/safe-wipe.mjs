@@ -20,7 +20,8 @@
 //     under the repository, never a home or data directory),
 // and never when it
 //   - is, contains, or lies inside the real default data dir (~/.murage from
-//     both $HOME and the account database, so a faked HOME does not hide it),
+//     both $HOME and the account database, so a faked HOME does not hide it;
+//     the account home is protected even when TMPDIR covers it),
 //     the legacy ~/.opengrokbot, the companion directory, or a MURAGE_DATA_DIR
 //     inherited from the environment that is not itself scratch,
 //   - is, or contains, a home directory, the current working directory or a
@@ -184,12 +185,24 @@ function leaseFor(dataDir) {
   catch { return null; }
 }
 
-function realHomes(options) {
-  const homes = new Set();
-  for (const candidate of [options.homedir ?? osHomedir(), accountHome()]) {
-    if (candidate) homes.add(canonicalPath(candidate));
-  }
-  return [...homes];
+/**
+ * The homes the data-dir rules protect. The account home from the passwd
+ * database is never disposable, whatever TMPDIR says: a temp dir configured
+ * as the home or a parent of it (TMPDIR=$HOME, TMPDIR=/Users) must not admit
+ * ~/.murage as "tmpdir". The $HOME entry is disposable only when it is a
+ * different directory that sits strictly inside the temp dir, which is the
+ * throwaway home vitest creates with mkdtemp; a $HOME that *equals* the temp
+ * dir is not a throwaway.
+ * @returns {{ path: string, disposable: boolean }[]}
+ */
+function realHomes(options, strictlyUnderTmp) {
+  const account = accountHome();
+  const accountPath = account ? canonicalPath(account) : null;
+  const envPath = canonicalPath(options.homedir ?? osHomedir());
+  const homes = [];
+  if (accountPath) homes.push({ path: accountPath, disposable: false });
+  if (!accountPath || envPath !== accountPath) homes.push({ path: envPath, disposable: strictlyUnderTmp(envPath) });
+  return homes;
 }
 
 function accountHome() {
@@ -202,8 +215,9 @@ function context(options) {
   const env = options.env ?? process.env;
   const tmp = canonicalPath(options.tmpdir ?? osTmpdir());
   const underTmp = (p) => !isRoot(tmp) && sameOrInside(p, tmp, platform);
+  const strictlyUnderTmp = (p) => !isRoot(tmp) && isInside(p, tmp, platform);
   const scratchMarked = (p) => p.split(/[\\/]+/).some(segment => SCRATCH_SEGMENT.test(segment));
-  return { platform, env, underTmp, scratchMarked, homes: realHomes(options), cwd: canonicalPath(options.cwd ?? process.cwd()), selfPid: options.selfPid ?? process.pid };
+  return { platform, env, underTmp, scratchMarked, homes: realHomes(options, strictlyUnderTmp), cwd: canonicalPath(options.cwd ?? process.cwd()), selfPid: options.selfPid ?? process.pid };
 }
 
 /** The rules no allow rule can outrank. Throws on the first hit. */
@@ -211,12 +225,13 @@ function denyRules(path, ctx) {
   const { platform, env, underTmp, scratchMarked, homes, cwd } = ctx;
   if (isRoot(path)) throw new SafeWipeRefused(path, "filesystem root");
   if (sameOrInside(cwd, path, platform)) throw new SafeWipeRefused(path, `is or contains the working directory ${cwd}`);
-  for (const home of homes) {
-    // A throwaway home under the OS temp dir (vitest) is disposable, and so
-    // is everything the data dir rules below would derive from it. The
-    // account's real home is always in `homes` too, so a faked HOME never
+  for (const { path: home, disposable } of homes) {
+    // A throwaway home strictly inside the OS temp dir (vitest) is
+    // disposable, and so is everything the data dir rules below would derive
+    // from it. The account's real home is always in `homes` and never
+    // disposable, so neither a faked HOME nor a TMPDIR that covers the home
     // hides the real installation.
-    if (underTmp(home)) continue;
+    if (disposable) continue;
     if (sameOrInside(home, path, platform)) throw new SafeWipeRefused(path, `is or contains the home directory ${home}`);
     for (const name of [".murage", ".opengrokbot", ".murage-companion"]) {
       const dataDir = join(home, name);
@@ -259,7 +274,7 @@ export function assertSafeToWipe(target, options = {}) {
   else if (options.within) {
     const within = canonicalPath(options.within);
     if (isRoot(within)) throw new SafeWipeRefused(path, "`within` names a filesystem root");
-    for (const home of ctx.homes) if (sameOrInside(home, within, ctx.platform)) throw new SafeWipeRefused(path, `\`within\` ${within} is or contains a home directory`);
+    for (const { path: home } of ctx.homes) if (sameOrInside(home, within, ctx.platform)) throw new SafeWipeRefused(path, `\`within\` ${within} is or contains a home directory`);
     if (isInside(path, within, ctx.platform)) admitted = "within";
     else throw new SafeWipeRefused(path, `is not strictly inside \`within\` ${within}`);
   }

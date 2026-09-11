@@ -132,7 +132,11 @@ and refuses — whatever the above says — when it
 - is, contains, or lies inside `~/.murage`, `~/.opengrokbot` or
   `~/.murage-companion`, where `~` is **both** `$HOME` and the account's
   home from the passwd database, so a faked `HOME` never hides the real
-  installation;
+  installation. The account home is never treated as disposable, whatever
+  `TMPDIR` says: `TMPDIR=$HOME` or `TMPDIR=/Users` must not admit `~/.murage`
+  as "under the temp dir". A different `$HOME` is disposable only when it sits
+  *strictly* inside the temp dir (the `mkdtemp` home vitest fakes); a `$HOME`
+  that equals the temp dir is not a throwaway;
 - is, contains, or lies inside a `MURAGE_DATA_DIR` / `MURAGE_COMPANION_DIR`
   inherited from the environment that is not itself temp or scratch;
 - is, or contains, a home directory, the working directory, or a filesystem
@@ -152,6 +156,20 @@ the vitest setup file installs it, and `pnpm test:electron` preloads it
 (`--import ./server/testing/safe-wipe-preload.mjs`) for `node --test` files,
 which get no faked home.
 
+Known gap: the process-wide guard is not inherited by child processes.
+Harness servers, fake CLIs and helper scripts that a `node --test` file or a
+fixture spawns run without `NODE_OPTIONS=--import=<preload>`, so a recursive
+delete computed *inside* a spawned helper is covered only where that helper
+calls `safeWipeSync` itself (the audit in section 4 lists those sites). The
+preload deliberately does not export `NODE_OPTIONS` for children: the app
+server under test legitimately deletes subdirectories of its own data
+directory (workspaces, staging, snapshots), the variable would also reach
+Electron and other non-test children whose behaviour under `NODE_OPTIONS`
+this lane has not verified, and a guard that fires inside the product would
+be testing the guard rather than the product. Scratch data directories handed to children
+are admitted by `lane-data-dir.ts` / `assertSafeToWipe` before the child
+starts, which is the layer that keeps a child's data dir out of `~/.murage`.
+
 Human specs: `src/e2e/lane-data-dir.ts` is the only reader of
 `MURAGE_E2E_DATA_DIR`. It throws without the variable (no fallback anywhere,
 finishing the CLAC2/CLAC3 sweep) and admits the value through
@@ -163,7 +181,7 @@ root through it and admits an override (`MURAGE_E2E_OUTPUT`,
 ## 3. Verifying
 
 ```
-pnpm exec vitest run server/testing/safe-wipe.test.ts server/testing/data-safety.test.ts src/e2e/evidence.test.ts
+pnpm exec vitest run server/testing/safe-wipe.test.ts server/testing/safe-wipe-sh.test.ts server/testing/data-safety.test.ts src/e2e/evidence.test.ts
 pnpm test:electron          # node --test with the guard preloaded
 node --test installer/test/*.test.mjs
 ```
@@ -171,14 +189,35 @@ node --test installer/test/*.test.mjs
 `safe-wipe.test.ts` covers: temp admitted; scratch segment admitted;
 `within` admitted only strictly inside a non-home root; `~/.murage`, its
 children and every parent of it refused; the account's real data dir
-refused while `HOME` is faked; a non-scratch `MURAGE_DATA_DIR` and its
-parents refused; cwd, its parents and `/` refused; a directory whose lease
-is held by a live foreign process refused (a real child process holds it)
-while a dead or self-owned lease is admitted; a symlink inside scratch that
-points at protected data refused; the process-wide guard refusing
-`fs.rmSync` / `fs.promises.rm` / callback `fs.rm` on protected paths while
-letting temp deletes through. `data-safety.test.ts` is the repository scan
-(section 4), including recursive deletes whose options object spans lines.
+refused while `HOME` is faked and while `TMPDIR` is pointed at the home, a
+parent of it or `~/.murage` itself; a faked `HOME` equal to the temp dir
+refused while one strictly inside it stays disposable; a non-scratch
+`MURAGE_DATA_DIR` and its parents refused; cwd, its parents and `/` refused;
+a directory whose lease is held by a live foreign process refused (a real
+child process holds it) while a dead or self-owned lease is admitted; a
+symlink inside scratch that points at protected data refused; the
+process-wide guard refusing `fs.rmSync` / `fs.promises.rm` / callback
+`fs.rm` on protected paths while letting temp deletes through.
+`safe-wipe-sh.test.ts` drives `scripts/safe-wipe.sh` from bash through the
+same matrix (faked and real home, `TMPDIR` misconfiguration, cwd, roots,
+`MURAGE_DATA_DIR`, live and dead leases, symlinks, `SAFE_WIPE_WITHIN`).
+`data-safety.test.ts` is the repository scan (section 4), including
+recursive deletes whose options object spans lines.
+
+**Test-safety rule for these tests.** No test in this repository fires a
+recursive delete at a real location and relies on the guard to refuse it.
+Every live-fire probe that names the real `~/.murage` or the account home
+names a *child that does not exist* (`~/.murage/safe-wipe-guard-probe-does-not-exist-<pid>`):
+the "lies inside the Murage data directory" rule refuses it, and with
+`force: true` (or `rm -rf`) a guard that failed to refuse would be a no-op.
+The real directory itself is checked assert-only (`assertNotProtected`) with
+no filesystem call. A regression in the guard therefore fails the test; it
+cannot reproduce the incident.
+
+The probes under `docs/verification/data-safety-probes/` (`wipe-race.mjs`,
+`rmdir-semantics.mjs`) use raw `rmSync` recursive on `mkdtemp` roots on
+purpose, to reproduce the incident's filesystem signature; `docs/` is outside
+the repository scan for that reason.
 
 ## 4. Audit: every recursive delete outside vitest files
 

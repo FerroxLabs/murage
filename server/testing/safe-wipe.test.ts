@@ -96,6 +96,28 @@ describe("assertSafeToWipe refuses", () => {
     refuses(dirname(real), /home directory/, {});
   });
 
+  it("the account's data dir when TMPDIR is misconfigured to cover the home (never disposable)", () => {
+    const real = userInfo().homedir;
+    const probe = join(real, ".murage", "safe-wipe-probe-does-not-exist");
+    for (const tmp of [real, dirname(real), join(real, ".murage")]) {
+      refuses(join(real, ".murage"), /Murage data directory|home directory/, { tmpdir: tmp });
+      refuses(probe, /Murage data directory|home directory/, { tmpdir: tmp });
+      refuses(real, /home directory/, { tmpdir: tmp });
+      refuses(dirname(real), /home directory/, { tmpdir: tmp });
+    }
+  });
+
+  it("a faked HOME that equals the temp dir, while a HOME strictly inside the temp dir stays disposable", () => {
+    // HOME == TMPDIR is not a throwaway home (TMPDIR=$HOME misconfiguration).
+    refuses(join(FAKE_HOME, ".murage"), /Murage data directory/, { homedir: FAKE_HOME, tmpdir: FAKE_HOME });
+    refuses(FAKE_HOME, /home directory/, { homedir: FAKE_HOME, tmpdir: FAKE_HOME });
+    // HOME strictly inside TMPDIR is the vitest shape: its data dir is disposable.
+    expect(assertSafeToWipe(join(FAKE_HOME, ".murage"), { homedir: FAKE_HOME, tmpdir: dirname(FAKE_HOME) }).admitted).toBe("tmpdir");
+    // vitest's own faked HOME (mkdtemp under the OS temp dir) is admitted as-is.
+    expect(process.env.HOME).not.toBe(userInfo().homedir);
+    expect(assertSafeToWipe(join(process.env.HOME!, ".murage")).admitted).toBe("tmpdir");
+  });
+
   it("a MURAGE_DATA_DIR inherited from the environment that is not scratch", () => {
     const env = { MURAGE_DATA_DIR: "/srv/murage/live-data" };
     refuses("/srv/murage/live-data", /MURAGE_DATA_DIR/, { ...opts, env });
@@ -184,13 +206,27 @@ describe("installSafeWipeGuard", () => {
   it("makes recursive fs deletes refuse protected paths, named imports included, and leaves other deletes alone", async () => {
     // setup.ts already installed the guard for this process; a second install is a no-op.
     expect(installSafeWipeGuard()).toBe(false);
-    const target = join(userInfo().homedir, ".murage");
+    // The real installation itself is checked assert-only: no fs call ever
+    // names it, so a regression in the guard cannot turn this test into the
+    // 21:05 incident on a developer's machine.
+    const realDataDir = join(userInfo().homedir, ".murage");
+    expect(() => assertNotProtected(realDataDir)).toThrow(/Murage data directory|home directory/);
+    expect(() => assertNotProtected(userInfo().homedir)).toThrow(/home directory/);
+    // The live-fire probes name a child of the real data dir that does not
+    // exist: the same "lies inside the Murage data directory" rule refuses it,
+    // and with force:true a guard that failed to refuse would be a no-op.
+    const target = join(realDataDir, `safe-wipe-guard-probe-does-not-exist-${process.pid}-${Date.now().toString(36)}`);
+    expect(existsSync(target)).toBe(false);
+    expect(() => assertNotProtected(target)).toThrow(/lies inside the Murage data directory/);
     expect(() => rmSync(target, { recursive: true, force: true })).toThrow(SafeWipeRefused);
     expect(() => fs.rmSync(target, { recursive: true, force: true })).toThrow(SafeWipeRefused);
     await expect(rm(target, { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
     await expect(fs.promises.rm(target, { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
     await expect(new Promise((resolve, reject) => fs.rm(target, { recursive: true, force: true }, (e) => e ? reject(e) : resolve(null)))).rejects.toBeInstanceOf(SafeWipeRefused);
-    expect(existsSync(target) || true).toBe(true);
+    // The throwaway HOME vitest fakes (mkdtemp under the OS temp dir) stays
+    // disposable under the guard; the probe is a nonexistent child, a no-op.
+    expect(process.env.HOME).not.toBe(userInfo().homedir);
+    expect(() => rmSync(join(process.env.HOME!, ".murage", "safe-wipe-guard-probe-does-not-exist"), { recursive: true, force: true })).not.toThrow();
     // Non-recursive deletes of ordinary files are untouched.
     const file = join(scratch, "plain.txt"); writeFileSync(file, "x");
     rmSync(file, { force: true });
