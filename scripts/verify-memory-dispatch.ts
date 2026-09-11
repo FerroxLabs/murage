@@ -133,6 +133,18 @@ async function main() {
     const made=await api("POST","/api/groups",{name:"Memory fixture room",memberIds:[a.id,b.id],setup:{bulletin:"Fixture only",defaultResponder:{kind:"mentions"}}});
     assert.equal(made.status,201);const room=made.body.group as {id:string;threadId:string};
     assert.equal((await api("PUT",`/api/bots/${a.id}/memory`,{text:"LEGACY_PRIVATE_NOTEBOOK_CANARY"})).status,200);
+    // The memory worker's idle pass migrates detected notebooks on its own
+    // 1 s cadence and every import revokes every disclosure, so under load
+    // that pass could land between a delivery and its receipt read below.
+    // Import the notebook through the owner route first: the revoke happens
+    // here, before any dispatch, and the later passes find nothing new. The
+    // canary now lives in the authority as an unverified import and must
+    // still stay out of every provider input below.
+    const preview=await api("POST","/api/memory/action",{action:"import-preview",selections:[{kind:"bot",botId:a.id}]});
+    assert.equal(preview.status,200,JSON.stringify(preview.body));
+    const imported=await api("POST","/api/memory/action",{action:"import-commit",previewId:preview.body.previewId,track:true});
+    assert.equal(imported.status,200,JSON.stringify(imported.body));
+    assert.equal(imported.body.imported,1,"Legacy notebook was not imported before the first dispatch");
     db=new DatabaseSync(join(fixture.info.dataDir,"messages.db"));
     db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
     const privateA=pin("fixture-a-private","bot",a.id,"PRIVATE_A_CANARY Keep the launch date confidential.",a.threadId);
