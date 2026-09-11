@@ -524,5 +524,8 @@
   "chatHeader.botFolderAt": "Ordner dieses Bots: {path}",
   "chatHeader.noDedicatedWorkspace": "Kein eigener Arbeitsbereichsordner; stattdessen werden die für diesen Bot gespeicherten Dateien aufgeführt.",
   "chatHeader.usageMenu": "Nutzung: {usage}",
-  "chatHeader.usageDetail": "Öffnet das Agentenprofil, in dem die Karte „Nutzung“ die vollständige Aufschlüsselung enthält."
+  "chatHeader.usageDetail": "Öffnet das Agentenprofil, in dem die Karte „Nutzung“ die vollständige Aufschlüsselung enthält.",
+  "composer.tooLarge": "Nicht gesendet: Diese Nachricht ist {size} groß, eine Nachricht darf höchstens {limit} groß sein. Kürze sie oder teile sie in kleinere Nachrichten auf. Dein Text ist noch da.",
+  "composer.refusedTooLarge": "Nicht gesendet: Murage hat diese Nachricht abgelehnt, weil sie zu groß ist ({size}). Kürze sie oder teile sie in kleinere Nachrichten auf. Dein Text ist noch da.",
+  "composer.dismissNotice": "Schließen"
 }
