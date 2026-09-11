@@ -322,7 +322,7 @@ describe("workspace search", () => {
 });
 
 describe("workspace-files route", () => {
-  it("serves discovery to the desktop only, parses strictly and leaves editing to F4-T1", async () => {
+  it("serves discovery to the desktop only, parses strictly and hands editing to F4-T1", async () => {
     const f = fixture();
     f.write("reports/result.html", "<h1>ok</h1>");
     const q = "botId=bot&threadId=thread";
@@ -341,8 +341,11 @@ describe("workspace-files route", () => {
     }
     expect(await call(f.deps, `/api/workspace-files/list?${q}&directory=../x`)).toMatchObject({ status: 400, body: { code: "invalid-path" } });
     expect(await call(f.deps, "/api/workspace-files/root?botId=nobody&threadId=thread")).toMatchObject({ status: 404, body: { code: "scope-unavailable" } });
-    for (const path of ["/api/workspace-files/read", "/api/workspace-files/write", "/api/workspace-files/save-version"]) {
-      expect(await call(f.deps, path, { method: "POST" }), path).toMatchObject({ status: 501, body: { code: "not-implemented" } });
+    // F4-T1 now serves editing (server/workspace-files-write.test.ts). Here:
+    // hidden from non-desktop callers, and a wrong method never reads a body.
+    for (const [path, method] of [[`/api/workspace-files/read?${q}&path=a.md`, "POST"], ["/api/workspace-files/write", "GET"], ["/api/workspace-files/save-version", "GET"]] as const) {
+      expect(await call(f.deps, path, { method, desktop: false }), `${method} ${path}`).toEqual(hiddenRoute());
+      expect(await call(f.deps, path, { method }), `${method} ${path}`).toMatchObject({ status: 400, headers: { "cache-control": "no-store" }, body: { code: "invalid-request" } });
     }
     for (const path of ["/api/workspace-files", "/api/workspace-files/elsewhere"]) {
       expect(await call(f.deps, path), path).toMatchObject({ status: 404, body: { code: "not-found" } });

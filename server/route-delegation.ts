@@ -11,8 +11,10 @@ export interface DelegatedRequest {
   headers: IncomingHttpHeaders;
   /** requestSurface(...) === "desktop" (per-launch renderer proof). */
   desktop: boolean;
-  /** Bounded JSON body reader from server/index.ts; call at most once. */
-  readBody: () => Promise<unknown>;
+  /** Bounded JSON body reader from server/index.ts; call at most once.
+   * `maxBytes` raises or lowers the default 1,000,000-byte bound for one
+   * route (F4-T1: a 2 MiB Markdown save is larger once JSON-escaped). */
+  readBody: (maxBytes?: number) => Promise<unknown>;
 }
 
 export interface DelegatedResult {
