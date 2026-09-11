@@ -46,7 +46,9 @@ import { createServerChildLifecycle, awaitOwnedWork } from "./server-child-lifec
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
-import { defaultSaveName, withSavableFile } from "./save-file.mjs";
+import { defaultSaveName } from "./save-file.mjs";
+import { activeDesktopDataRoot, createSaveFileHandler } from "./native-file-handlers.mjs";
+import { mainRendererOrigin } from "./main-trust.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
@@ -2193,8 +2195,8 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // copy of the chat UI instead of the file. Ask where to put it and copy it
 // there instead: a save dialog tells the user the file landed somewhere and
 // where, which a silent copy into ~/Downloads does not. The path is
-// renderer-controlled, so it must resolve inside ~/.murage and be a
-// regular file — never a symlink escape or directory.
+// renderer-controlled, so it must resolve inside the active owned installation
+// root and be a regular file — never a symlink escape or directory.
 ipcMain.handle("desktop:reveal-workspace", async (event, botId, threadId) => {
   const parent = BrowserWindow.fromWebContents(event.sender);
   const expectedOrigin = new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;
@@ -2233,8 +2235,32 @@ ipcMain.handle("desktop:artifact-action", async (event, id, action) => {
   else { const error = await shell.openPath(savedPath); if (error) throw new Error("The operating system could not open this file. Download it instead."); }
 });
 
-ipcMain.handle("desktop:save-file", async (event, rawPath) => {
-  return withSavableFile(rawPath, { home: os.homedir() }, async ({ defaultName, copyTo }) => {
+// Native writers use the installation this process owns (B1/B3): after a
+// separate restore that is the selected installation, never the retained
+// original that MURAGE_DATA_DIR or ~/.murage still names. Recovery and closing
+// refuse. Only the owned main window's top frame may ask (K0 main-trust).
+function activeNativeDataRoot() {
+  return activeDesktopDataRoot({
+    packaged: app.isPackaged,
+    recovery: desktopRecoveryMode,
+    closing: desktopShutdownStarted,
+    owner: desktopDataOwner,
+    dataDirectory: desktopDataDir,
+    env: process.env,
+    home: os.homedir(),
+  });
+}
+const ownedMainRenderer = {
+  window: () => mainWindow,
+  origin: () => mainRendererOrigin({ packaged: app.isPackaged, serverPort: SERVER_PORT, devUrl: DEV_URL }),
+};
+
+// Same-file saves are a no-op and other destinations are staged then renamed
+// (B2, save-file.mjs), so a save can never truncate its own source.
+ipcMain.handle("desktop:save-file", createSaveFileHandler({
+  ...ownedMainRenderer,
+  activeRoot: activeNativeDataRoot,
+  chooseDestination: async ({ event, defaultName }) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const defaultPath = await defaultSaveName(app.getPath("downloads"), defaultName);
     const choice = await dialog.showSaveDialog(parent ?? undefined, {
@@ -2244,13 +2270,10 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
       buttonLabel: "Save",
       properties: ["createDirectory", "showOverwriteConfirmation"],
     });
-    // Cancelling is a decision, not a failure — the bubble stays quiet.
-    if (choice.canceled || !choice.filePath) return null;
-    await copyTo(choice.filePath);
-    shell.showItemInFolder(choice.filePath);
-    return choice.filePath;
-  });
-});
+    return choice.canceled || !choice.filePath ? null : choice.filePath;
+  },
+  reveal: (filePath) => shell.showItemInFolder(filePath),
+}));
 
 // The renderer owns the palette. Native Windows/Linux chrome is intentionally
 // outside that surface; acknowledge the renderer handshake without creating a
