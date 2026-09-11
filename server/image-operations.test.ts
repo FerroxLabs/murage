@@ -9,6 +9,7 @@ import { saveImage } from "./attachments.ts";
 import { describeArtifact } from "./artifacts.ts";
 import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
 import { managedImageOutputPath } from "./output-publication.ts";
+import { composeMessage } from "../src/lib/composer-attachments.ts";
 // C2 fault injection: attachment storage refuses the next N image commits.
 const faults = vi.hoisted(() => ({ saveImage: 0 }));
 vi.mock("./attachments.ts", async importOriginal => {
@@ -71,6 +72,38 @@ it("rejects foreign conversation references and arbitrary file or URL inputs",()
  expect(()=>imageReferences(f.store,f.actor.threadId,[name])).toThrow("unavailable");
  for(const input of [["../secret.png"],["https://example.test/image.png"],["/tmp/image.png"],Array(5).fill(name)])expect(()=>imageReferences(f.store,f.actor.threadId,input)).toThrow();
  f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:"reference",attachments:[{kind:"image",path:saved.path,mime:saved.mime}]});expect(imageReferences(f.store,f.actor.threadId,[name])).toHaveLength(1);
+});
+// F5-T4 (IMG-SEED): an image the person uploaded with a message rides in its
+// text as an <attached-image> tag, not in message.attachments. It is a
+// reference of that conversation; the same tag in a bot's text is not.
+it("accepts an image the person uploaded to this conversation and nothing a bot merely names",()=>{
+ const f=fixture(),mine=saveImage(Buffer.concat([png,Buffer.from([1])]),"image/png"),named=saveImage(Buffer.concat([png,Buffer.from([2])]),"image/png");
+ const id=(path:string)=>path.split(/[\\/]/).at(-1)!;
+ f.store.appendMessage(f.actor.threadId,{role:"user",kind:"text",text:composeMessage("edit this",[{kind:"image",id:"chip",path:mine.path,name:"mine.png",size:mine.bytes,mime:"image/png"}])});
+ f.store.appendMessage(f.actor.threadId,{role:"bot",kind:"text",text:`<attached-image path="${named.path}" />`});
+ expect(imageReferences(f.store,f.actor.threadId,[id(mine.path)])[0].bytes).toEqual(readFileSync(mine.path));
+ expect(()=>imageReferences(f.store,f.actor.threadId,[id(named.path)])).toThrow("unavailable");
+ const other=fixture();expect(()=>imageReferences(other.store,other.actor.threadId,[id(mine.path)])).toThrow("unavailable");
+});
+it("names the reference count in the owner's paid approval",async()=>{
+ const f=fixture(),provider=vi.fn();
+ const job=f.operations.execute(f.actor,"refs",{prompt:"edit"},async reserve=>{await reserve({...detail,operation:"edit",referenceCount:3});provider();});
+ const refusal=expect(job).rejects.toThrow("not approved");const card=await f.card();
+ expect(card.card?.title).toBe("Approve image edit");expect(card.card?.subtitle).toContain("One image from 3 reference images · openai · gpt-image-2");
+ f.operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");await refusal;expect(provider).not.toHaveBeenCalled();
+});
+it("names the pinned upstream endpoint in an OpenRouter approval and nothing for other providers",async()=>{
+ const f=fixture(),provider=vi.fn();
+ const routed={...detail,connectionId:"openrouter",provider:"openrouter" as const,model:"openai/gpt-image-2",operation:"edit" as const,referenceCount:2,endpointTag:"openai"};
+ const job=f.operations.execute(f.actor,"pinned",{prompt:"edit"},async reserve=>{await reserve(routed);provider();});
+ const refusal=expect(job).rejects.toThrow("not approved");const card=await f.card();
+ expect(card.card?.subtitle).toContain("One image from 2 reference images · openrouter · openai/gpt-image-2 (pinned to openai, no fallback)");
+ f.operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");await refusal;expect(provider).not.toHaveBeenCalled();
+ const g=fixture();
+ const plain=g.operations.execute(g.actor,"plain",{prompt:"draw"},async reserve=>{await reserve(detail);provider();});
+ const plainRefusal=expect(plain).rejects.toThrow("not approved");const plainCard=await g.card();
+ expect(plainCard.card?.subtitle).toContain("One image · openai · gpt-image-2.");expect(plainCard.card?.subtitle).not.toContain("pinned");
+ g.operations.resolve(g.actor.threadId,plainCard.card!.requestId!,"deny");await plainRefusal;expect(provider).not.toHaveBeenCalled();
 });
 it.skipIf(process.platform==="win32")("refuses symlinked image workspaces without writing outside the bot",()=>{
  const f=fixture(),parent=join(DATA_DIR,"workspaces"),target=join(DATA_DIR,"other-private-workspace");mkdirSync(parent,{recursive:true});mkdirSync(target);symlinkSync(target,join(parent,f.bot.id));

@@ -242,6 +242,39 @@ function setStoredSendId(store: Store, draftId: string, sendId: string | undefin
   }
 }
 
+type AttachmentAppendListener = (added: Attachment[]) => void;
+const attachmentAppendListeners = new Map<string, Set<AttachmentAppendListener>>();
+
+const samePath = (a: Attachment, b: Attachment) => a.kind !== "paste" && b.kind !== "paste" && a.kind === b.kind && a.path === b.path;
+
+/** Add attachment chips to a draft from outside its composer (F5-T4 "Use as
+ * reference"). A mounted composer merges them into its own state, so an
+ * in-flight upload or edit is never overwritten; otherwise they are stored
+ * for the next time the conversation is opened. The same file is not added
+ * twice. */
+export function appendComposerDraftAttachments(id: string, added: Attachment[]): void {
+  if (added.length === 0) return;
+  markDraftEdited(id);
+  const listeners = attachmentAppendListeners.get(id);
+  if (listeners?.size) {
+    for (const listener of listeners) listener(added);
+    return;
+  }
+  const store = getStore();
+  const current = getDraftAttachments(store, id);
+  setDraftAttachments(store, id, [...current, ...added.filter(item => !current.some(existing => samePath(existing, item)))]);
+}
+
+function subscribeToAttachmentAppends(id: string, listener: AttachmentAppendListener): () => void {
+  const listeners = attachmentAppendListeners.get(id) ?? new Set<AttachmentAppendListener>();
+  listeners.add(listener);
+  attachmentAppendListeners.set(id, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) attachmentAppendListeners.delete(id);
+  };
+}
+
 /** Restores a rejected send into storage and whichever task view is mounted. */
 export function restoreComposerDraft(id: string, draft: DraftRestore): void {
   const store = getStore();
@@ -438,6 +471,11 @@ export function useComposerDraft(
       setAttachmentState(value);
     },
     [store, id, attachmentMemory],
+  );
+  useEffect(
+    () => subscribeToAttachmentAppends(id, (added) =>
+      setAttachments((previous) => [...previous, ...added.filter((item) => !previous.some((existing) => samePath(existing, item)))])),
+    [id, setAttachments],
   );
   return [text, setText, attachments, setAttachments];
 }

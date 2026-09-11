@@ -362,7 +362,8 @@ import { commitPackageImportFiles, recoverPackageImportTransaction } from "./pac
 import { shouldMountLocalComputer } from "./local-routing.ts";
 // 0.1.52 K0 delegation seams (docs/plans/0152-CONTRACTS.md).
 import { workspaceFilesRoute } from "./workspace-files.ts";
-import { mediaAssetsRoute, resolveImageReferenceRoute } from "./media-assets.ts";
+import { mediaAssetsRoute } from "./media-assets.ts";
+import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";

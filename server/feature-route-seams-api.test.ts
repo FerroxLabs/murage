@@ -165,9 +165,12 @@ it("serves resolve-image-reference only to the active turn's agents capability",
     const auth = { authorization: `Bearer ${token}` };
     expect((await call("GET", "/api/internal/resolve-image-reference", auth)).status).toBe(405);
     expect((await call("POST", "/api/internal/resolve-image-reference?botId=someone-else", auth, {})).status).toBe(403);
+    // F5-T4 filled the K0 skeleton (intended behavior change from 501): the
+    // route resolves real bytes, so a workspace file that is not there is
+    // refused as missing. The authority assertions around it are unchanged.
     const resolved = await call("POST", "/api/internal/resolve-image-reference", auth, { source: { kind: "workspace", relativePath: "outputs/cover.png" } });
-    expect(resolved.status).toBe(501);
-    expect(resolved.body).toMatchObject({ code: "not-implemented" });
+    expect(resolved.status).toBe(410);
+    expect(resolved.body).toMatchObject({ code: "missing" });
     expect((await call("POST", `/api/bots/${bot.id}/interrupt`, desktop, { threadId: bot.threadId })).status).toBe(200);
     await expect.poll(async () => (await call("POST", "/api/internal/resolve-image-reference", auth, {})).status, { timeout: 10000 }).toBe(401);
   } finally {

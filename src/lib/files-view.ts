@@ -60,6 +60,23 @@ export function rootStateNotice(state: WorkspaceRootState): LocaleKey | undefine
   return undefined;
 }
 
+/** Native open/reveal of one live workspace file (F4-T5). The renderer
+ * names the conversation and the entry's relative path only; the Electron
+ * main process authorizes the file through the server, applies the extension
+ * allowlist, warns before a browser opens HTML/SVG, and revalidates the path
+ * immediately before the OS call. Absent outside the desktop shell. */
+export type WorkspaceNativeAction = (scope: WorkspaceScopeRef, entry: WorkspaceEntry, action: "open" | "reveal") => Promise<void>;
+
+export function workspaceNativeAction(): WorkspaceNativeAction | undefined {
+  const bridge = typeof window === "undefined" ? undefined : window.muragebox;
+  if (typeof bridge?.workspaceFileAction !== "function") return undefined;
+  const act = bridge.workspaceFileAction;
+  return (scope, entry, action) => {
+    if (!canSaveEntry(entry)) return Promise.reject(new Error(t("filesWorkspace.nativeUnavailable")));
+    return act({ botId: scope.botId, threadId: scope.threadId }, entry.relativePath, action);
+  };
+}
+
 export interface SavedVersionResult { artifact: Artifact; pinnedRevision: boolean }
 
 /** Save the exact revision the owner picked (F4-T1 `save-version`). Only when

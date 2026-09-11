@@ -22,6 +22,8 @@ Written by lane K0 on `lane/0152-K0`. Every 0.1.52 lane follows these shapes. If
 | `/api/media/bytes/<assetId>?cap=` (GET/HEAD, single range) | same | U-03 capability, deliberately exempt from the desktop header, which media elements cannot send. Until F5-T1 issues capabilities, non-desktop callers get 404. | desktop 501 |
 | `POST /api/internal/resolve-image-reference` | `resolveImageReferenceRoute(request, claim, deps)` | Active `agents` internal capability. Identity (`botId`/`threadId`/`generation`) comes from the claim, never from the body. | 501; GET 405 |
 
+**Added by F4-T5** (no existing shape changed): `WORKSPACE_FILES_ROUTES.native` — `GET /api/workspace-files/native?botId&threadId&path` → `WorkspaceNativeFile {scope, relativePath, root, revision, bytes, identity}`. The editor design lists native open/reveal as a workspace-files operation with an owner-bound capability, and the Electron main process needs an authorized file identity it can revalidate; the K0 table had no route for it. Desktop-only like the rest of the prefix, same root/link/hard-link/private-file policy as `read`, no bytes and no size limit. Only `electron/workspace-file-actions.mjs` consumes it; the renderer never sees `root` or `identity`.
+
 Modules return `DelegatedResult {status, headers?, body?, bytes?, stream?}`, and `sendDelegated` writes it (`server/route-delegation.ts`). `deps` is `{dataDir, database, store, artifactScopes}` (`featureRouteDeps` in index.ts). Adding a dependency is a one-line change to that object. The routing lines stay as they are.
 
 ## Hooks (`server/output-publication.ts`, created once as `outputPublisher`)
