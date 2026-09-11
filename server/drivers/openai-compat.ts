@@ -4,6 +4,7 @@ import { assertProviderKey } from "../../electron/provider-connections.mjs";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { requestMemoryExtraction } from "../memory/extract.ts";
+import { classifyLocalHostname } from "../../shared/local-models.ts";
 
 const DRIVER_KIND = "openai-compat";
 const DEFAULT_MODELS: ModelCatalog = {
@@ -20,6 +21,18 @@ export interface OpenAICompatConfig {
   key?: string;
   model?: string;
   provider?: string;
+}
+
+const LOOPBACK_PLACEHOLDER_KEY = "local";
+
+/** http(s) on 127.0.0.0/8, ::1 or localhost — never a LAN or public host. */
+function isLoopbackEndpoint(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && classifyLocalHostname(parsed.hostname) === "loopback";
+  } catch {
+    return false;
+  }
 }
 
 function isOpenRouterUrl(url: string): boolean {
@@ -90,6 +103,11 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       try { assertProviderKey("openrouter", apiKey); }
       catch { credentialMismatch = true; apiKey = ""; }
     }
+    // Spec E4: a server on this machine needs no key. The shared runtime
+    // refuses an empty key, so a keyless loopback endpoint gets a harmless
+    // placeholder instead of asking the user to invent one. LAN and remote
+    // endpoints still need a real key.
+    if (!apiKey && !credentialMismatch && isLoopbackEndpoint(config.url)) apiKey = LOOPBACK_PLACEHOLDER_KEY;
     let catalog: ModelCatalog = config.model
       ? {
           default: config.model,

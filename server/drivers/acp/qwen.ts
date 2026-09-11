@@ -18,7 +18,7 @@ import type { ModelCatalog } from "../../contracts.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../../flux-routing.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
-import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { displayConfigPath, isPlainObject, NativeConfigRefusal, readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
@@ -89,6 +89,37 @@ export function ensureQwenInjectModel(
     // Windows ignores POSIX modes; keep the inject even if chmod is unsupported.
   }
   return inject.model;
+}
+
+/** Spec A3: drop the provider row and key Murage wrote for a removed server. */
+export function removeQwenLocalHost(
+  host: LocalHost,
+  env: Record<string, string | undefined> = process.env,
+): "removed" | "absent" {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  const path = join(qwenHome(env), "settings.json");
+  const existing = readNativeJsonConfig(path, home);
+  if (!existing) return "absent";
+  const settings: Record<string, unknown> = { ...existing.value };
+  const keyName = envKeyFor(host.id);
+  let changed = false;
+  if (isPlainObject(settings.env) && Object.hasOwn(settings.env, keyName)) {
+    const nextEnv = { ...settings.env };
+    delete nextEnv[keyName];
+    settings.env = nextEnv;
+    changed = true;
+  }
+  if (isPlainObject(settings.modelProviders) && Array.isArray(settings.modelProviders.openai)) {
+    const rows = settings.modelProviders.openai as unknown[];
+    const kept = rows.filter((row) => !(isPlainObject(row) && row.baseUrl === host.baseUrl && row.envKey === keyName));
+    if (kept.length !== rows.length) {
+      settings.modelProviders = { ...settings.modelProviders, openai: kept };
+      changed = true;
+    }
+  }
+  if (!changed) return "absent";
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
+  return "removed";
 }
 
 const DRIVER_KIND = "qwenAgent";
