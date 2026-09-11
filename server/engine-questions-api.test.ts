@@ -194,7 +194,10 @@ posixOnly("engine questions through the harness", () => {
     expect((await request("POST", `/api/bots/${bot.id}/respond`, { requestId: again.card.requestId, behavior: "skip" })).body).toEqual({ ok: true, outcome: "rejected" });
     await settled(bot);
     expect(JSON.parse(readFileSync(join(dumps, "fuigo.json"), "utf8")).decision).toEqual({ outcome: "cancelled" });
-    expect(decisions().filter((row) => row.decision === "question-skipped" && row.botId === bot.id)).toHaveLength(1);
+    // appendDecision queues the row and writes it after /respond returns, so it
+    // can reach decisions.ndjson after the turn has settled. Wait for exactly
+    // that one row instead of reading the file once.
+    await expect.poll(() => decisions().filter((row) => row.decision === "question-skipped" && row.botId === bot.id)).toHaveLength(1);
     const after = (await messages(bot.threadId)).find((m) => m.id === again.id);
     expect(after.card.answered).toBe("skipped");
   }, 60_000);
