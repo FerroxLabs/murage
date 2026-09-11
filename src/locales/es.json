@@ -3,6 +3,7 @@
   "claudeAccounts.removed": "Eliminada de Murage. Se conservaron el inicio de sesión y los archivos de credenciales.",
   "claudeAccounts.saved": "Configuración de la cuenta guardada.",
   "claudeAccounts.refreshError": "Se guardó, pero no se pudo actualizar la lista de cuentas. Usa Actualizar cuentas para comprobar su estado actual.",
+  "claudeAccounts.fleetRefreshError": "Se guardó, pero no se pudo actualizar la lista de motores. Cambia a otra ventana y vuelve para volver a sondear los motores.",
   "claudeAccounts.changeError": "No se pudo cambiar la cuenta.",
   "claudeAccounts.listUnreadable": "No se pudo leer la lista de cuentas de Claude. Usa Actualizar cuentas para volver a intentarlo.",
   "claudeAccounts.copied": "Se copió el comando de inicio de sesión de {name}.",

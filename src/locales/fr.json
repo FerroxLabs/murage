@@ -3,6 +3,7 @@
   "claudeAccounts.removed": "Retiré de Murage. La connexion et les fichiers d’identifiants ont été conservés.",
   "claudeAccounts.saved": "Paramètres du compte enregistrés.",
   "claudeAccounts.refreshError": "Enregistré, mais la liste des comptes n’a pas pu être actualisée. Utilisez Actualiser les comptes pour vérifier son état actuel.",
+  "claudeAccounts.fleetRefreshError": "Enregistré, mais la liste des moteurs n’a pas pu être actualisée. Passez à une autre fenêtre puis revenez pour sonder à nouveau les moteurs.",
   "claudeAccounts.changeError": "La modification du compte a échoué.",
   "claudeAccounts.listUnreadable": "Impossible de lire la liste des comptes Claude. Utilisez Actualiser les comptes pour réessayer.",
   "claudeAccounts.copied": "Commande de connexion de {name} copiée.",
