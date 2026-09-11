@@ -14,6 +14,8 @@ import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
 import { engineFamilies } from "@/lib/provider-model-picker";
+import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
+import { localEngineSupport } from "../../shared/local-models";
 import { cn } from "@/lib/cn";
 
 interface ProbeResult {
@@ -202,7 +204,13 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
 }
 
 function EngineRow({ instance }: { instance: InstanceInfo }) {
-  const { refreshInstances } = useStore();
+  const { refreshInstances, dispatch } = useStore();
+  // One place, one name (spec UX rule): this link is the same destination the
+  // picker's empty Local rail row uses.
+  const openLocalModels = () => {
+    dispatch({ type: "toggleAppSettings", open: true, section: "models" });
+    setTimeout(() => window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)), 0);
+  };
   const cliConfigurable = !["grok", "openai-compat", "boxAgent"].includes(instance.driverKind);
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -308,6 +316,18 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
           : needsSignIn(instance) ? "Detected · sign-in required"
             : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
       </p>
+      {/* Spec V4: every engine says where it stands on local models, in one
+          line, with the one place to manage them. An engine that cannot use a
+          local server at all gets no line rather than a denial. */}
+      {engineLocalLine(instance.driverKind) && (
+        <p className="mt-1 text-[12px] text-ink-secondary">
+          {engineLocalLine(instance.driverKind)}
+          {localEngineSupport(instance.driverKind) === "tools" && <>
+            {" "}
+            <button type="button" onClick={openLocalModels} className="text-accent underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Open {LOCAL_MODELS_TITLE}</button>
+          </>}
+        </p>
+      )}
       {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
         <EngineSetup instance={instance} className="mt-2" />
       )}

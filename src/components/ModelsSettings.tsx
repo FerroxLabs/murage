@@ -4,6 +4,7 @@ import { extractKeys, modelProviderCandidates } from "../../shared/key-extract";
 import type { ProviderCatalog, ProviderConnectionMutation, ProviderModel, ProviderPreset, PublicProviderConnection } from "../../shared/provider-connections";
 import type { FluxConnectionMutation, FluxConnectionStatus } from "../../shared/flux-connection";
 import { FluxRouterConnection } from "./FluxRouterConnection";
+import { LocalModelsSettings } from "./LocalModelsSettings";
 
 type Snapshot = { connections: PublicProviderConnection[]; storage: "encrypted" | "local-config" };
 const labels: Record<ProviderPreset, string> = { anthropic: "Anthropic", openai: "OpenAI", openrouter: "OpenRouter", deepseek: "DeepSeek", mistral: "Mistral", flux: "Flux Router", groq: "Groq", xai: "xAI" };
@@ -193,6 +194,8 @@ export function ModelsSettings() {
         <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary">Catalog information is not a successful model test. Image and video models are excluded from this chat list.</p>
       </section>;
     })}
+    {/* Spec V1: permanent, never conditional on anything having been detected. */}
+    <LocalModelsSettings />
     <section id="existing-model-keys" aria-labelledby="existing-keys-heading" className="rounded-xl border border-hairline/40 p-4">
       <h3 id="existing-keys-heading" className="text-[14px] font-medium">Existing/default connections</h3><p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">These update the keys already used by existing setups. No keys are copied into new connections. Saving can reload engines and interrupt running tasks.</p>
       <ExistingKey id="opencode" label="OpenCode provider" configured={state.config?.opencodeGo?.configured ?? false} onSaved={existingSaved} />
