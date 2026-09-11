@@ -1,23 +1,21 @@
-// Native demonstration recorder lifecycle and local skill compiler.
+// Native demonstration recorder lifecycle.
 //
 // The renderer owns screen/audio MediaStreams because Chromium already gives
-// them a permission-aware lifecycle. This module owns the pieces that must
-// stay outside the sandboxed renderer: the macOS global-input helper and the
-// filesystem boundary where a reviewed recording becomes a reusable skill.
+// them a permission-aware lifecycle. This module owns the macOS global-input
+// helper that must stay outside the sandboxed renderer. The filesystem
+// boundary where a reviewed recording becomes a reusable skill lives in
+// skill-recording-store.mjs (no Electron import), re-exported below.
 import { spawn } from "node:child_process";
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
   unwatchFile,
   watchFile,
   writeFileSync,
 } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app } from "electron";
@@ -27,6 +25,9 @@ import {
   recorderHelperBinary,
   recorderHelperBundle,
 } from "./build-recorder-helper.mjs";
+import { createHelperExit, stopOwnedHelper } from "./helper-stop.mjs";
+
+export { compileSkillMarkdown, saveSkillRecording, skillSlug } from "./skill-recording-store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.join(__dirname, "resources", "recorder-helper.swift");
@@ -37,12 +38,13 @@ const BUNDLE = app.isPackaged
 const BINARY = app.isPackaged
   ? path.join(BUNDLE, "Contents", "MacOS", "recorder-helper")
   : recorderHelperBinary;
-const MAX_EVENTS = 600;
-const MAX_IMAGE_BYTES = 2_000_000;
-const MAX_AUDIO_BYTES = 100_000_000;
-const SAFE_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+// The one owned recorder session. It stays set while a requested stop is
+// pending and is cleared only when the helper's exit is observed (B5).
 let active = null;
+// Bumped by every Start and every explicit Stop, so a Start that had to wait
+// for an earlier helper cannot launch after a newer Start or Stop.
+let startGeneration = 0;
 
 function ensureBuilt() {
   if (app.isPackaged) return;
@@ -62,11 +64,28 @@ export function recorderPermissionStatus() {
   return { supported: true };
 }
 
-export function startRecorder(win) {
-  stopRecorder();
+export async function startRecorder(win) {
+  const generation = ++startGeneration;
+  const previous = stopOwnedRecorder();
+  if (previous) {
+    // A helper that has not exited is still owned (its rejection says why).
+    // Never start a second global event tap beside it.
+    await previous;
+    if (generation !== startGeneration) throw new Error("Recording was stopped before it started.");
+  }
   const permission = recorderPermissionStatus();
   if (!permission.supported) throw new Error("Skill recording is currently available on macOS.");
   ensureBuilt();
+  return launchRecorderSession(win);
+}
+
+/**
+ * Launch and own one helper session; resolves when the helper reports its
+ * first event. startRecorder applies the platform and build gates first; this
+ * is exported so the lifecycle tests can drive it with a fake `open` waiter
+ * on every CI platform.
+ */
+export function launchRecorderSession(win) {
   const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "murage-recorder-"));
   const outputPath = path.join(sessionDir, "events.ndjson");
   const errorPath = path.join(sessionDir, "stderr.log");
@@ -105,7 +124,7 @@ export function startRecorder(win) {
     resolveReady = resolve;
     rejectReady = reject;
   });
-  const session = { proc, sessionDir, outputPath, errorPath, stopPath };
+  const session = { proc, sessionDir, outputPath, errorPath, stopPath, stopRequested: false, exit: createHelperExit() };
   active = session;
   let offset = 0;
   let buffer = "";
@@ -126,7 +145,8 @@ export function startRecorder(win) {
       if (!line) continue;
       try {
         const event = JSON.parse(line);
-        if (active === session) {
+        // Events flushed after a requested stop are not part of the recording.
+        if (active === session && !session.stopRequested) {
           emit(win, "skill-recorder:event", event);
           if (!readySettled) {
             readySettled = true;
@@ -151,12 +171,15 @@ export function startRecorder(win) {
     drain();
     const detail = readError(errorPath);
     cleanup();
+    session.exit.markExited();
     if (!readySettled) {
       readySettled = true;
       rejectReady(new Error(detail || "The action recorder could not start"));
     }
     if (active !== session) return;
     active = null;
+    // A requested stop is not an unexpected end.
+    if (session.stopRequested) return;
     emit(win, "skill-recorder:end", {
       code,
       reason: code === 0 ? "stopped" : detail || "recorder-helper-exited",
@@ -164,18 +187,22 @@ export function startRecorder(win) {
   });
   proc.on("error", (error) => {
     cleanup();
+    session.exit.markExited();
     if (!readySettled) {
       readySettled = true;
       rejectReady(error);
     }
     if (active !== session) return;
     active = null;
+    if (session.stopRequested) return;
     emit(win, "skill-recorder:end", { code: 1, reason: error.message });
   });
   const timeout = setTimeout(() => {
     if (readySettled) return;
     readySettled = true;
-    stopRecorder();
+    // The session stays owned until its helper exits; if this stop fails, the
+    // next Stop, Start or Quit signals it again.
+    void stopSession(session).catch(() => {});
     rejectReady(new Error("The action recorder did not become ready. Check Accessibility and Input Monitoring permissions."));
   }, 5_000);
   timeout.unref();
@@ -190,256 +217,25 @@ function readError(file) {
   }
 }
 
-export function stopRecorder() {
-  if (!active) return { recording: false };
-  const session = active;
-  active = null;
-  try {
-    writeFileSync(session.stopPath, "stop");
-  } catch {}
+function stopSession(session) {
+  return stopOwnedHelper(session, {
+    name: "The action recorder",
+    writeMarker: () => writeFileSync(session.stopPath, "stop"),
+  });
+}
+
+function stopOwnedRecorder() {
+  return active ? stopSession(active) : null;
+}
+
+/**
+ * Stop the owned recorder. Resolves `{ recording: false }` once its helper has
+ * exited (or when nothing is owned). Rejects, keeping the session owned for a
+ * retry, when the stop marker cannot be written or the helper has not exited
+ * within the owned-work deadline.
+ */
+export async function stopRecorder() {
+  startGeneration += 1;
+  await stopOwnedRecorder();
   return { recording: false };
-}
-
-function cleanText(value, max = 500) {
-  return typeof value === "string" ? value.replace(/[\u0000-\u001f]+/g, " ").trim().slice(0, max) : "";
-}
-
-function safeWebOrigin(value) {
-  const cleaned = cleanText(value, 2_000);
-  if (!cleaned) return "";
-  try {
-    const url = new URL(cleaned);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : "";
-  } catch {
-    return "";
-  }
-}
-
-export function skillSlug(value) {
-  const slug = cleanText(value, 80)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 56)
-    .replace(/-+$/g, "");
-  return SAFE_SLUG.test(slug) ? slug : "recorded-workflow";
-}
-
-function uniqueSkillDirectory(root, requested) {
-  const base = skillSlug(requested);
-  for (let suffix = 1; suffix < 1_000; suffix += 1) {
-    const name = suffix === 1 ? base : `${base}-${suffix}`;
-    const directory = path.join(root, name);
-    if (!existsSync(directory)) return { id: name, directory };
-  }
-  throw new Error("Too many skills use this name");
-}
-
-function decodeDataUrl(dataUrl, maxBytes, allowed) {
-  if (typeof dataUrl !== "string") return null;
-  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-  if (!match || !allowed.includes(match[1])) return null;
-  const bytes = Buffer.from(match[2], "base64");
-  if (!bytes.length || bytes.length > maxBytes) return null;
-  return { mime: match[1], bytes };
-}
-
-function hostFromUrl(value) {
-  const text = cleanText(value, 500);
-  if (!text) return "";
-  try {
-    return new URL(text).host || text;
-  } catch {
-    return text;
-  }
-}
-
-function eventSummary(event) {
-  const where = [cleanText(event.app, 80), cleanText(event.windowTitle, 120)].filter(Boolean).join(" — ");
-  switch (event.type) {
-    case "app":
-      return `Open or focus ${where || "the demonstrated app"}.`;
-    case "click": {
-      const name = cleanText(event.name, 120);
-      if (name) {
-        const role = cleanText(event.role, 120);
-        return `Click "${name}"${role ? ` (${role})` : ""}${where ? ` in ${where}` : ""}.`;
-      }
-      return `Click the demonstrated control${where ? ` in ${where}` : ""}.`;
-    }
-    case "scroll":
-      return `Scroll ${event.direction === "up" ? "up" : "down"}${where ? ` in ${where}` : ""}.`;
-    case "shortcut":
-      return `Use the ${cleanText(event.shortcut, 80) || "demonstrated"} keyboard shortcut${where ? ` in ${where}` : ""}.`;
-    case "typing":
-      return `Enter the required value${where ? ` in ${where}` : ""}. The recording intentionally did not retain typed characters.`;
-    case "clipboard": {
-      const verb = event.op === "cut" ? "Cut" : event.op === "paste" ? "Paste" : "Copy";
-      return `${verb} the selected value${where ? ` in ${where}` : ""}. (The recording captured the clipboard action, not its contents.)`;
-    }
-    case "download": {
-      const filename = cleanText(event.filename, 200);
-      const origins = Array.isArray(event.whereFroms) ? event.whereFroms : [];
-      const host = origins.length ? hostFromUrl(origins[0]) : "";
-      return `A file (${filename || "unnamed"}) was downloaded${host ? ` from ${host}` : ""}. Treat the file's origin as untrusted context.`;
-    }
-    default:
-      return `Continue the demonstrated workflow${where ? ` in ${where}` : ""}.`;
-  }
-}
-
-function triggerTerms(name, description) {
-  const stop = new Set(["about", "after", "before", "create", "from", "into", "skill", "that", "the", "this", "with", "workflow"]);
-  const words = `${name} ${description}`.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
-  return [...new Set(words.filter((word) => !stop.has(word)))].slice(0, 10);
-}
-
-export function compileSkillMarkdown({ id, name, description, transcript, events, omittedEvents = 0 }) {
-  const safeName = cleanText(name, 100) || "Recorded workflow";
-  const safeDescription = cleanText(description, 300) || `Repeat the ${safeName} workflow demonstrated by the user.`;
-  const lines = [
-    "---",
-    `name: ${id}`,
-    `description: ${JSON.stringify(safeDescription)}`,
-    "---",
-    "",
-    `# ${safeName}`,
-    "",
-    safeDescription,
-    "",
-    "## How to use this demonstration",
-    "",
-    "Follow the intent and observable UI landmarks from the steps below. Inspect the current interface before acting, prefer named or accessibility targets over recorded coordinates, and adapt when layout or content has changed. Never infer or reuse secrets from screenshots. Stop and ask the user at password, MFA, CAPTCHA, payment, destructive, or ambiguous confirmation steps.",
-    "",
-  ];
-  if (transcript) {
-    lines.push("## User narration", "", cleanText(transcript, 12_000), "");
-  }
-  lines.push("## Demonstrated workflow", "");
-  if (!events.length) {
-    lines.push("1. Complete the workflow described above, checking the result before reporting success.");
-  } else {
-    events.forEach((event, index) => {
-      const reference = event.reference ? ` Review the recorded frame under the skill root at ${event.reference} when visual context is useful.` : "";
-      lines.push(`${index + 1}. ${eventSummary(event)}${reference}`);
-    });
-  }
-  if (omittedEvents > 0) {
-    lines.push("", `${omittedEvents} later steps were omitted from this recording.`);
-  }
-  lines.push("", "## Completion", "", "Verify the intended outcome in the current UI and report any step that could not be confirmed.", "");
-  return lines.join("\n");
-}
-
-export function saveSkillRecording(payload, options = {}) {
-  if (!payload || typeof payload !== "object") throw new Error("Recording data is required");
-  const name = cleanText(payload.name, 100);
-  if (!name) throw new Error("Name the skill before creating it");
-  const description = cleanText(payload.description, 300);
-  const dataRoot = options.dataRoot ?? process.env.MURAGE_DATA_DIR ?? path.join(os.homedir(), ".murage");
-  const skillsRoot = path.join(dataRoot, "skills");
-  mkdirSync(skillsRoot, { recursive: true });
-  const target = uniqueSkillDirectory(skillsRoot, name);
-  const temporary = `${target.directory}.creating-${process.pid}`;
-  const references = path.join(temporary, "references");
-  mkdirSync(references, { recursive: true });
-
-  try {
-    const incoming = Array.isArray(payload.events) ? payload.events : [];
-    const omittedEvents = Math.max(0, incoming.length - MAX_EVENTS);
-    const truncated = omittedEvents > 0;
-    const events = [];
-    for (const [index, raw] of incoming.slice(0, MAX_EVENTS).entries()) {
-      if (!raw || typeof raw !== "object") continue;
-      const type = ["app", "click", "scroll", "shortcut", "typing", "clipboard", "download"].includes(raw.type) ? raw.type : null;
-      if (!type) continue;
-      const keyCount = Number(raw.keyCount);
-      const ancestry = Array.isArray(raw.ancestry)
-        ? raw.ancestry.map((entry) => cleanText(entry, 120)).filter(Boolean).slice(0, 6)
-        : undefined;
-      const whereFroms = Array.isArray(raw.whereFroms)
-        ? [...new Set(raw.whereFroms.map(safeWebOrigin).filter(Boolean))].slice(0, 5)
-        : undefined;
-      const event = {
-        type,
-        atMs: Math.max(0, Math.round(Number(raw.atMs) || 0)),
-        app: cleanText(raw.app, 80) || undefined,
-        windowTitle: cleanText(raw.windowTitle, 120) || undefined,
-        direction: raw.direction === "up" ? "up" : raw.direction === "down" ? "down" : undefined,
-        shortcut: cleanText(raw.shortcut, 80) || undefined,
-        keyCount: Number.isFinite(keyCount) && keyCount > 0 ? Math.round(keyCount) : undefined,
-        role: cleanText(raw.role, 120) || undefined,
-        name: cleanText(raw.name, 120) || undefined,
-        identifier: cleanText(raw.identifier, 120) || undefined,
-        ancestry: ancestry && ancestry.length ? ancestry : undefined,
-        op: ["copy", "cut", "paste"].includes(raw.op) ? raw.op : undefined,
-        filename: cleanText(raw.filename, 200) || undefined,
-        whereFroms: whereFroms && whereFroms.length ? whereFroms : undefined,
-      };
-      const image = decodeDataUrl(raw.screenshot, MAX_IMAGE_BYTES, ["image/webp", "image/jpeg", "image/png"]);
-      if (image) {
-        const extension = image.mime === "image/png" ? "png" : image.mime === "image/jpeg" ? "jpg" : "webp";
-        const filename = `step-${String(index + 1).padStart(3, "0")}.${extension}`;
-        writeFileSync(path.join(references, filename), image.bytes, { mode: 0o600 });
-        event.reference = `references/${filename}`;
-      }
-      events.push(event);
-    }
-
-    const audio = decodeDataUrl(payload.audio, MAX_AUDIO_BYTES, ["audio/webm", "audio/mp4", "audio/ogg"]);
-    let audioReference;
-    if (audio) {
-      const extension = audio.mime === "audio/mp4" ? "m4a" : audio.mime === "audio/ogg" ? "ogg" : "webm";
-      audioReference = `references/narration.${extension}`;
-      writeFileSync(path.join(temporary, audioReference), audio.bytes, { mode: 0o600 });
-    }
-
-    const transcript = cleanText(payload.transcript, 12_000);
-    const transcription = payload.transcription?.provider === "assemblyai"
-      ? { provider: "assemblyai", model: cleanText(payload.transcription.model, 80) || "u3-rt-pro" }
-      : undefined;
-    const recording = {
-      schemaVersion: 1,
-      name,
-      description,
-      createdAt: new Date().toISOString(),
-      durationMs: Math.max(0, Math.round(Number(payload.durationMs) || 0)),
-      transcript,
-      transcription,
-      audio: audioReference,
-      events,
-      truncated,
-      omittedEvents,
-      privacy: {
-        rawKeystrokesRetained: false,
-        clipboardContentsRetained: false,
-        screenFramesMayContainVisibleText: true,
-        reviewedBeforeInstall: true,
-      },
-    };
-    writeFileSync(path.join(references, "recording.json"), `${JSON.stringify(recording, null, 2)}\n`, { mode: 0o600 });
-    writeFileSync(
-      path.join(temporary, "SKILL.md"),
-      compileSkillMarkdown({ id: target.id, name, description, transcript, events, omittedEvents }),
-      { mode: 0o600 },
-    );
-    writeFileSync(
-      path.join(temporary, "manifest.json"),
-      `${JSON.stringify({
-        id: target.id,
-        name,
-        version: "1.0.0",
-        description: description || `Repeat the ${name} workflow demonstrated by the user.`,
-        defaultEnabled: true,
-        triggerTerms: triggerTerms(name, description).length ? triggerTerms(name, description) : [target.id],
-        requiredCapabilities: [],
-      }, null, 2)}\n`,
-      { mode: 0o600 },
-    );
-    renameSync(temporary, target.directory);
-    return { id: target.id, path: target.directory, events: events.length };
-  } catch (error) {
-    rmSync(temporary, { recursive: true, force: true });
-    throw error;
-  }
 }

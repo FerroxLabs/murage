@@ -137,6 +137,38 @@ describe("the sheet behaves like a dialog", () => {
   });
 });
 
+// F5-T2: every content image in both transcripts and Files enlarges through
+// the one shared lightbox. The browser proof is
+// src/e2e/media-lightbox.human.spec.ts; this pins that no surface drifted
+// back to a bare <img> with its own (or no) dialog.
+describe("one image surface", () => {
+  const files = read("./Files.tsx");
+  const markdown = read("./ChatMarkdown.tsx");
+  const preview = read("./AttachmentPreview.tsx");
+
+  it.each(views)("%s renders no content image of its own", (_name, source) => {
+    expect(source).not.toMatch(/<img\b/);
+    expect(source).toContain("<AttachedImageGallery");
+    expect(source).toContain("<ChatMarkdown");
+  });
+
+  it("routes the bot's screen frame through the shared thumbnail", () => {
+    expect(chat).toContain('import { ScreenFrameMedia } from "./ImageMedia"');
+    expect(chat).toMatch(/function ScreenFrame\([^)]*\)\s*\{[\s\S]{0,400}<ScreenFrameMedia/);
+    expect(chat).toContain("<ScreenFrame png={m.png} mime={m.mime} />");
+  });
+
+  it("routes Markdown images, attachment galleries and the Files preview the same way", () => {
+    expect(markdown).toMatch(/img\(\{ src, alt \}[\s\S]{0,300}<MarkdownImage /);
+    expect(markdown).not.toMatch(/<img\b/);
+    expect(preview).toContain("<ImageGallery");
+    expect(preview).toContain("<ImageLightbox");
+    expect(preview).not.toMatch(/<img\b|createPortal/);
+    expect(files).toContain('<ArtifactImageMedia artifact={preview.artifact} content={preview.content} />');
+    expect(files).not.toMatch(/<img\b/);
+  });
+});
+
 describe("motion is optional", () => {
   it("switches the sheet's animation off for a reader who asked", () => {
     const reduced = styles.slice(styles.indexOf("@media (prefers-reduced-motion: reduce)"));

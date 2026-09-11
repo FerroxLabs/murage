@@ -8,7 +8,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
-import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
+import { readTomlConfigForEdit, removeTomlTables } from "./kimi.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 export const STATIC_GROK_MODELS: ModelCatalog = {
@@ -178,6 +179,29 @@ export function ensureGrokInjectSlug(
   const next = text && !text.endsWith("\n") ? `${text}\n\n${block}` : `${text}${text ? "\n" : ""}${block}`;
   writeFileSync(path, next);
   return slug;
+}
+
+/** `key = "value"` inside one TOML table body, unescaped; null when absent. */
+function tomlBodyString(body: string, key: string): string | null {
+  const match = new RegExp(`^\\s*${key}\\s*=\\s*"((?:[^"\\\\]|\\\\.)*)"`, "m").exec(body);
+  return match ? match[1]!.replace(/\\"/g, '"').replace(/\\\\/g, "\\") : null;
+}
+
+/** Spec A3: drop the `[model.*]` blocks Murage wrote for a removed server. */
+export function removeGrokLocalHost(
+  host: LocalHost,
+  env: Record<string, string | undefined> = process.env,
+): "removed" | "absent" {
+  const path = join(grokHome(env), "config.toml");
+  const text = readTomlConfigForEdit(path, env.HOME || env.USERPROFILE || homedir());
+  if (text === null) return "absent";
+  const { text: next, removed } = removeTomlTables(
+    text,
+    (name, body) => name.startsWith("model.") && tomlBodyString(body, "base_url") === host.baseUrl,
+  );
+  if (!removed) return "absent";
+  writeFileSync(path, next);
+  return "removed";
 }
 
 const support: AcpSupport = {

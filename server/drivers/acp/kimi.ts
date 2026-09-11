@@ -11,7 +11,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
-import { decodeInjectId, hostApiKey, LOCAL_HOSTS, localHost, mergeLocalInject } from "../local-inject.ts";
+import { decodeInjectId, hostApiKey, localContextWindow, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
+import { displayConfigPath, NativeConfigRefusal } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const STATIC_KIMI_MODELS: ModelCatalog = {
@@ -25,10 +26,14 @@ const STATIC_KIMI_MODELS: ModelCatalog = {
 };
 
 const SLUG = /^[a-z0-9][a-z0-9._:/-]*$/i;
-const LOCAL_PROVIDER_PREFIXES = LOCAL_HOSTS.map((host) => `${host.id}/`);
+/** Kimi's window for a local alias when the server has not reported one. */
+const KIMI_UNKNOWN_CONTEXT = 262144;
 
+/** `host/alias` written by `ensureKimiInjectAlias`, for a built-in host or a
+ *  valid user-added server (the same allowlist `decodeInjectId` uses). */
 function isLocalInjectAlias(slug: string): boolean {
-  return LOCAL_PROVIDER_PREFIXES.some((prefix) => slug.startsWith(prefix));
+  const slash = slug.indexOf("/");
+  return slash > 0 && localHost(slug.slice(0, slash)) !== undefined;
 }
 
 function kimiDataRoot(env: Record<string, string | undefined>): string {
@@ -40,12 +45,12 @@ function credentialsPath(env: Record<string, string | undefined>) {
 }
 
 /** Quote a TOML string value. */
-function quoteToml(value: string): string {
+export function quoteToml(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /** Quote a TOML key when it is not a bare identifier. */
-function quoteTomlKey(key: string): string {
+export function quoteTomlKey(key: string): string {
   if (/^[A-Za-z0-9_-]+$/.test(key)) return key;
   return quoteToml(key);
 }
@@ -106,7 +111,7 @@ function takeTomlBasicEscape(
 }
 
 /** Canonical `a.b.c` form of a `[table]` heading, quotes and comments removed. */
-function canonicalizeTomlHeading(heading: string): string | null {
+export function canonicalizeTomlHeading(heading: string): string | null {
   const trimmed = stripTomlLineComment(heading).trim();
   const match = trimmed.match(/^\[([^[\]]+)\]$/);
   if (!match) return null;
@@ -168,7 +173,7 @@ function tomlRowKey(row: string): string {
 /** Walk `text` and yield `[table]` spans. `[[array]]` headings bound a table
  *  but are not themselves patchable. `#` comments in `out` mode are skipped
  *  so an apostrophe in a comment cannot open a phantom string. */
-function tomlTables(text: string): Array<{ name: string; headingStart: number; bodyStart: number; end: number }> {
+export function tomlTables(text: string): Array<{ name: string; headingStart: number; bodyStart: number; end: number }> {
   type Mode = "out" | "basic" | "literal" | "mlbasic" | "mllit";
   const headings: Array<{ name: string | null; patchable: boolean; lineStart: number; lineEnd: number }> = [];
   let mode: Mode = "out";
@@ -353,6 +358,42 @@ function patchTomlTable(text: string, heading: string, rows: string[]): string {
   return `${before}${pad}${missing.join("\n")}${after.startsWith("\n") ? "" : "\n"}${after}`;
 }
 
+/** Cut every `[table]` whose canonical name (and body) match, heading to the
+ *  next heading. Tables are cut from the end so earlier offsets stay valid. */
+export function removeTomlTables(
+  text: string,
+  match: (name: string, body: string) => boolean,
+): { text: string; removed: number } {
+  const doomed = tomlTables(text).filter((table) => match(table.name, text.slice(table.bodyStart, table.end)));
+  let next = text;
+  for (const table of [...doomed].reverse()) next = next.slice(0, table.headingStart) + next.slice(table.end);
+  return { text: doomed.length ? next.replace(/\n{3,}/g, "\n\n") : text, removed: doomed.length };
+}
+
+/** Read a TOML config Murage is about to edit; unreadable means refuse, not "empty". */
+export function readTomlConfigForEdit(path: string, home: string): string | null {
+  if (!existsSync(path)) return null;
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    throw new NativeConfigRefusal(displayConfigPath(path, home), "unreadable", (error as NodeJS.ErrnoException).code ?? "read failed");
+  }
+}
+
+/** Spec A3: drop the provider and model aliases written for a removed server. */
+export function removeKimiLocalHost(host: LocalHost, env: Record<string, string | undefined> = process.env): "removed" | "absent" {
+  const path = join(kimiDataRoot(env), "config.toml");
+  const text = readTomlConfigForEdit(path, env.HOME || env.USERPROFILE || homedir());
+  if (text === null) return "absent";
+  const { text: next, removed } = removeTomlTables(
+    text,
+    (name) => name === `providers.${host.id}` || name.startsWith(`models.${host.id}/`),
+  );
+  if (!removed) return "absent";
+  writeFileSync(path, next);
+  return "removed";
+}
+
 /** Write [providers.host] + [models."host/alias"] so `kimi -m` hits the local host. */
 export function ensureKimiInjectAlias(
   modelId: string,
@@ -393,8 +434,11 @@ export function ensureKimiInjectAlias(
   // skips default-model binding and falls through to OAuth. Patch
   // aliases written before those keys existed; do not overwrite a
   // user's protocol or context size.
+  // Spec T2: the window the server actually loaded, not a fixed 262k. A
+  // model table the user (or an older Murage) already sized is left alone.
+  const contextSize = localContextWindow(inject.host, inject.model) ?? KIMI_UNKNOWN_CONTEXT;
   if (hasTomlTable(text, modelHeading)) {
-    text = patchTomlTable(text, modelHeading, [`protocol = "openai"`, `max_context_size = 262144`]);
+    text = patchTomlTable(text, modelHeading, [`protocol = "openai"`, `max_context_size = ${contextSize}`]);
   } else {
     blocks.push(
       [
@@ -402,7 +446,7 @@ export function ensureKimiInjectAlias(
         `provider = ${quoteToml(inject.host)}`,
         `model = ${quoteToml(inject.model)}`,
         `protocol = "openai"`,
-        `max_context_size = 262144`,
+        `max_context_size = ${contextSize}`,
         "",
       ].join("\n"),
     );

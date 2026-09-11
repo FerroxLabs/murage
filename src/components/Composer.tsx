@@ -582,13 +582,15 @@ export function Composer({
         editText(base ? `${base} ${line.text}` : line.text);
       }
     });
-    const offEnd = bridge.onSpeechEnd(({ code }) => {
+    const offEnd = bridge.onSpeechEnd(({ code, reason }) => {
       setRecording(false);
       if (code === 2) {
         setSpeechError("Dictation is only available on macOS for now.");
       } else if (code === 1) {
         setSpeechError(
-          "Dictation needs Microphone + Speech Recognition access — System Settings → Privacy & Security.",
+          reason === "helper-stop-pending"
+            ? "The previous dictation session is still closing. Try again in a moment."
+            : "Dictation needs Microphone + Speech Recognition access — System Settings → Privacy & Security.",
         );
       }
     });

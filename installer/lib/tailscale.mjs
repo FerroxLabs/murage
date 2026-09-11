@@ -34,9 +34,10 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+
+import { makePrivateDir, makePrivateTempDir, writeExclusiveFile } from "./private-files.mjs";
 
 /** Candidate locations for the CLI, in preference order. */
 const BIN_CANDIDATES = [
@@ -168,8 +169,12 @@ export function doorPort(env = process.env) {
  * all proves something is listening and terminating requests there; a refused
  * connection or a timeout proves it is not.
  *
- * @param {{ port?: number, timeoutMs?: number, fetchImpl?: typeof fetch }} [opts]
- * @returns {Promise<{ answered: boolean, port: number, url: string, status?: number, reason?: string }>}
+ * Listening is not the same as being this deployment's door. That second
+ * question is `probeDoor` in `lib/door-identity.mjs`, which sends its
+ * challenge in `headers` and reads the answer from the returned `headers`.
+ *
+ * @param {{ port?: number, timeoutMs?: number, fetchImpl?: typeof fetch, headers?: Record<string, string> }} [opts]
+ * @returns {Promise<{ answered: boolean, port: number, url: string, status?: number, headers?: Headers | null, reason?: string }>}
  */
 export async function doorAnswers(opts = {}) {
   const port = Number(opts.port ?? doorPort());
@@ -186,9 +191,16 @@ export async function doorAnswers(opts = {}) {
     const res = await doFetch(url, {
       method: "GET",
       redirect: "manual",
+      ...(opts.headers ? { headers: opts.headers } : {}),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    return { answered: true, port, url, status: res?.status };
+    // Only the status and headers matter; release the body and its socket.
+    try {
+      await res?.body?.cancel?.();
+    } catch {
+      // nothing to release
+    }
+    return { answered: true, port, url, status: res?.status, headers: res?.headers ?? null };
   } catch (e) {
     return { answered: false, port, url, reason: e instanceof Error ? e.message : String(e) };
   }
@@ -216,21 +228,24 @@ export function buildServeArgs(opts) {
 }
 
 /**
- * Write the auth key to a private file and return its path. The directory is
- * created 0700 and the file 0600, and `chmodSync` is called explicitly because
- * the `mode` option on `writeFileSync` is subject to the process umask.
+ * Write the auth key to a private file and return its path.
+ *
+ * The directory is new: randomly named, created 0700, and its owner and mode
+ * read back before the key goes in. It used to be `murage-tsauth-<pid>` under
+ * the shared temp dir, a name another local account could predict and create
+ * first. The file is created exclusively and 0600, so nothing already at that
+ * path is written through.
  * @param {string} key
- * @param {string} [dir] default: a private dir under the OS temp dir
+ * @param {string} [dir] a directory to create for it; it must not exist yet.
+ *   Default: a fresh private directory under the OS temp dir.
  * @returns {string}
  */
-export function writeAuthKeyFile(key, dir = join(tmpdir(), `murage-tsauth-${process.pid}`)) {
+export function writeAuthKeyFile(key, dir) {
   const trimmed = String(key ?? "").trim();
   if (!trimmed) throw new Error("refusing to write an empty auth key file");
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  chmodSync(dir, 0o700);
-  const path = join(dir, "authkey");
-  writeFileSync(path, trimmed, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  const owned = dir === undefined ? makePrivateTempDir("murage-tsauth-") : makePrivateDir(dir);
+  const path = join(owned, "authkey");
+  writeExclusiveFile(path, trimmed, { mode: 0o600 });
   return path;
 }
 

@@ -71,6 +71,84 @@ for (const kind of ["primary", "child", "reaper"]) test(`real archive restores s
   assert.equal(inspectDataDirLease(original).code, "LEASE_FOREIGN_HOST");
   evidence.push({ kind, result: "PASS", snapshotId: saved.snapshotId, originalAndAnchorHashesUnchanged: true, pausedMemory: true, engines: report.engines, schedules: report.schedules, freshProcessSelection: true });
 });
+// B1 (0.1.52 R2-T1): after a separate restore, MURAGE_DATA_DIR/~/.murage still
+// name the retained original. A fresh relaunch resolves the selector exactly
+// like main's acquireDesktopDataOwner, then invokes the real recorder save
+// handler. Only the selected installation may gain the skill.
+test("recorder save after separate restore writes only the selected installation", () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-separate-recorder-"))); roots.push(root);
+  const original = path.join(root, "original"), userData = path.join(root, "desktop"), archive = path.join(root, "snapshot.zip"); mkdirSync(original); mkdirSync(userData);
+  const env = { PATH: path.dirname(process.execPath), HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
+  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  writeFileSync(path.join(original, "config.json"), JSON.stringify({ profile: { name: "Recorder root fixture" } }));
+  writeFileSync(path.join(original, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Original sentinel" }]));
+  writeFileSync(path.join(original, "groups.json"), "[]");
+  const db = new DatabaseSync(path.join(original, "messages.db"));
+  db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id)); CREATE INDEX messages_thread ON messages(thread_id); CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT);");
+  migrateMemorySchema(db, "active"); db.close();
+  run(["backup", "--data-dir", original, "--output", archive]);
+  // The original stays held by a foreign host throughout.
+  const paths = dataDirLeasePaths(original);
+  writeFileSync(paths.leasePath, JSON.stringify({ version: 1, pid: process.pid, host: "foreign-fixture.invalid", token: randomUUID(), createdAt: Date.now() - 1000 }), { mode: 0o600 });
+  const files = [...readdirSync(original).map(name => path.join(original, name)), ...readdirSync(root).filter(name => name.startsWith(path.basename(paths.leasePath))).map(name => path.join(root, name))];
+  const before = files.map(file => [file, fingerprint(file)]);
+  const preview = run(["plan-restore", "--archive", archive]);
+  const plan = allocateSeparateInstallation(planSeparateInstallation(userData, original, original));
+  const lease = acquireDataDirLease(plan.dataDirectory);
+  try {
+    publishInstallationSelection(plan, run(["restore", "--data-dir", plan.dataDirectory, "--archive", archive, "--sha256", preview.sha256], lease.utilityServerLeaseEnvironment()));
+  } finally { lease.release(); }
+  const report = run(["review", "--data-dir", plan.dataDirectory]);
+  run(["activate", "--data-dir", plan.dataDirectory, "--review-hash", report.reviewHash]);
+
+  const href = (file) => JSON.stringify(new URL(file, import.meta.url).href);
+  const relaunch = `
+    import {resolveInstallationSelection} from ${href("./installation-selection.mjs")};
+    import {assertRestoreReviewed} from ${href("./restore-review.mjs")};
+    import {acquireDataDirLease, dataDirLeasePaths} from ${href("./data-dir-lease.mjs")};
+    import {activeDesktopDataRoot, createSkillRecordingSaveHandler} from ${href("./native-file-handlers.mjs")};
+    import {saveSkillRecording} from ${href("./skill-recording-store.mjs")};
+    import {existsSync} from "node:fs";
+    import path from "node:path";
+    const [userData, home] = process.argv.slice(1);
+    // Mirrors main.mjs acquireDesktopDataOwner: the parent environment still names the original.
+    const canonical = dataDirLeasePaths(process.env.MURAGE_DATA_DIR ?? path.join(home, ".murage")).canonicalDataDir;
+    const selection = resolveInstallationSelection(userData, canonical);
+    const owner = acquireDataDirLease(selection.dataDirectory);
+    try {
+      assertRestoreReviewed(selection.dataDirectory);
+      const origin = "http://127.0.0.1:8799";
+      const mainFrame = { url: origin + "/", detached: false };
+      const webContents = { mainFrame, isDestroyed: () => false };
+      const window = { webContents, isDestroyed: () => false };
+      const event = { sender: webContents, senderFrame: mainFrame };
+      const owned = { packaged: true, recovery: false, closing: false, owner, dataDirectory: selection.dataDirectory, env: process.env, home };
+      const handlerFor = (state, windowFor = () => window) => createSkillRecordingSaveHandler({ window: windowFor, origin: () => origin, activeRoot: () => activeDesktopDataRoot(state), saveRecording: saveSkillRecording });
+      const payload = { name: "Recovered expense", description: "Saved after separate restore", events: [{ type: "click", atMs: 5, app: "Finder", name: "Open" }] };
+      const refusals = [];
+      for (const [state, windowFor] of [[{ ...owned, recovery: true }], [{ ...owned, closing: true }], [{ ...owned, owner: null }], [owned, () => null], [owned, () => ({ webContents: { mainFrame: {} }, isDestroyed: () => false })]]) {
+        try { handlerFor(state, windowFor)(event, payload); refusals.push("saved"); } catch (error) { refusals.push(error.code); }
+      }
+      const skillsBeforeSave = [existsSync(path.join(selection.dataDirectory, "skills")), existsSync(path.join(canonical, "skills"))];
+      const result = handlerFor(owned)(event, payload);
+      process.stdout.write(JSON.stringify({ selected: selection.dataDirectory, requested: canonical, refusals, skillsBeforeSave, result }));
+    } finally { owner.release(); }`;
+  const relaunched = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", relaunch, userData, root], { env: { ...env, MURAGE_DATA_DIR: original }, encoding: "utf8", timeout: 15_000 }));
+
+  assert.equal(relaunched.selected, plan.dataDirectory);
+  assert.equal(relaunched.requested, original);
+  assert.deepEqual(relaunched.refusals, ["NATIVE_ROOT_RECOVERY", "NATIVE_ROOT_CLOSING", "NATIVE_ROOT_UNOWNED", "NATIVE_SENDER_UNTRUSTED", "NATIVE_SENDER_UNTRUSTED"]);
+  assert.deepEqual(relaunched.skillsBeforeSave, [false, false], "refused saves created no skills directory in either installation");
+  assert.ok(relaunched.result.path.startsWith(path.join(plan.dataDirectory, "skills") + path.sep), relaunched.result.path);
+  assert.equal(readFileSync(path.join(relaunched.result.path, "SKILL.md"), "utf8").includes("name: recovered-expense"), true);
+  assert.equal(existsSync(path.join(original, "skills")), false);
+  assert.equal(existsSync(path.join(root, ".murage")), false);
+  assert.deepEqual(files.map(file => [file, fingerprint(file)]), before);
+  assert.equal(inspectDataDirLease(original).code, "LEASE_FOREIGN_HOST");
+  assert.equal(inspectDataDirLease(plan.dataDirectory).status, "available", "the relaunch released the selected installation lease");
+  evidence.push({ kind: "recorder-save", result: "PASS", selectedOnly: true, originalAndAnchorHashesUnchanged: true, refusedBeforeMkdir: true });
+});
+
 test("changed archive hash cannot publish startup selection", () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-separate-hash-"))); roots.push(root);
   const original = path.join(root, "original"), userData = path.join(root, "desktop"); mkdirSync(original); mkdirSync(userData);
