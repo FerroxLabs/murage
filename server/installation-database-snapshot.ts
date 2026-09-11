@@ -5,6 +5,9 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { validateMemorySchema } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
+import { initializeArtifacts } from "./artifacts.ts";
+import { initializeInbox } from "./inbox.ts";
+import { initializeMessageTables } from "./message-tables.ts";
 
 export class InstallationSnapshotError extends Error {
   readonly code: string;
@@ -32,29 +35,67 @@ function count(db: DatabaseSync, sql: string): number {
   return row.count;
 }
 
-/** Every non-memory table the harness creates in messages.db, with the exact
- * column shape it creates. server/database.ts owns messages/thread_state,
- * server/inbox.ts the inbox state, server/artifacts.ts the saved-file tables
- * (0.1.52 K0 froze that schema). Anything else in an archive is refused.
+/** Every non-memory table the harness creates in messages.db. server/database.ts
+ * owns messages/thread_state (server/message-tables.ts), server/inbox.ts the
+ * inbox state, server/artifacts.ts the saved-file tables (0.1.52 K0 froze that
+ * schema). `optional` names the nullable columns a later in-place migration
+ * appends, in order: an older archive may lack a suffix of them.
  * A Map, not a plain object: archive names such as "constructor" or
  * "__proto__" must never match a property every object inherits. */
-const APP_TABLES = new Map<string, { required: boolean; columns: string[]; optional: string[]; indexes: string[] }>(Object.entries({
-  messages: { required: true, columns: ["thread_id:TEXT:1", "id:TEXT:2", "at:INTEGER:0", "role:TEXT:0", "kind:TEXT:0", "text:TEXT:0", "json:TEXT:0"], optional: [], indexes: ["messages_thread", "messages_inbox_kind_thread_at"] },
-  thread_state: { required: true, columns: ["thread_id:TEXT:1", "active_leaf_id:TEXT:0"], optional: [], indexes: [] },
-  inbox_item_state: { required: false, columns: ["source_key:TEXT:1", "read_version:TEXT:0", "read_at:INTEGER:0", "snoozed_until:INTEGER:0"], optional: [], indexes: [] },
-  artifacts: {
-    required: false,
-    columns: ["id:TEXT:1", "name:TEXT:0", "kind:TEXT:0", "mime:TEXT:0", "bytes:INTEGER:0", "sha256:TEXT:0", "extension:TEXT:0", "created_at:INTEGER:0", "bot_id:TEXT:0", "thread_id:TEXT:0", "run_id:TEXT:0", "source_root:TEXT:0", "relative_path:TEXT:0", "source_fingerprint:TEXT:0"],
-    optional: ["producer:TEXT:0", "publication_id:TEXT:0"],
-    indexes: ["artifacts_scope_date", "artifacts_kind_date"],
-  },
-  output_publications: {
-    required: false,
-    columns: ["id:TEXT:1", "producer:TEXT:0", "bot_id:TEXT:0", "thread_id:TEXT:0", "run_id:TEXT:0", "path_token:TEXT:0", "sha256:TEXT:0", "mime:TEXT:0", "bytes:INTEGER:0", "stage:TEXT:0", "artifact_id:TEXT:0", "attachment_id:TEXT:0", "message_id:TEXT:0", "error_category:TEXT:0", "created_at:INTEGER:0", "updated_at:INTEGER:0"],
-    optional: [],
-    indexes: ["output_publications_scope", "output_publications_stage"],
-  },
+const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Object.entries({
+  messages: { required: true, optional: [] },
+  thread_state: { required: true, optional: [] },
+  inbox_item_state: { required: false, optional: [] },
+  artifacts: { required: false, optional: ["producer", "publication_id"] },
+  output_publications: { required: false, optional: [] },
 }));
+
+type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
+interface ReferenceObject { type: string; table: string; sql: Set<string | null>; columns: string[][] }
+
+/** SQLite keeps each CREATE statement's own text. Releases wrote the same
+ * definitions with different spacing (server/store.ts before 0.1.47, the
+ * memory restore target), so spacing is not part of a definition; every token,
+ * its case and its order are. */
+function normalizedSql(sql: unknown): string | null {
+  return sql === null || sql === undefined ? null : String(sql).replace(/\s+/g, " ").replace(/ ?([(),]) ?/g, "$1").trim();
+}
+
+function columnShape(db: DatabaseSync, table: string): string[] {
+  return db.prepare(`PRAGMA table_xinfo("${table}")`).all()
+    .map(column => `${column.name}:${String(column.type).toUpperCase()}:${column.notnull}:${column.dflt_value}:${column.pk}:${column.hidden}`);
+}
+
+let reference: Map<string, ReferenceObject> | undefined;
+/** The definitions the harness's own initializers create, read back from a
+ * fresh in-memory database rather than copied by hand, so an index or table
+ * the app changes is compared against what the app now writes. */
+function referenceSchema(): Map<string, ReferenceObject> {
+  if (reference) return reference;
+  const db = new DatabaseSync(":memory:");
+  try {
+    initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db);
+    const objects = new Map<string, ReferenceObject>();
+    for (const row of db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]) {
+      if (!APP_TABLES.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
+      objects.set(row.name, { type: row.type, table: row.tbl_name, sql: new Set([normalizedSql(row.sql)]), columns: row.type === "table" ? [columnShape(db, row.name)] : [] });
+    }
+    for (const [table, { optional }] of APP_TABLES) {
+      const object = objects.get(table);
+      if (!object || object.type !== "table") throw new Error(`initializer did not create ${table}`);
+      // An older archive predates the migration that appended these columns.
+      // Dropping them from the fresh table restores exactly the text SQLite
+      // kept before ALTER TABLE ADD COLUMN extended it.
+      for (const column of [...optional].reverse()) {
+        db.exec(`ALTER TABLE "${table}" DROP COLUMN "${column}"`);
+        object.sql.add(normalizedSql((db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?").get(table) as SchemaRow).sql));
+        object.columns.push(columnShape(db, table));
+      }
+    }
+    reference = objects;
+    return objects;
+  } finally { db.close(); }
+}
 
 export function inspectInstallationDatabase(db: DatabaseSync) {
   const fail = (code: string): never => { throw new InstallationSnapshotError(code); };
@@ -63,25 +104,26 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
   let memoryObjects = new Set<string>();
   try { memoryObjects = validateMemorySchema(db); }
   catch { fail("DATABASE_SCHEMA_UNSUPPORTED"); }
-  const schema = db.prepare("SELECT type,name,tbl_name FROM sqlite_schema").all();
+  const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
+  const expected = referenceSchema();
   for (const item of schema) {
     if (memoryObjects.has(String(item.name))) continue;
-    const table = String(item.tbl_name), name = String(item.name);
-    const owner = APP_TABLES.get(table);
-    if (item.type === "table" && owner && name === table) continue;
-    if (item.type === "index" && owner && (name.startsWith("sqlite_autoindex_") || owner.indexes.includes(name))) continue;
-    fail("DATABASE_SCHEMA_UNSUPPORTED");
+    // A known NAME is not enough: an index kept under an allowed name but
+    // made partial, unique, expression-based or re-targeted, or a table with a
+    // CHECK, conflict clause or generated column, would survive activation
+    // (the app's CREATE ... IF NOT EXISTS keeps an existing definition).
+    // Every object must be one the harness creates, with its definition.
+    const known = expected.get(String(item.name));
+    if (!known || known.type !== item.type || known.table !== item.tbl_name || !known.sql.has(normalizedSql(item.sql))) fail("DATABASE_SCHEMA_UNSUPPORTED");
   }
-  for (const [table, { required, columns, optional }] of APP_TABLES) {
+  for (const [table, { required }] of APP_TABLES) {
     if (!schema.some(item => item.type === "table" && item.name === table)) {
       if (required) fail("DATABASE_SCHEMA_UNSUPPORTED");
       continue;
     }
-    const actual = db.prepare(`PRAGMA table_info(${table})`).all().map(column => `${column.name}:${String(column.type).toUpperCase()}:${column.pk}`);
-    // Nullable columns added by a later in-place migration may be absent from
-    // an older archive; every column present must still match, in order.
-    const extra = actual.slice(columns.length);
-    if (JSON.stringify(actual.slice(0, columns.length)) !== JSON.stringify(columns) || JSON.stringify(extra) !== JSON.stringify(optional.slice(0, extra.length))) fail("DATABASE_SCHEMA_UNSUPPORTED");
+    // The text matched; the columns SQLite built from it must match too.
+    const actual = JSON.stringify(columnShape(db, table));
+    if (!expected.get(table)!.columns.some(shape => JSON.stringify(shape) === actual)) fail("DATABASE_SCHEMA_UNSUPPORTED");
   }
   const integrity = db.prepare("PRAGMA integrity_check").all();
   if (integrity.length !== 1 || Object.values(integrity[0])[0] !== "ok") throw new InstallationSnapshotError("DATABASE_INTEGRITY_FAILED");

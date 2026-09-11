@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { inspectInstallationArchive, portableArchivePath, writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
+import { initializeMessageTables } from "./message-tables.ts";
 
 const roots: string[] = [];
 const sha = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -42,7 +43,7 @@ it.each(["trigger", "counts", "cycle"])("rejects a hash-valid external database 
   const f = fixture(), path = join(f.parent, "external.db");
   const db = new DatabaseSync(path);
   try {
-    db.exec("CREATE TABLE messages(thread_id TEXT,id TEXT,at INTEGER,role TEXT,kind TEXT,text TEXT,json TEXT,PRIMARY KEY(thread_id,id)); CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT);");
+    initializeMessageTables(db);
     db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("t", "m", 1, "user", "text", null, JSON.stringify({ id: "m", at: 1, role: "user", kind: "text", parentId: kind === "cycle" ? "m" : null }));
     db.exec("INSERT INTO thread_state VALUES('t','m')");
     if (kind === "trigger") db.exec("CREATE TRIGGER hostile AFTER UPDATE ON messages BEGIN UPDATE thread_state SET active_leaf_id=NULL WHERE thread_id='t'; END");
