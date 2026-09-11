@@ -32,6 +32,10 @@ export const LOCAL_MODELS_TITLE = "Local models";
 export const LOCAL_MODELS_INTRO =
   "Models running on this computer or your own network. Murage sends them nothing until you pick one for a bot.";
 
+/** Under the section: which engines these models are for, and what it costs. */
+export const LOCAL_MODELS_FOOTER =
+  "A tested model can be picked for a bot on Fuigo, pi, OpenCode, Qwen, Hermes, Droid, Kimi or Grok; Codex and Claude when their test passes. Nothing here is sent to a cloud provider, and testing a model costs nothing.";
+
 /**
  * Spec V1: the empty state names every address Murage checked, so "nothing
  * answered" is a fact about known places rather than a shrug. Ports are shown
@@ -76,8 +80,13 @@ export function contextLine(model: LocalModelView): string {
   return `${tokensLabel(window)} context loaded`;
 }
 
-/** Spec V2: which engines can use this model right now, by their own names. */
+/** Spec V2: which engines can use this model right now, by their own names.
+ *  A model whose test just said it cannot run agents gets no such promise:
+ *  the outcome line and its one action are the whole answer for that state
+ *  (a chat engine would still list the model, so the card must not). */
 export function enginesLine(model: LocalModelView): string {
+  const outcome = model.test?.outcome;
+  if (outcome && outcome !== "tools-work" && outcome !== "tools-partial") return "";
   if (!model.engines.length) return "No engine can use this model yet — run the test first";
   return `Usable by ${model.engines.map(localEngineLabel).join(", ")}`;
 }

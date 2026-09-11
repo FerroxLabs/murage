@@ -28,8 +28,8 @@ import {
 import {
   checkLine,
   contextLine,
+  LOCAL_MODELS_FOOTER,
   enginesLine,
-  engineLocalLine,
   LOCAL_MODELS_INTRO,
   LOCAL_MODELS_TITLE,
   lookedLine,
@@ -205,7 +205,7 @@ function ModelCard({ server, model, onTested, onRefresh }: {
       {model.loaded && <span className="text-[11px] text-ink-secondary">In memory now</span>}
     </div>
     <p className="mt-1 text-[11px] text-ink-secondary">{contextLine(model)}</p>
-    <p className="mt-1 text-[11px] text-ink-secondary">{enginesLine(model)}</p>
+    {enginesLine(model) && <p className="mt-1 text-[11px] text-ink-secondary">{enginesLine(model)}</p>}
     {test && <p className={`mt-1 flex items-start gap-1 text-[12px] ${test.outcome === "tools-work" ? "text-success" : test.outcome === "tools-partial" ? "text-warning" : "text-danger"}`}>
       {test.outcome === "tools-work" ? <CheckCircle2 size={13} className="mt-[2px] shrink-0" /> : <AlertTriangle size={13} className="mt-[2px] shrink-0" />}
       <span>{testOutcomeLine(test)}</span>
@@ -357,6 +357,6 @@ export function LocalModelsSettings() {
       </button>
       {adding && <AddServerForm onAdded={() => { setAdding(false); void reload(); }} onCancel={() => setAdding(false)} />}
     </div>
-    <p className="mt-3 text-[11px] leading-relaxed text-ink-secondary">{engineLocalLine("fuigoAgent")}. Nothing here is sent to a cloud provider, and testing a model costs nothing.</p>
+    <p className="mt-3 text-[11px] leading-relaxed text-ink-secondary">{LOCAL_MODELS_FOOTER}</p>
   </section>;
 }
