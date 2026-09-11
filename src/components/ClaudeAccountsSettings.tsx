@@ -59,7 +59,10 @@ export function claudeAccountsListOrder() {
  * after `busy` is cleared: awaiting it inside `busy` greyed every account
  * button for one full-fleet probe per create, rename or remove (CLAC2
  * verifier, CLAC3). Fleet refreshes run one at a time, each requested after
- * the previous answered, so the last answer reflects the last change. */
+ * the previous answered, so the last answer reflects the last change. A fleet
+ * refresh that fails (the store's refreshInstances rejects when GET
+ * /api/instances does, FOLLOW4) is reported as such: the change was saved and
+ * the section's own list drawn, but the engine list may not show it yet. */
 export interface ClaudeAccountChangeSection {
   /** Sends the change; resolves with the server's receipt. */
   request(method: string, id: string | undefined, body: unknown): Promise<unknown>;
@@ -85,7 +88,7 @@ export function claudeAccountChanger(section: ClaudeAccountChangeSection) {
     } catch (cause) { section.error(cause instanceof Error ? cause.message : t("claudeAccounts.changeError")); }
     finally { gate = false; section.busy(false); }
     if (!drawn) return;
-    fleet = fleet.then(() => section.fleet()).then(() => undefined, () => section.error(t("claudeAccounts.refreshError")));
+    fleet = fleet.then(() => section.fleet()).then(() => undefined, () => section.error(t("claudeAccounts.fleetRefreshError")));
     await fleet;
   };
 }

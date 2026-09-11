@@ -30,7 +30,10 @@ export function EngineManagement({ instance }: { instance: InstanceInfo }) {
     setBusy(true); setError(null);
     try {
       setStatus(await api(url, { method: "POST", body: JSON.stringify({ action }) }));
-      if (action !== "check") await refreshInstances();
+      // The action already succeeded once the POST answered. A failed engine
+      // list refresh (refreshInstances rejects, FOLLOW4) must not read as
+      // "could not update this engine": the status above is the server's.
+      if (action !== "check") await refreshInstances().catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update this engine. Try again.");
       if (action !== "check") {
