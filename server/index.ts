@@ -5049,6 +5049,11 @@ type GroupMemberTurnOutcome =
   | "settled"
   | "provider_failed"
   | "dispatch_failed"
+  /** The memory context this attempt prepared was revoked before the provider
+   * accepted it (MEMORY_CONTEXT_REVOKED); the attempt is settled and the
+   * member turn is dispatched once more on fresh context. Internal to
+   * runGroupMemberTurn: the re-dispatch's own outcome is what callers see. */
+  | "memory_revoked"
   | "stalled"
   | "timed_out"
   | "cancelled"
@@ -5132,6 +5137,10 @@ async function runGroupMemberTurn(
   onProviderHandshakeSettled?: () => void,
   skillAuthoringClaim: { claimed: boolean } = { claimed: false },
   orchestration?: GroupTurnOrchestration,
+  /** Server-owned: this is the single re-dispatch of a member turn whose
+   * prepared memory context was revoked before the provider accepted it
+   * (see the dispatch catch below). Never taken from a request body. */
+  memoryRedispatch = false,
 ): Promise<boolean> {
   if (isCancelled?.()) return false;
   const group = store.group(groupId);
@@ -5567,6 +5576,24 @@ async function runGroupMemberTurn(
         clearCancelledProviderHandshake(threadId, retirementOwner);
         if (abandoned) return;
         recordMemorySettlement(threadId, `room-setup:${store.activeLeaf(threadId)}`, "setup-failed");
+        // The memory context this member turn prepared was revoked before the
+        // provider accepted it: the authority moved under the turn. The usual
+        // cause is a task created for this member while its room-turn
+        // handshake was held — a new thread changes the roster, and the
+        // roster policy revokes every disclosure for that (p02,
+        // "existing-task" still revokes) — or another bot, room or owner
+        // memory change in the same window. The guarantee is that no turn
+        // runs on revoked context, and the provider turn was stopped above
+        // before anything could; it is not that the room turn is lost. Same
+        // rule as the direct path (startTurn, RED2G-3): settle this attempt
+        // and dispatch the member turn once more on fresh context; a second
+        // refusal reports as before.
+        if (isMemoryContextRevoked(err) && !memoryRedispatch) {
+          console.warn(`[memory] context revoked during dispatch on thread ${threadId}; re-preparing once (room member ${bot.name})`);
+          watchdog.settle(threadId);
+          finish("memory_revoked");
+          return;
+        }
         const message = err instanceof Error ? err.message : "turn failed";
         store.appendMessage(threadId, {
           role: "bot",
@@ -5579,7 +5606,9 @@ async function runGroupMemberTurn(
         finish("dispatch_failed");
       });
   });
-  if (orchestration) {
+  // A revoked-context attempt is re-dispatched below; its result is the
+  // re-dispatch's, never this attempt's.
+  if (orchestration && outcome !== "memory_revoked") {
     orchestration.result.replyText = replyText.trim();
     orchestration.result.outcome = outcome;
   }
@@ -5643,11 +5672,48 @@ async function runGroupMemberTurn(
   // duplicate group frame or clear a newer speaker's state.
   if (store.group(group.id)?.busyBotId === bot.id) {
     groupSpeakers.delete(threadId);
-    store.patchGroup(group.id, { busyBotId: null, unread: true });
-    if (store.bot(bot.id)?.busy) {
-      store.setActivity(bot.id, "idle");
-      retryDelegationsWaitingOn(bot.id);
+    if (outcome === "memory_revoked") {
+      // Release the claim only so the re-dispatch below can take it again:
+      // no unread flag (the room is still answering) and no delegation
+      // retry, which could claim this bot before its own room turn runs.
+      store.patchGroup(group.id, { busyBotId: null });
+      if (store.bot(bot.id)?.busy) store.setActivity(bot.id, "idle");
+    } else {
+      store.patchGroup(group.id, { busyBotId: null, unread: true });
+      if (store.bot(bot.id)?.busy) {
+        store.setActivity(bot.id, "idle");
+        retryDelegationsWaitingOn(bot.id);
+      }
     }
+  }
+  if (outcome === "memory_revoked") {
+    // The refused attempt released the room and the bot above, exactly as a
+    // rejected dispatch does, but nothing is drained here: a queued send
+    // admitted now could claim the bot before its own room turn runs again.
+    // The re-dispatch's completion (or its failure path) drains as always.
+    if (skillAuthoring) skillAuthoringClaim.claimed = false;
+    await releaseBrowserCapabilityForThread(threadId);
+    // This attempt's generation is finished: revoke it before the re-dispatch
+    // claims the thread under its own (the finally below would otherwise do
+    // so only after the re-dispatch returned). Its writer lease stays until
+    // the stopped provider turn's terminal event, as after any refused
+    // acceptance; a second writer on the same folder is admitted.
+    revokeInternalGeneration(threadId, internalGeneration);
+    return await runGroupMemberTurn(
+      groupId,
+      threadId,
+      botId,
+      hop,
+      spoken,
+      cardContinuation,
+      onDispatchError,
+      isCancelled,
+      onProviderHandshakeStarted,
+      onProviderHandshakeSettled,
+      skillAuthoringClaim,
+      orchestration,
+      true,
+    );
   }
   if (outcome === "dispatch_failed") {
     if (skillAuthoring) skillAuthoringClaim.claimed = false;
