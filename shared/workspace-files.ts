@@ -30,6 +30,9 @@ export const WORKSPACE_FILES_ROUTES = {
   search: `${WORKSPACE_FILES_ROUTE_PREFIX}/search`,
   /** GET ?botId&threadId&path -> WorkspaceReadResult */
   read: `${WORKSPACE_FILES_ROUTE_PREFIX}/read`,
+  /** GET ?botId&threadId&path -> WorkspaceNativeFile (F4-T5; the Electron
+   * main process only, never the renderer) */
+  native: `${WORKSPACE_FILES_ROUTE_PREFIX}/native`,
   /** POST WorkspaceWriteRequest -> SaveReceipt */
   write: `${WORKSPACE_FILES_ROUTE_PREFIX}/write`,
   /** POST WorkspaceSaveVersionRequest -> WorkspaceSaveVersionResponse */
@@ -139,6 +142,32 @@ export interface WorkspaceReadResult {
   content: string;
 }
 export type ReadResult = WorkspaceReadResult;
+
+/**
+ * F4-T5: what the owned Electron main process needs to hand one workspace
+ * file to the operating system (open or reveal).
+ *
+ * The renderer never sees this. It asks the main process for a scope plus a
+ * relative path; the main process adds the desktop proof, calls this route,
+ * then rebuilds the path from `root` itself, walks every ancestor without
+ * following a link, opens the file `O_NOFOLLOW` and refuses unless the
+ * observed `identity` still matches. The server authorizes the file; the main
+ * process closes the gap between that answer and the OS call.
+ *
+ * No bytes are returned and there is no size limit: the OS opens the file,
+ * Murage does not read it.
+ */
+export interface WorkspaceNativeFile {
+  scope: WorkspaceScopeRef;
+  relativePath: string;
+  /** Canonical (real) workspace root. Never shown to the renderer. */
+  root: string;
+  revision: FileRevision;
+  bytes: number;
+  /** Opaque identity of the exact observed file state. The main process
+   * recomputes it from its own `fstat`; nothing else parses it. */
+  identity: string;
+}
 
 export interface WorkspaceWriteRequest {
   scope: WorkspaceScopeRef;
