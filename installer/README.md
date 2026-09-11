@@ -35,6 +35,35 @@ So `murage start` runs both, and `murage setup` starts the door itself —
 briefly — to prove it comes up before it configures any proxy in front of it.
 It stops that one again when it exits; `murage start` is what runs it for real.
 
+### Is that really the door?
+
+Something answering on `127.0.0.1:8813` is not proof that it is this
+deployment's browser door. It could be an unrelated server, a crashed one, or a
+sidecar left over from an older install. So:
+
+- Every `murage start` writes a fresh random nonce, mode `0600`, to
+  `$MURAGE_DATA_DIR/door-identity`, and hands it to the sidecar it starts (never
+  to the harness). The sidecar removes it from its environment at startup.
+- `setup` and `status` send a random challenge; the door answers with an HMAC
+  of the challenge under that nonce, plus the installer version that started
+  it. The nonce itself never crosses the socket or the tailnet proxy.
+- `setup` adopts an already-running door only when that proof matches, the
+  version is this installer's, and the door is not answering 5xx. Anything
+  else is reported and **not** fronted with `tailscale serve`. It is also never
+  stopped: a listener setup did not start is not setup's to stop.
+- The sidecar `setup` starts for itself gets its own nonce, and setup waits for
+  that proof, not just any answer, before it configures the proxy.
+
+`status` reports a listener that fails the proof as not this deployment's door.
+
+### The node runtime
+
+`setup` and `start` both check the running node against the server's
+distributed manifest (`engines.node` in the payload's `package.json`, else the
+package's, else the checkout's) before doing anything, and never accept less
+than node 24: the server uses `node:sqlite`. An older runtime is refused with
+the requirement and where it came from, with nothing changed.
+
 ### The one door the sidecar does *not* open here
 
 On a desktop the sidecar also opens a **device door on `0.0.0.0:8810`**, so a
