@@ -128,6 +128,34 @@ describe("MinimaxDriver", () => {
     await instance.dispose();
   });
 
+  it("fails an empty 200 stream instead of completing an empty turn (A3)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })));
+    const instance = await MinimaxDriver.create({
+      instanceId: "minimax-empty-stream",
+      displayName: "MiniMax",
+      enabled: true,
+      config: MinimaxDriver.defaultConfig(),
+      environment: { MINIMAX_API_KEY: "secret" },
+    });
+    const recorder = recordEvents(instance.adapter);
+
+    await instance.adapter.sendTurn({ threadId: "thread-empty-stream", text: "hello" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "runtime.error",
+      message: expect.stringContaining("stream ended before the provider signalled completion"),
+    }));
+    expect(recorder.events.some((event) => event.type === "item.completed")).toBe(false);
+    expect(instance.adapter.hasSession("thread-empty-stream")).toBe(false);
+    recorder.stop();
+    await instance.dispose();
+  });
+
   it("reports a bodyless stream clearly and releases the turn", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
     const instance = await MinimaxDriver.create({
