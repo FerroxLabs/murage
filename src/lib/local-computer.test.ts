@@ -166,12 +166,48 @@ describe("computerSwitchNeedsLocalAutoWarning (AUTOOP2 verifier follow-up)", () 
 
 describe("localAutoHostPlatform", () => {
   const host = (platform: "darwin" | "linux" | "win32" | "other") => ({ host: { platform, label: "", homeDir: "" } } as never);
-  it("uses the announced desktop platform", () => {
-    expect(localAutoHostPlatform(host("darwin"), "Mozilla/5.0 (X11; Linux x86_64)")).toBe("darwin");
-    expect(localAutoHostPlatform(host("linux"), "Mozilla/5.0 (Macintosh; Intel Mac OS X)")).toBe("linux");
+  const macUa = "Mozilla/5.0 (Macintosh; Intel Mac OS X)";
+  const linuxUa = "Mozilla/5.0 (X11; Linux x86_64)";
+  it("uses the announced desktop platform when the harness has not answered", () => {
+    expect(localAutoHostPlatform(host("darwin"), { userAgent: linuxUa })).toBe("darwin");
+    expect(localAutoHostPlatform(host("linux"), { userAgent: macUa })).toBe("linux");
   });
-  it("lets the UA stand in for a plain browser on a Mac, where the harness is on the same machine", () => {
-    expect(localAutoHostPlatform(host("other"), "Mozilla/5.0 (Macintosh; Intel Mac OS X)")).toBe("darwin");
-    expect(localAutoHostPlatform(host("other"), "Mozilla/5.0 (X11; Linux x86_64)")).toBe("other");
+  it("lets the UA stand in for a plain browser only while the harness has not answered", () => {
+    expect(localAutoHostPlatform(host("other"), { userAgent: macUa })).toBe("darwin");
+    expect(localAutoHostPlatform(host("other"), { userAgent: linuxUa })).toBe("other");
+    expect(localAutoHostPlatform(host("other"), { userAgent: macUa, harness: undefined })).toBe("darwin");
+    expect(localAutoHostPlatform(host("other"), { userAgent: macUa, harness: null })).toBe("darwin");
+  });
+  // FOLLOW5: the server decides local-Auto consent from ITS process.platform
+  // (autoMountsLocalComputer in server/local-routing.ts). A plain-browser
+  // client's UA is the browser's machine, not necessarily the harness's — a
+  // Linux or Windows tab through the browser door talks to a Mac harness and
+  // used to get a bare 400 with no dialog, and a Mac tab against a Linux
+  // harness showed a dialog the server never asked for. The harness announces
+  // its platform on /api/config and that wins over both the UA and the
+  // desktop shell's own answer whenever it is present.
+  it("prefers the platform the harness announced over the browser UA", () => {
+    expect(localAutoHostPlatform(host("other"), { userAgent: linuxUa, harness: { platform: "darwin" } })).toBe("darwin");
+    expect(localAutoHostPlatform(host("other"), { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", harness: { platform: "darwin" } })).toBe("darwin");
+    expect(localAutoHostPlatform(host("other"), { userAgent: macUa, harness: { platform: "linux" } })).toBe("linux");
+    expect(localAutoHostPlatform(host("other"), { userAgent: macUa, harness: { platform: "win32" } })).toBe("win32");
+  });
+  it("prefers the announced harness platform over the desktop shell's answer too — the harness is what refuses the PATCH", () => {
+    expect(localAutoHostPlatform(host("darwin"), { userAgent: macUa, harness: { platform: "linux" } })).toBe("linux");
+    expect(localAutoHostPlatform(host("linux"), { userAgent: linuxUa, harness: { platform: "darwin" } })).toBe("darwin");
+  });
+  it("folds a harness platform the renderer has no name for into 'other', never into a UA guess", () => {
+    expect(localAutoHostPlatform(host("other"), { userAgent: macUa, harness: { platform: "freebsd" } })).toBe("other");
+    expect(localAutoHostPlatform(host("other"), { userAgent: macUa, harness: { platform: "" } })).toBe("darwin");
+  });
+  it("decides the warning from the harness platform, not the UA (the FOLLOW3 verifier cases)", () => {
+    // non-Mac UA + darwin harness → the warning is required
+    const darwinHarness = localAutoHostPlatform(host("other"), { userAgent: linuxUa, harness: { platform: "darwin" } });
+    expect(autoNeedsLocalComputerWarning({ platform: darwinHarness, computer: undefined, autoApprove: false })).toBe(true);
+    // Mac UA + linux harness + computer undefined → no warning
+    const linuxHarness = localAutoHostPlatform(host("other"), { userAgent: macUa, harness: { platform: "linux" } });
+    expect(autoNeedsLocalComputerWarning({ platform: linuxHarness, computer: undefined, autoApprove: false })).toBe(false);
+    expect(computerSwitchNeedsLocalAutoWarning({ platform: linuxHarness, from: "cloud", to: undefined, autoApprove: true })).toBe(false);
+    expect(computerSwitchNeedsLocalAutoWarning({ platform: darwinHarness, from: "cloud", to: undefined, autoApprove: true })).toBe(true);
   });
 });

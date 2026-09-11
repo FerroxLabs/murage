@@ -473,8 +473,10 @@ export function Composer({
     // Turning it on for a bot that drives THIS computer is the one case that
     // has to be acknowledged first. The flag the dialog sends is stripped by
     // the reducer rather than stored, so — exactly like the settings panel —
-    // the warning is shown on every switch-on, not just the first.
-    const platform = localAutoHostPlatform(capabilities);
+    // the warning is shown on every switch-on, not just the first. The
+    // platform is the harness's own (announced on /api/config), not this
+    // browser's UA (FOLLOW5).
+    const platform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
     if (auto && autoNeedsLocalComputerWarning({ platform, computer: autoBot.computer, autoApprove: autoBot.autoApprove })) {
       setAutoWarn(true);
       return;

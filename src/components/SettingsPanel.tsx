@@ -788,8 +788,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               onClick={() => {
                 // Same rule as the composer chip and the server: a bot that
                 // never chose a computer mounts this Mac too, so switching it
-                // to Auto shows the warning instead of a refused PATCH.
-                if (autoNeedsLocalComputerWarning({ platform: localAutoHostPlatform(capabilities), computer: bot.computer, autoApprove: bot.autoApprove })) setLocalAutoWarning("auto");
+                // to Auto shows the warning instead of a refused PATCH. The
+                // platform is the harness's own (announced on /api/config),
+                // not this browser's UA (FOLLOW5).
+                if (autoNeedsLocalComputerWarning({ platform: localAutoHostPlatform(capabilities, { harness: state.config?.harness }), computer: bot.computer, autoApprove: bot.autoApprove })) setLocalAutoWarning("auto");
                 else patch({ autoApprove: !bot.autoApprove });
               }}
             />

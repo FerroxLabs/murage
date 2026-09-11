@@ -134,6 +134,7 @@ describe("ComputerPanel destination change on an Auto-on bot", () => {
   });
   it("reads the Mac through the browser door the way the settings switch does", () => {
     // host.platform "other" (a plain browser) on a Mac UA is still this Mac
+    // while the harness has not announced itself
     expect(planComputerDestinationChange({
       capabilities: capabilities("other"),
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)",
@@ -141,5 +142,35 @@ describe("ComputerPanel destination change on an Auto-on bot", () => {
       next: "auto",
       autoApprove: true,
     })).toEqual({ kind: "warn", choice: "auto" });
+  });
+  // FOLLOW5: the harness's own platform (announced on /api/config) decides,
+  // not the browser's UA — a Linux tab through the browser door on a Mac
+  // harness must get the dialog, and a Mac tab on a Linux harness must not.
+  it("decides on the platform the harness announced, not the browser UA", () => {
+    expect(planComputerDestinationChange({
+      capabilities: capabilities("other"),
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64)",
+      harness: { platform: "darwin" },
+      current: "cloud",
+      next: "auto",
+      autoApprove: true,
+    })).toEqual({ kind: "warn", choice: "auto" });
+    expect(planComputerDestinationChange({
+      capabilities: capabilities("other"),
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)",
+      harness: { platform: "linux" },
+      current: "cloud",
+      next: "auto",
+      autoApprove: true,
+    })).toEqual({ kind: "patch", patch: { computer: null } });
+    // an explicit "local" on a Linux harness still mounts it there
+    expect(planComputerDestinationChange({
+      capabilities: capabilities("other"),
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)",
+      harness: { platform: "linux" },
+      current: "cloud",
+      next: "local",
+      autoApprove: true,
+    })).toEqual({ kind: "warn", choice: "local" });
   });
 });

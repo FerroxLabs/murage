@@ -402,6 +402,13 @@ export interface ConfigStatus {
   features?: { skillRecorder: boolean; showToolCalls?: boolean; browser?: boolean };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
+  /** The harness announcing itself: `platform` is its `process.platform`,
+   * the platform the server's local-Auto consent rule runs on
+   * (`autoMountsLocalComputer`, server/local-routing.ts). The renderer's copy
+   * of that rule reads it (`localAutoHostPlatform`) rather than guessing from
+   * the browser UA, which is the browser's machine, not the harness's.
+   * Absent until `/api/config` has answered, or from an older harness. */
+  harness?: { platform: string };
 }
 
 export interface BrowserProfile {
@@ -414,7 +421,7 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "webSearch" | "notifications" | "profile" | "language" | "features" | "browserProfiles"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "webSearch" | "notifications" | "profile" | "language" | "features" | "browserProfiles" | "harness"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -435,6 +442,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     language: frame.language,
     features: frame.features,
     browserProfiles: frame.browserProfiles,
+    harness: frame.harness,
   };
 }
 

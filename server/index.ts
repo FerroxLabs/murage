@@ -7031,6 +7031,15 @@ function configStatus() {
     // show the same durable session as an agent, but config PATCH validation
     // keeps it read-only and rejects callers that try to choose it.
     browserProfiles: cfg.browserProfiles ?? [],
+    // The harness announcing itself. Local-Auto consent is decided from THIS
+    // process's platform (`autoMountsLocalComputer`, server/local-routing.ts),
+    // and the renderer's copy of that rule (`localAutoHostPlatform`,
+    // src/lib/local-computer.ts) must run on the same one — a plain browser
+    // (dev rig, browser door) has no desktop shell to ask and its UA is the
+    // browser's machine, not necessarily this one. Not a secret: the platform
+    // name is in every error string the routes already return. Rides on this
+    // route because the renderer reads it at startup anyway (FOLLOW5).
+    harness: { platform: process.platform },
   };
 }
 
