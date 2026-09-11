@@ -201,7 +201,9 @@ export class ImageOperations {
     const prompt = request && typeof request === "object" && "prompt" in request ? String(request.prompt) : "";
     const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", card: {
       title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",
-      subtitle: `One image${details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : ""} · ${details.connectionId} · ${details.model}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}. Provider charges apply; exact cost is not available.`,
+      // F1-T4: the owner approves the exact upstream that will bill them. An
+      // OpenRouter edit names its pinned endpoint; nothing else is routed.
+      subtitle: `One image${details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : ""} · ${details.connectionId} · ${details.model}${details.endpointTag ? ` (pinned to ${details.endpointTag}, no fallback)` : ""}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}. Provider charges apply; exact cost is not available.`,
       held: prompt, options: ["Allow", "Deny"], requestId, tool: "generate_image",
     } });
     this.waiting(actor.threadId, true, requestId, card.id);
