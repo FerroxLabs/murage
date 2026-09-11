@@ -84,8 +84,16 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
       body: JSON.stringify({ cli: committed }),
     })
       // onSaved (refreshInstances) failing must NOT read as "not saved" —
-      // the PATCH already returned 200. Close regardless; the global banner
-      // from refreshInstances already reports the refresh failure.
+      // the PATCH already returned 200. Close regardless. The store's
+      // refreshInstances rejects when GET /api/instances fails (FOLLOW4) and
+      // there is no global banner for it: this picker is closing, so the
+      // failure is swallowed here and the row keeps its pre-save snapshot
+      // until the store re-probes (window focus, or a config frame from a
+      // later change; this PATCH broadcasts none). The callers with
+      // somewhere to say it do: the Enable toggle below sets its own
+      // "Change saved. Refresh the engine list…" line, and
+      // ClaudeAccountsSettings' claudeAccountChanger reports
+      // claudeAccounts.fleetRefreshError (FOLLOW6, FOLLOW4 verifier).
       .then(() => Promise.resolve(onSaved()).catch(() => {}))
       .then(onClose)
       .catch((e) => setError(e.message))
