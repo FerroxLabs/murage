@@ -1,4 +1,5 @@
 import { EMBER_AVATAR_STATES, type EmberAvatarState } from "@/components/EmberAvatar";
+import { hostStoppedReason } from "../../shared/host-stop";
 
 /** The mascot's behaviour vocabulary — EmberAvatar's 39 states, under the
  * app's historical names. */
@@ -150,8 +151,16 @@ export const PICKABLE_STATES: EmberState[] = [
 
 type MascotMessage = {
   kind: string;
-  tool?: { ok?: boolean };
+  tool?: { name?: string; ok?: boolean };
 };
+
+/** A settled, not-successful activity that is really a failure. A host-stop
+ * notice (shared/host-stop.ts) is ok:false too, but it is a neutral stop —
+ * the transcript shows a StoppedRow, not a red card — and the face must not
+ * flinch at it. */
+export function activityFailed(message: Pick<MascotMessage, "kind" | "tool"> | undefined): boolean {
+  return message?.kind === "activity" && message.tool?.ok === false && hostStoppedReason(message.tool.name) === undefined;
+}
 
 export type MascotBotProfile = {
   name: string;
@@ -174,7 +183,7 @@ export function stateForBot(bot: MascotBotProfile): EmberState {
 
   const last = bot.messages?.[bot.messages.length - 1];
 
-  if (last?.kind === "activity" && last.tool?.ok === false) return "alerting";
+  if (activityFailed(last)) return "alerting";
   if (bot.busy) return "working";
   if (bot.unread) return "notifying";
   if (last?.kind === "options") return "curious";
