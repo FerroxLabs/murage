@@ -220,6 +220,9 @@ describe("claudeAccountChanger", () => {
   });
 
   // The wiring — EnginesSettings hands the store's refreshInstances to the
-  // section as onChanged — is pinned by rendering in EnginesSettings.test.ts;
-  // the sequence in the real browser by claude-accounts.human.spec.ts.
+  // section as onChanged — is pinned by rendering in EnginesSettings.test.ts,
+  // which also drives this same sequence over a fake fetch (busy around the
+  // section's own requests only, GET /api/instances after busy clears, one
+  // probe out at a time — FOLLOW6); the real browser by
+  // claude-accounts.human.spec.ts.
 });
