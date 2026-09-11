@@ -53,6 +53,8 @@ import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
+import { QuestionCard } from "./QuestionCard";
+import { isQuestionCard } from "../../shared/questions";
 import { Composer } from "./Composer";
 import { IntakeTurn } from "./IntakeTurn";
 import { readIntakeCard } from "@/lib/onboarding-intake";
@@ -961,8 +963,14 @@ const MessagesList = memo(function MessagesList({
               // the intake route appends exactly such a message on every turn,
               // so the question would vanish the moment it was answered.
               if (readIntakeCard(m.card)) return <IntakeTurn bot={bot} message={m} />;
-              // a live permission ask gets the approval box; questions keep
-              // the list card. The first-run quiz drops out once they talk.
+              // a live provider question gets the question card (header,
+              // options with descriptions, multi-select, Other, expiry) —
+              // before the approval box, which only answers permissions
+              if (isQuestionCard(m.card)) {
+                return <QuestionCard message={m} threadId={bot.threadId} botId={bot.id} botName={bot.name} />;
+              }
+              // a live permission ask gets the approval box. The first-run
+              // quiz drops out once they talk.
               if (m.card?.requestId && m.card.tool) {
                 return <ApprovalCard bot={bot} message={m} />;
               }

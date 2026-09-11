@@ -65,6 +65,7 @@ function trimRoutineRuns(runs: readonly RoutineRun[]): RoutineRun[] {
 
 export type { EmberColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
+import { isQuestionCard, type QuestionAnswer, type QuestionSpec } from "../../shared/questions";
 
 export interface OptionCardData {
   title: string;
@@ -81,6 +82,14 @@ export interface OptionCardData {
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
   approvalScope?: "local-computer";
+  /** A provider question's structured questions (server/store.ts). */
+  questions?: QuestionSpec[];
+  /** What the owner chose; a secret answer is never kept. */
+  answers?: QuestionAnswer[];
+  /** The bot stopped waiting with no answer; "Send as a message" still works. */
+  expired?: boolean;
+  sentAsMessage?: boolean;
+  unattended?: boolean;
   /** Persisted proposal used by the server when the user confirms it. */
   routineRequest?: RoutineRequestCardData;
   routineProposalDigest?: string;
@@ -695,6 +704,28 @@ export type Action =
       /** Local UI recovery hook for voice flows. Never sent to the server. */
       onError?: (message: string) => void;
     }
+  /** A question card's answer or explicit skip, by THREAD (works in rooms). */
+  | {
+      type: "answerQuestion";
+      threadId: string;
+      requestId: string;
+      behavior: "answer" | "skip";
+      answers?: QuestionAnswer[];
+      /** Local recovery hook for the card. Never sent to the server. */
+      onError?: (message: string) => void;
+    }
+  /** An expired question's answer, posted as an ordinary message and then
+   * recorded on the card. `groupId` for rooms, `botId` for 1:1 chats. */
+  | {
+      type: "sendQuestionAsMessage";
+      botId?: string;
+      groupId?: string;
+      threadId: string;
+      requestId: string;
+      text: string;
+      answers: QuestionAnswer[];
+      onError?: (message: string) => void;
+    }
   | { type: "newTask"; botId: string }
   | { type: "switchTask"; botId: string; threadId: string }
   | { type: "taskSwitched"; bot: Bot }
@@ -1018,14 +1049,21 @@ export function reducer(state: AppState, action: Action): AppState {
         "working",
       );
     }
-    case "dismissCard":
+    case "dismissCard": {
+      // A live question never vanishes on dismiss: it is skipped (the
+      // engine is told at once) and the server's patch shows it as skipped.
+      const card = state.bots.find((bot) => bot.id === action.botId)?.messages.find((message) => message.id === action.messageId)?.card;
+      if (isQuestionCard(card)) return state;
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
+    }
     // Explicitly false, never a delete: `undefined` means "nobody decided" and
     // lets the transcript hide the card again on its own.
     case "restoreCard":
       return patchCard(state, action.botId, action.messageId, { dismissed: false });
     case "decideRequest":
-      return state; // the server's request.resolved patch settles the card
+    case "answerQuestion":
+    case "sendQuestionAsMessage":
+      return state; // the server's message patch settles the card
     case "botAdded":
       return withMascotMotion({
         ...state,
@@ -1847,6 +1885,57 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           void respond();
           break;
         }
+        case "answerQuestion": {
+          api(`/api/threads/${action.threadId}/respond`, {
+            method: "POST",
+            body: JSON.stringify({
+              requestId: action.requestId,
+              behavior: action.behavior,
+              ...(action.answers ? { answers: action.answers } : {}),
+            }),
+          }).catch((error) => {
+            showError(error);
+            action.onError?.(error instanceof Error ? error.message : String(error));
+          });
+          break;
+        }
+        case "sendQuestionAsMessage": {
+          // Send first, record second: a card is marked "sent" only once the
+          // message really went out through the ordinary composer route.
+          const fail = (error: unknown) => {
+            showError(error);
+            action.onError?.(error instanceof Error ? error.message : String(error));
+          };
+          if (!action.groupId && !action.botId) {
+            fail(new Error("This conversation can no longer take a message."));
+            break;
+          }
+          const sendId = newSendId();
+          const post = action.groupId
+            ? () => api(`/api/groups/${action.groupId}/messages`, {
+                method: "POST",
+                body: JSON.stringify({ text: action.text, threadId: action.threadId, sendId, mode: "chat" }),
+              })
+            : () => threadWrites.ready(action.threadId).then(() => api(`/api/bots/${action.botId}/messages`, {
+                method: "POST",
+                body: JSON.stringify({ text: action.text, threadId: action.threadId, sendId }),
+              }));
+          void post()
+            .then((body) => {
+              if (body?.message && typeof body.threadId === "string") {
+                rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message });
+              }
+              if (body?.queued && typeof body.threadId === "string" && typeof body.queueId === "string") {
+                rawDispatch({ type: "pendingQueued", threadId: body.threadId, queueId: body.queueId, text: action.text });
+              }
+              return api(`/api/threads/${action.threadId}/respond`, {
+                method: "POST",
+                body: JSON.stringify({ requestId: action.requestId, behavior: "answer", answers: action.answers, sentAsMessage: true }),
+              });
+            })
+            .catch(fail);
+          break;
+        }
         case "answerCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
@@ -1889,10 +1978,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
           if (card?.requestId) {
+            // A question's X is an explicit skip the engine hears at once.
+            // Sending "deny" to a question used to be refused, and the bot
+            // then waited out its whole timeout (0.1.52 ASK2).
             api(`/api/bots/${action.botId}/respond`, {
               method: "POST",
-              body: JSON.stringify({ requestId: card.requestId,threadId:bot?.threadId, behavior: "deny", message: "Dismissed by user." }),
-            }).catch(() => {});
+              body: JSON.stringify(
+                isQuestionCard(card)
+                  ? { requestId: card.requestId, threadId: bot?.threadId, behavior: "skip" }
+                  : { requestId: card.requestId, threadId: bot?.threadId, behavior: "deny", message: "Dismissed by user." },
+              ),
+            }).catch(showError);
           } else {
             persistCard(action.botId, action.messageId, { dismissed: true });
           }

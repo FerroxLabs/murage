@@ -118,6 +118,27 @@ export function workingGoalRunMessages(): Array<{ threadId: string; message: Mes
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
 }
 
+/** Provider question cards still waiting on an answer (0.1.52 ASK2). An
+ * engine's wait lives only in memory, so after a restart every one of these
+ * is unanswerable where it stands; the boot sweep marks them Expired so a
+ * late answer can still go out as a message. A question card is a request
+ * card without a permission tool and without a harness-owned proposal. */
+export function openQuestionCardMessages(): Array<{ threadId: string; message: Message }> {
+  const rows = db()
+    .prepare(
+      "SELECT thread_id, json FROM messages WHERE kind = 'options' " +
+        "AND json_type(json, '$.card.requestId') = 'text' " +
+        "AND json_type(json, '$.card.tool') IS NULL " +
+        "AND json_type(json, '$.card.answered') IS NULL " +
+        "AND COALESCE(json_extract(json, '$.card.dismissed'), 0) = 0 " +
+        "AND json_type(json, '$.card.routineRequest') IS NULL " +
+        "AND json_type(json, '$.card.skillRequest') IS NULL " +
+        "AND json_type(json, '$.card.intake') IS NULL",
+    )
+    .all() as Array<{ thread_id: string; json: string }>;
+  return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
+}
+
 function writeActiveLeaf(threadId: string, leafId: string | null): void {
   db()
     .prepare(
