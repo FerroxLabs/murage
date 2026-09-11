@@ -536,7 +536,7 @@ test("a full non-interactive setup takes a fresh box to exit 0, with no prompt a
 
   // The whole point: neither secret reached argv or the terminal.
   const argv = readFileSync(log, "utf8");
-  assert.match(argv, /^up --auth-key=file:/m, "the key goes in by file path, never as an argument");
+  assert.match(argv, /^up --reset --auth-key=file:/m, "the key goes in by file path, never as an argument");
   assert.ok(!argv.includes(AUTH_SECRET), `the auth key leaked into tailscale's argv:\n${argv}`);
   assert.ok(!argv.includes(PROVIDER_SECRET), argv);
   assert.ok(!out.includes(AUTH_SECRET), "the auth key was printed");
