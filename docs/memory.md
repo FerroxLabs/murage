@@ -1,6 +1,6 @@
 # Memory in Murage
 
-Murage 0.1.47 includes opt-in managed memory: durable records, source history, scoped retrieval and owner controls. It belongs to the application rather than to a particular engine.
+Murage includes managed memory: durable records, source history, scoped retrieval and owner controls. A new installation starts in Capture and recall; an installation that already has a memory setting keeps it. It belongs to the application rather than to a particular engine.
 
 ## Enable it
 
@@ -8,9 +8,9 @@ Open **More → Team map → Manage memory**. A bot's settings also provide a fi
 
 | Mode | What happens |
 |---|---|
-| Off (default) | No new capture or Murage-provided recall. Retained data stays on disk. |
+| Off | No new capture or Murage-provided recall. Retained data stays on disk. |
 | Capture only | Capture and local processing run, but memory is not added to agent turns. |
-| Capture and recall | Capture, processing, scoped context and supported memory tools are enabled. |
+| Capture and recall (default on a new installation) | Capture, processing, scoped context and supported memory tools are enabled. |
 | Paused | Retain data and incoming source capture; stop the worker and injection. |
 
 Start with the conversations and audiences you want to retain. Excluding a conversation retires its eligible sources; removing that exclusion does not silently bring retired history back.
@@ -19,7 +19,7 @@ Start with the conversations and audiences you want to retain. Excluding a conve
 
 Keyword retrieval searches the local index. On Apple Silicon, Windows x64 and Linux x64, you can also download the pinned local embedding model from **Local model** to enable semantic retrieval. Murage checks its size and hashes before use; inference does not silently download model files.
 
-Intel Macs use keyword retrieval in 0.1.47. The pinned semantic runtime does not ship an Intel Mac binding, so unsupported downloads are refused. Review, corrections, sharing, pins, forgetting and source recovery remain available.
+Intel Macs use keyword retrieval in this release. The pinned semantic runtime does not ship an Intel Mac binding, so unsupported downloads are refused. Review, corrections, sharing, pins, forgetting and source recovery remain available.
 
 Missing or unusable embeddings are reported as degraded keyword recall. An invalid or oversized required pin can block dispatch rather than silently lose an important owner constraint.
 

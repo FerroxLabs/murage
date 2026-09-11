@@ -11,9 +11,11 @@ import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
-import { buildMemoryBundle } from "./bundle.ts";
+import { buildMemoryBundle, supersededThreadCheckpoint } from "./bundle.ts";
 import { buildMemoryBundleAfterReset, MemoryDispatchReceipt } from "./dispatch.ts";
 import { forgetMemory } from "./forget.ts";
+import { archiveMemoryRecord } from "./retention.ts";
+import { continuationMemoryRevoked, filterMemoryReplay } from "./disclosures.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 
 const threadId="7f00a32e-17a4-426b-bdc6-910220ba66c9";
@@ -36,12 +38,90 @@ function checkpoint(text:string){
   return {sourceId,id:result.checkpointId,version:result.version};
 }
 
-it("reproduces the former failure when a selected checkpoint rolls over during reset",async()=>{
+// Until Q1-T5 §4.1 a selected checkpoint that rolled over before receipt
+// construction failed preparation with MEMORY_RECORD_UNAVAILABLE. The thread's
+// own checkpoint rolls on every captured message in that thread, so that
+// supersession is now staleness (bundle.ts supersededThreadCheckpoint): the
+// receipt prepares the version it selected and discloses exactly that.
+it("prepares a bundle whose own-thread checkpoint rolled over during reset as stale, not revoked",async()=>{
   const f=fixture(),first=checkpoint("Verified initial result.");
   const before=await buildMemoryBundle("result",f.access,bridge);
   expect(before.recordVersions).toContainEqual({id:first.id,version:first.version});
   await Promise.resolve().then(()=>checkpoint("Verified later result."));
-  expect(()=>new MemoryDispatchReceipt(before,f.access,"fixture")).toThrow("MEMORY_RECORD_UNAVAILABLE");
+  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
+  const receipt=new MemoryDispatchReceipt(before,f.access,"fixture");
+  expect(()=>receipt.assertCurrent()).not.toThrow();
+  expect(JSON.parse(String(database().prepare("SELECT record_versions FROM memory_disclosures WHERE bundle_id=?").get(before.bundleId)?.record_versions))).toContainEqual({id:first.id,version:first.version});
+});
+
+it("treats the thread's own checkpoint superseded inside the dispatch window as stale: the accepted turn runs and its reply stays replayable",async()=>{
+  const f=fixture(),first=checkpoint("Verified initial result.");
+  const bundle=await buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{});
+  expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
+  const receipt=new MemoryDispatchReceipt(bundle,f.access,"fixture");
+  receipt.assertCurrent();
+  // The turn's own prompt capture completes in the worker while the provider is still starting.
+  expect(checkpoint("The turn's own prompt, captured meanwhile.")).toMatchObject({id:first.id,version:first.version+1});
+  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
+  expect(()=>receipt.assertCurrent()).not.toThrow();
+  let stopped=false;
+  const guarded=await guardTurnDispatch(Promise.resolve({turnId:"accepted-provider"}),()=>false,async()=>{stopped=true;},()=>receipt.accepted());
+  expect(guarded).toEqual({value:{turnId:"accepted-provider"},cancelled:false});
+  expect(stopped).toBe(false);
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
+  receipt.sessionStarted("native");receipt.output("reply-1");receipt.completed(true);
+  // The reply's own capture rolls the checkpoint again; the next turn still
+  // replays this reply and may resume the native session.
+  expect(checkpoint("The reply, captured.")).toMatchObject({id:first.id,version:first.version+2});
+  const next=fixture();
+  expect(filterMemoryReplay(threadId,[{id:"reply-1"}],next.access).map(message=>message.id)).toEqual(["reply-1"]);
+  expect(continuationMemoryRevoked(threadId,"fixture","native",next.access)).toBe(false);
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
+});
+
+it("keeps every other revocation of a disclosed checkpoint fail-closed",async()=>{
+  const prepared=async(text:string)=>{
+    const f=fixture(),first=checkpoint(text),bundle=await buildMemoryBundle("result",f.access,bridge);
+    expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
+    return {f,first,receipt:new MemoryDispatchReceipt(bundle,f.access,"fixture")};
+  };
+  // Archived without a successor is not supersession.
+  {const {first,receipt}=await prepared("Archived, no successor.");
+    database().prepare("UPDATE memory_records SET state='archived' WHERE id=? AND version=?").run(first.id,first.version);
+    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+  // A superseded version whose evidence source retired is not disclosable.
+  {const {first,receipt}=await prepared("Retired evidence.");checkpoint("Roll.");
+    database().prepare("UPDATE memory_sources SET state='retired' WHERE id=?").run(first.sourceId);
+    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+  // A tombstoned version stays refused even with a newer active version.
+  {const {first,receipt}=await prepared("Tombstoned version.");checkpoint("Roll.");
+    database().prepare("INSERT INTO memory_tombstones VALUES(?,'record',?,?,NULL,0,'fixture',?)").run(randomUUID(),first.id,first.version,Date.now());
+    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+  // An owner forget moves the deletion epoch: refused before any record check.
+  {const {first,receipt}=await prepared("Forgotten evidence.");checkpoint("Roll.");
+    forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});
+    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+  // An owner archive moves the policy revision, successor or not.
+  {const {first,receipt}=await prepared("Owner-archived.");
+    archiveMemoryRecord(ownerMemoryTicket(),first.id,first.version);
+    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+});
+
+it("recognizes only the current thread's own checkpoint as superseded",()=>{
+  const otherThread="0c5a7e0e-2f0d-4b7e-9c2a-6d4e1f3a8b90";
+  const wider={bots:[{id:"bot",threadId},{id:"other",threadId:otherThread}],groups:[]};
+  reconcileMemoryRoster(wider);
+  const first=checkpoint("Own thread evidence.");checkpoint("Roll.");
+  const registry=new InternalCapabilities();
+  const access=(botId:string,thread:string)=>{const generation=registry.begin(botId,thread);const token=registry.mint({botId,threadId:thread,generation,depth:0,kind:"memory",skillAuthoring:false});return memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>wider);};
+  expect(supersededThreadCheckpoint(first.id,first.version,access("bot",threadId))).toBe(true);
+  expect(supersededThreadCheckpoint(first.id,first.version,access("other",otherThread))).toBe(false);
+  expect(supersededThreadCheckpoint(first.id,first.version+1,access("bot",threadId))).toBe(false);
 });
 
 it("builds after checkpoint rollover during reset and prepares the current version without a provider retry",async()=>{
