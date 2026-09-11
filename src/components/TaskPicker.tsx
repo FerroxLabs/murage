@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Download, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useStore, formatTime, type Bot, type Group, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { COMPACT_BUBBLE } from "@/lib/compact-chip";
+import { COMPACT_BUBBLE_LAST } from "@/lib/compact-chip";
 import { formatTaskTokens } from "@/lib/usage";
 import { nextRename } from "@/lib/rename";
 import { downloadConversation } from "@/lib/conversation-export";
@@ -222,14 +222,17 @@ function ConversationTaskPicker({
         }}
         title={switchTitle}
         className={cn(
-          "flex max-w-[220px] items-center gap-1.5 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
-          COMPACT_BUBBLE,
+          // `w-full`: a button is shrink-to-fit, so on the chat header's
+          // labelled second row it must follow its root down to the floor
+          // the header sets, truncating the title, rather than run past it.
+          "flex w-full max-w-[220px] items-center gap-1.5 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
+          COMPACT_BUBBLE_LAST,
         )}
       >
-        <span className="truncate @max-4xl/chathead:hidden">{current?.title ?? "Task"}</span>
+        <span className="truncate chip-fold:hidden">{current?.title ?? "Task"}</span>
         {/* folded: just the count in the bubble — the title rides the tooltip */}
-        <span className="shrink-0 tabular-nums opacity-60 @max-4xl/chathead:opacity-100">{tasks.length}</span>
-        <ChevronDown size={12} className="shrink-0 @max-4xl/chathead:hidden" />
+        <span className="shrink-0 tabular-nums opacity-60 chip-fold:opacity-100">{tasks.length}</span>
+        <ChevronDown size={12} className="shrink-0 chip-fold:hidden" />
       </button>
 
       {open && (
