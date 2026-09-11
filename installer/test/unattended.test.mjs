@@ -594,6 +594,10 @@ test("a non-interactive run with nothing supplied exits 2, lists everything miss
   assert.match(out, /provider API key/, out);
   assert.match(out, /Nothing has been changed/, out);
   assert.equal(existsSync(join(home, ".murage-server", "murage.env")), false, "no env file was written");
+  // "Nothing has been changed" includes the data directory: on the Linux proof
+  // an exit-2 run left an empty 0700 `~murage/.murage-server` behind, created
+  // before the preflight ran. It is created only once every input is known.
+  assert.equal(existsSync(join(home, ".murage-server")), false, "no data directory was created");
   // The preflight is allowed to READ the daemon (that is how it knows whether a
   // key is needed) but must not have changed anything.
   const argv = existsSync(log) ? readFileSync(log, "utf8") : "";
@@ -610,6 +614,7 @@ test("a secret file the run cannot read is named exactly, and the run still chan
   assert.equal(status, EXIT.USAGE, out);
   assert.match(out, /Tailscale auth key: .*not-there does not exist/, out);
   assert.equal(existsSync(join(home, ".murage-server", "murage.env")), false);
+  assert.equal(existsSync(join(home, ".murage-server")), false, "no data directory was created");
 });
 
 test("unattended answers without --non-interactive are refused, not silently ignored into a hang", async () => {

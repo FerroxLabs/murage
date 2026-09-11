@@ -631,7 +631,21 @@ function announceDeviceDoorClosed() {
  *   in its environment file instead of its command line.
  * @returns {SetupContext}
  */
-function resolveSetupContext(argv, serviceUserFromEnv = null) {
+function resolveSetupContext(argv, serviceUserFromEnv = null, { prepareNow = true } = {}) {
+  // Creating the data directory is the first thing setup CHANGES on a box. An
+  // unattended run promises "nothing has been changed" when it exits 2 for a
+  // missing input, and the preflight that decides that runs after this — so
+  // the unattended caller defers the creation (`ctx.prepare()`) until the
+  // preflight has passed. The interactive run prepares here, as before.
+  const guard = (work) => {
+    try {
+      return work();
+    } catch (error) {
+      if (!(error instanceof ServiceAccountRefused)) throw error;
+      fail(error.message);
+      process.exit(2);
+    }
+  };
   const parsed = parseSetupArgs(argv);
   if (parsed.error) {
     fail(parsed.error);
@@ -652,18 +666,14 @@ function resolveSetupContext(argv, serviceUserFromEnv = null) {
     }
     // The data directory is tightened here, once, through an fd; the env file
     // write no longer chmods whatever directory it finds (see `writeEnvFile`).
-    if (process.platform !== "win32") {
+    const prepare = () => {
+      if (process.platform === "win32") return;
       const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
       const gid = typeof process.getegid === "function" ? process.getegid() : 0;
-      try {
-        prepareDataDir(resolve(DATA_DIR), { user: userInfo().username, uid: euid ?? 0, gid }, { euid });
-      } catch (error) {
-        if (!(error instanceof ServiceAccountRefused)) throw error;
-        fail(error.message);
-        process.exit(2);
-      }
-    }
-    return { dataDir: DATA_DIR, envFile: ENV_FILE, account: null, owner: null, spawnAs: null };
+      guard(() => prepareDataDir(resolve(DATA_DIR), { user: userInfo().username, uid: euid ?? 0, gid }, { euid }));
+    };
+    if (prepareNow) prepare();
+    return { dataDir: DATA_DIR, envFile: ENV_FILE, account: null, owner: null, spawnAs: null, prepare };
   }
   const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
   try {
@@ -683,11 +693,14 @@ function resolveSetupContext(argv, serviceUserFromEnv = null) {
       );
     }
     const paths = setupPaths({ env: process.env, account, euid, home: homedir() });
-    prepareDataDir(paths.dataDir, account, { euid });
     ok(`service account: ${c.b(`${account.user}:${account.group}`)} (uid ${account.uid}; ${chosen.source}), home ${c.dim(account.home)}`);
-    ok(`data dir: ${c.dim(paths.dataDir)} (owned by ${account.user}, 0700)`);
+    const prepare = () => {
+      guard(() => prepareDataDir(paths.dataDir, account, { euid }));
+      ok(`data dir: ${c.dim(paths.dataDir)} (owned by ${account.user}, 0700)`);
+    };
+    if (prepareNow) prepare();
     const forAnother = euid === 0 && account.uid !== 0 ? { uid: account.uid, gid: account.gid } : null;
-    return { ...paths, account, owner: forAnother && { ...forAnother, groups: account.groups }, spawnAs: forAnother };
+    return { ...paths, account, owner: forAnother && { ...forAnother, groups: account.groups }, spawnAs: forAnother, prepare };
   } catch (error) {
     if (!(error instanceof ServiceAccountRefused)) throw error;
     fail(error.message);
@@ -773,7 +786,7 @@ async function setup(argv = []) {
   }
   ok(`server payload: ${c.dim(found.entry)} (${found.kind})`);
   if (!checkNode()) process.exit(1);
-  const ctx = resolveSetupContext(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null);
+  const ctx = resolveSetupContext(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null, { prepareNow: !mode.nonInteractive });
 
   // A rerun edits the existing env file rather than starting it over, so it is
   // read and validated before anything else happens. A file setup cannot
@@ -808,6 +821,8 @@ async function setup(argv = []) {
   //    facts, both known by now, and neither of them a change to this box.
   /** @type {UnattendedPlan | null} */
   const plan = mode.nonInteractive ? await unattendedPreflight(mode.options, current.bag) : null;
+  // The first change an unattended run makes: only once every input is known.
+  if (mode.nonInteractive) ctx.prepare();
 
   // 1. Tailscale FIRST. Everything after it depends on knowing whether this box
   //    has a secure path in, and there is no point wiring a provider key into a
