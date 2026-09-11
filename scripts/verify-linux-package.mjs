@@ -8,7 +8,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
   statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +20,7 @@ import {
   CLOUDFLARED_VERSION,
   executableTarget,
 } from "./prepare-cloudflared.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const require = createRequire(import.meta.url);
 const { validateDriverCandidate } = require("../electron/cua-linux.cjs");
@@ -493,7 +493,7 @@ try {
   }
   execFileSync("desktop-file-validate", [desktopFile], { stdio: "inherit" });
 } finally {
-  rmSync(extracted, { recursive: true, force: true });
+  safeWipeSync(extracted);
 }
 
 const appImageExtracted = mkdtempSync(path.join(tmpdir(), "murage-appimage-verify-"));
@@ -540,7 +540,7 @@ try {
     if (appImageHashes.get(packaged) !== expected) fail(`AppImage and linux-unpacked CUA hashes differ`);
   }
 } finally {
-  rmSync(appImageExtracted, { recursive: true, force: true });
+  safeWipeSync(appImageExtracted);
 }
 
 console.log(`[verify-linux-package] OK\n- ${path.basename(appImage)}\n- ${path.basename(deb)}`);

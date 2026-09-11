@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,12 +11,13 @@ import { migrateMemorySchema } from "../server/memory/schema.ts";
 import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
 import { allocateSeparateInstallation, planSeparateInstallation, publishInstallationSelection, resolveInstallationSelection } from "./installation-selection.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const cli = fileURLToPath(new URL("../scripts/installation-recovery.ts", import.meta.url));
 const roots = [], evidence = [];
 const output = fileURLToPath(new URL("../.planning/0149-separate-recovery-confirm/", import.meta.url));
 test.after(() => { mkdirSync(output, { recursive: true }); writeFileSync(path.join(output, "archive-integration.json"), JSON.stringify(evidence, null, 2) + "\n"); });
-test.afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+test.afterEach(() => { for (const root of roots.splice(0)) safeWipeSync(root); });
 function fingerprint(file) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }
 for (const kind of ["primary", "child", "reaper"]) test(`real archive restores separately with foreign ${kind} intact across startup selection and activation`, () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-separate-archive-"))); roots.push(root);

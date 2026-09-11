@@ -25,9 +25,10 @@
 // Usage:
 //   node scripts/import-wayland-teams.mjs [--out <dir>] [--source <dir>]
 //                                         [--force] [--dry-run] [--no-verify]
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_SOURCE = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams";
@@ -241,7 +242,7 @@ function prepareOutDir(out, force, dryRun) {
     throw new Error(`${out} is not empty and was not written by this script — pass --force to replace it`);
   }
   if (!dryRun) {
-    rmSync(out, { recursive: true, force: true });
+    safeWipeSync(out, { within: repoRoot });
     mkdirSync(join(out, "teams"), { recursive: true });
   }
 }

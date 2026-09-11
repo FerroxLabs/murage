@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SafeWipeRefused, safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const prefixName = "murage-linux-smoke-runtime-";
@@ -11,9 +12,11 @@ const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 async function cleanupRuntime(directory) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
-      rmSync(directory, { recursive: true, force: true });
+      safeWipeSync(directory);
       return;
-    } catch {
+    } catch (error) {
+      // A refusal is a wrong path, not a slow teardown: never retried.
+      if (error instanceof SafeWipeRefused) throw error;
       // dbus-run-session can exit just before a portal-owned runtime socket
       // disappears. Give that bounded teardown a moment before treating a
       // persistent runtime as a lifecycle failure.

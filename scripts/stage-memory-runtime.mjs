@@ -1,9 +1,10 @@
 // Package the exact installed dependency graph, including native files/licenses.
 // No network, install scripts, global environment or user profile mutations.
-import { cpSync,existsSync,mkdirSync,readFileSync,realpathSync,writeFileSync,rmSync } from "node:fs";
+import { cpSync,existsSync,mkdirSync,readFileSync,realpathSync,writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname,join,relative,resolve,sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const root=resolve(dirname(fileURLToPath(import.meta.url)),"..");
 const records=[];
 function packageRoot(name,from){
@@ -33,7 +34,7 @@ const destination=join(root,"dist-server","node_modules","@huggingface","transfo
 const marker=join(destination,".murage-runtime-stage");
 if(existsSync(destination)){
   if(!existsSync(marker)||readFileSync(marker,"utf8")!=="murage-memory-runtime")throw Error("refusing unowned runtime staging directory");
-  rmSync(destination,{recursive:true});
+  safeWipeSync(destination,{within:root});
 }
 mkdirSync(destination,{recursive:true});writeFileSync(marker,"murage-memory-runtime");
 stage("@huggingface/transformers",root,destination);

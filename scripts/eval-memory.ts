@@ -4,11 +4,12 @@
 // of deterministic unrelated inventory notes to BOTH backends. Only that query's
 // extra records are active, keeping the real worker below its global vector cap.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { families, validateCorpus, type MemoryCorpus } from "../server/memory/testing/contracts.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 type Query = MemoryCorpus["queries"][number];
 export interface EvidenceScore {
@@ -158,7 +159,7 @@ async function main() {
       finally{database().prepare("UPDATE memory_records SET owner_pinned=0 WHERE id=?").run(id);}
     }
   }catch(error){preparationError=error instanceof Error?error.message:String(error);}
-  finally{await controller.stop();closeDatabase();rmSync(root,{recursive:true,force:true});}
+  finally{await controller.stop();closeDatabase();safeWipeSync(root);}
   const summary=cases.length?summarizeEvidence(cases):null;
   const baselineSummary=baseline.length?summarizeEvidence(baseline):null;
   const regression=cases.filter(row=>row.family==="exact-paraphrase"&&(row.score.recallAt10??0)<(baseline.find(before=>before.id===row.id)?.score.recallAt10??0)).map(row=>row.id);

@@ -25,6 +25,7 @@ import {
   rendererOriginArguments,
 } from "./main-ipc-trust.mjs";
 import { isOwnedMainSender } from "./main-trust.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const ORIGIN = "http://127.0.0.1:8799";
@@ -416,7 +417,7 @@ function loadMainUnderStub() {
     assert.equal(result.status, 0, result.stderr);
     return report;
   } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    safeWipeSync(scratch);
   }
 }
 

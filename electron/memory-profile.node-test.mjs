@@ -5,6 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { applyLoginProfileArguments } from "./background-login.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const source=fs.readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
 const start=source.indexOf("// Explicit fixture/profile isolation");
@@ -28,7 +29,7 @@ test("explicit paired roots configure Electron before instance lock and credenti
     assert(source.indexOf('app.setPath("userData"')<source.indexOf("app.requestSingleInstanceLock()"));
     assert(source.indexOf('app.setPath("userData"')<source.indexOf("let CREDENTIALS_FILE"));
     assert(source.indexOf("applyLoginProfileArguments(process.argv,process.env)")<source.indexOf('app.setPath("userData"'));
-  }finally{fs.rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 
 test("sign-in launch arguments select the paired roots before the isolation block runs",()=>{
@@ -42,7 +43,7 @@ test("sign-in launch arguments select the paired roots before the isolation bloc
     // Without the sign-in flag the same arguments are inert and ordinary launches stay on default paths.
     const plain=context({},["electron","--murage-data-dir",data,"--murage-user-data",user]);plain.run();
     assert.deepEqual(plain.env,{});assert.deepEqual(plain.calls,[]);
-  }finally{fs.rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 
 test("invalid or unpaired roots fail before any Electron path changes",()=>{
@@ -62,5 +63,5 @@ test("invalid or unpaired roots fail before any Electron path changes",()=>{
       {MURAGE_USER_DATA:user,MURAGE_DATA_DIR:link},
       {MURAGE_USER_DATA:path.join(root,"missing"),MURAGE_DATA_DIR:data},
     ]){const fixture=context(env);assert.throws(fixture.run);assert.deepEqual(fixture.calls,[]);}
-  }finally{fs.rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });

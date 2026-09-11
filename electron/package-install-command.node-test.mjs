@@ -3,7 +3,7 @@
 // is stuck with a downloaded package and no way to finish.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
   shellQuote,
   stagedInstallFile,
 } from "./package-install-command.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 test("the Ubuntu command resolves dependencies", () => {
   const command = packageInstallCommand("deb", "/home/u/.cache/murage-updater/pending/x.deb");
@@ -59,7 +60,7 @@ test("a staged path that is gone is not used", () => {
       /no longer available/,
     );
   } finally {
-    rmSync(workspace, { recursive: true, force: true });
+    safeWipeSync(workspace);
   }
 });
 
@@ -89,7 +90,7 @@ test("the quoted path survives a shell round-trip", { skip: posixShell }, () => 
       assert.equal(parsed, file, `quoting mangled ${name}`);
     }
   } finally {
-    rmSync(workspace, { recursive: true, force: true });
+    safeWipeSync(workspace);
   }
 });
 

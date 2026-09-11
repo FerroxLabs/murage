@@ -5,11 +5,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { validateFuigoProbeResources, stampSignedFuigoProbe } from './fuigo-probe-resources.mjs';
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 // Header fixtures verify rejection logic only; the CI-only case uses a real compiled helper.
 async function fixture(t, platform = 'linux') {
   const resources = await mkdtemp(join(tmpdir(), 'murage-fuigo-resource-'));
-  t.after(() => rm(resources, { recursive: true, force: true }));
+  t.after(() => safeWipe(resources));
   const root = join(resources, 'fuigo-probe'); await mkdir(root);
   const bytes = Buffer.alloc(128); Buffer.from([0x7f, 69, 76, 70, 2, 1]).copy(bytes); bytes.writeUInt16LE(0x3e, 18);
   if (platform === 'win32') { bytes.fill(0); bytes.write('MZ'); bytes.writeUInt32LE(64, 60); bytes.write('PE\0\0', 64); bytes.writeUInt16LE(0x8664, 68); }
@@ -45,7 +46,7 @@ test('rejects corrupted bytes and wrong target identity', async t => {
 test('rejects missing required payload and unexpected canary payload', async t => {
   const f = await fixture(t); await writeFile(join(f.root, 'canary'), 'must not ship');
   await assert.rejects(validateFuigoProbeResources(f.resources, 'linux'), /Unexpected/);
-  await rm(f.root, { recursive: true });
+  await safeWipe(f.root);
   await assert.rejects(validateFuigoProbeResources(f.resources, 'linux'));
   assert.equal(await validateFuigoProbeResources(f.resources, 'linux', false), null);
 });
@@ -56,7 +57,7 @@ test('rejects a symlink in place of the launcher', async t => {
 });
 test('rejects a symlink in place of the resource directory', async t => {
   const f = await fixture(t), source = join(f.resources, 'other');
-  await mkdir(source); await rm(f.root, { recursive: true }); await symlink(source, f.root);
+  await mkdir(source); await safeWipe(f.root); await symlink(source, f.root);
   await assert.rejects(validateFuigoProbeResources(f.resources, 'linux'), /real directory/);
 });
 test('validates actual compiled Linux helper copied into package resource layout', { skip: process.env.MURAGE_FUIGO_RESOURCE_CHECK_REAL !== '1' }, async t => {

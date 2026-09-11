@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -15,6 +15,7 @@ import { inflateSync } from "node:zlib";
 import { browserBundlePaths, browserBundleSpec } from "../server/browser-bundle-release.ts";
 import { executableTarget } from "./prepare-cloudflared.mjs";
 import { WINDOWS_VENDOR_VERSION, verifyVendorCandidate, verifyVendorPatch } from "./build-windows-browser-vendor.mjs";
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 const { values } = parseArgs({ options: {
   resources: { type: "string" }, target: { type: "string" },
@@ -352,7 +353,7 @@ finally {
   process.removeListener("SIGINT", interrupt);
   process.removeListener("SIGTERM", interrupt);
   if (cleanupErrors.length) failure = new Error(`${failure?.message ?? "Browser test passed"}; browser cleanup failed, isolated fixture retained at ${fixture}: ${cleanupErrors.join("; ")}`);
-  else await rm(fixture, { recursive: true, force: true });
+  else await safeWipe(fixture);
 }
 if (failure) { console.error(failure.stack ?? failure); process.exitCode = 1; }
 else console.log(JSON.stringify({ ...report, cleanup: "owned browsers, local HTTP server, and isolated home removed" }, null, 2));

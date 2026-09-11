@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EngineManager } from "../server/engine-management.ts";
 import { managedFuigoReceipt, nativeFuigoPackage, nativeFuigoTarget, probeNativeFuigo, stageNativeFuigo } from "../server/fuigo-native-update.ts";
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 // A distinct native proof from the earlier custom synthetic-probe receipt.
 // The manager uses its unchanged DEFAULT production probe for every action.
@@ -94,7 +95,7 @@ try {
   assert.equal((await readdir(root)).some(name => name.startsWith("probe-") || name.startsWith("fuigo-bundle-probe-")), false);
   Object.assign(result, { status: "passed", activations, preservedHashes: { first: firstHash, second: secondHash, bundled: pins["1.0.10"].binarySha256 },
     processAndListenerCleanup: "Every production probe returned after confirmed child close and listener close; no probe scratch remains" });
-  await rm(root, { recursive: true, force: true }); result.cleaned = true;
+  await safeWipe(root); result.cleaned = true;
 } catch (error) {
   Object.assign(result, { status: "failed", error: error.message, code: error.code ?? null, probeMethod: error.probeMethod ?? null, rpcCode: error.rpcCode ?? null, cleaned: false });
   process.exitCode = 1;

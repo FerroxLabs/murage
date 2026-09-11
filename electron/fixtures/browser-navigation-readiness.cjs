@@ -2,12 +2,13 @@
 // Regression contract: bounded first-content observation and honest unknown,
 // with real Chromium and host calls but no external website or user data.
 const assert = require("node:assert/strict");
-const { mkdtempSync, rmSync } = require("node:fs");
+const { mkdtempSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { app, BrowserWindow, WebContentsView } = require("electron");
 const { createBrowserSurfaceManager } = require("../browser-surface.cjs");
 const { createBrowserHost } = require("../browser-host.cjs");
+const { safeWipeSync } = require("../../server/testing/safe-wipe.mjs");
 const privateRoot = mkdtempSync(join(tmpdir(), "murage-navigation-readiness-"));
 app.setPath("userData", privateRoot);
 app.setPath("sessionData", privateRoot);
@@ -106,7 +107,7 @@ app.whenReady().then(async () => {
   } finally {
     await host.stop(); manager.closeAll(); owner.destroy();
   }
-}).then(() => { rmSync(privateRoot, { recursive: true, force: true }); app.exit(0); }).catch(error => {
+}).then(() => { safeWipeSync(privateRoot); app.exit(0); }).catch(error => {
   process.stderr.write(error.stack + "\n");
-  rmSync(privateRoot, { recursive: true, force: true }); app.exit(1);
+  safeWipeSync(privateRoot); app.exit(1);
 });

@@ -12,7 +12,6 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import Module, { createRequire } from "node:module";
@@ -22,6 +21,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { patchAppImageUpdater } from "../scripts/patch-appimage-updater.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const bundle = readFileSync(join(root, "electron/vendor/electron-updater.cjs"), "utf8");
@@ -102,7 +102,7 @@ test("the shipped installer moves the update onto the running AppImage's path", 
 
   const { AppImageUpdater } = createRequire(import.meta.url)("./vendor/electron-updater.cjs");
   const workspace = mkdtempSync(join(tmpdir(), "murage-appimage-install-"));
-  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(workspace));
 
   // The user launches a versioned filename — the case upstream renames.
   const launched = join(workspace, "Murage-0.1.43-x86_64.AppImage");
@@ -150,7 +150,7 @@ test("the running AppImage is never removed before its replacement is in place",
 
   const { AppImageUpdater } = createRequire(import.meta.url)("./vendor/electron-updater.cjs");
   const workspace = mkdtempSync(join(tmpdir(), "murage-appimage-failed-"));
-  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(workspace));
 
   const launched = join(workspace, "Murage-0.1.43-x86_64.AppImage");
   writeFileSync(launched, "the app the user has", { mode: 0o755 });

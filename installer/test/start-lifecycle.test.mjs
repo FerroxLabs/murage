@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const INSTALLER = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -70,7 +71,7 @@ writeFileSync(${JSON.stringify(join(dir, role + ".env.json"))},JSON.stringify({d
       try { process.kill(-launcher.pid,"SIGKILL"); } catch {}
       launcher.stdout.destroy(); launcher.stderr.destroy();
       await waitFor(()=>!alive(launcher.pid),"fixture launcher survived cleanup");
-      rmSync(dir,{recursive:true,force:true});
+      safeWipeSync(dir);
     },
   };
 }

@@ -1,10 +1,11 @@
 import { execFile, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -262,5 +263,5 @@ try {
   if (proxy) await stop(proxy);
   await stop(driverProcess);
   if (xev.exitCode === null && xev.signalCode === null) xev.kill("SIGTERM");
-  rmSync(sandbox, { recursive: true, force: true });
+  safeWipeSync(sandbox);
 }
