@@ -37,15 +37,18 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
       });
       sawUserInput = true;
     } else if (message.kind === "activity" && message.tool) {
-      const failed = message.tool.ok === false || message.tool.name.startsWith("error:");
-      // a host stop reads as "Stopped — why" here too, not as a raw prefix
+      // a host stop is neither a tool run nor a failure: the harness observed
+      // the turn end, and says why — the neutral dot, never the red one
       const stoppedReason = hostStoppedReason(message.tool.name);
+      if (stoppedReason) {
+        events.push({ id: message.id, at: message.at, label: `Stopped — ${stoppedReason}`, state: "observed", kind: "tool" });
+        continue;
+      }
+      const failed = message.tool.ok === false || message.tool.name.startsWith("error:");
       events.push({
         id: message.id,
         at: message.at,
-        label: stoppedReason
-          ? `Stopped — ${stoppedReason}`
-          : failed ? message.tool.name.replace(/^error:\s*/i, "") : message.tool.name,
+        label: failed ? message.tool.name.replace(/^error:\s*/i, "") : message.tool.name,
         // An activity is appended at tool start and patched with its outcome.
         // Until that patch arrives, do not imply that the action succeeded.
         state: failed ? "failed" : message.tool.ok === true ? "complete" : "running",
