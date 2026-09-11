@@ -8,11 +8,12 @@ after every further lane merge (see "How to refresh this draft" at the end).
 - Integration head this draft was refreshed from at the release freeze:
   `7bc90549` on `release/v0.1.52` (the FluxRouter switch, rollout step 7;
   289 non-merge commits since the baseline —
-  `git rev-list --count --no-merges acaee1db..7bc90549`). The frozen
-  release commit is the docs commit that lands this refresh on top of it
-  (recorded in the freeze evidence as `frozen-sha.txt`); it changes no
-  code. Earlier revisions of this draft described `37c2822d` (120
-  non-merge) and `cae69216` (134).
+  `git rev-list --count --no-merges acaee1db..7bc90549`), plus the freeze
+  follow-up that aligns the Linux package smoke and two safe-wipe test
+  pins with that switch and with GitHub's runners (row in section 3). The
+  frozen release commit is recorded in the freeze evidence as
+  `frozen-sha.txt`. Earlier revisions of this draft described `37c2822d`
+  (120 non-merge) and `cae69216` (134).
 - Version: `package.json` is `0.1.52` (the only surface
   `scripts/release-guard.mjs version` reads; it prints `0.1.52`). The
   companion, docs and control-plane manifests carry their own independent
@@ -747,6 +748,7 @@ baseline belongs here. Lane labels are the task ids in the commit subjects.
 | FUIGOTRUST1–4 | `1ce787de`, `70fa0467`, `553ce001`, `4474c568`, `22de1c3a`, `04c83072`, `3d11ca73`, `3b12f4aa`, `c77af468`, `f6198f90`, `5398c239`, `add8a29f`, `8d0b0f54`, `9ea5cb5e`, `c3a1017f`, `6166f136`, `09512819` | added / enhanced | folder trust decided before the spawn; picker/upgrade/upstream trust; worktree and managed-worktree keys; room note per member |
 | LOCALE1, FINAL1 | `548a76e0`, `1143ebad`, `ad46b392` | quality | 38 late strings in all seven packs; resumed-turn trust path pinned; safe-wipe URL predicate verbatim |
 | Release freeze (rollout step 7) | `7bc90549` | added | `FLUX_COMPOSIO_BROKER_URL` and `COMPOSIO_LEGACY_BROKER_UNTIL` set for the packaged build; guard test pins them |
+| Release freeze follow-up | (the commit after this refresh) | quality | Linux package smoke requires no anonymous Worker registration in a FluxRouter build; safe-wipe reason pins accept the working-directory rule on a runner whose checkout sits inside `$HOME` |
 
 Nothing planned for 0.1.52 is unmerged at the freeze. `lane/0152-LINUXFIX`
 landed (row above; "Installer, proven on Linux" under Enhanced) and

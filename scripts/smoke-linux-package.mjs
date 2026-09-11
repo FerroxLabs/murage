@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { FLUX_COMPOSIO_BROKER_URL } from "../electron/composio-release-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const wayland = process.env.MURAGE_SMOKE_WAYLAND === "1";
@@ -167,6 +168,14 @@ chmodSync(sentinel, 0o755);
 // Accept the optional managed-Composio request but never answer it. The
 // renderer must still become ready and close normally while this request is
 // pending, proving hosted integration latency is outside first paint.
+//
+// Once the build carries the FluxRouter broker (rollout step 7,
+// electron/composio-release-config.mjs), a packaged app never mints an
+// anonymous Worker identity: electron/main.mjs passes registrationAllowed:false
+// and a fresh install has no Worker token to probe. The smoke then requires
+// the opposite — no request reaches this broker at all — while the renderer
+// still becomes ready and the app still closes normally.
+const fluxBrokerBuild = Boolean(FLUX_COMPOSIO_BROKER_URL);
 let brokerRequests = 0;
 const brokerSockets = new Set();
 const slowBroker = createServer(() => {
@@ -331,7 +340,15 @@ try {
     throw new Error("Linux package did not disable hardware acceleration before startup");
   }
   if (displayMediaRequests !== 0) throw new Error("launch triggered display capture without user intent");
-  await until(async () => brokerRequests > 0, "the optional slow-broker request");
+  if (fluxBrokerBuild) {
+    if (brokerRequests > 0) {
+      throw new Error(
+        `a build that carries the FluxRouter broker registered with the Worker broker anyway (${brokerRequests} request(s)).\n${output}`,
+      );
+    }
+  } else {
+    await until(async () => brokerRequests > 0, "the optional slow-broker request");
+  }
   if (sessionBlocked) {
     await waitForExit();
     if (existsSync(marker)) throw new Error("release safety block still invoked a CUA executable");
@@ -346,7 +363,7 @@ try {
       throw new Error("release safety block did not clear the durable Linux opt-in");
     }
     console.log(
-      `[smoke-linux-package] OK (${wayland ? "GNOME/Wayland" : path.basename(executable)}): slow optional broker did not block first paint and Wayland CUA failed closed`,
+      `[smoke-linux-package] OK (${wayland ? "GNOME/Wayland" : path.basename(executable)}): ${fluxBrokerBuild ? "no anonymous Worker registration" : "slow optional broker did not block first paint"} and Wayland CUA failed closed`,
     );
   } else if (bundled) {
     if (signalShutdown) child.kill("SIGTERM");
@@ -586,6 +603,11 @@ try {
     if (!hardDeath) {
       console.log(`[smoke-linux-package] OK (${wayland ? "GNOME/Wayland" : "GNOME/X11"}): renderer, private CUA crash/retry, harness, and shutdown`);
     }
+  }
+  if (fluxBrokerBuild && brokerRequests > 0) {
+    throw new Error(
+      `a build that carries the FluxRouter broker registered with the Worker broker during its run (${brokerRequests} request(s)).\n${output}`,
+    );
   }
 } finally {
   await stopProcess();

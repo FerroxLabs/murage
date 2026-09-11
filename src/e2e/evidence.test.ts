@@ -43,9 +43,11 @@ describe("evidenceDir", () => {
   it("refuses a root or override Playwright must never wipe: a home, a data dir, an unmarked path", () => {
     const home = userInfo().homedir;
     process.env.MURAGE_E2E_DATA_DIR = join(home, ".murage");
-    expect(() => evidenceDir("startup")).toThrow(/REFUSED[\s\S]*Murage data directory|REFUSED[\s\S]*home directory/);
+    // On a runner whose checkout sits inside $HOME (GitHub Actions) the
+    // working-directory rule names the same refusal first.
+    expect(() => evidenceDir("startup")).toThrow(/REFUSED[\s\S]*(Murage data directory|home directory|working directory)/);
     process.env.MURAGE_E2E_DATA_DIR = "/lane/.e2e/CLAC3";
-    expect(() => evidenceDir("startup", home)).toThrow(/REFUSED[\s\S]*home directory/);
+    expect(() => evidenceDir("startup", home)).toThrow(/REFUSED[\s\S]*(home directory|working directory)/);
     expect(() => evidenceDir("startup", "/proof/local-models")).toThrow(/REFUSED[\s\S]*not marked scratch/);
     process.env.MURAGE_E2E_DATA_DIR = "/lane/e2e/CLAC3";
     expect(() => evidenceRoot("startup")).toThrow(/REFUSED[\s\S]*not marked scratch/);

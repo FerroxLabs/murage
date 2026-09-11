@@ -89,22 +89,29 @@ describe("assertSafeToWipe refuses", () => {
     refuses(join(FAKE_HOME, ".murage-companion"), /Murage data directory/);
   });
 
+  // The real home is refused as a home directory, or — on a runner whose
+  // checkout sits inside $HOME (GitHub Actions: /home/runner/work/...) — by
+  // the working-directory rule, which is checked first. Either way nothing
+  // is deleted; the pin accepts both reasons so the test is not tied to
+  // where the checkout lives.
+  const REAL_HOME_REASON = /home directory|working directory/;
+
   it("the account's real data dir even when HOME is faked (vitest fakes HOME)", () => {
     const real = userInfo().homedir;
     expect(process.env.HOME).not.toBe(real);
-    refuses(join(real, ".murage"), /Murage data directory|home directory/, {});
-    refuses(real, /home directory/, {});
-    refuses(dirname(real), /home directory/, {});
+    refuses(join(real, ".murage"), /Murage data directory|home directory|working directory/, {});
+    refuses(real, REAL_HOME_REASON, {});
+    refuses(dirname(real), REAL_HOME_REASON, {});
   });
 
   it("the account's data dir when TMPDIR is misconfigured to cover the home (never disposable)", () => {
     const real = userInfo().homedir;
     const probe = join(real, ".murage", "safe-wipe-probe-does-not-exist");
     for (const tmp of [real, dirname(real), join(real, ".murage")]) {
-      refuses(join(real, ".murage"), /Murage data directory|home directory/, { tmpdir: tmp });
-      refuses(probe, /Murage data directory|home directory/, { tmpdir: tmp });
-      refuses(real, /home directory/, { tmpdir: tmp });
-      refuses(dirname(real), /home directory/, { tmpdir: tmp });
+      refuses(join(real, ".murage"), /Murage data directory|home directory|working directory/, { tmpdir: tmp });
+      refuses(probe, /Murage data directory|home directory|working directory/, { tmpdir: tmp });
+      refuses(real, REAL_HOME_REASON, { tmpdir: tmp });
+      refuses(dirname(real), REAL_HOME_REASON, { tmpdir: tmp });
     }
   });
 
@@ -211,8 +218,9 @@ describe("installSafeWipeGuard", () => {
     // names it, so a regression in the guard cannot turn this test into the
     // 21:05 incident on a developer's machine.
     const realDataDir = join(userInfo().homedir, ".murage");
-    expect(() => assertNotProtected(realDataDir)).toThrow(/Murage data directory|home directory/);
-    expect(() => assertNotProtected(userInfo().homedir)).toThrow(/home directory/);
+    // Reason may be the working-directory rule on a runner whose checkout sits inside $HOME.
+    expect(() => assertNotProtected(realDataDir)).toThrow(/Murage data directory|home directory|working directory/);
+    expect(() => assertNotProtected(userInfo().homedir)).toThrow(/home directory|working directory/);
     // The live-fire probes name a child of the real data dir that does not
     // exist: the same "lies inside the Murage data directory" rule refuses it,
     // and with force:true a guard that failed to refuse would be a no-op.
