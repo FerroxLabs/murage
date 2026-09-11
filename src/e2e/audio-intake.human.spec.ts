@@ -2,11 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createVoiceBudget, handleTranscribeRoute } from "../../server/voice/transcribe-route";
 import { TranscriptionUnavailable } from "../../server/voice/flux-voice";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 // Real Composer + StoreProvider + transcription HTTP registrar. Only the
 // external paid provider is replaced; no key/private audio leaves this rig.
@@ -52,7 +53,7 @@ test.beforeAll(async () => {
 });
 test.beforeEach(() => { configured = true; mode = "success"; calls.length = 0; unexpectedPosts.length = 0; budget = createVoiceBudget(); release = () => {}; });
 test.afterEach(() => release());
-test.afterAll(async () => { release(); await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { release(); await server?.close(); safeWipeSync(cache); });
 async function open(page: Page, skin = "dark") { await page.goto(origin + "/__audio?skin=" + skin); await expect(page.locator("output")).toHaveText("fixture/text-model"); }
 async function pick(page: Page) { await page.locator('input[type="file"]').setInputFiles({ name: "voice.wav", mimeType: "audio/wav", buffer: audio }); }
 const transcribe = (page: Page) => page.getByRole("button", { name: "Transcribe with Flux (uses credits)", exact: true });

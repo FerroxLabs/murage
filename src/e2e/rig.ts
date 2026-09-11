@@ -17,6 +17,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { laneDataDir } from "./lane-data-dir";
+
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export const HARNESS_PORT = Number(process.env.MURAGE_E2E_PORT || 8853);
@@ -24,10 +26,10 @@ export const UI_PORT = Number(process.env.MURAGE_E2E_UI_PORT || 5253);
 export const HARNESS_URL = `http://127.0.0.1:${HARNESS_PORT}`;
 export const APP_URL = `http://127.0.0.1:${UI_PORT}`;
 
-/** Gitignored, inside the repo, and never `~/.murage`. `server/config.ts`
- *  reads this through MURAGE_DATA_DIR. */
-export const SCRATCH_DATA_DIR = process.env.MURAGE_E2E_DATA_DIR
-  || join(REPO_ROOT, ".murage-scratch", "e2e");
+/** MURAGE_E2E_DATA_DIR, required and validated (see lane-data-dir.ts); there
+ *  is no default. `server/config.ts` reads it through MURAGE_DATA_DIR, and
+ *  prepare-scratch.mjs wipes it before the harness binds. */
+export const SCRATCH_DATA_DIR = laneDataDir("the shared human rig never uses ~/.murage");
 
 /** The seeded workspace, by name. Specs address fixtures through these so a
  *  rename is one edit. Every name is prefixed so a fixture is unmistakable in

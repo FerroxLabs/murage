@@ -4,9 +4,10 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { safeWipe } from "../../server/testing/safe-wipe.mjs";
 const pack = (locale: string) => JSON.parse(readFileSync(new URL(`../locales/${locale}.json`, import.meta.url), "utf8")) as Record<string, string>;
 let vite: ViteDevServer, origin: string, temporary: string;
 test.beforeAll(async () => {
@@ -28,7 +29,7 @@ test.beforeAll(async () => {
   if (!address || typeof address === "string") throw Error("Missing fixture port");
   origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await vite?.close(); if (temporary) await rm(temporary, { recursive: true, force: true }); });
+test.afterAll(async () => { await vite?.close(); if (temporary) await safeWipe(temporary); });
 for (const width of [390, 1440]) for (const locale of ["zz", "de"]) test(`account action copy ${locale} at ${width}`, async ({ page }, info) => {
   const catalog = pack(locale === "zz" ? "en" : locale);
   const text = (key: string) => catalog[`claudeAccounts.${key}`].replaceAll("{name}", "Work").replaceAll("{shell}", "PowerShell");

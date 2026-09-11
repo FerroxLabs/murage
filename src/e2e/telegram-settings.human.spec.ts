@@ -2,9 +2,10 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async()=>{
   const root=fileURLToPath(new URL('../../',import.meta.url));cache=mkdtempSync(join(tmpdir(),'murage-telegram-ui-'));
@@ -13,7 +14,7 @@ test.beforeAll(async()=>{
     configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=='/__telegram')return next();res.setHeader('content-type','text/html');res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root" style="padding:16px"></div><script type="module" src="/__telegram.js"></script>');});},
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
 test('Telegram token, pairing, refresh and revoke remain deliberate with recoverable failures',async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
   let state={configured:false,enabled:false,paired:false,pending:false,uncertain:false,connecting:false,pairingExpired:false};let pairs=0;let fail=false;let statusReads=0;let revokes=0;

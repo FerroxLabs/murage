@@ -6,9 +6,10 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
@@ -30,7 +31,7 @@ test.beforeAll(async () => {
   }] });
   await server.listen(0); const address = server.httpServer!.address(); if (!address || typeof address === "string") throw new Error("No fixture port"); origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 
 const LINK = (slug: string) => `https://connect.composio.dev/link/${slug}`;
 const CARDS = [

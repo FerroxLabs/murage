@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
-import { join } from "node:path";
-// MURAGE_E2E_DATA_DIR keeps a lane's artifacts out of the shared tree.
-const out = process.env.MURAGE_E2E_DATA_DIR ? join(process.env.MURAGE_E2E_DATA_DIR, "workspace-editor-results") : "../../.planning/workspace-editor-results";
+import { laneEvidenceDir } from "./lane-data-dir";
+// MURAGE_E2E_DATA_DIR is required; evidence lands inside it (lane-data-dir.ts).
+const out = laneEvidenceDir("workspace-editor-results");
 export default defineConfig({
   testDir: ".", testMatch: "workspace-editor.human.spec.ts", workers: 1, retries: 0,
   // One real harness, restarted once mid-run, drives every test in order.

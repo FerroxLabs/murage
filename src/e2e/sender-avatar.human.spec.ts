@@ -2,9 +2,10 @@ import { expect, test } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url)); cache = mkdtempSync(join(tmpdir(), "murage-sender-avatar-"));
@@ -19,7 +20,7 @@ test.beforeAll(async () => {
   }] });
   await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
 for(const skin of ['light','dark'])test('sender custom avatar and failed-image fallback in '+skin,async({page},info)=>{
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.route('**/api/attachments/sender.png',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=','base64')}));

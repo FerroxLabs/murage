@@ -1,10 +1,11 @@
 import {test,expect} from "@playwright/test";
 import {createServer,type ViteDevServer} from "vite";
 import tailwindcss from "@tailwindcss/vite";
-import {readFileSync,mkdtempSync,rmSync} from "node:fs";
+import {readFileSync,mkdtempSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server:ViteDevServer,cache:string,origin:string;
 test.beforeAll(async()=>{
  const root=fileURLToPath(new URL("../../",import.meta.url));cache=mkdtempSync(join(tmpdir(),"murage-auth-card-"));
@@ -23,7 +24,7 @@ test.beforeAll(async()=>{
   },configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=="/__auth")return next();res.setHeader('content-type','text/html');res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root" style="max-width:640px;padding:12px"></div><script type="module" src="/__auth.js"></script>');});}
  }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
 test('expired Claude login overrides stale Ready until a fresh successful auth check; provider errors stay provider errors',async({page},info)=>{
  let authenticated=false;
  await page.route('**/api/instances',route=>route.fulfill({json:{instances:[{instanceId:'claude',driverKind:'claudeAgent',displayName:'Claude',enabled:true,models:{default:'',options:[]},snapshot:{state:'available',authenticated},install:{command:{darwin:'fixture install'},signInCommand:'claude'}}]}}));
