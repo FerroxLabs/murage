@@ -6,8 +6,9 @@ import path from "node:path";
 import test from "node:test";
 import { awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
-import { ensureManagedComposioCredentials } from "./managed-composio.mjs";
+import { deriveManagedComposioCredentials, MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
+import { trackedCredentialUpdate } from "./secure-credentials.mjs";
 
 const rawSource = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 // Test-only negative controls execute the actual main function with exactly
@@ -243,24 +244,29 @@ test("actual before-quit waits for child exit AND pending credentials before rel
   assert.equal(released,1);assert.equal(f.quit(),1);assert.equal(f.state.owned,false);
 });
 
+// R2-T5 changed intended behavior: an aborted registration that derives an
+// unchanged document no longer writes at all. The drain barrier is exercised
+// with the case that still must write, a definitive 401 invalidation whose
+// replacement registration is stalled when quit begins.
 test("actual quit cancels stalled optional registration but drains its credential write", async () => {
   const controller = new AbortController();
   const requested = deferred(), persist = deferred();
   let requestAborted = false, released = 0;
-  const credentials = createSecureCredentialState({}, () => persist.promise);
+  const credentials = createSecureCredentialState({ composioBrokerToken: "a".repeat(64), composioInstallationId: "revoked" }, () => persist.promise);
   const writes = [];
   const scope = {
     app: { isPackaged: true }, composioBrokerUrl: () => "http://127.0.0.1:12345",
     credentialStoreUnavailable: false, desktopShutdownStarted: false,
     managedComposioShutdown: controller, slog() {}, syncManagedComposioCredentials() {},
-    updateSecureCredentialDocument: (derive) => {
-      const write = credentials.update(derive);
+    MANAGED_COMPOSIO_UPDATE_OPTIONS,
+    updateSecureCredentialDocument: (derive, afterPersist, options) => {
+      const write = credentials.update(derive, afterPersist, options);
       writes.push(write);
       return write;
     },
-    ensureManagedComposioCredentials: (options) => ensureManagedComposioCredentials({
+    deriveManagedComposioCredentials: (options) => deriveManagedComposioCredentials({
       ...options,
-      fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => {
+      fetchImpl: (url, { signal }) => url.endsWith("/v1/me") ? Promise.resolve({ ok: false, status: 401 }) : new Promise((_resolve, reject) => {
         signal.addEventListener("abort", () => { requestAborted = true; reject(signal.reason); }, { once: true });
         requested.resolve();
       }),
@@ -338,7 +344,7 @@ test("actual before-quit CUA deadline is not clean lease release",async()=>{
 test("actual credential mutation barrier rejects new work but waits for admitted rollback",async()=>{
   const text=between("export async function updateSecureCredentialDocument(","function publicManagedCompanionState()").replace("export ","");
   const gate=deferred();let calls=0;
-  const make=new Function("gate",`
+  const make=new Function("gate","trackedCredentialUpdate",`
     let desktopShutdownStarted=false,secureCredentials={};
     const app={isPackaged:true};
     const credentialWrites=new Set();
@@ -347,7 +353,7 @@ test("actual credential mutation barrier rejects new work but waits for admitted
     const secureCredentialState={update:()=>gate.promise,read:()=>({})};
     ${text};return {write:updateSecureCredentialDocument,close:()=>{desktopShutdownStarted=true;},pending:()=>credentialWrites.size};
   `);
-  const f=make(gate);const admitted=f.write(()=>{calls++;});assert.equal(f.pending(),1);
+  const f=make(gate,trackedCredentialUpdate);const admitted=f.write(()=>{calls++;});assert.equal(f.pending(),1);
   f.close();await assert.rejects(f.write(()=>{calls++;}),/shutdown/);
   assert.equal(f.pending(),1);gate.resolve();await admitted;assert.equal(f.pending(),0);
   assert.equal(calls,0);

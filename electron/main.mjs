@@ -51,7 +51,8 @@ import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import {
-  ensureManagedComposioCredentials,
+  deriveManagedComposioCredentials,
+  MANAGED_COMPOSIO_UPDATE_OPTIONS,
   managedComposioAccess,
   managedComposioChildEnvironment,
   normalizeManagedComposioBrokerUrl,
@@ -66,7 +67,7 @@ import {
 } from "./managed-companion-tunnel.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
 import { isKnownSkin, skinChrome } from "./skin-overlay.cjs";
-import { readSecureCredentials } from "./secure-credentials.mjs";
+import { readSecureCredentials, trackedCredentialUpdate } from "./secure-credentials.mjs";
 import { createControlPlaneClient } from "./control-plane-client.mjs";
 import {
   companionAccountCleanupPending,
@@ -625,16 +626,13 @@ let advertisementTransition = Promise.resolve();
  * other runtime credential writer share this state, so persisting a tunnel
  * token can never overwrite an API key saved at the same time (or vice
  * versa). */
-export async function updateSecureCredentialDocument(derive, afterPersist) {
+export async function updateSecureCredentialDocument(derive, afterPersist, options) {
   assertDesktopStartupActive();
   if (app.isPackaged) ownedDesktopDataDir();
   if (!secureCredentialState) throw new Error("Secure credentials are not ready");
-  const write = secureCredentialState.update(derive, afterPersist);
-  credentialWrites.add(write);
   try {
-    return await write;
+    return await trackedCredentialUpdate(secureCredentialState, credentialWrites, derive, afterPersist, options);
   } finally {
-    credentialWrites.delete(write);
     secureCredentials = secureCredentialState.read();
   }
 }
@@ -2748,21 +2746,17 @@ const desktopStartup = app.whenReady().then(async () => {
     slog("skipping connected-apps registration: the credential store was unreadable this launch");
   }
   if (app.isPackaged && composioBrokerUrl() && !credentialStoreUnavailable) {
-    void updateSecureCredentialDocument(async (credentials) => {
-      await ensureManagedComposioCredentials({
-        brokerUrl: composioBrokerUrl(),
-        credentials,
-        timeoutSignal: (milliseconds) => AbortSignal.any([
-          managedComposioShutdown.signal,
-          AbortSignal.timeout(milliseconds),
-        ]),
-        // The shared credential state performs the one atomic encrypted
-        // write after this registration has derived its complete document.
-        saveCredentials: async () => {},
-        log: slog,
-      });
-      return credentials;
-    }).finally(syncManagedComposioCredentials).catch(() => {
+    // Optional writer: an unchanged derivation (registration aborted at quit,
+    // transient broker outage) skips native encryption. A 401 invalidation or
+    // a completed registration still persists through the same queue.
+    void updateSecureCredentialDocument(deriveManagedComposioCredentials({
+      brokerUrl: composioBrokerUrl(),
+      timeoutSignal: (milliseconds) => AbortSignal.any([
+        managedComposioShutdown.signal,
+        AbortSignal.timeout(milliseconds),
+      ]),
+      log: slog,
+    }), undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS).finally(syncManagedComposioCredentials).catch(() => {
       if (!desktopShutdownStarted) slog("connected-apps registration did not complete");
     });
   }
