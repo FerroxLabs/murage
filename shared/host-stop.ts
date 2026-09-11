@@ -19,3 +19,12 @@ export function hostStoppedReason(name: string | undefined | null): string | und
   const reason = name.slice(HOST_STOPPED_PREFIX.length).trim();
   return reason || undefined;
 }
+
+/** "Stopped — <reason>" for a host-stop notice on a surface that has no
+ * renderer locale (the Markdown export, a delegation's activity summary);
+ * undefined for any other activity name. The renderer's translated copy is
+ * `hostStoppedLabel` in src/lib/host-stop.ts and reads the same reason. */
+export function hostStoppedDisplayName(name: string | undefined | null): string | undefined {
+  const reason = hostStoppedReason(name);
+  return reason ? `Stopped — ${reason}` : undefined;
+}
