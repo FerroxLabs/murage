@@ -69,7 +69,11 @@
 // path that was always remembered: 1.4-1.9 s), warm listings 5-20 ms on both
 // paths with the odd scheduler stall; the probe itself takes 0.7-5 ms. Before
 // the probe a plain-written page paid the hashing cost on every listing
-// (290-620 ms under load). No further bound is applied at that cost.
+// (290-620 ms under load). On the Linux runner (Ubuntu 24.04 container,
+// kernel 6.8, ext4 bind mount and overlay, idle) both volumes pass the probe
+// in 15 ms (one tick wait: a utimes inside the write's coarse tick could not
+// move ctime) and the same page lists in 316-362 ms first, 3-7 ms warm,
+// plain-written and renamed alike. No further bound is applied at that cost.
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync, utimesSync, writeFileSync, type Stats } from "node:fs";
 import { join } from "node:path";
