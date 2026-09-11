@@ -29,6 +29,30 @@ export function classifyProviderError(error: unknown): ProviderErrorInfo | undef
   return { kind, httpStatus: status, ...(fluxRouterSource(message) ? { provider: "flux-router" as const } : {}) };
 }
 
+/** Which local lease another thread holds. Contention between this device's own
+ * threads is not a provider rejection and never needs account or model setup. */
+export type LocalResource = "working-folder" | "computer" | "browser" | "shared";
+export interface LocalResourceConflict { kind: "resource-busy"; resource: LocalResource }
+
+/** The exact copy the server uses when a thread cannot claim a resource another
+ * thread holds (`server/index.ts` setup claims and the `resource_busy` conflict in
+ * `server/independent-thread-runs.ts`). Matched verbatim, never by pattern. */
+export const LOCAL_RESOURCE_BUSY_MESSAGES: ReadonlyMap<string, LocalResource> = new Map([
+  ["Another thread is using this working folder. Wait for it to finish.", "working-folder"],
+  ["Another thread is using this computer. Wait for it to finish.", "computer"],
+  ["Another thread is using this browser profile. Wait for it to finish.", "browser"],
+  ["Another thread is using this browser, computer or working folder.", "shared"],
+]);
+
+/** A local lease refusal is recorded with no diagnostic details. Engine and
+ * provider failures always carry details, so provider text that merely repeats
+ * this copy keeps the ordinary runtime or provider card. */
+export function classifyLocalResourceConflict(message: unknown, details?: unknown): LocalResourceConflict | undefined {
+  if (typeof message !== "string" || details) return undefined;
+  const resource = LOCAL_RESOURCE_BUSY_MESSAGES.get(message.trim());
+  return resource ? { kind: "resource-busy", resource } : undefined;
+}
+
 /** The renderer consumes fixed copy, never provider-supplied details or URLs. */
 export function providerErrorPresentation(info: ProviderErrorInfo): { title: string; summary: string; resolution: string; billingUrl?: string } {
   const provider = info?.provider === "flux-router" ? "Flux Router" : "Your model provider";
