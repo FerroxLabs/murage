@@ -42,6 +42,35 @@ describe("skill recorder compiler", () => {
     expect(existsSync(path.join(result.path, "references", "step-001.webp"))).toBe(true);
   });
 
+  it("refuses a missing, relative or absent data root before creating anything (B1)", () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "murage-recording-root-"));
+    const missing = path.join(parent, "missing");
+    const codeOf = (options) => {
+      try {
+        saveSkillRecording({ name: "No owned root" }, options);
+        return "saved";
+      } catch (error) {
+        return error.code;
+      }
+    };
+    expect(codeOf(undefined)).toBe("SKILL_DATA_ROOT_UNAVAILABLE");
+    expect(codeOf({})).toBe("SKILL_DATA_ROOT_UNAVAILABLE");
+    expect(codeOf({ dataRoot: "relative/root" })).toBe("SKILL_DATA_ROOT_UNAVAILABLE");
+    expect(codeOf({ dataRoot: missing })).toBe("SKILL_DATA_ROOT_UNAVAILABLE");
+    expect(existsSync(missing)).toBe(false);
+  });
+
+  it("never falls back to MURAGE_DATA_DIR, which may name a retained original (B1)", () => {
+    const retained = mkdtempSync(path.join(tmpdir(), "murage-recording-retained-"));
+    vi.stubEnv("MURAGE_DATA_DIR", retained);
+    try {
+      expect(() => saveSkillRecording({ name: "Env fallback" })).toThrow("not available for saving skills");
+      expect(existsSync(path.join(retained, "skills"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("tells agents to adapt to current UI instead of replaying coordinates", () => {
     expect(compileSkillMarkdown({
       id: "demo", name: "Demo", description: "Do the task", transcript: "", events: [],
