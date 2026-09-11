@@ -109,6 +109,46 @@ export function autoNeedsLocalComputerWarning({
   autoApprove: Bot["autoApprove"];
 }): boolean {
   if (autoApprove) return false;
+  return autoMountsThisComputer({ platform, computer });
+}
+
+/** Whether Auto on a bot with this `computer` setting hands it THIS
+ *  computer — the renderer's copy of the server's `autoMountsLocalComputer`
+ *  (server/local-routing.ts). Provider support is deliberately not part of
+ *  the rule, because the server's is not (`providerSupportsLocal` is
+ *  hard-coded there): a Mac bot on a provider with no local-computer
+ *  capability is still refused Auto without the acknowledgement, so the
+ *  renderer must still show the warning for it rather than fire a PATCH
+ *  that comes back as a bare 400. */
+export function autoMountsThisComputer({
+  platform,
+  computer,
+}: {
+  platform: DesktopCapabilities["host"]["platform"];
+  computer: Bot["computer"];
+}): boolean {
   if (computer === "local") return platform === "darwin" || platform === "linux";
   return computer === undefined && platform === "darwin";
+}
+
+/** Whether moving an Auto-on bot's computer destination (the "Runs on"
+ *  grid in ComputerPanel) must show the local-computer warning and send
+ *  `acknowledgeLocalAuto`. Mirrors the server's profile PATCH exactly: the
+ *  acknowledgement is due when the new destination mounts this computer
+ *  and the current one did not; Auto already granted on this desktop
+ *  (moving `undefined` ↔ "local") is the same desktop and needs none, and
+ *  a bot in Ask never needs one for a destination change. */
+export function computerSwitchNeedsLocalAutoWarning({
+  platform,
+  from,
+  to,
+  autoApprove,
+}: {
+  platform: DesktopCapabilities["host"]["platform"];
+  from: Bot["computer"];
+  to: Bot["computer"];
+  autoApprove: Bot["autoApprove"];
+}): boolean {
+  if (!autoApprove) return false;
+  return autoMountsThisComputer({ platform, computer: to }) && !autoMountsThisComputer({ platform, computer: from });
 }
