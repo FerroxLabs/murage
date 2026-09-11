@@ -2,6 +2,8 @@
 // route. Every type below comes from validated bytes, never from a suffix.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,7 +16,7 @@ import {
   __resetMediaAssetsForTests, issueMediaCapability, mediaActiveStreamCount, mediaAssetsRoute, mediaWorkspaceRevision, parseByteRange,
   resolveImageReferenceRoute, sniffMedia, verifyMediaCapability, type MediaAssetsDeps,
 } from "./media-assets.ts";
-import type { DelegatedRequest, DelegatedResult } from "./route-delegation.ts";
+import { sendDelegated, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 import { Store } from "./store.ts";
 import { COMPANION_HEADER } from "./sse-visibility.ts";
 import {
@@ -110,7 +112,10 @@ describe("parseByteRange", () => {
     expect(parseByteRange("bytes=90-500", 100)).toEqual({ start: 90, end: 99 });
     expect(parseByteRange("bytes=-10", 100)).toEqual({ start: 90, end: 99 });
     expect(parseByteRange("bytes=-500", 100)).toEqual({ start: 0, end: 99 });
-    for (const bad of ["bytes=100-", "bytes=5-4", "bytes=-0", "bytes=0-1,5-6", "bytes=-", "items=0-1", "bytes=a-b", "bytes=0-1;x", "0-1"]) expect(parseByteRange(bad, 100)).toBe("unsatisfiable");
+    // RFC 9110: the unit is case-insensitive and whitespace may surround "=".
+    expect(parseByteRange("Bytes=10-19", 100)).toEqual({ start: 10, end: 19 });
+    expect(parseByteRange("BYTES = -10", 100)).toEqual({ start: 90, end: 99 });
+    for (const bad of ["bytes=100-", "bytes=5-4", "bytes=-0", "bytes=0-1,5-6", "bytes=-", "items=0-1", "bytes=a-b", "bytes=0-1;x", "0-1", "bytes=0 - 1", "bits=0-1"]) expect(parseByteRange(bad, 100), bad).toBe("unsatisfiable");
     expect(parseByteRange(["bytes=0-1", "bytes=2-3"], 100)).toBe("unsatisfiable");
     expect(parseByteRange("bytes=0-", 0)).toBe("unsatisfiable");
   });
@@ -210,7 +215,10 @@ describe("mediaAssetsRoute authority", () => {
       expect(result.body).toMatchObject({ code: "invalid-request" });
     }
     expect((await mediaAssetsRoute(request("POST", MEDIA_ROUTES.resolve, { body: { ref: { source: "artifact", artifactId: "0f2a1c3e-1111-4222-8333-944455566677" }, extra: 1 } }), f.deps)).status).toBe(400);
-    expect((await mediaAssetsRoute({ ...request("POST", MEDIA_ROUTES.resolve), readBody: async () => { throw new Error("body too large"); } }, f.deps)).status).toBe(400);
+    expect((await mediaAssetsRoute({ ...request("POST", MEDIA_ROUTES.resolve), readBody: async () => { throw new Error("invalid JSON body"); } }, f.deps)).status).toBe(400);
+    // The bounded body reader's 413 keeps its meaning instead of becoming a generic 400.
+    const oversized = await mediaAssetsRoute({ ...request("POST", MEDIA_ROUTES.resolve), readBody: async () => { throw Object.assign(new Error("body too large"), { status: 413 }); } }, f.deps);
+    expect(oversized.status).toBe(413); expect(oversized.body).toMatchObject({ code: "too-large" });
   });
   it("keeps resolve-image-reference as the K0 skeleton until F5-T4", async () => {
     const f = fixture();
@@ -283,7 +291,11 @@ describe("attachment assets", () => {
       expect(result.headers).toMatchObject({ "content-range": `bytes */${image.length}`, "accept-ranges": "bytes" });
       expect(result.stream).toBeUndefined();
     }
-    expect((await fetchBytes(f, url, { method: "POST" })).status).toBe(405);
+    // Only a capability holder learns the method rule; without one the route stays hidden.
+    const post = await fetchBytes(f, url, { method: "POST" });
+    expect(post.status).toBe(405); expect(post.headers).toMatchObject({ allow: "GET, HEAD" });
+    expect((await fetchBytes(f, bytesPath(url).pathname, { method: "POST" })).status).toBe(404);
+    expect((await fetchBytes(f, `${bytesPath(url).pathname}?cap=mc1.${"A".repeat(20)}.${"B".repeat(43)}`, { method: "POST" })).status).toBe(404);
   });
   it("requires a valid, unexpired capability for exactly this asset and never serves the companion", async () => {
     const f = fixture();
@@ -488,5 +500,107 @@ describe("workspace assets", () => {
     const result = await fetchBytes(f, resolved.url, { headers: { range: `bytes=${MEDIA_SNIFF_BYTES}-` } });
     expect(result.status).toBe(206);
     expect((await drain(result)).equals(video.subarray(MEDIA_SNIFF_BYTES))).toBe(true);
+  });
+});
+
+// ── route: through the delegation seam over real sockets ───────────────────
+// server/index.ts awaits the module and then hands the result to
+// sendDelegated. A media element aborts range requests on every seek, so the
+// client is often gone by the time the file is open: every such request must
+// give its stream slot back, or the byte route ends up 503 for the life of
+// the process.
+describe("byte route through sendDelegated", () => {
+  const servers: Server[] = [];
+  // A server-side stream outlives the client's last byte by a tick; wait for
+  // it before the module-level reset zeroes the counter under it.
+  afterEach(async () => {
+    await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
+    for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+  });
+  interface Seam { base: string; received: () => number; handled: () => number; settled: () => Promise<void> }
+  /** Same shape as the server/index.ts delegation; `before` runs first so a
+   * test can hold the request until the client has gone or a gate opens. */
+  async function seam(f: Fixture, before: (res: ServerResponse) => Promise<void> = async () => {}): Promise<Seam> {
+    let received = 0, handled = 0;
+    const server = createServer(async (req, res) => {
+      received++;
+      await before(res);
+      const url = new URL(req.url!, "http://127.0.0.1");
+      const result = await mediaAssetsRoute({ method: req.method!, path: url.pathname, url, headers: req.headers, desktop: false, readBody: async () => undefined }, f.deps);
+      sendDelegated(res, req.method!, result);
+      handled++;
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return {
+      base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, received: () => received, handled: () => handled,
+      settled: () => expect.poll(() => handled === received, { timeout: 5000 }).toBe(true),
+    };
+  }
+  /** Aborts `count` requests that the server actually received; an abort that
+   * lands before the request is even sent does not count. */
+  async function abortReceived(seam: Seam, target: string, count: number): Promise<void> {
+    const start = seam.received();
+    for (let index = 0; seam.received() < start + count; index++) {
+      if (index >= count * 20) throw new Error("the server never received enough aborted requests");
+      const controller = new AbortController();
+      const attempt = fetch(target, { signal: controller.signal, headers: { range: `bytes=${index * 100}-` } }).then(response => response.arrayBuffer()).catch(() => undefined);
+      setImmediate(() => controller.abort());
+      await attempt;
+    }
+  }
+  const fullBytes = async (target: string) => { const response = await fetch(target); expect(response.status).toBe(200); return Buffer.from(await response.arrayBuffer()); };
+  const attachLarge = (f: Fixture, name: string, chunks: number) => { const image = png(2, 2, MEDIA_STREAM_CHUNK_BYTES * chunks); attach(f, f.threadId, name, image); return image; };
+
+  it("releases the slot when the client is gone before the file is open", async () => {
+    const f = fixture(), image = attachLarge(f, "dddddddd-dddd-4ddd-8ddd-dddddddddddd.png", 2);
+    const { url } = ready(await resolve(f, { source: "attachment", threadId: f.threadId, attachmentId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd.png" }));
+    // Hold every request until its client has gone, then open the file for it: the worst case of the async window.
+    const held = await seam(f, res => new Promise(resolve => res.once("close", () => resolve())));
+    await abortReceived(held, held.base + url, MEDIA_MAX_ACTIVE_STREAMS + 4);
+    await held.settled();
+    expect(held.handled()).toBeGreaterThanOrEqual(MEDIA_MAX_ACTIVE_STREAMS + 4);
+    expect(mediaActiveStreamCount()).toBe(0);
+    // The next player request is served in full, not answered 503.
+    const server = await seam(f);
+    expect((await fullBytes(server.base + url)).equals(image)).toBe(true);
+    await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
+  });
+
+  it("releases the slot whichever way an abort races the open, and mid-stream", async () => {
+    const f = fixture(), image = attachLarge(f, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.png", 6);
+    const { url } = ready(await resolve(f, { source: "attachment", threadId: f.threadId, attachmentId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.png" }));
+    const racing = await seam(f), base = racing.base;
+    await abortReceived(racing, base + url, MEDIA_MAX_ACTIVE_STREAMS * 4);
+    // A seek after the first chunk: the response is piped, then the client leaves.
+    for (let index = 0; index < MEDIA_MAX_ACTIVE_STREAMS + 2; index++) {
+      const response = await fetch(base + url);
+      expect(response.status).toBe(200);
+      const reader = response.body!.getReader();
+      expect((await reader.read()).done).toBe(false);
+      await reader.cancel();
+    }
+    await racing.settled();
+    await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
+    expect((await fullBytes(base + url)).equals(image)).toBe(true);
+    await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
+  });
+
+  it("holds the cap while several requests are still opening their files", async () => {
+    const f = fixture(); attachLarge(f, "ffffffff-ffff-4fff-8fff-ffffffffffff.png", 8);
+    const { url } = ready(await resolve(f, { source: "attachment", threadId: f.threadId, attachmentId: "ffffffff-ffff-4fff-8fff-ffffffffffff.png" }));
+    let waiting = 0, open!: () => void;
+    const gate = new Promise<void>(resolve => { open = resolve; });
+    const { base } = await seam(f, async () => { waiting++; await gate; });
+    const total = MEDIA_MAX_ACTIVE_STREAMS * 2;
+    const responses = Array.from({ length: total }, () => fetch(base + url));
+    await expect.poll(() => waiting, { timeout: 5000 }).toBe(total);
+    open();
+    const settled = await Promise.all(responses);
+    const statuses = settled.map(response => response.status).sort();
+    expect(statuses).toEqual([...Array(MEDIA_MAX_ACTIVE_STREAMS).fill(200), ...Array(MEDIA_MAX_ACTIVE_STREAMS).fill(503)]);
+    expect(mediaActiveStreamCount()).toBeLessThanOrEqual(MEDIA_MAX_ACTIVE_STREAMS);
+    for (const response of settled) await (response.status === 200 ? response.body!.cancel() : response.text());
+    await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
   });
 });
