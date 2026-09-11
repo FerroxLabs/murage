@@ -370,6 +370,12 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
   };
   const onNativeClose = (event: SyntheticEvent<HTMLDialogElement>) => {
     event.stopPropagation();
+    // `close` is queued, not dispatched inline. StrictMode (src/main.tsx, the
+    // dev server and the e2e rig) runs the open effect, its cleanup, then the
+    // effect again: the cleanup's close() event lands after the dialog is modal
+    // again. A close that finds the dialog open is that stale echo, not a
+    // person closing it.
+    if (event.currentTarget.open) return;
     closeRef.current();
   };
   const stop = (event: SyntheticEvent) => event.stopPropagation();

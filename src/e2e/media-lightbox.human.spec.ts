@@ -79,18 +79,19 @@ import {Files} from '/src/components/Files.tsx';
 import '/src/styles.css';
 const h=React.createElement;
 function FilesModal(){const ref=React.useRef(null);const [open,setOpen]=React.useState(false);
-  React.useEffect(()=>{if(open)ref.current?.showModal();},[open]);
+  React.useEffect(()=>{if(open&&!ref.current?.open)ref.current?.showModal();},[open]);
   return h(React.Fragment,{},h('button',{type:'button',onClick:()=>setOpen(true)},'Open Files'),
     open&&h('dialog',{ref,id:'files-dialog','aria-label':'Files',onCancel:()=>setOpen(false),onClose:()=>setOpen(false),className:'m-auto h-[80dvh] w-[min(900px,calc(100vw-24px))] rounded-2xl bg-panel p-0 text-ink'},
       h(Files,{bots:[],initialArtifactId:'art-chart',onClose:()=>setOpen(false)})));}
 // the app stylesheet pins body to the viewport, as the real shell does, so the
-// fixture scrolls inside main the way the transcript scrolls inside its pane
-createRoot(document.getElementById('root')).render(h('main',{style:{background:'var(--color-app)',color:'var(--color-ink)',padding:16,height:'100dvh',overflowY:'auto'}},
+// fixture scrolls inside main the way the transcript scrolls inside its pane.
+// StrictMode as in src/main.tsx: dev and the e2e rig run every effect twice.
+createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main',{style:{background:'var(--color-app)',color:'var(--color-ink)',padding:16,height:'100dvh',overflowY:'auto'}},
   h('button',{type:'button','data-testid':'outside'},'Outside'),
   h('section',{'data-testid':'gallery'},h(AttachedImageGallery,{paths:['/Users/x/attachments/portrait-1.png','/Users/x/attachments/missing-9.png','/Users/x/attachments/wide-2.png'],className:'justify-start'})),
   h('section',{'data-testid':'markdown'},h(ChatMarkdown,{text:${JSON.stringify(MARKDOWN)}})),
   h('section',{'data-testid':'screen'},h(ScreenFrameMedia,{png:${JSON.stringify(SCREEN)},mime:'image/png',className:'block w-fit max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40'})),
-  h('section',{'data-testid':'files'},h(FilesModal))));`;
+  h('section',{'data-testid':'files'},h(FilesModal)))));`;
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://fixture");
