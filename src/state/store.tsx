@@ -657,7 +657,9 @@ export type Action =
       replyToId?: string;
       threadId?: string;
       mode?: "chat" | "goal";
-      onError?: () => void;
+      /** Runs after a failed send. Returning true means the caller has shown
+       * the failure where it happened, so the store adds no toast of its own. */
+      onError?: (error: unknown) => boolean | void;
     }
   | {
       type: "patchGroup";
@@ -680,7 +682,9 @@ export type Action =
       sendId?: string;
       replyToId?: string;
       threadId?: string;
-      onError?: () => void;
+      /** Runs after a failed send. Returning true means the caller has shown
+       * the failure where it happened, so the store adds no toast of its own. */
+      onError?: (error: unknown) => boolean | void;
     }
   | { type: "pendingQueued"; threadId: string; queueId: string; text: string }
   | { type: "consumePendingQueued"; threadId: string; queueId: string }
@@ -1849,8 +1853,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }
             })
             .catch((error) => {
-              showError(error);
-              action.onError?.();
+              if (action.onError?.(error) !== true) showError(error);
             });
           break;
         }
@@ -2104,8 +2107,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }
             })
             .catch((error) => {
-              showError(error);
-              action.onError?.();
+              if (action.onError?.(error) !== true) showError(error);
             });
           break;
         }

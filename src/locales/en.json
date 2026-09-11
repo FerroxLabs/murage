@@ -539,5 +539,8 @@
   "artifactCard.htmlFrame": "Preview {name}",
   "artifactCard.htmlNote": "Protected preview: scripts, external resources and app access are blocked.",
   "artifactCard.larger": "Larger",
-  "artifactCard.smaller": "Smaller"
+  "artifactCard.smaller": "Smaller",
+  "composer.tooLarge": "Not sent: this message is {size}, and one message can be up to {limit}. Shorten it or split it into smaller messages. Your text is still here.",
+  "composer.refusedTooLarge": "Not sent: Murage refused this message because it is too large ({size}). Shorten it or split it into smaller messages. Your text is still here.",
+  "composer.dismissNotice": "Dismiss"
 }
