@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import {
-  artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
+  artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
   artifactRelativePathParts, artifactSourceFingerprint, authorizedArtifactRoot, isPrivateWorkspaceName, safeArtifactDirectory, verifiedArtifactSource,
 } from "./artifacts.ts";
 const roots: string[] = [], databases: DatabaseSync[] = [];
@@ -129,6 +129,39 @@ it("keeps preview responses inert and downloads byte-exact with attachment heade
   writeFileSync(join(f.workspace, "report.pdf"), "fake PDF bytes");
   const pdf = registerArtifact(f.db, f.storage, { ...f.input, relativePath: "report.pdf" }, f.access);
   expect(previewArtifact(f.db, f.storage, pdf.id, f.access).mode).toBe("download");
+});
+
+it("saves source and configuration files as text so they preview inline within the unchanged bound (INLINE1)", () => {
+  const f = fixture();
+  const samples: Array<[string, string]> = [
+    ["outputs/report.py", "import json\nprint(json.dumps({'ok': True}))\n"], ["outputs/server.ts", "export const ok = true;\n"], ["outputs/App.tsx", "export default () => <div />;\n"],
+    ["outputs/tool.mjs", "export {};\n"], ["outputs/run.sh", "#!/bin/sh\necho ok\n"], ["outputs/config.yaml", "ok: true\n"], ["outputs/config.yml", "ok: true\n"],
+    ["outputs/pyproject.toml", "[tool]\nok = true\n"], ["outputs/data.xml", "<ok/>\n"], ["outputs/style.css", "body { margin: 0 }\n"], ["outputs/query.sql", "SELECT 1;\n"],
+    ["outputs/main.go", "package main\n"], ["outputs/lib.rs", "fn main() {}\n"], ["outputs/rows.jsonl", "{\"ok\":true}\n"], ["outputs/change.patch", "--- a\n+++ b\n"],
+  ];
+  for (const [relativePath, content] of samples) {
+    mkdirSync(join(f.workspace, "outputs"), { recursive: true }); writeFileSync(join(f.workspace, relativePath), content);
+    const saved = registerArtifact(f.db, f.storage, { ...f.input, relativePath, name: relativePath.slice("outputs/".length) }, f.access);
+    expect([relativePath, saved.kind, saved.mime]).toEqual([relativePath, "text", "text/plain"]);
+    expect(previewArtifact(f.db, f.storage, saved.id, f.access)).toMatchObject({ mode: "text", content });
+  }
+  expect(ARTIFACT_TEXT_EXTENSIONS).toEqual(expect.arrayContaining([".txt", ".md", ".csv", ".tsv", ".json", ".log"]));
+  // Not text: images that are also markup, credential files, archives, binaries.
+  for (const [relativePath, content] of [["outputs/logo.svg", "<svg/>"], ["outputs/local.env", "SECRET=1"], ["outputs/key.pem", "-----BEGIN"], ["outputs/site.zip", "PK"], ["outputs/tool.wasm", "\0asm"]] as Array<[string, string]>) {
+    writeFileSync(join(f.workspace, relativePath), content);
+    const saved = registerArtifact(f.db, f.storage, { ...f.input, relativePath, name: relativePath.slice("outputs/".length) }, f.access);
+    expect([relativePath, saved.kind]).toEqual([relativePath, "other"]);
+    expect(previewArtifact(f.db, f.storage, saved.id, f.access).mode).toBe("download");
+  }
+  // The preview bound is unchanged: a source file over 2 MiB downloads, and one
+  // whose bytes are not UTF-8 downloads even under the bound.
+  expect(ARTIFACT_PREVIEW_MAX_BYTES).toBe(2 * 1024 * 1024);
+  writeFileSync(join(f.workspace, "outputs/huge.py"), Buffer.alloc(ARTIFACT_PREVIEW_MAX_BYTES + 1, 0x23));
+  const huge = registerArtifact(f.db, f.storage, { ...f.input, relativePath: "outputs/huge.py", name: "huge.py" }, f.access);
+  expect([huge.kind, previewArtifact(f.db, f.storage, huge.id, f.access).mode]).toEqual(["text", "download"]);
+  writeFileSync(join(f.workspace, "outputs/binary.py"), Buffer.from([0xff, 0xfe, 0x00, 0x41]));
+  const binary = registerArtifact(f.db, f.storage, { ...f.input, relativePath: "outputs/binary.py", name: "binary.py" }, f.access);
+  expect([binary.kind, previewArtifact(f.db, f.storage, binary.id, f.access).mode]).toEqual(["text", "download"]);
 });
 
 it("exports the registration path rules unchanged for workspace discovery (R3-T1)", () => {
