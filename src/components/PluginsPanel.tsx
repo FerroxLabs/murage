@@ -8,6 +8,13 @@ import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 import { McpServersPanel } from "./McpServersPanel";
+import {
+  COMPOSIO_KEY_FIELD_SELECTOR,
+  ConnectedAppsLock,
+  connectedAppsLockState,
+  FLUX_KEY_FIELD_SELECTOR,
+  focusSettingsField,
+} from "./ConnectedAppsLock";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 
@@ -38,6 +45,10 @@ let cachedConnectorStatus: Record<string, ConnectorStatus> | null = null;
 let cachedConnectorStatusAt = 0;
 let cachedConnectorStatusAuthoritative = true;
 let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
+/** true after the last inventory answer said credentials.bin could not be
+ * read this launch. Config then cannot vouch for which keys exist, so the
+ * lock stands down and the panel shows what it remembers, as it always did. */
+let credentialStoreUnreadable = false;
 const CONNECTOR_STATUS_CACHE_MS = 30_000;
 
 export interface ConnectorInventory {
@@ -63,8 +74,10 @@ export function preloadConnectedApps(force = false): Promise<ConnectorInventory>
       // An unreadable credential store tells us nothing about what is
       // connected. Keep the last inventory we were sure about instead.
       if (response.credentialStore === "unavailable") {
+        credentialStoreUnreadable = true;
         return { services: readCachedInventory()?.services ?? {}, authoritative: false };
       }
+      credentialStoreUnreadable = false;
       cachedConnectorStatus = services;
       cachedConnectorStatusAt = Date.now();
       cachedConnectorStatusAuthoritative = true;
@@ -76,6 +89,18 @@ export function preloadConnectedApps(force = false): Promise<ConnectorInventory>
       connectorStatusRequest = null;
     });
   return connectorStatusRequest;
+}
+
+/** The inventory request already in flight, if any — the app warms one on
+ * connect. The locked panel awaits THIS rather than starting its own, so it
+ * learns whether the credential store was readable without sending a single
+ * connector request of its own. */
+export function pendingConnectedApps(): Promise<ConnectorInventory> | null {
+  return connectorStatusRequest;
+}
+
+export function isCredentialStoreUnreadable(): boolean {
+  return credentialStoreUnreadable;
 }
 
 export function disconnectAccountConfirmation(
@@ -151,7 +176,6 @@ export function migrationFromClaim(
 
 export type ConnectedAppsNoticeAction = "enable-flux" | "own-key" | "open-settings" | "billing" | "claim" | "keep-legacy";
 export type ConnectedAppsNotice =
-  | { kind: "flux-cta"; title: string; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
 
@@ -219,15 +243,9 @@ export function connectedAppsNotices(input: {
       // FluxRouter" here would point at a door this build does not have.
       notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.notInBuild"), action: { id: "own-key", label: t("connectedApps.flux.openSettings") } });
     } else if (!fields.fluxConfigured) {
-      notices.push({
-        kind: "flux-cta",
-        title: t("connectedApps.flux.ctaTitle"),
-        body: t("connectedApps.flux.ctaBody"),
-        actions: [
-          { id: "enable-flux", label: t("connectedApps.flux.ctaButton") },
-          { id: "own-key", label: t("connectedApps.flux.ctaByok") },
-        ],
-      });
+      // No FluxRouter key and no key of the person's own: the panel is
+      // locked (ConnectedAppsLock) and never reaches these notices, because
+      // it does not fetch the catalog they are derived from. Nothing to add.
     } else if (tokenNotice) {
       notices.push(tokenNotice);
     } else {
@@ -404,7 +422,7 @@ function ServiceIcon({ card }: { card: ToolkitCard }) {
 }
 
 export function PluginsPanel() {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
   const dialogRef = useRef<HTMLDivElement>(null);
   // Which half of the dialog is showing: the Composio marketplace, or the
@@ -419,6 +437,8 @@ export function PluginsPanel() {
   const [panelFields, setPanelFields] = useState<ConnectorPanelFields>(EMPTY_CONNECTOR_PANEL_FIELDS);
   const [consentDismissed, setConsentDismissed] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  /** the last inventory answer said the credential store could not be read */
+  const [storeUnreadable, setStoreUnreadable] = useState(isCredentialStoreUnreadable);
   // Paint what we last knew before any request goes out: the module cache if
   // this window already fetched, otherwise the inventory saved on disk. An
   // empty panel is never the first thing a connected user sees.
@@ -538,6 +558,28 @@ export function PluginsPanel() {
 
   const notices = connectedAppsNotices({ configured, stale, mode, fields: panelFields, consentDismissed });
 
+  // Locked until a FluxRouter key or a Composio key of the person's own
+  // exists. Decided from what GET /api/config already told the store, never
+  // from a connector response: the locked panel sends no connector request
+  // at all, and the config frame flips it open the moment a key is saved.
+  const lockState = connectedAppsLockState(state.config, { stale: stale || storeUnreadable });
+  const locked = lockState === "locked";
+
+  /** The lock's one button: Settings → Models, cursor in the Flux key field. */
+  const addFluxKey = useCallback(() => {
+    dispatch({ type: "togglePlugins", open: false });
+    dispatch({ type: "toggleAppSettings", open: true, section: "models" });
+    focusSettingsField(FLUX_KEY_FIELD_SELECTOR);
+  }, [dispatch]);
+
+  /** The lock's secondary way in: the person's own Composio key, under
+   * Tools & Connections, cursor in that field. */
+  const addOwnKey = useCallback(() => {
+    dispatch({ type: "togglePlugins", open: false });
+    dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
+    focusSettingsField(COMPOSIO_KEY_FIELD_SELECTOR);
+  }, [dispatch]);
+
   /** What each notice's button does. Moving connected apps is the only one
    * that changes anything, and it runs in the main process (it holds the
    * credentials); the rest just open the right settings section. */
@@ -579,7 +621,23 @@ export function PluginsPanel() {
     cachedConnectorStatusAuthoritative = !stale;
   }, [inventoryPhase, stale, status]);
 
+  // Locked, or not yet known: no catalog, no inventory. The only thing the
+  // panel does is listen for the app's own warm-up request, already in
+  // flight, so an unreadable credential store still shows the remembered
+  // inventory instead of the lock.
   useEffect(() => {
+    if (lockState === "unlocked") return;
+    let alive = true;
+    void pendingConnectedApps()?.then(() => {
+      if (alive) setStoreUnreadable(isCredentialStoreUnreadable());
+    });
+    return () => {
+      alive = false;
+    };
+  }, [lockState]);
+
+  useEffect(() => {
+    if (lockState !== "unlocked") return;
     let alive = true;
     void loadConnectionInventory();
     api("/api/connectors/catalog")
@@ -598,7 +656,7 @@ export function PluginsPanel() {
     return () => {
       alive = false;
     };
-  }, [loadConnectionInventory]);
+  }, [lockState, loadConnectionInventory]);
 
   useEffect(() => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -610,7 +668,12 @@ export function PluginsPanel() {
         ) ?? [],
       );
 
-    (dialog?.querySelector<HTMLElement>("input") ?? focusable()[0] ?? dialog)?.focus();
+    // Locked, the offer's button is the first thing the keyboard reaches;
+    // otherwise the search field, as before.
+    (dialog?.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
+      ?? dialog?.querySelector<HTMLElement>("input")
+      ?? focusable()[0]
+      ?? dialog)?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -641,6 +704,22 @@ export function PluginsPanel() {
       returnFocus?.focus();
     };
   }, [dispatch]);
+
+  // The dialog places focus once, on mount, and the apps surface may not be
+  // decided yet then (config answered late). Once it is, put focus where the
+  // mount would have — the lock's button, or the search field — unless the
+  // person has already moved it somewhere on purpose. Switching surfaces
+  // does not re-run this.
+  useEffect(() => {
+    if (lockState === "unknown") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const active = document.activeElement;
+    const parked = !active || active === document.body || active === dialog || active === dialog.querySelector('[aria-label="Close plugins"]');
+    if (!parked) return;
+    (dialog.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
+      ?? dialog.querySelector<HTMLElement>('input[aria-label="Search apps"]'))?.focus();
+  }, [lockState]);
 
   const openConnectUrl = async (url: string) => {
     if (window.muragebox?.openExternal) {
@@ -759,7 +838,7 @@ export function PluginsPanel() {
             <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? "Connect apps and your own MCP tools." : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
           </div>
           <div className="flex items-center gap-1">
-            {surface === "apps" && (
+            {surface === "apps" && lockState === "unlocked" && (
               <button
                 onClick={() => void loadConnectionInventory(true)}
                 disabled={refreshing}
@@ -799,7 +878,13 @@ export function PluginsPanel() {
           </div>
         </div>
 
-        {desktop === true && surface === "mcp" ? <McpServersPanel /> : <>
+        {desktop === true && surface === "mcp" ? <McpServersPanel /> : lockState === "unknown" ? (
+          <div className="flex flex-1 items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
+            <Loader2 size={14} className="animate-spin" /> {t("connectedApps.lock.loading")}
+          </div>
+        ) : locked ? (
+          <ConnectedAppsLock onAddFluxKey={addFluxKey} onOwnKey={addOwnKey} />
+        ) : <>
 
         {stale && (
           // Say which of the two things is true. Silence here is what makes a
@@ -878,25 +963,6 @@ export function PluginsPanel() {
           </div>
         )}
         {notices.map((notice, index) => {
-          if (notice.kind === "flux-cta") {
-            return (
-              <div key={`cta-${index}`} className="mx-6 mb-1 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning sm:mx-8">
-                <div className="font-medium">{notice.title}</div>
-                <div className="mt-1 text-ink-secondary">{notice.body}</div>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  {notice.actions.map((action) => (
-                    <button
-                      key={action.id}
-                      className="font-medium underline underline-offset-2"
-                      onClick={() => runNoticeAction(action.id)}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          }
           if (notice.kind === "consent") {
             return (
               <div key={`consent-${index}`} className="mx-6 mb-1 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-ink sm:mx-8">

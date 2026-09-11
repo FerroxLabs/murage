@@ -17,7 +17,7 @@ test.beforeAll(async () => {
     name: "apps-alias-fixture", enforce: "pre",
     resolveId(id) { if (id.endsWith("/src/state/store") || id === "@/state/store") return "\0apps-store"; if (id === "/__apps.js") return "\0apps-entry"; },
     load(id) {
-      if (id === "\0apps-store") return `export * from '/src/state/store.tsx?original';import {initialState} from '/src/state/store.tsx?original';const dispatch=action=>window.dispatched.push(action);export function useStore(){return {state:initialState,dispatch};}`; // stable like the real memoized dispatch, so the dialog focus effect runs once
+      if (id === "\0apps-store") return `export * from '/src/state/store.tsx?original';import {initialState} from '/src/state/store.tsx?original';const dispatch=action=>window.dispatched.push(action);const config={composio:{configured:true,mode:'self-hosted'},box:{configured:false},vps:{configured:false,sshAlias:''},rooms:{turnTimeoutMinutes:15},localVm:{mode:'shared',maxInstances:1},flux:{configured:false}};const state={...initialState,config};export function useStore(){return {state,dispatch};}`; // stable like the real memoized dispatch, so the dialog focus effect runs once. CTA1: the panel is locked until a key exists; this fixture runs on the person's own Composio key, matching its catalog answer.
       if (id !== "\0apps-entry") return;
       return `import React from 'react';import {createRoot} from 'react-dom/client';import {PluginsPanel} from '/src/components/PluginsPanel.tsx';import '/src/styles.css';
         const query=new URLSearchParams(location.search);document.documentElement.dataset.skin=query.get('skin')||'dark';
