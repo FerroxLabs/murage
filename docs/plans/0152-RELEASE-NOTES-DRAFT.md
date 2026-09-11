@@ -266,7 +266,16 @@ close a set of audited gaps, and all seven language packs are complete.
   without the folder's files instead of "stopped"; folder trust is
   recorded from a picker only on the desktop, including a team imported as
   a project; and a provider-routed turn that never started (card stopped or
-  timed out) no longer leaves its temporary Fuigo home behind.
+  timed out) no longer leaves its temporary Fuigo home behind. Further
+  follow-ups (FUIGOTRUST3): a bot working in a linked git worktree shares
+  its trust with the main checkout, exactly as Fuigo keys it, so `fuigo
+  --trust` on the main repo covers every worktree and a worktree picked in
+  Murage is remembered for the whole repo; a folder Fuigo itself still asks
+  about is never trusted on Murage's reading of Fuigo's store alone — your
+  own answer, or the card, decides; a card the engine raised on its own
+  under a turn that then failed says the turn failed, not "stopped"; and
+  the picker note reads the Fuigo install of the bot it belongs to when
+  several Fuigo instances run with different homes.
 - **Images can be saved without touching the source.** Choosing the source
   file itself (or a hard/symlink alias) as the Save destination is a no-op
   rather than a truncation; every other destination is written to an
