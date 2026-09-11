@@ -706,7 +706,9 @@ describe("where this door may bind", () => {
   it("never offers 0.0.0.0, and refuses to start rather than fall back", () => {
     expect(browserBindHost("loopback", null)).toBe("127.0.0.1");
     expect(browserBindHost("loopback", "100.79.121.109")).toBe("127.0.0.1");
-    expect(browserBindHost("tailnet", "100.79.121.109")).toBe("100.79.121.109");
+    // CP5 (adopted U-12): explicit tailnet binds only an address Tailscale
+    // itself confirmed, so the confirmation is part of this expectation now.
+    expect(browserBindHost("tailnet", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
     // Falling back to 0.0.0.0 "so it works" is how a tailnet-only door
     // becomes a LAN door, and nobody would see it happen.
     expect(() => browserBindHost("tailnet", null)).toThrow(/no Tailscale address/i);
@@ -717,7 +719,9 @@ describe("where this door may bind", () => {
     // demand for the tailnet refuses to start before Tailscale is signed in,
     // and a demand for loopback leaves a signed-in tailnet with no door on it.
     expect(browserBindHost("auto", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
-    expect(browserBindHost("auto", "100.79.121.109")).toBe("100.79.121.109");
+    // CP5 (adopted U-12): an interface address Tailscale has not confirmed is
+    // not a tailnet, so auto stays on loopback for it.
+    expect(browserBindHost("auto", "100.79.121.109")).toBe("127.0.0.1");
     expect(browserBindHost("auto", null)).toBe("127.0.0.1");
     // and it says why, rather than silently being loopback
     const declined: string[] = [];
@@ -755,11 +759,49 @@ describe("where this door may bind", () => {
     expect(browserBindHost("auto", null, "100.79.121.109")).toBe("127.0.0.1");
   });
 
-  it("treats a missing CLI answer as no evidence, not as a disagreement", () => {
-    // Tailscale may simply not be installed where we looked. The interface
-    // address is then the only evidence there is, and it is the same one the
-    // pairing page has always printed.
-    expect(tailnetBindAddress("100.79.121.109", null)).toEqual({ address: "100.79.121.109" });
+  // CP5 (adopted U-12). This used to accept the interface address when the CLI
+  // gave no answer. A 100.64.0.0/10 address is what a carrier NAT, another VPN
+  // or a container bridge also produces, so with nothing to cross-check it
+  // against it is not evidence of Tailscale; a missing answer is its own
+  // refusal now, distinct from a disagreement.
+  it("does not take an unconfirmed 100.64.0.0/10 interface address as the tailnet", () => {
+    const unconfirmed = tailnetBindAddress("100.64.0.7", null);
+    expect(unconfirmed).toEqual({ refused: expect.stringContaining("Tailscale did not confirm it") });
+    expect(JSON.stringify(unconfirmed)).not.toContain("Something else is using");
+
+    // auto: loopback, and it says why
+    const declined: string[] = [];
+    expect(browserBindHost("auto", "100.64.0.7", null, (r) => declined.push(r))).toBe("127.0.0.1");
+    expect(declined).toHaveLength(1);
+    expect(declined[0]).toMatch(/not proof on its own/);
+
+    // explicit tailnet: refuses, with something to do about it, and never
+    // falls back to loopback or to anything wider
+    expect(() => browserBindHost("tailnet", "100.64.0.7", null)).toThrow(/Tailscale did not confirm it/);
+    expect(() => browserBindHost("tailnet", "100.64.0.7", null)).toThrow(/command line tool/);
+  });
+
+  it("binds the tailnet address when Tailscale confirms the one the interface carries", () => {
+    expect(tailnetBindAddress("100.79.121.109", "100.79.121.109")).toEqual({ address: "100.79.121.109" });
+    expect(browserBindHost("tailnet", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
+    expect(browserBindHost("auto", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
+  });
+
+  it("keeps an explicit-tailnet refusal from moving a running door", async () => {
+    const server = createServer();
+    let listens = 0;
+    const result = await rebindBrowserDoor({
+      server,
+      port: 1,
+      boundHost: "127.0.0.1",
+      desiredHost: () => browserBindHost("tailnet", "100.64.0.7", null),
+      listen: async () => {
+        listens += 1;
+      },
+    });
+    expect(result.host).toBe("127.0.0.1");
+    expect(result.note).toMatch(/Tailscale did not confirm it/);
+    expect(listens).toBe(0);
   });
 });
 
