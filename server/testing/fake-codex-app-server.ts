@@ -39,6 +39,10 @@ const notify = (method: string, params: unknown) => out({ jsonrpc: "2.0", method
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
+// Markers count only on the prompt's last line (the current request): the
+// harness replays earlier messages into a fresh process's prompt, and an old
+// marker there must not re-trigger a fixture on a later, ordinary turn.
+const fixtureRequested = (text: string, marker: string) => (text.trimEnd().split("\n").pop() ?? "").includes(marker);
 
 const dump = () => {
   if (process.env.FAKE_CODEX_DUMP) {
@@ -198,17 +202,17 @@ process.stdin.on("data", (chunk) => {
         out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
         // Bounded-ingress fixtures (A4), keyed on the prompt text.
         const promptText = String(msg.params?.input?.[0]?.text ?? "");
-        if (promptText.includes("__fixture_oversize_frame__")) {
+        if (fixtureRequested(promptText, "__fixture_oversize_frame__")) {
           // a VALID frame one KiB over the limit, then a clean completion
           notify("item/agentMessage/delta", { itemId: "big", delta: fixtureOversizeText() });
           finishTurn();
           break;
         }
-        if (promptText.includes("__fixture_oversize_open_frame__")) {
+        if (fixtureRequested(promptText, "__fixture_oversize_open_frame__")) {
           process.stdout.write(`{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"itemId":"big","delta":"${fixtureOversizeText()}`);
           break;
         }
-        if (promptText.includes("__fixture_large_frame__")) {
+        if (fixtureRequested(promptText, "__fixture_large_frame__")) {
           notify("item/completed", {
             item: { id: "img-large", type: "imageGeneration", status: "completed", result: fixtureLargeImageBase64(), revisedPrompt: "large" },
           });
