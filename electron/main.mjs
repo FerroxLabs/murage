@@ -58,6 +58,7 @@ import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName } from "./save-file.mjs";
 import { activeDesktopDataRoot, createSaveFileHandler, createSkillRecordingSaveHandler } from "./native-file-handlers.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
+import { createWorkspaceFileActionHandler } from "./workspace-file-actions.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import {
@@ -2296,6 +2297,41 @@ ipcMain.handle("desktop:artifact-action", async (event, id, action) => {
   if (action === "reveal") shell.showItemInFolder(savedPath);
   else { const error = await shell.openPath(savedPath); if (error) throw new Error("The operating system could not open this file. Download it instead."); }
 });
+
+// F4-T5: open or reveal a live workspace file (the Workspace view and the
+// workspace pane), as opposed to the immutable saved copies above. The
+// renderer names a conversation scope and a relative path and never a path on
+// disk; the server re-resolves the authorized root, applies the same link,
+// hard-link and private-file policy as a read, and answers with the canonical
+// root plus the observed file identity. workspace-file-actions.mjs rebuilds
+// the path from that root and revalidates it immediately before the OS call.
+ipcMain.handle("desktop:workspace-file-action", createWorkspaceFileActionHandler({
+  window: () => mainWindow,
+  origin: trustedRendererOrigin,
+  authorize: async ({ scope, relativePath }) => {
+    if (!desktopSurfaceSecret) throw new Error("Workspace files are unavailable here.");
+    const query = new URLSearchParams({ botId: scope.botId, threadId: scope.threadId, path: relativePath });
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/workspace-files/native?${query}`, {
+      headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
+      signal: AbortSignal.timeout(10000), redirect: "error",
+    });
+    const body = await response.json().catch(() => null);
+    // The server's refusals already read as user-facing sentences.
+    if (!response.ok) throw new Error(typeof body?.error === "string" && body.error ? body.error : "This file is unavailable. Refresh the workspace.");
+    return body;
+  },
+  // Fixed wording: the file name is renderer-controlled and never becomes
+  // dialog text.
+  confirmBrowserOpen: async ({ event }) => {
+    const parent = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const decision = await dialog.showMessageBox(parent, { type: "warning", title: "Open in your browser?",
+      message: "Your browser may run scripts or access the network when opening this file. Use Preview in Murage for an isolated view.",
+      buttons: ["Cancel", "Open in browser"], defaultId: 0, cancelId: 0 });
+    return decision.response === 1;
+  },
+  openPath: (file) => shell.openPath(file),
+  revealPath: (file) => shell.showItemInFolder(file),
+}));
 
 // Native writers use the installation this process owns (B1/B3): after a
 // separate restore that is the selected installation, never the retained
