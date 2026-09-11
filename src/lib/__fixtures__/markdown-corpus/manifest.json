@@ -1,0 +1,225 @@
+{
+  "description": "F4-T2 Markdown round-trip corpus (adopted U-06). `rich`: the pinned @tiptap/markdown 3.31.3 parse -> serialize reproduces the file byte for byte and every token class is supported. `source`: the file opens in Source mode for the listed reasons. Bytes are exact; see .gitattributes.",
+  "files": [
+    {
+      "file": "rich-basic.md",
+      "expect": "rich",
+      "note": "headings, emphasis, strong, links (URL bytes kept), strikethrough, code span, hard/soft breaks, thematic break, escapes, trailing newline"
+    },
+    {
+      "file": "rich-lists.md",
+      "expect": "rich",
+      "note": "bullet, nested bullet, ordered, ordered with start, task lists with nesting"
+    },
+    {
+      "file": "rich-quote-code.md",
+      "expect": "rich",
+      "note": "blockquote, nested blockquote, fenced code with info string and backticks inside the code"
+    },
+    {
+      "file": "rich-unicode-rtl.md",
+      "expect": "rich",
+      "note": "Arabic/Hebrew RTL, CJK, emoji with skin tone modifier, combining mark"
+    },
+    {
+      "file": "rich-frontmatter.md",
+      "expect": "rich",
+      "note": "YAML frontmatter (with a blank line inside) preserved as an opaque prefix"
+    },
+    {
+      "file": "rich-bom.md",
+      "expect": "rich",
+      "note": "UTF-8 BOM + LF"
+    },
+    {
+      "file": "rich-crlf-frontmatter-bom.md",
+      "expect": "rich",
+      "note": "BOM + CRLF + frontmatter: CRLF normalized for the editor and restored on compose, code block included"
+    },
+    {
+      "file": "rich-thematic-break-start.md",
+      "expect": "rich",
+      "note": "leading thematic break is prose, not frontmatter"
+    },
+    {
+      "file": "rich-no-trailing-newline.md",
+      "expect": "rich",
+      "note": "newline style none, no trailing newline"
+    },
+    {
+      "file": "rich-leading-blank-lines.md",
+      "expect": "rich",
+      "note": "leading and trailing blank lines are opaque parts"
+    },
+    {
+      "file": "empty.md",
+      "expect": "rich",
+      "note": "empty file"
+    },
+    {
+      "file": "frontmatter-only.md",
+      "expect": "rich",
+      "note": "frontmatter with an empty body"
+    },
+    {
+      "file": "source-table.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "GFM table with an escaped pipe: 3.31.3 re-pads cells and adds blank lines"
+    },
+    {
+      "file": "source-reference-links.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "reference links and definitions would be inlined by the serializer"
+    },
+    {
+      "file": "source-html-comment.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "raw HTML and comments would be escaped as text"
+    },
+    {
+      "file": "source-directive.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "container directive"
+    },
+    {
+      "file": "source-footnote.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "footnote with a URL definition lexes as footnote + def and would be rewritten as an inline link"
+    },
+    {
+      "file": "source-footnote-prose.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "footnote with a prose definition lexes as plain text; the byte check catches the escaped brackets"
+    },
+    {
+      "file": "source-adjacent-ordered-lists.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "CommonMark joins ordered lists separated only by a blank line; the serializer renumbers them"
+    },
+    {
+      "file": "source-math.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "display math"
+    },
+    {
+      "file": "source-image.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "images: rich mode never fetches local or remote images"
+    },
+    {
+      "file": "source-tilde-fence.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "tilde fence would become backticks"
+    },
+    {
+      "file": "source-indented-code.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "indented code would become a fence"
+    },
+    {
+      "file": "source-setext.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "setext headings would become ATX"
+    },
+    {
+      "file": "source-loose-list.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "loose list would be tightened"
+    },
+    {
+      "file": "source-autolink.md",
+      "expect": "source",
+      "reasons": [
+        "unsupported-syntax"
+      ],
+      "note": "angle autolinks and bare URLs would be rewritten as inline links"
+    },
+    {
+      "file": "source-fence-with-backtick-fence.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "4-backtick fence containing a 3-backtick fence would be broken by the serializer"
+    },
+    {
+      "file": "source-escaped-pipe.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "escaped pipe would lose its backslash"
+    },
+    {
+      "file": "source-underscore-emphasis.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "underscore emphasis would become asterisks"
+    },
+    {
+      "file": "source-star-bullets.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "star bullets would become dashes"
+    },
+    {
+      "file": "source-uppercase-task.md",
+      "expect": "source",
+      "reasons": [
+        "round-trip-changed"
+      ],
+      "note": "capital X task marker would be lowercased"
+    },
+    {
+      "file": "source-mixed-newlines.md",
+      "expect": "source",
+      "reasons": [
+        "mixed-newlines"
+      ],
+      "note": "mixed newlines are edited verbatim in Source mode, never normalized silently"
+    }
+  ]
+}
