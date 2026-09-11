@@ -83,7 +83,13 @@ describe("every way into skill assignment", () => {
     // pointed at a menu three levels away; a bot that already has skills had
     // no way to add another from here at all.
     expect(skillsPanel.match(/props\.onBrowse && <AddSkillButton/g)).toHaveLength(2);
-    expect(settings).toContain('onBrowse={() => dispatch({ type: "showTeamLibrary", botId: bot.id })}');
+    // Since the settings moved into a dialog (949a66bb) the jump goes through
+    // the dialog's `navigate()` — the same guard as Close, so a half-typed
+    // instruction draft is confirmed, not silently lost, when the library
+    // replaces the dialog. The destination and the pre-filled agent are
+    // unchanged.
+    expect(settings).toContain('onBrowse={() => navigate(() => dispatch({ type: "showTeamLibrary", botId: bot.id }))}');
+    expect(settings).toContain("const navigate = useBotSettingsNavigation();");
   });
 
   it("3. the library's own skill rows offer it, naming the agent", () => {
