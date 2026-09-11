@@ -246,6 +246,7 @@ it.runIf(canRunRealElectronFixture)("protects closed-shadow values and revalidat
   ].join("\n");
   expect(result, diagnostics).toMatchObject({ code: 0, signal: null, timedOut: false });
   expect(result.stdout).toContain("sandboxed-preload-bridge-loaded");
+  expect(result.stdout).toContain("sandboxed-preload-foreign-origin-refused");
   expect(result.stdout).toContain("compact-viewport-stable-after-navigation");
   expect(result.stdout).toContain("closed-shadow-screenshot-refused");
   expect(result.stdout).toContain("closed-shadow-nested-name-source-redacted");

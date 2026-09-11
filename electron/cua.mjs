@@ -14,7 +14,7 @@
 // The resulting connection descriptor is written to
 // <userData>/cua-connection.json for the harness server to hand to drivers.
 
-import { app, ipcMain } from "electron";
+import { app, ipcMain as electronIpcMain } from "electron";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -295,7 +295,8 @@ export async function stopCua() {
   }
 }
 
-export function registerCuaIpc() {
+// main.mjs passes its owned-main-window gate (main-ipc-trust.mjs, B6).
+export function registerCuaIpc(ipcMain = electronIpcMain) {
   ipcMain.handle("cua:connection", () => connectionStore.get());
   ipcMain.handle("cua:permissions", () => cuaPermissionsStatus());
   ipcMain.handle("cua:linux-status", () =>

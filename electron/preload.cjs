@@ -2,6 +2,32 @@
 // this narrow surface (window.muragebox), never Node or ipcRenderer itself.
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
+// B6 (0.1.52 S1-T3): the bridge, and the desktop secret, belong to the one
+// origin main created this window for; main hands it over as a launch argument
+// (main-ipc-trust.mjs). A document on any other origin — a navigation main
+// failed to stop, the startup error page, a window created without the
+// argument — gets no bridge and never asks for the secret. Main still refuses
+// every IPC that does not come from its own window's top frame on that origin.
+// Sandboxed preloads cannot require sibling files, so the check is inline.
+const RENDERER_ORIGIN_ARGUMENT = "--murage-renderer-origin=";
+
+function bridgeOriginTrusted() {
+  try {
+    const argument = (process.argv ?? []).find(
+      (value) => typeof value === "string" && value.startsWith(RENDERER_ORIGIN_ARGUMENT),
+    );
+    if (!argument) return false;
+    const expected = new URL(argument.slice(RENDERER_ORIGIN_ARGUMENT.length)).origin;
+    const current = globalThis.location?.origin;
+    return expected !== "null" && typeof current === "string" && current === expected;
+  } catch {
+    return false;
+  }
+}
+
+if (bridgeOriginTrusted()) exposeBridge();
+
+function exposeBridge() {
 // Sandboxed preloads receive Electron's restricted `require`, which cannot
 // load sibling CommonJS files. Keep this tiny predicate inline here; main's
 // privileged process uses the shared browser-platform helper.
@@ -266,3 +292,4 @@ contextBridge.exposeInMainWorld("muragebox", {
     },
   },
 });
+}
