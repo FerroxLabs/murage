@@ -38,6 +38,10 @@ export type DecisionKind =
    * An answer itself is conversation, not authorization, and is not logged. */
   | "question-expired"
   | "question-skipped"
+  /** 0.1.52 FUIGOTRUST1: the owner's answer to a folder-trust card — an
+   * authorization for a folder's own files, remembered by workspace. */
+  | "folder-trusted"
+  | "folder-untrusted"
   | "log-omitted";
 
 /** Who or what produced the decision. The AutoVerdictSource values carry

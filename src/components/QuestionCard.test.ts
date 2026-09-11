@@ -23,6 +23,7 @@ import {
   type Drafts,
 } from "./QuestionCard";
 import type { QuestionAnswer, QuestionSpec } from "../../shared/questions";
+import { folderTrustDecision, folderTrustQuestion } from "../../shared/folder-trust";
 import type { OptionCardData } from "@/state/store";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
@@ -286,6 +287,70 @@ describe("the markup", () => {
     expect(markup).toContain("Not yet");
     expect(markup).toContain("Choose one");
     expect(markup).toContain("Type your own answer");
+  });
+});
+
+// The folder-trust card (0.1.52 FUIGOTRUST1): the same card, one question
+// that is a decision about a folder. What it must say and must not offer.
+describe("the folder-trust card", () => {
+  const buttonDisabled = (markup: string, label: string): boolean => {
+    const end = markup.indexOf(`>${label}`);
+    expect(end, `no "${label}" button in the markup`).toBeGreaterThan(-1);
+    const tag = markup.slice(markup.lastIndexOf("<button", end), end + 1);
+    return /\sdisabled(=|\s|>)/.test(tag);
+  };
+  const trustCard = (over: Partial<OptionCardData> = {}): Partial<OptionCardData> => ({
+    title: "Trust this folder?",
+    subtitle: folderTrustQuestion({ key: "/repo", folder: "/repo/app", sources: ["AGENTS.md", ".mcp.json"] }).question,
+    options: ["Trust this folder", "Don't trust"],
+    requestId: "trust-1",
+    questions: [folderTrustQuestion({ key: "/repo", folder: "/repo/app", sources: ["AGENTS.md", ".mcp.json"] })],
+    folderTrust: { key: "/repo", folder: "/repo/app", sources: ["AGENTS.md", ".mcp.json"] },
+    ...over,
+  });
+
+  it("names the folder and what it would contribute, offers exactly Trust / Don't trust, and no free text", () => {
+    const markup = render(trustCard());
+    expect(markup).toContain("Sable needs a decision");
+    expect(markup).toContain("Folder trust");
+    expect(markup).toContain("/repo/app");
+    expect(markup).toContain("AGENTS.md, .mcp.json");
+    expect(markup).toContain("Trust this folder");
+    expect(markup).toContain("Don&#x27;t trust");
+    expect(markup).toContain("Apply them, and remember this for the folder.");
+    expect(markup).toContain('role="radio"');
+    // a decision, not conversation: no "Other" field
+    expect(markup).not.toContain("Type your own answer");
+    expect(markup).toContain("Choose one");
+    expect(buttonDisabled(render(trustCard()), "Send answer")).toBe(true);
+  });
+
+  it("submits the pick as the folder-trust answer the server records", () => {
+    const question = folderTrustQuestion({ key: "/repo", folder: "/repo", sources: ["AGENTS.md"] });
+    let picked = toggleOption({}, question, "Trust this folder");
+    expect(draftsComplete([question], picked)).toBe(true);
+    expect(draftAnswers([question], picked)).toEqual([{ id: "folderTrust", selected: ["Trust this folder"] }]);
+    expect(folderTrustDecision(draftAnswers([question], picked))).toBe("trust");
+    picked = toggleOption(picked, question, "Don't trust");
+    expect(folderTrustDecision(draftAnswers([question], picked))).toBe("reject");
+    expect(buttonDisabled(render(trustCard({ answers: draftAnswers([question], picked) })), "Send answer")).toBe(false);
+  });
+
+  it("an expired trust card is read-only and says the turn was stopped — never 'Send as a message'", () => {
+    const markup = render(trustCard({ answered: "expired", expired: true }));
+    expect(markup).toContain('data-question-state="expired"');
+    expect(markup).toContain("Nobody decided in time, so this turn was stopped. Send the message again to be asked.");
+    expect(markup).not.toContain("Send as a message");
+    expect(markup).not.toContain("Sable stopped waiting");
+    // the radios are shown for the record but disabled
+    expect(markup).toMatch(/role="radio"[^>]*disabled=""/);
+  });
+
+  it("shows the decision read-only once made", () => {
+    const answered = render(trustCard({ answered: "answer", answers: [{ id: "folderTrust", selected: ["Don't trust"] }] }));
+    expect(answered).toContain('data-question-state="answered"');
+    expect(answered).toContain("Answered");
+    expect(answered).toMatch(/aria-checked="true"[^>]*>(?:(?!<\/button>).)*Don&#x27;t trust/s);
   });
 });
 

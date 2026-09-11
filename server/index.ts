@@ -99,6 +99,8 @@ import {
 import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, flushDecisionLog, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
+import { FolderTrustStore, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
+import { folderTrustDecision, folderTrustDisplayName } from "../shared/folder-trust.ts";
 import { subscribe } from "./sendlane.ts";
 import {
   attachmentExists,
@@ -189,6 +191,7 @@ import {
   type ProviderInstance,
   type RequestOutcome,
   type RuntimeEvent,
+  type SendTurnInput,
   newId,
   stopCloseConfirmed,
 } from "./contracts.ts";
@@ -1331,6 +1334,32 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
+// Murage's own per-folder trust record (FUIGOTRUST1): what the human said
+// about a folder's AGENTS.md / .mcp.json / skills, remembered by workspace
+// root next to bots.json. Read before every turn on an engine that gates
+// folders (Fuigo 1.0.13) and written by the trust card and the folder picker.
+const folderTrust = new FolderTrustStore(join(DATA_DIR, "folder-trust.json"));
+/** The record the driver decides from, for an engine that gates folders;
+ * undefined for every other engine. `cwd` undefined = the home folder,
+ * which Fuigo never gates. */
+function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined): SendTurnInput["folderTrust"] {
+  if (instance.adapter.capabilities.folderTrust !== true || !cwd) return undefined;
+  const scan = scanFolderTrustSources(cwd);
+  if (isUnrecordableTrustRoot(scan.key)) return undefined;
+  const decision = folderTrust.decision(scan.folder);
+  return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}) };
+}
+/** A folder the human chose in a picker is trusted at that moment (the
+ * picker says so): the common case never sees a card. Bot-created folders,
+ * clones and subfolders with their own root still do. */
+function rememberPickedFolder(cwd: string | null | undefined): void {
+  if (!cwd) return;
+  try {
+    folderTrust.remember(cwd, "trust", "picker");
+  } catch (error) {
+    console.warn(`[folder-trust] could not record the picked folder: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 // STOPRESTORE2: the workspace editor's overwrite hold waits for a stopped
 // turn's lease the way a restore does (projectTurns + the engine close budget).
 const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders, projectTurns: projectTurnLeases, stoppedTurnCloseMs: providerCloseDeadlineMs };
@@ -2081,6 +2110,29 @@ async function answerRequest(
     }
   }
   const question = isQuestionCard(card) ? card : undefined;
+  // A folder-trust answer IS an authorization (unlike an ordinary question):
+  // remembered for the folder's workspace once the engine has taken it, and
+  // logged. A skip remembers nothing — the next turn asks again.
+  if (question?.folderTrust && outcome === "answered" && behavior === "answer") {
+    const decision = folderTrustDecision(answers);
+    if (decision) {
+      try {
+        folderTrust.remember(question.folderTrust.folder, decision, "card");
+      } catch (error) {
+        console.warn(`[folder-trust] could not record the decision: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      appendDecision(DATA_DIR, {
+        threadId,
+        requestId,
+        botId: decidedFor?.id,
+        botName: decidedFor?.name,
+        tool: card?.tool,
+        summary: question.folderTrust.folder,
+        decision: decision === "trust" ? "folder-trusted" : "folder-untrusted",
+        source: "user",
+      });
+    }
+  }
   if (question && outcome === "answered" && answers?.length && cardMessage) {
     // The fold already marked it answered; keep what was chosen so the card
     // can show it read-only (never a secret question's answer).
@@ -2190,7 +2242,7 @@ type QuestionReply =
  * older client's deny) is an explicit, immediate "no answer". An expired
  * question takes no engine answer; its late answer is recorded once the
  * client has sent it as an ordinary message. */
-function questionReply(threadId: string, requestId: string, body: Record<string, unknown>, skip: boolean): QuestionReply {
+function questionReply(threadId: string, requestId: string, body: Record<string, unknown>, skip: boolean, owner = true): QuestionReply {
   const message = store.messagesFor(threadId).find((m) => m.card?.requestId === requestId && isQuestionCard(m.card));
   const card = message?.card;
   if (!message || !card) {
@@ -2198,6 +2250,12 @@ function questionReply(threadId: string, requestId: string, body: Record<string,
       return { kind: "error", status: 400, error: "only a question takes answers or a skip" };
     }
     return { kind: "none" };
+  }
+  // A folder-trust card is a durable authorization for the installation's
+  // own files, so only the owner's surfaces answer it (the desktop, the
+  // paired Telegram channel); a companion sees it wait.
+  if (card.folderTrust && !owner) {
+    return { kind: "error", status: 403, error: "Whether to trust a folder is decided on the desktop." };
   }
   const questions = questionsForCard(card);
   if (!skip && body.behavior === "allow") {
@@ -2919,11 +2977,14 @@ bus.subscribe((event: RuntimeEvent) => {
               ? "Local computer approval"
               : permission
                 ? "Approval needed"
-                : "Your bot has a question",
+                : event.folderTrust
+                  ? "Trust this folder?"
+                  : "Your bot has a question",
           subtitle: event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           ...(questions ? { questions } : {}),
+          ...(event.folderTrust ? { folderTrust: event.folderTrust } : {}),
           ...(questionUnattended ? { unattended: true } : {}),
           tool: permission ? event.tool : undefined,
           // the exact grant "always allow" would remember, decided here so
@@ -4380,6 +4441,7 @@ async function startTurn(
             : ""),
         integrations,
         cwd,
+        folderTrust: folderTrustForTurn(instance, cwd),
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
@@ -5578,6 +5640,7 @@ async function runGroupMemberTurn(
         system: roomSystem,
         cwd,
         integrations,
+        folderTrust: folderTrustForTurn(instance, cwd),
         ...memberTurnSelection(bot.modelSelection),
       }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
         // Retire before teardown so synchronous/late output cannot settle this
@@ -9594,7 +9657,7 @@ const server = createServer(async (req, res) => {
       for (const msg of messages) {
         const who = msg.role === "user" ? userName : (msg.from?.name ?? bot?.name ?? "Bot");
         if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, "");
-        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
+        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? folderTrustDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
         else if (msg.kind === "screen") lines.push("> [screen capture]", "");
         else if (msg.kind === "options" && msg.card) {
           lines.push(`> ${msg.card.title}${msg.card.answered ? ` — answered: ${msg.card.answered}` : ""}`, "");
@@ -10294,6 +10357,7 @@ const server = createServer(async (req, res) => {
         }
         if (!responder) return json(res, 400, { error: "invalid default responder" });
         patch.cwd = checked.cwd ?? undefined;
+        rememberPickedFolder(checked.cwd);
         patch.defaultResponder = responder;
         patch.bulletin = body.bulletin;
         patch.setupCompletedAt = Date.now();
@@ -10481,6 +10545,7 @@ const server = createServer(async (req, res) => {
         const checked = validateBotCwd(body.cwd);
         if (!checked.ok) return json(res, 400, { error: checked.error });
         patch.cwd = checked.cwd ?? undefined;
+        rememberPickedFolder(checked.cwd);
       }
       // one pinned message per room; null/"" clears. The id is not
       // validated against the transcript here — a pin whose message was
@@ -11050,6 +11115,7 @@ const server = createServer(async (req, res) => {
         const checked = validateBotCwd(body.cwd);
         if (!checked.ok) return json(res, 400, { error: checked.error });
         patch.cwd = checked.cwd ?? undefined;
+        rememberPickedFolder(checked.cwd);
       }
       if (body.hidden === true && existingBot?.chiefOfStaff && body.chiefOfStaff !== false) {
         return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
@@ -11949,7 +12015,7 @@ const server = createServer(async (req, res) => {
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
       const skip = body.behavior === "skip";
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
-      const question = questionReply(bot.threadId, String(body.requestId), body, skip);
+      const question = questionReply(bot.threadId, String(body.requestId), body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
       if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
       if (question.kind === "late") return json(res, 200, { ok: true, outcome: question.outcome });
       if (question.kind === "deliver") {
@@ -11993,7 +12059,7 @@ const server = createServer(async (req, res) => {
       const skip = body.behavior === "skip";
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
       const requestId = String(body.requestId);
-      const question = questionReply(threadId, requestId, body, skip);
+      const question = questionReply(threadId, requestId, body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
       if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
       if (question.kind === "late") return json(res, 200, { ok: true, outcome: question.outcome });
       // A question card is never a skill, routine or peer proposal
@@ -12174,7 +12240,7 @@ const server = createServer(async (req, res) => {
         if(body.autoApprove&&!current.autoApprove&&autoMountsLocalComputer(current.computer)&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)"});
         patch.autoApprove=body.autoApprove;
       }
-      if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;}
+      if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;rememberPickedFolder(checked.cwd);}
       if(body.unread!==undefined){if(typeof body.unread!=="boolean")return json(res,400,{error:"unread must be true or false"});patch.unread=body.unread;}
       if(body.title!==undefined&&typeof body.title!=="string")return json(res,400,{error:"title must be text"});
       if(body.title!==undefined)patch.title=body.title;
@@ -12386,6 +12452,29 @@ const server = createServer(async (req, res) => {
       }
       const limit = parsedLimit;
       return json(res, 200, readThreadEvents({ eventsDir: EVENTS_DIR, nativeDir: NATIVE_DIR, threadId, limit }));
+    }
+
+    // ── per-folder trust (FUIGOTRUST1) ──
+    // What the owner said about a folder's own files, for the working-folder
+    // pickers: the record, and what the folder would contribute. DELETE
+    // forgets it, so the next turn there asks again.
+    if (path === "/api/folder-trust" && (method === "GET" || method === "DELETE")) {
+      const checked = validateBotCwd(url.searchParams.get("folder"));
+      if (!checked.ok) return json(res, 400, { error: checked.error });
+      if (!checked.cwd) return json(res, 400, { error: "folder is required" });
+      if (method === "DELETE") {
+        folderTrust.forget(checked.cwd);
+        return json(res, 200, { ok: true });
+      }
+      const scan = scanFolderTrustSources(checked.cwd);
+      const record = folderTrust.record(checked.cwd) ?? null;
+      return json(res, 200, {
+        key: scan.key,
+        folder: scan.folder,
+        sources: scan.sources,
+        gated: !isUnrecordableTrustRoot(scan.key),
+        record: record ? { decision: record.decision, decidedAt: record.decidedAt, source: record.source } : null,
+      });
     }
 
     // ── the fleet-wide authorization decision log ──
