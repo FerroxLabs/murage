@@ -260,12 +260,15 @@ const startInternalFixtureTurn = async (botId: string, groupId?: string, text = 
       working: Boolean(group?.working),
     };
   }, { timeout: 5_000 }).toEqual({ present: true, busy: false, working: false });
-  expect((await desktopApi("PATCH", `/api/bots/${botId}`, {
-    modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
-  })).status).toBe(200);
+  // Independent threads (N7, 89a41bd7): once a bot has several tasks, model
+  // changes and sends must name the thread; a single-task bot keeps the
+  // legacy whole-bot write.
+  const selected = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === botId);
+  const modelSelection = { instanceId: "claude", model: "claude-sonnet-5" };
+  expect((await desktopApi("PATCH", (selected.tasks?.length ?? 1) > 1 ? `/api/bots/${botId}/tasks/${selected.threadId}` : `/api/bots/${botId}`, { modelSelection })).status).toBe(200);
   rmSync(fakeClaudeDump, { force: true });
   const target = groupId ? `/api/groups/${groupId}/messages` : `/api/bots/${botId}/messages`;
-  const started = await api("POST", target, { text });
+  const started = await api("POST", target, groupId ? { text } : { text, threadId: selected.threadId });
   expect(started.status).toBe(202);
   if (!groupId) {
     expect(started.body.steered).not.toBe(true);
@@ -2645,7 +2648,10 @@ describe("harness HTTP API", () => {
     expect(markdownExport.status).toBe(200);
     expect(markdownExport.body).toMatchObject({ name: "Field Team", members: visibleNames.length });
     expect(markdownExport.body.markdown).toContain("## Activation");
-    expect(markdownExport.body.markdown).toContain("Give this file to your Chief of Staff");
+    // 863cb947: exported Markdown is an inert blueprint; it never appoints the reader.
+    expect(markdownExport.body.markdown).toContain("Selected bot blueprint");
+    expect(markdownExport.body.markdown).not.toContain("Give this file to your Chief of Staff");
+    expect(markdownExport.body.markdown).not.toContain("You are the Chief of Staff");
     expect(markdownExport.body.markdown).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
     expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
     expect((await desktopApi("POST", "/api/teams/export", {})).body.team.name).toBe("My Murage Team");
@@ -3948,7 +3954,9 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("refuses to switch a bot's active task while its turn is running", async () => {
+  // Independent threads (N7, 05cce991): selecting another task never stops or
+  // re-targets a running turn, and an ambiguous send must name its thread.
+  it("switches the selected task while another thread's turn keeps running", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
       const instances = (await api("GET", "/api/instances")).body.instances;
@@ -3962,29 +3970,37 @@ describe("harness HTTP API", () => {
       const created = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Running task" });
       expect(created.status).toBe(201);
       const runningTask = created.body.task.threadId;
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
+      const ambiguous = await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" });
+      expect(ambiguous.status).toBe(409);
+      expect(ambiguous.body.error).toMatch(/choose a thread explicitly/i);
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: runningTask, text: "keep running" })).status).toBe(202);
 
-      await expect.poll(async () => {
-        const state = (await api("GET", "/api/bots?messages=0")).body.bots.find(
-          (candidate: { id: string }) => candidate.id === bot.id,
-        );
-        return state?.busy;
-      }).toBe(true);
+      const taskState = async (threadId: string) => (await api("GET", "/api/bots?messages=0")).body.bots.find(
+        (candidate: { id: string }) => candidate.id === bot.id,
+      )?.tasks.find((task: { threadId: string }) => task.threadId === threadId);
+      await expect.poll(async () => (await taskState(runningTask))?.busy).toBe(true);
 
-      const blocked = await api("POST", `/api/bots/${bot.id}/tasks/${originalTask}`);
-      expect(blocked.status).toBe(409);
-      expect(blocked.body.error).toMatch(/stop it before switching tasks/i);
+      const switched = await api("POST", `/api/bots/${bot.id}/tasks/${originalTask}`);
+      expect(switched.status).toBe(200);
+      expect(switched.body.bot.threadId).toBe(originalTask);
       const current = (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       );
-      expect(current.threadId).toBe(runningTask);
+      expect(current.threadId).toBe(originalTask);
+      expect(current.busy).toBe(true);
+      expect((await taskState(runningTask)).busy).toBe(true);
+      expect(Boolean((await taskState(originalTask)).busy)).toBe(false);
+      // The selected task is not the running one: a Stop must still name it.
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`, {})).status).toBe(409);
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: runningTask })).status).toBe(200);
+      await expect.poll(async () => (await taskState(runningTask))?.busy).toBe(false);
     } finally {
-      await api("POST", `/api/bots/${bot.id}/interrupt`, {});
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }).catch(() => undefined);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
   });
 
-  it.each(["tasks", "active-branch"])("rechecks bot state after a delayed body for %s", async (operation) => {
+  it("rechecks bot state after a delayed body for active-branch", async () => {
     const instance = (await api("GET", "/api/instances")).body.instances.find(
       (candidate: { instanceId: string }) => candidate.instanceId === "claude",
     );
@@ -3997,8 +4013,7 @@ describe("harness HTTP API", () => {
     const before = (await api("GET", "/api/bots")).body.bots.find(
       (candidate: { id: string }) => candidate.id === bot.id,
     );
-    const held = await delayedJsonBody("POST", `/api/bots/${bot.id}/${operation}`,
-      operation === "tasks" ? { title: "Delayed task" } : { messageId: before.messages[0].id });
+    const held = await delayedJsonBody("POST", `/api/bots/${bot.id}/active-branch`, { messageId: before.messages[0].id });
     try {
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find(
@@ -4017,6 +4032,46 @@ describe("harness HTTP API", () => {
     } finally {
       held.close();
       await api("POST", `/api/bots/${bot.id}/interrupt`, {});
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  // Independent threads (N7, 05cce991): a new task is admitted while a
+  // sibling thread runs; the running thread and its transcript are untouched.
+  it("admits a new task after a delayed body while a sibling thread is running", async () => {
+    const instance = (await api("GET", "/api/instances")).body.instances.find(
+      (candidate: { instanceId: string }) => candidate.instanceId === "claude",
+    );
+    const created = await api("POST", "/api/bots", {
+      modelSelection: { instanceId: "claude", model: instance.models.default },
+      requireAvailableModel: true,
+    });
+    expect(created.status).toBe(201);
+    const bot = created.body.bot;
+    const before = (await api("GET", "/api/bots")).body.bots.find(
+      (candidate: { id: string }) => candidate.id === bot.id,
+    );
+    const held = await delayedJsonBody("POST", `/api/bots/${bot.id}/tasks`, { title: "Delayed task" });
+    try {
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find(
+        (candidate: { id: string }) => candidate.id === bot.id,
+      )?.busy).toBe(true);
+      const admitted = await held.finish();
+      expect(admitted.status).toBe(201);
+      expect(admitted.body.task).toMatchObject({ title: "Delayed task", busy: false });
+      expect(admitted.body.task.threadId).not.toBe(before.threadId);
+      const current = (await api("GET", "/api/bots?messages=0")).body.bots.find(
+        (candidate: { id: string }) => candidate.id === bot.id,
+      );
+      expect(current.tasks).toHaveLength(before.tasks.length + 1);
+      expect(current.tasks.find((task: { threadId: string }) => task.threadId === before.threadId)).toMatchObject({ busy: true });
+      expect(current.busy).toBe(true);
+      const running = (await api("GET", `/api/threads/${before.threadId}/messages?limit=100`)).body.messages;
+      expect(running.some((message: { text?: string }) => message.text === "keep running")).toBe(true);
+    } finally {
+      held.close();
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: before.threadId });
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
   });
@@ -4151,8 +4206,11 @@ describe("harness HTTP API", () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const room = (await api("POST", "/api/groups", { name: "Exact stop", memberIds: [bot.id] })).body.group;
     try {
+      // N7 (05cce991): a bot's threads are independent, so an unknown explicit
+      // target is "no such thread", never a switch that could be retried.
       const wrongBot = await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: "old-task" });
-      expect(wrongBot.status).toBe(409);
+      expect(wrongBot.status).toBe(404);
+      expect(wrongBot.body.error).toMatch(/no such thread/i);
       const wrongRoom = await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: "old-task" });
       expect(wrongRoom.status).toBe(409);
       expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
@@ -4181,12 +4239,14 @@ describe("harness HTTP API", () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const room = (await api("POST", "/api/groups", { name: "Pinned sends", memberIds: [bot.id] })).body.group;
     try {
+      // N7 (05cce991): an explicit unknown bot thread is refused as missing;
+      // it never falls through to another run.
       const wrongBot = await api("POST", `/api/bots/${bot.id}/messages`, {
         text: "Do not reroute me",
         threadId: "old-task",
       });
-      expect(wrongBot.status).toBe(409);
-      expect(wrongBot.body.error).toMatch(/switched tasks/i);
+      expect(wrongBot.status).toBe(404);
+      expect(wrongBot.body.error).toMatch(/no such thread/i);
 
       const wrongRoom = await api("POST", `/api/groups/${room.id}/messages`, {
         text: "Do not reroute me",
@@ -5031,6 +5091,12 @@ describe("harness HTTP API", () => {
         (call) => call.operation === "verify" && call.session === browserSession(bot.id),
       ), { timeout: 5_000 }).toBe(true);
 
+      // N7 (05cce991): a bot with a running thread cannot be deleted; the
+      // thread (and its in-flight binding) is stopped explicitly first.
+      const refused = await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toMatch(/stop this bot's threads/i);
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
       expect((await desktopApi("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);
       // Native verification is intentionally held by the fixture. Wait beyond that
       // entire window so a late provider dispatch cannot escape the check.
@@ -5044,7 +5110,10 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("keeps a setup-cancelled bot owned until the provider handshake is retired", async () => {
+  // N7 (05cce991): a Stop during setup has no provider handshake to retire,
+  // so the thread is released at once; the cancelled setup never dispatches
+  // and a replacement starts as a fresh turn with its own browser binding.
+  it("releases a setup-cancelled thread immediately without dispatching the cancelled setup", async () => {
     const descriptorFile = join(home, "browser-test-connection.json");
     writeFileSync(descriptorFile, JSON.stringify({
       version: 1,
@@ -5070,13 +5139,24 @@ describe("harness HTTP API", () => {
       const afterStop = (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       );
-      expect(afterStop.busy).toBe(true);
-      const replacementTooSoon = await api("POST", `/api/bots/${bot.id}/messages`, { text: "replacement" });
-      expect(replacementTooSoon.status).toBe(202);
-      expect(replacementTooSoon.body.queued).toBe(true);
+      expect(afterStop.busy).toBe(false);
+      expect(afterStop.tasks.find((task: { threadId: string }) => task.threadId === bot.threadId)).toMatchObject({ busy: false, activity: "idle" });
+      // Native verification is still held; wait out that whole window so a
+      // late dispatch from the cancelled setup cannot escape the check.
+      await new Promise((resolve) => setTimeout(resolve, browserRegisterDelayMs + 250));
       expect(existsSync(fakeClaudeDump)).toBe(false);
 
-      expect(JSON.stringify(await readJsonFileWhenReady(fakeClaudeDump))).toContain("replacement");
+      const replacement = await api("POST", `/api/bots/${bot.id}/messages`, { text: "replacement" });
+      expect(replacement.status).toBe(202);
+      expect(replacement.body.queued).not.toBe(true);
+      expect(replacement.body.steered).not.toBe(true);
+      // The only provider process is the replacement's own turn.
+      const dump = await readJsonFileWhenReady<{ pid: number; prompt: unknown }>(fakeClaudeDump);
+      expect(JSON.stringify(dump.prompt)).toContain("replacement");
+      expect(dump.pid).toBeGreaterThan(0);
+      expect((await api("GET", "/api/bots?messages=0")).body.bots.find(
+        (candidate: { id: string }) => candidate.id === bot.id,
+      ).busy).toBe(true);
     } finally {
       browserRegisterDelayMs = 0;
       await api("POST", `/api/bots/${bot.id}/interrupt`, {}).catch(() => undefined);
@@ -5600,14 +5680,25 @@ describe("harness HTTP API", () => {
         .toBe(202);
       const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
 
-      const deletion = await isolatedApi("DELETE", `/api/bots/${bot.id}`, undefined, isolatedDesktopHeaders);
-      expect(deletion.status).toBe(503);
-      expect(deletion.body.error).toMatch(/cleanup journal could not be read safely/i);
+      // N7 (05cce991): live work refuses deletion outright, with no teardown.
+      const refused = await isolatedApi("DELETE", `/api/bots/${bot.id}`, undefined, isolatedDesktopHeaders);
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toMatch(/stop this bot's threads/i);
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(browserNativeEvents.slice(callOffset).some(call => call.operation === "close")).toBe(false);
       expect((await browserRpc(mounted.env.MURAGE_CONTROL_TOKEN, `http://127.0.0.1:${isolatedPort}`)).status).toBe(200);
       const state = await isolatedApi("GET", "/api/bots?messages=0");
       expect(state.body.bots.find((candidate: { id: string }) => candidate.id === bot.id)).toMatchObject({ busy: true });
+
+      // Once idle, the unreadable journal still rejects the delete before any
+      // teardown: the bot, its routines and its files stay untouched.
+      expect((await isolatedApi("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
+      await expect.poll(async () => (await isolatedApi("GET", "/api/bots?messages=0")).body.bots
+        .find((candidate: { id: string }) => candidate.id === bot.id)?.busy, { timeout: 5_000 }).toBe(false);
+      const deletion = await isolatedApi("DELETE", `/api/bots/${bot.id}`, undefined, isolatedDesktopHeaders);
+      expect(deletion.status).toBe(503);
+      expect(deletion.body.error).toMatch(/cleanup journal could not be read safely/i);
+      expect((await isolatedApi("GET", "/api/bots?messages=0")).body.bots.some((candidate: { id: string }) => candidate.id === bot.id)).toBe(true);
     } finally {
       if (createdBotId) {
         await isolatedApi("POST", `/api/bots/${createdBotId}/interrupt`, {}).catch(() => undefined);
@@ -6255,7 +6346,7 @@ describe("harness HTTP API", () => {
         // Reading the source and then marking the failure seen in Routines
         // must not make the original conversation unread again. markSeen
         // re-emits the receipt without changing its lifecycle status.
-        expect((await api("POST", `/api/bots/${bot.id}/read`)).status).toBe(200);
+        expect((await api("POST", `/api/bots/${bot.id}/read`, { threadId: bot.threadId })).status).toBe(200);
         expect((await api("POST", `/api/routine-runs/${queued.body.run.id}/seen`)).status).toBe(200);
         const afterSeen = (await api("GET", "/api/bots?messages=0")).body.bots
           .find((candidate: { id: string }) => candidate.id === bot.id);
@@ -6287,12 +6378,14 @@ describe("harness HTTP API", () => {
           error: expect.stringMatching(/This bot's AI connection is unavailable.*App Settings/i),
           executionThreadId: runCards[0].routineRun.executionThreadId,
         });
-        expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+        expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
         await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
           .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
         { timeout: 5_000 }).toBe(false);
+        // The bot now has an execution task too: routine runs inherit the
+        // bot defaults, so write those explicitly (N7, 89a41bd7).
         expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
-          modelSelection: { instanceId: "ghost", model: "unavailable-fixture" },
+          modelSelection: { instanceId: "ghost", model: "unavailable-fixture" }, settingsScope: "defaults",
         })).status).toBe(200);
       } finally {
         routineEvents.close();
@@ -6330,12 +6423,12 @@ describe("harness HTTP API", () => {
       });
       expect(orphanConfirmed.status).toBe(200);
       orphanRoutineId = orphanConfirmed.body.resultId;
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: orphanThreadId })).status).toBe(200);
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
         .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
       { timeout: 5_000 }).toBe(false);
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
-        modelSelection: { instanceId: "ghost", model: "unavailable-fixture" },
+        modelSelection: { instanceId: "ghost", model: "unavailable-fixture" }, settingsScope: "defaults",
       })).status).toBe(200);
       expect((await api("DELETE", `/api/bots/${bot.id}/tasks/${orphanThreadId}`)).status).toBe(200);
       expect(storedMessageCount(orphanThreadId)).toBe(0);
@@ -6399,7 +6492,9 @@ describe("harness HTTP API", () => {
       if (legacyRoutineId) await desktopApi("DELETE", `/api/routines/${legacyRoutineId}`);
       if (orphanRoutineId) await desktopApi("DELETE", `/api/routines/${orphanRoutineId}`);
       if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
-      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      for (const task of (await api("GET", "/api/bots?messages=0")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.tasks ?? []) {
+        await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: task.threadId }).catch(() => undefined);
+      }
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
   });
@@ -8424,10 +8519,14 @@ describe("internal capability authority", () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
       const turn = await startInternalFixtureTurn(bot.id);
-      if (action === "model") {
-        // Changing an active model is deliberately refused; it must leave
-        // the current grant valid. Stop first, then apply the actual change.
-        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { modelSelection: STATE_ONLY_SELECTION })).status).toBe(409);
+      if (action === "model" || action === "delete") {
+        // Changing an active model, or deleting a bot with a running thread
+        // (N7, 05cce991), is deliberately refused; it must leave the current
+        // grant valid. Stop first, then apply the actual change.
+        const refused = action === "model"
+          ? await desktopApi("PATCH", `/api/bots/${bot.id}`, { modelSelection: STATE_ONLY_SELECTION })
+          : await desktopApi("DELETE", `/api/bots/${bot.id}`);
+        expect(refused.status).toBe(409);
         expect((await fetch(`${BASE}/api/internal/agents?self=${bot.id}`, { headers: turn.headers })).status).toBe(200);
         expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
         await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
