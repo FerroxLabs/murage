@@ -394,6 +394,13 @@ export interface ModelCatalog {
      * the model-facing rebuild (server/context-rebuild.ts). Unknown falls
      * back to a pattern table over the model id, then a conservative default. */
     contextWindow?: number;
+    /** Local models only: the server this model is served by, already in the
+     * form the picker shows ("llama.cpp on seanbeast"). Spec V3. */
+    localServer?: string;
+    /** Local models only: how the last Local models tool test came out, so the
+     * picker can mark a model that answers but cannot call tools. Absent means
+     * never tested. Spec V3. */
+    localTools?: "pass" | "partial" | "failed";
   }>;
 }
 

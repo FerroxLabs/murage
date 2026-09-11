@@ -130,15 +130,34 @@ describe("qwen Flux routing — the gate", () => {
     expect(existsSync(settingsPath())).toBe(false);
   });
 
-  it("leaves a native local-inject turn alone", async () => {
+  it("routes a local-inject turn at its own server, with the openai auth type selected", async () => {
+    // 0.1.52 LOCAL-MODELS E2. This used to assert the local turn got NO
+    // OPENAI_* env and no --auth-type, on the belief the modelProviders row
+    // alone was enough. The live proof (docs/plans/0152-LOCAL-MODELS-PROOF.md)
+    // showed qwen 0.15.6 refusing session/new with "Authentication required:
+    // Use Qwen Code CLI to authenticate first." on exactly that spawn: its
+    // ensureAuthenticated wants a selected auth type, and a fresh install has
+    // none. So a local turn now carries what a Flux turn carries, pointed at
+    // the local host — never the Flux key, never a Flux URL.
     const { argv, env } = await spawnFor("omlx::GLM-5.2-fp8");
-    expect(argv).toEqual(["--acp", "-m", "GLM-5.2-fp8"]);
-    expect(env.OPENAI_BASE_URL).toBeUndefined();
-    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(argv).toEqual(["--acp", "--auth-type", "openai", "-m", "GLM-5.2-fp8"]);
+    expect(env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+    expect(env.OPENAI_API_KEY).toBe("omlx"); // the host's own placeholder key, from LOCAL_HOSTS
+    expect(env.OPENAI_MODEL).toBe("GLM-5.2-fp8");
+    expect(Object.values(env)).not.toContain(FLUX_KEY);
     // the local-host path is the one that DOES write settings.json — proving
     // the writer still runs is what makes the Flux assertions above mean
     // something, rather than passing because nothing writes at all.
     expect(JSON.parse(readFileSync(settingsPath(), "utf8")).modelProviders.openai[0].id).toBe("GLM-5.2-fp8");
+  });
+
+  it("leaves a native turn alone: no auth flag, no OPENAI_* env", async () => {
+    const { argv, env } = await spawnFor(undefined);
+    expect(argv).toEqual(["--acp"]);
+    expect(env.OPENAI_BASE_URL).toBeUndefined();
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.OPENAI_MODEL).toBeUndefined();
+    expect(existsSync(settingsPath())).toBe(false);
   });
 
   it("fails a local-inject turn before spawning when settings.json cannot be merged, leaving it byte-identical", async () => {
@@ -168,8 +187,18 @@ describe("qwen Flux routing — the gate", () => {
   it("strips an ambient OPENAI_BASE_URL from a native turn", async () => {
     process.env.OPENAI_BASE_URL = "http://evil.example/v1";
     process.env.OPENAI_MODEL = "stolen";
-    const { env } = await spawnFor("omlx::GLM-5.2-fp8");
+    const { env } = await spawnFor(undefined);
     expect(env.OPENAI_BASE_URL).toBeUndefined();
     expect(env.OPENAI_MODEL).toBeUndefined();
+  });
+
+  it("lets a local pick outrank an ambient OPENAI_BASE_URL rather than inherit it", async () => {
+    process.env.OPENAI_BASE_URL = "http://evil.example/v1";
+    process.env.OPENAI_MODEL = "stolen";
+    process.env.OPENAI_API_KEY = "sk-ambient";
+    const { env } = await spawnFor("omlx::GLM-5.2-fp8");
+    expect(env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+    expect(env.OPENAI_MODEL).toBe("GLM-5.2-fp8");
+    expect(env.OPENAI_API_KEY).toBe("omlx"); // the host's own placeholder key, from LOCAL_HOSTS
   });
 });

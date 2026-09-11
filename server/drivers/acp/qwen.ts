@@ -140,6 +140,19 @@ function fluxRouted(model: string | null | undefined): boolean {
   return isFluxModel(model) && fluxKey() !== null;
 }
 
+/**
+ * The local server a `host::model` pick addresses, or undefined for anything
+ * else. Decided from the PICKER id, never the resolved one: `resolveTurnModel`
+ * hands qwen the bare alias for `-m`, and a bare alias no longer says where it
+ * came from.
+ */
+function localRouted(requestedModel: string | null | undefined): { host: LocalHost; model: string } | undefined {
+  const inject = decodeInjectId(requestedModel);
+  if (!inject) return undefined;
+  const host = localHost(inject.host);
+  return host ? { host, model: inject.model } : undefined;
+}
+
 async function resolveModels(env: Record<string, string | undefined>): Promise<ModelCatalog> {
   const catalog = await mergeLocalInject(EMPTY, env);
   // Qwen has no official catalog, so its default is whatever came first. Flux
@@ -187,9 +200,19 @@ const support: AcpSupport = {
   // "Qwen OAuth credentials expired" and never reaches api.fluxrouter.ai —
   // reproduced live against a real `qwen --acp` on 2026-09-01. Only for a Flux
   // turn: a native turn must keep obeying the user's own saved auth type.
-  spawnArgs: (_config, turn) => [
+  //
+  // A LOCAL turn needs the same flag, for the same reason, and the live proof
+  // is what showed it (0.1.52 LOCAL-MODELS E2, docs/plans/0152-LOCAL-MODELS-
+  // PROOF.md): with the modelProviders row written and nothing else, qwen
+  // 0.15.6 refuses `session/new` with "Authentication required: Use Qwen Code
+  // CLI to authenticate first." — `ensureAuthenticated` demands a selected
+  // auth type, and a fresh install has none. On an install signed in with
+  // Qwen OAuth the saved type would win instead and the turn would go to the
+  // cloud under a local model's name. The picker id (`ctx.requestedModel`) is
+  // what still says the pick was local, so it is the gate, not `turn.model`.
+  spawnArgs: (_config, turn, ctx) => [
     "--acp",
-    ...(fluxRouted(turn.model) ? ["--auth-type", "openai"] : []),
+    ...(fluxRouted(turn.model) || localRouted(ctx?.requestedModel) ? ["--auth-type", "openai"] : []),
     ...(turn.model ? ["-m", turn.model] : []),
   ],
   /**
@@ -226,7 +249,18 @@ const support: AcpSupport = {
    * needed and none is written.
    */
   applyTurnEnv: (env, { model, requestedModel }) => {
-    applyFluxSurface(DRIVER_KIND, env, model ?? requestedModel, fluxKey());
+    if (applyFluxSurface(DRIVER_KIND, env, model ?? requestedModel, fluxKey()).applied) return;
+    // A local pick: the same three vars, pointed at the local server. The
+    // modelProviders row `ensureQwenInjectModel` wrote carries baseUrl and key
+    // for `-m <alias>` already; these are what let `--auth-type openai` pass
+    // qwen's `refreshAuth` on an install that has never signed in anywhere,
+    // and they are set AFTER the core's strip (core.ts:212), so an ambient
+    // OPENAI_BASE_URL from the parent shell can never outrank the pick.
+    const local = localRouted(requestedModel);
+    if (!local) return;
+    env.OPENAI_BASE_URL = local.host.baseUrl;
+    env.OPENAI_API_KEY = hostApiKey(local.host, env);
+    env.OPENAI_MODEL = local.model;
   },
   pickAuthMethod: () => null,
   authFailure: "continue",

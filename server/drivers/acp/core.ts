@@ -174,8 +174,11 @@ export interface AcpSupport {
   versionFailure?(
     env: Record<string, string | undefined>, config: AcpConfig, detail: string,
   ): { reason: string; setupAction?: "repair" } | undefined;
-  /** CLI argv AFTER the binary name to enter ACP stdio mode. */
-  spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
+  /** CLI argv AFTER the binary name to enter ACP stdio mode. `turn.model` is
+   *  the CLI-native id `resolveTurnModel` settled on; `ctx.requestedModel` is
+   *  the id the picker asked for (a `host::model` local pick keeps its host
+   *  only there), for a driver whose argv has to differ for a local turn. */
+  spawnArgs(config: AcpConfig, turn: SendTurnInput, ctx?: { requestedModel?: string }): string[];
   /** Provider credential variables this ACP child is allowed to inherit. */
   credentialEnv?: readonly string[];
   /** Select the model through a session config option instead of argv, for
@@ -490,7 +493,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         lifecycle.record("spawn_requested");
         const child = (() => {
           try {
-            return spawnCli(config.cli, support.spawnArgs(config, cliTurn), {
+            return spawnCli(config.cli, support.spawnArgs(config, cliTurn, { requestedModel: turn.model }), {
               cwd,
               env,
               stdio: ["pipe", "pipe", "pipe"],

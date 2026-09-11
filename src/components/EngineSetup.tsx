@@ -8,6 +8,8 @@ import { api, useStore, type EngineInstall, type InstanceInfo } from "@/state/st
 import { cn } from "@/lib/cn";
 import { EngineManagement } from "./EngineManagement";
 import { FluxKeyCard } from "./FluxKeyCard";
+import { LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
+import { localEngineSupport } from "../../shared/local-models";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -141,6 +143,10 @@ export function EngineSetup({
   onReady?: () => void;
 }) {
   const { dispatch } = useStore();
+  const openLocalModels = () => {
+    dispatch({ type: "toggleAppSettings", open: true, section: "models" });
+    setTimeout(() => window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)), 0);
+  };
   const [checking, setChecking] = useState(false);
   const [checkMessage, setCheckMessage] = useState<string | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
@@ -233,6 +239,16 @@ export function EngineSetup({
         <div className="min-w-0">
           <div className="text-[13px] font-semibold text-ink">{title}</div>
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{description}</p>
+          {/* Spec V5: the one first-run line that mentions local models now
+              reaches the section that manages them, instead of leaving the
+              reader to find where "local models" live. */}
+          {intent === "inject" && localEngineSupport(instance.driverKind) === "tools" && (
+            <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
+              <button type="button" onClick={openLocalModels} className="text-accent underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                Set up {LOCAL_MODELS_TITLE.toLowerCase()} under Models → {LOCAL_MODELS_TITLE}
+              </button>
+            </p>
+          )}
         </div>
       </div>
 

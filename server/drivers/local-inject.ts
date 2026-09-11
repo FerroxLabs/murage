@@ -15,10 +15,12 @@ import { join } from "node:path";
 
 import type { ModelCatalog } from "../contracts.ts";
 import {
+  llamaCppModelId,
   LOCAL_ENGINE_SURFACE,
   localServerDisplayLabel,
   type LocalContextReading,
   type LocalServerKind,
+  type LocalToolTestOutcome,
 } from "../../shared/local-models.ts";
 import { cachedLocalToolTest, readLocalServers, userLocalServer, type StoredLocalServer } from "../local-servers.ts";
 
@@ -108,6 +110,12 @@ export interface InjectedModel {
   host: string;
   model: string;
   label: string;
+  /** The server, named the way the picker and the settings card name it
+   *  ("llama.cpp on seanbeast"). Spec V3. */
+  server: string;
+  /** Outcome of the last Local models tool test for this server+model, if any.
+   *  `failed` is what the picker marks with a warning. Spec V3. */
+  tools?: "pass" | "partial" | "failed";
   /** In VRAM / running on the host right now — Custom pins these first. */
   loaded?: boolean;
   /** the host's own word on the model's context window (Ollama reports it
@@ -458,6 +466,13 @@ function modelRows(payload: unknown): Array<Record<string, unknown>> {
   return rows.map(record).filter((row): row is Record<string, unknown> => row !== null);
 }
 
+/** How many model rows a catalog payload offered, usable id or not. One row
+ *  (or none) means a single-model server; more means llama.cpp router mode,
+ *  where the `model` field really selects and must never be rewritten. */
+export function localModelRowCount(payload: unknown): number {
+  return modelRows(payload).length;
+}
+
 function rowId(row: Record<string, unknown>): string | null {
   const id = row.id ?? row.model ?? row.name;
   return typeof id === "string" && MODEL_ID.test(id) ? id : null;
@@ -568,6 +583,19 @@ async function probeHostGroup(
     ? servedModelIds(host, catalog)
     : loadedIdsFromPayloads(host, catalog ?? extra, extra);
   const ids = [...new Set([...catalogIds, ...extraIds, ...loaded])];
+  // A single-model llama-server names its model by the path it was given, so
+  // on Windows every id it reports is rejected by MODEL_ID and the card ends up
+  // "running, no models". `llamaCppModelId` recovers the file's own name, which
+  // addresses the same model because this mode ignores the request's `model`
+  // field. Router mode (more than one row) is left exactly as reported.
+  if (!ids.length && host.kind === "llamacpp" && localModelRowCount(catalog) <= 1) {
+    const props = record(extra);
+    const derived = llamaCppModelId(props?.model_alias) ?? llamaCppModelId(props?.model_path);
+    if (derived) {
+      ids.push(derived);
+      loaded.add(derived);
+    }
+  }
 
   const contexts = new Map<string, LocalContextReading>(contextWindowsFromModelRows(catalog));
   if (host.kind === "ollama") {
@@ -616,11 +644,16 @@ export async function probeLocalInjects(
   for (const { host, ids, loaded, contexts } of await probeLocalHosts(env, fetchImpl)) {
     for (const model of ids) {
       const contextWindow = contexts.get(model)?.contextWindow;
+      const tools = localToolsBadge(cachedLocalTestFor(host.id, model));
       found.push({
         id: encodeInjectId(host.id, model),
         host: host.id,
         model,
-        label: `${model} (${host.label})`,
+        // "qwen3.8-27b · llama.cpp on seanbeast" (spec V3): one row that says
+        // both which model and which machine, in that order.
+        label: `${model} · ${host.label}`,
+        server: host.label,
+        ...(tools ? { tools } : {}),
         loaded: loaded.has(model),
         ...(contextWindow ? { contextWindow } : {}),
       });
@@ -645,6 +678,17 @@ export function cachedLocalTestFor(hostId: string, model: string) {
     if (test) return test;
   }
   return undefined;
+}
+
+/** The picker's three-state view of a tool test: passed, passed with gaps, or
+ *  cannot be used for agents. Untested stays undefined — an unmarked row. */
+export function localToolsBadge(
+  test: { outcome: LocalToolTestOutcome } | undefined,
+): "pass" | "partial" | "failed" | undefined {
+  if (!test) return undefined;
+  if (test.outcome === "tools-work") return "pass";
+  if (test.outcome === "tools-partial") return "partial";
+  return "failed";
 }
 
 /** Append live local models as custom rows. Official rows stay first. */
@@ -678,6 +722,8 @@ export async function mergeLocalInject(
     if (existing) {
       if (extra.loaded) existing.loaded = true;
       if (extra.contextWindow) existing.contextWindow = extra.contextWindow;
+      existing.localServer = extra.server;
+      if (extra.tools) existing.localTools = extra.tools;
       continue;
     }
     seen.add(extra.id);
@@ -685,6 +731,8 @@ export async function mergeLocalInject(
       id: extra.id,
       label: extra.label,
       custom: true,
+      localServer: extra.server,
+      ...(extra.tools ? { localTools: extra.tools } : {}),
       ...(extra.loaded ? { loaded: true } : {}),
       ...(extra.contextWindow ? { contextWindow: extra.contextWindow } : {}),
     });
