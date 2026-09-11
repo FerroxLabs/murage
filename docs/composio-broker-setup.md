@@ -127,6 +127,11 @@ curl -s https://murage-composio.<your-subdomain>.workers.dev/health
 
 `ready: false` means the secret didn't land — redo step 4.
 
+The committed `vars` ship the Ferrox Labs Worker's state after FluxRouter
+rollout step 8, including `REGISTRATION_MODE: "closed"`. A fork standing up its
+own broker must deploy with `--var REGISTRATION_MODE:open` (or commit `"open"`)
+before any install can register; read §8 first.
+
 ---
 
 ## 6. Point the app at your broker
@@ -183,13 +188,17 @@ curl -s $BROKER/v1/me       -H "Authorization: Bearer <token>"
 curl -s $BROKER/v1/catalog  -H "Authorization: Bearer <token>" | head -c 300
 ```
 
-`/v1/me` returning an `installationId` means the chain works.
+`/v1/me` returning an `installationId` means the chain works. With
+registration closed (the committed value) the first call answers
+`503 registration is temporarily closed`; run the check against an open
+broker, or with a token from an install that registered before it closed.
 
 ---
 
 ## 8. COST GUARDRAIL — read before going public
 
-`REGISTRATION_MODE: "open"` lets **any** install register and spend your
+The committed config ships `REGISTRATION_MODE: "closed"`. Opening it
+(`--var REGISTRATION_MODE:open`) lets **any** install register and spend your
 quota. Composio's post-2026-08-15 pricing charges **$4 per 1,000 tool
 calls** over plan — roughly 14x the old rate, and we are not grandfathered.
 
@@ -203,14 +212,16 @@ calls** over plan — roughly 14x the old rate, and we are not grandfathered.
 Cloudflare adds ~$5/mo. Private beta lands at **$5–35/mo**; ~1,000 active
 users is roughly **$1,200/mo**.
 
-Close registration any time without redeploying code:
+Close registration again without changing code: a plain `wrangler deploy`
+ships the committed `"closed"`, or override explicitly:
 
 ```bash
 wrangler deploy --var REGISTRATION_MODE:closed
 ```
 
 Registration then returns `503 registration is temporarily closed`.
-Existing installs keep working — only new ones are refused.
+Existing installs keep working — only new ones are refused. A `--var` lasts
+only for that deploy; the next plain deploy uses the committed values.
 
 **Before public launch:** gate registration behind a licence check and add
 a per-install call ceiling. The `installations` table is the right place to

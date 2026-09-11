@@ -8,17 +8,35 @@
   "vars": {
     "COMPOSIO_API_BASE": "https://backend.composio.dev/api/v3.1",
     "COMPOSIO_TOOLKIT_BASE": "https://backend.composio.dev/api/v3",
-    "REGISTRATION_MODE": "open",
+    // These vars are the state the live Worker runs after FluxRouter rollout
+    // step 8, so a plain `pnpm broker:deploy` from this tree reproduces it
+    // instead of silently reverting a `--var` override. Change them only
+    // together with the rollout (FLUX-COMPOSIO-BROKER-DESIGN.md §8.3, §8.4).
+    // src/wrangler-config.test.ts fails if CLAIM_MODE or REGISTRATION_MODE
+    // drifts back.
+    //
+    // Rollout step 8 (the same day as the 0.1.52 release, which moves the
+    // desktop to FluxRouter): "closed" stops issuing new installation tokens;
+    // existing installs keep working. Deploying this tree IS step 8. Roll back
+    // with `--var REGISTRATION_MODE:open` only if the desktop release is
+    // pulled and new installs must register here again.
+    "REGISTRATION_MODE": "closed",
     // Left unset on purpose for the pre-migration population: the ceiling now
     // counts tool executions rather than every POST, and turning it on at the
     // old value would 429 installs that were never near it. Set it to "2000"
     // (FluxRouter parity) once those installs have moved.
     "DAILY_CALL_CEILING": "off",
     // Claims: "open" lets a desktop ask this Worker to sign an assertion.
-    "CLAIM_MODE": "closed",
-    // "on" retires an install once FluxRouter has confirmed it. "off" is the
-    // FluxRouter-rollback switch: every install with a token is served again,
-    // claimed or not, on the token the desktop deliberately kept.
+    // Opened at rollout step 5 (live Worker fa297f66 since 2026-09-11; Flux
+    // claims on at step 6). Roll back per §8.4 "Claims paused": deploy with
+    // `--var CLAIM_MODE:closed` (unredeemed assertions expire in 5 minutes);
+    // if claims stay paused longer than 7 days also `--var MIGRATION_GATE:off`.
+    "CLAIM_MODE": "open",
+    // "on" retires an install once FluxRouter has confirmed it (rollout step
+    // 5). "off" is the FluxRouter-rollback switch: every install with a token
+    // is served again, claimed or not, on the token the desktop deliberately
+    // kept. Flux broker dark (§8.4) needs `--var MIGRATION_GATE:off` in the
+    // same step.
     "MIGRATION_GATE": "on",
     // How long a confirmed install keeps working here after confirmation.
     "CLAIM_GRACE_SECONDS": "900",
@@ -26,6 +44,8 @@
     "CLAIM_ISSUED_FALLBACK_SECONDS": "604800",
     // ISO-8601 instants; "" means no cut-off. LEGACY_BROKER_UNTIL must match
     // the desktop's COMPOSIO_LEGACY_BROKER_UNTIL. Claims stay open past it.
+    // Both stay "" until rollout step 9 (the cut-off, a later date), which sets
+    // LEGACY_BROKER_UNTIL to that date and CLAIM_UNTIL to cut-off + 90 days.
     "LEGACY_BROKER_UNTIL": "",
     "CLAIM_UNTIL": ""
   },

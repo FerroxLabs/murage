@@ -328,7 +328,11 @@ function registrationActorKey(request: Request): string {
 }
 
 async function register(request: Request, env: Env) {
-  if (env.REGISTRATION_MODE !== "open") return json({ error: "registration is temporarily closed" }, 503);
+  // Read as a string, like the claim vars: `wrangler types` narrows each var to
+  // its committed literal, but `--var REGISTRATION_MODE:open` can reopen it.
+  if ((env as { REGISTRATION_MODE?: string }).REGISTRATION_MODE !== "open") {
+    return json({ error: "registration is temporarily closed" }, 503);
+  }
   const actor = registrationActorKey(request);
   if (!(await env.REGISTRATION_LIMITER.limit({ key: await sha256(actor) })).success) {
     return json({ error: "too many registration attempts" }, 429);
