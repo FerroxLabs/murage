@@ -3,9 +3,10 @@
 // upstream `workspace_key` (git root, else the folder; home and filesystem
 // roots never), and the durable store the driver decides from.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, parse } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -16,6 +17,7 @@ import {
   fuigoHomeFromEnv,
   gitRootOf,
   isUnrecordableTrustRoot,
+  managedWorktreeSourceRepo,
   parseUpstreamTrustedFolders,
   readUpstreamTrustedFolders,
   scanFolderTrustSources,
@@ -214,6 +216,182 @@ describe("trust keys", () => {
 // from `<FUIGO_HOME>/trusted_folders.toml` before it ever asks, so Murage
 // reads the same file (read-only) and neither asks nor claims "untrusted"
 // for a folder the engine will trust anyway.
+// FUIGOTRUST4 (1): upstream `workspace_key` FIRST collapses a fuigo-managed
+// worktree (`fuigo -w`, registered in `<FUIGO_HOME>/worktrees.db`) onto its
+// recorded source repo's git root — whatever git says about the worktree,
+// including a standalone clone git cannot link back. Without the mirror a
+// bot in such a worktree of a trusted source repo sees a card and a chip
+// while the engine runs trusted.
+describe("fuigo-managed worktrees (worktrees.db, read-only)", () => {
+  /** `<FUIGO_HOME>/worktrees.db` exactly as the engine's `WorktreeDb::open`
+   * creates it (fuigo-fast-worktree/src/db/schema.rs INIT_SQL, verbatim) and
+   * `register` fills it (queries.rs, the same column list): one row per
+   * managed worktree, `path` and `source_repo` canonical the way
+   * `register_worktree` stores them (api.rs). WAL, as the engine sets it. */
+  const INIT_SQL = `
+PRAGMA busy_timeout = 5000;
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worktrees (
+    id TEXT PRIMARY KEY,
+    path TEXT UNIQUE NOT NULL,
+    source_repo TEXT NOT NULL,
+    repo_name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'session',
+    creation_mode TEXT NOT NULL DEFAULT 'linked',
+    git_ref TEXT,
+    head_commit TEXT,
+    session_id TEXT,
+    creator_pid INTEGER,
+    created_at INTEGER NOT NULL,
+    last_accessed_at INTEGER,
+    status TEXT NOT NULL DEFAULT 'alive',
+    metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_worktrees_repo ON worktrees(repo_name);
+CREATE INDEX IF NOT EXISTS idx_worktrees_status_kind ON worktrees(status, kind);
+CREATE INDEX IF NOT EXISTS idx_worktrees_session ON worktrees(session_id);
+CREATE INDEX IF NOT EXISTS idx_worktrees_created ON worktrees(created_at);
+`;
+  const writeWorktreesDb = (fuigoHome: string, rows: Array<{ path: string; source: string; mode?: string; status?: string }>) => {
+    const db = new DatabaseSync(join(fuigoHome, "worktrees.db"));
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec(INIT_SQL);
+      db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?1, ?2)").run("schema_version", "1");
+      const insert = db.prepare(
+        "INSERT OR REPLACE INTO worktrees (id, path, source_repo, repo_name, kind, creation_mode, git_ref, head_commit, session_id, creator_pid, created_at, last_accessed_at, status, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+      );
+      for (const [i, row] of rows.entries()) {
+        insert.run(`wt-${i}`, row.path, row.source, "repo", "session", row.mode ?? "linked", "main", null, null, null, 1789152451, null, row.status ?? "alive", JSON.stringify({ label: `wt-${i}`, label_user_provided: false }));
+      }
+    } finally {
+      db.close();
+    }
+  };
+  /** A managed worktree the way `fuigo -w` lays one out: under
+   * `<FUIGO_HOME>/worktrees/<repo slug>/<label>`, here as a STANDALONE clone
+   * (its own `.git` directory) — the creation mode git cannot link back to
+   * its source, so only the registry knows where it came from. */
+  const managedClone = (fuigoHome: string, source: string, label: string) => {
+    const dir = join(fuigoHome, "worktrees", "repo", label);
+    mkdirSync(dirname(dir), { recursive: true });
+    git(root, "clone", "-q", source, dir);
+    return realpathSync.native(dir);
+  };
+  const fuigoHomeIn = (name: string) => {
+    const dir = join(root, name);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+
+  it("keys a managed standalone clone on its recorded source repo's git root, the way the engine does; without the registry it is its own workspace", () => {
+    const source = realRepo("source");
+    const home = fuigoHomeIn("fuigo-home");
+    const clone = managedClone(home, source, "feat");
+    writeWorktreesDb(home, [{ path: clone, source, mode: "standalone" }]);
+    // git alone: a clone is its own repository, so its own key
+    expect(gitRootOf(clone)).toBe(clone);
+    expect(folderTrustKey(clone)).toBe(clone);
+    // the registry (the engine's first step) collapses it onto the source
+    expect(managedWorktreeSourceRepo(clone, home)).toBe(source);
+    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(source);
+    // from a subfolder too: the engine walks up to the registered path
+    const deep = join(clone, "src", "lib");
+    mkdirSync(deep, { recursive: true });
+    expect(folderTrustKey(deep, { fuigoHome: home })).toBe(source);
+    // the source checkout itself, and the source's subfolders, share it
+    expect(folderTrustKey(join(source, "sub"), { fuigoHome: home })).toBe(source);
+    // the scan describes the engine's key; the store's cascade is judged on it
+    expect(scanFolderTrustSources(deep, { fuigoHome: home })).toMatchObject({ key: source, folder: deep });
+    expect(upstreamTrustsFolder(new Map([[source, true]]), clone)).toBe(false);
+    expect(upstreamTrustsFolder(new Map([[source, true]]), clone, { fuigoHome: home })).toBe(true);
+    expect(upstreamTrustsFolder(new Map([[source, false]]), clone, { fuigoHome: home })).toBe(false);
+    // a standalone `fuigo --trust` in the source repo covers the managed clone
+    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${source}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    expect(scanFolderTrustSources(deep, { fuigoHome: home })).toEqual({ key: source, folder: deep, sources: [], upstreamTrusted: true });
+    // a different home (a provider-routed turn's temporary one) has no registry
+    expect(scanFolderTrustSources(deep, { fuigoHome: fuigoHomeIn("routed-turn-home") })).toEqual({ key: clone, folder: deep, sources: [] });
+    expect(scanFolderTrustSources(deep)).toEqual({ key: clone, folder: deep, sources: [] });
+  });
+
+  it("resolves the recorded source repo like upstream: a subdir source keys on its git root, a vanished source keeps the recorded path, an over-broad source falls back to the worktree", () => {
+    const source = realRepo("source");
+    const home = fuigoHomeIn("fuigo-home");
+    const fromSubdir = managedClone(home, source, "from-subdir");
+    const orphan = managedClone(home, source, "orphan");
+    const fromHome = managedClone(home, source, "from-home");
+    const gone = join(root, "deleted-source");
+    writeWorktreesDb(home, [
+      // `fuigo -w` launched from a subdir records that subdir as the source
+      { path: fromSubdir, source: join(source, "packages", "app") },
+      // the source repo has since been deleted: the recorded path stands
+      { path: orphan, source: gone },
+      // a record naming the home folder can never be a trust key
+      { path: fromHome, source: homedir() },
+    ]);
+    expect(folderTrustKey(fromSubdir, { fuigoHome: home })).toBe(source);
+    expect(folderTrustKey(orphan, { fuigoHome: home })).toBe(gone);
+    expect(folderTrustKey(fromHome, { fuigoHome: home })).toBe(fromHome);
+  });
+
+  it("consults the registry only for a folder under <FUIGO_HOME>/worktrees, and reads it read-only: a missing, unreadable or unrelated database changes nothing", () => {
+    const source = realRepo("source");
+    const home = fuigoHomeIn("fuigo-home");
+    const clone = managedClone(home, source, "feat");
+    // no database yet: git decides, and none is created by the read
+    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(clone);
+    expect(() => readFileSync(join(home, "worktrees.db"))).toThrow();
+    // a database without this worktree
+    writeWorktreesDb(home, [{ path: join(home, "worktrees", "repo", "other"), source }]);
+    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(clone);
+    // a dead record still maps (the engine does not filter on status)
+    writeWorktreesDb(home, [{ path: clone, source, status: "dead" }]);
+    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(source);
+    // a clone of the same repo OUTSIDE the worktrees dir is never looked up,
+    // even when a record names it
+    const outside = join(root, "outside-clone");
+    git(root, "clone", "-q", source, outside);
+    writeWorktreesDb(home, [{ path: realpathSync.native(outside), source }]);
+    expect(folderTrustKey(outside, { fuigoHome: home })).toBe(realpathSync.native(outside));
+    // a damaged database: the engine logs and falls through to git
+    writeFileSync(join(home, "worktrees.db"), "not a database");
+    rmSync(join(home, "worktrees.db-wal"), { force: true });
+    rmSync(join(home, "worktrees.db-shm"), { force: true });
+    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(clone);
+    // the worktrees dir itself is not a worktree
+    expect(managedWorktreeSourceRepo(join(home, "worktrees"), home)).toBeNull();
+  });
+
+  it("the store's lookup cascades from the engine's key to the folder's own, so a picker-trusted clone is not asked again and a decision on the source covers the clone", () => {
+    const source = realRepo("source");
+    const home = fuigoHomeIn("fuigo-home");
+    const clone = managedClone(home, source, "feat");
+    writeWorktreesDb(home, [{ path: clone, source, mode: "standalone" }]);
+    const store = new FolderTrustStore(join(root, "folder-trust.json"));
+    // the picker recorded the clone by its own (git) key
+    expect(store.remember(clone, "trust", "picker")).toBe(clone);
+    expect(store.decision(clone, { fuigoHome: home })).toBe("trust");
+    expect(store.record(clone, { fuigoHome: home })?.folder).toBe(clone);
+    // a card on a native turn records the engine's key: the source
+    expect(store.remember(clone, "reject", "card", { fuigoHome: home })).toBe(source);
+    expect(store.decision(source)).toBe("reject");
+    expect(store.decision(clone, { fuigoHome: home })).toBe("reject");
+    // ... and not the clone's own key, which a routed turn (no registry) reads
+    expect(store.decision(clone)).toBe("trust");
+    // Forget with the engine's home clears both
+    expect(store.forget(clone, { fuigoHome: home })).toBe(true);
+    expect(store.decision(clone, { fuigoHome: home })).toBeUndefined();
+    expect(store.decision(clone)).toBeUndefined();
+    expect(store.decision(source)).toBeUndefined();
+  });
+});
+
 describe("the upstream trusted_folders.toml (read-only)", () => {
   const fuigoHomeIn = (name: string) => {
     const dir = join(root, name);

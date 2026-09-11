@@ -19,7 +19,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
@@ -77,10 +77,27 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
         fuigo: { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile }, config: { cli: FAKE_ACP, fullAuto: false } },
         "fuigo-late": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile, FAKE_ACP_TRUST_PROMPT_FIRST: "1" }, config: { cli: FAKE_ACP, fullAuto: false } },
         "fuigo-other-home": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile, FUIGO_HOME: join(homeDir, "other-fuigo-home") }, config: { cli: FAKE_ACP, fullAuto: false } },
+        // FUIGOTRUST4 (2): the Cloud VM runner a `runOn=cloud` turn borrows
+        // (no token: its snapshot is "unavailable" without any network)
+        computer: { driver: "boxAgent" },
       },
     }),
   );
-  const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  // FUIGOTRUST4 (2): a provider connection's catalog refresh is served by an
+  // instrumented fetch (fixture key, no network), the host-stop fixture's way
+  const instrumentation = join(homeDir, ".verification-instrumentation.mjs");
+  writeFileSync(instrumentation, `
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      const url = String(input);
+      if (url.startsWith("https://api.anthropic.com/v1/models")) {
+        if (init?.headers?.["x-api-key"] !== "sk-ant-FAKE_FOLDER_TRUST_KEY_ONLY") throw new Error("Unexpected fixture key");
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "claude-fixture-5", display_name: "Fixture", type: "model" }], has_more: false })));
+      }
+      if (url.startsWith("https://")) throw new Error("External network blocked in folder-trust fixture: " + url);
+      return originalFetch(input, init);
+    };`, { mode: 0o600 });
+  const proc = spawn(process.execPath, ["--import", pathToFileURL(instrumentation).href, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -89,6 +106,8 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       MURAGE_PORT: String(port),
       MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+      MURAGE_MODEL_PROVIDER_CONNECTIONS: "",
+      MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -384,6 +403,62 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     } finally {
       rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
       rmSync(join(home, "other-fuigo-home", "trusted_folders.toml"), { force: true });
+    }
+  });
+
+  // FUIGOTRUST4 (2): the note derives "provider-routed" the way the turn does
+  it("(FUIGOTRUST4 2) the picker note follows the turn's own routing rule: a routed turn runs without the user's store, a disabled connection is reported as refused (the turn's own 409), a cloud run borrows the Box runner", async () => {
+    const project = join(home, "routed-project");
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, "AGENTS.md"), "# routed\n");
+    // the user's own install trusts the folder
+    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(project)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    const status = (folder: string, botId?: string, runOn?: string) =>
+      request("GET", `/api/folder-trust?folder=${encodeURIComponent(folder)}${botId ? `&bot=${botId}` : ""}${runOn ? `&runOn=${runOn}` : ""}`);
+    // a provider connection with a fixture catalog (instrumented fetch, no network)
+    const created = await request("POST", "/api/provider-connections/mutate", { action: "create", preset: "anthropic", label: "Folder trust fixture", key: "sk-ant-FAKE_FOLDER_TRUST_KEY_ONLY" });
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
+    const connection = created.body.connections.find((row: any) => row.label === "Folder trust fixture") as { id: string };
+    expect((await request("POST", `/api/provider-connections/${connection.id}/refresh`, {})).status).toBe(200);
+    const currentRevision = async () => (await request("GET", "/api/provider-connections")).body.connections.find((row: any) => row.id === connection.id).revision as string;
+    const setEnabled = async (enabled: boolean) => {
+      const changed = await request("POST", "/api/provider-connections/mutate", { action: "update", id: connection.id, revision: await currentRevision(), enabled });
+      expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+      if (enabled) expect((await request("POST", `/api/provider-connections/${connection.id}/refresh`, {})).status).toBe(200);
+    };
+    const native = await makeBot("Native-login bot");
+    const routedCreated = await request("POST", "/api/bots", { name: "Routed bot", modelSelection: { instanceId: "fuigo", model: "claude-fixture-5", connectionId: connection.id } });
+    expect(routedCreated.status, JSON.stringify(routedCreated.body)).toBe(201);
+    const routed = routedCreated.body.bot as { id: string; threadId: string };
+    expect((await request("PATCH", `/api/bots/${routed.id}`, { cwd: project, computer: "off", browser: false, composio: false })).status).toBe(200);
+    try {
+      // native-login: the user's own store speaks
+      expect((await status(project, native.id)).body).toMatchObject({ upstreamTrusted: true, upstreamStore: "own", engineGates: true, instanceId: "fuigo", refused: null });
+      // provider-routed: a temporary home, the user's store does not apply
+      expect((await status(project, routed.id)).body).toMatchObject({ upstreamTrusted: false, upstreamStore: "temporary", engineGates: true, instanceId: "fuigo", refused: null, record: { decision: "trust", source: "picker" } });
+      // a cloud run borrows the Box runner, which gates no folder — and is
+      // never provider-routed, so the disabled connection below does not
+      // refuse it either
+      expect((await status(project, routed.id, "cloud")).body).toMatchObject({ upstreamTrusted: false, upstreamStore: "none", engineGates: false, instanceId: "computer", refused: null });
+      expect((await status(project, routed.id, "elsewhere")).status).toBe(400);
+      await setEnabled(false);
+      const refusedStatus = (await status(project, routed.id)).body;
+      expect(refusedStatus).toMatchObject({ refused: "Selected provider connection is disabled or unavailable", upstreamTrusted: false, upstreamStore: "none", engineGates: false, instanceId: null });
+      // ... which is exactly what the turn says
+      const sent = await request("POST", `/api/bots/${routed.id}/messages`, { threadId: routed.threadId, text: "go" });
+      expect(sent).toMatchObject({ status: 409, body: { error: refusedStatus.refused } });
+      expect((await status(project, routed.id, "cloud")).body).toMatchObject({ upstreamStore: "none", engineGates: false, instanceId: "computer", refused: null });
+      // the native bot is untouched by the routed bot's connection
+      expect((await status(project, native.id)).body).toMatchObject({ upstreamTrusted: true, upstreamStore: "own", refused: null });
+      await setEnabled(true);
+      expect((await status(project, routed.id)).body).toMatchObject({ upstreamStore: "temporary", engineGates: true, refused: null });
+      // a Forget from the routed bot's picker forgets the folder like any other
+      expect((await request("DELETE", `/api/folder-trust?folder=${encodeURIComponent(project)}&bot=${routed.id}`)).status).toBe(200);
+      expect((await status(project, routed.id)).body).toMatchObject({ record: null });
+      expect((await request("DELETE", `/api/folder-trust?folder=${encodeURIComponent(project)}&bot=no-such-bot`)).status).toBe(404);
+    } finally {
+      rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
+      await setEnabled(true);
     }
   });
 
