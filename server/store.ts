@@ -30,6 +30,7 @@ import type { GroupGoalRunCardData } from "../shared/group-goal-run.ts";
 import type { IntakeCardData } from "../shared/intake-turn.ts";
 import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
+import { withoutQuestionGrants } from "./auto-approve.ts";
 
 export type EmberColor =
   | "green"
@@ -946,6 +947,20 @@ export class Store {
         task.busy=false;task.activity="idle";
       }
       b.unread=b.tasks.some(task=>task.unread);
+    }
+    // A question is answered by its owner every time. Older builds offered
+    // "Always allow" on a question tool (Claude's AskUserQuestion reached the
+    // permission card), so strip any such remembered grant — from the bot
+    // and from every task that inherited or recorded one. Runs after task
+    // adoption above so a freshly inherited copy is cleaned too.
+    for (const b of this.bots) {
+      for (const holder of [b, ...(b.tasks ?? [])] as { alwaysAllow?: string[] }[]) {
+        if (!holder.alwaysAllow?.length) continue;
+        const kept = withoutQuestionGrants(holder.alwaysAllow);
+        if (kept.length === holder.alwaysAllow.length) continue;
+        holder.alwaysAllow = kept;
+        botsMigrated = true;
+      }
     }
     if (botsMigrated) this.saveBots();
     // Search reads SQLite directly, so migrate every known legacy transcript

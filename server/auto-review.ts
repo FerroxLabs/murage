@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { parseJson } from "./schema.ts";
-import type { AutoVerdictSource } from "./auto-approve.ts";
+import { isQuestionTool, type AutoVerdictSource } from "./auto-approve.ts";
 
 export type AutoReviewMode = "off" | "shadow" | "enforce";
 
@@ -24,6 +24,10 @@ export interface ReviewContext {
   mode: AutoReviewMode;
   unattended: boolean;
   approvalScope: "local-computer" | undefined;
+  /** the tool the request names; a question tool is never reviewed */
+  tool?: string;
+  /** the driver's trusted signal that this ask is a question */
+  question?: boolean;
 }
 
 export function resolveAutoReviewMode(stored: string | undefined): AutoReviewMode {
@@ -32,8 +36,14 @@ export function resolveAutoReviewMode(stored: string | undefined): AutoReviewMod
 
 /** Review is a last resort for an ordinary attended permission card.
  * Existing decisions, unattended turns, host-computer access, and questions
- * remain exclusively human/rule controlled. */
+ * remain exclusively human/rule controlled.
+ *
+ * A question is excluded twice over: its verdict source is `question-tool`,
+ * never `no-grant`, and the tool identity / driver signal is checked here
+ * too, so a caller that passes a stale or missing source still cannot send
+ * a question to the reviewer in either watch or enforce mode. */
 export function shouldReview(context: ReviewContext): boolean {
+  if (context.question || (context.tool !== undefined && isQuestionTool(context.tool))) return false;
   return (
     context.mode !== "off" &&
     context.source === "no-grant" &&
@@ -90,6 +100,9 @@ export async function requestReview(
   timeoutMs = AUTO_REVIEW_TIMEOUT_MS,
 ): Promise<ReviewVerdict | null> {
   if (!reviewPermission) return null;
+  // Last line of defense: a question's content never leaves for a reviewer,
+  // and no verdict is ever produced for one.
+  if (isQuestionTool(request.tool)) return null;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

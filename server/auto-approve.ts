@@ -30,6 +30,63 @@ const SENSITIVE = [
   /\bcredentials?\.json\b|\bserviceaccount\b/i,
 ];
 
+// Tools that ASK THE OWNER something. These are never permissions, however
+// an engine happens to file them: the entire point of the call is that a
+// person decides, so a machine answering one — auto mode, a remembered
+// grant, or the AI reviewer — is not "approval", it is an invented answer.
+// Claude Code's AskUserQuestion arrives through the permission host and was
+// auto-approved with no answers at all, which the model reads as "The user
+// did not answer the questions."
+//
+// Identity comes from what the ENGINE reports — Claude's `tool_name`, Codex's
+// method, Fuigo's extension method, an ACP tool call's name — never from
+// model prose. Unknown spellings fail CLOSED here: an unrecognized name is
+// treated as an ordinary permission by the rules below, so this list is
+// defense in depth behind each driver's own trusted signal, not the only gate.
+const QUESTION_TOOLS = new Set([
+  "askuserquestion",
+  "askuser",
+  "ask_user",
+  "ask_user_question",
+  "request_user_input",
+  "requestuserinput",
+  "question",
+  "clarify",
+  "elicitation",
+  // full method identities, which have no useful last segment
+  "item/tool/requestuserinput",
+  "mcpserver/elicitation/request",
+  "elicitation/create",
+  "_fuigo/ask_user_question",
+  "_fuigo/mcp/elicit",
+]);
+
+/** Is this the name of a tool that asks the owner a question?
+ *
+ * Matches the whole identity and its last segment, so an MCP-namespaced
+ * (`mcp__box__ask_user`), dotted (`functions.request_user_input`) or
+ * slash-separated method (`_fuigo/ask_user_question`) is recognized as the
+ * same tool. */
+export function isQuestionTool(tool: string): boolean {
+  const bare = tool.trim().toLowerCase().replace(/^mcp__.+__/, "");
+  if (QUESTION_TOOLS.has(bare)) return true;
+  return QUESTION_TOOLS.has(bare.split(/[./]/).pop() ?? "");
+}
+
+/** Is this remembered "always allow" key a grant over a question tool?
+ *
+ * Older builds offered "Always allow" on a question (the key was the bare
+ * tool name, optionally scoped), which would have handed every future
+ * question to the machine permanently. Such a key is stripped at load and
+ * refused at the grant routes; `autoVerdict` ignores it regardless. */
+export function isQuestionGrant(key: string): boolean {
+  return isQuestionTool(key.replace(/^local-computer:/, ""));
+}
+
+export function withoutQuestionGrants(keys: string[]): string[] {
+  return keys.filter((key) => !isQuestionGrant(key));
+}
+
 /** First matching pattern's source, so a verdict can NAME the rule that
  * made it — the decision log's whole value is "which rule", and deriving
  * the match a second time at the call site is how the log and the verdict
@@ -123,6 +180,8 @@ function simpleProgram(summary: string): string | undefined {
 }
 
 export function approvalKey(tool: string, summary: string, scope?: "local-computer"): string | undefined {
+  // No "Always allow" for a question: undefined hides the action entirely.
+  if (isQuestionTool(tool)) return undefined;
   const bare = tool.toLowerCase().replace(/^mcp__.+__/, "").split(".").pop()!;
   if (!COMMAND_TOOLS.has(bare)) return scope ? `${scope}:${tool}` : tool;
   const program = simpleProgram(summary);
@@ -146,6 +205,7 @@ export type AutoVerdictSource =
   | "local-computer-block"
   | "destructive-guard"
   | "sensitive-guard"
+  | "question-tool"
   | "no-grant";
 
 export interface AutoVerdict {
@@ -168,6 +228,7 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
     case "sensitive-guard": return "This action may access sensitive data. Review it before allowing it.";
     case "unattended-block": return "This task started outside the desktop. Your approval is required before this action can continue.";
     case "local-computer-block": return "This action controls your computer. Your approval is required.";
+    case "question-tool": return "Your bot is asking you a question. Only you can answer it.";
     default: return undefined;
   }
 }
@@ -185,8 +246,16 @@ export function autoVerdict(
     unattended?: boolean;
     /** the request controls the user's active desktop */
     scope?: "local-computer";
+    /** the driver's trusted signal that this ask is a question to the owner
+     * even though it is filed as a permission (Pi `select`, whose title is
+     * extension-composed text and so cannot be matched by name) */
+    question?: boolean;
   },
 ): AutoVerdict {
+  // A question outranks everything, including the unattended and host
+  // blocks: no mode, grant or turn origin lets the machine answer it. It
+  // names no rule — no grant was consulted, and none could apply.
+  if (context?.question || isQuestionTool(tool)) return { approve: null, source: "question-tool" };
   // the guards outrank the grants, so an "always allow" can never widen
   // into them
   const destructive = matchFirst(DESTRUCTIVE, summary) ?? matchFirst(DESTRUCTIVE, tool);
@@ -242,6 +311,8 @@ export function autoDecision(
     unattended?: boolean;
     /** the request controls the user's active desktop */
     scope?: "local-computer";
+    /** the driver's trusted signal that this ask is a question */
+    question?: boolean;
   },
 ): string | null {
   return autoVerdict(bot, tool, summary, context).approve;
