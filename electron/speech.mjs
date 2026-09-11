@@ -22,6 +22,7 @@ import {
   speechHelperBinary,
   speechHelperBundle,
 } from "./build-speech-helper.mjs";
+import { createHelperExit, stopOwnedHelper } from "./helper-stop.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(__dirname, "resources", "speech-helper.swift");
@@ -35,7 +36,12 @@ const BIN = app.isPackaged
   ? path.join(BUNDLE, "Contents", "MacOS", "speech-helper")
   : speechHelperBinary;
 
+// The one owned recognizer session. It stays set while a requested stop is
+// pending and is cleared only when the helper's exit is observed (B5).
 let child = null;
+// Bumped by every Start and every explicit Stop, so a Start that had to wait
+// for an earlier helper cannot launch after a newer Start or Stop.
+let startGeneration = 0;
 
 function ensureBuilt() {
   if (app.isPackaged) return;
@@ -53,8 +59,20 @@ function sendEnd(win, info) {
  * Start one recognition session. `endpointMs` is call-mode-only: composer
  * dictation deliberately keeps listening until its mic button is pressed.
  */
-export function startSpeech(win, options = {}) {
-  stopSpeech();
+export async function startSpeech(win, options = {}) {
+  const generation = ++startGeneration;
+  const previous = stopOwnedSpeech();
+  if (previous) {
+    try {
+      await previous;
+    } catch {
+      // The previous helper is still owned (its stop marker failed or it has
+      // not exited). Never start a second recognizer beside it.
+      if (generation === startGeneration) sendEnd(win, { code: 1, reason: "helper-stop-pending" });
+      return;
+    }
+    if (generation !== startGeneration) return;
+  }
   if (process.platform !== "darwin") {
     sendEnd(win, { code: 2, reason: "unsupported-platform" });
     return;
@@ -71,7 +89,15 @@ export function startSpeech(win, options = {}) {
     sendEnd(win, { code: 1, reason: "helper-build-failed" });
     return;
   }
+  launchSpeechSession(win, args);
+}
 
+/**
+ * Launch and own one helper session. startSpeech applies the platform and
+ * build gates first; this is exported so the lifecycle tests can drive it
+ * with a fake `open` waiter on every CI platform.
+ */
+export function launchSpeechSession(win, args = []) {
   // A direct spawn of Contents/MacOS/speech-helper loses the app-bundle
   // identity and TCC kills it for lacking a usage description. LaunchServices
   // preserves that identity. `open` redirects its stdout/stderr to files,
@@ -112,7 +138,16 @@ export function startSpeech(win, options = {}) {
     return;
   }
 
-  const speechSession = { proc, outputPath, errorPath, stopPath, finishPath, sessionDir };
+  const speechSession = {
+    proc,
+    outputPath,
+    errorPath,
+    stopPath,
+    finishPath,
+    sessionDir,
+    stopRequested: false,
+    exit: createHelperExit(),
+  };
   child = speechSession;
   let buf = "";
   let offset = 0;
@@ -138,9 +173,9 @@ export function startSpeech(win, options = {}) {
         const parsed = JSON.parse(line);
         if (typeof parsed.error === "string") reportedError = parsed.error;
         if (parsed.partial === false && typeof parsed.text === "string") completed = true;
-        // A stopped/replaced helper can flush one last chunk. Never leak it
-        // into the session that replaced it.
-        if (child === speechSession && !win.isDestroyed()) {
+        // A stopping or replaced helper can flush one last chunk. Never leak
+        // it into the renderer or the session that replaced it.
+        if (child === speechSession && !speechSession.stopRequested && !win.isDestroyed()) {
           win.webContents.send("speech:transcript", parsed);
         }
       } catch {
@@ -160,11 +195,13 @@ export function startSpeech(win, options = {}) {
   proc.on("close", (code) => {
     drain();
     cleanup();
-    // stopSpeech() clears child before creating the stop marker. Suppressing
-    // that close event is essential in call mode: intentional TTS muting must
-    // not look like the natural end of a spoken turn.
+    speechSession.exit.markExited();
     if (child !== speechSession) return;
     child = null;
+    // A requested stop is intentional. Suppressing its close event is
+    // essential in call mode: TTS muting must not look like the natural end
+    // of a spoken turn.
+    if (speechSession.stopRequested) return;
     if (reportedError) {
       sendEnd(win, { code: 1, reason: reportedError });
     } else if (completed && code === 0) {
@@ -175,25 +212,38 @@ export function startSpeech(win, options = {}) {
   });
   proc.on("error", () => {
     cleanup();
+    speechSession.exit.markExited();
     if (child !== speechSession) return;
     child = null;
+    if (speechSession.stopRequested) return;
     sendEnd(win, { code: 1, reason: "helper-start-failed" });
   });
 }
 
-export function stopSpeech() {
-  if (!child) return;
-  const speechSession = child;
-  child = null;
-  try {
-    writeFileSync(speechSession.stopPath, "stop");
-  } catch {}
+function stopOwnedSpeech() {
+  const session = child;
+  if (!session) return null;
+  return stopOwnedHelper(session, {
+    name: "Dictation",
+    writeMarker: () => writeFileSync(session.stopPath, "stop"),
+  });
+}
+
+/**
+ * Stop the owned recognizer. Resolves once its helper has exited (or when
+ * nothing is owned). Rejects, keeping the session owned for a retry, when the
+ * stop marker cannot be written or the helper has not exited within the
+ * owned-work deadline.
+ */
+export async function stopSpeech() {
+  startGeneration += 1;
+  await stopOwnedSpeech();
 }
 
 /** Finalize the active request and keep it owned until the recognizer emits
  * its final transcript. Used by push-to-talk key release. */
 export function finishSpeech() {
-  if (!child) return;
+  if (!child || child.stopRequested) return;
   try {
     writeFileSync(child.finishPath, "finish");
   } catch {}

@@ -1,7 +1,10 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+
+const OUTSIDE_ROOT = "Only files created by your bots can be saved";
 
 function normalizeSourcePath(rawPath) {
   if (typeof rawPath !== "string" || !rawPath.trim()) {
@@ -30,7 +33,7 @@ async function canonicalPath(target, fsp, message) {
 
 function assertInside(root, target) {
   if (target !== root && !target.startsWith(root + path.sep)) {
-    throw new Error("Only files created by your bots can be saved");
+    throw new Error(OUTSIDE_ROOT);
   }
 }
 
@@ -45,21 +48,23 @@ function isSameFile(left, right) {
 // Paths come from model-rendered markdown, so they are untrusted. Resolve the
 // root and target before checking containment, then retain the target identity
 // for the open step below.
-async function resolveSource(rawPath, { home, fsp, platform }) {
+//
+// `root` is the ACTIVE installation data root the caller owns (audit B3). It is
+// required: a missing root is a refusal, never a fallback to the default
+// ~/.murage, which may be a retained original installation this process does
+// not own.
+async function resolveSource(rawPath, { root, fsp, platform }) {
   const target = normalizeSourcePath(rawPath);
-  const root = await canonicalPath(
-    path.join(home, ".murage"),
-    fsp,
-    "Only files created by your bots can be saved",
-  );
+  if (typeof root !== "string" || !path.isAbsolute(root)) throw new Error(OUTSIDE_ROOT);
+  const canonicalRoot = await canonicalPath(root, fsp, OUTSIDE_ROOT);
   const filePath = await canonicalPath(target, fsp, "That file no longer exists");
-  assertInside(root, filePath);
+  assertInside(canonicalRoot, filePath);
 
   const stats = await fsp.stat(filePath, { bigint: true });
   assertRegularFile(stats);
   if (platform === "win32") {
     const pathAfterStat = await canonicalPath(filePath, fsp, "That file no longer exists");
-    assertInside(root, pathAfterStat);
+    assertInside(canonicalRoot, pathAfterStat);
   }
   return { filePath, stats };
 }
@@ -67,12 +72,12 @@ async function resolveSource(rawPath, { home, fsp, platform }) {
 // Kept as a narrow validation seam for callers and tests that only need the
 // canonical path. The save flow uses withSavableFile so it cannot forget to
 // close the stable source handle.
-export async function resolveSavablePath(rawPath, { home, fsp = fs.promises, platform = process.platform } = {}) {
-  return (await resolveSource(rawPath, { home, fsp, platform })).filePath;
+export async function resolveSavablePath(rawPath, { root, fsp = fs.promises, platform = process.platform } = {}) {
+  return (await resolveSource(rawPath, { root, fsp, platform })).filePath;
 }
 
-async function openSavableFile(rawPath, { home, fsp, platform }) {
-  const source = await resolveSource(rawPath, { home, fsp, platform });
+async function openSavableFile(rawPath, { root, fsp, platform }) {
+  const source = await resolveSource(rawPath, { root, fsp, platform });
   const noFollow = platform === "win32" ? 0 : fs.constants.O_NOFOLLOW ?? 0;
   const handle = await fsp.open(source.filePath, fs.constants.O_RDONLY | noFollow);
   try {
@@ -81,10 +86,62 @@ async function openSavableFile(rawPath, { home, fsp, platform }) {
     if (platform === "win32" && !isSameFile(source.stats, openedStats)) {
       throw new Error("That file changed while it was being opened");
     }
-    return { handle, filePath: source.filePath };
+    return { handle, filePath: source.filePath, stats: openedStats };
   } catch (error) {
     await handle.close();
     throw error;
+  }
+}
+
+async function statIfPresent(fsp, target) {
+  try {
+    return await fsp.stat(target, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
+    throw error;
+  }
+}
+
+// Copy the retained source handle to `destination` without ever opening an
+// existing destination for writing (audit B2).
+//
+// - A destination that already IS the source inode (the same path, a hard
+//   link, or a symlink resolving to it) already holds exactly these bytes, so
+//   the save is a truthful no-op. Writing it would truncate the source.
+// - Otherwise the bytes go to an exclusively created sibling and are published
+//   with one rename. Even if the destination became the source between the
+//   check and the rename, a rename replaces the directory entry and never
+//   truncates the source inode. A failed copy removes only the sibling, so an
+//   existing destination is left exactly as it was.
+async function copyHandleTo(handle, sourceStats, destination, { fsp, platform }) {
+  if (typeof destination !== "string" || !path.isAbsolute(destination)) {
+    throw new Error("Choose where to save the file");
+  }
+  const existing = await statIfPresent(fsp, destination);
+  if (existing && isSameFile(existing, sourceStats)) return { written: false, reason: "same-file" };
+  if (existing && !existing.isFile()) throw new Error("That destination is not a file");
+
+  const staging = path.join(
+    path.dirname(destination),
+    `.${path.basename(destination)}.murage-save-${randomBytes(6).toString("hex")}.tmp`,
+  );
+  const output = await fsp.open(staging, "wx", 0o666);
+  let published = false;
+  try {
+    if (existing && platform !== "win32") await output.chmod(Number(existing.mode & 0o777n));
+    // The write stream owns the staging handle: it flushes the descriptor,
+    // closes it, and the pipeline settles on that close. (A non-closing write
+    // stream never settles a pipeline.)
+    await pipeline(
+      handle.createReadStream({ autoClose: false, start: 0 }),
+      output.createWriteStream({ flush: true }),
+    );
+    await fsp.rename(staging, destination);
+    published = true;
+    return { written: true };
+  } finally {
+    await output.close().catch(() => {});
+    if (!published) await fsp.rm(staging, { force: true }).catch(() => {});
   }
 }
 
@@ -92,20 +149,15 @@ async function openSavableFile(rawPath, { home, fsp, platform }) {
 // handle. This keeps validation, stable copying, and cleanup at one seam.
 export async function withSavableFile(
   rawPath,
-  { home, fsp = fs.promises, platform = process.platform } = {},
+  { root, fsp = fs.promises, platform = process.platform } = {},
   operation,
 ) {
-  const { handle, filePath } = await openSavableFile(rawPath, { home, fsp, platform });
+  const { handle, filePath, stats } = await openSavableFile(rawPath, { root, fsp, platform });
   try {
     return await operation({
       filePath,
       defaultName: path.basename(filePath),
-      copyTo: async (destination) => {
-        await pipeline(
-          handle.createReadStream({ autoClose: false, start: 0 }),
-          fs.createWriteStream(destination),
-        );
-      },
+      copyTo: (destination) => copyHandleTo(handle, stats, destination, { fsp, platform }),
     });
   } finally {
     await handle.close();
