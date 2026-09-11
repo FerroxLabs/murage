@@ -7,6 +7,19 @@ it("renders a readable header and accessible controls without changing code text
   expect(html).toContain("TypeScript"); expect(html).toContain("3 lines"); expect(html).toContain('aria-label="Copy code"'); expect(html).toContain('aria-pressed="false"');
   expect(html).toContain("a &lt; b\r\n\treturn 1;\n");
 });
+// #979 (adapted): a Save control beside Wrap and Copy, named for the file it
+// suggests. It never claims the file was saved; the browser owns that.
+it("offers Save beside Wrap and Copy, named for the suggested file, with no saved claim", () => {
+  const html = renderToStaticMarkup(createElement(CodeBlock, { code: "print(1)\n", lang: "python", streaming: false }));
+  const buttons = [...html.matchAll(/<button type="button"([^>]*)>/g)].map(([, attributes]) => /aria-label="([^"]*)"/.exec(attributes!)?.[1]);
+  expect(buttons).toEqual(["Wrap long lines", "Save code as snippet.py", "Copy code"]);
+  expect(html).toContain('title="Save code as snippet.py"'); expect(html).toContain(">Save</span>");
+  expect(html).not.toContain("Saved"); expect(html).not.toContain('role="alert"');
+  expect(html).toContain("print(1)\n");
+  // a hostile fence hint still only picks a safe extension
+  const hostile = renderToStaticMarkup(createElement(ChatMarkdown, { text: "```../../etc/passwd\nroot\n```" }));
+  expect(hostile).toContain('aria-label="Save code as snippet.txt"');
+});
 it("recognizes punctuation-bearing fences and still escapes model HTML", () => {
   const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: '```c++\nint x = 1;\n```\n<script>alert(1)</script>' }));
   expect(html).toContain("C++"); expect(html).toContain("1 line"); expect(html).not.toContain("<script>");

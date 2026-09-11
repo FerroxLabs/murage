@@ -242,5 +242,8 @@
   "markdownEditor.heldDraft.title": "An unsaved draft from an earlier session was found",
   "markdownEditor.heldDraft.body": "You started typing before it loaded. Both texts are kept, and your new typing is not stored as a draft until you choose which one to continue with.",
   "markdownEditor.heldDraft.restore": "Use the earlier draft",
-  "markdownEditor.heldDraft.keepCurrent": "Keep what I typed"
+  "markdownEditor.heldDraft.keepCurrent": "Keep what I typed",
+  "chatCode.save": "Save",
+  "chatCode.saveAs": "Save code as {name}",
+  "chatCode.saveFailed": "Could not save this code. Copy it instead."
 }
