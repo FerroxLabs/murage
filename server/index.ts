@@ -553,7 +553,7 @@ utilityParentPort?.on("message", (event) => {
     if (browserCleanup.receive(message)) return;
     if (applyProviderBankFenceMessage(message)) {
       // Admission closed while the desktop reconciled; drain once it reopens.
-      if (!providerBankDispatchFenced()) scheduleCoordinationDrain();
+      if (!providerBankDispatchFenced()) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); }
       return;
     }
     if (!applyDesktopBrowserConnectionMessage(message)) composio.applyManagedBrokerMessage(message);
@@ -607,7 +607,7 @@ function finishProviderConfigMutation(): void {
   providerConfigBusy = false;
   // Reload/rollback may have released idle targets while admission was closed.
   // Drain only after the final fleet is attached and the mutation guard clears.
-  if (providerFleetReady) scheduleCoordinationDrain();
+  if (providerFleetReady) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); }
 }
 function holdCoordinationSlot(threadId: string): () => void {
   if (coordinationSlots.has(threadId) || !coordinationHasCapacity()) throw new Error("COORDINATION_CAPACITY: wait for a running handoff");
@@ -886,6 +886,9 @@ type DirectTurnDispatchClaim = {
   phase: "setup" | "dispatching";
 };
 class DirectTurnSetupCancelled extends Error {}
+/** server/memory: assertMemoryAccess and deliverMemoryDisclosure refuse with
+ * exactly this message when the authority a dispatch prepared under has moved. */
+const isMemoryContextRevoked = (error: unknown) => error instanceof Error && error.message === "MEMORY_CONTEXT_REVOKED";
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directRuns = new IndependentThreadRuns<BotRecord>();
 function botForDirectThread(botId:string,threadId:string):BotRecord|null {
@@ -3455,7 +3458,18 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
 // bot without that event, so every explicit idle release calls this same
 // coalesced retry hook. The microtask lets the releasing state machine finish
 // before another turn claims the bot.
+//
+// A release can land while admission is closed: reloadProviders retires
+// direct runs before the new fleet is attached, and every caller of it holds
+// the config-mutation guard until after the reload, so a retry that ran then
+// found providerFleetReady false or providerConfigBusy true and released
+// nothing — the handoff stayed "waiting — retry 1/3" until an unrelated
+// drain happened by. The retry is kept instead and replayed when admission
+// reopens (finishProviderConfigMutation, the Flux fence, the desktop bank
+// fence), so a delegation waiting on a reloaded bot runs on the new fleet.
 const delegationRetryBots = new Set<string>();
+const deferredDelegationRetries = new Set<string>();
+const coordinationAdmissionClosed = () => providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady;
 function retryDelegationsWaitingOn(botId: string): void {
   if (delegationRetryBots.has(botId)) return;
   delegationRetryBots.add(botId);
@@ -3464,11 +3478,20 @@ function retryDelegationsWaitingOn(botId: string): void {
     if (store.bot(botId)?.busy) return;
     const threadId = store.bot(botId)?.threadId;
     if (threadId) coordinationSlots.get(threadId)?.();
-    if (providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady) return;
+    if (coordinationAdmissionClosed()) { deferredDelegationRetries.add(botId); return; }
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
   });
+}
+/** Re-run the idle releases that arrived while admission was closed. Each
+ * goes back through the same hook, so a bot that has since become busy again
+ * waits for its own settle as usual. */
+function replayDeferredDelegationRetries(): void {
+  if (coordinationAdmissionClosed() || !deferredDelegationRetries.size) return;
+  const bots = [...deferredDelegationRetries];
+  deferredDelegationRetries.clear();
+  for (const botId of bots) retryDelegationsWaitingOn(botId);
 }
 
 bus.subscribe((event: RuntimeEvent) => {
@@ -3712,6 +3735,10 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
+    /** Server-owned: this is the single re-dispatch of a turn whose prepared
+     * memory context was revoked before the provider accepted it (see the
+     * catch below). Never taken from a request body. */
+    memoryRedispatch?: boolean;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -4414,7 +4441,27 @@ async function startTurn(
       }
       if (!ownsLatestGeneration) return;
       recordMemorySettlement(threadId, dispatchClaimId, "setup-failed");
-      const message = e instanceof Error ? e.message : String(e);
+      // The memory context this dispatch prepared was revoked before the
+      // provider accepted it: the authority moved under the turn. The usual
+      // cause is a task created for this bot while a sibling turn sat in its
+      // dispatch window — a new thread changes the roster, and the roster
+      // policy revokes every disclosure for that (p02, "existing-task" still
+      // revokes) — or another bot, room or owner memory change in the same
+      // window. The guarantee is that no turn runs on revoked context, and
+      // the provider turn was stopped above before anything could; it is not
+      // that the person's message is lost. Re-prepare under the current
+      // authority and dispatch once more with the same user message; a
+      // second refusal, or an admission refusal now, reports as before.
+      let failure: unknown = e;
+      if (isMemoryContextRevoked(e) && !opts?.memoryRedispatch) {
+        console.warn(`[memory] context revoked during dispatch on thread ${threadId}; re-preparing once`);
+        store.setTaskActivity(bot.id, threadId, "idle");
+        try {
+          await startTurn(botId, text, { ...opts, threadId, userMessage, memoryRedispatch: true });
+          return;
+        } catch (redispatchError) { failure = redispatchError; }
+      }
+      const message = failure instanceof Error ? failure.message : String(failure);
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
@@ -7023,7 +7070,7 @@ function readFluxConnectionState(): FluxCredentialState {
 const fluxConnectionTransaction = new FluxConnectionTransaction({
   read: readFluxConnectionState,
   assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error("Finish running work before changing Flux credentials."), { status: 409 }); },
-  fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) scheduleCoordinationDrain(); },
+  fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); } },
   apply: async (state, external, restore) => {
     const previous = cfg.modelProviders?.bank;
     const bank = state.bank ?? "[]", apiKey = state.workspaceKey ?? "", connectionAliases = state.aliases ?? [];
