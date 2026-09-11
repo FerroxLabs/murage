@@ -52,6 +52,8 @@ import {
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { fromPi, toPiValue, type QuestionAnswer, type QuestionSpec } from "../question-normalize.ts";
+import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
@@ -427,7 +429,13 @@ interface PiEvent {
   method?: string;
   options?: unknown[];
   title?: string;
+  placeholder?: string;
+  prefill?: string;
 }
+
+/** Settles one pi extension_ui_request. A question's `answer` carries the
+ * owner's validated picks (0.1.52 ASK3); `deny` on a question is a skip. */
+type PiAskAnswer = (decision: { behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[] }) => void;
 
 function piEnvironment(source: Record<string, string | undefined>): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...source, PATH: augmentedPath() };
@@ -486,7 +494,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const active = new Map<string, {
       stop: () => void;
       turnId: string;
-      pending: Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>;
+      pending: Map<string, PiAskAnswer>;
       child?: { stdin: { write: (s: string) => void } };
       /** Asks opened as host-control permission requests (local-computer scope). */
       scopedRequests: Set<string>;
@@ -523,7 +531,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         throw new Error("local computer control requires the interactive approval broker");
       }
       const turnId = newId();
-      const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
+      const pending = new Map<string, PiAskAnswer>();
       const scopedRequests = new Set<string>();
       let settled = false;
 
@@ -735,11 +743,27 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           }
           case "extension_ui_request": {
             // pi floods setWidget/setStatus for TUI bookkeeping; only
-            // select/confirm/input are questions that wait for an answer.
-            if (evt.method === "select" || evt.method === "confirm" || evt.method === "input") {
+            // select/confirm/input/editor are dialogs that wait for an answer.
+            // Verified against pi-mono docs/rpc.md: select answers {value:
+            // <option>}, input and editor answer {value: <text>}, confirm
+            // answers {confirmed}, and every dialog takes {cancelled: true}.
+            if (evt.method === "select" || evt.method === "confirm" || evt.method === "input" || evt.method === "editor") {
               flushAssistantText();
               const reqId = evt.id ?? newId();
-              const isQuestion = evt.method === "input";
+              // select, input and editor ask the OWNER something: one question
+              // card with the dialog's own options or a free-text field
+              // (0.1.52 ASK3). Before this, a select was carded as a
+              // permission whose Allow sent {confirmed:true} — not even pi's
+              // reply shape for a select. `confirm` stays a permission.
+              const question = evt.method === "confirm" ? null : fromPi(evt);
+              if (question && !question.ok) {
+                // a dialog the owner cannot be shown is cancelled at once,
+                // and the owner sees why, instead of a card nobody can answer
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: `pi asked a question Murage could not show (${question.error}); it was cancelled` });
+                send({ type: "extension_ui_response", id: reqId, cancelled: true });
+                return;
+              }
+              const questions: QuestionSpec[] | null = question ? question.questions : null;
               // Carry the trusted host-control scope to the shared policy
               // gate, as the Claude, Codex and ACP drivers do. Without it
               // index.ts treats the card as ordinary: it offers a bare-title
@@ -749,32 +773,49 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // and is never parsed for this — so every permission ask on a
               // host-controlling turn is scoped conservatively. Questions are
               // not permissions and always reach the human anyway.
-              const scoped = controlsHost && !isQuestion;
+              const scoped = controlsHost && !questions;
               if (scoped) scopedRequests.add(reqId);
-              // A `select` asks the owner to pick an option — a question, even
-              // while it is still carded as a permission here. The method is
-              // pi's trusted signal (the title is extension text), so it rides
-              // on the event and the harness never auto-approves, remembers or
-              // AI-reviews it. `confirm` stays an ordinary permission.
-              const questionTool = evt.method === "select";
+              // A question waits for the owner up to the shared 30-minute
+              // limit, then pi gets an honest {cancelled:true} — never a guess
+              // in the owner's name. (pi's own `timeout` field, when set, may
+              // auto-resolve sooner on its side.)
+              const timer = questions
+                ? setTimeout(() => {
+                    if (!pending.delete(reqId)) return;
+                    send({ type: "extension_ui_response", id: reqId, cancelled: true });
+                    emit({ ...base(threadId, turnId), requestId: reqId, type: "request.resolved", behavior: "deny", source: "timeout" });
+                  }, QUESTION_TIMEOUT_MS)
+                : null;
+              timer?.unref?.();
               // Register BEFORE emitting: the harness may auto-approve from
               // inside its synchronous request.opened listener. Emitting first
               // made respondToRequest see no pending ask, return unavailable,
               // then fall back to a human card on every "Always allow" call.
               pending.set(reqId, (decision) => {
+                if (timer) clearTimeout(timer);
+                if (questions) {
+                  // validated picks first; a one-string client (voice) still works
+                  const value = decision.behavior !== "answer"
+                    ? ""
+                    : decision.answers?.length
+                      ? toPiValue(questions, decision.answers)
+                      : (decision.message ?? "").trim();
+                  if (value) send({ type: "extension_ui_response", id: reqId, value });
+                  else send({ type: "extension_ui_response", id: reqId, cancelled: true });
+                  return;
+                }
                 if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
-                else if (isQuestion) send({ type: "extension_ui_response", id: reqId, value: decision.message ?? "" });
                 else send({ type: "extension_ui_response", id: reqId, confirmed: true });
               });
               emit({
                 ...base(threadId, turnId),
                 requestId: reqId,
                 type: "request.opened",
-                requestType: isQuestion ? "question" : "permission",
-                tool: String(evt.title ?? "pi"),
-                summary: String(evt.title ?? "pi wants confirmation"),
+                requestType: questions ? "question" : "permission",
+                tool: questions ? String(evt.method) : String(evt.title ?? "pi"),
+                summary: questions ? questions[0]!.question.slice(0, 300) : String(evt.title ?? "pi wants confirmation"),
+                ...(questions ? { choices: questions[0]!.options.map((option) => option.label), questions } : {}),
                 ...(scoped ? { approvalScope: "local-computer" as const } : {}),
-                ...(questionTool ? { questionTool: true as const } : {}),
               });
             }
             return;
@@ -1005,7 +1046,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           if (!entry || !answer) return "unavailable";
           entry.pending.delete(requestId);
           const scoped = entry.scopedRequests.delete(requestId);
-          answer({ behavior: decision.behavior, message: decision.message });
+          answer({ behavior: decision.behavior, message: decision.message, answers: decision.answers });
           emit({
             ...base(threadId, entry.turnId),
             requestId,

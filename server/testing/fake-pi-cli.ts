@@ -5,13 +5,17 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | question | interleave | turn-error | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | question | editor | interleave | turn-error | no-models | exit-early
+//                  permission = a `select` ask ("Run bash: echo hi?", Allow once / Deny) — since 0.1.52 ASK3 a select
+//                  is a QUESTION for the owner (its answer is {value}); host-confirm = a `confirm` ask, the permission
+//                  shape; question = an `input` ask; editor = an `editor` ask with prefill
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
 //   FAKE_PI_SET_MODEL ok (default) | reject (success:false with pi's error text) | silent (never answers)
 //   FAKE_PI_SESSION   ok (default) | reject (new_session / switch_session answer success:false)
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
 //                  and env hygiene (no leaked secrets into the pi child). Model
-//                  pins, thinking levels and received prompts are appended too.
+//                  pins, thinking levels, received prompts and every
+//                  extension_ui_response ({uiResponse}) are appended too.
 //   FAKE_PI_PID_FILE   write this child's pid (close-confirmed stop tests)
 //   FAKE_PI_LINGER_MS  stay alive this long after SIGTERM or stdin end (max
 //                  10 s). POSIX-only observation: Windows taskkill /F runs no handler.
@@ -165,7 +169,14 @@ const streamHostConfirmTurn = () => {
 const streamQuestionTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
-  send({ type: "extension_ui_request", id: "ask-q", method: "input", title: "Which branch should I use?" });
+  send({ type: "extension_ui_request", id: "ask-q", method: "input", title: "Which branch should I use?", placeholder: "branch name" });
+};
+
+// editor: a multi-line `editor` ask with prefilled text (docs/rpc.md).
+const streamEditorTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "extension_ui_request", id: "ask-e", method: "editor", title: "Edit the release notes", prefill: "Line 1\nLine 2" });
 };
 
 /** Scripted text → tool → text → tool → text turn for order-contract tests. */
@@ -305,12 +316,21 @@ function handle(cmd: any) {
       else if (mode === "permission") streamPermissionTurn();
       else if (mode === "host-confirm") streamHostConfirmTurn();
       else if (mode === "question") streamQuestionTurn();
+      else if (mode === "editor") streamEditorTurn();
       else if (mode === "interleave") streamInterleaveTurn();
       else if (mode === "turn-error") streamErrorTurn();
       else streamTurn();
       return;
     case "extension_ui_response":
-      if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q") finishPermissionTurn();
+      // record the exact reply shape so a test can assert {value} vs {confirmed} vs {cancelled}
+      if (process.env.FAKE_PI_DUMP) {
+        try {
+          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ uiResponse: cmd }) + "\n");
+        } catch {
+          /* never let dumping break a run */
+        }
+      }
+      if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q" || cmd.id === "ask-e") finishPermissionTurn();
       return;
     case "abort":
       send({ type: "turn_end", message: { stopReason: "cancelled", usage: { input: 0, output: 0 } }, usage: { input: 0, output: 0 } });

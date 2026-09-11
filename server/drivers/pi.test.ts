@@ -629,13 +629,15 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(texts).toEqual(["before one", "before two", "after"]);
   });
 
-  it("brokers a permission ask through request.opened → respondToRequest", async () => {
-    await create("permission");
+  it("brokers a permission ask (a pi confirm) through request.opened → respondToRequest", async () => {
+    // Before 0.1.52 ASK3 this used the select fixture; a select is now a
+    // question, so the permission path is pi's confirm dialog.
+    await create("host-confirm");
     await instance.adapter.sendTurn({ threadId: "t-perm", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     expect(recorder.events.some((e) => e.type === "request.opened")).toBe(true);
 
-    const outcome = await instance.adapter.respondToRequest("t-perm", "ask-1", { behavior: "allow" });
+    const outcome = await instance.adapter.respondToRequest("t-perm", "ask-host", { behavior: "allow" });
     expect(outcome).toBe("allowed-once");
 
     const done = await recorder.until((e) => e.type === "turn.completed");
@@ -644,7 +646,7 @@ describe("PiDriver turns (fake CLI)", () => {
   });
 
   it("registers an ask before emitting it so synchronous auto-approval works", async () => {
-    await create("permission");
+    await create("host-confirm");
     let unsubscribe = () => {};
     const outcome = new Promise<string>((resolve) => {
       unsubscribe = instance.adapter.onEvent((event) => {
@@ -722,46 +724,101 @@ describe("PiDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   });
 
-  it("marks a select ask as a question the harness never auto-approves, remembers or reviews (ASK1)", async () => {
-    await create("permission");
+  it("cards a select as a question with its own options and answers pi with {value} (ASK1, ASK3)", async () => {
+    // R1-T6 (L03) and ASK1 carded a select as a permission with a question
+    // flag; ASK3 makes it the question it is. This deliberately changes that
+    // expectation: requestType is "question", the card carries the select's
+    // options, and pi receives {value: <label>} — its select reply shape —
+    // never {confirmed: true}.
+    const dump = join(tmpdir(), `murage-pi-select-${newId()}.jsonl`);
+    await create("permission", { FAKE_PI_DUMP: dump });
     const threadId = `t-select-question-${newId()}`;
     const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
     const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as unknown as OpenedAsk & {
       questionTool?: true;
+      choices?: string[];
+      questions?: unknown;
     };
-    expect(opened).toMatchObject({ requestType: "permission", tool: "Run bash: echo hi?", questionTool: true });
-
-    // The join server/index.ts applies, with every grant a user could hold and Auto on.
-    const everything = { autoApprove: true, alwaysAllow: [opened.tool, `local-computer:${opened.tool}`] };
-    const verdict = autoVerdict(everything, opened.tool, opened.summary, {
-      scope: opened.approvalScope,
-      question: opened.questionTool === true,
+    expect(opened).toMatchObject({
+      requestType: "question",
+      tool: "select",
+      summary: "Run bash: echo hi?",
+      choices: ["Allow once", "Deny"],
+      questions: [{ id: "q1", question: "Run bash: echo hi?", options: [{ label: "Allow once" }, { label: "Deny" }], multiSelect: false, allowOther: false }],
     });
-    expect(verdict).toEqual({ approve: null, source: "question-tool" });
-    for (const mode of ["shadow", "enforce"] as const) {
-      expect(
-        shouldReview({ source: "no-grant", mode, unattended: false, approvalScope: undefined, tool: opened.tool, question: opened.questionTool === true }),
-      ).toBe(false);
-    }
-    await instance.adapter.respondToRequest(threadId, "ask-1", { behavior: "deny" });
+    expect(opened).not.toHaveProperty("approvalScope");
+    expect(opened).not.toHaveProperty("questionTool");
+
+    // Still never a machine's to answer, whatever grants a user holds.
+    const everything = { autoApprove: true, alwaysAllow: [opened.tool, `local-computer:${opened.tool}`] };
+    expect(autoVerdict(everything, opened.tool, opened.summary, { scope: opened.approvalScope, question: true })).toEqual({ approve: null, source: "question-tool" });
+
+    await expect(
+      instance.adapter.respondToRequest(threadId, "ask-1", { behavior: "answer", message: "Allow once", answers: [{ id: "q1", selected: ["Allow once"] }] }),
+    ).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === turnId)).toMatchObject({ behavior: "answer", source: "user" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.uiResponse);
+    expect(replies).toEqual([{ uiResponse: { type: "extension_ui_response", id: "ask-1", value: "Allow once" } }]);
+    rmSync(dump, { force: true });
     recorder.stop();
     await instance.dispose();
 
-    // A confirm stays an ordinary permission: no question signal.
-    await create("host-confirm");
+    // A confirm stays an ordinary permission: no question, {confirmed:true} on allow.
+    const dump2 = join(tmpdir(), `murage-pi-confirm-${newId()}.jsonl`);
+    await create("host-confirm", { FAKE_PI_DUMP: dump2 });
     const plain = `t-confirm-plain-${newId()}`;
     const second = await instance.adapter.sendTurn({ threadId: plain, text: "click it" });
     const confirm = await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
     expect(confirm).toMatchObject({ requestType: "permission" });
     expect(confirm).not.toHaveProperty("questionTool");
+    expect(confirm).not.toHaveProperty("questions");
     await instance.adapter.respondToRequest(plain, "ask-host", { behavior: "allow" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    const confirmReplies = readFileSync(dump2, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.uiResponse);
+    expect(confirmReplies).toEqual([{ uiResponse: { type: "extension_ui_response", id: "ask-host", confirmed: true } }]);
+    rmSync(dump2, { force: true });
+  });
+
+  it("answers input and editor asks with the owner's text as {value}, and a skip as {cancelled:true} (ASK3)", async () => {
+    const dump = join(tmpdir(), `murage-pi-editor-${newId()}.jsonl`);
+    await create("editor", { FAKE_PI_DUMP: dump });
+    const threadId = `t-editor-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    expect(opened).toMatchObject({
+      requestType: "question",
+      tool: "editor",
+      questions: [{ id: "q1", question: "Edit the release notes\nCurrent text:\nLine 1\nLine 2", options: [], multiSelect: false, allowOther: true }],
+    });
+    await expect(
+      instance.adapter.respondToRequest(threadId, "ask-e", { behavior: "answer", message: "Line 1 edited", answers: [{ id: "q1", selected: [], other: "Line 1 edited" }] }),
+    ).resolves.toBe("answered");
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.uiResponse)).toEqual([
+      { uiResponse: { type: "extension_ui_response", id: "ask-e", value: "Line 1 edited" } },
+    ]);
+    rmSync(dump, { force: true });
+    recorder.stop();
+    await instance.dispose();
+
+    const dump2 = join(tmpdir(), `murage-pi-input-skip-${newId()}.jsonl`);
+    await create("question", { FAKE_PI_DUMP: dump2 });
+    const skipped = `t-input-skip-${newId()}`;
+    const second = await instance.adapter.sendTurn({ threadId: skipped, text: "go" });
+    const input = await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
+    expect(input).toMatchObject({ requestType: "question", tool: "input", questions: [{ id: "q1", question: "Which branch should I use?", header: "branch name", allowOther: true }] });
+    await expect(instance.adapter.respondToRequest(skipped, "ask-q", { behavior: "deny" })).resolves.toBe("rejected");
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(readFileSync(dump2, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.uiResponse)).toEqual([
+      { uiResponse: { type: "extension_ui_response", id: "ask-q", cancelled: true } },
+    ]);
+    rmSync(dump2, { force: true });
   });
 
   it("leaves ordinary asks, isolated computers and questions unscoped so ordinary grants still work", async () => {
-    // An ordinary permission ask with no host control.
-    await create("permission");
+    // An ordinary permission ask (a confirm) with no host control.
+    await create("host-confirm");
     const plain = `t-plain-scope-${newId()}`;
     const first = await instance.adapter.sendTurn({ threadId: plain, text: "go" });
     const ordinary = (await recorder.until((e) => e.type === "request.opened" && e.turnId === first.turnId)) as unknown as OpenedAsk;
@@ -771,7 +828,7 @@ describe("PiDriver turns (fake CLI)", () => {
         scope: ordinary.approvalScope,
       }),
     ).toMatchObject({ source: "always-allow" });
-    await instance.adapter.respondToRequest(plain, "ask-1", { behavior: "allow" });
+    await instance.adapter.respondToRequest(plain, "ask-host", { behavior: "allow" });
     expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === first.turnId)).not.toHaveProperty(
       "approvalScope",
     );
