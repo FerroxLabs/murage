@@ -18,6 +18,7 @@ import {
   type LocalToolCheck,
   type LocalToolTestResult,
 } from "../../shared/local-models";
+import { contextK } from "./provider-model-picker";
 
 /** The event that brings someone from the picker or an Engines row straight to
  *  Settings → Models → Local models, with "Add a server" focused. */
@@ -66,7 +67,7 @@ export function lastCheckedLine(at: number, now: number): string {
 }
 
 export function tokensLabel(tokens: number): string {
-  return tokens >= 1000 ? `${Math.round(tokens / 1024)}K` : String(tokens);
+  return tokens >= 1000 ? contextK(tokens) : String(tokens);
 }
 
 /** What context this model actually gets, and whether that is enough for agent

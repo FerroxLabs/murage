@@ -208,6 +208,34 @@ export function isValidLocalModelId(value: unknown): value is string {
  *  host id, and restricted so it is safe as a TOML key, YAML key and env name. */
 export const USER_LOCAL_SERVER_ID = /^srv_[a-z0-9]{8,24}$/;
 
+/** The built-in local host ids a picker id can start with (`omlx::model`).
+ *  Mirrors server/drivers/local-inject.ts LOCAL_HOSTS — pinned there by test. */
+export const BUILT_IN_LOCAL_HOST_IDS: readonly string[] = [
+  "omlx",
+  "llamacpp",
+  "ollama",
+  "local_ollama",
+  "exo",
+  "lmstudio",
+  "unsloth",
+  "unsloth_api",
+  "vllm",
+  "sglang",
+];
+
+/** `host::model` for a built-in host or a user-added server — and nothing
+ *  else. A Codex `flux::flux-auto` or a custom `openrouter::x` is not local,
+ *  so the picker must never call it a local server when it drops out. */
+export function localPickerModel(id: string): { host: string; model: string } | null {
+  const at = id.indexOf("::");
+  if (at <= 0) return null;
+  const host = id.slice(0, at);
+  const model = id.slice(at + 2);
+  if (!model) return null;
+  if (!BUILT_IN_LOCAL_HOST_IDS.includes(host) && !USER_LOCAL_SERVER_ID.test(host)) return null;
+  return { host, model };
+}
+
 /**
  * llama-server names the model it loaded by the path it was handed. On Windows
  * that is `D:\Qwen\models\Qwen3.8-27B-UD-Q4_K_M.gguf`, which is not a usable

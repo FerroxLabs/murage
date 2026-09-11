@@ -168,15 +168,17 @@ function ModelCard({ server, model, onTested, onRefresh }: {
     if (busy) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      if (action.kind === "test" || action.kind === "retest" && !test) {
+      if (action.kind === "test") {
         const result: LocalToolTestResponse = await api(LOCAL_MODELS_ROUTES.test(server.id), { method: "POST", body: JSON.stringify({ model: model.model }) });
         onTested(server.id, model.model, result);
         return;
       }
+      // "Check again" always asks the address / model list again (its help text
+      // says so) — never the seven-check tool test, whatever the last test was.
       if (action.kind === "retest") { onRefresh(); return; }
       if (action.kind === "use") {
         window.dispatchEvent(new CustomEvent(OPEN_MODEL_PICKER_EVENT, { detail: { model: model.id } }));
-        setNotice("Open the bot you want and choose it from the model menu.");
+        setNotice(`The model menu of every open bot now shows ${model.model}. Close Settings and choose it in the bot you want.`);
         return;
       }
       if (action.kind === "copy-flag" && action.value) {

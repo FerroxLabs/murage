@@ -237,7 +237,7 @@ for (const skin of skins) for (const width of widths) test(`Local models: found 
 
   // "Use with a bot" sends the person to the one place a model is chosen.
   await card.getByRole("button", { name: "Use with a bot", exact: true }).click();
-  await expect(card.getByRole("status")).toHaveText("Open the bot you want and choose it from the model menu.");
+  await expect(card.getByRole("status")).toHaveText(`The model menu of every open bot now shows ${TOOL_MODEL}. Close Settings and choose it in the bot you want.`);
 
   // A3 — removing says what it takes with it before it happens.
   await card.getByRole("button", { name: `Remove ${SERVER_NAME}`, exact: true }).click();

@@ -124,6 +124,9 @@ describe("a server card states what it found, in that order", () => {
   it("keeps K labels honest for small windows", () => {
     expect(tokensLabel(512)).toBe("512");
     expect(tokensLabel(32_768)).toBe("32K");
+    expect(tokensLabel(65_536)).toBe("64K");
+    // an Ollama started with OLLAMA_CONTEXT_LENGTH=128000 reads the same as the picker row
+    expect(tokensLabel(128_000)).toBe("128K");
   });
 });
 
