@@ -193,7 +193,9 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     // nothing was spawned while the card waits — no argv dump yet
     expect(existsSync(dump)).toBe(false);
     // auto mode did not answer it, and it is logged as a card a rule may not answer
-    expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "card-shown" && row.source === "question")).toBe(true);
+    // (the decision log is an async queued append — decision-log.ts `drain` —
+    // so the row can land a moment after the card is visible)
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "card-shown" && row.source === "question"), { timeout: 5_000 }).toBe(true);
 
     // a companion surface (no desktop proof) cannot decide trust
     const companion = await answerTrust(bot, card.card.requestId, "Trust this folder", {});
@@ -208,7 +210,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect(await botText(bot.threadId)).toContain("canary-card-osprey");
     expect(readDump().argv).toContain("--trust");
     expect(await trustRecord(workspace)).toMatchObject({ record: { decision: "trust", source: "card" } });
-    expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-trusted" && row.source === "user")).toBe(true);
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-trusted" && row.source === "user"), { timeout: 5_000 }).toBe(true);
     const settledCard = (await messages(bot.threadId)).find((m) => m.card?.requestId === card.card.requestId)!;
     expect(settledCard.card).toMatchObject({ answered: "answer", answers: [{ id: "folderTrust", selected: ["Trust this folder"] }] });
 
@@ -238,7 +240,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect(await activities(bot.threadId)).toContain("untrusted folder: AGENTS.md, .fuigo/skills");
     expect((await activities(bot.threadId)).filter((name) => name.startsWith("error:"))).toEqual([]);
     expect(await trustRecord(workspace)).toMatchObject({ record: { decision: "reject", source: "card" } });
-    expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-untrusted")).toBe(true);
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-untrusted"), { timeout: 5_000 }).toBe(true);
 
     // remembered: the next turn gets the chip, not a card
     await send(bot, "again");

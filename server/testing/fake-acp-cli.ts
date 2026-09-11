@@ -443,6 +443,32 @@ process.stdin.on("data", (c) => {
   }
 });
 
+// folder-trust mode, after session/new OR session/load: Fuigo's
+// `maybe_spawn_interactive_trust_prompt` runs after either session reply
+// (session_setup.rs `new_session_inner` / `load_session_inner`), only for an
+// interactive client, only when the store has no grant. Detached from the
+// prompt: the client may answer it before or after it sends session/prompt.
+// (FUIGOTRUST3: the session/load branch was missing, so a second turn on a
+// thread — resumed through its cursor — neither asked nor recorded
+// `folderTrust` in the dump, and a test reading it after such a turn was
+// timing-dependent.)
+function afterSessionBuilt() {
+  if (mode !== "folder-trust") return;
+  dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, requested: false };
+  if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+  if (!folderTrustedAtBuild && folderTrustInteractive) {
+    (dumpState.folderTrust as { requested: boolean }).requested = true;
+    if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+    pendingPermissionId = 9006;
+    out({
+      jsonrpc: "2.0",
+      id: pendingPermissionId,
+      method: "_fuigo/folder_trust/request",
+      params: { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: process.cwd(), configKinds: ["instructions"] },
+    });
+  }
+}
+
 function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
@@ -512,25 +538,7 @@ function handle(msg: any) {
         ...(opts ? { configOptions: opts } : {}),
         ...(mdls ? { models: mdls } : {}),
       });
-      if (mode === "folder-trust") {
-        // Fuigo's `maybe_spawn_interactive_trust_prompt`: after the session
-        // reply, only for an interactive client, only when the store has no
-        // grant. Detached from the prompt: the client may answer it before or
-        // after it sends session/prompt.
-        dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, requested: false };
-        if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
-        if (!folderTrustedAtBuild && folderTrustInteractive) {
-          (dumpState.folderTrust as { requested: boolean }).requested = true;
-          if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
-          pendingPermissionId = 9006;
-          out({
-            jsonrpc: "2.0",
-            id: pendingPermissionId,
-            method: "_fuigo/folder_trust/request",
-            params: { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: process.cwd(), configKinds: ["instructions"] },
-          });
-        }
-      }
+      afterSessionBuilt();
       break;
     }
     case "session/load": {
@@ -541,6 +549,9 @@ function handle(msg: any) {
       const opts = configOptions();
       const mdls = sessionModels();
       result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}) });
+      // the real engine runs the trust prompt after session/load too
+      // (`load_session_inner`), so a resumed turn is gated like a new one
+      afterSessionBuilt();
       break;
     }
     // per-session settings (droid sets model/autonomy here, not via argv).
