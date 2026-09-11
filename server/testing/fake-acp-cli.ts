@@ -9,6 +9,12 @@
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
 //   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
+//                   | question-tool (AskUserQuestion routed through request_permission)
+//                   | fuigo-question (Fuigo's `_fuigo/ask_user_question` ext request)
+//                   | elicitation-form | elicitation-url | elicitation-legacy
+//                     (ACP `elicitation/create` form / url, and the older
+//                     `session/elicitation` spelling); the client's reply is
+//                     written to FAKE_ACP_DUMP as `decision`
 //                   | exit-on-cancel | exit-on-prompt | exit-with-ansi
 //                   | interleave (message → tool → message → tool → message)
 //                   | no-session-config (reject session/set_mode + set_model
@@ -366,6 +372,10 @@ function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
+    if (process.env.FAKE_ACP_DUMP) {
+      dumpState.decision = msg.result ?? { error: msg.error };
+      writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+    }
     onPermissionAnswered?.();
     return;
   }
@@ -391,6 +401,10 @@ function handle(msg: any) {
         process.exit(3);
       }
       const authMethods = mode === "no-auth" ? [] : [{ id: "cached_token" }];
+      if (process.env.FAKE_ACP_DUMP) {
+        dumpState.initialize = msg.params ?? null;
+        writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+      }
       result(msg.id, { protocolVersion: 1, authMethods, _meta: { modelState: { currentModelId: "fake-acp-model" } } });
       break;
     }
@@ -743,6 +757,72 @@ function handle(msg: any) {
         });
       } else if (mode === "interleave") playInterleaveTurn();
       else if (mode !== "empty-reply") playTurn();
+      if (mode === "fuigo-question") {
+        // Fuigo's AskUserQuestion over ACP: `_fuigo/ask_user_question` with
+        // the exact AskUserQuestionExtRequest shape (types.rs), two
+        // questions, one multi-select. Held until the client answers.
+        pendingPermissionId = 9002;
+        onPermissionAnswered = complete;
+        out({
+          jsonrpc: "2.0",
+          id: pendingPermissionId,
+          method: "_fuigo/ask_user_question",
+          params: {
+            sessionId: "fake-session",
+            toolCallId: "tc-1",
+            mode: "default",
+            questions: [
+              { question: "Which database?", options: [{ label: "Redis", description: "In-memory", preview: "<div/>" }, { label: "Postgres", description: "Relational" }] },
+              { question: "Which frameworks?", options: [{ label: "React", description: "" }, { label: "Vue", description: "" }], multiSelect: true },
+            ],
+          },
+        });
+        return;
+      }
+      if (mode === "elicitation-form" || mode === "elicitation-legacy") {
+        // ACP v1 elicitation/create in form mode (CreateElicitationRequest),
+        // or the older Rust-crate spelling of the same request.
+        pendingPermissionId = 9003;
+        onPermissionAnswered = complete;
+        out({
+          jsonrpc: "2.0",
+          id: pendingPermissionId,
+          method: mode === "elicitation-legacy" ? "session/elicitation" : "elicitation/create",
+          params: {
+            sessionId: "fake-session",
+            toolCallId: "tc-2",
+            mode: "form",
+            message: "Deploy settings",
+            requestedSchema: {
+              type: "object",
+              properties: {
+                environment: { type: "string", title: "Environment", enum: ["staging", "production"] },
+                features: { type: "array", title: "Features", items: { type: "string", enum: ["cache", "cdn"] } },
+                confirm: { type: "boolean", title: "Really?" },
+              },
+              required: ["environment", "confirm"],
+            },
+          },
+        });
+        return;
+      }
+      if (mode === "elicitation-url") {
+        pendingPermissionId = 9004;
+        onPermissionAnswered = complete;
+        out({
+          jsonrpc: "2.0",
+          id: pendingPermissionId,
+          method: "elicitation/create",
+          params: {
+            sessionId: "fake-session",
+            mode: "url",
+            elicitationId: "el-1",
+            url: "https://example.com/authorize?state=abc",
+            message: "Sign in to the deploy service to continue",
+          },
+        });
+        return;
+      }
       if (mode === "permission" || mode === "question-tool") {
         // ask the client to approve a tool, then complete once answered.
         // question-tool: the agent routes its AskUserQuestion tool through
