@@ -205,6 +205,52 @@ describe("draft uploads against a changing remote", () => {
     finally { rmSync(dir,{recursive:true,force:true}); }
     return {calls,error,id};
   }
+  it("re-reads an eventually consistent listing before declaring the created draft absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-draft-upload-"));
+    writeFileSync(join(dir, "asset.zip"), "artifact");
+    const calls = [];
+    let created = false;
+    let listings = 0;
+    const run = (command, args) => {
+      calls.push([command, ...args]);
+      const endpoint = args.at(-1);
+      if (args[0] === "release" && args[1] === "create") { created = true; return { status: 0, stdout: "" }; }
+      if (args.includes("POST")) return { status: 0, stdout: "{}" };
+      if (endpoint.endsWith("/murage-releases")) return http(200, { permissions: { push: true } });
+      if (endpoint.includes("/tags/")) return http(404, {});
+      if (endpoint.includes("/releases?")) {
+        // The draft shows up in the listing only on the third read after creation.
+        listings++;
+        return http(200, created && listings >= 4 ? [{ id: 7, tag_name: "v1.2.3", draft: true, assets: [] }] : []);
+      }
+      return http(200, { id: 7, tag_name: "v1.2.3", draft: true, assets: [] });
+    };
+    let error; let id;
+    try { id = uploadDraft("1.2.3", dir, "unused-notes", run); } catch (caught) { error = caught; }
+    finally { rmSync(dir, { recursive: true, force: true }); }
+    expect(error).toBeUndefined();
+    expect(id).toBe(7);
+    expect(calls.filter(call => call[2] === "create")).toHaveLength(1);
+  });
+  it("still refuses when the created draft never appears", () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-draft-upload-"));
+    writeFileSync(join(dir, "asset.zip"), "artifact");
+    const calls = [];
+    const run = (command, args) => {
+      calls.push([command, ...args]);
+      const endpoint = args.at(-1);
+      if (args[0] === "release" && args[1] === "create") return { status: 0, stdout: "" };
+      if (endpoint.endsWith("/murage-releases")) return http(200, { permissions: { push: true } });
+      if (endpoint.includes("/tags/")) return http(404, {});
+      return http(200, []);
+    };
+    let error;
+    try { uploadDraft("1.2.3", dir, "unused-notes", run); } catch (caught) { error = caught; }
+    finally { rmSync(dir, { recursive: true, force: true }); }
+    expect(error.message).toMatch(/could not be confirmed/);
+    expect(calls.filter(call => call[2] === "create")).toHaveLength(1);
+    expect(calls.flat()).not.toContain("POST");
+  });
   it("stops before uploading when publication happens after initial lookup", () => {
     const result = uploadScenario({states:[false]});
     expect(result.error.message).toMatch(/published/);

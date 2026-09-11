@@ -43,6 +43,15 @@ const execute = (command, args) => spawnSync(command, args, {
   timeout: args.some(arg => arg.startsWith("https://uploads.github.com/")) ? 10 * 60_000 : 30_000,
 });
 
+export const DRAFT_CONFIRM_ATTEMPTS = 6;
+export const DRAFT_CONFIRM_BACKOFF_MS = 2_000;
+// Synchronous wait (the guard is synchronous end to end). Test runners pass a
+// fake `run` and get a no-op so the suite never sleeps.
+function pause(ms, run) {
+  if (run !== execute) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function checked(command, args, run) {
   const result = run(command, args);
   if (result.error || result.status !== 0) {
@@ -205,7 +214,15 @@ export function uploadDraft(version, directory, notesFile, run = execute) {
   if (!release) {
     checked("gh", ["release", "create", `v${version}`, "--repo", RELEASE_REPO,
       "--draft", "--title", `Murage ${version}`, "--notes-file", notesFile], run);
-    release = findRelease(version, run);
+    // The draft listing is eventually consistent: run 34655404559 created the
+    // draft at 23:11:35Z and the listing one second later did not carry it yet.
+    // Re-read with a short backoff before treating the draft as absent; a
+    // second `release create` over an unseen draft is exactly what this guard
+    // exists to prevent, so absence after the retries is still an error.
+    for (let attempt = 0; !release && attempt < DRAFT_CONFIRM_ATTEMPTS; attempt++) {
+      if (attempt) pause(DRAFT_CONFIRM_BACKOFF_MS * attempt, run);
+      release = findRelease(version, run);
+    }
     if (!release) throw new Error("created draft could not be confirmed");
   }
   const id = release.id;
