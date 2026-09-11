@@ -1,6 +1,6 @@
 # Telegram control in Murage
 
-Murage 0.1.47 connects a paired owner's private Telegram chat to the Chief of Staff's current conversation. It is a way to continue the same work from your phone while Murage remains running on its host.
+Murage connects a paired owner's private Telegram chat to the Chief of Staff's current conversation. It is a way to continue the same work from your phone while Murage remains running on its host.
 
 ## Connect your bot
 
