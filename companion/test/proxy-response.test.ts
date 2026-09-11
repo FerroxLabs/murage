@@ -206,4 +206,25 @@ describe("preparing a harness response for a device", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("cdn-cache-control")).toBe("no-store");
   });
+
+  it("never forwards a stream event it could not scrub", async () => {
+    // The stream form of "never forwards a body it could not scrub". Arrays
+    // nested far past any stack make the scrub throw on every runtime while
+    // staying under the event ceiling; the 6,000-level object fixture above
+    // follows it, so the invariant is checked for both.
+    const depth = 200_000;
+    const tooDeep = `${"[".repeat(depth)}${JSON.stringify({ resumeCursors: { agent: "cursor-value" } })}${"]".repeat(depth)}`;
+    respond = (res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write('id: a:1\ndata: {"kind":"runtime","resumeCursors":{"agent":"first"}}\n\n');
+      res.write(`id: a:2\ndata: ${tooDeep}\n\n`);
+      res.write(`id: a:3\ndata: ${deeplyNested}\n\n`);
+      res.end();
+    };
+
+    const { status, text } = await device("/api/events");
+    expect(status).toBe(200);
+    expect(text).not.toContain("cursor-value");
+    expect(text).not.toContain("resumeCursors");
+  });
 });

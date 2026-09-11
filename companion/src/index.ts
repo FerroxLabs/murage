@@ -273,10 +273,10 @@ const browserIdentity = (): BoundIdentity => {
  *
  * `tailnetBindAddress` is the browser door's own resolver, imported rather
  * than reimplemented. It is the part that refuses a 100.64.0.0/10 address
- * that Tailscale and the interface table disagree about — CGNAT space is not
- * Tailscale's, and binding the wrong 100.64 address opens this door on a
- * network nobody chose. Two doors deciding that differently is how one of
- * them ends up wrong. */
+ * that Tailscale and the interface table disagree about, or that Tailscale
+ * never confirmed at all — CGNAT space is not Tailscale's, and binding the
+ * wrong 100.64 address opens this door on a network nobody chose. Two doors
+ * deciding that differently is how one of them ends up wrong. */
 const companionBindHost = (): string | null => {
   switch (COMPANION_BIND) {
     case "off":
@@ -291,7 +291,8 @@ const companionBindHost = (): string | null => {
       // this variable is the public internet.
       throw new Error(
         `MURAGE_COMPANION_BIND=tailnet, and the device door cannot bind the Tailscale address: ` +
-          `${resolved.refused}. Bring Tailscale up, or set MURAGE_COMPANION_BIND=off to run with ` +
+          `${resolved.refused}. Bring Tailscale up and signed in where the companion can run its command ` +
+          `line tool, or set MURAGE_COMPANION_BIND=off to run with ` +
           `no device door at all. It will not fall back to a wider address.`,
       );
     }
@@ -391,6 +392,11 @@ const service = (): ServiceInfo => ({
 });
 
 const connectedDevices = createConnectedDeviceTracker();
+// A browser session that stops being a sign-in — signed out, evicted by a
+// newer sign-in, found expired, or taken with its device — takes its live
+// streams with it. Device revoke still ends every stream through
+// `disconnectDevice` below; this is the narrower boundary.
+devices.onSessionEnded(({ sessionId }) => connectedDevices.disconnectSession(sessionId));
 const proxy = createProxyHandler({
     harnessPort: HARNESS_PORT,
     companionToken,
