@@ -94,6 +94,10 @@ const send = (obj: any) => process.stdout.write(JSON.stringify(obj) + "\n");
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const fixtureLargeText = () => "é".repeat(7 * 1024 * 1024);
+// Markers count only on the prompt's last line (the current request): the
+// harness replays earlier messages into a fresh process's prompt, and an old
+// marker there must not re-trigger a fixture on a later, ordinary turn.
+const fixtureRequested = (text: string, marker: string) => (text.trimEnd().split("\n").pop() ?? "").includes(marker);
 let sessionCounter = 0;
 let currentSessionFile: string | null = null;
 
@@ -282,17 +286,17 @@ function handle(cmd: any) {
       // acknowledge acceptance; the completion comes via events
       send({ type: "response", command: "prompt", success: true });
       // Bounded-ingress fixtures (A4), keyed on the prompt text.
-      if (String(cmd.message ?? "").includes("__fixture_oversize_frame__")) {
+      if (fixtureRequested(String(cmd.message ?? ""), "__fixture_oversize_frame__")) {
         // a VALID frame one KiB over the limit, then a clean turn_end
         send({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: fixtureOversizeText() } });
         streamTurn();
         return;
       }
-      if (String(cmd.message ?? "").includes("__fixture_oversize_open_frame__")) {
+      if (fixtureRequested(String(cmd.message ?? ""), "__fixture_oversize_open_frame__")) {
         process.stdout.write(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"${fixtureOversizeText()}`);
         return;
       }
-      if (String(cmd.message ?? "").includes("__fixture_large_frame__")) {
+      if (fixtureRequested(String(cmd.message ?? ""), "__fixture_large_frame__")) {
         send({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: fixtureLargeText() } });
         streamTurn();
         return;

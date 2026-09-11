@@ -188,6 +188,10 @@ const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
+// Markers count only on the prompt's last line (the current request): the
+// harness replays earlier messages into a fresh process's prompt, and an old
+// marker there must not re-trigger a fixture on a later, ordinary turn.
+const fixtureRequested = (text: string, marker: string) => (text.trimEnd().split("\n").pop() ?? "").includes(marker);
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
 const rpcMethods: string[] = [];
 const recordMethod = (method: string) => {
@@ -537,20 +541,20 @@ function handle(msg: any) {
       const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
       // Bounded-ingress fixtures (A4), keyed on the prompt so one fake can
       // run an oversized turn beside an ordinary one.
-      if (promptText.includes("__fixture_oversize_frame__")) {
+      if (fixtureRequested(promptText, "__fixture_oversize_frame__")) {
         // a VALID frame one KiB over the limit, then a clean success: the
         // driver must fail the turn rather than read past the dropped frame
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: fixtureOversizeText() } } } });
         complete();
         return;
       }
-      if (promptText.includes("__fixture_oversize_open_frame__")) {
+      if (fixtureRequested(promptText, "__fixture_oversize_open_frame__")) {
         // an oversized frame that never ends; stay alive until stopped
         process.stdout.write(`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"${fixtureOversizeText()}`);
         setInterval(() => {}, 1_000);
         return;
       }
-      if (promptText.includes("__fixture_large_frame__")) {
+      if (fixtureRequested(promptText, "__fixture_large_frame__")) {
         // an inline image at the harness's 10 MiB image cap: near the size a
         // real frame reaches, and well inside the frame limit
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "image", data: fixtureLargeImageBase64(), mimeType: "image/png" } } } });
