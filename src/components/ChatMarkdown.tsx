@@ -14,6 +14,8 @@ import { Check, Copy, Download, WrapText } from "lucide-react";
 import { codeFileName, codeLanguageLabel, codeLineLabel, saveCodeSnippet } from "@/lib/code-block";
 import { t } from "@/lib/i18n";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
+import { LocalMedia } from "./MediaPlayer";
+import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 
 // react-markdown drops every data: URL. Raster image bytes already inside the
 // message are the one exception worth keeping (they cost no request); links,
@@ -185,7 +187,17 @@ export function CodeBlock({ code, lang, streaming }: { code: string; lang: strin
 // and an <a href="file://…"> would still reach setWindowOpenHandler on a
 // middle or modifier click, which calls shell.openExternal without the main
 // process' containment check.
-function LocalFileLink({ filePath, children }: { filePath: string; children?: ReactNode }) {
+//
+// F5-T3: when the path names one of the player containers and the bubble knows
+// which conversation it belongs to, the same button is offered to the media
+// resolver first. A player replaces it only if the harness proves the file is
+// a playable regular file of this conversation's own workspace; otherwise this
+// button is what stays, unchanged.
+function LocalFileLink({ filePath, children, scope }: { filePath: string; children?: ReactNode; scope?: WorkspaceScopeRef }) {
+  return <LocalMedia scope={scope} path={filePath} fallback={<SaveFileLink filePath={filePath}>{children}</SaveFileLink>} />;
+}
+
+function SaveFileLink({ filePath, children }: { filePath: string; children?: ReactNode }) {
   const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
   const [reason, setReason] = useState("");
   const [savedTo, setSavedTo] = useState("");
@@ -276,7 +288,14 @@ function Spoiler({ children }: { children?: ReactNode }) {
   );
 }
 
-function ChatMarkdownComponent({ text, streaming = false }: { text: string; streaming?: boolean }) {
+function ChatMarkdownComponent({ text, streaming = false, scope }: {
+  text: string;
+  streaming?: boolean;
+  /** The conversation this message belongs to. Only a bubble that knows its
+   * own bot and thread can offer a file link to the media resolver; without
+   * it, file links keep exactly today's Save a copy behaviour. */
+  scope?: WorkspaceScopeRef;
+}) {
   return (
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
       <Markdown
@@ -315,7 +334,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
             const localPath = localFilePath(href);
-            if (localPath) return <LocalFileLink filePath={localPath}>{children}</LocalFileLink>;
+            if (localPath) return <LocalFileLink filePath={localPath} scope={scope}>{children}</LocalFileLink>;
             return (
               <a
                 href={href}
@@ -385,4 +404,14 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
   );
 }
 
-export const ChatMarkdown = memo(ChatMarkdownComponent);
+// F5-T3: `scope` is two strings a bubble builds on every render. Compared by
+// value here so a transcript re-render (streaming, scrolling) does not parse
+// every message's Markdown again just because the object identity moved.
+type ChatMarkdownProps = Parameters<typeof ChatMarkdownComponent>[0];
+function sameChatMarkdownProps(previous: ChatMarkdownProps, next: ChatMarkdownProps): boolean {
+  if (previous.scope?.botId !== next.scope?.botId || previous.scope?.threadId !== next.scope?.threadId) return false;
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)] as Array<keyof ChatMarkdownProps>);
+  for (const key of keys) if (key !== "scope" && previous[key] !== next[key]) return false;
+  return true;
+}
+export const ChatMarkdown = memo(ChatMarkdownComponent, sameChatMarkdownProps);

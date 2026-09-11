@@ -10,6 +10,7 @@ import {
   clipboardImageFiles,
   composeMessage,
   isImageFile,
+  mediaHintForPath,
   splitTranscriptAttachments,
   type ImageAttachment,
 } from "./composer-attachments";
@@ -200,5 +201,36 @@ describe("clipboard image intake", () => {
     const text = clipboard([{ kind: "string", type: "text/plain" }]);
     expect(clipboardHasImages(text)).toBe(false);
     expect(clipboardImageFiles(text)).toEqual([]);
+  });
+});
+
+// F5-T3: the extension table that decides whether a transcript path is worth
+// offering to the media resolver at all. It is a hint, never an authority.
+describe("playable media hints", () => {
+  it("recognizes exactly the U-28 container set, case-insensitively", () => {
+    expect(mediaHintForPath("/desk/outputs/take-2.wav")).toEqual({ kind: "audio", mime: "audio/wav" });
+    expect(mediaHintForPath("C:\\desk\\Song.MP3")).toEqual({ kind: "audio", mime: "audio/mpeg" });
+    expect(mediaHintForPath("clip.ogg")).toEqual({ kind: "audio", mime: "audio/ogg" });
+    expect(mediaHintForPath("clip.oga")).toEqual({ kind: "audio", mime: "audio/ogg" });
+    expect(mediaHintForPath("/desk/voice.m4a")).toEqual({ kind: "audio", mime: "audio/mp4" });
+    expect(mediaHintForPath("/desk/demo.mp4")).toEqual({ kind: "video", mime: "video/mp4" });
+    expect(mediaHintForPath("/desk/demo.WebM")).toEqual({ kind: "video", mime: "video/webm" });
+  });
+
+  it("has no hint for containers 0.1.52 does not offer a player for", () => {
+    for (const path of ["take.flac", "take.aiff", "clip.mov", "clip.avi", "clip.mkv", "clip.m4v", "list.m3u8", "stream.mpd"]) {
+      expect(mediaHintForPath(path), path).toBeNull();
+    }
+  });
+
+  it("never reads a suffix out of a name that has none", () => {
+    for (const path of ["", "/desk/README", "/desk/.mp3", ".wav", "/desk/song.mp3.", "/desk/mp4", "/desk/"]) {
+      expect(mediaHintForPath(path), JSON.stringify(path)).toBeNull();
+    }
+  });
+
+  it("reads the basename, so a directory that looks like a song is not one", () => {
+    expect(mediaHintForPath("/desk/album.mp3/notes.txt")).toBeNull();
+    expect(mediaHintForPath("/desk/album.txt/track.mp3")).toEqual({ kind: "audio", mime: "audio/mpeg" });
   });
 });

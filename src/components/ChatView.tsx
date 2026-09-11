@@ -636,7 +636,11 @@ function Bubble({
                 <AttachedImageGallery paths={attachments.images} />
               )}
               {attachments && attachments.files.length > 0 && (
-                <AttachedFileChips files={attachments.files} className={!visibleText ? "mb-0" : undefined} />
+                <AttachedFileChips
+                  files={attachments.files}
+                  className={!visibleText ? "mb-0" : undefined}
+                  scope={{ botId: bot.id, threadId: bot.threadId }}
+                />
               )}
               {visibleText && (
                 <div
@@ -669,7 +673,7 @@ function Bubble({
                   className={text ? "justify-start" : "mb-0 justify-start"}
                 />
               ) : null}
-              {text ? <ChatMarkdown text={text} /> : null}
+              {text ? <ChatMarkdown text={text} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
             </MessageBoundary>
           )}
@@ -1614,7 +1618,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
                       className={popping.text ? "justify-start" : "mb-0 justify-start"}
                     />
                   ) : null}
-                  {popping.text ? <ChatMarkdown text={popping.text} /> : null}
+                  {popping.text ? <ChatMarkdown text={popping.text} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
                 </MessageBoundary>
               </div>
             ) : null}
