@@ -159,6 +159,7 @@ posixOnly("unattended turns keep asking", () => {
   it("keeps approval cards while applying private or disabled attention notifications", async () => {
     const events = await openSse(`${base}/api/events`);
     const bots: string[] = [], hooks: string[] = [], threads: Array<{ botId: string; threadId: string }> = [];
+    const cleanupFailures: string[] = [];
     try {
       expect((await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: false } })).status).toBe(200);
       const first = await makeBot("grok"); bots.push(first.id);
@@ -199,11 +200,21 @@ posixOnly("unattended turns keep asking", () => {
       // threads, 05cce991). Stop the webhook threads by name and make sure the
       // bots are really gone: a leaked busy bot becomes bots[0] for the next
       // test and turns its settings edit into a "choose a thread" refusal.
-      for (const { botId, threadId } of threads) expect((await api("POST", `/api/bots/${botId}/interrupt`, { threadId })).status).toBe(200);
+      // Cleanup records problems instead of throwing, so every step still runs
+      // and a failure in the test body is never masked by a cleanup failure.
+      for (const { botId, threadId } of threads) {
+        const stopped = await api("POST", `/api/bots/${botId}/interrupt`, { threadId });
+        if (stopped.status !== 200) cleanupFailures.push(`stop ${botId}/${threadId}: ${stopped.status}`);
+      }
       for (const id of hooks) await desktopApi("DELETE", `/api/webhooks/${id}`);
-      for (const id of bots) expect((await deleteBotWhenIdle(id)).status, `bot ${id} was not deleted`).toBe(200);
+      for (const id of bots) {
+        const deleted = await deleteBotWhenIdle(id);
+        if (deleted.status !== 200) cleanupFailures.push(`delete bot ${id}: ${deleted.status}`);
+      }
       await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: true }, profile: { name: "" } });
     }
+    // Reached only when the body passed: a leaked busy bot would break the next test.
+    expect(cleanupFailures).toEqual([]);
   }, 60_000);
 
   it(
