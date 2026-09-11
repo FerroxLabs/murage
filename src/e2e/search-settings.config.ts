@@ -1,7 +1,8 @@
 import { defineConfig } from "@playwright/test";
+import { evidenceDir } from "./evidence";
 export default defineConfig({
   testDir: ".", testMatch: "search-settings.human.spec.ts", workers: 1, retries: 0,
   timeout: 30000, expect: { timeout: 5000 }, reporter: "list",
-  outputDir: "../../.planning/next-programme/search-settings-browser-results",
+  outputDir: evidenceDir("search-settings"),
   use: { headless: true, trace: "retain-on-failure" },
 });
