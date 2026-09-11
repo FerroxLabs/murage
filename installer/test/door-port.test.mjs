@@ -28,13 +28,24 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 
 import { planStart } from "../bin/murage.mjs";
+import {
+  DOOR_CHALLENGE_HEADER,
+  DOOR_NONCE_FILE,
+  DOOR_PROOF_HEADER,
+  DOOR_VERSION_HEADER,
+  createDoorNonce,
+  doorProof,
+  probeDoor,
+  readDoorNonce,
+  writeDoorNonce,
+} from "../lib/door-identity.mjs";
 import { readEnvFile } from "../lib/env-file.mjs";
 import { DEFAULT_DOOR_PORT, buildServeArgs, doorAnswers, doorPort, enroll } from "../lib/tailscale.mjs";
 
@@ -106,11 +117,26 @@ function tailscaleStub(dir, { logFile, proxyTarget, firstStatusNeedsLogin = fals
   return path;
 }
 
-/** A stand-in for the companion's browser door: answers `GET /enter`. */
-async function fakeDoor() {
+/**
+ * A stand-in for the companion's browser door: answers `GET /enter`.
+ *
+ * With `identity`, it also answers the identity challenge the way the real
+ * door does (`companion/src/door-identity.ts`); without one it is any other
+ * HTTP server that happens to hold the port. `status` plays a broken door.
+ * `requests()` counts what reached it, so a test can show it was probed and
+ * left running rather than stopped.
+ */
+async function fakeDoor({ identity = null, status = 200 } = {}) {
+  let requests = 0;
   const server = createServer((req, res) => {
+    requests += 1;
+    const challenge = req.headers[DOOR_CHALLENGE_HEADER];
+    if (identity && typeof challenge === "string" && /^[a-f0-9]{64}$/.test(challenge)) {
+      res.setHeader(DOOR_VERSION_HEADER, identity.version);
+      res.setHeader(DOOR_PROOF_HEADER, doorProof(identity.nonce, challenge, identity.version));
+    }
     if ((req.url ?? "").split("?")[0] === "/enter") {
-      res.writeHead(200, { "content-type": "text/html" });
+      res.writeHead(status, { "content-type": "text/html" });
       res.end("<!doctype html><title>enter</title>");
       return;
     }
@@ -118,7 +144,7 @@ async function fakeDoor() {
     res.end();
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  return { port: server.address().port, close: () => new Promise((r) => server.close(r)) };
+  return { port: server.address().port, requests: () => requests, close: () => new Promise((r) => server.close(r)) };
 }
 
 /**
@@ -162,6 +188,23 @@ function runCli(args, env) {
     child.on("error", error => finish(error));
     child.on("close", code => finish(null, code));
   });
+}
+
+/**
+ * Give the scratch install a manifest, the way a real one has one: `runCli`
+ * puts the installer at `<home>/installer`, so `<home>` is its package root.
+ * The door identity carries this version. Returns it.
+ */
+function installerManifest(home, version = "0.1.52-test") {
+  writeFileSync(join(home, "package.json"), JSON.stringify({ name: "murage", version, engines: { node: ">=24" } }));
+  return version;
+}
+
+/** Record a door identity the way `murage start` does, and return it. */
+function recordStart(home) {
+  const nonce = createDoorNonce();
+  writeDoorNonce(join(home, ".murage-server"), nonce);
+  return nonce;
 }
 
 function setupEnv(home, extra = {}) {
@@ -218,8 +261,12 @@ test("enrolment points the proxy at the door port, never at the harness", async 
 });
 
 test("`murage setup` sends the proxy to the door, and `murage status` reads it back there", async () => {
-  const door = await fakeDoor();
+  // The listener is the door the last `murage start` here recorded, so it can
+  // answer the identity challenge. (It used to be any HTTP server; I7 below.)
   const home = scratch();
+  const version = installerManifest(home);
+  const nonce = recordStart(home);
+  const door = await fakeDoor({ identity: { nonce, version } });
   const log = join(home, "argv.log");
   const stub = tailscaleStub(home, {
     logFile: log,
@@ -240,6 +287,7 @@ test("`murage setup` sends the proxy to the door, and `murage status` reads it b
     );
     assert.ok(!serveLine.includes("8799"), `the proxy must never front the harness: ${serveLine}`);
     assert.match(out, /browser door/);
+    assert.match(out, /proved it is this deployment's door \(installer 0\.1\.52-test\)/);
 
     // The env file — the thing the SERVER reads — still says 8799.
     const envFile = readEnvFile(join(home, ".murage-server", "murage.env"));
@@ -250,6 +298,7 @@ test("`murage setup` sends the proxy to the door, and `murage status` reads it b
     // as configured rather than as "no proxy".
     const { out: statusOut } = await runCli(["status"], env);
     assert.match(statusOut, new RegExp(`proxy is fronting the browser door 127\\.0\\.0\\.1:${door.port}`));
+    assert.match(statusOut, new RegExp(`browser door answering on 127\\.0\\.0\\.1:${door.port} \\(HTTP 200\\), and proved it is this deployment's door`));
   } finally {
     await door.close();
   }
@@ -391,4 +440,141 @@ test("`murage setup` fails closed when its installed temporary sidecar crashes",
   assert.ok(!commands.some(line=>line.startsWith("serve --bg")),"configured a proxy after sidecar failure");
   assert.ok(!commands.some(line=>line.startsWith("up ")),"continued enrollment after sidecar failure");
   assert.equal(existsSync(join(home,".murage-server","murage.env")),false,"failed setup wrote a success configuration");
+});
+
+// ── (e) I7: answering is not being the door ──────────────────────────────
+
+test("a recorded door identity is private, regular, owned and well formed, or it proves nothing", () => {
+  const dataDir = join(scratch(), "data");
+  const missing = readDoorNonce(dataDir);
+  assert.equal(missing.nonce, null);
+  assert.match(missing.error, /no `murage start` has recorded a door identity/);
+
+  const nonce = createDoorNonce();
+  assert.match(nonce, /^[a-f0-9]{64}$/);
+  assert.notEqual(createDoorNonce(), nonce, "every start gets its own");
+  const path = writeDoorNonce(dataDir, nonce);
+  assert.equal(path, join(dataDir, DOOR_NONCE_FILE));
+  if (process.platform !== "win32") assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.deepEqual(readDoorNonce(dataDir), { nonce, error: null });
+  assert.throws(() => writeDoorNonce(dataDir, "not-a-nonce"), /malformed/);
+  assert.deepEqual(readDoorNonce(dataDir), { nonce, error: null }, "a refused write leaves the recorded identity alone");
+
+  if (process.platform !== "win32") {
+    assert.match(readDoorNonce(dataDir, { owner: process.geteuid() + 1 }).error, /does not belong to the account/);
+    chmodSync(path, 0o640);
+    assert.match(readDoorNonce(dataDir).error, /readable by other accounts/);
+    chmodSync(path, 0o600);
+
+    const elsewhere = join(scratch(), "real-identity");
+    writeFileSync(elsewhere, `${nonce}\n`, { mode: 0o600 });
+    const linked = join(scratch(), "data");
+    mkdirSync(linked);
+    symlinkSync(elsewhere, join(linked, DOOR_NONCE_FILE));
+    assert.match(readDoorNonce(linked).error, /symlink/);
+  }
+  writeFileSync(path, "garbage\n");
+  assert.match(readDoorNonce(dataDir).error, /does not hold a door identity/);
+});
+
+test("probeDoor matches only a proof under the recorded nonce from this installer version, and is ready only below 500", async () => {
+  const nonce = createDoorNonce();
+  const version = "0.1.52-test";
+  const unproven = /did not answer the identity challenge/;
+  const cases = [
+    ["an unrelated server answering 200", { status: 200 }, "mismatch", false, unproven],
+    ["an unrelated server answering 404", { status: 404 }, "mismatch", false, unproven],
+    ["a crashed server answering 500", { status: 500 }, "mismatch", false, unproven],
+    ["a door from an earlier start", { identity: { nonce: createDoorNonce(), version } }, "mismatch", false, /does not match/],
+    ["a door from another installer version", { identity: { nonce, version: "0.1.51" } }, "mismatch", false, /installer 0\.1\.51, and this installer is 0\.1\.52-test/],
+    ["this deployment's door, not ready", { identity: { nonce, version }, status: 503 }, "match", false, /HTTP 503/],
+    ["this deployment's door", { identity: { nonce, version } }, "match", true, null],
+  ];
+  for (const [label, opts, identity, ready, reason] of cases) {
+    const door = await fakeDoor(opts);
+    try {
+      const r = await probeDoor({ port: door.port, nonce, version, timeoutMs: 5_000 });
+      assert.equal(r.answered, true, label);
+      assert.equal(r.identity, identity, label);
+      assert.equal(r.ready, ready, label);
+      if (reason) assert.match(r.reason, reason, label);
+      else assert.equal(r.reason, undefined, label);
+      assert.equal(r.doorVersion, identity === "match" ? version : null, label);
+    } finally {
+      await door.close();
+    }
+  }
+
+  // With no recorded identity, even the real door is unproven, and says why.
+  const door = await fakeDoor({ identity: { nonce, version } });
+  try {
+    const r = await probeDoor({ port: door.port, nonce: null, nonceError: "no `murage start` has recorded a door identity in /x", version, timeoutMs: 5_000 });
+    assert.equal(r.identity, "mismatch");
+    assert.match(r.reason, /no `murage start` has recorded a door identity/);
+  } finally {
+    await door.close();
+  }
+
+  // Nothing listening is not a mismatch. It is nothing.
+  const gone = await fakeDoor();
+  const port = gone.port;
+  await gone.close();
+  const nothing = await probeDoor({ port, nonce, version, timeoutMs: 2_000 });
+  assert.equal(nothing.answered, false);
+  assert.equal(nothing.identity, "unknown");
+});
+
+test("`murage setup` neither adopts nor fronts a listener that cannot prove it is this deployment's door, and does not stop it (I7)", async () => {
+  const notOurs = /something is already listening on 127\.0\.0\.1:\d+, and it is not this deployment's browser door: /;
+  const cases = [
+    ["an unrelated server answering 200", () => ({ status: 200 }), [notOurs, /did not answer the identity challenge/]],
+    ["an unrelated server answering 404", () => ({ status: 404 }), [notOurs, /did not answer the identity challenge/]],
+    ["a crashed server answering 500", () => ({ status: 500 }), [notOurs, /did not answer the identity challenge/]],
+    ["a door from an earlier start", ({ version }) => ({ identity: { nonce: createDoorNonce(), version } }), [notOurs, /does not match the door `murage start` last started here/]],
+    ["a door from another installer version", ({ nonce }) => ({ identity: { nonce, version: "0.1.51" } }), [notOurs, /started by installer 0\.1\.51/]],
+    ["this deployment's door answering 503", ({ nonce, version }) => ({ identity: { nonce, version }, status: 503 }), [/this deployment's browser door answers on 127\.0\.0\.1:\d+ but is not ready \(it answered HTTP 503\)/]],
+  ];
+  for (const [label, doorOpts, expected] of cases) {
+    const home = scratch();
+    const version = installerManifest(home);
+    const nonce = recordStart(home);
+    const door = await fakeDoor(doorOpts({ nonce, version }));
+    const log = join(home, "argv.log");
+    const stub = tailscaleStub(home, { logFile: log, proxyTarget: null, firstStatusNeedsLogin: true });
+    try {
+      const env = setupEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(door.port) });
+      const { status, out } = await runCli(["setup"], env);
+      assert.equal(status, 0, `${label}: the node still joined, so setup completes:\n${out}`);
+      for (const pattern of expected) assert.match(out, pattern, label);
+      assert.ok(door.requests() > 0, `${label}: setup never asked the listener`);
+      assert.doesNotMatch(out, /Starting the companion sidecar|sidecar is not in this install/, `${label}: setup went on to start a sidecar of its own on an occupied port`);
+
+      const argv = readFileSync(log, "utf8");
+      assert.ok(!argv.split("\n").some((l) => l.startsWith("serve --bg")), `${label}: fronted a listener that is not the door:\n${argv}`);
+      assert.equal(readEnvFile(join(home, ".murage-server", "murage.env")).MURAGE_TRUSTED_PROXY, undefined, `${label}: declared a proxy that was not configured`);
+
+      // Not setup's to stop: it is still there, and the recorded identity is untouched.
+      const still = await doorAnswers({ port: door.port, timeoutMs: 5_000 });
+      assert.equal(still.answered, true, `${label}: the listener setup did not start is gone`);
+      assert.deepEqual(readDoorNonce(join(home, ".murage-server")), { nonce, error: null }, `${label}: setup rewrote the recorded identity`);
+    } finally {
+      await door.close();
+    }
+  }
+});
+
+test("`murage status` reports a listener that fails the proof as not this deployment's door (I7)", async () => {
+  const home = scratch();
+  installerManifest(home);
+  recordStart(home);
+  const foreign = await fakeDoor();
+  try {
+    const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: null });
+    const { out } = await runCli(["status"], setupEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(foreign.port) }));
+    assert.match(out, new RegExp(`something answers on 127\\.0\\.0\\.1:${foreign.port} \\(HTTP 200\\), but it is NOT this deployment's browser door: it did not answer the identity challenge`));
+    assert.doesNotMatch(out, /browser door answering on/);
+    assert.ok(foreign.requests() > 0);
+  } finally {
+    await foreign.close();
+  }
 });
