@@ -137,7 +137,21 @@ the staged bytes still match:
 
 ```sh
 echo '<sha256>  /tmp/murage-unit-XXXXXX/murage.service' | sha256sum --check --strict - && sudo install -o root -g root -m 0644 /tmp/murage-unit-XXXXXX/murage.service /etc/systemd/system/murage.service
+rm -r /tmp/murage-unit-XXXXXX
 ```
+
+When setup ran as root (`sudo murage setup --service-user …`), the staging
+directory and file belong to root, so the printed check and cleanup carry
+`sudo` too and work from the same shell you ran `sudo` in. The staged file is
+never handed to your own account, which could otherwise swap it between the
+check and the install:
+
+```sh
+echo '<sha256>  /tmp/murage-unit-XXXXXX/murage.service' | sudo sha256sum --check --strict - && sudo install -o root -g root -m 0644 /tmp/murage-unit-XXXXXX/murage.service /etc/systemd/system/murage.service
+sudo rm -r /tmp/murage-unit-XXXXXX
+```
+
+From a root shell with no `sudo` installed, drop the `sudo ` prefixes.
 
 Paths with spaces, apostrophes, `%` or `$` are quoted and escaped for systemd
 (`%%`, and `$$` in `ExecStart=`). A path containing a newline or other control

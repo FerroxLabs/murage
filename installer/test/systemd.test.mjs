@@ -45,7 +45,15 @@ import {
   prepareDataDir,
   setupPaths,
 } from "../lib/service-account.mjs";
-import { UNIT_PATH, UnitRefused, environmentLine, shellWord, stageUnit, unitText } from "../lib/systemd.mjs";
+import {
+  UNIT_PATH,
+  UnitRefused,
+  environmentLine,
+  operatorCommands,
+  shellWord,
+  stageUnit,
+  unitText,
+} from "../lib/systemd.mjs";
 
 const scratchDirs = [];
 const scratch = () => {
@@ -218,6 +226,106 @@ test("the unit is staged in a new private directory, and the install command che
   assert.equal(cleanup, `rm -r ${shellWord(a.stagingDir)}`);
   assert.equal(enable, "sudo systemctl daemon-reload && sudo systemctl enable --now murage");
   assert.ok(!a.commands.some((cmd) => /\bmv\b|\/tmp\/murage\.service/.test(cmd)), a.commands.join("\n"));
+});
+
+// Fix round 1: under `sudo murage setup --service-user $SUDO_USER` the
+// staging directory is root's 0700 and the file root's 0600, and the operator
+// pastes the printed commands into the shell that ran sudo. A check or cleanup
+// without sudo there cannot open the file, so nothing was installable.
+test("a root-owned staging gets sudo on every command that opens it", () => {
+  const stagingDir = "/tmp/murage-unit-AbC123";
+  const stagedPath = `${stagingDir}/murage.service`;
+  const sha256 = "a".repeat(64);
+  const root = operatorCommands({ stagingDir, stagedPath, sha256, rootOwned: true });
+  const [install, cleanup] = root;
+  assert.equal(
+    install,
+    `echo ${shellWord(`${sha256}  ${stagedPath}`)} | sudo sha256sum --check --strict - && sudo install -o root -g root -m 0644 ${shellWord(stagedPath)} ${UNIT_PATH}`
+  );
+  assert.equal(cleanup, `sudo rm -r ${shellWord(stagingDir)}`);
+  // Every program that is handed the staged path runs under sudo; `echo`
+  // only prints the digest line and opens nothing.
+  for (const cmd of root) {
+    for (const part of cmd.split(/\s*(?:\|\||&&|\|)\s*/)) {
+      if (part.startsWith("echo ")) continue;
+      if (part.includes(stagingDir) || /^(sha256sum|install|rm|systemctl|journalctl)\b/.test(part)) {
+        assert.ok(part.startsWith("sudo "), `runs without sudo from the invoking shell: ${part}`);
+      }
+    }
+  }
+
+  // Staged by an ordinary account: that account can open its own files, so
+  // the check and the cleanup stay unprivileged.
+  const own = operatorCommands({ stagingDir, stagedPath, sha256, rootOwned: false });
+  assert.ok(own[0].startsWith(`echo ${shellWord(`${sha256}  ${stagedPath}`)} | sha256sum --check --strict - && sudo install `), own[0]);
+  assert.equal(own[1], `rm -r ${shellWord(stagingDir)}`);
+  assert.deepEqual(own.slice(2), root.slice(2));
+});
+
+test("the printed commands run as printed from a shell that cannot open the staging directory", () => {
+  // This process is not root, so a root-owned directory cannot be made here.
+  // A 0000 staging directory is the same situation from the invoking shell:
+  // it cannot list or read it. A `sudo` shim on PATH stands in for real sudo:
+  // it records each call and restores the owner's access for the command it
+  // runs, the way root has it. `install` into /etc is recorded, not run.
+  const root = scratch();
+  const staged = stageUnit(unitOpts(), { stagingRoot: root });
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const log = join(root, "sudo.log");
+  writeFileSync(
+    join(bin, "sudo"),
+    [
+      "#!/bin/sh",
+      `printf '%s\\n' "$*" >> ${shellWord(log)}`,
+      `[ "$1" = install ] && exit 0`,
+      `chmod 700 ${shellWord(staged.stagingDir)} 2>/dev/null`,
+      `"$@"; status=$?`,
+      `[ -d ${shellWord(staged.stagingDir)} ] && chmod 000 ${shellWord(staged.stagingDir)}`,
+      "exit $status",
+      "",
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+  const run = (cmd) =>
+    execFileSync("/bin/sh", ["-c", cmd], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+  const [install, cleanup] = operatorCommands({ ...staged, rootOwned: true });
+  chmodSync(staged.stagingDir, 0o000);
+  try {
+    // Without sudo on the check, exactly the reported failure.
+    assert.throws(() => run(`echo ${shellWord(`${staged.sha256}  ${staged.stagedPath}`)} | sha256sum --check --strict -`));
+    assert.match(run(install), /OK/);
+    run(cleanup);
+  } finally {
+    try {
+      chmodSync(staged.stagingDir, 0o700);
+    } catch {
+      // Removed by the cleanup command.
+    }
+  }
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.deepEqual(calls, [
+    "sha256sum --check --strict -",
+    `install -o root -g root -m 0644 ${staged.stagedPath} ${UNIT_PATH}`,
+    `rm -r ${staged.stagingDir}`,
+  ]);
+  assert.throws(() => lstatSync(staged.stagingDir), { code: "ENOENT" }, "the cleanup command removed the staging");
+
+  // A digest that no longer matches stops the install.
+  const again = stageUnit(unitOpts(), { stagingRoot: root });
+  const [tampered] = operatorCommands({ ...again, sha256: "0".repeat(64), rootOwned: true });
+  writeFileSync(log, "");
+  chmodSync(again.stagingDir, 0o000);
+  try {
+    assert.throws(() => run(tampered));
+  } finally {
+    chmodSync(again.stagingDir, 0o700);
+  }
+  assert.ok(!readFileSync(log, "utf8").includes("install "), "install must not run after a failed check");
 });
 
 test("files planted in the staging root are never written through or reused", () => {
