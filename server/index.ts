@@ -34,7 +34,7 @@ import { homedir, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { companionAuthorized } from "./companion-authority.ts";
 import { isIP } from "node:net";
-import { extname, join } from "node:path";
+import { extname, isAbsolute, join, sep } from "node:path";
 
 import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
@@ -99,7 +99,7 @@ import {
 import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, flushDecisionLog, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
-import { FolderTrustStore, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
+import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
 import { folderTrustDecision, folderTrustDisplayName } from "../shared/folder-trust.ts";
 import { subscribe } from "./sendlane.ts";
 import {
@@ -282,6 +282,7 @@ import {
   ensureTaskWorkspace,
   listMemoryTopics,
   isMemoryTopicName,
+  WORKSPACES_DIR,
 } from "./workspace.ts";
 import {
   readMemoryFile,
@@ -1340,25 +1341,72 @@ const store = new Store(() => bootSelection);
 // root next to bots.json. Read before every turn on an engine that gates
 // folders (Fuigo 1.0.13) and written by the trust card and the folder picker.
 const folderTrust = new FolderTrustStore(join(DATA_DIR, "folder-trust.json"));
+/** The Fuigo home a NATIVE-LOGIN turn on `instanceId` reads its own
+ * `trusted_folders.toml` from (FUIGOTRUST2): the engine's env is the
+ * server's plus the instance's configured environment, `FUIGO_HOME` else
+ * `~/.fuigo` — the same resolution as the driver's `fuigoHome`. Null for a
+ * provider-routed turn, which runs under a per-turn temporary home that
+ * trusts nothing, and for any engine that is not Fuigo. */
+function fuigoHomeForTrust(instance: Pick<ProviderInstance, "instanceId" | "driverKind"> | undefined, providerRouted: boolean): string | null {
+  if (!instance || instance.driverKind !== "fuigoAgent" || providerRouted) return null;
+  return fuigoHomeFromEnv({ ...process.env, ...instanceConfigs(cfg)[instance.instanceId]?.environment });
+}
 /** The record the driver decides from, for an engine that gates folders;
  * undefined for every other engine. `cwd` undefined = the home folder,
- * which Fuigo never gates. */
-function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined): SendTurnInput["folderTrust"] {
+ * which Fuigo never gates. `providerRouted` = the turn runs on a provider
+ * connection (temporary FUIGO_HOME), so the user's own Fuigo store is not
+ * consulted. */
+function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined, providerRouted: boolean): SendTurnInput["folderTrust"] {
   if (instance.adapter.capabilities.folderTrust !== true || !cwd) return undefined;
-  const scan = scanFolderTrustSources(cwd);
+  const scan = scanFolderTrustSources(cwd, { fuigoHome: fuigoHomeForTrust(instance, providerRouted) });
   if (isUnrecordableTrustRoot(scan.key)) return undefined;
   const decision = folderTrust.decision(scan.folder);
-  return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}) };
+  return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}) };
 }
 /** A folder the human chose in a picker is trusted at that moment (the
  * picker says so): the common case never sees a card. Bot-created folders,
- * clones and subfolders with their own root still do. */
-function rememberPickedFolder(cwd: string | null | undefined): void {
-  if (!cwd) return;
+ * clones and subfolders with their own root still do. Recorded ONLY when
+ * the request carries desktop authority — the same proof the trust card
+ * demands (FUIGOTRUST2): a paired device that reaches a picker route sets
+ * nothing here, and the first Fuigo turn raises the card to the owner. */
+function rememberPickedFolder(cwd: string | null | undefined, desktop: boolean): void {
+  if (!cwd || !desktop) return;
   try {
     folderTrust.remember(cwd, "trust", "picker");
   } catch (error) {
     console.warn(`[folder-trust] could not record the picked folder: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+/** FUIGOTRUST2 upgrade seed, once per installation: every working folder a
+ * bot, task or room already had when folder trust first appeared was chosen
+ * by the person in Murage (a picker, a room setup, a project import), so it
+ * is recorded as trusted rather than raising one card per folder after the
+ * upgrade. Bot-created private workspaces (`<DATA_DIR>/workspaces/…`) are
+ * never a human's choice and are left for the card. Guarded by
+ * `seededFrom` in folder-trust.json: a later Forget is never undone. */
+function seedFolderTrustFromStore(): void {
+  if (folderTrust.seeded) return;
+  const managed = canonicalFolder(WORKSPACES_DIR) + sep;
+  const folders = new Set<string>();
+  const add = (cwd: string | null | undefined) => {
+    if (!cwd || !isAbsolute(cwd)) return;
+    if ((canonicalFolder(cwd) + sep).startsWith(managed)) return;
+    folders.add(cwd);
+  };
+  for (const bot of store.bots) {
+    add(bot.cwd);
+    for (const task of bot.tasks ?? []) add(task.cwd);
+  }
+  for (const group of store.groups) {
+    add(group.cwd);
+    add(group.pinnedCwd);
+    for (const task of group.tasks ?? []) add(task.pinnedCwd);
+  }
+  try {
+    const count = folderTrust.seedOnce(folders, "0.1.52");
+    if (count >= 0) console.info(`[folder-trust] recorded ${count} folder${count === 1 ? "" : "s"} bots were already working in as trusted (chosen before 0.1.52; Forget in the picker asks again)`);
+  } catch (error) {
+    console.warn(`[folder-trust] could not seed pre-existing working folders: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 // STOPRESTORE2: the workspace editor's overwrite hold waits for a stopped
@@ -1397,6 +1445,7 @@ memoryWorker.start();
 const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+seedFolderTrustFromStore();
 // A committed profile cleanup means both its config deletion and bot-reference
 // cleanup were intended to be durable. Reconcile stale secondary references
 // before Electron can ACK and remove the journal: a crash between those writes
@@ -2209,11 +2258,17 @@ async function answerRequest(
  * told so honestly (or is gone), the card stays visible as Expired with
  * "Send as a message", and an unattended one keeps needing the owner in the
  * Inbox and buzzes once more. Idempotent: a settled card is left alone. */
-function expireQuestionCard(threadId: string, message: Message): void {
+function expireQuestionCard(threadId: string, message: Message, folderTrustLate?: "finished" | "stopped" | "timeout"): void {
   const card = message.card;
   if (!card || card.answered || !isQuestionCard(card)) return;
   store.patchMessage(threadId, message.id, {
-    card: { ...card, answered: "expired", expired: true, dismissed: false },
+    card: {
+      ...card,
+      answered: "expired",
+      expired: true,
+      dismissed: false,
+      ...(folderTrustLate && card.folderTrust ? { folderTrust: { ...card.folderTrust, late: folderTrustLate } } : {}),
+    },
   });
   if (card.requestId) askMessageByRequest.delete(`${threadId}:${card.requestId}`);
   const owner = (message.from?.botId ? store.bot(message.from.botId) : null) ?? store.botByThread(threadId);
@@ -3099,7 +3154,10 @@ bus.subscribe((event: RuntimeEvent) => {
                 card: { ...existing.card, answered: event.behavior === "answer" ? "answer" : "skipped", dismissed: false },
               });
             } else {
-              expireQuestionCard(event.threadId, existing);
+              // FUIGOTRUST2: a late trust card (the engine had already
+              // started) closed by the turn's own end keeps WHY, so the
+              // card can say the turn ran untrusted rather than "stopped"
+              expireQuestionCard(event.threadId, existing, event.folderTrustLate);
             }
           } else {
             store.patchMessage(event.threadId, messageId, {
@@ -4466,7 +4524,7 @@ async function startTurn(
             : ""),
         integrations,
         cwd,
-        folderTrust: folderTrustForTurn(instance, cwd),
+        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute)),
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
@@ -5655,7 +5713,7 @@ async function runGroupMemberTurn(
         system: roomSystem,
         cwd,
         integrations,
-        folderTrust: folderTrustForTurn(instance, cwd),
+        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute)),
         ...memberTurnSelection(bot.modelSelection),
       }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
         // Retire before teardown so synchronous/late output cannot settle this
@@ -10292,6 +10350,8 @@ const server = createServer(async (req, res) => {
             // first turn (pinGroupCwd). Setting the pin here would decide it
             // before anyone has worked, which is the store's call, not ours.
             group = store.patchGroup(group.id, { cwd: projectCwd }) ?? group;
+            // a human-chosen folder for the new room, like any picker (FUIGOTRUST2)
+            rememberPickedFolder(projectCwd, requestSurface(req.headers, url.searchParams) === "desktop");
           }
           broadcast({ kind: "group", group: publicGroupState(group) });
           createdGroups.push(group);
@@ -10372,7 +10432,7 @@ const server = createServer(async (req, res) => {
         }
         if (!responder) return json(res, 400, { error: "invalid default responder" });
         patch.cwd = checked.cwd ?? undefined;
-        rememberPickedFolder(checked.cwd);
+        rememberPickedFolder(checked.cwd, requestSurface(req.headers, url.searchParams) === "desktop");
         patch.defaultResponder = responder;
         patch.bulletin = body.bulletin;
         patch.setupCompletedAt = Date.now();
@@ -10560,7 +10620,7 @@ const server = createServer(async (req, res) => {
         const checked = validateBotCwd(body.cwd);
         if (!checked.ok) return json(res, 400, { error: checked.error });
         patch.cwd = checked.cwd ?? undefined;
-        rememberPickedFolder(checked.cwd);
+        rememberPickedFolder(checked.cwd, requestSurface(req.headers, url.searchParams) === "desktop");
       }
       // one pinned message per room; null/"" clears. The id is not
       // validated against the transcript here — a pin whose message was
@@ -11130,7 +11190,7 @@ const server = createServer(async (req, res) => {
         const checked = validateBotCwd(body.cwd);
         if (!checked.ok) return json(res, 400, { error: checked.error });
         patch.cwd = checked.cwd ?? undefined;
-        rememberPickedFolder(checked.cwd);
+        rememberPickedFolder(checked.cwd, requestSurface(req.headers, url.searchParams) === "desktop");
       }
       if (body.hidden === true && existingBot?.chiefOfStaff && body.chiefOfStaff !== false) {
         return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
@@ -12246,7 +12306,10 @@ const server = createServer(async (req, res) => {
       const current=store.projectBotForTask(m[1],m[2]);if(!current)return json(res,404,{error:"no such task"});
       if(Object.keys(body).some(key=>!["title","modelSelection","autoApprove","cwd","unread","requireAvailableModel","acknowledgeLocalAuto"].includes(key)))return json(res,400,{error:"unsupported thread setting"});
       const settings=body.modelSelection!==undefined||body.autoApprove!==undefined||body.cwd!==undefined;
-      if(settings&&requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"not found"});
+      // the working folder is a desktop setting: a paired device answers 404
+      // and (FUIGOTRUST2) records no folder trust either way
+      const desktopSurface=requestSurface(req.headers,url.searchParams)==="desktop";
+      if(settings&&!desktopSurface)return json(res,404,{error:"not found"});
       if(settings&&directThreadBusy(current.id,current.threadId))return json(res,409,{error:"Stop this thread before changing its settings"});
       const patch:Parameters<typeof store.patchTask>[2]={};
       if(body.modelSelection!==undefined){const checked=checkedModelSelection(body.modelSelection,{selection:current.modelSelection,busy:false},body.requireAvailableModel===true);if(!checked.ok)return json(res,checked.status,{error:checked.error});patch.modelSelection=checked.selection;}
@@ -12255,7 +12318,7 @@ const server = createServer(async (req, res) => {
         if(body.autoApprove&&!current.autoApprove&&autoMountsLocalComputer(current.computer)&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)"});
         patch.autoApprove=body.autoApprove;
       }
-      if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;rememberPickedFolder(checked.cwd);}
+      if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;rememberPickedFolder(checked.cwd,desktopSurface);}
       if(body.unread!==undefined){if(typeof body.unread!=="boolean")return json(res,400,{error:"unread must be true or false"});patch.unread=body.unread;}
       if(body.title!==undefined&&typeof body.title!=="string")return json(res,400,{error:"title must be text"});
       if(body.title!==undefined)patch.title=body.title;
@@ -12481,7 +12544,9 @@ const server = createServer(async (req, res) => {
         folderTrust.forget(checked.cwd);
         return json(res, 200, { ok: true });
       }
-      const scan = scanFolderTrustSources(checked.cwd);
+      // the user's own Fuigo store, as a native-login turn would read it
+      const fuigoInstance = registry.instances().find((instance) => instance.driverKind === "fuigoAgent");
+      const scan = scanFolderTrustSources(checked.cwd, { fuigoHome: fuigoHomeForTrust(fuigoInstance, false) });
       const record = folderTrust.record(checked.cwd) ?? null;
       return json(res, 200, {
         key: scan.key,
@@ -12489,6 +12554,7 @@ const server = createServer(async (req, res) => {
         sources: scan.sources,
         gated: !isUnrecordableTrustRoot(scan.key),
         record: record ? { decision: record.decision, decidedAt: record.decidedAt, source: record.source } : null,
+        upstreamTrusted: scan.upstreamTrusted === true,
       });
     }
 
