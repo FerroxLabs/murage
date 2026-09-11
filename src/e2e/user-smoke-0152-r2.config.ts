@@ -1,11 +1,11 @@
 import { defineConfig } from "@playwright/test";
+import { evidenceRoot } from "./evidence";
 import { join } from "node:path";
 
 // Murage 0.1.52 user smoke test ROUND 2 (docs/plans/0152-USER-SMOKE-2.md).
 // Same rig as round 1: one isolated harness + the real Vite app.
-const out = process.env.MURAGE_E2E_DATA_DIR
-  ? join(process.env.MURAGE_E2E_DATA_DIR, "..", "results")
-  : "../../.planning/user-smoke-2-results";
+// Results sit beside the data dir (docs/plans/0152-USER-SMOKE-2.md), never in the repo.
+const out = join(evidenceRoot("user-smoke-2"), "..", "results");
 
 export default defineConfig({
   testDir: ".",
