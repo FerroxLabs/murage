@@ -5,7 +5,7 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly; spawnCli
 // resolves it to `node <script>`, so these run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -539,6 +539,35 @@ describe("PiDriver turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-interrupt");
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+  });
+
+  it("close-confirmed stop: interruptTurn resolves only after the pi child has exited", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-pi-close-"));
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "EPERM";
+      }
+    };
+    try {
+      const pidFile = join(scratch, "pi.pid");
+      await create("permission", { FAKE_PI_PID_FILE: pidFile, FAKE_PI_LINGER_MS: "400" });
+      const threadId = "t-close-confirmed";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+      await recorder.until((e) => e.type === "request.opened");
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(alive(pid)).toBe(true);
+      await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+      expect(alive(pid)).toBe(false);
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toEqual([
+        expect.objectContaining({ turnId, ok: true, stopReason: "cancelled" }),
+      ]);
+      await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   it("writes models.json and set_model for a host::model inject pick", async () => {

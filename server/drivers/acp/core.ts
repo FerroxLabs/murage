@@ -20,6 +20,7 @@ import { stripVTControlCharacters } from "node:util";
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "../child-teardown.ts";
 import { classifyProviderError } from "../../../shared/provider-error.ts";
 import { redactSecretsInText } from "../../redact.ts";
 
@@ -215,6 +216,15 @@ const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
 const SESSION_CONFIG_TIMEOUT = envOr("MURAGE_ACP_SESSION_CONFIG_MS", 60_000); // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_NEW_MS", 90_000);
 const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // history replay on a long thread is slow
+/** After session/cancel the agent may still answer the prompt; past this the
+ * turn settles as cancelled and the child is terminated. */
+const ACP_CANCEL_GRACE_MS = 5_000;
+/** A stop that starts with session/cancel reaches the kill only after the
+ * grace period, so its close budget is measured from there. */
+const acpStopBudget = (): TeardownWait => {
+  const closeMs = providerCloseDeadlineMs();
+  return { closeMs, maxMs: ACP_CANCEL_GRACE_MS + closeMs };
+};
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -295,6 +305,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         asks: Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>;
       }
       const active = new Map<string, Turn>();
+      // Settlement removes a turn from `active` before its child has exited.
+      // Ownership of that child lasts until close is observed (A2).
+      const teardowns = new TurnTeardowns();
 
       const emit = (event: RuntimeEvent) => {
         for (const l of [...listeners]) l(event);
@@ -429,6 +442,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
 
         child.once("close", () => providerBinding?.cleanup());
+        const teardown = teardowns.track(threadId, turnId, child);
         const state = { settled: false, promptSent: false, cancelRequested: false, text: "" };
         const asks = new Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>();
         let nextId = 1;
@@ -460,7 +474,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({ jsonrpc: "2.0", id, method, params });
           });
 
-        const stop = () => killCliTree(child);
+        // Requesting termination is not closure; the teardown observes close.
+        const stop = () => {
+          teardown.markStopRequested();
+          killCliTree(child);
+        };
 
         /** Emit buffered assistant text as its own item, then clear it. */
         const flushAssistantText = () => {
@@ -685,7 +703,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
           else stop();
           if (interruptTimer) clearTimeout(interruptTimer);
-          interruptTimer = setTimeout(() => settle(true, "cancelled"), 5_000);
+          interruptTimer = setTimeout(() => settle(true, "cancelled"), ACP_CANCEL_GRACE_MS);
           interruptTimer.unref?.();
         };
         active.set(threadId, { stop, interrupt, turnId, asks });
@@ -900,7 +918,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             localComputerMcp: !config.fullAuto,
           },
           sendTurn,
-          interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),
+          // Close-confirmed stop (A2): resolve only once the child that served
+          // this thread has closed; reject at the bounded deadline while the
+          // process stays owned. A thread with no live child is already closed.
+          interruptTurn: async (threadId, turnId) => {
+            active.get(threadId)?.interrupt();
+            const result = await teardowns.wait(threadId, turnId, acpStopBudget());
+            if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
+            return result;
+          },
+          awaitTurnTeardown: (threadId, turnId) => teardowns.wait(threadId, turnId, acpStopBudget()),
           respondToRequest: async (threadId, requestId, decision) => {
             const turn = active.get(threadId);
             const finish = turn?.asks.get(requestId);
@@ -911,6 +938,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           hasSession: (threadId) => active.has(threadId),
           stopAll: async () => {
             for (const { stop } of active.values()) stop();
+            const result = await teardowns.waitAll({ closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() });
+            if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           },
           onEvent: (listener) => {
             listeners.add(listener);
@@ -919,6 +948,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         },
         dispose: async () => {
           for (const { stop } of active.values()) stop();
+          const result = await teardowns.waitAll({ closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() });
+          // Same as codex: an unconfirmed close keeps listeners attached so
+          // the owned child's late events are still accounted for.
+          if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           listeners.clear();
         },
       };

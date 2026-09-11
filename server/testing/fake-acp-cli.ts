@@ -39,6 +39,16 @@
 //   FAKE_ACP_USAGE_ROOT  put the prompt result's usage at the root instead of
 //                        under _meta (what opencode 1.18.18 actually does)
 //
+// Close-confirmed stop fixtures (A2):
+//   FAKE_ACP_MODE=cancel-ack  hold session/prompt open; answer it with
+//                        stopReason "cancelled" on session/cancel and stay alive
+//   FAKE_ACP_PID_FILE    write this child's pid (after probe branches exit)
+//   FAKE_ACP_TERM        ignore | linger | gate: SIGTERM handling. POSIX-only
+//                        observation — Windows taskkill /F runs no handler
+//   FAKE_ACP_TERM_MS     linger delay before exiting (default 400, max 10 s)
+//   FAKE_ACP_TERM_MARK   path written when SIGTERM arrives
+//   FAKE_ACP_EXIT_GATE   with TERM=gate, exit once this file exists (max 10 s)
+//
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, writeFileSync } from "node:fs";
@@ -178,6 +188,27 @@ const recordMethod = (method: string) => {
   rpcMethods.push(method);
   if (process.env.FAKE_ACP_RPC_DUMP) writeFileSync(process.env.FAKE_ACP_RPC_DUMP, JSON.stringify(rpcMethods));
 };
+
+if (process.env.FAKE_ACP_PID_FILE) writeFileSync(process.env.FAKE_ACP_PID_FILE, String(process.pid));
+const termBehavior = process.env.FAKE_ACP_TERM;
+if (termBehavior === "ignore" || termBehavior === "linger" || termBehavior === "gate") {
+  process.on("SIGTERM", () => {
+    if (process.env.FAKE_ACP_TERM_MARK) writeFileSync(process.env.FAKE_ACP_TERM_MARK, String(Date.now()));
+    if (termBehavior === "ignore") return;
+    if (termBehavior === "linger") {
+      setTimeout(() => process.exit(0), Math.min(10_000, Math.max(1, Number(process.env.FAKE_ACP_TERM_MS) || 400)));
+      return;
+    }
+    const gate = process.env.FAKE_ACP_EXIT_GATE;
+    const deadline = Date.now() + 10_000;
+    const poll = () => {
+      if (!gate || existsSync(gate) || Date.now() >= deadline) process.exit(0);
+      else setTimeout(poll, 20);
+    };
+    poll();
+  });
+}
+let pendingCancelAckPrompt: unknown = null;
 
 /** Test-only resource fixture. Existing modes retain their exact output.
  * The gate and PNG are explicit task-owned paths; nothing is fetched. */
@@ -442,6 +473,12 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode === "cancel-ack") {
+        pendingCancelAckPrompt = msg.id;
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
+        setInterval(() => {}, 1_000);
+        return;
+      }
       if (mode === "exit-on-cancel") {
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
         setInterval(() => {}, 1_000);
@@ -696,6 +733,14 @@ function handle(msg: any) {
       break;
     }
     case "session/cancel":
+      if (mode === "cancel-ack" && pendingCancelAckPrompt !== null) {
+        // A cooperative agent acknowledges promptly but only exits when the
+        // client terminates it — the gap close-confirmed stop must cover.
+        const id = pendingCancelAckPrompt;
+        pendingCancelAckPrompt = null;
+        result(id, { stopReason: "cancelled" });
+        break;
+      }
       if (mode === "exit-on-cancel") {
         // Exit before replying to the outstanding prompt, inside the driver's
         // cancellation grace. POSIX truncates this Windows exit value to 4.

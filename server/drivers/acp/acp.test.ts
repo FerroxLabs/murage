@@ -25,6 +25,16 @@ import { removeTempDir } from "../../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
+/** Signal 0 probes existence without touching the process. */
+const processAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 /** A harness that exists only in tests: it exercises the opt-in session-config
  *  model hook so PR 1 can prove the core capability without shipping a visible
  *  engine. Real harnesses live in their own file. */
@@ -210,6 +220,10 @@ describe("ACP turns (fake CLI)", () => {
   afterEach(async () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
+    delete process.env.FAKE_ACP_PID_FILE;
+    delete process.env.FAKE_ACP_TERM;
+    delete process.env.FAKE_ACP_TERM_MS;
+    delete process.env.MURAGE_PROVIDER_CLOSE_MS;
     delete process.env.XAI_API_KEY;
     delete process.env.OPENCODE_API_KEY;
     delete process.env.CURSOR_API_KEY;
@@ -697,6 +711,87 @@ describe("ACP turns (fake CLI)", () => {
     expect(errors).toEqual([]);
     expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
     expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
+  it("close-confirmed stop: interruptTurn resolves only after the ACP child has exited", async () => {
+    const pidFile = join(scratch, "acp.pid");
+    process.env.FAKE_ACP_PID_FILE = pidFile;
+    process.env.FAKE_ACP_TERM = "linger";
+    process.env.FAKE_ACP_TERM_MS = "400";
+    await create(GrokAgentDriver, "cancel-ack");
+    const threadId = "t-close-confirmed";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(processAlive(pid)).toBe(true);
+    // The agent acknowledges the cancel at once; the child keeps running until
+    // it is terminated. Returning here used to hand its workspace away early.
+    await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(pid)).toBe(false);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toEqual([
+      expect.objectContaining({ turnId, ok: true, stopReason: "cancelled" }),
+    ]);
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+  });
+
+  it("close-confirmed stop: a child still alive at the deadline stays owned", async () => {
+    const pidFile = join(scratch, "acp.pid");
+    process.env.FAKE_ACP_PID_FILE = pidFile;
+    process.env.FAKE_ACP_TERM = "ignore";
+    process.env.MURAGE_PROVIDER_CLOSE_MS = "300";
+    await create(GrokAgentDriver, "cancel-ack");
+    const threadId = "t-close-unconfirmed";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    try {
+      if (process.platform === "win32") {
+        // taskkill /T /F cannot be intercepted by the child: the real Windows
+        // route ends it, so the stop is confirmed there.
+        await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+        return;
+      }
+      await expect(instance.adapter.interruptTurn(threadId)).rejects.toMatchObject({
+        code: "provider_stop_unconfirmed",
+        stopResult: { closeConfirmed: false, reason: "timeout" },
+      });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(instance.adapter.hasSession(threadId)).toBe(false);
+      expect(processAlive(pid)).toBe(true);
+      await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({
+        closeConfirmed: false,
+        reason: "timeout",
+      });
+      process.kill(pid, "SIGKILL");
+      // the child stayed tracked, so its late close is still observed
+      await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    } finally {
+      if (processAlive(pid)) process.kill(pid, "SIGKILL");
+    }
+  });
+
+  it("close-confirmed stop: awaitTurnTeardown follows the exact turn's child, not a newer one", async () => {
+    const pidFile = join(scratch, "acp.pid");
+    process.env.FAKE_ACP_PID_FILE = pidFile;
+    await create();
+    const threadId = "t-teardown-generation";
+    const first = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const firstPid = Number(readFileSync(pidFile, "utf8"));
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, first.turnId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(firstPid)).toBe(false);
+
+    process.env.FAKE_ACP_MODE = "cancel-ack";
+    const second = await instance.adapter.sendTurn({ threadId, text: "again" });
+    await recorder.until((e) => e.type === "content.delta" && e.turnId === second.turnId);
+    const secondPid = Number(readFileSync(pidFile, "utf8"));
+    expect(secondPid).not.toBe(firstPid);
+    // The closed older generation is confirmed without waiting on, or
+    // vouching for, the live replacement.
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, first.turnId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(secondPid)).toBe(true);
+    await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(secondPid)).toBe(false);
   });
 
   it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {

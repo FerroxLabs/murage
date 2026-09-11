@@ -185,6 +185,7 @@ import {
   type RequestOutcome,
   type RuntimeEvent,
   newId,
+  stopCloseConfirmed,
 } from "./contracts.ts";
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 import {
@@ -851,12 +852,31 @@ async function interruptDirectThread(botId:string,threadId:string):Promise<void>
   const selected=botForDirectThread(botId,threadId);if(!selected)return;
   const run=directRuns.get(threadId),claim=cancelDirectTurnDispatch(botId,threadId);
   await releaseBrowserCapabilityForThread(threadId);
-  await registry.get(selected.modelSelection.instanceId)?.adapter.interruptTurn(threadId);
+  // Close-confirmed stop (A2): the run stays "stopping" and keeps its folder,
+  // computer and browser leases until the provider reports its child closed.
+  // A rejection or an explicit unconfirmed result retains ownership.
+  let stopped:Awaited<ReturnType<ProviderInstance["adapter"]["interruptTurn"]>>;
+  try{stopped=await registry.get(selected.modelSelection.instanceId)?.adapter.interruptTurn(threadId);}
+  catch{closeOpenApprovals(threadId);throw unconfirmedDirectStop(threadId,run?.generation);}
   closeOpenApprovals(threadId);
+  if(stopCloseConfirmed(stopped)===false)throw unconfirmedDirectStop(threadId,run?.generation);
   if(run&&claim?.phase!=="dispatching"&&directRuns.current(run)){
     if(screenPollers.get(botId)?.threadId===threadId)await finalScreenFrame(botId,threadId);
     directRuns.release(run);store.setTaskActivity(botId,threadId,"idle");
   }
+}
+/** One visible notice per retained generation; the caller keeps the lease. */
+const reportedUnconfirmedDirectStops=new Set<string>();
+function reportUnconfirmedDirectStop(threadId:string,generation?:string):void{
+  const key=generation??`thread:${threadId}`;
+  if(reportedUnconfirmedDirectStops.has(key))return;
+  reportedUnconfirmedDirectStops.add(key);
+  if(reportedUnconfirmedDirectStops.size>512)reportedUnconfirmedDirectStops.delete(reportedUnconfirmedDirectStops.values().next().value!);
+  store.appendMessage(threadId,{role:"bot",kind:"activity",tool:{name:"error: provider stop is unconfirmed; restart Murage before continuing this thread",ok:false}});
+}
+function unconfirmedDirectStop(threadId:string,generation?:string):Error{
+  reportUnconfirmedDirectStop(threadId,generation);
+  return Object.assign(new Error("The engine has not confirmed that it stopped. This thread keeps its working folder until the engine exits; restart Murage if it stays stuck."),{status:409,code:"provider_stop_unconfirmed"});
 }
 
 /** Images a provider turn has produced but not yet attached to a message.
@@ -2102,12 +2122,13 @@ const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
   checkMs: 60_000,
   onStall: (turn) => {
-    if(directRuns.get(turn.threadId)){
+    const stalledRun=directRuns.get(turn.threadId);
+    if(stalledRun){
       void interruptDirectThread(turn.botId,turn.threadId).then(()=>{
         recordMemorySettlement(turn.threadId,`watchdog:${store.activeLeaf(turn.threadId)}`,"interrupted");
         store.appendMessage(turn.threadId,{role:"bot",kind:"activity",tool:{name:"error: inactive thread stopped",ok:false}});
         drainQueuedSends();
-      }).catch(()=>store.appendMessage(turn.threadId,{role:"bot",kind:"activity",tool:{name:"error: provider stop is unconfirmed; restart Murage before continuing this thread",ok:false}}));
+      }).catch(()=>reportUnconfirmedDirectStop(turn.threadId,stalledRun.generation));
       return;
     }
     revokeInternalThread(turn.threadId);
@@ -2829,11 +2850,27 @@ bus.subscribe((event: RuntimeEvent) => {
         // settled → idle; a setup failure already marked it dead, keep that
         const directRun=directRuns.get(event.threadId);
         if(directRun)directRuns.settling(directRun);
-        const settleDirect=()=>{
-          if(directRun&&!directRuns.current(directRun))return;
+        const releaseDirect=()=>{
+          if(directRun&&!directRuns.current(directRun)){
+            // Stop already released this generation after the same confirmed
+            // close; queued work may proceed unless a newer run owns the thread.
+            if(!directRuns.get(event.threadId))drainQueuedSends();
+            return;
+          }
           if(directRun)directRuns.release(directRun);
           if(store.taskByThread(bot.id,event.threadId)?.activity!=="dead")store.setTaskActivity(bot.id,event.threadId,"idle");
           drainQueuedSends();
+        };
+        // A2: a terminal event is not teardown. Drivers that end a turn by
+        // terminating its child expose awaitTurnTeardown; the lease is released
+        // only after that exact child closed, and retained if it did not.
+        const settleDirect=()=>{
+          const teardownAdapter=directRun&&directRuns.current(directRun)
+            ? registry.get(event.providerInstanceId??directRun.snapshot.modelSelection.instanceId)?.adapter
+            : undefined;
+          if(!directRun||!teardownAdapter?.awaitTurnTeardown){releaseDirect();return;}
+          const retain=()=>{if(directRuns.current(directRun))reportUnconfirmedDirectStop(event.threadId,directRun.generation);};
+          void teardownAdapter.awaitTurnTeardown(event.threadId,event.turnId).then(result=>result.closeConfirmed?releaseDirect():retain(),retain);
         };
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
         const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
@@ -3993,7 +4030,7 @@ async function startTurn(
       }), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
-          await instance.adapter.interruptTurn(threadId);
+          if(stopCloseConfirmed(await instance.adapter.interruptTurn(threadId))===false)throw new Error("provider termination is unconfirmed");
           if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
         } catch(error) { acceptedTurnCleanupFailed=true;throw error; }
       },()=>memoryReceipt?.accepted());
@@ -11405,7 +11442,12 @@ const server = createServer(async (req, res) => {
         const selected=requestedDirectBot(bot.id,body.threadId),threadId=selected.threadId;
         const routine=routines!.activeBotRunForBot(bot.id);
         if(routine?.threadId===threadId){cancelDirectTurnDispatch(bot.id,threadId);await routines!.cancelRun(routine.id);return json(res,200,{ok:true});}
-        await interruptDirectThread(bot.id,threadId);
+        try{await interruptDirectThread(bot.id,threadId);}
+        catch(error){
+          const stop=error as {code?:unknown;message?:string};
+          if(stop.code!=="provider_stop_unconfirmed")throw error;
+          return json(res,409,{error:stop.message,code:stop.code});
+        }
         return json(res,200,{ok:true});
       }
       const expectedThreadId = body.threadId;
