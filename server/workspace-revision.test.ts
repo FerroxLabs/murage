@@ -27,9 +27,12 @@ import type { WorkspaceScopeRef } from "../shared/workspace-files.ts";
 // `held` pins the stamps of chosen inodes; `volume.shape` reshapes every
 // stamp the way a whole mount would (a mirror mount, whole seconds, a clock
 // that runs ahead), which is what the clock probe has to catch; `probes`
-// records every probe file the module wrote.
-const { held, opened, probes, volume } = vi.hoisted(() => ({
+// records every probe file the module created (by path, whichever call
+// created it); `pathOps` records every path-addressed chmod/utimes/stat, the
+// calls a same-user writer could redirect by swapping a probe for a symlink.
+const { held, opened, probes, pathOps, volume } = vi.hoisted(() => ({
   held: new Map<string, { mtimeMs: number; ctimeMs: number }>(), opened: [] as string[], probes: [] as string[],
+  pathOps: [] as { op: string; path: string }[],
   volume: { shape: undefined as ((stat: Stats) => void) | undefined },
 }));
 vi.mock("node:fs", async (importOriginal) => {
@@ -40,13 +43,29 @@ vi.mock("node:fs", async (importOriginal) => {
     if (stat && volume.shape) volume.shape(stat);
     return stat;
   };
+  const isProbe = (path: unknown) => String(path).includes("/.murage-clock-probe-");
   return {
     ...fs,
-    lstatSync: ((...args: Parameters<typeof fs.lstatSync>) => hold(fs.lstatSync(...args) as Stats | undefined)) as typeof fs.lstatSync,
+    lstatSync: ((...args: Parameters<typeof fs.lstatSync>) => {
+      if (isProbe(args[0])) pathOps.push({ op: "lstatSync", path: String(args[0]) });
+      return hold(fs.lstatSync(...args) as Stats | undefined);
+    }) as typeof fs.lstatSync,
+    statSync: ((...args: Parameters<typeof fs.statSync>) => {
+      if (isProbe(args[0])) pathOps.push({ op: "statSync", path: String(args[0]) });
+      return hold(fs.statSync(...args) as Stats | undefined);
+    }) as typeof fs.statSync,
     fstatSync: ((...args: Parameters<typeof fs.fstatSync>) => hold(fs.fstatSync(...args) as Stats)) as typeof fs.fstatSync,
-    openSync: ((...args: Parameters<typeof fs.openSync>) => { opened.push(String(args[0])); return fs.openSync(...args); }) as typeof fs.openSync,
+    chmodSync: ((...args: Parameters<typeof fs.chmodSync>) => { pathOps.push({ op: "chmodSync", path: String(args[0]) }); return fs.chmodSync(...args); }) as typeof fs.chmodSync,
+    lchmodSync: ((...args: Parameters<typeof fs.lchmodSync>) => { pathOps.push({ op: "lchmodSync", path: String(args[0]) }); return fs.lchmodSync(...args); }) as typeof fs.lchmodSync,
+    utimesSync: ((...args: Parameters<typeof fs.utimesSync>) => { pathOps.push({ op: "utimesSync", path: String(args[0]) }); return fs.utimesSync(...args); }) as typeof fs.utimesSync,
+    lutimesSync: ((...args: Parameters<typeof fs.lutimesSync>) => { pathOps.push({ op: "lutimesSync", path: String(args[0]) }); return fs.lutimesSync(...args); }) as typeof fs.lutimesSync,
+    openSync: ((...args: Parameters<typeof fs.openSync>) => {
+      opened.push(String(args[0]));
+      if (isProbe(args[0]) && /x/.test(String(args[1]))) probes.push(String(args[0]));
+      return fs.openSync(...args);
+    }) as typeof fs.openSync,
     writeFileSync: ((...args: Parameters<typeof fs.writeFileSync>) => {
-      if (String(args[0]).includes("/.murage-clock-probe-")) probes.push(String(args[0]));
+      if (isProbe(args[0])) probes.push(String(args[0]));
       return fs.writeFileSync(...args);
     }) as typeof fs.writeFileSync,
   };
@@ -55,7 +74,7 @@ vi.mock("node:fs", async (importOriginal) => {
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
-  held.clear(); opened.length = 0; probes.length = 0; volume.shape = undefined; vi.restoreAllMocks(); __resetWorkspaceRevisionCacheForTests();
+  held.clear(); opened.length = 0; probes.length = 0; pathOps.length = 0; volume.shape = undefined; vi.restoreAllMocks(); __resetWorkspaceRevisionCacheForTests();
   for (const db of databases.splice(0)) db.close();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -375,6 +394,31 @@ describe("the volume clock probe", () => {
     expect(probeVolumeClock(dir)).toBe(true);
     expect(probes).toHaveLength(1);
     expect(probes[0]!.startsWith(`${dir}/.murage-clock-probe-`)).toBe(true);
+    expect(leftovers(dir)).toEqual([]);
+  });
+
+  it("touches the probe only through its own descriptor: no path-addressed chmod, utimes or stat that a symlink swap could redirect", () => {
+    // The probe file is created with O_EXCL under a random name, but a
+    // same-user writer inside the root can unlink it and put a symlink to
+    // any file they can name in its place. A chmod or utimes addressed by
+    // path would then land on that file (chmod follows symlinks); the
+    // readback by path would report that file's stamps. Everything after
+    // the create must go through the descriptor the create returned, which
+    // stays bound to the inode whatever the name now points at.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
+    expect(probeVolumeClock(dir)).toBe(true);
+    expect(probes).toHaveLength(1);
+    expect(pathOps).toEqual([]);
+    expect(leftovers(dir)).toEqual([]);
+    // The verdict shapes are unchanged by the descriptor route.
+    volume.shape = stat => { stat.ctimeMs = stat.mtimeMs; };
+    expect(probeVolumeClock(dir)).toBe(false);
+    volume.shape = stat => { stat.mtimeMs = Math.floor(stat.mtimeMs / 1000) * 1000; stat.ctimeMs = Math.floor(stat.ctimeMs / 1000) * 1000; };
+    expect(probeVolumeClock(dir)).toBe(false);
+    volume.shape = undefined;
+    expect(probeVolumeClock(dir)).toBe(true);
+    expect(pathOps).toEqual([]);
+    expect(probes).toHaveLength(4);
     expect(leftovers(dir)).toEqual([]);
   });
 

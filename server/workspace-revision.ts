@@ -47,8 +47,8 @@
 // every bot-written file on every discovery page and every 5 s parent-folder
 // probe of an open document. Instead the volume is asked once, the first
 // time such a state is otherwise fit to remember (probeVolumeClock): a hidden
-// temp file is written in the workspace root, chmod'ed and given an mtime ten
-// seconds in the past with utimes, and its stamps must show sub-second
+// temp file is created in the workspace root and, through its own descriptor,
+// chmod'ed and given an mtime ten seconds in the past, and its stamps must show sub-second
 // precision, sit at or behind the local clock, keep mtime through the chmod,
 // and move ctime forward while mtime goes back. A mirror mount fails the last
 // check (its ctime follows mtime into the past), a whole-second mount the
@@ -80,7 +80,7 @@
 // move ctime) and the same page lists in 316-362 ms first, 3-7 ms warm,
 // plain-written and renamed alike. No further bound is applied at that cost.
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync, utimesSync, writeFileSync, type Stats } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, futimesSync, lstatSync, openSync, readSync, unlinkSync, writeSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { WORKSPACE_TEXT_MAX_BYTES, type FileRevision } from "../shared/workspace-files.ts";
 
@@ -143,18 +143,26 @@ const pause = (ms: number) => { try { Atomics.wait(new Int32Array(new SharedArra
  */
 export function probeVolumeClock(directory: string): boolean {
   const path = join(directory, `.murage-clock-probe-${process.pid}-${Math.random().toString(36).slice(2, 10)}`);
+  // The name is only used to create the file (exclusively: an existing entry,
+  // a symlink included, fails the create) and to unlink it. Every stat,
+  // chmod and utimes goes through the descriptor, which stays bound to the
+  // inode the create made: a same-user writer inside the root who swaps the
+  // probe for a symlink in the meantime redirects nothing, since a chmod or
+  // utimes by path would follow that link to whatever it names.
+  let fd: number | undefined;
   try {
-    writeFileSync(path, "murage volume clock probe\n", { mode: 0o600, flag: "wx" });
-    const written = lstatSync(path);
+    fd = openSync(path, "wx", 0o600);
+    writeSync(fd, "murage volume clock probe\n");
+    const written = fstatSync(fd);
     const behindClock = (stat: Stats, now: number) => stat.mtimeMs <= now + PROBE_CLOCK_SLACK_MS && stat.ctimeMs <= now + PROBE_CLOCK_SLACK_MS;
     if (!Number.isFinite(written.mtimeMs) || !Number.isFinite(written.ctimeMs) || !behindClock(written, Date.now())) return false;
-    chmodSync(path, 0o640);
-    const changed = lstatSync(path);
+    fchmodSync(fd, 0o640);
+    const changed = fstatSync(fd);
     if (changed.mtimeMs !== written.mtimeMs || changed.ctimeMs < written.ctimeMs || !behindClock(changed, Date.now())) return false;
     for (let attempt = 0; attempt < PROBE_TICK_ATTEMPTS; attempt++) {
       if (attempt > 0) pause(PROBE_TICK_WAIT_MS);
-      utimesSync(path, new Date(written.atimeMs), new Date(written.mtimeMs - PROBE_MTIME_BACK_MS));
-      const dated = lstatSync(path);
+      futimesSync(fd, new Date(written.atimeMs), new Date(written.mtimeMs - PROBE_MTIME_BACK_MS));
+      const dated = fstatSync(fd);
       if (!behindClock(dated, Date.now())) return false;
       if (dated.mtimeMs >= written.mtimeMs) return false;
       if (dated.ctimeMs <= dated.mtimeMs) return false;
@@ -163,7 +171,11 @@ export function probeVolumeClock(directory: string): boolean {
     }
     return false;
   } catch { return false; }
-  finally { try { unlinkSync(path); } catch { /* never written, or already gone */ } }
+  finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* already closed */ } }
+    // unlink never follows a symlink: at worst a swapped-in link is removed.
+    try { unlinkSync(path); } catch { /* never created, or already gone */ }
+  }
 }
 
 /** The held verdict for `dev`, probing `root` when none is fresh. Only the
