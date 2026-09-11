@@ -4,6 +4,7 @@ import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts"
 import { memoryRequestPrefix } from "../../shared/memory.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
+import { threadCheckpointId } from "./checkpoints.ts";
 
 export interface BundleRecord {
   id: string; version: number; scopeId: string; text: string; assertion: string;
@@ -16,9 +17,42 @@ const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: Bundle
 
 /** Hydrate authoritative bytes only; an approved projection does not expose its private parents. */
 export function hydrateMemoryRecord(id: string, version: number, access: MemoryAccess): BundleRecord {
+  return hydrate(id,version,access,false);
+}
+
+/** A thread's own checkpoint rolls on every captured message in that thread, the
+ * turn's own prompt and reply included, so the version selected for a dispatch
+ * is routinely archived inside the dispatch window. That supersession forgets
+ * nothing: the archived version is a bounded index of evidence that is still
+ * active at the same revisions, under the same policy revision and deletion
+ * epoch (an owner forget, archive or policy change moves one of those and is
+ * refused on its own). A disclosed version in that state is stale, not
+ * revoked. Everything else stays fail-closed: the record must be the current
+ * thread's checkpoint, unpinned, untombstoned, with a newer active version and
+ * every evidence source intact. */
+export function supersededThreadCheckpoint(id: string, version: number, access: MemoryAccess): boolean {
+  const db = database();
+  const row = db.prepare("SELECT scope_id,kind,state,owner_pinned FROM memory_records WHERE id=? AND version=?").get(id,version);
+  if (!row || row.kind !== "checkpoint" || row.state !== "archived" || row.owner_pinned === 1 || id !== threadCheckpointId(String(row.scope_id),access.threadId)) return false;
+  return Boolean(db.prepare("SELECT 1 FROM memory_records WHERE id=? AND version>? AND state='active' LIMIT 1").get(id,version));
+}
+
+/** Hydrate a version that was disclosed to a turn: identical to hydrateMemoryRecord
+ * except that the thread's own superseded checkpoint is accepted as stale. */
+export function hydrateDisclosedMemoryRecord(id: string, version: number, access: MemoryAccess): BundleRecord {
+  try { return hydrate(id,version,access,false); }
+  catch (error) {
+    if (!supersededThreadCheckpoint(id,version,access)) throw error;
+    return hydrate(id,version,access,true);
+  }
+}
+
+function hydrate(id: string, version: number, access: MemoryAccess, allowSuperseded: boolean): BundleRecord {
   assertMemoryAccess(access);
   const db = database();
-  const row = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state='active'").get(id,version);
+  const row = db.prepare(allowSuperseded
+    ? "SELECT * FROM memory_records WHERE id=? AND version=? AND state IN ('active','archived')"
+    : "SELECT * FROM memory_records WHERE id=? AND version=? AND state='active'").get(id,version);
   if (!row || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(id,version)) throw new Error("MEMORY_RECORD_UNAVAILABLE");
   assertMemoryAccess(access,String(row.scope_id));
   const evidence = db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,version) as unknown as MemoryEvidenceHandle[];
@@ -124,7 +158,7 @@ export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
   if (bundle.tokenCount !== tokens(bundle.text)) throw new Error("MEMORY_BUNDLE_BUDGET_MISMATCH");
   assertMemoryAccess(access);
   for (const record of trusted.records) {
-    const current = hydrateMemoryRecord(record.id,record.version,access);
+    const current = hydrateDisclosedMemoryRecord(record.id,record.version,access);
     if (JSON.stringify(current)!==JSON.stringify(record)) throw new Error("MEMORY_CONTEXT_REVOKED");
   }
 }

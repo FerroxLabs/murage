@@ -20,7 +20,7 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 
 ## Download
 
-**[Murage 0.1.47 — stable release](https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.47)** · [Release notes](https://github.com/FerroxLabs/murage-releases/releases/latest)
+**[Latest release](https://github.com/FerroxLabs/murage-releases/releases/latest)** · [All releases](https://github.com/FerroxLabs/murage-releases/releases)
 
 | Platform | Installer |
 |---|---|
@@ -31,7 +31,7 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 
 Mac downloads are signed and notarized. Windows downloads are signed. Ubuntu installation and upgrade checks passed for this release. [Ubuntu checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt) are available alongside the downloads.
 
-**Fuigo 1.0.7 is bundled. Installed desktop builds need neither Node.js nor pnpm.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
+**Fuigo 1.0.11 is bundled. Installed desktop builds need neither Node.js nor pnpm.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
 
 ## A real brief. A working team.
 
@@ -55,7 +55,7 @@ Custom avatars, named teams and group portraits make that structure easy to reco
 
 You do not have to invent every role and workflow yourself. Browse **prebuilt teams** for an outcome, inspect their members and playbooks, and choose what to import. Agents—called **Embers**—can also work individually, with their own instructions, model and task history.
 
-With a delegation-compatible engine, your Chief can use the live roster, create useful specialists when you ask for a team, and assign them work. The Chief stays your central point of contact. In 0.1.47, nested Chief-to-lead-to-specialist delegation has a known tool-availability limitation; improvements are in development and are not part of this release.
+With a delegation-compatible engine, your Chief can use the live roster, create useful specialists when you ask for a team, and assign them work. The Chief stays your central point of contact. Nested Chief-to-lead-to-specialist delegation has a known tool-availability limitation; improvements are in development and are not part of this release.
 
 > “Build a launch team for this product. Have a strategist propose the plan, a reviewer challenge the assumptions, and a writer prepare the copy. Bring me the decisions.”
 
@@ -104,7 +104,7 @@ Combined with managed memory, this gives the team an evolving working playbook: 
 
 *Inspect the saved launch brief’s source and audience. This record was deliberately imported from the demo conversation and retains its unverified-import label.*
 
-**In 0.1.47, managed memory starts off.** Open **More → Team map → Manage memory** to choose Capture only or Capture and recall. Local indexing does not require a paid extraction model. Optional model-based extraction is a separate, explicit setting and creates review candidates.
+**Managed memory is on (Capture and recall) for a new installation; an existing installation keeps the mode it already has.** Open **More → Team map → Manage memory** to choose Off, Capture only or Capture and recall. Local indexing does not require a paid extraction model. Optional model-based extraction is a separate, explicit setting and creates review candidates.
 
 Local storage is not the same as local-only AI processing: recalled context sent to a hosted engine is processed by that provider. Forgetting cannot retract text already sent. Intel Macs use keyword memory in this release; local semantic retrieval is available on Apple Silicon, Windows x64 and Linux x64 after model setup. [Read the memory guide](docs/memory.md).
 
@@ -141,7 +141,7 @@ Telegram group routing and additional inbound messaging channels remain future w
 
 ## Fuigo built in. Multi-vendor by design.
 
-**Fuigo 1.0.7 is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
+**Fuigo 1.0.11 is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
 
 Multi-vendor choice is part of the product, not an add-on. Use Fuigo, installed engines such as **Claude Code** and **Codex**, custom ACP agents, or compatible API endpoints. Choose an engine and model per agent, mix them in a team, and keep Murage-owned conversations and memory around that work. Each engine retains its supported capabilities and permission requirements.
 
@@ -167,7 +167,7 @@ Murage also includes a local MCP server for other clients to list the team, send
 |---|---|
 | Windows browser | The embedded browser is disabled because of an upstream Electron sandbox issue. |
 | Ubuntu desktop control | The app runs on GNOME Xorg and Wayland; local computer control is restricted to Xorg. Linux dictation and ARM64 installers are unavailable. |
-| Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime in 0.1.47. |
+| Intel Mac memory | Keyword retrieval and owner controls; no local semantic runtime in this release. |
 | Background work | Murage's host must remain available for routines and Telegram. This release is not an always-on hosted service. |
 | Memory scale | Verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred. |
 | Cross-device memory | No automatic memory synchronization between separate installations or profiles. |

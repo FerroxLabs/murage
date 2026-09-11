@@ -12,6 +12,11 @@
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
 //   FAKE_PI_SET_MODEL ok (default) | reject (success:false with pi's error text) | silent (never answers)
 //   FAKE_PI_SESSION   ok (default) | reject (new_session / switch_session answer success:false)
+//   FAKE_PI_SESSION_GATE  path: hold the new_session / switch_session answer until
+//                  this file exists (writes `<path>.waiting` while held, polls
+//                  every 25 ms). The driver's sendTurn awaits that answer, so a
+//                  test gets a deterministic window in which the harness has
+//                  called sendTurn but the provider turn is not yet accepted.
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
 //                  and env hygiene (no leaked secrets into the pi child). Model
 //                  pins, thinking levels, received prompts and every
@@ -20,7 +25,7 @@
 //   FAKE_PI_LINGER_MS  stay alive this long after SIGTERM or stdin end (max
 //                  10 s). POSIX-only observation: Windows taskkill /F runs no handler.
 
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_PI_MODE ?? "happy";
 const modelPairs = (process.env.FAKE_PI_MODELS ?? "ollama-cloud/glm-5.2,openai/gpt-4o")
@@ -223,6 +228,19 @@ process.stdin.on("data", (chunk) => {
 if (process.env.FAKE_PI_PID_FILE) writeFileSync(process.env.FAKE_PI_PID_FILE, String(process.pid));
 process.stdin.on("end", () => (lingerMs > 0 ? lingerThenExit() : process.exit(0)));
 
+// FAKE_PI_SESSION_GATE: answer the session handshake only once the gate file
+// exists, so the driver's sendTurn stays pending until the test releases it.
+const afterSessionGate = (answer: () => void) => {
+  const gate = process.env.FAKE_PI_SESSION_GATE;
+  if (!gate || existsSync(gate)) return answer();
+  writeFileSync(`${gate}.waiting`, String(process.pid));
+  const poll = setInterval(() => {
+    if (!existsSync(gate)) return;
+    clearInterval(poll);
+    answer();
+  }, 25);
+};
+
 function handle(cmd: any) {
   switch (cmd.type) {
     case "get_available_models":
@@ -246,7 +264,9 @@ function handle(cmd: any) {
       }
       sessionCounter += 1;
       currentSessionFile = `/fake/pi-session-${sessionCounter}.json`;
-      send({ type: "response", command: "new_session", success: true, data: { sessionId: `s-${sessionCounter}`, sessionFile: currentSessionFile } });
+      afterSessionGate(() =>
+        send({ type: "response", command: "new_session", success: true, data: { sessionId: `s-${sessionCounter}`, sessionFile: currentSessionFile } }),
+      );
       return;
     case "switch_session":
       if (process.env.FAKE_PI_SESSION === "reject") {
@@ -254,7 +274,9 @@ function handle(cmd: any) {
         return;
       }
       currentSessionFile = cmd.sessionPath ?? currentSessionFile;
-      send({ type: "response", command: "switch_session", success: true, data: { sessionId: "s-resumed", sessionFile: currentSessionFile } });
+      afterSessionGate(() =>
+        send({ type: "response", command: "switch_session", success: true, data: { sessionId: "s-resumed", sessionFile: currentSessionFile } }),
+      );
       return;
     case "set_model": {
       if (process.env.FAKE_PI_DUMP) {
