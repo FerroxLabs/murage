@@ -28,11 +28,12 @@
  * be scanned by its own rule.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const NEEDLE = ["fun", "nel"].join("");
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -115,7 +116,7 @@ test("TIER 1 self-check: an extension-less wrapper is scanned, not skipped", () 
   assert.ok(scannable(wrapper), "the widened rule must read it");
   const hits = walk(dir, scannable).filter((f) => readFileSync(f, "utf8").toLowerCase().includes(NEEDLE));
   assert.deepEqual(hits, [wrapper], "the scanner must find the violation in a file with no extension");
-  rmSync(dir, { recursive: true, force: true });
+  safeWipeSync(dir);
 });
 
 test("TIER 1 self-check: the scanner would actually catch a violation", () => {

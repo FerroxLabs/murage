@@ -5,6 +5,8 @@ set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")" && pwd)}"
 MODE="${1:-dry}"          # dry | apply
+# shellcheck source=scripts/safe-wipe.sh
+source "$ROOT/scripts/safe-wipe.sh"   # the only recursive delete scripts may use
 
 # ---- brand tokens -------------------------------------------------
 PROD_OLD="OpenMausBot";  PROD_NEW="Murage"
@@ -76,5 +78,5 @@ while IFS= read -r f; do
   grep -Iq . "$f" 2>/dev/null || continue   # -I: skip binaries; passes JSON/JSONC
   perl -pi "$RULES" "$f" && n=$((n+1))
 done <<< "$FILES"
-rm -rf "$RULESDIR"
+safe_wipe "$RULESDIR"
 echo "### rewrote $n files"

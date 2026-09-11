@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 function fail(message) {
   throw new Error(`[smoke-deb-upgrade] ${message}`);
@@ -107,5 +108,7 @@ try {
     `[smoke-deb-upgrade] OK: 0.1.7 legacy modes repaired by ${installedVersion} without weakening the runtime path`,
   );
 } finally {
-  fs.rmSync(temporary, { recursive: true, force: true });
+  // RUNNER_TEMP is the runner's temp root, not os.tmpdir(); name it so the
+  // guard admits it and still refuses anything outside it.
+  safeWipeSync(temporary, { tmpdir: path.resolve(runnerTemp) });
 }

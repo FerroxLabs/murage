@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import electron from "electron";
 import { launchVerificationServer } from "../scripts/control-murage.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const evidence = join(root, ".planning/flux-native-evidence");
@@ -48,6 +49,6 @@ try {
   await server?.close();
   const receipt = { passed, driverNode: process.versions.node, electronChildExited: childExited, serverClosed: Boolean(server), scope: "native Flux IPC with fixture encryption; no OS keychain proof" };
   writeFileSync(join(evidence, "lifecycle.json"), JSON.stringify(receipt, null, 2));
-  if (childExited || !server) rmSync(scratch, { recursive: true, force: true });
+  if (childExited || !server) safeWipeSync(scratch);
   console.log(JSON.stringify(receipt));
 }

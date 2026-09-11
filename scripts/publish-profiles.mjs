@@ -18,11 +18,12 @@
 //
 // Usage:
 //   node scripts/publish-profiles.mjs [--repo <clone>] [--dry-run]
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseBotPackage } from "../server/bot-package.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const SOURCES = [join(repoRoot, "library", "assistants"), join(repoRoot, "bot-library", "builtins")];
@@ -74,7 +75,7 @@ for (const file of files) {
   const dir = join(options.repo, "teams", pkg.id);
   // Only the profile's own tree is replaced; every other entry is untouched.
   if (!options.dryRun) {
-    rmSync(dir, { recursive: true, force: true });
+    safeWipeSync(dir, { within: options.repo });
     mkdirSync(join(dir, "skills"), { recursive: true });
   }
 
@@ -95,7 +96,7 @@ for (const file of files) {
   }
 
   if (!options.dryRun) {
-    if (!skills.length) rmSync(join(dir, "skills"), { recursive: true, force: true });
+    if (!skills.length) safeWipeSync(join(dir, "skills"), { within: options.repo });
     writeFileSync(join(dir, `${pkg.id}.emberteam.json`), JSON.stringify(document, null, 2) + "\n");
     writeFileSync(join(dir, "README.md"), readme(pkg, skills.length));
   }

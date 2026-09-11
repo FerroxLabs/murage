@@ -10,12 +10,12 @@ import {
   readdir,
   realpath,
   rename,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { gunzipSync } from "node:zlib";
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 const run = promisify(execFile);
 const KIB = 1024;
@@ -455,7 +455,7 @@ async function readVerifiedArchive({
     await writeFile(temporaryArchive, bytes, { mode: 0o600, flag: "wx" });
     await rename(temporaryArchive, cachePath);
   } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
+    await safeWipe(temporaryDirectory, { within: cacheDirectory });
   }
   return bytes;
 }
@@ -532,7 +532,7 @@ export async function stageLinuxCua({
     });
     await validateStagedRuntime(temporary, { licenseDirectory });
 
-    await rm(backup, { recursive: true, force: true });
+    await safeWipe(backup, { within: rootDirectory });
     try {
       await rename(stageDirectory, backup);
       previousMoved = true;
@@ -540,9 +540,9 @@ export async function stageLinuxCua({
       if (error?.code !== "ENOENT") throw error;
     }
     await rename(temporary, stageDirectory);
-    if (previousMoved) await rm(backup, { recursive: true, force: true });
+    if (previousMoved) await safeWipe(backup, { within: rootDirectory });
   } catch (error) {
-    await rm(temporary, { recursive: true, force: true });
+    await safeWipe(temporary, { within: rootDirectory });
     if (previousMoved) {
       try {
         await rename(backup, stageDirectory);

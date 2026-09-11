@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 test("native artifact action accepts only matching private saved bytes", () => {
   const scratch = mkdtempSync(join(tmpdir(), "murage-native-artifact-"));
@@ -17,7 +18,7 @@ test("native artifact action accepts only matching private saved bytes", () => {
     writeFileSync(path, "changed");
     assert.throws(() => verifiedArtifactNativePath({ path, sha256 }, root));
     assert.throws(() => verifiedArtifactNativePath({ path, sha256: "invalid" }, root));
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  } finally { safeWipeSync(scratch); }
 });
 test("native artifact action rejects symlinks", { skip: process.platform === "win32" }, () => {
   const scratch = mkdtempSync(join(tmpdir(), "murage-native-artifact-link-"));
@@ -26,5 +27,5 @@ test("native artifact action rejects symlinks", { skip: process.platform === "wi
     const source = join(root, "outside.txt"); writeFileSync(source, "private");
     const path = join(root, "artifact-files", "link.txt"); symlinkSync(source, path);
     assert.throws(() => verifiedArtifactNativePath({ path, sha256: createHash("sha256").update("private").digest("hex") }, root));
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  } finally { safeWipeSync(scratch); }
 });

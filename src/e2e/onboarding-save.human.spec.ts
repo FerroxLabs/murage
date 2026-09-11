@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { freePortBlock } from "../../server/testing/ports";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 // Actual onboarding + API helper, isolated HTTP fixture. No subscription,
 // provider, native permission or live installation call leaves this server.
@@ -80,7 +81,7 @@ test.beforeAll(async () => {
 });
 test.beforeEach(() => { mode = "success"; writes = []; subscriptions = 0; release = undefined; });
 test.afterEach(() => { release?.(); release = undefined; });
-test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
 async function fill(page: import("@playwright/test").Page) {
   await page.goto(`${origin}/__onboarding`);

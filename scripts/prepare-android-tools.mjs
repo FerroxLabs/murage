@@ -1,10 +1,11 @@
 // Stage Google's official Android Platform Tools beside the packaged app so
 // USB phone support works on a clean machine without Homebrew or an SDK.
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const platformNames = { darwin: "darwin", linux: "linux", win32: "win32" };
@@ -57,9 +58,9 @@ try {
   const adb = join(staged, process.platform === "win32" ? "adb.exe" : "adb");
   if (!existsSync(adb)) throw new Error("Downloaded Android Platform Tools do not contain adb");
   mkdirSync(dirname(finalDir), { recursive: true });
-  rmSync(finalDir, { recursive: true, force: true });
+  safeWipeSync(finalDir, { within: root });
   cpSync(staged, finalDir, { recursive: true });
   console.log(`staged Android Platform Tools at ${finalDir}`);
 } finally {
-  rmSync(temporary, { recursive: true, force: true });
+  safeWipeSync(temporary);
 }

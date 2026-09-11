@@ -2,9 +2,10 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -31,7 +32,7 @@ test.beforeAll(async () => {
   const address = server.httpServer!.address(); if (!address || typeof address === "string") throw new Error("Missing fixture port");
   origin = "http://127.0.0.1:" + address.port;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 
 for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("provider recovery renders translated actions on mobile: " + locale, async ({ page }, info) => {
   const pack = JSON.parse(readFileSync(new URL("../locales/" + locale + ".json", import.meta.url), "utf8"));

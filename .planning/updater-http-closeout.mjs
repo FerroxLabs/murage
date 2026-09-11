@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../server/testing/ports.ts";
 import { nativeFixtureBinary } from "../server/testing/fuigo-native-fixture.ts";
 import { DEFAULT_INSTANCES } from "../server/default-instances.ts";
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "murage-updater-http-")), data = join(root, "data"), bundle = join(root, "bundle");
 const port = await freePortBlock([0, 1]);
@@ -105,7 +106,7 @@ finally {
   }
   result.processClosed = true; result.exitCode = child.exitCode; result.signalCode = child.signalCode;
   result.stderr = stderr; result.stdout = stdout; result.finishedAt = new Date().toISOString();
-  if (result.status === "passed" && child.exitCode === 0) { await rm(root, { recursive: true, force: true }); result.cleaned = true; }
+  if (result.status === "passed" && child.exitCode === 0) { await safeWipe(root); result.cleaned = true; }
   else { result.status = "failed"; result.cleaned = false; process.exitCode = 1; }
   await writeFile(new URL("./updater-closeout-http-r1.json", import.meta.url), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));

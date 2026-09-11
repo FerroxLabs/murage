@@ -4,13 +4,13 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
-  readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
-  writeFileSync,
+  readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { browserBundlePaths, browserBundleSpec } from "../server/browser-bundle-release.ts";
 import { executableTarget } from "./prepare-cloudflared.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 export const BROWSER_LICENSE_FILES = [
   "agent-browser-LICENSE.txt", "LICENSE-axe-core.txt", "LICENSE-axe-core-THIRD-PARTY.txt", "README.md",
@@ -178,7 +178,7 @@ export async function stageBrowserTarget(root, target, { cacheDirectory = proces
     console.log(`Browser ready: agent-browser ${spec.engine.version} + Chromium headless ${spec.chrome.version} (${target})`);
     return destination;
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    safeWipeSync(scratch, { within: root });
   }
 }
 

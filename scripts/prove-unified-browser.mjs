@@ -1,11 +1,12 @@
 // Isolated, no-model native browser proof. Only task-created local data is used.
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { createServer } from 'node:http';
 import { UnifiedBrowserController } from '../server/browser-control.ts';
 import { createNativeBrowser } from '../server/browser-native-relay.ts';
 import { agentBrowserIntegration } from '../server/browser-engine.ts';
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const target = `${process.platform}-${process.arch}`;
 const root = mkdtempSync(join(tmpdir(), 'murage-c11-proof-'));
 const evidence = resolve(process.argv[2] ?? '.planning/chief-capability-evidence/C11/native');
@@ -51,5 +52,5 @@ try {
   await native.close();
   results.checks.push({name:'idempotent-idle-close',pass:true});
 } catch(error) { results.error=error.message; process.exitCode=1; }
-finally { await controller.close().catch(error=>{results.cleanupError=error.message;process.exitCode=1}); await new Promise(done=>server.close(done)); writeFileSync(join(evidence,`${target}.json`),JSON.stringify(results,null,2)); if(!results.cleanupError)rmSync(root,{recursive:true,force:true}); }
+finally { await controller.close().catch(error=>{results.cleanupError=error.message;process.exitCode=1}); await new Promise(done=>server.close(done)); writeFileSync(join(evidence,`${target}.json`),JSON.stringify(results,null,2)); if(!results.cleanupError)safeWipeSync(root); }
 console.log(JSON.stringify(results,null,2));

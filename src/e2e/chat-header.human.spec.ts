@@ -22,10 +22,11 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 /** The acceptance matrix's container widths. */
 const WIDTHS = [320, 390, 480, 640, 820, 1024] as const;
@@ -158,7 +159,7 @@ createRoot(document.getElementById('mount')).render(React.createElement(HeaderFi
 
 test.afterAll(async () => {
   await server?.close();
-  rmSync(cache, { recursive: true, force: true });
+  safeWipeSync(cache);
 });
 
 /** The fixture's own globals, declared where they are used rather than

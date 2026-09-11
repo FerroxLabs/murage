@@ -2,9 +2,10 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -40,7 +41,7 @@ test.beforeAll(async () => {
   });
   await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
 
 test("manual catalog refresh discovers current rows while preserving a removed choice and honest metadata",async({page},testInfo)=>{
  let refreshed=0,instanceReads=0,fail=false;const refreshIds:string[]=[];

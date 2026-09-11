@@ -2,9 +2,10 @@ import { expect, test } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 const CODE = 'const greeting = "Hello";\r\n\tconsole.log(greeting);\n// ' + "long-token-".repeat(35) + "\n\n";
 // #1023 (adapted): long inline tokens inside a real bot bubble. The identifier
 // has no line-break opportunity at all; the path is the upstream example.
@@ -53,7 +54,7 @@ test.beforeAll(async () => {
     }] });
   await server.listen(0); const address = server.httpServer!.address(); if (!address || typeof address === "string") throw new Error("No fixture port"); origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 test("copy confirms only after success and reports a rejected clipboard", async ({ page }) => {
   await page.goto(origin + "/__polish"); await page.evaluate(() => { (window as any).clipboardMode = "hold"; });
   await page.getByRole("button", { name: "Copy code", exact: true }).click(); await expect(page.getByText("Copied", { exact: true })).toHaveCount(0);

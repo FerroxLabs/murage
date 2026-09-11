@@ -38,7 +38,7 @@
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
     "test": "pnpm check:contrast && vitest run && pnpm broker:test && pnpm test:electron && pnpm test:packaged-server",
-    "test:electron": "node --test \"electron/*.node-test.mjs\"",
+    "test:electron": "node --import ./server/testing/safe-wipe-preload.mjs --test \"electron/*.node-test.mjs\"",
     "test:human": "playwright test src/e2e/*.human.spec.ts",
     "bench:observation": "node --experimental-strip-types scripts/bench-observation.ts",
     "test:watch": "vitest",

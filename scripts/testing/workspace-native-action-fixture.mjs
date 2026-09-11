@@ -12,10 +12,11 @@
 // one above it).
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, openSync, realpathSync, rmSync, statSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, openSync, realpathSync, statSync, writeFileSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const PORT = Number(process.env.MURAGE_FIXTURE_PORT ?? 9424);
@@ -97,5 +98,5 @@ main().then(() => {
   failures++;
 }).finally(() => {
   child.kill("SIGTERM");
-  setTimeout(() => { rmSync(base, { recursive: true, force: true }); process.exit(failures ? 1 : 0); }, 1500);
+  setTimeout(() => { safeWipeSync(base); process.exit(failures ? 1 : 0); }, 1500);
 });

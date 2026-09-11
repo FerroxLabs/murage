@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import electron from "electron";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const scratch = mkdtempSync(path.join(tmpdir(), "murage-recovery-window-"));
 try {
@@ -21,5 +22,5 @@ try {
 } finally {
   // execFile settles only after this exact child closes. Never rely on
   // Electron app.exit() to emit the normal quit cleanup event.
-  rmSync(scratch, { recursive: true, force: true });
+  safeWipeSync(scratch);
 }

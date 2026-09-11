@@ -4,10 +4,11 @@
 // pnpm exec electron scripts/smoke-clipboard.mjs --allow-native-clipboard --case=image
 import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pasteMenuItem } from "../electron/paste-menu-item.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 if (process.platform !== "darwin" || !process.argv.includes("--allow-native-clipboard") || !process.argv.includes("--case=image")) {
   console.error("REFUSED: macOS, --allow-native-clipboard and --case=image are required. No clipboard accessed. Finder is a separate unverified case.");
@@ -91,7 +92,7 @@ async function runFixture() {
   app.on("will-quit", () => {
     ipcMain.removeHandler(channel);
     // This exact temporary profile is owned exclusively by this fixture.
-    rmSync(profile, { recursive: true, force: true });
+    safeWipeSync(profile);
   });
 
   try {

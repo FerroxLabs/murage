@@ -1,11 +1,12 @@
 "use strict";
 const assert = require("node:assert/strict");
-const { mkdtempSync, rmSync } = require("node:fs");
+const { mkdtempSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { app, BrowserWindow, WebContentsView, nativeImage } = require("electron");
 const { createBrowserSurfaceManager } = require("../browser-surface.cjs");
 const { createBrowserHost } = require("../browser-host.cjs");
+const { safeWipeSync } = require("../../server/testing/safe-wipe.mjs");
 const privateRoot = mkdtempSync(join(tmpdir(), "murage-click-after-shot-"));
 app.setPath("userData", privateRoot);
 app.setPath("sessionData", privateRoot);
@@ -62,8 +63,8 @@ app.whenReady().then(async () => {
     }
     process.stdout.write("actual-host-screenshot-click-regression-passed\n");
   } finally { await host.stop(); manager.closeAll(); owner.destroy(); }
-}).then(() => { rmSync(privateRoot, { recursive: true, force: true }); app.exit(0); }).catch(error => {
+}).then(() => { safeWipeSync(privateRoot); app.exit(0); }).catch(error => {
   process.stderr.write(error.stack + "\n");
-  rmSync(privateRoot, { recursive: true, force: true });
+  safeWipeSync(privateRoot);
   app.exit(1);
 });

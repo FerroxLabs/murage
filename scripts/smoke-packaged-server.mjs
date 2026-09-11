@@ -11,11 +11,12 @@
 // test passes on a build that would be dead in the field — which is precisely
 // how the bug escaped. The copy is the whole point; do not "simplify" it away.
 import { execFile, spawn } from "node:child_process";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const staging = mkdtempSync(join(tmpdir(), "murage-smoke-"));
@@ -51,7 +52,7 @@ const cleanup = () => {
   child.kill("SIGKILL");
   for (const dir of [staging, home]) {
     try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      safeWipeSync(dir, { maxRetries: 5, retryDelay: 200 });
     } catch {
       /* the OS will reap it; the assertion below is what matters */
     }

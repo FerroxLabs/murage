@@ -7,11 +7,12 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer } from "node:http";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { _electron, expect } from "@playwright/test";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const exec=promisify(execFile),args=process.argv.slice(2);
 function option(flag){const index=args.indexOf(flag);return index<0?undefined:args[index+1];}
@@ -200,7 +201,7 @@ async function main(){
     const afterHashes=protectedHashes(protectedProfile);
     const protectedFilesUnchanged=JSON.stringify(afterHashes)===JSON.stringify(beforeHashes);
     outcome={...outcome,ok:Boolean(outcome?.ok&&cleanupVerified&&foregroundRestored&&originalProcessesAlive&&protectedFilesUnchanged),cleanupVerified,foregroundRestored,originalProcessesAlive,protectedFilesUnchanged,protectedProfileHashes:{before:beforeHashes,after:afterHashes},ownedPids:[...owned.keys()]};
-    if(cleanupVerified)rmSync(root,{recursive:true,force:true});else outcome.preservedFixtureRoot=root;
+    if(cleanupVerified)safeWipeSync(root);else outcome.preservedFixtureRoot=root;
     writeFileSync(join(out,"result.json"),JSON.stringify(outcome,null,2));
   }
   console.log(JSON.stringify(outcome));assert(outcome.ok,`Native packaged memory gate failed; inspect ${join(out,"result.json")}`);

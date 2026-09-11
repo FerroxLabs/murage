@@ -2,10 +2,11 @@ import {test,expect} from '@playwright/test';
 import {build} from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import {createServer} from 'node:http';
-import {readFileSync,writeFileSync,mkdtempSync,realpathSync,rmSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdtempSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {tmpdir} from 'node:os';
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 const root=fileURLToPath(new URL('../../',import.meta.url));let scratch='',server:any,origin='';
 const name='<Mira & team>';
 test.beforeAll(async()=>{
@@ -22,7 +23,7 @@ test.beforeAll(async()=>{
  await build({configFile:false,root:scratch,envFile:false,resolve:{alias:{'@':join(root,'src'),react:join(root,'node_modules/react'), 'react-dom':join(root,'node_modules/react-dom')}},esbuild:{jsx:'automatic'},build:{outDir:join(scratch,'dist'),emptyOutDir:true},plugins:[tailwindcss(),{name:'selected-locale-fixture',enforce:'pre',resolveId(id){if(id==='@/state/store'||id.endsWith('/src/state/store'))return '\0locale-store';if(id==='./DesktopCapabilities')return '\0locale-capabilities';},load(id){if(id==='\0locale-store')return `export * from '${root}/src/state/store.tsx';export const useStore=()=>({state:{config:{tts:{configured:true,ready:true}}},dispatch:()=>{}});export const api=async()=>({instances:[window.fixtureInstance]});`;if(id==='\0locale-capabilities')return 'export const useDesktopCapabilities=()=>({ready:true,capabilities:{dictation:{available:true}}});';}}]});
  server=createServer((req,res)=>{const pathname=new URL(req.url??'/','http://fixture').pathname;const file=pathname==='/'?'index.html':pathname.slice(1);if(file.includes('..')){res.statusCode=400;return res.end();}try{res.setHeader('content-type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(readFileSync(join(scratch,'dist',file)));}catch{res.statusCode=404;res.end();}});await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${server.address().port}`;
 });
-test.afterAll(async()=>{await new Promise<void>(resolve=>server?server.close(()=>resolve()):resolve());if(scratch)rmSync(scratch,{recursive:true,force:true});});
+test.afterAll(async()=>{await new Promise<void>(resolve=>server?server.close(()=>resolve()):resolve());if(scratch)safeWipeSync(scratch);});
 for(const locale of ['en','de','es','fr','hi','ja','pt-br','zh'])test('selected setup, update and call controls: '+locale,async({page},info)=>{
  test.skip(info.project.name==='desktop'&&locale!=='en'||info.project.name==='mobile'&&locale==='en','one matching viewport per locale');
  const pack=JSON.parse(readFileSync(join(root,'src/locales',locale+'.json'),'utf8'));

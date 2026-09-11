@@ -3,6 +3,8 @@
 # first rebrand pass missed. Re-runnable; tokens are variables.
 set -euo pipefail
 ROOT="${ROOT:-$(cd "$(dirname "$0")" && pwd)}"; MODE="${1:-dry}"; cd "$ROOT"
+# shellcheck source=scripts/safe-wipe.sh
+source "$ROOT/scripts/safe-wipe.sh"   # the only recursive delete scripts may use
 
 EXCLUDES=(--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=build
           --exclude-dir=dist --exclude-dir=target --exclude-dir=third_party
@@ -49,5 +51,5 @@ while IFS= read -r f; do
   grep -Iq . "$f" 2>/dev/null || continue
   perl -pi "$R" "$f" && n=$((n+1))
 done <<< "$(grep -rliE 'maus' "${EXCLUDES[@]}" . 2>/dev/null || true)"
-rm -rf "$D"
+safe_wipe "$D"
 echo "### rewrote $n files"

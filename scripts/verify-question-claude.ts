@@ -18,13 +18,14 @@
 // Passes only if the model is told "Your questions have been answered" with
 // the label that was picked, and then acts on it.
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createPermissionBroker } from "../server/drivers/claude.ts";
 import { SPAWNED_PROXIES } from "../server/proxy-paths.ts";
 import { toClaudeAnswers, validateAnswers } from "../server/question-normalize.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const scratch = mkdtempSync(join(tmpdir(), "murage-live-auq-"));
 const socketPath = join(scratch, "b.sock");
@@ -135,7 +136,7 @@ console.log("=== final assistant text ===");
 console.log(finalText.trim() || "(none)");
 
 broker.close();
-rmSync(scratch, { recursive: true, force: true });
+safeWipeSync(scratch);
 
 if (!asked) fail("Claude never called AskUserQuestion through the permission host");
 if (!toolResult.includes("Your questions have been answered")) {

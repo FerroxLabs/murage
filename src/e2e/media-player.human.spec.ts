@@ -19,10 +19,11 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 /** 16-bit mono PCM at 8 kHz: a real, decodable WAV of `seconds` length, big
  * enough that the browser streams it in ranges instead of one gulp. */
@@ -224,7 +225,7 @@ createRoot(document.getElementById('root')).render(h(React.StrictMode,{},
   origin = `http://127.0.0.1:${address.port}`;
 });
 
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 
 const players = (page: Page) => page.getByTestId("media-player-audio");
 

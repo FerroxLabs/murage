@@ -3,7 +3,7 @@ import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import { sendDelegated } from "../../server/route-delegation.ts";
 import { workspaceFilesRoute, type WorkspaceFilesDeps } from "../../server/workspace-files.ts";
 import type { ArtifactQuery, ArtifactRegistration } from "../../shared/artifacts.ts";
 import { WORKSPACE_FILES_ROUTE_PREFIX } from "../../shared/workspace-files.ts";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let root: string, dataDir: string, workspace: string, storage: string, origin: string, server: ViteDevServer, db: DatabaseSync;
 let leakedRequests = 0;
 const proof = "files-fixture-proof";
@@ -83,7 +84,7 @@ test.beforeAll(async () => {
   }] });
   await server.listen(0); const address = server.httpServer!.address(); if (!address || typeof address === "string") throw Error("Files fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await server?.close(); db?.close(); if (root) rmSync(root, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); db?.close(); if (root) safeWipeSync(root); });
 
 for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`verified HTML saved preview/download is isolated at ${width}px ${skin}`, async ({ page, request }, testInfo) => {
   const relativePath = `report-${width}-${skin}.html`, name = `Weekly report ${width} ${skin}`;

@@ -28,22 +28,18 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { homedir, userInfo } from "node:os";
-import { join, resolve } from "node:path";
+import { userInfo } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
 import { openSidebar } from "./fixtures.ts";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { laneDataDir } from "./lane-data-dir";
 
 // ── Inputs ───────────────────────────────────────────────────────────────
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const DATA_DIR = (() => {
-  const raw = process.env.MURAGE_E2E_DATA_DIR;
-  if (!raw) throw new Error("MURAGE_E2E_DATA_DIR is required — the smoke test never uses ~/.murage");
-  const dir = resolve(raw);
-  if (dir === resolve(join(homedir(), ".murage"))) throw new Error(`refusing the real data dir ${dir}`);
-  return dir;
-})();
+const DATA_DIR = laneDataDir("the smoke test never uses ~/.murage");
 const HARNESS_PORT = Number(process.env.MURAGE_E2E_PORT || 9990);
 const UI_PORT = Number(process.env.MURAGE_E2E_UI_PORT || 9992);
 const EVIDENCE = process.env.MURAGE_SMOKE_EVIDENCE_DIR || join(DATA_DIR, "evidence");
@@ -137,7 +133,7 @@ function writeConfig() {
 }
 
 async function startHarness() {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  safeWipeSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   mkdirSync(EVIDENCE, { recursive: true });
   const home = join(DATA_DIR, "fixture-home"); mkdirSync(home, { recursive: true });

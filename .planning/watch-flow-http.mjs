@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../server/testing/ports.ts";
 import { DEFAULT_INSTANCES } from "../server/default-instances.ts";
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "murage-watch-http-")), data = join(root, "data"), folder = join(root, "work");
 await mkdir(data); await mkdir(folder); await mkdir(join(root, "static"));
@@ -105,7 +106,7 @@ finally {
   try { await stop(); } catch (error) { result.status = "failed"; result.cleanupError = error.message; process.exitCode = 1; }
   for (const item of pending.values()) clearTimeout(item.timer);
   result.stderr = stderr; result.finishedAt = new Date().toISOString();
-  if (result.status === "passed") { await rm(root, { recursive: true, force: true }); result.cleaned = true; }
+  if (result.status === "passed") { await safeWipe(root); result.cleaned = true; }
   else result.cleaned = false;
   await writeFile(new URL(process.env.MURAGE_WATCH_HTTP_OUTPUT ?? "./watch-flow-http-r1.json", import.meta.url), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));

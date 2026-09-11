@@ -2,9 +2,10 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../../server/testing/ports";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 // This fixture mounts the real hook and transport modules in Chromium. Its
 // own ephemeral Vite server has no harness, proxy, workspace or live data.
@@ -53,7 +54,7 @@ test.beforeAll(async () => {
   origin = `http://127.0.0.1:${address.port}`;
 });
 
-test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
 test("mounted surface recovers after a transient config failure", async ({ page }) => {
   let attempts = 0;

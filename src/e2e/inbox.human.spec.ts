@@ -2,13 +2,14 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { inboxRequest, initializeInbox, type InboxAccess } from "../../server/inbox.ts";
 import type { InboxQuery, InboxStateUpdate } from "../../shared/inbox.ts";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let vite: ViteDevServer, origin: string, root: string, db: DatabaseSync;
 const proof = "inbox-fixture-proof";
@@ -46,7 +47,7 @@ test.beforeAll(async () => {
   if (!address || typeof address === "string") throw Error("Inbox fixture did not bind");
   origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await vite?.close(); db?.close(); if (root) rmSync(root, { recursive: true, force: true }); });
+test.afterAll(async () => { await vite?.close(); db?.close(); if (root) safeWipeSync(root); });
 test.beforeEach(() => {
   db.exec("DELETE FROM messages WHERE thread_id IN ('old-task','not-permitted'); DELETE FROM inbox_item_state WHERE json_extract(source_key,'$[0]')='old-task';");
   source("approval", "options", { card: { requestId: "approval-request", title: "SECRET_CARD_CONTENT", subtitle: "PRIVATE_COMMAND", tool: "Bash", options: ["Allow", "Deny"] } });

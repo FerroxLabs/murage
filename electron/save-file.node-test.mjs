@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 
 import { activeDesktopDataRoot, createSaveFileHandler } from "./native-file-handlers.mjs";
 import { defaultSaveName, resolveSavablePath, withSavableFile } from "./save-file.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 // Creating a symlink on Windows needs elevation or developer mode, so the
 // symlink cases only run where the runner can actually make one.
@@ -19,7 +20,7 @@ const canSymlink = (() => {
   } catch {
     return false;
   } finally {
-    fs.rmSync(probe, { recursive: true, force: true });
+    safeWipeSync(probe);
   }
 })();
 
@@ -37,7 +38,7 @@ before(() => {
 });
 
 after(() => {
-  fs.rmSync(home, { recursive: true, force: true });
+  safeWipeSync(home);
 });
 
 describe("save-file path validation", () => {
@@ -65,8 +66,8 @@ describe("save-file path validation", () => {
       await fs.promises.realpath(viaLink),
     );
 
-    fs.rmSync(realHome, { recursive: true, force: true });
-    fs.rmSync(linkedHome, { recursive: true, force: true });
+    safeWipeSync(realHome);
+    safeWipeSync(linkedHome);
   });
 
   it("rejects paths outside the bot home, including via traversal", async () => {
@@ -104,7 +105,7 @@ describe("save-file active root (B3)", () => {
         { message: OUTSIDE_ROOT },
       );
     } finally {
-      fs.rmSync(active, { recursive: true, force: true });
+      safeWipeSync(active);
     }
   });
 
@@ -127,7 +128,7 @@ describe("save-file dialog default name", () => {
     fs.writeFileSync(path.join(downloads, "report (2).docx"), "");
     assert.equal(await defaultSaveName(downloads, source), path.join(downloads, "report (3).docx"));
 
-    fs.rmSync(downloads, { recursive: true, force: true });
+    safeWipeSync(downloads);
   });
 
   it("keeps the extension on the suggestion", async () => {
@@ -137,7 +138,7 @@ describe("save-file dialog default name", () => {
 
     assert.equal(path.extname(await defaultSaveName(downloads, source)), ".docx");
 
-    fs.rmSync(downloads, { recursive: true, force: true });
+    safeWipeSync(downloads);
   });
 });
 
@@ -332,7 +333,7 @@ describe("save-file destination safety (B2)", () => {
       assert.deepEqual(staging(home), []);
       assert.equal(sha256(source), digest);
     } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
+      safeWipeSync(directory);
     }
   });
 });
@@ -356,8 +357,8 @@ describe("desktop:save-file handler root resolution (B3)", () => {
     downloads = fs.mkdtempSync(path.join(os.tmpdir(), "murage-save-downloads-"));
   });
   afterEach(() => {
-    fs.rmSync(selected, { recursive: true, force: true });
-    fs.rmSync(downloads, { recursive: true, force: true });
+    safeWipeSync(selected);
+    safeWipeSync(downloads);
   });
 
   function handlerFor(state, { window, url } = {}) {

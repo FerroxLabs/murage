@@ -15,12 +15,12 @@ import {
   mkdtempSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 export const CLOUDFLARED_VERSION = "2026.8.2";
 
@@ -262,13 +262,13 @@ async function stageTarget(root, target) {
       `${JSON.stringify(expectedManifest(target), null, 2)}\n`,
       { mode: 0o600 },
     );
-    rmSync(finalDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    safeWipeSync(finalDirectory, { within: root, maxRetries: 10, retryDelay: 200 });
     renameSync(stagedDirectory, finalDirectory);
     console.log(`staged cloudflared ${CLOUDFLARED_VERSION} for ${target}`);
   } finally {
     // Windows Defender can briefly retain the executable after the version
     // probe exits. Node retries EPERM for recursive removals when asked.
-    rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    safeWipeSync(scratch, { maxRetries: 10, retryDelay: 200 });
   }
 }
 

@@ -8,6 +8,7 @@ import {
   WORKSPACE_NATIVE_BROWSER_EXTENSIONS, WORKSPACE_NATIVE_OPEN_EXTENSIONS, createWorkspaceFileActionHandler,
   isNativeOpenableWorkspaceFile, isWorkspaceRelativeFilePath, opensInBrowser, verifiedWorkspaceNativePath,
 } from "./workspace-file-actions.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const SCOPE = { botId: "bot", threadId: "thread" };
 const scratchRoots = [];
@@ -16,7 +17,7 @@ function scratch() {
   scratchRoots.push(base);
   return base;
 }
-test.after(() => { for (const root of scratchRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+test.after(() => { for (const root of scratchRoots.splice(0)) safeWipeSync(root); });
 
 /** A workspace root with one file, plus the record the server would answer. */
 function fixture({ relativePath = "notes.md", content = "# Notes" } = {}) {
@@ -128,7 +129,7 @@ test("a symlinked file, a symlinked parent folder and a hard link are refused", 
   const elsewhere = join(base, "elsewhere");
   mkdirSync(elsewhere);
   writeFileSync(join(elsewhere, "report.md"), "private");
-  rmSync(join(nested.root, "docs"), { recursive: true });
+  safeWipeSync(join(nested.root, "docs"));
   symlinkSync(elsewhere, join(nested.root, "docs"));
   assert.equal(codeOf(() => verifiedWorkspaceNativePath(nested.record, { relativePath: nested.relativePath, scope: SCOPE })), "WORKSPACE_NATIVE_LINKED");
 

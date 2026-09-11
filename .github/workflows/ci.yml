@@ -145,8 +145,10 @@ jobs:
           # The rig's data dir and its evidence (playwright.config.ts routes
           # outputDir to <MURAGE_E2E_DATA_DIR>/human-results through
           # src/e2e/evidence.ts, which refuses to run without it): never
-          # test-results/ inside the checkout.
-          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e
+          # test-results/ inside the checkout. Required, no default: the rig
+          # wipes this directory, and the name carries the "scratch" segment
+          # safe-wipe admits (data-safety.md).
+          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
         run: pnpm test:human
       - name: Upload human spec traces on failure
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -205,8 +207,9 @@ jobs:
         shell: bash
         env:
           HUMAN_FILES: ${{ inputs.human_files }}
-          # See "Run human specs": evidence lands outside the checkout.
-          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e
+          # See "Run human specs": evidence lands outside the checkout, in a
+          # scratch-marked directory safe-wipe admits.
+          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
         run: |
           human_paths=()
           while IFS= read -r human_path; do human_paths+=("$human_path"); done <<< "$HUMAN_FILES"
