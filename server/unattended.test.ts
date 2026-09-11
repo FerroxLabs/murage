@@ -63,6 +63,17 @@ async function waitForCard(threadId: string, ms = 30_000) {
   return null;
 }
 
+/** Delete a bot once its stopped threads have settled; a run that is still
+ * tearing down answers 409 with the control that stops it. */
+async function deleteBotWhenIdle(botId: string, ms = 10_000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const result = await desktopApi("DELETE", `/api/bots/${botId}`);
+    if (result.status !== 409 || Date.now() > deadline) return result;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 /** The detached task a webhook delivery created. */
 async function waitForRunThread(runId: string, ms = 20_000) {
   const deadline = Date.now() + ms;
@@ -147,7 +158,7 @@ posixOnly("unattended turns keep asking", () => {
 
   it("keeps approval cards while applying private or disabled attention notifications", async () => {
     const events = await openSse(`${base}/api/events`);
-    const bots: string[] = [], hooks: string[] = [];
+    const bots: string[] = [], hooks: string[] = [], threads: Array<{ botId: string; threadId: string }> = [];
     try {
       expect((await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: false } })).status).toBe(200);
       const first = await makeBot("grok"); bots.push(first.id);
@@ -163,6 +174,7 @@ posixOnly("unattended turns keep asking", () => {
         const card = await waitForCard(threadId!);
         expect(card?.card?.answered).toBeUndefined();
         expect(card?.card?.requestId).toBeTruthy();
+        threads.push({ botId, threadId: threadId! });
         return threadId;
       };
       const firstThread = await trigger(first.id);
@@ -182,9 +194,14 @@ posixOnly("unattended turns keep asking", () => {
       expect((await api("GET", "/api/config")).body.notifications).toMatchObject({ attention: false, previewContent: false });
     } finally {
       events.close();
-      for (const id of bots) await api("POST", `/api/bots/${id}/interrupt`);
+      // Each webhook turn runs in its own thread beside the bot's chat, and a
+      // bot with more than one thread refuses an untargeted Stop (independent
+      // threads, 05cce991). Stop the webhook threads by name and make sure the
+      // bots are really gone: a leaked busy bot becomes bots[0] for the next
+      // test and turns its settings edit into a "choose a thread" refusal.
+      for (const { botId, threadId } of threads) expect((await api("POST", `/api/bots/${botId}/interrupt`, { threadId })).status).toBe(200);
       for (const id of hooks) await desktopApi("DELETE", `/api/webhooks/${id}`);
-      for (const id of bots) await desktopApi("DELETE", `/api/bots/${id}`);
+      for (const id of bots) expect((await deleteBotWhenIdle(id)).status, `bot ${id} was not deleted`).toBe(200);
       await desktopApi("PATCH", "/api/config", { notifications: { attention: true, completion: true, failures: true, previewContent: true }, profile: { name: "" } });
     }
   }, 60_000);
