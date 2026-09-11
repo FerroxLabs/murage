@@ -17,9 +17,9 @@
 // skills"). It walks the same cwd → git-root chain the upstream loaders walk.
 // Fuigo's scan stays authoritative for the gate itself: if it gates something
 // this scan did not name, its request still reaches the driver and the card.
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, parse, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { readPersistedJson } from "./persisted-state.ts";
@@ -124,11 +124,26 @@ export interface FolderTrustScan {
    * a person would recognise them (instructions first). Empty = nothing to
    * gate, so no card. */
   sources: string[];
+  /** 0.1.52 FUIGOTRUST2: the user's own Fuigo install already trusts this
+   * workspace (`<FUIGO_HOME>/trusted_folders.toml`, the store standalone
+   * `fuigo --trust` writes and the engine re-reads per session). Such a
+   * folder runs trusted whatever Murage's record says — the engine never
+   * asks and cannot be told otherwise — so no card is raised for it and no
+   * "untrusted folder" chip is ever shown. Present only when true. */
+  upstreamTrusted?: true;
+}
+
+export interface FolderTrustScanOptions {
+  /** The Fuigo home whose `trusted_folders.toml` the engine will read for
+   * this turn (`fuigoHomeFromEnv`); null/undefined = do not consult one —
+   * a provider-routed turn runs under a per-turn temporary FUIGO_HOME that
+   * has no such file, so only Murage's own record speaks for it. */
+  fuigoHome?: string | null;
 }
 
 /** What the folder would contribute to a Fuigo turn, by name. Cheap: a
  * bounded set of stat calls along the cwd → git-root chain, no parsing. */
-export function scanFolderTrustSources(folder: string): FolderTrustScan {
+export function scanFolderTrustSources(folder: string, options: FolderTrustScanOptions = {}): FolderTrustScan {
   const start = canonicalFolder(folder);
   const key = folderTrustKey(start);
   const sources: string[] = [];
@@ -148,7 +163,237 @@ export function scanFolderTrustSources(folder: string): FolderTrustScan {
   for (const dir of dirs) for (const name of SKILL_DIRS) if (isDir(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_FILES) if (isFile(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_DIRS) if (isDir(join(dir, name))) hit(name);
-  return { key, folder: start, sources };
+  const upstream = options.fuigoHome ? upstreamTrustsFolder(readUpstreamTrustedFolders(options.fuigoHome), start) : false;
+  return { key, folder: start, sources, ...(upstream ? { upstreamTrusted: true as const } : {}) };
+}
+
+// ── the user's own Fuigo trust store (read-only) ─────────────────────────
+//
+// Fuigo 1.0.13 keeps its grants in `<FUIGO_HOME>/trusted_folders.toml`
+// (fuigo-workspace/src/trust.rs), written by standalone `fuigo --trust` and
+// by the `--trust` Murage passes on a trusted turn:
+//
+//     [folders."/abs/repo/root"]
+//     trusted = true
+//     decided_at = 1780000000
+//
+// The engine re-reads it per session and its `decide` answers Trusted from
+// the store BEFORE anything else — before the interactive request Murage
+// answers, before Murage's own record. A native-login turn (the user's real
+// FUIGO_HOME) in such a folder therefore runs trusted no matter what the
+// person told Murage. Murage reads the same file, read-only, so the card is
+// not raised and the "untrusted folder" chip is not shown for a folder the
+// engine will trust anyway. Never written here: `--trust` is the only way a
+// Murage decision reaches that file, and only on a trusted turn.
+
+/** Fuigo's home for a child env: `FUIGO_HOME` verbatim when non-empty (the
+ * engine uses it as-is, uncanonicalized), else `<home>/.fuigo`. Mirrors
+ * `fuigoHome` in drivers/acp/fuigo.ts and upstream fuigo-dirs
+ * `resolve_fuigo_home_from`. */
+export function fuigoHomeFromEnv(env: Record<string, string | undefined>): string {
+  if (env.FUIGO_HOME) return env.FUIGO_HOME;
+  return join(env.HOME || env.USERPROFILE || homedir(), ".fuigo");
+}
+
+export const UPSTREAM_TRUST_FILE = "trusted_folders.toml";
+
+/** A TOML basic (`"…"`, with escapes) or literal (`'…'`) string at the start
+ * of `text`; null when it is neither or is unterminated. */
+function tomlString(text: string): { value: string; rest: string } | null {
+  const quote = text[0];
+  if (quote !== '"' && quote !== "'") return null;
+  let value = "";
+  for (let i = 1; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === quote) return { value, rest: text.slice(i + 1) };
+    if (quote === "'" || ch !== "\\") {
+      value += ch;
+      continue;
+    }
+    const next = text[i + 1];
+    i++;
+    switch (next) {
+      case "\\": value += "\\"; break;
+      case '"': value += '"'; break;
+      case "n": value += "\n"; break;
+      case "t": value += "\t"; break;
+      case "r": value += "\r"; break;
+      case "b": value += "\b"; break;
+      case "f": value += "\f"; break;
+      case "u":
+      case "U": {
+        const width = next === "u" ? 4 : 8;
+        const hex = text.slice(i + 1, i + 1 + width);
+        if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length !== width) return null;
+        value += String.fromCodePoint(parseInt(hex, 16));
+        i += width;
+        break;
+      }
+      default:
+        return null;
+    }
+  }
+  return null;
+}
+
+/** A TOML key: quoted, or bare (`A-Za-z0-9_-`). */
+function tomlKey(text: string): { value: string; rest: string } | null {
+  const quoted = tomlString(text);
+  if (quoted) return quoted;
+  const bare = /^[A-Za-z0-9_-]+/.exec(text);
+  return bare ? { value: bare[0], rest: text.slice(bare[0].length) } : null;
+}
+
+/** Strip a trailing `# comment` (outside quotes) and whitespace. */
+function stripTomlComment(line: string): string {
+  let quote: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (quote) {
+      if (ch === "\\" && quote === '"') i++;
+      else if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "#") return line.slice(0, i).trim();
+  }
+  return line.trim();
+}
+
+/** `trusted = true|false`, or null for any other value. */
+function tomlTrusted(value: string): boolean | null {
+  const v = value.trim();
+  return v === "true" ? true : v === "false" ? false : null;
+}
+
+/** Parse the upstream `trusted_folders.toml` document into folder → trusted.
+ * Understands exactly what the engine's `toml` serializer writes (one
+ * `[folders."<key>"]` table per folder) plus the two hand-edit spellings a
+ * TOML reader accepts for the same data (`[folders]` with inline tables or
+ * dotted keys). Anything else — any line it does not recognise — makes the
+ * whole document unparseable and yields an EMPTY map, the way the engine's
+ * own reader treats a document its parser rejects: Murage must never trust
+ * a folder the engine would not, or the turn would run untrusted with no
+ * card and no chip. Returns null for an unparseable document. */
+export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> | null {
+  const folders = new Map<string, boolean>();
+  // table state: null = root, "folders" = inside [folders], {key} = inside [folders."key"]
+  let table: null | "folders" | { key: string } | "other" = null;
+  const set = (key: string, trusted: boolean | null) => {
+    if (trusted === null) return false;
+    folders.set(key, trusted);
+    return true;
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = stripTomlComment(raw);
+    if (!line) continue;
+    if (line.startsWith("[")) {
+      if (line.startsWith("[[") || !line.endsWith("]")) return null;
+      const inner = line.slice(1, -1).trim();
+      if (inner === "folders") { table = "folders"; continue; }
+      if (inner.startsWith("folders.")) {
+        const key = tomlKey(inner.slice("folders.".length));
+        if (!key || key.rest.trim()) return null;
+        table = { key: key.value };
+        continue;
+      }
+      // a table this reader does not know (a future section): skip its body
+      table = "other";
+      continue;
+    }
+    const eq = (() => {
+      // find the first `=` outside quotes
+      let quote: string | null = null;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i]!;
+        if (quote) {
+          if (ch === "\\" && quote === '"') i++;
+          else if (ch === quote) quote = null;
+        } else if (ch === '"' || ch === "'") quote = ch;
+        else if (ch === "=") return i;
+      }
+      return -1;
+    })();
+    if (eq < 0) return null;
+    const lhs = line.slice(0, eq).trim();
+    const rhs = line.slice(eq + 1).trim();
+    if (table === "other") continue;
+    if (table === null) return null; // a root-level key the document never has
+    if (typeof table === "object") {
+      if (lhs === "trusted") { if (!set(table.key, tomlTrusted(rhs))) return null; continue; }
+      if (lhs === "decided_at") { if (!/^-?\d+$/.test(rhs)) return null; continue; }
+      return null;
+    }
+    // inside [folders]: `"key" = { trusted = true, decided_at = 1 }` or `"key".trusted = true`
+    const key = tomlKey(lhs);
+    if (!key) return null;
+    const after = key.rest.trim();
+    if (after === "" && rhs.startsWith("{") && rhs.endsWith("}")) {
+      let trusted: boolean | null = null;
+      for (const part of rhs.slice(1, -1).split(",").map((p) => p.trim()).filter(Boolean)) {
+        const m = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
+        if (!m) return null;
+        if (m[1] === "trusted") { trusted = tomlTrusted(m[2]!); if (trusted === null) return null; }
+        else if (m[1] === "decided_at") { if (!/^-?\d+$/.test(m[2]!.trim())) return null; }
+        else return null;
+      }
+      if (trusted === null) return null;
+      folders.set(key.value, trusted);
+      continue;
+    }
+    if (after === ".trusted") { if (!set(key.value, tomlTrusted(rhs))) return null; continue; }
+    if (after === ".decided_at") { if (!/^-?\d+$/.test(rhs)) return null; continue; }
+    return null;
+  }
+  return folders;
+}
+
+/** The user's own Fuigo grants: folder → trusted, from
+ * `<fuigoHome>/trusted_folders.toml`. Missing, unreadable or unparseable →
+ * empty (the engine's own rule). Read fresh every time: the engine re-reads
+ * per session, and standalone Fuigo may have written it a moment ago. */
+export function readUpstreamTrustedFolders(fuigoHome: string): Map<string, boolean> {
+  let text: string;
+  try {
+    text = readFileSync(join(fuigoHome, UPSTREAM_TRUST_FILE), "utf8");
+  } catch {
+    return new Map();
+  }
+  if (!text.trim()) return new Map();
+  return parseUpstreamTrustedFolders(text) ?? new Map();
+}
+
+/** Component-wise "`path` is `prefix` or below it" (Rust `Path::starts_with`). */
+function pathStartsWith(path: string, prefix: string): boolean {
+  const rel = relative(prefix, path);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
+
+/** Whether the engine's own store trusts `folder`, by upstream `is_trusted`
+ * (fuigo-workspace/src/trust.rs): among recorded folders that are an
+ * ancestor-or-self of the canonical query AND share its workspace key (the
+ * same git root — a nested repo is not covered), the deepest decides; on a
+ * depth tie every tied record must say trusted; over-broad keys (home, a
+ * filesystem root, a relative path) are ignored. */
+export function upstreamTrustsFolder(records: ReadonlyMap<string, boolean>, folder: string): boolean {
+  if (!records.size) return false;
+  const query = canonicalFolder(folder);
+  const queryKey = folderTrustKey(query);
+  let bestDepth: number | null = null;
+  let trusted = false;
+  for (const [raw, decision] of records) {
+    // a hand-edited `/a/b/` names the same folder as `/a/b` (Rust Path
+    // components ignore a trailing separator); the tie rule then applies
+    const recorded = raw.length > 1 ? raw.replace(/[\\/]+$/, "") || raw : raw;
+    if (isUnrecordableTrustRoot(recorded) || !pathStartsWith(query, recorded)) continue;
+    if (folderTrustKey(recorded) !== queryKey) continue;
+    const depth = recorded.split(/[\\/]+/).filter(Boolean).length;
+    if (bestDepth !== null && depth < bestDepth) continue;
+    if (bestDepth !== null && depth === bestDepth) trusted &&= decision;
+    else {
+      bestDepth = depth;
+      trusted = decision;
+    }
+  }
+  return trusted;
 }
 
 /** Display names for the kinds Fuigo's own request reports (`configKinds`),
@@ -178,7 +423,11 @@ export function folderTrustKindNames(kinds: readonly unknown[]): string[] {
   return out;
 }
 
-export type FolderTrustSource = "picker" | "card";
+/** Who made the record: a folder picker, the trust card, or the one-time
+ * upgrade seed (FUIGOTRUST2: a folder a bot, task or room was already
+ * working in before 0.1.52 — chosen by the person in Murage back then, so
+ * treated as picker-chosen; Forget in the picker asks again). */
+export type FolderTrustSource = "picker" | "card" | "upgrade";
 
 export interface FolderTrustRecord {
   decision: FolderTrustDecision;
@@ -191,6 +440,8 @@ export interface FolderTrustRecord {
 interface PersistedFolderTrust {
   version: 1;
   folders: Record<string, FolderTrustRecord>;
+  /** The release whose boot seeded pre-existing working folders (once). */
+  seededFrom?: string;
 }
 
 const isRecord = (value: unknown): value is FolderTrustRecord =>
@@ -205,15 +456,45 @@ const isRecord = (value: unknown): value is FolderTrustRecord =>
 export class FolderTrustStore {
   private folders = new Map<string, FolderTrustRecord>();
   private readonly file: string;
+  private seededFrom: string | undefined;
 
   constructor(file: string) {
     this.file = file;
     const parsed = readPersistedJson(file);
     if (parsed === undefined) return;
     const raw = parsed as Partial<PersistedFolderTrust> | null;
+    if (raw && typeof raw === "object" && typeof raw.seededFrom === "string") this.seededFrom = raw.seededFrom;
     const folders = raw && typeof raw === "object" && raw.folders && typeof raw.folders === "object" ? raw.folders : null;
     if (!folders) return;
     for (const [key, record] of Object.entries(folders)) if (isRecord(record)) this.folders.set(key, record);
+  }
+
+  /** 0.1.52 FUIGOTRUST2 upgrade seed: folders bots, tasks and rooms were
+   * already working in when this record first appeared were chosen by the
+   * person in Murage before it existed, so they are recorded as trusted
+   * ONCE — on the first boot that finds no `seededFrom` marker — and never
+   * again: a later Forget (or a card's Don't trust) is not overridden by the
+   * next boot, and a folder that already has a record keeps it. Returns how
+   * many folders were recorded; -1 when the seed had already run. The
+   * marker is written even when nothing was recorded. */
+  seedOnce(folders: Iterable<string>, release: string): number {
+    if (this.seededFrom) return -1;
+    let count = 0;
+    const now = Date.now();
+    for (const folder of folders) {
+      const key = folderTrustKey(folder);
+      if (isUnrecordableTrustRoot(key) || this.folders.has(key)) continue;
+      this.folders.set(key, { decision: "trust", decidedAt: now, source: "upgrade", folder: canonicalFolder(folder) });
+      count++;
+    }
+    this.seededFrom = release;
+    this.persist();
+    return count;
+  }
+
+  /** The release the upgrade seed ran for, if it has. */
+  get seeded(): string | undefined {
+    return this.seededFrom;
   }
 
   /** The recorded decision for the folder's trust key, if any. */
@@ -248,7 +529,7 @@ export class FolderTrustStore {
   }
 
   private persist(): void {
-    const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(this.folders) };
+    const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(this.folders), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
     writeFileAtomic(this.file, JSON.stringify(data, null, 2), { mode: 0o600 });
   }
 }

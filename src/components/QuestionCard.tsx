@@ -308,7 +308,17 @@ export function QuestionCardView({
 
       {state === "expired" && (
         <p className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] leading-snug text-warning">
-          {trust ? t("folderTrust.expiredNote") : secret ? t("questions.secretExpired") : t("questions.expiredNote", { name })}
+          {trust
+            ? card.folderTrust?.late === "finished"
+              ? t("folderTrust.lateFinishedNote")
+              : card.folderTrust?.late === "stopped"
+                ? t("folderTrust.lateStoppedNote")
+                : card.folderTrust?.late === "timeout"
+                  ? t("folderTrust.lateTimeoutNote")
+                  : t("folderTrust.expiredNote")
+            : secret
+              ? t("questions.secretExpired")
+              : t("questions.expiredNote", { name })}
         </p>
       )}
       {error && (

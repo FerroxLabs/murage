@@ -24,7 +24,14 @@
 //                     client advertised `fuigo/folderTrust.interactive`, writes
 //                     the answer to FAKE_ACP_DUMP as `decision`, and — like the
 //                     real engine, which reads instructions at session build —
-//                     still replies with AGENTS.md withheld this session)
+//                     still replies with AGENTS.md withheld this session.
+//                     Like the engine it also reads the user's own store,
+//                     `<FUIGO_HOME | ~/.fuigo>/trusted_folders.toml`: a
+//                     `[folders."<cwd>"]` table with `trusted = true` trusts
+//                     the folder at build without `--trust`. With
+//                     FAKE_ACP_TRUST_PROMPT_FIRST=1 the prompt completes at
+//                     once while its trust request is still open — the real
+//                     engine's timing when the turn outruns the card)
 //                   | elicitation-form | elicitation-url | elicitation-legacy
 //                     (ACP `elicitation/create` form / url, and the older
 //                     `session/elicitation` spelling); the client's reply is
@@ -73,7 +80,8 @@
 import { spawn } from "node:child_process";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
-import { isAbsolute } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -296,7 +304,22 @@ let onPermissionAnswered: (() => void) | null = null;
 // trusted when the session was built (argv --trust, the way `fuigo --trust`
 // grants the process cwd up front)
 let folderTrustInteractive = false;
-const folderTrustedAtBuild = argv.includes("--trust");
+// the engine's own store (fuigo-workspace/src/trust.rs): exact-key match is
+// enough for a fixture — the server's reader mirrors the real cascade
+const storeTrustsCwd = (): boolean => {
+  const home = process.env.FUIGO_HOME || join(process.env.HOME || process.env.USERPROFILE || homedir(), ".fuigo");
+  try {
+    const text = readFileSync(join(home, "trusted_folders.toml"), "utf8");
+    const table = text.indexOf(`[folders."${process.cwd()}"]`);
+    if (table < 0) return false;
+    const body = text.slice(table).split("\n").slice(1).join("\n");
+    const next = body.search(/^\[/m);
+    return /^trusted = true$/m.test(next < 0 ? body : body.slice(0, next));
+  } catch {
+    return false;
+  }
+};
+const folderTrustedAtBuild = argv.includes("--trust") || (mode === "folder-trust" && storeTrustsCwd());
 const agentsMdForReply = () => {
   if (!folderTrustedAtBuild) return "withheld";
   try {
@@ -613,7 +636,7 @@ function handle(msg: any) {
         // tears the child down (the client always answers: a known decision
         // at once, a card when the owner does, and a cancel when the turn
         // ends).
-        if (pendingPermissionId === 9006) {
+        if (pendingPermissionId === 9006 && !process.env.FAKE_ACP_TRUST_PROMPT_FIRST) {
           onPermissionAnswered = answer;
           return;
         }

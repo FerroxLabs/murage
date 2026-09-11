@@ -524,7 +524,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let child: ReturnType<typeof spawnCli> | null = null;
         let teardown: ReturnType<TurnTeardowns["track"]> | null = null;
         let spawned = false;
-        const state = { settled: false, promptSent: false, cancelRequested: false, text: "" };
+        const state = { settled: false, finished: false, promptSent: false, cancelRequested: false, text: "" };
         const asks = new Map<string, AcpAskFinish>();
         let nextId = 1;
         let sessionId: string | null = null;
@@ -538,6 +538,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // also answers the engine's own request should one still arrive.
         let folderTrusted: FolderTrustDecision | "skipped" | null = turn.folderTrust?.decision ?? null;
         const folderSources = () => turn.folderTrust?.sources ?? [];
+        // The user's own Fuigo install already trusts the folder (its
+        // trusted_folders.toml, FUIGOTRUST2): the engine runs trusted from
+        // its store whatever Murage recorded, so there is nothing to ask
+        // and nothing was withheld. `--trust` is still passed only on
+        // Murage's own decision: the engine's store needs no rewriting.
+        const upstreamTrusted = support.folderTrust === true && turn.folderTrust?.upstreamTrusted === true;
 
         const send = (obj: unknown) => {
           try {
@@ -589,6 +595,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         ) => {
           if (state.settled) return;
           state.settled = true;
+          state.finished = ok && stopReason === null;
           lifecycle.record("turn_settled", {
             reason: cause,
             settled: true,
@@ -596,6 +603,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             promptSent: state.promptSent,
           });
           if (interruptTimer) clearTimeout(interruptTimer);
+          // FUIGOTRUST2 (1): a routed turn's per-turn FUIGO_HOME is removed
+          // on the child's close — but a turn that never spawned (its card
+          // timed out, was stopped, or its launch threw) has no child.
+          if (!child) providerBinding?.cleanup();
           for (const finish of [...asks.values()]) finish("cancel", "system");
           for (const p of rpcPending.values()) {
             if (p.timer) clearTimeout(p.timer);
@@ -703,6 +714,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const askFolderTrust = (
           sources: string[],
           onDecided: (decision: FolderTrustDecision | "skipped" | "unanswered") => void,
+          late = false,
         ) => {
           const folder = turn.folderTrust?.folder ?? cwd;
           const key = turn.folderTrust?.key ?? cwd;
@@ -712,12 +724,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!asks.delete(requestId)) return;
             clearTimeout(timer);
             const decision = behavior === "answer" ? folderTrustDecision(answers) : null;
+            // FUIGOTRUST2 (6): a late card (the engine had already started)
+            // closed by nobody: the turn finished, was stopped, or the ask
+            // timed out while the turn ran on — untrusted in every case.
+            const folderTrustLate = late && source !== "user"
+              ? source === "timeout" ? "timeout" : state.finished ? "finished" : "stopped"
+              : undefined;
             emit({
               ...base(threadId, turnId),
               type: "request.resolved",
               requestId,
               behavior: decision ? "answer" : "deny",
               source,
+              ...(folderTrustLate ? { folderTrustLate } : {}),
             });
             if (decision) onDecided(decision);
             else onDecided(source === "user" ? "skipped" : "unanswered");
@@ -751,6 +770,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const params = raw.params && typeof raw.params === "object" ? raw.params : raw;
           const reply = (decision: FolderTrustDecision | "skipped") =>
             send({ jsonrpc: "2.0", id: msg.id, result: { outcome: decision === "trust" ? "trust" : "reject" } });
+          // the user's own Fuigo store trusts the folder (FUIGOTRUST2): the
+          // engine would not ask, but if it does the answer is its own
+          if (upstreamTrusted) return reply("trust");
           if (folderTrusted) return reply(folderTrusted);
           const kinds = Array.isArray(params.configKinds) ? params.configKinds : [];
           const sources = folderSources().length ? folderSources() : folderTrustKindNames(kinds);
@@ -758,9 +780,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           askFolderTrust(sources, (decision) => {
             folderTrusted = decision === "trust" || decision === "reject" ? decision : "skipped";
             reply(folderTrusted);
+            // FUIGOTRUST2 (6): nobody decided while the engine ran — it ran
+            // untrusted, so the chip names what it asked about. A settle
+            // closes the ask BEFORE it emits turn.completed, so the chip
+            // still lands inside the turn.
+            if (decision === "unanswered") return noteFolderTrust(folderTrustWithheldName(sources));
             if (state.settled) return;
             noteFolderTrust(decision === "trust" ? folderTrustLateName(sources) : folderTrustWithheldName(sources));
-          });
+          }, true);
         };
 
         // server→client permission request → canonical request.opened
@@ -1253,10 +1280,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // naming what was left out; no answer in time ends the turn as a
         // stopped turn (STOP2), never a hang and never a guess.
         const gate = turn.folderTrust;
-        const needsCard = Boolean(support.folderTrust && gate && !gate.decision && gate.sources.length);
+        const needsCard = Boolean(support.folderTrust && gate && !gate.decision && gate.sources.length && !upstreamTrusted);
         if (!needsCard) {
-          launch(folderTrusted === "trust");
-          if (support.folderTrust && folderTrusted === "reject" && gate?.sources.length) noteFolderTrust(folderTrustWithheldName(gate.sources));
+          try {
+            launch(folderTrusted === "trust");
+          } catch (error) {
+            providerBinding?.cleanup();
+            throw error;
+          }
+          if (support.folderTrust && folderTrusted === "reject" && gate?.sources.length && !upstreamTrusted) noteFolderTrust(folderTrustWithheldName(gate.sources));
           return { turnId };
         }
         start();
