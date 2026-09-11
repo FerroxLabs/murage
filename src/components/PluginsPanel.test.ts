@@ -13,7 +13,16 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import {
+  connectedAppsLockState,
+  COMPOSIO_KEY_FIELD_SELECTOR,
+  FLUX_KEY_FIELD_SELECTOR,
+  focusSettingsField,
+  SHOWCASE_APPS,
+} from "./ConnectedAppsLock";
 import {
   connectedAppsNotices,
   connectorActionLabel,
@@ -24,11 +33,28 @@ import {
   formatLegacyCutoff,
   mergeCompleteConnectorStatus,
   migrationFromClaim,
+  PluginsPanel,
   type ConnectorPanelFields,
 } from "./PluginsPanel";
 
+// The panel renders against a stubbed store so each key state can be painted
+// without a harness. `api` is a spy: nothing in these renders may call it.
+const storeStub = vi.hoisted(() => ({
+  config: null as null | Record<string, unknown>,
+  api: vi.fn(async () => { throw new Error("no request may leave the locked panel"); }),
+}));
+vi.mock("@/state/store", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/state/store")>();
+  return {
+    ...original,
+    api: storeStub.api,
+    useStore: () => ({ state: { ...original.initialState, config: storeStub.config }, dispatch: () => {} }),
+  };
+});
+
 const here = dirname(fileURLToPath(import.meta.url));
 const panel = readFileSync(join(here, "PluginsPanel.tsx"), "utf8");
+const lockSource = readFileSync(join(here, "ConnectedAppsLock.tsx"), "utf8");
 const en = JSON.parse(readFileSync(join(here, "../locales/en.json"), "utf8")) as Record<string, string>;
 const composio = readFileSync(join(here, "../../server/composio.ts"), "utf8");
 
@@ -132,17 +158,13 @@ const texts = (list: ReturnType<typeof connectedAppsNotices>) =>
   list.map((notice) => ("text" in notice ? notice.text : "body" in notice ? notice.body : "")).join(" | ");
 
 describe("the connected-apps call to action", () => {
-  it("offers FluxRouter first and a pasted key second when nothing is set up", () => {
-    const [cta] = notices({ configured: false }, fields({ fluxBrokerEnabled: true }));
-    expect(cta).toMatchObject({
-      kind: "flux-cta",
-      title: "Connect 500+ apps — enable FluxRouter",
-      actions: [
-        { id: "enable-flux", label: "Enable FluxRouter" },
-        { id: "own-key", label: "Use my own Composio key (Advanced)" },
-      ],
-    });
-    // "enable-flux" must land on Models, where FluxRouter actually lives.
+  it("leaves the no-key state to the lock rather than a notice line", () => {
+    // Sean 2026-09-11: the whole panel is locked until a key exists. The
+    // notices never see this state, because the locked panel does not fetch
+    // the catalog they are derived from.
+    expect(notices({ configured: false }, fields({ fluxBrokerEnabled: true }))).toEqual([]);
+    expect(panel).not.toContain("flux-cta");
+    // "enable-flux" must still land on Models, where FluxRouter actually lives.
     expect(panel).toContain('{ type: "toggleAppSettings", open: true, section: "models" }');
   });
 
@@ -314,5 +336,145 @@ describe("reading what the server sent", () => {
       installationId: "install-1",
     });
     expect(migrationFromClaim(null, CUTOFF)).toEqual({ state: "none", legacyUntil: CUTOFF });
+  });
+});
+
+// ── the lock ──────────────────────────────────────────────────────────
+// Sean 2026-09-11: the connected-apps screen is greyed out until a FluxRouter
+// key or a Composio key of the person's own exists, and the grey is the
+// offer. What is pinned: the three key states, the exact copy, the static
+// showcase, and that the locked panel sends nothing anywhere.
+
+const noKeys = { composio: { configured: false, mode: "unavailable" as const }, flux: { configured: false } };
+const fluxKey = { composio: { configured: false, mode: "unavailable" as const }, flux: { configured: true } };
+const ownKey = { composio: { configured: true, mode: "self-hosted" as const }, flux: { configured: false } };
+
+const render = (config: typeof storeStub.config) => {
+  storeStub.config = config;
+  storeStub.api.mockClear();
+  return renderToStaticMarkup(createElement(PluginsPanel));
+};
+
+describe("the connected-apps lock", () => {
+  it("locks with no key, and opens for either key", () => {
+    expect(connectedAppsLockState(noKeys)).toBe("locked");
+    expect(connectedAppsLockState(fluxKey)).toBe("unlocked");
+    expect(connectedAppsLockState(ownKey)).toBe("unlocked");
+    // A FluxRouter key whose broker is not ready yet is still a key: the
+    // panel's own "not reachable" line owns that case, not the lock.
+    expect(connectedAppsLockState({ composio: { configured: false, mode: "unavailable" }, flux: { configured: true } })).toBe("unlocked");
+    // The Murage Worker still holding the apps counts as configured.
+    expect(connectedAppsLockState({ composio: { configured: true, mode: "managed" } })).toBe("unlocked");
+  });
+
+  it("does not guess before GET /api/config has answered", () => {
+    expect(connectedAppsLockState(null)).toBe("unknown");
+    expect(connectedAppsLockState(undefined)).toBe("unknown");
+  });
+
+  it("stands down when the credential store could not be read, so a remembered inventory stays visible", () => {
+    expect(connectedAppsLockState(noKeys, { stale: true })).toBe("unlocked");
+    expect(connectedAppsLockState(noKeys, { stale: false })).toBe("locked");
+  });
+
+  it("says exactly what unlocking buys, in English, under connectedApps.lock.*", () => {
+    expect(en["connectedApps.lock.title"]).toBe("Connect 500+ apps");
+    expect(en["connectedApps.lock.body"]).toBe(
+      "Gmail, Slack, Notion, GitHub, Google Calendar and 500+ more — your bots can use them all. Add your FluxRouter key to unlock, with a free daily allowance included.",
+    );
+    expect(en["connectedApps.lock.button"]).toBe("Add FluxRouter key");
+    expect(en["connectedApps.lock.ownKey"]).toBe("Have your own Composio key? Add it under Advanced.");
+    // The old notice-line CTA strings stay in en.json unreferenced until the locale
+    // regeneration lane prunes them; the "flux-cta" notice kind itself is gone (see above).
+  });
+
+  it("paints the offer over a dimmed, inert showcase when there is no key", () => {
+    const html = render(noKeys);
+    expect(html).toContain('data-connected-apps-lock=""');
+    expect(html).toContain("Connect 500+ apps");
+    expect(html).toContain("Add FluxRouter key");
+    expect(html).toContain("Have your own Composio key? Add it under Advanced.");
+    // One headline, one line, one primary action.
+    expect(html.match(/data-connected-apps-lock-primary/g)).toHaveLength(1);
+    expect(html.match(/<h3 /g)).toHaveLength(1);
+    // The showcase is scenery: hidden from assistive tech, out of the tab
+    // order, and it takes no pointer.
+    expect(html).toMatch(/aria-hidden="true" inert="" class="pointer-events-none select-none opacity-35 blur-\[1\.5px\]"/);
+    for (const app of SHOWCASE_APPS) expect(html).toContain(`>${app.label}<`);
+    // Nothing of the live panel is behind the glass: no catalog loading
+    // line, no search, no marketplace tabs, no refresh button.
+    expect(html).not.toContain("Loading catalog");
+    expect(html).not.toContain("Search apps");
+    expect(html).not.toContain("Marketplace");
+    expect(html).not.toContain("Refresh connection status");
+  });
+
+  it("is the normal panel once either key exists", () => {
+    for (const config of [fluxKey, ownKey]) {
+      const html = render(config);
+      expect(html).not.toContain("data-connected-apps-lock");
+      expect(html).toContain("Search apps");
+      expect(html).toContain("Refresh connection status");
+    }
+  });
+
+  it("waits, and fetches nothing, until the config answer exists", () => {
+    const html = render(null);
+    expect(html).not.toContain("data-connected-apps-lock");
+    expect(html).toContain(en["connectedApps.lock.loading"]);
+    expect(html).not.toContain("Search apps");
+  });
+
+  it("never fetches the catalog or the inventory while locked", () => {
+    // The showcase is a static list: no request of any kind leaves the lock.
+    expect(SHOWCASE_APPS).toHaveLength(24);
+    expect(SHOWCASE_APPS.map((app) => app.label)).toEqual([
+      "Gmail", "Google Calendar", "Google Drive", "Slack", "Notion", "GitHub", "Linear", "Jira", "Trello", "HubSpot",
+      "Salesforce", "Stripe", "Shopify", "Airtable", "Discord", "Telegram", "X", "LinkedIn", "YouTube", "Dropbox",
+      "Zoom", "Calendly", "Asana", "Todoist",
+    ]);
+    expect(lockSource).not.toMatch(/\bfetch\(|\bapi\(|https?:\/\/|<img/);
+    // The panel's two requests — the catalog and the inventory — sit behind
+    // the one gate, in the one effect, and that effect re-runs when a key
+    // is saved (the config frame flips `lockState`).
+    expect(panel).toMatch(
+      /useEffect\(\(\) => \{\n\s+if \(lockState !== "unlocked"\) return;\n\s+let alive = true;\n\s+void loadConnectionInventory\(\);\n\s+api\("\/api\/connectors\/catalog"\)[\s\S]*?\}, \[lockState, loadConnectionInventory\]\);/,
+    );
+    expect(panel.match(/api\("\/api\/connectors\/catalog"\)/g)).toHaveLength(1);
+    // The locked panel listens for the app's own warm-up request; it never
+    // starts one. `pendingConnectedApps` only returns what is in flight.
+    expect(panel).toMatch(/if \(lockState === "unlocked"\) return;[\s\S]{0,200}pendingConnectedApps\(\)\?\.then/);
+    expect(panel).toMatch(/export function pendingConnectedApps\(\)[^{]*\{\n\s+return connectorStatusRequest;\n\}/);
+    // The header refresh button, which would fetch, is not offered while locked.
+    expect(panel).toContain('{surface === "apps" && lockState === "unlocked" && (');
+    // And the render did not call `api` at all (effects do not run in a
+    // static render, so this pins the render path, not the effect gate).
+    render(noKeys);
+    expect(storeStub.api).not.toHaveBeenCalled();
+  });
+
+  it("lands the cursor in the key field the button names", () => {
+    expect(FLUX_KEY_FIELD_SELECTOR).toBe('input[name="flux-router-key"]:not([disabled])');
+    expect(COMPOSIO_KEY_FIELD_SELECTOR).toBe('input[aria-label="Composio project key"]:not([disabled])');
+    // The primary goes to Models (where the Flux key lives) and the secondary
+    // to Tools & Connections (where the Composio key row lives), each with
+    // the field focus queued behind the dialog opening.
+    expect(panel).toMatch(/const addFluxKey = useCallback[\s\S]*?section: "models" \}\);\n\s+focusSettingsField\(FLUX_KEY_FIELD_SELECTOR\);/);
+    expect(panel).toMatch(/const addOwnKey = useCallback[\s\S]*?section: "connections" \}\);\n\s+focusSettingsField\(COMPOSIO_KEY_FIELD_SELECTOR\);/);
+    // The lock's button is the first thing the keyboard reaches.
+    expect(panel).toContain('dialog?.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")');
+  });
+
+  it("focuses a field that already exists, and gives up quietly where there is no document", () => {
+    const focused: string[] = [];
+    const field = { focus: () => focused.push("field"), scrollIntoView: () => focused.push("scroll") };
+    const doc = { querySelector: (selector: string) => (selector === FLUX_KEY_FIELD_SELECTOR ? field : null), body: null } as unknown as Document;
+    const stop = focusSettingsField(FLUX_KEY_FIELD_SELECTOR, { doc });
+    expect(focused).toEqual(["scroll", "field"]);
+    stop();
+    // Nothing found and no body to observe: a bounded timer, then nothing.
+    const cancel = focusSettingsField(COMPOSIO_KEY_FIELD_SELECTOR, { doc, timeoutMs: 1 });
+    cancel();
+    expect(focused).toEqual(["scroll", "field"]);
   });
 });
