@@ -14,6 +14,7 @@
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, validateProviderTurnRoute } from "../../provider-routing.ts";
+import { isQuestionTool } from "../../auto-approve.ts";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
 
@@ -576,7 +577,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
-          if (config.fullAuto) {
+          const kind = String(toolCall.kind ?? "");
+          // An agent that routes its question tool (e.g. AskUserQuestion)
+          // through request_permission names it in the tool call. That tool
+          // asks the OWNER, so fullAuto must not select "allow" for it — that
+          // would answer the question with nothing — and the harness receives
+          // the tool's own name so its policy recognizes it too.
+          const title = String(toolCall.title ?? "");
+          const questionTool = isQuestionTool(title) ? title : isQuestionTool(kind) ? kind : undefined;
+          if (config.fullAuto && !questionTool) {
             const allow = optionFor("allow");
             if (!allow) missing("allow");
             return send({
@@ -585,8 +594,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               result: allow ? { outcome: { outcome: "selected", optionId: allow } } : cancelled,
             });
           }
-          const kind = String(toolCall.kind ?? "");
-          const tool = kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool";
+          const tool = questionTool ?? (kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool");
           const summary = String(toolCall.rawInput?.command ?? toolCall.title ?? tool).slice(0, 200);
           const requestId = newId();
           const finish = (behavior: string, source: "user" | "timeout" | "system" = "user") => {
@@ -623,6 +631,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             tool,
             summary,
             approvalScope: controlsHost ? "local-computer" : undefined,
+            ...(questionTool ? { questionTool: true as const } : {}),
           });
         };
 
