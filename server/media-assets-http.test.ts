@@ -70,6 +70,31 @@ it("resolves saved and workspace media for the desktop only and streams exact ra
   const beyond = await fetch(`${fixture.info.url}${url}`, { headers: { range: `bytes=${image.length}-` } });
   expect(beyond.status).toBe(416); await beyond.text();
 
+  // A player seeks: range requests are abandoned before and after the first
+  // bytes arrive, more of them than there are stream slots. None may keep a
+  // slot, so the next request is served in full rather than answered 503.
+  for (let index = 0; index < 24; index++) {
+    const controller = new AbortController();
+    const attempt = fetch(`${fixture.info.url}${url}`, { signal: controller.signal, headers: { range: `bytes=${index * 4096}-` } }).then(response => response.arrayBuffer()).catch(() => undefined);
+    setImmediate(() => controller.abort());
+    await attempt;
+  }
+  for (let index = 0; index < 10; index++) {
+    const seek = await fetch(`${fixture.info.url}${url}`, { headers: { range: `bytes=${index * 4096}-` } });
+    expect(seek.status).toBe(206);
+    const reader = seek.body!.getReader();
+    expect((await reader.read()).done).toBe(false);
+    await reader.cancel();
+  }
+  const afterSeeks = await fetch(`${fixture.info.url}${url}`);
+  expect(afterSeeks.status).toBe(200);
+  expect(Buffer.from(await afterSeeks.arrayBuffer()).equals(image)).toBe(true);
+  // A method a capability holder cannot use is refused; without the capability the route stays hidden.
+  const post = await fetch(`${fixture.info.url}${url}`, { method: "POST" });
+  expect(post.status).toBe(405); await post.text();
+  const blindPost = await fetch(`${fixture.info.url}${MEDIA_ROUTES.bytes}/${asset.id}`, { method: "POST" });
+  expect(blindPost.status).toBe(404); await blindPost.text();
+
   // The capability alone is not enough through the companion door, and a bad one is hidden.
   const viaDoor = await fetch(`${fixture.info.url}${url}`, { headers: { [COMPANION_HEADER]: "1" } });
   expect(viaDoor.status).toBe(404); await viaDoor.text();

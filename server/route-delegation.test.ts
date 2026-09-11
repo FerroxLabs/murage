@@ -2,7 +2,7 @@ import { createServer, request, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
-import { hiddenRoute, notImplemented, sendDelegated, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
+import { hiddenRoute, notImplemented, responseGone, sendDelegated, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute, resolveImageReferenceRoute } from "./media-assets.ts";
 import { createOutputPublisher } from "./output-publication.ts";
@@ -43,6 +43,39 @@ describe("route delegation writer", () => {
     const stream = new Readable({ read() {}, destroy(error, callback) { destroyed = true; callback(error); } });
     expect(await serve("HEAD", () => ({ status: 200, stream }))).toMatchObject({ status: 200, body: "" });
     expect(destroyed).toBe(true);
+  });
+
+  it("destroys a stream whose client left before or during the response instead of piping into the void", async () => {
+    // Before: the module answered after the client had gone (a player seek
+    // aborting a range request during the file open). The stream must be
+    // released right away; a pipe into a closed response never drains.
+    let releasedBefore = false;
+    const early = new Readable({ read() {}, destroy(error, callback) { releasedBefore = true; callback(error); } });
+    let arrived!: () => void;
+    const received = new Promise<void>(resolve => { arrived = resolve; });
+    const beforeServer = createServer((_req, res) => {
+      expect(responseGone(res)).toBe(false);
+      res.once("close", () => { expect(responseGone(res)).toBe(true); sendDelegated(res, "GET", { status: 200, stream: early }); });
+      arrived();
+    });
+    servers.push(beforeServer);
+    await new Promise<void>(resolve => beforeServer.listen(0, "127.0.0.1", resolve));
+    const abandoned = request({ host: "127.0.0.1", port: (beforeServer.address() as AddressInfo).port, method: "GET", path: "/" });
+    abandoned.on("error", () => undefined); abandoned.end();
+    await received;
+    abandoned.destroy();
+    await expect.poll(() => releasedBefore, { timeout: 5000 }).toBe(true);
+    // During: the response is piped and the client leaves after the first chunk.
+    let releasedDuring = false;
+    const during = new Readable({ read() { this.push(Buffer.alloc(1024, 0x41)); }, destroy(error, callback) { releasedDuring = true; callback(error); } });
+    const duringServer = createServer((_req, res) => { expect(responseGone(res)).toBe(false); sendDelegated(res, "GET", { status: 200, stream: during }); });
+    servers.push(duringServer);
+    await new Promise<void>(resolve => duringServer.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port: (duringServer.address() as AddressInfo).port, method: "GET", path: "/" }, res => { res.once("data", () => { res.destroy(); resolve(); }); });
+      req.on("error", reject); req.end();
+    });
+    await expect.poll(() => releasedDuring, { timeout: 5000 }).toBe(true);
   });
 
   it("uses the existing hidden-route answer and a coded 501", () => {

@@ -392,7 +392,8 @@ function locateWorkspace(ref: Extract<NormalizedRef, { source: "workspace" }>, d
   let rootStat: Stats;
   try { rootStat = lstatSync(candidate); } catch (error) { return { ...located, outcome: { state: errno(error) === "ENOENT" ? "missing" : "denied" } }; }
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return { ...located, outcome: { state: "denied" } };
-  const root = realpathSync.native(candidate);
+  let root: string;
+  try { root = realpathSync.native(candidate); } catch (error) { return { ...located, outcome: { state: errno(error) === "ENOENT" ? "missing" : "denied" } }; }
   let home: string | undefined;
   try { home = realpathSync.native(homedir()); } catch { home = undefined; }
   // The filesystem root, HOME and any ancestor of HOME are never a dedicated workspace.
@@ -401,7 +402,10 @@ function locateWorkspace(ref: Extract<NormalizedRef, { source: "workspace" }>, d
   }
   const parts = ref.relativePath.split("/");
   if (parts.some((part, index) => privateName(part, index === parts.length - 1))) return { ...located, outcome: { state: "denied" } };
-  const observed: Array<[string, Stats]> = [[root, lstatSync(root)]];
+  let canonicalStat: Stats;
+  try { canonicalStat = lstatSync(root); } catch (error) { return { ...located, outcome: { state: errno(error) === "ENOENT" ? "missing" : "denied" } }; }
+  if (!canonicalStat.isDirectory() || canonicalStat.isSymbolicLink()) return { ...located, outcome: { state: "denied" } };
+  const observed: Array<[string, Stats]> = [[root, canonicalStat]];
   let path = root;
   for (const [index, part] of parts.entries()) {
     path = join(path, part);
@@ -529,12 +533,14 @@ async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: numb
 
 export type ByteRange = { start: number; end: number } | "full" | "unsatisfiable";
 
-/** One `bytes=` range only. Multiple ranges, other units and malformed or
- * unsatisfiable specs are refused (416) rather than approximated. */
+/** One `bytes=` range only (the unit is case-insensitive and optional
+ * whitespace may surround `=`, per RFC 9110). Multiple ranges, other units
+ * and malformed or unsatisfiable specs are refused (416) rather than
+ * approximated. */
 export function parseByteRange(header: string | string[] | undefined, size: number): ByteRange {
   if (header === undefined) return "full";
   if (typeof header !== "string") return "unsatisfiable";
-  const match = /^bytes=(\d{0,15})-(\d{0,15})$/.exec(header.trim());
+  const match = /^bytes[ \t]*=[ \t]*(\d{0,15})-(\d{0,15})$/i.exec(header.trim());
   if (!match || (match[1] === "" && match[2] === "") || size === 0) return "unsatisfiable";
   if (match[1] === "") {
     const suffix = Number(match[2]);
@@ -550,7 +556,11 @@ export function parseByteRange(header: string | string[] | undefined, size: numb
 /** Pull-based reader: each chunk is read only when the response asks for
  * more, so a slow or paused client applies backpressure. The file must still
  * match its pinned state when the range ends; otherwise the response is
- * destroyed instead of completing with mixed bytes. */
+ * destroyed instead of completing with mixed bytes. The stream takes over a
+ * slot the caller reserved in `activeStreams` and gives it back exactly once
+ * when it is destroyed, whether it ended, failed, or lost its client (the
+ * delegation seam destroys it when the response goes away, including a
+ * response that was already gone by the time the file was open). */
 class PinnedRangeStream extends Readable {
   private position: number;
   private released = false;
@@ -560,7 +570,6 @@ class PinnedRangeStream extends Readable {
   constructor(handle: FileHandle, start: number, end: number, expected: string) {
     super({ highWaterMark: MEDIA_STREAM_CHUNK_BYTES });
     this.handle = handle; this.position = start; this.end = end; this.expected = expected;
-    activeStreams++;
   }
   override _read(): void {
     if (this.position > this.end) {
@@ -587,13 +596,14 @@ const hiddenBytes = (): DelegatedResult => ({ ...hiddenRoute(), headers: { ...BY
 const contentDisposition = (name: string) => `inline; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}`;
 
 async function serveBytes(request: DelegatedRequest, deps: MediaAssetsDeps, assetId: string, now: number): Promise<DelegatedResult> {
-  if (request.method !== "GET" && request.method !== "HEAD") return bytesError(405, "method-not-allowed", "Media bytes are read with GET or HEAD.", { allow: "GET, HEAD" });
   const tokens = request.url.searchParams.getAll(MEDIA_CAPABILITY_QUERY_PARAM);
   if (tokens.length !== 1) return hiddenBytes();
   const check = verifyMediaCapability(tokens[0], assetId, now);
   if (!check.ok) return check.reason === "expired" ? bytesError(403, "capability-expired", "This media link expired. Open the media again.") : hiddenBytes();
   const entry = registry.get(assetId);
   if (!entry) return hiddenBytes();
+  // Only a holder of the capability learns that the route exists at all.
+  if (request.method !== "GET" && request.method !== "HEAD") return bytesError(405, "method-not-allowed", "Media bytes are read with GET or HEAD.", { allow: "GET, HEAD" });
   if (entry.revision !== check.claims.revision) return bytesError(409, "changed", "This media changed. Open it again.");
   let located: Located;
   try {
@@ -619,9 +629,13 @@ async function serveBytes(request: DelegatedRequest, deps: MediaAssetsDeps, asse
   const status = partial ? 206 : 200;
   if (request.method === "HEAD") return { status, headers, bytes: new Uint8Array(0) };
   if (activeStreams >= MEDIA_MAX_ACTIVE_STREAMS) return bytesError(503, "busy", "Too many media streams are open. Try again.", { "retry-after": "1" });
-  const handle = await openPinned(outcome.path, entry.fingerprint, outcome.observed);
-  if (!handle) return bytesError(409, "changed", "This media changed. Open it again.");
-  if (length === 0) { await handle.close().catch(() => undefined); return { status, headers, bytes: new Uint8Array(0) }; }
+  // Reserve the slot before the open: requests that arrive while this one is
+  // still opening must see it, or the cap is only advisory.
+  activeStreams++;
+  let handle: FileHandle | undefined;
+  try { handle = await openPinned(outcome.path, entry.fingerprint, outcome.observed); } catch { handle = undefined; }
+  if (!handle) { activeStreams--; return bytesError(409, "changed", "This media changed. Open it again."); }
+  if (length === 0) { activeStreams--; await handle.close().catch(() => undefined); return { status, headers, bytes: new Uint8Array(0) }; }
   return { status, headers, stream: new PinnedRangeStream(handle, start, end, entry.fingerprint) };
 }
 
@@ -646,7 +660,10 @@ export async function mediaAssetsRoute(request: DelegatedRequest, deps: MediaAss
   if (request.method !== "POST") return { status: 405, headers: { ...RESOLVE_HEADERS, allow: "POST" }, body: { error: "Resolve media with POST.", code: "method-not-allowed" } };
   try {
     let body: unknown;
-    try { body = await request.readBody(); } catch { fail(400, "invalid-request", "Choose media from this conversation, Files or its workspace."); }
+    try { body = await request.readBody(); } catch (error) {
+      if ((error as { status?: unknown } | null)?.status === 413) fail(413, "too-large", "That media reference is too large.");
+      fail(400, "invalid-request", "Choose media from this conversation, Files or its workspace.");
+    }
     return { status: 200, headers: { ...RESOLVE_HEADERS }, body: await resolveMedia(parseRef(body), deps, now) };
   } catch (error) {
     if (error instanceof MediaError) return { status: error.status, headers: { ...RESOLVE_HEADERS }, body: { error: error.message, code: error.code } };
