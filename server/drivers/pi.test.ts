@@ -1054,3 +1054,85 @@ describe("PiDriver snapshot", () => {
     await instance.dispose();
   });
 });
+// A4: pi RPC stdout is framed with a byte bound before any parse.
+describe("PiDriver bounded ingress (A4)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+
+  const create = async () => {
+    instance = await PiDriver.create({
+      instanceId: "pi-bounded",
+      displayName: "pi Bounded",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+  /** No event on the thread may carry the dropped frame's content. */
+  const noLargePayload = (threadId: string) =>
+    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+  });
+  afterEach(async () => {
+    recorder?.stop();
+    await instance?.dispose();
+  });
+
+  it("fails only the turn whose frame is over the limit, even when turn_end follows it", async () => {
+    await create();
+    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__", model: "ollama-cloud/glm-5.2" });
+    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hi", model: "ollama-cloud/glm-5.2" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "runtime.error",
+      threadId: "t-oversize",
+      message: expect.stringMatching(/^pi sent a protocol message larger than 32 MiB/),
+    }));
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "item.completed", itemType: "assistant_text", threadId: "t-ordinary", text: "Hello from pi",
+    }));
+    expect(noLargePayload("t-oversize")).toBe(true);
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === oversized.turnId)).toHaveLength(1);
+  });
+
+  it("fails an unterminated oversized frame without waiting for a newline", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__", model: "ollama-cloud/glm-5.2" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(noLargePayload("t-open")).toBe(true);
+  });
+
+  it("still carries a valid 14 MiB multibyte frame intact", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__", model: "ollama-cloud/glm-5.2" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: true });
+    const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.threadId === "t-large");
+    const text = (reply as { text: string } | undefined)?.text ?? "";
+    expect(text.startsWith("éé")).toBe(true);
+    expect(Buffer.byteLength(text)).toBe(14 * 1024 * 1024 + Buffer.byteLength("Hello from pi"));
+  });
+
+  it("resolves the catalog probe empty on an oversized frame instead of waiting for its timeout", async () => {
+    const started = Date.now();
+    const catalog = await fetchPiModels(FAKE_CLI, {
+      PATH: process.env.PATH ?? "",
+      HOME: join(tmpdir(), "murage-pi-oversize"),
+      FAKE_PI_MODE: "oversize-catalog",
+    });
+    expect(catalog).toEqual({ default: "", options: [] });
+    // the probe's own fallback timer is 15 s; the frame bound answers first
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});

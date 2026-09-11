@@ -51,6 +51,7 @@ import {
   mergeLocalInject,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 
 const DRIVER_KIND = "piAgent";
 const PI_ARGS = ["--mode", "rpc", "--no-session"];
@@ -293,7 +294,6 @@ export async function fetchPiModels(
 ): Promise<ModelCatalog> {
   const child = spawnCli(cli, PI_ARGS, { stdio: ["pipe", "pipe", "pipe"], env });
   return new Promise((resolve) => {
-    let buf = "";
     let done = false;
     const fallbackDefault = readPiDefaultModel(env);
     const finish = (catalog: ModelCatalog) => {
@@ -308,22 +308,23 @@ export async function fetchPiModels(
     };
     const timer = setTimeout(() => finish({ default: "", options: [] }), 15_000);
     timer.unref?.();
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      buf += chunk;
-      let nl: number;
-      while ((nl = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        if (!line.trim()) continue;
+    // Byte-bounded framing (A4): an oversized catalog frame is never parsed;
+    // the probe resolves empty, the same as any other failed probe.
+    const stdoutLines = createBoundedLineSplitter({
+      onLine: (line) => {
+        if (done || !line.trim()) return;
         const parsed = parsePiCatalog(line + "\n", fallbackDefault);
         if (parsed.options.length || line.includes('"get_available_models"')) {
           clearTimeout(timer);
           finish(parsed);
-          return;
         }
-      }
+      },
+      onOverflow: () => {
+        clearTimeout(timer);
+        finish({ default: "", options: [] });
+      },
     });
+    child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
     child.on("error", () => finish({ default: "", options: [] }));
     child.on("close", () => finish({ default: "", options: [] }));
     try {
@@ -551,7 +552,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       })();
       const teardown = teardowns.track(threadId, turnId, child);
-      let buf = "";
       let assistantText = "";
       // resolve one-shot RPC responses (new_session / switch_session / set_model)
       const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
@@ -753,21 +753,30 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       };
 
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
-        buf += chunk;
-        let nl: number;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl);
-          buf = buf.slice(nl + 1);
-          if (!line.trim()) continue;
+      // Byte-bounded framing (A4): UTF-8 is decoded per complete line, so a
+      // multibyte character split across reads stays intact, and one frame
+      // never holds more than ENGINE_FRAME_MAX_BYTES of the shared process.
+      const stdoutLines = createBoundedLineSplitter({
+        onLine: (line) => {
+          if (!line.trim()) return;
           try {
             onEvent(JSON.parse(line) as PiEvent);
           } catch {
             /* skip non-JSON line */
           }
-        }
+        },
+        onOverflow: (overflow) => {
+          appendNative(threadId, { dir: "in", source: "pi.rpc", msg: { frameOverflow: overflow } });
+          if (settled) return;
+          const message = frameOverflowMessage("pi", overflow);
+          emit({ ...base(threadId, turnId), type: "runtime.error", message });
+          // settle first so a pending handshake step sees the turn is over
+          // and adds no second failure
+          settle(false, FRAME_TOO_LARGE);
+          rejectWaiters(new Error(message));
+        },
       });
+      child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
       child.on("error", (err) => {
         const fail = describeSpawnFailure(err as NodeJS.ErrnoException, config.cli);
         rejectWaiters(new Error(fail.message));
