@@ -225,6 +225,100 @@ test("setup exits non-zero when it could not secure the box", () => {
   assert.equal(readEnvFile(envPath).MURAGE_TRUSTED_PROXY, undefined, "no proxy was configured, so none is declared");
 });
 
+test("rerunning setup and pressing Enter at the key prompt keeps what was already configured (I3)", () => {
+  const home = scratch();
+  const dataDir = mkdtempSync(join(home, "data-"));
+  const envPath = join(dataDir, "murage.env");
+  const stored = {
+    MURAGE_DATA_DIR: dataDir,
+    MURAGE_PORT: "9100",
+    MURAGE_BIND_MODE: "loopback",
+    NODE_ENV: "production",
+    ANTHROPIC_API_KEY: "sk-ant-STORED-ONE",
+    OPENAI_API_KEY: "sk-STORED-TWO",
+    MURAGE_BROWSER_PORT: "9313",
+    MURAGE_TRUSTED_PROXY: "1",
+    CUSTOM_SETTING: "kept",
+  };
+  const text = `# Written by an earlier murage setup\n${Object.entries(stored).map(([k, v]) => `${k}=${v}`).join("\n")}\n`;
+  writeFileSync(envPath, text, { mode: 0o600 });
+  const stub = join(home, "tailscale-stub");
+  writeFileSync(stub, '#!/bin/sh\necho \'{"BackendState":"NeedsLogin"}\'\n', { mode: 0o755 });
+
+  let status = 0;
+  let out = "";
+  try {
+    out = execFileSync(process.execPath, [CLI, "setup"], {
+      encoding: "utf8",
+      timeout: 60_000,
+      // Two blank answers: no auth key, then Enter at the provider-key prompt.
+      // Piped rather than closed, so the provider prompt is actually asked.
+      input: "\n\n",
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        MURAGE_SERVER_ENTRY: serverFile(LOOPBACK_ONLY_SERVER),
+        MURAGE_DATA_DIR: dataDir,
+        MURAGE_ENV_FILE: envPath,
+        MURAGE_TAILSCALE_BIN: stub,
+        MURAGE_TS_AUTHKEY: "",
+        TS_AUTHKEY: "",
+        TAILSCALE_AUTHKEY: "",
+        MURAGE_PORT: "",
+        MURAGE_BROWSER_PORT: "",
+        NO_COLOR: "1",
+      },
+    });
+  } catch (e) {
+    status = e.status ?? 0;
+    out = (e.stdout ?? "") + (e.stderr ?? "");
+  }
+  assert.equal(status, SETUP_NOT_SECURED, out);
+  assert.deepEqual(readEnvFile(envPath), stored, "every stored key and setting survives a skipped key and a failed enrolment");
+  assert.equal(envFilePermissions(envPath).private, true);
+  assert.equal(existsSync(`${envPath}.previous`), false, "nothing was replaced, so there is no recovery copy");
+  assert.match(out, /Enter to keep/);
+  assert.match(out, /ANTHROPIC_API_KEY/, "the operator is told which keys are already configured");
+  assert.ok(!out.includes("STORED"), "stored key values are never printed");
+  assert.match(out, /ssh -N -L 9100:127\.0\.0\.1:9100/, "the stored harness port is the one setup uses");
+});
+
+test("setup refuses to rewrite an env file it cannot carry over, and changes nothing", () => {
+  const home = scratch();
+  const dataDir = mkdtempSync(join(home, "data-"));
+  const envPath = join(dataDir, "murage.env");
+  const text = "ANTHROPIC_API_KEY=sk-ant-KEEPME\nsk-proj-PASTEDONITSOWNLINE\n";
+  writeFileSync(envPath, text, { mode: 0o600 });
+  const log = join(home, "argv.log");
+  const stub = join(home, "tailscale-stub");
+  writeFileSync(stub, `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\necho '{}'\n`, { mode: 0o755 });
+  let status = 0;
+  let out = "";
+  try {
+    out = execFileSync(process.execPath, [CLI, "setup"], {
+      encoding: "utf8",
+      timeout: 20_000,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        MURAGE_SERVER_ENTRY: serverFile(LOOPBACK_ONLY_SERVER),
+        MURAGE_DATA_DIR: dataDir,
+        MURAGE_ENV_FILE: envPath,
+        MURAGE_TAILSCALE_BIN: stub,
+        NO_COLOR: "1",
+      },
+    });
+  } catch (e) {
+    status = e.status ?? 0;
+    out = (e.stdout ?? "") + (e.stderr ?? "");
+  }
+  assert.equal(status, 2, out);
+  assert.match(out, /line 2 is not KEY=value/);
+  assert.ok(!/KEEPME|PASTEDONITSOWNLINE/.test(out), out);
+  assert.equal(readFileSync(envPath, "utf8"), text);
+  assert.equal(existsSync(log), false, "refused before tailscale was touched");
+});
+
 test("MURAGE_TAILSCALE_BIN points at a specific CLI, and a missing one is not found", async () => {
   const { tailscaleBin } = await import("../lib/tailscale.mjs");
   assert.equal(tailscaleBin({ env: { MURAGE_TAILSCALE_BIN: "/opt/ts/tailscale" }, exists: (p) => p === "/opt/ts/tailscale" }), "/opt/ts/tailscale");
