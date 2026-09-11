@@ -2,9 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url)); cache = mkdtempSync(join(tmpdir(), "murage-watch-picker-ui-"));
@@ -20,7 +21,7 @@ test.beforeAll(async () => {
     }] });
   await server.listen(0); const address = server.httpServer!.address(); if (!address || typeof address === "string") throw new Error("No fixture port"); origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 async function routeFiles(page: Page, unavailable = false) {
   const proposals: unknown[] = [];
   await page.route("**/api/bots/worker/watch-files?*", route => unavailable ? route.fulfill({ status: 409, json: { error: "Choose an existing working folder for this bot before creating a file watch" } })

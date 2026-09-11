@@ -4,9 +4,10 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
+import { safeWipe } from "../../server/testing/safe-wipe.mjs";
 const de = JSON.parse(readFileSync(new URL("../locales/de.json", import.meta.url), "utf8")) as Record<string, string>;
 
 // Real dialog components; synthetic store/API and child buttons drive only their
@@ -34,7 +35,7 @@ test.beforeAll(async () => {
   if (!address || typeof address === "string") throw Error("Missing fixture port");
   origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await vite?.close(); if (temporary) await rm(temporary, { recursive: true, force: true }); });
+test.afterAll(async () => { await vite?.close(); if (temporary) await safeWipe(temporary); });
 
 for (const width of [390, 820, 1440]) test(`German dialog error states and keyboard at ${width}`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 1000 });

@@ -6,7 +6,7 @@
 // that a checkbox question really takes several picks, that typing in Other
 // takes the pick off a radio question, and that the card is readable in both
 // skins and at phone width.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import tailwindcss from "@tailwindcss/vite";
 import { createServer, type ViteDevServer } from "vite";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const QUESTIONS = [
   {
@@ -123,7 +124,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await server?.close();
-  rmSync(cache, { recursive: true, force: true });
+  safeWipeSync(cache);
 });
 
 const sent = (page: Page) => page.evaluate(() => (window as any).sent);

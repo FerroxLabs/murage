@@ -1,12 +1,13 @@
 import { test,expect } from "@playwright/test";
-import { mkdtempSync,rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 // @ts-expect-error Test-only Vite launcher is a native ESM helper.
 import { startStartupUiFixture } from "../../scripts/testing/startup-ui-fixture.mjs";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let fixture:{url:string;close:()=>Promise<void>},cache:string;
 test.beforeAll(async()=>{cache=mkdtempSync(join(tmpdir(),"murage-startup-ui-"));fixture=await startStartupUiFixture(cache);});
-test.afterAll(async()=>{await fixture?.close();if(cache)rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await fixture?.close();if(cache)safeWipeSync(cache);});
 test("startup controls report confirmed state and keep missing-tray launches visible",async({page},info)=>{
   for(const skin of ["light","dark"]){
     await page.goto(`${fixture.url}?skin=${skin}`);

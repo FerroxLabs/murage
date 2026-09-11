@@ -2,11 +2,12 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../../server/testing/ports";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import type { ConnectorStatus } from "../components/PluginsPanel";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let server: ViteDevServer;
 let origin: string;
@@ -105,7 +106,7 @@ test.beforeAll(async () => {
   origin = `http://127.0.0.1:${address.port}`;
 });
 
-test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
 async function mount(page: Page, component: string, desktop = false, { claudeAccounts = { accounts: [] } as unknown } = {}) {
   await page.route("**/api/**", async (route) => {

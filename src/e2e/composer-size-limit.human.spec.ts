@@ -23,21 +23,16 @@ import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { MESSAGE_TEXT_MAX_BYTES } from "../../shared/message-limits.ts";
 import { openSidebar } from "./fixtures.ts";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { laneDataDir } from "./lane-data-dir";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const DATA_DIR = (() => {
-  const raw = process.env.MURAGE_E2E_DATA_DIR;
-  if (!raw) throw new Error("MURAGE_E2E_DATA_DIR is required — this spec never uses ~/.murage");
-  const dir = resolve(raw, "composer-size-limit-data");
-  if (dir.startsWith(resolve(join(homedir(), ".murage")))) throw new Error(`refusing the real data dir ${dir}`);
-  return dir;
-})();
+const DATA_DIR = resolve(laneDataDir("this spec never uses ~/.murage"), "composer-size-limit-data");
 const HARNESS_PORT = Number(process.env.MURAGE_E2E_PORT || 9576);
 const UI_PORT = Number(process.env.MURAGE_E2E_UI_PORT || 9578);
 const HARNESS_URL = `http://127.0.0.1:${HARNESS_PORT}`;
@@ -63,7 +58,7 @@ let headers: Record<string, string> = {};
 interface Bot { id: string; threadId: string; name: string }
 
 async function startHarness() {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  safeWipeSync(DATA_DIR);
   for (const dir of [DATA_DIR, EVIDENCE, join(DATA_DIR, "home"), join(DATA_DIR, "tmp"), join(DATA_DIR, "bin")]) mkdirSync(dir, { recursive: true });
   symlinkSync(process.execPath, join(DATA_DIR, "bin", "node"));
   writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ instances: { verification: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLI } } } }, null, 2) + "\n", { mode: 0o600 });

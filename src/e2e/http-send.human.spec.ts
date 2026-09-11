@@ -2,9 +2,10 @@ import { expect, test } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { freePortBlock } from "../../server/testing/ports";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 // A real insecure origin, mapped only inside this Chromium process. No OS
 // DNS, tailnet, live harness, engine, or user data is involved. Unlike deleting
@@ -108,7 +109,7 @@ test.beforeAll(async () => {
   origin = `http://murage-http.test:${address.port}`;
 });
 
-test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 test.beforeEach(() => { requests.length = 0; rejectFirst = false; });
 
 test("room goal intent follows its draft through task switching and reload", async ({ page }) => {

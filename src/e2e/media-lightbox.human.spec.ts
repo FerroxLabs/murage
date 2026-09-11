@@ -17,11 +17,12 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 /** A solid-colour RGB PNG, so each fixture image has known dimensions. */
 function png(width: number, height: number, [r, g, b]: [number, number, number]): Buffer {
@@ -120,7 +121,7 @@ createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main
   if (!address || typeof address === "string") throw new Error("No fixture port");
   origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 
 const lightbox = (page: Page) => page.getByTestId("image-lightbox");
 const lightboxImage = (page: Page) => page.getByTestId("image-lightbox-image");

@@ -2,9 +2,10 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root=fileURLToPath(new URL("../../",import.meta.url));cache=mkdtempSync(join(tmpdir(),"murage-call-avatar-"));
@@ -23,7 +24,7 @@ test.beforeAll(async () => {
     },configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=="/__call")return next();res.setHeader("content-type","text/html");res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__call.js"></script>');});}
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
 test("call overlay honors a stored portrait/crops and retains animated mascot fallbacks",async({page},info)=>{
   // Deterministic PNG portrait fixture; no remote photo, personal data or image API.
   const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=320;canvas.height=400;const c=canvas.getContext('2d')!;c.fillStyle='#16384a';c.fillRect(0,0,320,400);c.fillStyle='#7ad6c3';c.fillRect(0,300,320,100);c.fillStyle='#e9b78e';c.beginPath();c.ellipse(160,165,85,110,0,0,Math.PI*2);c.fill();c.fillStyle='#352827';c.beginPath();c.ellipse(160,82,93,52,0,Math.PI,Math.PI*2);c.fill();c.fillRect(118,157,13,9);c.fillRect(190,157,13,9);c.strokeStyle='#873b35';c.lineWidth=7;c.beginPath();c.arc(160,205,33,0.2,Math.PI-0.2);c.stroke();return canvas.toDataURL('image/png').split(',')[1];});

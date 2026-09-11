@@ -2,9 +2,10 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -32,7 +33,7 @@ test.beforeAll(async () => {
   const address = server.httpServer!.address(); if (!address || typeof address === "string") throw new Error("Missing fixture port");
   origin = "http://127.0.0.1:" + address.port;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 const profiles = [
   { id: "starter-personal-home", name: "Personal and home", summary: "Organize tasks using your own notes.", outcomes: ["Prioritize your next actions"], members: 2, agents: [{ key: "planner", name: "Planner" }, { key: "helper", name: "Helper" }], routines: [{ key: "review", name: "Weekly review" }], connectionsRequired: false },
   { id: "starter-solo-business", name: "Solo business", summary: "Plan your work using information you provide.", outcomes: ["Choose a practical next step"], members: 1, agents: [{ key: "operator", name: "Operator" }], routines: [], connectionsRequired: false },

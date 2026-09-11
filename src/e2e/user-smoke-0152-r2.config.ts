@@ -1,11 +1,11 @@
 import { defineConfig } from "@playwright/test";
-import { join } from "node:path";
+
+import { laneEvidenceDir } from "./lane-data-dir";
 
 // Murage 0.1.52 user smoke test ROUND 2 (docs/plans/0152-USER-SMOKE-2.md).
 // Same rig as round 1: one isolated harness + the real Vite app.
-const out = process.env.MURAGE_E2E_DATA_DIR
-  ? join(process.env.MURAGE_E2E_DATA_DIR, "..", "results")
-  : "../../.planning/user-smoke-2-results";
+// MURAGE_E2E_DATA_DIR is required; evidence lands inside it (lane-data-dir.ts).
+const out = laneEvidenceDir("user-smoke-2-results", "the smoke test never uses ~/.murage");
 
 export default defineConfig({
   testDir: ".",

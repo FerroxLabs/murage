@@ -12,10 +12,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConfigStatus } from "../state/store";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 type Keys = "none" | "flux" | "composio";
 let server: ViteDevServer, origin: string, cache: string;
@@ -82,7 +83,7 @@ test.beforeAll(async () => {
 });
 test.beforeEach(async ({ page }) => { keys = "none"; configDelayMs = 0; connectorHits = []; pageErrors = []; page.on("pageerror", (error) => pageErrors.push(error.message)); await page.route("https://**/*", (route) => route.abort()); });
 test.afterEach(() => { expect(pageErrors).toEqual([]); });
-test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
 async function open(page: Page, { which = "none" as Keys, skin = "dark", width = 1100 } = {}) {
   keys = which;

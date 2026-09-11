@@ -16,7 +16,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,7 @@ import { ProjectFolderLeases } from "../../server/project-folder-leases.ts";
 import { sendDelegated } from "../../server/route-delegation.ts";
 import { workspaceFilesRoute, type WorkspaceFilesDeps } from "../../server/workspace-files.ts";
 import { WORKSPACE_FILES_ROUTE_PREFIX, WORKSPACE_FILES_ROUTES } from "../../shared/workspace-files.ts";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let root: string, dataDir: string, workspace: string, origin: string, server: ViteDevServer, db: DatabaseSync;
 let leakedRequests = 0;
@@ -109,7 +110,7 @@ createRoot(document.getElementById('root')).render(React.createElement(Harness))
   if (!address || typeof address === "string") throw new Error("Workspace pane fixture did not bind");
   origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await server?.close(); db?.close(); if (root) rmSync(root, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); db?.close(); if (root) safeWipeSync(root); });
 test.beforeEach(() => {
   writeFileSync(file("report.md"), REPORT);
   writeFileSync(file("notes.txt"), NOTES);

@@ -2,10 +2,11 @@ import { expect, test } from '@playwright/test';
 import { createServer, type ViteDevServer } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConfigStatus } from '../state/store';
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 // Real onboarding/settings/Models/PasteKeys, controlled empty-workspace backend.
 // This fixture verifies navigation and write boundaries, not provider readiness.
@@ -61,7 +62,7 @@ test.beforeAll(async () => {
 });
 test.beforeEach(async ({page}) => { writes=[];failStatus=false;pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));await page.route('https://**/*',route=>route.abort()); });
 test.afterEach(()=>{expect(pageErrors).toEqual([]);});
-test.afterAll(async()=>{await server?.close();if(cache)rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await server?.close();if(cache)safeWipeSync(cache);});
 
 async function openFromOnboarding(page: import('@playwright/test').Page) {
   await page.goto(`${origin}/__flux-entry`, { waitUntil:'domcontentloaded' });

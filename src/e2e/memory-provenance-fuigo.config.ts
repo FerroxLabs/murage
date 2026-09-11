@@ -1,12 +1,10 @@
 import { defineConfig } from "@playwright/test";
-import { join } from "node:path";
+import { laneEvidenceDir } from "./lane-data-dir";
 
 // MEMJSON1 real-app proof: the built renderer + the harness, the bundled
 // Fuigo on Flux Auto through FluxRouter, ten text turns. MURAGE_E2E_DATA_DIR
 // is required (never ~/.murage); evidence lands in MURAGE_SMOKE_EVIDENCE_DIR.
-const out = process.env.MURAGE_E2E_DATA_DIR
-  ? join(process.env.MURAGE_E2E_DATA_DIR, "..", "memory-provenance-results")
-  : "../../.planning/memory-provenance-results";
+const out = laneEvidenceDir("memory-provenance-results", "this proof never uses ~/.murage");
 
 export default defineConfig({
   testDir: ".",
