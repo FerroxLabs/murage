@@ -31,7 +31,7 @@ Work in the desktop app, continue through the responsive Web UI or PWA, or messa
 
 Mac downloads are signed and notarized. Windows downloads are signed. Ubuntu installation and upgrade checks passed for this release. [Ubuntu checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt) are available alongside the downloads.
 
-**Fuigo 1.0.11 is bundled. Installed desktop builds need neither Node.js nor pnpm.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
+**Fuigo 1.0.13 is bundled. Installed desktop builds need neither Node.js nor pnpm.** Your selected engine still needs its own provider login or API credentials; model access and provider charges are separate.
 
 ## A real brief. A working team.
 
@@ -141,7 +141,7 @@ Telegram group routing and additional inbound messaging channels remain future w
 
 ## Fuigo built in. Multi-vendor by design.
 
-**Fuigo 1.0.11 is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
+**Fuigo 1.0.13 is Murage’s bundled agent harness**, with its tool and permission integration included in the shipped desktop build. You can start with it without separately installing Fuigo. The release checks cover the bundled executable and its integration; provider login and model access remain yours.
 
 Multi-vendor choice is part of the product, not an add-on. Use Fuigo, installed engines such as **Claude Code** and **Codex**, custom ACP agents, or compatible API endpoints. Choose an engine and model per agent, mix them in a team, and keep Murage-owned conversations and memory around that work. Each engine retains its supported capabilities and permission requirements.
 

@@ -16,7 +16,7 @@ after every further lane merge (see "How to refresh this draft" at the end).
   `scripts/release-guard.mjs version` reads; it prints `0.1.52`). The
   companion, docs and control-plane manifests carry their own independent
   versions and are unchanged.
-- Bundled engine: `scripts/prepare-fuigo.mjs` pins `FUIGO_VERSION = "1.0.12"` (LFU2; was 1.0.11 at LFU).
+- Bundled engine: `scripts/prepare-fuigo.mjs` pins `FUIGO_VERSION = "1.0.13"` (FUIGO13; was 1.0.12 at LFU2, 1.0.11 at LFU).
 - Already shipped in 0.1.51, not a 0.1.52 change: `15c3cbd6` "fix(packaging):
   sign Windows recovery helper" is the parent of the `acaee1db` baseline
   (`git merge-base --is-ancestor 15c3cbd6 acaee1db` is true). It must not
@@ -226,13 +226,19 @@ close a set of audited gaps, and all seven language packs are complete.
   silently running Pi's default; a bare model id fails before a child is
   spawned. Pi's host-computer asks carry the local-computer scope so they
   are never remembered as "Always allow" or auto-reviewed.
-- **Fuigo bundle 1.0.12.** Every target tarball checked byte-identical to
-  the upstream release-workflow artifact (run 34588671916, source f296fc50;
-  no GitHub release v1.0.12 exists — the workflow publishes npm only) and
-  SHA-512 against npm integrity and the run's release manifest;
-  `third_party/fuigo` provenance updated. 1.0.12 stops advertising
-  `ask_user_question` to non-interactive sessions; Murage's sessions stay
-  interactive so the question card path is unchanged.
+- **Fuigo bundle 1.0.13.** Every target tarball checked byte-identical to
+  the upstream release-workflow artifact (run 34623419288, source 1f5f89ab;
+  no GitHub release v1.0.13 exists — the workflow publishes npm only) and
+  SHA-512/SHA-1 against npm integrity/shasum and the run's release
+  manifest; `third_party/fuigo` provenance updated. 1.0.13 is the first
+  published Fuigo whose folder-trust gate is live (1.0.11/1.0.12 binaries
+  were dev-stamped and auto-trusted every folder): a hosted turn in a folder
+  the user has not trusted in Fuigo runs without that folder's repo-local
+  MCP/hooks/permission rules and, new in 1.0.13, its AGENTS.md/CLAUDE.md
+  and project skills. It never blocks (no prompt on a piped stdio session).
+  `auto` mode stops auto-running discarding git checkout/switch/stash and
+  `rg --hostname-bin`; those now reach Murage's permission card. The
+  1.0.12 `ask_user_question` gate and question card path are unchanged.
 - **Images can be saved without touching the source.** Choosing the source
   file itself (or a hard/symlink alias) as the Save destination is a no-op
   rather than a truncation; every other destination is written to an
@@ -477,6 +483,7 @@ baseline belongs here. Lane labels are the task ids in the commit subjects.
 | F2-T4 (I6, I7, U-20) | `218092f3` | hardened | node floor preflight; door identity proof |
 | LFU Fuigo bump | `1370d9e3`, `51b66e12` | enhanced | Fuigo 1.0.11 verified pin; README proposal |
 | LFU2 Fuigo bump | lane/0152-LFU2 | enhanced | Fuigo 1.0.12 verified pin from CI run 34588671916 (npm-only publish, no GitHub release) |
+| FUIGO13 Fuigo bump | lane/0152-FUIGO13 | enhanced | Fuigo 1.0.13 verified pin from CI run 34623419288 (npm-only publish, no GitHub release); first release-stamped build, folder trust live |
 | F2-T2 (I2, U-21) | `7b02e179` | hardened | secrets read with no echo, no history |
 | F4-T2 (U-06) + fixes | `52a07f44`, `5b4e08dd`, `be79a7f7` | added | DocumentSession, fidelity gate, corpus; superseded reads; deferred reads |
 | F4-T4 (U-07) + fixes | `12ae89fe`, `1ebd4159`, `5814aa9e`, `9171c623` | added | Tiptap editor, Source fallback, bounded drafts; conflict read failures; held crash drafts |
@@ -531,8 +538,8 @@ Version and pin rows:
 | Line | Current | Proposed |
 |---|---|---|
 | 23 | `**[Murage 0.1.47 — stable release](.../releases/tag/v0.1.47)** · [Release notes](.../releases/latest)` | `**[Latest release](https://github.com/FerroxLabs/murage-releases/releases/latest)** · [Release notes](https://github.com/FerroxLabs/murage-releases/releases/latest)` (per `docs/releasing.md`; no version in the heading) |
-| 34 | `**Fuigo 1.0.7 is bundled. ...` | `**Fuigo 1.0.12 is bundled. ...` (`scripts/prepare-fuigo.mjs` pins `FUIGO_VERSION = "1.0.12"` once LFU2 merges; `"1.0.11"` at `1370d9e3` until then — re-read the pin at freeze) |
-| 144 | `**Fuigo 1.0.7 is Murage’s bundled agent harness**, ...` | `**Fuigo 1.0.12 is Murage’s bundled agent harness**, ...` (same pin check as line 34) |
+| 34 | `**Fuigo 1.0.7 is bundled. ...` | `**Fuigo 1.0.13 is bundled. ...` (`scripts/prepare-fuigo.mjs` pins `FUIGO_VERSION = "1.0.13"` once FUIGO13 merges, and FUIGO13 applies this README edit itself — re-read the pin at freeze) |
+| 144 | `**Fuigo 1.0.7 is Murage’s bundled agent harness**, ...` | `**Fuigo 1.0.13 is Murage’s bundled agent harness**, ...` (same pin check as line 34) |
 | 107 | `**In 0.1.47, managed memory starts off.**` | `**Managed memory starts off.**` (still true; drop the version so the sentence does not age) |
 | 170 | `Keyword retrieval and owner controls; no local semantic runtime in 0.1.47.` | `Keyword retrieval and owner controls; no local semantic runtime in this release.` |
 | 17, 62 | `2,237 skills` | Already matches: `find skills-library -name SKILL.md \| wc -l` = 2237 at `37c2822d`. Keep. |
@@ -559,7 +566,7 @@ of "what you can do today" and do not promise gates that are still open):
 - Installer table identical to 4a (Apple Silicon DMG, Intel DMG, Windows
   setup, Ubuntu .deb and AppImage) with the stable download names the
   Release workflow asserts.
-- Bundled engine line: Fuigo 1.0.12 (the pin LFU2 sets; re-read
+- Bundled engine line: Fuigo 1.0.13 (the pin FUIGO13 sets; re-read
   `FUIGO_VERSION` at freeze); no Node.js, npm, pnpm or separate Fuigo
   install required for desktop installers.
 - Known platform limits copied verbatim from the 4a table after the 0.1.52
