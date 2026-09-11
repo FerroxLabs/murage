@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
+import { initializeMessageTables } from "./message-tables.ts";
 import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 
@@ -40,7 +41,7 @@ async function fixture() {
     { id: "pending", at: 2, role: "bot", kind: "options", parentId: "terminal", card: { requestId: "old-request", title: "Old approval", options: ["Allow"] } },
   ];
   try {
-    db.exec("CREATE TABLE messages(thread_id TEXT,id TEXT,at INTEGER,role TEXT,kind TEXT,text TEXT,json TEXT,PRIMARY KEY(thread_id,id)); CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT);");
+    initializeMessageTables(db);
     for (const message of messages) db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread", message.id, message.at, message.role, message.kind, null, JSON.stringify(message));
     db.exec("INSERT INTO thread_state VALUES('thread','pending')");
   } finally { db.close(); }
