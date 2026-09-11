@@ -149,7 +149,10 @@ async function main() {
     db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
     const privateA=pin("fixture-a-private","bot",a.id,"PRIVATE_A_CANARY Keep the launch date confidential.",a.threadId);
     const privateB=pin("fixture-b-private","bot",b.id,"PRIVATE_B_CANARY Keep the budget confidential.",b.threadId);
-    const shared=pin("fixture-room","room",room.id,"ROOM_SHARED_DECISION Use the reviewed checklist.",room.threadId);
+    // The id must not be a substring of any request text the thread's
+    // checkpoint may quote ("dispatch-fixture-room" below), or the record-id
+    // leak check would trip on the owner's own words.
+    const shared=pin("fixture-room-shared","room",room.id,"ROOM_SHARED_DECISION Use the reviewed checklist.",room.threadId);
     db.exec("UPDATE memory_meta SET mode='active',data_revision=data_revision+1 WHERE id=1; COMMIT");
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(),[]);
 
@@ -191,6 +194,33 @@ async function main() {
     await receipt(room.threadId,[shared]);
     checks.push({name:"actual-room-dispatch-private-exclusion",threadId:room.threadId,recordIds:[shared.id],status:"PASS"});
 
+    // MEMJSON2 follow-up: a round that dispatches two members. B's prompt
+    // carries the round verbatim (the ask and A's just-captured reply) in the
+    // serialized room context, so nothing the context holds may come back as
+    // a recalled "source" line — not only the person's message.
+    clearDump();
+    const roundText=`@${a.name} @${b.name} dispatch-fixture-round`;
+    const roundSend=await api("POST",`/api/groups/${room.id}/messages`,{text:roundText});assert.equal(roundSend.status,202);
+    const roundB=await until<Dump>("second member dispatched with the round",()=>{
+      try{const parsed=JSON.parse(readFileSync(fixture.fixtureDumpPath,"utf8")) as Dump;return parsed.prompt.message.content.includes(`(Reply to the conversation above as ${b.name}.)`)?parsed:undefined;}catch{return undefined;}
+    },30000);
+    await settled("channel",room.id);
+    const roundLines=assertPayload(roundB,[shared],[privateA.text,privateB.text,current.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"],roundText);
+    const roomTranscript=(await api("GET",`/api/threads/${room.threadId}/messages?limit=100`)).body.messages as Array<{role:string;kind:string;text?:string;from?:{botId:string}}>;
+    const roundStart=roomTranscript.findIndex(m=>m.role==="user"&&m.text===roundText);
+    assert(roundStart>=0,"The round's request is not in the room transcript");
+    const aReply=roomTranscript.slice(roundStart+1).find(m=>m.role==="bot"&&m.kind==="text"&&m.from?.botId===a.id)?.text;
+    assert(aReply,"Member A did not answer the round before B was dispatched");
+    assert(roundB.prompt.message.content.includes(`${a.name}: ${aReply}`),"B's room context does not carry A's reply from this round");
+    // Everything B's context carries — the round's request, A's reply from
+    // it, and the earlier round — stays out of B's recalled source lines.
+    const carried=roomTranscript.filter(m=>m.kind==="text"&&m.text).map(m=>m.text!);
+    for(const line of roundLines){
+      if(!/; source\) "/.test(line))continue;
+      for(const text of carried)assert(!line.endsWith(`; source) ${JSON.stringify(text)}`),`Recall echoed a room message the context already carries back to B: ${line}`);
+    }
+    checks.push({name:"room-round-recall-exclusion",threadId:room.threadId,recordIds:[shared.id],status:"PASS"});
+
     // A model selection change makes the existing fake's first-prompt dump
     // observable again. Holding its reply preserves the live turn capability.
     assert.equal((await api("PATCH",`/api/bots/${a.id}`,{modelSelection:a.modelSelection})).status,200);
@@ -224,7 +254,7 @@ async function main() {
     });
     checks.push({name:"live-memory-and-delegation-capability-separation",status:"PASS"});
     checks.push({name:"cancelled-turn-memory-revocation",status:"PASS"});
-    assert.equal(checks.length,7);
+    assert.equal(checks.length,8);
     console.log(JSON.stringify({ok:true,checks,fixtureLog:fixture.info.logPath,node:process.version,
       limits:"Fake Claude transport only; no native Claude/Codex/Fuigo/API runtime, semantic quality, GUI or successful autonomous handoff proof"}));
   } finally {

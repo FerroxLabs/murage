@@ -46,8 +46,10 @@ import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { Switch } from "./SettingsPrimitives";
 import {
   autoSelectsLocalComputer,
+  computerSwitchNeedsLocalAutoWarning,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
+  localAutoHostPlatform,
   localComputerDisabledReason,
   localComputerSelectable,
 } from "@/lib/local-computer";
@@ -62,6 +64,36 @@ export function ScreenStreamNotice({ message }: { message?: string }) {
 }
 
 type ComputerChoice = "auto" | "cloud" | "vm" | "local" | "browser" | "off";
+/** What picking a destination in the "Runs on" grid does. The local-Auto
+ *  warning is decided by the same rule the settings Auto switch and the
+ *  composer chip use (`computerSwitchNeedsLocalAutoWarning`, mirroring the
+ *  server's `autoMountsLocalComputer`), never by whether "This computer" is
+ *  clickable: the server does not consult provider support, so an Auto-on
+ *  Mac bot on a provider without local-computer capability still needs the
+ *  acknowledgement — deciding on `localSelectable` here used to fire the
+ *  PATCH without it and show a bare 400 instead of the dialog. */
+export function planComputerDestinationChange({
+  capabilities,
+  userAgent,
+  current,
+  next,
+  autoApprove,
+}: {
+  capabilities: Pick<DesktopCapabilities, "host">;
+  userAgent?: string;
+  current: Bot["computer"];
+  next: ComputerChoice;
+  autoApprove: Bot["autoApprove"];
+}): { kind: "warn"; choice: "local" | "auto" } | { kind: "patch"; patch: { computer: Exclude<Bot["computer"], undefined> | null; browser?: true } } | null {
+  if (next === (current ?? "auto")) return null;
+  const to = next === "auto" ? undefined : next;
+  const platform = localAutoHostPlatform(capabilities, userAgent);
+  if ((next === "auto" || next === "local") && computerSwitchNeedsLocalAutoWarning({ platform, from: current, to, autoApprove })) {
+    return { kind: "warn", choice: next };
+  }
+  return { kind: "patch", patch: { computer: next === "auto" ? null : next, ...(next === "browser" ? { browser: true as const } : {}) } };
+}
+
 export function ComputerDestinationGrid({ value, unavailable, onSelect }: {
   value: ComputerChoice;
   unavailable: Partial<Record<ComputerChoice, string>>;
@@ -1290,12 +1322,10 @@ export function ComputerPanel({
             ...(!builtInBrowserEnabled(state.config)
               ? { browser: !builtInBrowserEnabled(state.config) ? "Enable Browser in Settings" : "Browser setup required on this host" } : {}),
           }} onSelect={(mode) => {
-            if (mode === (bot.computer ?? "auto")) return;
-            if (bot.autoApprove && (mode === "local" || (mode === "auto" && !isLinux && localSelectable))) {
-              setLocalAutoWarningChoice(mode); setLocalAutoWarning(true); return;
-            }
-            dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode === "auto" ? null : mode,
-              ...(mode === "browser" ? { browser: true } : {}) } });
+            const plan = planComputerDestinationChange({ capabilities, current: bot.computer, next: mode, autoApprove: bot.autoApprove });
+            if (!plan) return;
+            if (plan.kind === "warn") { setLocalAutoWarningChoice(plan.choice); setLocalAutoWarning(true); return; }
+            dispatch({ type: "updateBot", botId: bot.id, patch: plan.patch });
           }} />
           {bot.computer === "browser" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">
             Browser tools can work with web pages without desktop access. {browserEnabled ? "Open the Browser tab above to view it." : "An interactive browser preview is unavailable here."}

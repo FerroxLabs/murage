@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Bot, InstanceInfo } from "@/state/store";
 import {
+  autoMountsThisComputer,
   autoNeedsLocalComputerWarning,
   autoSelectsLocalComputer,
+  computerSwitchNeedsLocalAutoWarning,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
   localAutoHostPlatform,
@@ -121,6 +123,45 @@ describe("autoNeedsLocalComputerWarning", () => {
       expect(autoNeedsLocalComputerWarning(input)).toBe(expected);
     });
   }
+});
+
+describe("computerSwitchNeedsLocalAutoWarning (AUTOOP2 verifier follow-up)", () => {
+  // The destination switch on an Auto-on bot needs the acknowledgement
+  // exactly when the server's profile PATCH would refuse it without one:
+  // the new destination mounts this computer and the current one did not.
+  const cases: Array<[string, Parameters<typeof computerSwitchNeedsLocalAutoWarning>[0], boolean]> = [
+    ["Auto-on Mac bot leaving a cloud box for the Auto destination", { platform: "darwin", from: "cloud", to: undefined, autoApprove: true }, true],
+    ["Auto-on Mac bot leaving off for this computer", { platform: "darwin", from: "off", to: "local", autoApprove: true }, true],
+    ["Auto-on Mac bot leaving a VM for the Auto destination", { platform: "darwin", from: "vm", to: undefined, autoApprove: true }, true],
+    ["Auto-on Linux bot picking this computer explicitly", { platform: "linux", from: undefined, to: "local", autoApprove: true }, true],
+    ["Auto-on Linux bot moving to the Auto destination mounts nothing", { platform: "linux", from: "cloud", to: undefined, autoApprove: true }, false],
+    ["Auto-on Windows bot moving to the Auto destination mounts nothing", { platform: "win32", from: "cloud", to: undefined, autoApprove: true }, false],
+    ["already granted: Auto on this Mac moving local → Auto is the same desktop", { platform: "darwin", from: "local", to: undefined, autoApprove: true }, false],
+    ["already granted: Auto on this Mac moving Auto → local is the same desktop", { platform: "darwin", from: undefined, to: "local", autoApprove: true }, false],
+    ["leaving this computer never warns", { platform: "darwin", from: "local", to: "cloud", autoApprove: true }, false],
+    ["a bot in Ask never warns on a destination change", { platform: "darwin", from: "cloud", to: undefined, autoApprove: false }, false],
+  ];
+  for (const [name, input, expected] of cases) {
+    it(name, () => {
+      expect(computerSwitchNeedsLocalAutoWarning(input)).toBe(expected);
+    });
+  }
+  it("is the same rule the Auto switch uses (server autoMountsLocalComputer), independent of provider support", () => {
+    // The server rule hard-codes providerSupportsLocal (server/local-routing.ts),
+    // so a Mac bot on a provider with no local-computer capability still needs
+    // the acknowledgement; the renderer must not gate the warning on it.
+    expect(autoMountsThisComputer({ platform: "darwin", computer: undefined })).toBe(true);
+    expect(autoMountsThisComputer({ platform: "darwin", computer: "local" })).toBe(true);
+    expect(autoMountsThisComputer({ platform: "linux", computer: "local" })).toBe(true);
+    expect(autoMountsThisComputer({ platform: "linux", computer: undefined })).toBe(false);
+    expect(autoMountsThisComputer({ platform: "darwin", computer: "browser" })).toBe(false);
+    for (const platform of ["darwin", "linux", "win32", "other"] as const) {
+      for (const computer of [undefined, "cloud", "vm", "local", "browser", "off"] as const) {
+        expect(autoNeedsLocalComputerWarning({ platform, computer, autoApprove: false })).toBe(autoMountsThisComputer({ platform, computer }));
+        expect(computerSwitchNeedsLocalAutoWarning({ platform, from: "off", to: computer, autoApprove: true })).toBe(autoMountsThisComputer({ platform, computer }));
+      }
+    }
+  });
 });
 
 describe("localAutoHostPlatform", () => {

@@ -23,6 +23,7 @@ import { MEMORY_HANDLE_PATTERN, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, M
 import type { SendTurnInput } from "../contracts.ts";
 import { decorateMemoryInstance } from "../harness/memory-adapter.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
+import { roomContextMessageIds, roomContextMessages } from "../room-context.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR,{recursive:true,force:true}); mkdirSync(DATA_DIR,{recursive:true}); });
 const PROVENANCE = /sourceId|startByte|endByte|scopeId|"evidence"|"revision"|"version"/;
@@ -228,4 +229,53 @@ it("keeps the current turn's own just-captured message out of recall while pins 
   // Unknown or foreign message ids exclude nothing.
   const foreign = await buildMemoryBundle("pong",access,bridge,{excludeMessageIds:["no-such-message",""]});
   expect(foreign.evidence.map(r => r.id)).toEqual(["own-chunk","queued-chunk","older-chunk","mixed"]);
+});
+
+// ── MEMJSON2 follow-up: the whole room round, not only the user's message ───
+
+it("keeps every message the room context already carries out of a member's recall, not only the latest user message", async () => {
+  // A room round: the person asks, member A answers, member B answers, and
+  // now member C is dispatched. The room serializer hands C the whole round
+  // verbatim; A's and B's just-captured replies must not also come back as
+  // recalled "source" lines.
+  const access = fixture(), scope = ensureScope("bot","bot");
+  const thread = [
+    { id: "old-user", role: "user", kind: "text", text: "Earlier: what is the plan?", at: 1 },
+    { id: "old-a", role: "bot", kind: "text", text: "Earlier: pong, shipped on Friday.", at: 2 },
+    { id: "round-user", role: "user", kind: "text", text: "Reply with exactly the single word: pong", at: 3 },
+    { id: "round-a", role: "bot", kind: "text", text: "pong (A)", at: 4 },
+    { id: "round-a-tool", role: "bot", kind: "activity", tool: { name: "Bash", ok: true }, at: 5 },
+    { id: "round-b", role: "bot", kind: "text", text: "pong (B)", at: 6 },
+  ] as const;
+  // The serializer's own selection is the exclusion — the two cannot drift.
+  expect(roomContextMessages(thread as never).map(m => m.id)).toEqual(["old-user","old-a","round-user","round-a","round-b"]);
+  expect(roomContextMessageIds(thread as never)).toEqual(["old-user","old-a","round-user","round-a","round-b"]);
+  // The window is the serializer's: the last N text messages only.
+  expect(roomContextMessageIds(thread as never, 2)).toEqual(["round-a","round-b"]);
+  expect(roomContextMessageIds([], 2)).toEqual([]);
+
+  record("chunk-user",scope,"Reply with exactly the single word: pong",{pinned:false,kind:"source",messageId:"round-user"});
+  record("chunk-a",scope,"pong (A)",{pinned:false,kind:"source",messageId:"round-a"});
+  record("chunk-b",scope,"pong (B)",{pinned:false,kind:"source",messageId:"round-b"});
+  record("chunk-older",scope,"Earlier: pong, shipped on Friday.",{pinned:false,kind:"source",messageId:"old-a"});
+  record("chunk-elsewhere",scope,"pong, from another thread",{pinned:false,kind:"source",messageId:"other-thread-message"});
+  // A fact resting on this round and an older message keeps its older evidence.
+  record("mixed",scope,"The team says pong.",{pinned:false,kind:"fact",assertion:"assistant-inference",messageId:"other-thread-message"});
+  database().prepare("INSERT INTO memory_evidence VALUES('mixed',1,'source-chunk-b',1,0,5)").run();
+  const hits = ["chunk-user","chunk-a","chunk-b","chunk-older","chunk-elsewhere","mixed"].map((id,i) => ({id,version:1,score:1-i/10}));
+  const bridge: MemorySearchBridge = {search:async()=>({hits,vectorRows:0})};
+
+  // Only the latest user message excluded (the MEMJSON2 shape): A's and B's
+  // replies echo back although the prompt already carries them.
+  const userOnly = await buildMemoryBundle("pong",access,bridge,{excludeMessageIds:["round-user"]});
+  expect(userOnly.evidence.map(r => r.id)).toEqual(["chunk-a","chunk-b","chunk-older","chunk-elsewhere","mixed"]);
+
+  // Everything the serialized room context holds is excluded; a chunk from
+  // elsewhere, and a fact with evidence outside the round, still recall.
+  const round = await buildMemoryBundle("pong",access,bridge,{excludeMessageIds:roomContextMessageIds(thread.slice(2) as never)});
+  expect(round.evidence.map(r => r.id)).toEqual(["chunk-older","chunk-elsewhere","mixed"]);
+  const whole = await buildMemoryBundle("pong",access,bridge,{excludeMessageIds:roomContextMessageIds(thread as never)});
+  expect(whole.evidence.map(r => r.id)).toEqual(["chunk-elsewhere","mixed"]);
+  expect(whole.degradedReason).toBeUndefined();
+  expect(() => assertMemoryBundle(whole,access)).not.toThrow();
 });

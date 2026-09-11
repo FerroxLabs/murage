@@ -123,6 +123,7 @@ import {
 import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
+import { roomContextMessageIds, roomContextMessages } from "./room-context.ts";
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
@@ -380,7 +381,7 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
-import { hostStoppedActivityName } from "../shared/host-stop.ts";
+import { hostStoppedActivityName, hostStoppedDisplayName } from "../shared/host-stop.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";
@@ -5042,7 +5043,6 @@ const webhookIngressStatus = () => ({
 // fresh session with recent room context. A member's reply may @mention
 // teammates; those get one chained turn (hop 1), never deeper.
 const groupQueues = new Map<string, Promise<void>>();
-const GROUP_CONTEXT_MESSAGES = 30;
 const MAX_GROUP_HOPS = 1;
 
 type GroupMemberTurnOutcome =
@@ -5070,9 +5070,7 @@ type GroupTurnOrchestration = {
 function serializeRoomContext(threadId: string, userName: string, permitted?: Message[]): string {
   const messages = permitted ?? store.messagesFor(threadId);
   const messagesById = new Map(messages.map((message) => [message.id, message]));
-  return messages
-    .filter((m) => m.kind === "text" && m.text)
-    .slice(-GROUP_CONTEXT_MESSAGES)
+  return roomContextMessages(messages)
     .map((m) => `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${transcriptText(m, messagesById, userName)}`)
     .join("\n");
 }
@@ -5437,10 +5435,17 @@ async function runGroupMemberTurn(
     const selection=memberTurnSelection(bot.modelSelection);
     const availableContextTokens=instance.models.options.find(option=>option.id===(selection.model??instance.models.default))?.contextWindow??20480;
     const query=Buffer.from(latestUser?.text??"").subarray(0,4093).toString("utf8").replace(/�+$/,"");
+    // Recall must not hand this member what its prompt already carries: the
+    // room context below serializes the round verbatim (the person's ask and
+    // every other member's just-captured reply), so every message it holds is
+    // excluded, not only the latest user message (MEMJSON2 follow-up). Read
+    // from the thread as a whole rather than the post-reset replay filter —
+    // a superset of what is serialized, so nothing in the prompt can echo.
+    const excludeMessageIds=[...new Set([...(latestUser?[latestUser.id]:[]),...roomContextMessageIds(store.messagesFor(threadId))])];
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-    },{availableContextTokens,excludeMessageIds:latestUser?[latestUser.id]:[]});
+    },{availableContextTokens,excludeMessageIds});
     const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
     text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
@@ -9541,7 +9546,7 @@ const server = createServer(async (req, res) => {
       for (const msg of messages) {
         const who = msg.role === "user" ? userName : (msg.from?.name ?? bot?.name ?? "Bot");
         if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, "");
-        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${msg.tool.name}`, "");
+        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
         else if (msg.kind === "screen") lines.push("> [screen capture]", "");
         else if (msg.kind === "options" && msg.card) {
           lines.push(`> ${msg.card.title}${msg.card.answered ? ` — answered: ${msg.card.answered}` : ""}`, "");

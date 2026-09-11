@@ -22,6 +22,7 @@ import {
 import { intakeChips, type IntakeCardData } from "../../shared/intake-turn.js";
 import { openLiveEvents, type LiveEventSourceLike, type LiveEventsPlatform } from "../lib/live-events";
 import { openerAt } from "../../shared/bot-openers.js";
+import { hostStoppedActivityName } from "../../shared/host-stop";
 import type { RoutineRun } from "../lib/routines";
 
 type SnapshotFrame =
@@ -1075,6 +1076,36 @@ describe("messageAdded leaf adoption", () => {
     });
     expect(next.bots[0].activeLeafId).toBe("m2"); // the user's message stays the tail
     expect(next.bots[0].messages.map((m) => m.id)).toContain("shot");
+  });
+});
+
+describe("messageAdded avatar motion", () => {
+  const baseBot = {
+    id: "bot-1",
+    threadId: "thread-1",
+    messages: [{ id: "m1", at: 1, role: "user", kind: "text", text: "do the thing" }],
+    activeLeafId: "m1",
+  } as never as Bot;
+  const state = { ...initialState, bots: [baseBot] };
+  const added = (message: Record<string, unknown>) =>
+    reducer(state, { type: "messageAdded", threadId: "thread-1", message: { id: "m2", at: 2, parentId: "m1", role: "bot", kind: "activity", ...message } as never as Message });
+  const patched = (message: Record<string, unknown>) =>
+    reducer(added({ tool: { name: "Bash" } }), { type: "messagePatched", threadId: "thread-1", message: { id: "m2", at: 2, parentId: "m1", role: "bot", kind: "activity", ...message } as never as Message });
+
+  it("plays the failure motion for a failed tool run", () => {
+    expect(added({ tool: { name: "Bash", ok: false } }).mascotMotion?.kind).toBe("failure");
+    expect(added({ tool: { name: "error: claude exited null before result", ok: false } }).mascotMotion?.kind).toBe("failure");
+    expect(patched({ tool: { name: "Bash", ok: false } }).mascotMotion?.kind).toBe("failure");
+  });
+
+  it("does not play the failure motion for a host-stop notice (a neutral stop, STOP2)", () => {
+    // shared/host-stop.ts: ok:false with the "stopped:" name is the StoppedRow,
+    // never a red card — the avatar must not flinch at it either.
+    const stopped = { tool: { name: hostStoppedActivityName("the model connection it was using was changed or turned off"), ok: false } };
+    expect(added(stopped).mascotMotion).toBeNull();
+    expect(patched(stopped).mascotMotion?.kind).not.toBe("failure");
+    // the notice itself still lands in the transcript
+    expect(added(stopped).bots[0].messages.map((m) => m.id)).toEqual(["m1", "m2"]);
   });
 });
 
