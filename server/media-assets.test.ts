@@ -14,8 +14,9 @@ import { initializeArtifacts, registerArtifact, type ArtifactScope } from "./art
 import {
   MEDIA_ASSET_ID_PATTERN, MEDIA_IMAGE_MAX_PIXELS, MEDIA_MAX_ACTIVE_STREAMS, MEDIA_SERVER_ID, MEDIA_SNIFF_BYTES, MEDIA_STREAM_CHUNK_BYTES,
   __resetMediaAssetsForTests, issueMediaCapability, mediaActiveStreamCount, mediaAssetsRoute, mediaWorkspaceRevision, parseByteRange,
-  resolveImageReferenceRoute, sniffMedia, verifyMediaCapability, type MediaAssetsDeps,
+  sniffMedia, verifyMediaCapability, type MediaAssetsDeps,
 } from "./media-assets.ts";
+import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { sendDelegated, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 import { Store } from "./store.ts";
 import { COMPANION_HEADER } from "./sse-visibility.ts";
@@ -220,10 +221,14 @@ describe("mediaAssetsRoute authority", () => {
     const oversized = await mediaAssetsRoute({ ...request("POST", MEDIA_ROUTES.resolve), readBody: async () => { throw Object.assign(new Error("body too large"), { status: 413 }); } }, f.deps);
     expect(oversized.status).toBe(413); expect(oversized.body).toMatchObject({ code: "too-large" });
   });
-  it("keeps resolve-image-reference as the K0 skeleton until F5-T4", async () => {
+  // F5-T4 filled the K0 skeleton (intended behavior change): the route now
+  // refuses a malformed body instead of answering 501. Its behavior is
+  // covered in image-reference-resolver.test.ts.
+  it("routes resolve-image-reference to the F5-T4 resolver", async () => {
     const f = fixture();
     expect((await resolveImageReferenceRoute(request("GET", "/api/internal/resolve-image-reference"), { botId: "b", threadId: "t", generation: "g" }, f.deps)).status).toBe(405);
-    expect((await resolveImageReferenceRoute(request("POST", "/api/internal/resolve-image-reference", { body: {} }), { botId: "b", threadId: "t", generation: "g" }, f.deps)).status).toBe(501);
+    const empty = await resolveImageReferenceRoute(request("POST", "/api/internal/resolve-image-reference", { body: {} }), { botId: "b", threadId: "t", generation: "g" }, f.deps);
+    expect(empty.status).toBe(400); expect(empty.body).toMatchObject({ code: "invalid-request" });
   });
 });
 
@@ -460,6 +465,21 @@ describe("workspace assets", () => {
     writeFileSync(join(root, "outputs", "take one.wav"), wav(3)); utimesSync(join(root, "outputs", "take one.wav"), new Date(Date.now() + 5000), new Date(Date.now() + 5000));
     expect((await fetchBytes(f, resolved.url)).status).toBe(409);
     expect((await resolve(f, { source: "workspace", scope, relativePath: "outputs/take one.wav", revision })).body).toMatchObject({ asset: { availability: "changed" } });
+  });
+  // F5-T4 regression: R3-T4 gives every conversation a managed generated-images
+  // scope. It authorizes saved image rows only and must not make the task
+  // workspace look ambiguous (it used to, so workspace media never resolved).
+  it("resolves the task workspace when the conversation also has its managed generated-images scope", async () => {
+    const f = fixture(), root = join(f.workspaces, f.botId), image = png(4, 4);
+    const managed = join(DATA_DIR, "workspaces", f.botId, "generated-images", "managed-thread"); mkdirSync(managed, { recursive: true });
+    const withManaged: MediaAssetsDeps = { ...f.deps, artifactScopes: () => [...f.deps.artifactScopes(), { botId: f.botId, botName: "Media bot", threadId: f.threadId, workspaceRoot: managed, managedOutput: true }] };
+    writeFileSync(join(root, "picture.png"), image);
+    const fs = await import("node:fs");
+    const revision = mediaWorkspaceRevision(fs.realpathSync.native(root), "picture.png", fs.lstatSync(join(root, "picture.png")));
+    const result = await mediaAssetsRoute(request("POST", MEDIA_ROUTES.resolve, { body: { ref: { source: "workspace", scope: { botId: f.botId, threadId: f.threadId }, relativePath: "picture.png", revision } } }), withManaged);
+    const body = ready(result);
+    expect(body.asset).toMatchObject({ source: "workspace", kind: "image", mime: "image/png", capabilities: { imageReference: true } });
+    expect((await drain(await fetchBytes({ ...f, deps: withManaged }, body.url))).equals(image)).toBe(true);
   });
   it("never follows links, never opens private files and refuses roots that are not dedicated workspaces", async () => {
     const f = fixture(), root = join(f.workspaces, f.botId), fs = await import("node:fs");

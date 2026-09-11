@@ -316,5 +316,13 @@
   "markdownEditor.heldDraft.keepCurrent": "Keep what I typed",
   "chatCode.save": "Save",
   "chatCode.saveAs": "Save code as {name}",
-  "chatCode.saveFailed": "Could not save this code. Copy it instead."
+  "chatCode.saveFailed": "Could not save this code. Copy it instead.",
+  "imageReference.use": "Use as reference",
+  "imageReference.useLabel": "Use {name} as a reference image in your next message",
+  "imageReference.useTitle": "Attach this exact image to your next message so the bot can edit from it. Nothing is generated or billed until you approve an image request.",
+  "imageReference.added": "Added as reference",
+  "imageReference.addedLabel": "{name} was added to your next message as a reference image",
+  "imageReference.addedStatus": "Attached to your next message.",
+  "imageReference.openConversation": "Open the conversation this image belongs to, then try again.",
+  "imageReference.failed": "The image could not be added as a reference."
 }
