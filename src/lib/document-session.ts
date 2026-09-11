@@ -107,8 +107,10 @@ export interface DocumentSessionState {
   savedDraftRevision: number;
   status: DocumentSaveStatus;
   saving: PendingSave | null;
-  /** An external change seen while a save was in flight; settled after it. */
-  pendingExternal: ObservedDiskState | null;
+  /** Every disk read seen while a save was in flight, in arrival order, one
+   * per revision; settled after it. All are kept because a late read of the
+   * write itself can arrive after a genuine external change. */
+  pendingExternal: ObservedDiskState[];
   conflict: DocumentConflict | null;
   error: DocumentError | null;
   lastSave: LastSave | null;
@@ -132,6 +134,13 @@ function supersede(state: DocumentSessionState, nextBase: FileRevision, ...revis
     kept.push(revision);
   }
   return kept.length > SUPERSEDED_REVISIONS_KEPT ? kept.slice(kept.length - SUPERSEDED_REVISIONS_KEPT) : kept;
+}
+
+function lastRead(reads: readonly ObservedDiskState[], accept: (read: ObservedDiskState) => boolean): ObservedDiskState | null {
+  for (let index = reads.length - 1; index >= 0; index -= 1) {
+    if (accept(reads[index]!)) return reads[index]!;
+  }
+  return null;
 }
 
 /** True when `revision` is one this session has already moved past. */
@@ -183,7 +192,7 @@ export function openDocumentSession(read: WorkspaceReadResult, options: { mode?:
     savedDraftRevision: 0,
     status: "clean",
     saving: null,
-    pendingExternal: null,
+    pendingExternal: [],
     conflict: null,
     error: null,
     lastSave: null,
@@ -259,12 +268,11 @@ export function acknowledgeSave(state: DocumentSessionState, receipt: SaveReceip
   // The replaced revisions are remembered, so the same stale read arriving
   // after the receipt is ignored too (see `observeExternalChange`).
   const supersededRevisions = supersede(state, receipt.revision, state.baseRevision, pending.baseRevision, receipt.previousRevision);
-  const observed = state.pendingExternal;
-  const external = observed
-    && observed.revision !== receipt.revision
-    && !supersededRevisions.includes(observed.revision)
-    ? observed
-    : null;
+  // The write was conditioned on `pending.baseRevision` and succeeded, so any
+  // other revision read meanwhile came after it. Settle the newest of those;
+  // a late read of the write itself (or of what it replaced) is dropped
+  // rather than hiding an earlier genuine change.
+  const external = lastRead(state.pendingExternal, read => read.revision !== receipt.revision && !supersededRevisions.includes(read.revision));
   const next = derive({
     ...state,
     supersededRevisions,
@@ -273,7 +281,7 @@ export function acknowledgeSave(state: DocumentSessionState, receipt: SaveReceip
     bom: pending.bom,
     savedDraftRevision: pending.draftRevision,
     saving: null,
-    pendingExternal: null,
+    pendingExternal: [],
     error: null,
     lastSave: {
       requestId: pending.requestId,
@@ -307,11 +315,11 @@ export type FailOutcome = "failed" | "conflict" | "ignored";
 export function failSave(state: DocumentSessionState, requestId: string, failure: SaveFailure): Transition & { outcome: FailOutcome } {
   const pending = state.saving;
   if (!pending || pending.requestId !== requestId) return { state, effect: "none", outcome: "ignored" };
-  const external = state.pendingExternal;
-  const cleared = { ...state, saving: null, pendingExternal: null };
+  const external = lastRead(state.pendingExternal, () => true);
+  const cleared = { ...state, saving: null, pendingExternal: [] };
   if (failure.code === "revision-conflict" || failure.code === "already-exists") {
     const currentRevision = failure.currentRevision ?? external?.revision ?? null;
-    const disk = external && (currentRevision === null || external.revision === currentRevision) ? external : null;
+    const disk = currentRevision === null ? external : lastRead(state.pendingExternal, read => read.revision === currentRevision);
     return {
       state: derive({ ...cleared, error: null, conflict: { source: "save-rejected", currentRevision: disk?.revision ?? currentRevision, disk } }),
       effect: "conflict",
@@ -338,7 +346,8 @@ export function observeExternalChange(state: DocumentSessionState, disk: Observe
   if (isSupersededRevision(state, disk.revision)) return { state, effect: "none" };
   if (state.saving) {
     // It may be this very write landing before its receipt; decide after.
-    return { state: { ...state, pendingExternal: disk }, effect: "deferred" };
+    const reads = [...state.pendingExternal.filter(read => read.revision !== disk.revision), disk];
+    return { state: { ...state, pendingExternal: reads.slice(-SUPERSEDED_REVISIONS_KEPT) }, effect: "deferred" };
   }
   if (disk.revision === state.baseRevision && !state.conflict) return { state, effect: "none" };
   // Disk already holds exactly this draft (an unknown-outcome save that did

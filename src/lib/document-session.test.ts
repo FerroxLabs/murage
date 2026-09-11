@@ -273,8 +273,37 @@ describe("external changes", () => {
       const begun = startSave(editDocument(openDocumentSession(read()), "mine"));
       const during = observeExternalChange(begun.state, stale).state;
       const acked = acknowledgeSave(during, receiptFor(during));
-      expect(acked).toMatchObject({ effect: "none", state: { status: "clean", draft: "mine", savedContent: "mine", baseRevision: rev("r1"), pendingExternal: null } });
+      expect(acked).toMatchObject({ effect: "none", state: { status: "clean", draft: "mine", savedContent: "mine", baseRevision: rev("r1"), pendingExternal: [] } });
     }
+  });
+
+  // Regression (fix round 2, verifier probe P2): a late read of the write
+  // itself used to replace an earlier genuine change held for after the
+  // receipt, leaving a clean editor on text the disk no longer holds.
+  it("settles a genuine change seen during a save even when a late read of the write follows it", () => {
+    for (const typingContinued of [false, true]) {
+      const begun = startSave(editDocument(openDocumentSession(read()), "mine"));
+      let during = observeExternalChange(begun.state, { revision: rev("x"), content: "bot wrote after us", bom: false }).state;
+      if (typingContinued) during = editDocument(during, "mine and more");
+      during = observeExternalChange(during, { revision: rev("r1"), content: "mine", bom: false }).state;
+      expect(during.pendingExternal.map(item => item.revision)).toEqual([rev("x"), rev("r1")]);
+      const acked = acknowledgeSave(during, receiptFor(during));
+      expect(acked).toMatchObject(typingContinued
+        ? { outcome: "saved", effect: "conflict", state: { status: "conflict", draft: "mine and more", conflict: { currentRevision: rev("x"), disk: { content: "bot wrote after us" } }, pendingExternal: [] } }
+        : { outcome: "saved", effect: "reload", state: { status: "clean", draft: "bot wrote after us", baseRevision: rev("x"), pendingExternal: [] } });
+    }
+  });
+
+  it("uses the deferred read of the rejecting revision as the conflict's disk text", () => {
+    const begun = startSave(editDocument(openDocumentSession(read()), "mine"));
+    let during = observeExternalChange(begun.state, { revision: rev("x"), content: "first", bom: false }).state;
+    during = observeExternalChange(during, { revision: rev("y"), content: "second", bom: false }).state;
+    expect(failSave(during, "req-1", { code: "revision-conflict", currentRevision: rev("x") }).state.conflict)
+      .toMatchObject({ currentRevision: rev("x"), disk: { content: "first" } });
+    expect(failSave(during, "req-1", { code: "revision-conflict" }).state.conflict)
+      .toMatchObject({ currentRevision: rev("y"), disk: { content: "second" } });
+    expect(failSave(during, "req-1", { code: "revision-conflict", currentRevision: rev("z") }).state.conflict)
+      .toMatchObject({ currentRevision: rev("z"), disk: null });
   });
 
   // Regression (fix round 1): the same stale read arriving just after the
