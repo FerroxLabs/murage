@@ -59,8 +59,11 @@ describe("the bot row's menu is reachable without a right-click", () => {
     for (const site of sites) {
       expect(site, site).toContain("[@media(hover:none)]:opacity-100");
     }
-    // A disabled archive button must still look disabled there.
-    expect(sidebar).toContain("disabled:[@media(hover:none)]:opacity-0");
+    // An unavailable archive must not appear as a live control there. Since
+    // U0-T2 (#762/#767) the row never mounts a disabled Archive at all — its
+    // invisible pixels swallowed clicks — so the guard is the omission itself.
+    expect(sidebar).toContain("{showInlineArchive && <button");
+    expect(sidebar).not.toContain("disabled={archiveDisabled}");
     // And the timestamp those two are positioned on top of has to get out of
     // the way at rest too, or they render over it.
     expect(sidebar).toContain("group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0");

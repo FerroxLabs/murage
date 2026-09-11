@@ -29,7 +29,13 @@ it("advertises extraction only with usable credentials and sends one bounded too
     expect(body).not.toHaveProperty("tools");expect(body).not.toHaveProperty("tool_choice");
     expect(JSON.stringify(body)).toContain("Keep the verified source.");
   } finally {await instance.dispose();}
-  const unavailable=await OpenAICompatDriver.create({instanceId:"no-key",displayName:undefined,environment:{},enabled:true,config:{url,apiKeyEnv:"P09_UNUSED_KEY"}});
+  // 0.1.52 spec E4: a keyless server on this machine is usable (it gets the
+  // loopback placeholder key), so it extracts too; a keyless LAN endpoint is
+  // unusable and advertises nothing. Nothing is fetched for the LAN instance
+  // (the catalog refresh is gated on a key).
+  const keylessLoopback=await OpenAICompatDriver.create({instanceId:"no-key-loopback",displayName:undefined,environment:{},enabled:true,config:{url,apiKeyEnv:"P09_UNUSED_KEY"}});
+  try{expect(typeof keylessLoopback.extractMemory).toBe("function");}finally{await keylessLoopback.dispose();}
+  const unavailable=await OpenAICompatDriver.create({instanceId:"no-key",displayName:undefined,environment:{},enabled:true,config:{url:"http://192.168.1.20:8000/v1",apiKeyEnv:"P09_UNUSED_KEY"}});
   try{expect(unavailable.extractMemory).toBeUndefined();}finally{await unavailable.dispose();}
 });
 

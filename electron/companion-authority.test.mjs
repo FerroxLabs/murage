@@ -24,6 +24,9 @@ it("the real main-process launch blocks share one fresh private token without mu
     const desktopDataOwner={utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-lease-fixture"})};
     const assertDesktopStartupActive=()=>{};
     const composioBrokerUrl=()=>null;
+    // The FluxRouter-hosted broker and the Worker cut-off are release
+    // constants read through app.isPackaged; off here, like the Worker URL.
+    const fluxComposioBrokerUrlValue=()=>"", composioLegacyUntilValue=()=>0;
     const managedComposioChildEnvironment=(_url,_credentials,env)=>env;
     const harnessResourceEnvironment=()=>({}), workspaceCredentialEnv=()=>({});
     ${declaration}
