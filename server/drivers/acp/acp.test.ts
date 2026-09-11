@@ -647,6 +647,177 @@ describe("ACP turns (fake CLI)", () => {
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
   });
 
+  it("advertises form and URL elicitation in initialize (ASK3)", async () => {
+    const dump = join(scratch, "init.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver);
+    await instance.adapter.sendTurn({ threadId: "t-init-caps", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const init = JSON.parse(readFileSync(dump, "utf8")).initialize;
+    expect(init).toMatchObject({
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, elicitation: { form: {}, url: {} } },
+    });
+  });
+
+  it("maps Fuigo's _fuigo/ask_user_question to a question card and answers {outcome:accepted} by question text (ASK3)", async () => {
+    const dump = join(scratch, "fuigo-q.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    // fullAuto on: a question is never auto-answered
+    process.env.FAKE_ACP_MODE = "fuigo-question";
+    instance = await GrokAgentDriver.create({
+      instanceId: "acp-test",
+      displayName: "ACP Test",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-q", text: "go" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({
+      requestType: "question",
+      tool: "ask_user_question",
+      summary: "Which database?",
+      choices: ["Redis", "Postgres"],
+      questions: [
+        { id: "q1", question: "Which database?", options: [{ label: "Redis", description: "In-memory" }, { label: "Postgres", description: "Relational" }], multiSelect: false, allowOther: true },
+        { id: "q2", question: "Which frameworks?", options: [{ label: "React" }, { label: "Vue" }], multiSelect: true, allowOther: true },
+      ],
+    });
+    expect(opened).not.toHaveProperty("questionTool");
+
+    await expect(
+      instance.adapter.respondToRequest("t-fuigo-q", (opened as any).requestId, {
+        behavior: "answer",
+        message: "Redis; React, Vue; and Svelte",
+        answers: [
+          { id: "q1", selected: ["Redis"] },
+          { id: "q2", selected: ["React", "Vue"], other: "and Svelte" },
+        ],
+      }),
+    ).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "answer", source: "user" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({
+      outcome: "accepted",
+      answers: { "Which database?": ["Redis"], "Which frameworks?": ["React", "Vue"] },
+      annotations: { "Which frameworks?": { notes: "and Svelte" } },
+    });
+  });
+
+  it("answers a dismissed Fuigo question with {outcome:cancelled}, and the same when the turn is stopped (ASK3)", async () => {
+    const dump = join(scratch, "fuigo-cancel.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "fuigo-question");
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-skip", text: "go" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await expect(instance.adapter.respondToRequest("t-fuigo-skip", (opened as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: "cancelled" });
+    recorder.stop();
+    await instance.dispose();
+
+    // A stopped turn resolves the open question as a system non-answer (the
+    // cancelled reply is written before the child is torn down; whether a
+    // dying child still reads it is not something a test can pin).
+    await create(GrokAgentDriver, "fuigo-question");
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-stop", text: "go" });
+    await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.interruptTurn("t-fuigo-stop");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it("maps an ACP form elicitation to questions and accepts typed content, under both method spellings (ASK3)", async () => {
+    for (const mode of ["elicitation-form", "elicitation-legacy"] as const) {
+      const dump = join(scratch, `${mode}.json`);
+      process.env.FAKE_ACP_DUMP = dump;
+      await create(GrokAgentDriver, mode);
+      const threadId = `t-${mode}`;
+      await instance.adapter.sendTurn({ threadId, text: "deploy" });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({
+        requestType: "question",
+        tool: "elicitation",
+        summary: "Deploy settings\nEnvironment",
+        questions: [
+          { id: "environment", header: "Environment", options: [{ label: "staging" }, { label: "production" }], multiSelect: false, allowOther: false },
+          { id: "features", header: "Features", options: [{ label: "cache" }, { label: "cdn" }], multiSelect: true, allowOther: false },
+          { id: "confirm", header: "Really?", options: [{ label: "Yes" }, { label: "No" }], multiSelect: false, allowOther: false },
+        ],
+      });
+      await expect(
+        instance.adapter.respondToRequest(threadId, (opened as any).requestId, {
+          behavior: "answer",
+          message: "production; cdn; Yes",
+          answers: [
+            { id: "environment", selected: ["production"] },
+            { id: "features", selected: ["cdn"] },
+            { id: "confirm", selected: ["Yes"] },
+          ],
+        }),
+      ).resolves.toBe("answered");
+      await recorder.until((e) => e.type === "turn.completed");
+      expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({
+        action: "accept",
+        content: { environment: "production", features: ["cdn"], confirm: true },
+      });
+      recorder.stop();
+      await instance.dispose();
+    }
+  });
+
+  it("declines a skipped elicitation and cancels one the turn outlives (ASK3)", async () => {
+    const dump = join(scratch, "elicit-decline.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "elicitation-form");
+    await instance.adapter.sendTurn({ threadId: "t-elicit-skip", text: "deploy" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await expect(instance.adapter.respondToRequest("t-elicit-skip", (opened as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "decline" });
+    recorder.stop();
+    await instance.dispose();
+
+    await create(GrokAgentDriver, "elicitation-form");
+    await instance.adapter.sendTurn({ threadId: "t-elicit-stop", text: "deploy" });
+    await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.interruptTurn("t-elicit-stop");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it("shows a URL elicitation as a link the owner opens, never fetches it, and accepts only after the explicit tap (ASK3)", async () => {
+    const dump = join(scratch, "elicit-url.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "elicitation-url");
+    await instance.adapter.sendTurn({ threadId: "t-elicit-url", text: "deploy" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({
+      requestType: "question",
+      questions: [{
+        id: "url",
+        question: "Sign in to the deploy service to continue\nhttps://example.com/authorize?state=abc",
+        options: [{ label: "I opened the link", description: "https://example.com/authorize?state=abc" }],
+        allowOther: false,
+      }],
+    });
+    // nothing was fetched: the fake would have to be asked, and it never is
+    // (the driver has no HTTP client for this; the card only shows text)
+    await expect(
+      instance.adapter.respondToRequest("t-elicit-url", (opened as any).requestId, {
+        behavior: "answer",
+        message: "I opened the link",
+        answers: [{ id: "url", selected: ["I opened the link"] }],
+      }),
+    ).resolves.toBe("answered");
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept" });
+  });
+
   it("grok fails closed when the CLI advertises no cached_token (needs login)", async () => {
     await create(GrokAgentDriver, "no-auth");
     await instance.adapter.sendTurn({ threadId: "t-auth", text: "go" });
