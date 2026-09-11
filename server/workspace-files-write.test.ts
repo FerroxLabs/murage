@@ -6,7 +6,7 @@ import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, r
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initializeArtifacts, readArtifact } from "./artifacts.ts";
 import { ProjectFolderLeaseError, ProjectFolderLeases } from "./project-folder-leases.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
@@ -20,6 +20,7 @@ import { WORKSPACE_TEXT_MAX_BYTES, type FileRevision, type SaveReceipt, type Wor
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const db of databases.splice(0)) db.close();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -450,14 +451,26 @@ describe("bot-active hold", () => {
     const opened = f.read("a.md");
     const request = { scope: f.scope, relativePath: "a.md", baseRevision: opened.revision, requestId: "r", content: "# Edit\n", bom: false };
     const broken = { acquireRestore: () => { throw new TypeError("registry exploded"); }, release: () => false };
+    // FOLLOW4: the fold is not silent. The registry's "only throws its own
+    // refusals" invariant is what makes root-changed the right answer; a
+    // change that breaks it must show up in the log, once per swallowed
+    // throw, with the error's name and message and no path.
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const swallowed = () => warned.mock.calls.map(call => call.map(String).join(" ")).filter(line => line.includes("registry exploded"));
     // Synchronous path (no projectTurns): the pre-STOPRESTORE2 behavior.
     const sync = await refusal(() => writeWorkspaceMarkdown({ ...f.deps, projectFolders: broken }, request));
     expect([sync.code, sync.status]).toEqual(["root-changed", 409]);
+    expect(swallowed()).toHaveLength(1);
+    expect(swallowed()[0]).toMatch(/TypeError: registry exploded/);
+    expect(swallowed()[0]).not.toContain(f.taskRoot);
     // Turn-aware path: the same throw, through acquireRestoreWhenStopped.
     const turns = new ProjectTurnLeases();
     Object.defineProperty(turns, "folders", { value: broken });
     const aware = await refusal(() => writeWorkspaceMarkdown({ ...f.deps, projectFolders: broken, projectTurns: turns, stoppedTurnCloseMs: () => 5_000 }, request));
     expect([aware.code, aware.status]).toEqual(["root-changed", 409]);
+    expect(swallowed()).toHaveLength(2);
+    expect(swallowed()[1]).toMatch(/TypeError: registry exploded/);
+    expect(swallowed()[1]).not.toContain(f.taskRoot);
     // The registry's own refusals keep their meaning on that path.
     const conflicting = { acquireRestore: () => { throw new ProjectFolderLeaseError("conflict"); }, release: () => false, conflicts: () => { throw new ProjectFolderLeaseError("conflict"); } };
     Object.defineProperty(turns, "folders", { value: conflicting });
@@ -465,6 +478,8 @@ describe("bot-active hold", () => {
     const unusable = { acquireRestore: () => { throw new ProjectFolderLeaseError("invalid-path"); }, release: () => false };
     Object.defineProperty(turns, "folders", { value: unusable });
     expect(await codeOf(() => writeWorkspaceMarkdown({ ...f.deps, projectFolders: unusable, projectTurns: turns, stoppedTurnCloseMs: () => 5_000 }, request))).toBe("root-changed");
+    // The registry's own refusals are the expected answer: nothing logged.
+    expect(swallowed()).toHaveLength(2);
     expect(readFileSync(path, "utf8")).toBe("# Base\n");
     expect(f.artifactCount()).toBe(0);
     expect(f.leftovers()).toEqual([]);

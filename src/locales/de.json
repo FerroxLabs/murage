@@ -3,6 +3,7 @@
   "claudeAccounts.removed": "Aus Murage entfernt. Anmeldung und Zugangsdaten-Dateien bleiben erhalten.",
   "claudeAccounts.saved": "Kontoeinstellungen gespeichert.",
   "claudeAccounts.refreshError": "Gespeichert, aber die Kontoliste konnte nicht aktualisiert werden. Prüfe den aktuellen Stand mit „Konten aktualisieren“.",
+  "claudeAccounts.fleetRefreshError": "Gespeichert, aber die Engine-Liste konnte nicht aktualisiert werden. Wechsle zu einem anderen Fenster und zurück, um die Engines erneut zu prüfen.",
   "claudeAccounts.changeError": "Die Kontoänderung ist fehlgeschlagen.",
   "claudeAccounts.listUnreadable": "Die Claude-Kontoliste konnte nicht gelesen werden. Versuche es mit „Konten aktualisieren“ erneut.",
   "claudeAccounts.copied": "Anmeldebefehl für {name} kopiert.",
