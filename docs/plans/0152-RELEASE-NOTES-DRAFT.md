@@ -256,7 +256,17 @@ close a set of audited gaps, and all seven language packs are complete.
   Fuigo's interactive trust capability and answers its request from the
   same decision. Proven against the bundled 1.0.13 binary on a local model:
   an AGENTS.md canary is absent untrusted and present the moment the card
-  is answered Trust.
+  is answered Trust. Follow-ups (FUIGOTRUST2): folders your bots were
+  already working in before this release are treated as trusted — you chose
+  them in Murage — so the upgrade raises no card for them (Forget in the
+  picker asks again); a folder you trusted in standalone Fuigo (`fuigo
+  --trust`) is honoured as trusted here too, with no card and no "untrusted
+  folder" notice, and the picker says which install trusts it; a card the
+  engine raised on its own that the turn outran now says the turn ran
+  without the folder's files instead of "stopped"; folder trust is
+  recorded from a picker only on the desktop, including a team imported as
+  a project; and a provider-routed turn that never started (card stopped or
+  timed out) no longer leaves its temporary Fuigo home behind.
 - **Images can be saved without touching the source.** Choosing the source
   file itself (or a hard/symlink alias) as the Save destination is a no-op
   rather than a truncation; every other destination is written to an
