@@ -470,14 +470,19 @@ const playTurn = (prompt: JsonValue) => {
 
   // Shell-output fixture: writes a real file inside the turn's working folder
   // the way a Bash/Write tool would, without ever calling register_artifact.
-  // Runs before the hang branch so held turns write too.
+  // Runs before the hang branch so held turns write too. A Markdown path gets
+  // a Markdown report (the workspace editor's format); anything else HTML.
   const writeOutput = /__fixture_write_output__:([A-Za-z0-9_./-]{1,200})/.exec(promptText(prompt));
   // Create-only: a prompt that repeats earlier conversation text must not
   // rewrite a report a previous turn already produced.
   if (writeOutput && !writeOutput[1]!.split("/").some((part) => part === "" || part === "." || part === "..")) {
     const target = join(process.cwd(), ...writeOutput[1]!.split("/"));
     mkdirSync(dirname(target), { recursive: true });
-    if (!existsSync(target)) writeFileSync(target, `<!doctype html><h1>Fixture report</h1><p>${writeOutput[1]}</p>\n`, { flag: "wx" });
+    const markdown = /\.(md|markdown)$/i.test(writeOutput[1]!);
+    const body = markdown
+      ? `# Weekly report\n\nThree updates this week.\n\n- Written by the fixture engine to ${writeOutput[1]}\n`
+      : `<!doctype html><h1>Fixture report</h1><p>${writeOutput[1]}</p>\n`;
+    if (!existsSync(target)) writeFileSync(target, body, { flag: "wx" });
   }
   if (promptText(prompt).includes("__fixture_fail_turn__")) {
     out({ type: "assistant", message: { content: [{ type: "text", text: "fixture turn failed after writing" }] } });
