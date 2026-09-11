@@ -39,6 +39,7 @@ import { rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { homedir as osHomedir, hostname, tmpdir as osTmpdir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { dataDirLeasePaths } from "../../electron/data-dir-lease.mjs";
 
@@ -318,17 +319,23 @@ export function safeWipeSync(target, options = {}) {
 
 /**
  * Async twin of safeWipeSync with a longer retry window, for teardown of a
- * fixture whose child process may still be closing files (Windows).
+ * fixture whose child process may still be closing files (Windows). The
+ * admission check runs on every attempt, not once up front: a just-killed
+ * owner still answers `process.kill(pid, 0)` until it is reaped, so its
+ * lease reads as live for a beat, and a single judgement turned that beat
+ * into a one-off SafeWipeRefused on a green suite (FOLLOW7). A refusal that
+ * outlives the retry window is still thrown, never swallowed, and nothing
+ * is deleted while it stands.
  * @param {string} target
  * @param {import("./safe-wipe.d.mts").SafeWipeOptions} [options]
  */
 export async function safeWipe(target, options = {}) {
-  const { path } = assertSafeToWipe(target, { ...options, checkLeases: true });
   const attempts = options.maxRetries ?? 20;
   const delay = options.retryDelay ?? 100;
   let lastError;
   for (let i = 0; i <= attempts; i++) {
     try {
+      const { path } = assertSafeToWipe(target, { ...options, checkLeases: true });
       await rm(path, { recursive: true, force: true });
       return path;
     } catch (error) {
@@ -339,13 +346,29 @@ export async function safeWipe(target, options = {}) {
   throw lastError;
 }
 
+/**
+ * The path a node:fs delete names, as a string, from any of the spellings
+ * fs accepts: a `file:` URL, a Buffer, or a string. `String(url)` is
+ * "file:///..." which resolves to a nonexistent path under the checkout and
+ * is judged unprotected, so a URL used to walk past the guard (FOLLOW7).
+ * @param {string | URL | Buffer | unknown} target
+ * @returns {string}
+ */
+export function wipeTargetPath(target) {
+  if (target instanceof URL) return target.protocol === "file:" ? fileURLToPath(target) : String(target);
+  if (Buffer.isBuffer(target)) return target.toString();
+  return String(target);
+}
+
 let guardInstalled = false;
 /**
  * Patch node:fs so every recursive rm/rmSync/rmdir in this process runs
  * assertNotProtected first. Idempotent. Used by the vitest setup file and the
  * node --test preload so files that were never routed through safeWipeSync
  * still cannot reach a data directory. Named imports see the patch because
- * Node's builtin ESM facades are re-synced after the assignment.
+ * Node's builtin ESM facades are re-synced after the assignment. The target
+ * is judged by the path it names whether it is a string, a `file:` URL or a
+ * Buffer (wipeTargetPath).
  * @param {import("./safe-wipe.d.mts").SafeWipeOptions} [options]
  */
 export function installSafeWipeGuard(options = {}) {
@@ -354,13 +377,13 @@ export function installSafeWipeGuard(options = {}) {
   const recursive = (opts) => Boolean(opts && typeof opts === "object" && opts.recursive);
   const originalRmSync = fs.rmSync;
   fs.rmSync = function guardedRmSync(path, opts) {
-    if (recursive(opts)) assertNotProtected(String(path), options);
+    if (recursive(opts)) assertNotProtected(wipeTargetPath(path), options);
     return originalRmSync.call(this, path, opts);
   };
   const originalRm = fs.rm;
   fs.rm = function guardedRm(path, opts, callback) {
     if (recursive(opts)) {
-      try { assertNotProtected(String(path), options); }
+      try { assertNotProtected(wipeTargetPath(path), options); }
       catch (error) {
         const cb = typeof opts === "function" ? opts : callback;
         if (typeof cb === "function") { process.nextTick(cb, error); return; }
@@ -371,12 +394,12 @@ export function installSafeWipeGuard(options = {}) {
   };
   const originalPromisesRm = fs.promises.rm;
   fs.promises.rm = async function guardedPromisesRm(path, opts) {
-    if (recursive(opts)) assertNotProtected(String(path), options);
+    if (recursive(opts)) assertNotProtected(wipeTargetPath(path), options);
     return originalPromisesRm.call(this, path, opts);
   };
   const originalRmdirSync = fs.rmdirSync;
   fs.rmdirSync = function guardedRmdirSync(path, opts) {
-    if (recursive(opts)) assertNotProtected(String(path), options);
+    if (recursive(opts)) assertNotProtected(wipeTargetPath(path), options);
     return originalRmdirSync.call(this, path, opts);
   };
   syncBuiltinESMExports();

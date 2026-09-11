@@ -8,7 +8,7 @@
 import type { ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 
-import { assertSafeToWipe } from "./safe-wipe.mjs";
+import { assertSafeToWipe, SafeWipeRefused } from "./safe-wipe.mjs";
 
 /** How `waitForExit` should end the child, and how long to allow. */
 export interface WaitForExitOptions {
@@ -83,14 +83,19 @@ export function waitForExit(
  * says nothing about the code under test is not.
  *
  * The one thing that is not a non-event: the path not being a temp directory
- * at all. assertSafeToWipe runs first, throws SafeWipeRefused naming the path,
- * and is never retried — see safe-wipe.mjs and docs/verification/data-safety.md.
+ * at all. assertSafeToWipe runs on every attempt and a refusal that outlives
+ * the retries is thrown, never warned away — see safe-wipe.mjs and
+ * docs/verification/data-safety.md. It runs per attempt rather than once up
+ * front because the lease rule reads a just-killed owner as live until the
+ * OS reaps it (`process.kill(pid, 0)` answers for a zombie): judging once
+ * turned that beat into a one-off SafeWipeRefused on a green suite
+ * (FOLLOW7, SAFEWIPE1 verifier). Nothing is deleted while a refusal stands.
  */
 export async function removeTempDir(dir: string): Promise<void> {
-  const { path } = assertSafeToWipe(dir);
   let lastError: unknown;
   for (let i = 0; i < 20; i++) {
     try {
+      const { path } = assertSafeToWipe(dir);
       rmSync(path, { recursive: true, force: true });
       return;
     } catch (error) {
@@ -98,6 +103,7 @@ export async function removeTempDir(dir: string): Promise<void> {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
+  if (lastError instanceof SafeWipeRefused) throw lastError;
   console.warn(
     `test cleanup could not remove ${dir}: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
   );

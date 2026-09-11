@@ -10,19 +10,24 @@ const prefixName = "murage-linux-smoke-runtime-";
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function cleanupRuntime(directory) {
+  let refusal;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
       safeWipeSync(directory);
       return;
     } catch (error) {
-      // A refusal is a wrong path, not a slow teardown: never retried.
-      if (error instanceof SafeWipeRefused) throw error;
+      // A refusal is re-judged on every attempt and thrown if it outlives
+      // them: the just-exited app answers `kill -0` until it is reaped, so
+      // its lease reads as live for a beat (FOLLOW7). A wrong path refuses on
+      // every attempt and still throws; nothing is deleted while it stands.
+      refusal = error instanceof SafeWipeRefused ? error : undefined;
       // dbus-run-session can exit just before a portal-owned runtime socket
       // disappears. Give that bounded teardown a moment before treating a
       // persistent runtime as a lifecycle failure.
       await delay(100);
     }
   }
+  if (refusal) throw refusal;
   throw new Error(`[run-linux-package-smoke] could not clean released runtime ${directory}`);
 }
 const appImages = readdirSync(path.join(root, "release")).filter((name) => name.endsWith(".AppImage"));
