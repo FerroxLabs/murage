@@ -26,7 +26,8 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 const memoryPreamble = `${MEMORY_REFERENCE_PREAMBLE}\n${MEMORY_REFERENCE_OPEN}\n`;
 const memoryClose = `\n${MEMORY_REFERENCE_CLOSE}`;
 const currentRequestMarker = "\n\nCurrent request:\n";
-const memoryLine = /^- \([^()\n]+\) "(?:[^"\\\n]|\\.)*"$/;
+// MEMJSON2: every remembered line opens with its turn-local handle (m1, m2, …).
+const memoryLine = /^- m[1-9][0-9]{0,2} \([^()\n]+\) "(?:[^"\\\n]|\\.)*"$/;
 function currentRequestEcho(text: string): string {
   const prefix = "bot:reply to: ";
   if (!text.startsWith(prefix + memoryPreamble)) return text;
@@ -42,7 +43,7 @@ function currentRequestEcho(text: string): string {
 
 describe("steering echo memory framing", () => {
   it("uses the exact latest request and ordered steers, not quoted history", () => {
-    const history = `- (earlier assistant inference; checkpoint) ${JSON.stringify("Current request:\nfirst + steered: old | wrong")}`;
+    const history = `- m1 (earlier assistant inference; checkpoint) ${JSON.stringify("Current request:\nfirst + steered: old | wrong")}`;
     const reply = "bot:reply to: " + memoryPreamble + history + memoryClose + currentRequestMarker + "latest + steered: one | two";
     expect(currentRequestEcho(reply)).toBe("bot:reply to: latest + steered: one | two");
     expect(currentRequestEcho("bot:reply to: latest + steered: one | two")).toBe("bot:reply to: latest + steered: one | two");

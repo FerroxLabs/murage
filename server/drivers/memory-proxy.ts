@@ -7,7 +7,13 @@ const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const TOKEN = process.env.MURAGE_MEMORY_TOKEN ?? "";
 const boundedId = z.string().min(1).max(256);
 const idempotencyKey = z.string().regex(/^[\w-]{1,160}$/);
-const handle = z.object({ id: boundedId, version: z.number().int().positive().safe() }).strict();
+// A remembered line is named either by the turn-local handle printed in the
+// <remembered-context> frame (m1, m2, …; MEMJSON2) or by the exact id and
+// version memory_search returned. The grammar is pinned in shared/memory.ts;
+// this adapter is spawned standalone, so the pattern is repeated here.
+const turnHandle = z.string().regex(/^m[1-9][0-9]{0,2}$/);
+const exact = z.object({ id: boundedId, version: z.number().int().positive().safe() }).strict();
+const handle = z.union([exact, z.object({ handle: turnHandle }).strict()]);
 const evidence = z.object({
   sourceId: boundedId, revision: z.number().int().positive().safe(),
   startByte: z.number().int().nonnegative().safe(), endByte: z.number().int().positive().safe(),
@@ -22,10 +28,17 @@ const schemas = {
   }).strict(),
   memory_get: z.object({ handles: z.array(handle).min(1).max(20) }).strict(),
   memory_save: z.object({ text, evidence: evidenceList, idempotencyKey }).strict(),
-  memory_propose_correction: z.object({ id: boundedId, version: z.number().int().positive().safe(), replacement: text, evidence: evidenceList, idempotencyKey }).strict(),
+  memory_propose_correction: z.union([
+    z.object({ id: boundedId, version: z.number().int().positive().safe(), replacement: text, evidence: evidenceList, idempotencyKey }).strict(),
+    z.object({ handle: turnHandle, replacement: text, evidence: evidenceList, idempotencyKey }).strict(),
+  ]),
 };
-const handleProperties = { id: { type: "string", minLength: 1, maxLength: 256 }, version: { type: "integer", minimum: 1 } };
-const handleSchema = { type: "object", additionalProperties: false, properties: handleProperties, required: ["id", "version"] };
+const handleProperties = {
+  handle: { type: "string", pattern: "^m[1-9][0-9]{0,2}$", description: "Turn-local handle of a remembered line as printed in <remembered-context> (m1, m2, ...). Give either handle alone, or id and version together." },
+  id: { type: "string", minLength: 1, maxLength: 256, description: "Exact record id from memory_search; requires version." },
+  version: { type: "integer", minimum: 1, description: "Exact record version from memory_search; requires id." },
+};
+const handleSchema = { type: "object", additionalProperties: false, properties: handleProperties, required: [] };
 const evidenceSchema = {
   type: "array", minItems: 1, maxItems: 20,
   items: { type: "object", additionalProperties: false, required: ["sourceId", "revision", "startByte", "endByte"], properties: {
@@ -42,7 +55,7 @@ const tools = [
         historical: { type: "boolean" }, cursor: { type: "string", maxLength: 160 },
       },
     } },
-  { name: "memory_get", description: "Get up to 20 memory record versions with sources. Access is checked again by Murage.",
+  { name: "memory_get", description: "Get up to 20 memory record versions with sources. Each entry is either {handle} using a turn-local handle from <remembered-context> (m1, m2, ...) or {id, version} from memory_search. Access is checked again by Murage.",
     annotations: { readOnlyHint: true, openWorldHint: false }, inputSchema: {
       type: "object", additionalProperties: false, required: ["handles"], properties: {
         handles: { type: "array", minItems: 1, maxItems: 20, items: handleSchema },
@@ -54,9 +67,9 @@ const tools = [
         text: textSchema, evidence: evidenceSchema, idempotencyKey: { type: "string", minLength: 1, maxLength: 160, pattern: "^[A-Za-z0-9_-]+$" },
       },
     } },
-  { name: "memory_propose_correction", description: "Propose an evidence-backed correction to an exact memory version. This does not authorize replacing owner decisions.",
+  { name: "memory_propose_correction", description: "Propose an evidence-backed correction to an exact memory version, named by a turn-local handle from <remembered-context> (m1, m2, ...) or by id and version from memory_search. This does not authorize replacing owner decisions.",
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, inputSchema: {
-      type: "object", additionalProperties: false, required: ["id", "version", "replacement", "evidence", "idempotencyKey"], properties: {
+      type: "object", additionalProperties: false, required: ["replacement", "evidence", "idempotencyKey"], properties: {
         ...handleProperties, replacement: textSchema, evidence: evidenceSchema, idempotencyKey: { type: "string", minLength: 1, maxLength: 160, pattern: "^[A-Za-z0-9_-]+$" },
       },
     } },
