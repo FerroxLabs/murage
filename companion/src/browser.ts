@@ -1138,7 +1138,7 @@ export function normalizeCredential(raw: unknown): string {
  * fail-closed direction: a future refusal nobody classified is treated as a
  * guess rather than waved through. */
 export function countsAgainstSignIn(reason: string | undefined): boolean {
-  return reason !== "full" && reason !== "save-failed";
+  return reason !== "full" && reason !== "save-failed" && reason !== "unavailable";
 }
 
 /**
@@ -1270,7 +1270,16 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       }
       const cookie = readCookie(req.headers.cookie, cookieName(identity.scheme));
       if (method === "DELETE") {
-        options.devices.closeSession(cookie);
+        try {
+          options.devices.closeSession(cookie);
+        } catch {
+          // The sign-out could not be written down, so the session is still an
+          // authorisation on disk and the registry kept it in memory too.
+          // Saying "signed out" here would be false, and clearing the cookie
+          // would only hide the credential from the one browser able to retry.
+          // No detail: the underlying error names paths on this computer.
+          return sendJson(res, 500, { error: "could not sign out on this computer — try again" });
+        }
         res.setHeader("set-cookie", clearedCookie(identity));
         return sendJson(res, 200, { ok: true });
       }

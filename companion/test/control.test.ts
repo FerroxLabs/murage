@@ -4,11 +4,14 @@
 // unreachable from outside. It is not: a browser on the victim's machine is
 // inside that boundary, and any page on the internet can aim a form at it.
 // These tests pin the rule that keeps that from mattering.
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request, type Server } from "node:http";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createControlServer, hostCandidates, originIsLoopback } from "../src/control.ts";
 import { DeviceRegistry, PAIRING_TTL_MS } from "../src/devices.ts";
+import { DATA_DIR } from "../src/state.ts";
 
 let control: Server;
 let port = 0;
@@ -304,6 +307,95 @@ describe("hostCandidates", () => {
     expect(revoked.status).toBe(200);
     expect(disconnectedDeviceIds).toEqual([paired.device.id]);
     expect(revoked.body.connectedDeviceIds).toEqual([]);
+  });
+
+  it("keeps a device and its streams when its removal cannot be written, and removes it on retry", async () => {
+    const { code } = devices.openPairing();
+    const paired = devices.redeem(code, "Phone on a full disk");
+    if ("error" in paired) throw new Error(paired.error);
+    disconnectedDeviceIds = [];
+    connectedDeviceIds = [paired.device.id];
+    // SAFETY: private `persist` shadowed on this registry only; deleting the
+    // shadow restores the real write.
+    const writable = devices as unknown as { persist?: () => void };
+    writable.persist = () => {
+      throw new Error("ENOSPC: no space left on device, open '/Users/someone/.murage-companion/devices.json'");
+    };
+    try {
+      const failed = await ask("DELETE", `/devices/${paired.device.id}`);
+      expect(failed).toEqual({ status: 500, body: { error: "could not remove the device" } });
+      // The listener survived the failed write, and nothing claims a removal.
+      const state = await ask("GET", "/state");
+      expect(state.status).toBe(200);
+      expect(state.body.devices.map((d: { id: string }) => d.id)).toContain(paired.device.id);
+      expect(disconnectedDeviceIds).toEqual([]);
+      expect(connectedDeviceIds).toEqual([paired.device.id]);
+      expect(devices.authenticate(paired.token)?.id).toBe(paired.device.id);
+    } finally {
+      delete writable.persist;
+    }
+
+    const retried = await ask("DELETE", `/devices/${paired.device.id}`);
+    expect(retried.status).toBe(200);
+    expect(disconnectedDeviceIds).toEqual([paired.device.id]);
+    expect(devices.authenticate(paired.token)).toBeNull();
+    connectedDeviceIds = [];
+  });
+});
+
+describe("a paired-device list that cannot be read", () => {
+  it("reports the registry unavailable, refuses changes, and recovers without a restart", async () => {
+    const file = join(DATA_DIR, "devices.json");
+    let original: string | null = null;
+    try {
+      original = readFileSync(file, "utf8");
+    } catch {
+      original = null;
+    }
+    const valid = JSON.stringify({
+      devices: [{ id: "kept-phone", name: "Kept phone", tokenHash: "a".repeat(64), createdAt: 1, lastSeenAt: 1 }],
+    });
+    writeFileSync(file, "{ torn");
+    const unreadable = new DeviceRegistry();
+    const server = createControlServer({
+      devices: unreadable,
+      companionPort: 8810,
+      hostedUrl: () => null,
+      discovery: () => ({ advertising: false, name: "Test computer" }),
+    });
+    const brokenPort = await new Promise<number>((resolve) =>
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port)),
+    );
+    const call = async (method: string, path: string): Promise<{ status: number; body: any }> => {
+      const res = await fetch(`http://127.0.0.1:${brokenPort}${path}`, { method });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      const state = await call("GET", "/state");
+      expect(state.status).toBe(200);
+      expect(state.body.registry).toMatchObject({ available: false });
+      expect(state.body.devices).toEqual([]);
+      // In the field the panel already renders as needing attention.
+      expect(state.body.error).toMatch(/pairing is paused/i);
+
+      expect((await call("POST", "/pairing")).status).toBe(503);
+      expect(unreadable.pairing()).toBeNull();
+      expect((await call("DELETE", "/devices/kept-phone")).status).toBe(503);
+      expect((await call("POST", "/devices/kept-phone/cloud-desktop")).status).toBe(503);
+      expect(readFileSync(file, "utf8")).toBe("{ torn");
+
+      writeFileSync(file, valid);
+      expect(unreadable.reload()).toBe(true);
+      const recovered = await call("GET", "/state");
+      expect(recovered.body.registry).toEqual({ available: true });
+      expect(recovered.body.error).toBeUndefined();
+      expect(recovered.body.devices.map((d: { id: string }) => d.id)).toEqual(["kept-phone"]);
+      expect((await call("POST", "/pairing")).status).toBe(201);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (original === null) rmSync(file, { force: true });
+      else writeFileSync(file, original);
+    }
   });
 });
 

@@ -111,7 +111,11 @@ const liveStream = async (cookie: string): Promise<Stream> => {
   return stream;
 };
 
-const doorWrite = (method: string, path: string, cookie: string): Promise<{ status: number; setCookie: string }> =>
+const doorWrite = (
+  method: string,
+  path: string,
+  cookie: string,
+): Promise<{ status: number; setCookie: string; body: string }> =>
   new Promise((resolve, reject) => {
     const req = request(
       {
@@ -128,9 +132,11 @@ const doorWrite = (method: string, path: string, cookie: string): Promise<{ stat
         },
       },
       (res) => {
-        res.resume();
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => (body += chunk));
         res.on("end", () =>
-          resolve({ status: res.statusCode ?? 0, setCookie: String(res.headers["set-cookie"]?.[0] ?? "") }),
+          resolve({ status: res.statusCode ?? 0, setCookie: String(res.headers["set-cookie"]?.[0] ?? ""), body }),
         );
       },
     );
@@ -403,6 +409,34 @@ describe("a live browser stream", () => {
     await waitFor(() => stream.text().includes("hello"), "the first frame");
     expect(tracker.ids()).toEqual([deviceId]);
     stream.res.destroy();
+  });
+
+  it("stays signed in and streaming when the sign-out cannot be written, and signs out on retry", async () => {
+    const deviceId = pair();
+    const browser = signInBrowser(deviceId);
+    const stream = await liveStream(browser.value);
+    // SAFETY: private `persist` shadowed on this registry only.
+    const writable = registry as unknown as { persist?: () => void };
+    writable.persist = () => {
+      throw new Error("EROFS: read-only file system, open '/Users/someone/.murage-companion/devices.json'");
+    };
+    try {
+      const failed = await signOut(browser.value);
+      expect(failed.status).toBe(500);
+      expect(JSON.parse(failed.body)).toEqual({ error: "could not sign out on this computer — try again" });
+      // The cookie is not cleared: the credential is still live on disk, and
+      // this browser is the one that can retry.
+      expect(failed.setCookie).toBe("");
+      broadcast("after-failed-sign-out");
+      await waitFor(() => stream.text().includes("after-failed-sign-out"), "the frame after a failed sign-out");
+      expect(stream.isClosed()).toBe(false);
+    } finally {
+      delete writable.persist;
+    }
+
+    expect((await signOut(browser.value)).status).toBe(200);
+    await stream.closed;
+    expect(tracker.ids()).toEqual([]);
   });
 
   it("still ends every browser's stream when the whole device is revoked", async () => {
