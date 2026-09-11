@@ -6,7 +6,7 @@
 // signing). In dev it's a no-op so the browser/dev shell is unaffected.
 // electron-updater is vendored (electron/vendor/electron-updater.cjs) because
 // the packaged app ships no node_modules.
-import { app, clipboard, ipcMain } from "electron";
+import { app, clipboard, ipcMain as electronIpcMain } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -78,7 +78,8 @@ function setState(patch) {
   }
 }
 
-export function registerUpdaterIpc() {
+// main.mjs passes its owned-main-window gate (main-ipc-trust.mjs, B6).
+export function registerUpdaterIpc(ipcMain = electronIpcMain) {
   ipcMain.handle("update:get-state", () => state);
   ipcMain.handle("update:check", () => updaterCoordinator?.check(true));
   ipcMain.handle("update:download", () => updaterCoordinator?.download());

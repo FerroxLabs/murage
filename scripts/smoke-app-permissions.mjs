@@ -19,6 +19,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { mainAppPermissionCheckAllowed, mainAppPermissionRequestAllowed } from "../electron/app-permissions.mjs";
+import { createMainNavigationGuard, createOwnedMainIpc, rendererOriginArguments } from "../electron/main-ipc-trust.mjs";
+import { isOwnedMainSender } from "../electron/main-trust.mjs";
 import screenPreview from "../electron/screen-preview.cjs";
 
 if (!process.versions.electron) {
@@ -34,7 +36,8 @@ if (!process.versions.electron) {
   process.exit(code);
 }
 
-const { app, BrowserWindow, session } = electron;
+const { app, BrowserWindow, ipcMain, session } = electron;
+const PRELOAD = fileURLToPath(new URL("../electron/preload.cjs", import.meta.url));
 const data = process.argv[2];
 assert.ok(data, "Run this smoke with Node so its parent owns the temporary profile");
 app.setPath("userData", data);
@@ -46,11 +49,18 @@ const timeout = setTimeout(() => { console.error("Permission smoke timed out"); 
 const PAGE = "<!doctype html><title>Isolated permission smoke</title><p>Only this test page is captured.</p>";
 
 async function run() {
+  let redirectTarget = "";
   const servers = [0, 1].map(() => createServer((req, res) => {
+    if (req.url === "/redirect" && redirectTarget) {
+      res.statusCode = 302;
+      res.setHeader("Location", redirectTarget);
+      res.end();
+      return;
+    }
     res.setHeader("Content-Type", "text/html");
     res.end(req.url === "/with-frame" ? `${PAGE}<iframe src="/frame"></iframe>` : PAGE);
   }));
-  let win, other;
+  let win, other, bridged, unowned;
   try {
     await Promise.all(servers.map(server => new Promise(resolve => server.listen(0, "127.0.0.1", resolve))));
     const [origin, foreignOrigin] = servers.map(server => `http://127.0.0.1:${server.address().port}`);
@@ -114,13 +124,66 @@ async function run() {
     assert.ok((await capture(win.webContents, display)).error, "another origin must not capture");
     assert.deepEqual(displayDecisions, [false, true, false], "foreign capture must not reach source selection");
 
+    // S1-T3 (B6): the real preload, the owned-main IPC gate and the main-window
+    // navigation guard, exactly as main.mjs wires them. The secret here is a
+    // fixture value; no app data, credentials or external browser are touched.
+    redirectTarget = `${foreignOrigin}/`;
+    const secret = "isolated-smoke-secret";
+    const gate = createOwnedMainIpc({ ipcMain, isTrusted: (event) => isOwnedMainSender(event, { window: bridged, origin }) });
+    gate.on("desktop:surface-secret", (event) => { event.returnValue = secret; }, { refusedReturnValue: "" });
+    gate.handle("desktop:capabilities", () => ({ fixture: true }));
+    const bridgePreferences = { ...webPreferences, preload: PRELOAD, additionalArguments: rendererOriginArguments(origin) };
+    const openedExternally = [];
+    bridged = new BrowserWindow({ show: false, webPreferences: bridgePreferences });
+    const navigation = createMainNavigationGuard({ origin: () => origin, openExternal: (url) => { openedExternally.push(url); } });
+    bridged.webContents.on("will-navigate", navigation.willNavigate);
+    bridged.webContents.on("will-redirect", navigation.willRedirect);
+    const bridgeState = (target) => target.webContents.executeJavaScript(`(async () => ({
+      type: typeof window.muragebox,
+      secret: window.muragebox ? window.muragebox.desktopSurfaceSecret : null,
+      capabilities: window.muragebox ? await window.muragebox.getCapabilities().then((value) => value, (error) => ({ refused: /main Murage window/.test(String(error && error.message)) })) : null,
+    }))()`);
+    const currentOrigin = (target) => new URL(target.webContents.getURL()).origin;
+
+    await bridged.loadURL(origin);
+    assert.deepEqual(await bridgeState(bridged), { type: "object", secret, capabilities: { fixture: true } }, "owned window gets the bridge and the secret");
+
+    // A renderer-initiated navigation off the renderer origin stays in place and
+    // goes to the default browser (recorded here) instead.
+    await bridged.webContents.executeJavaScript(`location.href = ${JSON.stringify(`${foreignOrigin}/`)}; true`);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    assert.equal(currentOrigin(bridged), origin, "navigation away is refused");
+    assert.deepEqual(openedExternally, [`${foreignOrigin}/`]);
+
+    // A main-frame redirect off the renderer origin is refused.
+    await assert.rejects(bridged.loadURL(`${origin}/redirect`), "cross-origin redirect is aborted");
+    assert.equal(currentOrigin(bridged), origin, "redirect away is refused");
+    assert.deepEqual(openedExternally, [`${foreignOrigin}/`], "a redirect never opens externally");
+
+    // A second window on the same origin gets a bridge from the preload, but
+    // main refuses its secret request and its privileged IPC.
+    unowned = new BrowserWindow({ show: false, webPreferences: bridgePreferences });
+    await unowned.loadURL(origin);
+    assert.deepEqual(await bridgeState(unowned), { type: "object", secret: "", capabilities: { refused: true } }, "unowned window is refused");
+    unowned.destroy();
+    unowned = null;
+
+    // A foreign document in the owned window (loaded by main here, to model a
+    // navigation that escaped) gets no bridge at all.
+    await bridged.loadURL(foreignOrigin);
+    assert.deepEqual(await bridgeState(bridged), { type: "undefined", secret: null, capabilities: null }, "foreign document has no bridge");
+
     console.log(JSON.stringify({
       electron: process.versions.electron, platform: process.platform,
       microphone: "allowed", camera: "denied", display: "intent-bound-one-shot",
       subframe: "denied", unownedWindow: "denied", foreignOrigin: "denied",
+      bridge: "owned-origin-only", navigation: "refused-opened-externally", redirect: "refused",
+      unownedWindowIpc: "refused", foreignDocumentBridge: "absent",
     }));
   } finally {
     clearTimeout(timeout);
+    unowned?.destroy();
+    bridged?.destroy();
     other?.destroy();
     win?.destroy();
     await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
