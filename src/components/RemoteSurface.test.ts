@@ -38,6 +38,11 @@ const settings = read("./SettingsPanel.tsx");
 const sidebar = read("./Sidebar.tsx");
 const hook = read("../lib/use-surface.ts");
 
+/** The one early return in <Onboarding> (bf1dc245 folded the workspace check
+ *  into it, 347a3f4d the settings dialog). `desktop !== true` is its FIRST
+ *  clause, so the unknown surface is refused before anything else is asked. */
+const ONBOARDING_GUARD = 'if (desktop !== true || workspace === "established" || state.appSettingsOpen) return null;';
+
 /** Every file that suppresses something, so a new one cannot quietly answer
  *  the question a different way. */
 const gated: Array<[string, string]> = [
@@ -104,30 +109,39 @@ describe("1. the welcome / email gate never reaches a phone", () => {
     expect(app).not.toMatch(/\{gated && <Onboarding/);
   });
 
-  it("takes the ENGINE SCAN and the permission prompt with it", () => {
-    // The three screens a paired phone was actually walked through, in order:
-    // step 0 the email gate, step 1 "Your engines" — the scan — and step 3 the
-    // browser-door wizard. Step 1 polls GET /api/instances for CLIs installed
-    // on THIS COMPUTER and offers to install the missing ones; a phone can
-    // install nothing, and the door refuses those routes anyway. Step 2 asks
-    // macOS for the microphone, which is not this device's microphone.
+  it("takes the ENGINE SCAN and the workspace check with it", () => {
+    // The screens a paired phone was actually walked through, in order, as
+    // the outcome-first rewrite (bf1dc245) now lays them out: step 0 the
+    // welcome / email gate, step 1 "Choose an engine" — the scan — and step 2
+    // the starter crew. Step 1 polls GET /api/instances for CLIs installed on
+    // THIS COMPUTER and offers to install the missing ones; a phone can
+    // install nothing, and the door refuses those routes anyway. The
+    // workspace check (GET /api/bots) that decides whether the screen is
+    // needed at all is an effect, so it cannot sit behind the early return;
+    // it carries the same condition instead.
     //
     // None of them is separately gated, and that is the design: they are steps
     // of ONE screen, and the screen does not exist off the desktop.
     const body = onboarding.slice(onboarding.indexOf("export function Onboarding("));
-    const guard = body.indexOf("if (desktop !== true) return null;");
+    const guard = body.indexOf(ONBOARDING_GUARD);
     expect(guard).toBeGreaterThan(-1);
-    for (const step of ["{step === 0 && (", "{step === 1 && (", "{step === 2 && (", "{step === 3 && ("]) {
+    for (const step of ["{step === 0 && <>", "{step === 1 && <>", "{step === 2 && choice && modelReady && <StarterProfiles", "{step === 2 && !modelReady && <>"]) {
       expect(body.indexOf(step), step).toBeGreaterThan(guard);
     }
-    expect(body).toContain("Your engines");
-    expect(body).toContain("<PhoneSetupFlow");
+    expect(body).toContain("Choose an engine");
+    expect(body).toContain("useEffect(() => { if (desktop === true) void checkWorkspace(); }, [desktop]);");
+    // The phone-setup wizard left this screen for good; it must not creep back.
+    expect(body).not.toContain("<PhoneSetupFlow");
   });
 
   it("is locked a second time in the component itself", () => {
     // So a future caller cannot reopen the hole by mounting <Onboarding>
-    // somewhere new.
-    expect(onboarding).toContain("if (desktop !== true) return null;");
+    // somewhere new. The guard is the component's only early return, and
+    // `desktop !== true` is its first clause: the workspace and settings
+    // conditions after it can only withhold more, never admit an unknown
+    // surface.
+    expect(onboarding).toContain(ONBOARDING_GUARD);
+    expect(onboarding.match(/return null;/g)).toHaveLength(1);
     expect(onboarding).toContain("const desktop = useDesktopSurface();");
   });
 });
@@ -253,14 +267,14 @@ describe("4. nothing that installs or executes is offered to a phone", () => {
   it("keeps the engine installer inside the screen that is already gone", () => {
     // <EngineSetup> is reachable from onboarding step 1 and nowhere else in
     // this lane, and onboarding no longer mounts off the desktop. Scoped to
-    // the component body: `SetupRow` above it is a helper the guard cannot
-    // sit inside, and it is only ever called from the tree below.
+    // the component body, where the guard sits ahead of the tree that mounts
+    // it for the selected engine.
     expect(onboarding).toContain("<EngineSetup");
     const body = onboarding.slice(onboarding.indexOf("export function Onboarding("));
-    expect(body).toContain("if (desktop !== true) return null;");
-    expect(body).toContain("<SetupRow key={e.label}");
-    expect(body.indexOf("if (desktop !== true) return null;"))
-      .toBeLessThan(body.indexOf("<SetupRow key={e.label}"));
+    expect(body).toContain(ONBOARDING_GUARD);
+    expect(body).toContain("<EngineSetup instance={selected}");
+    expect(body.indexOf(ONBOARDING_GUARD))
+      .toBeLessThan(body.indexOf("<EngineSetup instance={selected}"));
   });
 });
 
@@ -269,10 +283,22 @@ describe("5. the desktop is untouched", () => {
     // Every gate is a plain guard with no `else`. With the answer `true` each
     // file's tree is exactly the tree it had before, so "unchanged on the
     // desktop" is a property of the shape, not of a screenshot.
+    //
+    // A menu built from an items ARRAY cannot use `&&` — a `false` entry is
+    // not an item — so the sidebar's desktop-only Inbox and Files entries
+    // (f287470f, c95571f0) are spread from an EMPTY list off the desktop:
+    // `...(desktop === true ? [item] : [])`. Nothing is rendered in their
+    // place, which is the same rule in the only shape an array admits. That
+    // exact form is the only ternary allowed; an `else` that renders
+    // something, or a `desktop === false` / `desktop ?` branch, is still a
+    // leak.
+    const EMPTY_LIST_SPREAD = /\.\.\.\(desktop === true \? \[[^\]]*\] : \[\]\)/g;
+    expect(sidebar.match(EMPTY_LIST_SPREAD)).toHaveLength(2);
     for (const [name, source] of gated) {
-      expect(source, name).not.toMatch(/desktop === true \? /);
-      expect(source, name).not.toMatch(/desktop === false \? /);
-      expect(source, name).not.toMatch(/desktop \?/);
+      const withoutEmptySpreads = source.replace(EMPTY_LIST_SPREAD, "");
+      expect(withoutEmptySpreads, name).not.toMatch(/desktop === true \? /);
+      expect(withoutEmptySpreads, name).not.toMatch(/desktop === false \? /);
+      expect(withoutEmptySpreads, name).not.toMatch(/desktop \?/);
     }
   });
 
