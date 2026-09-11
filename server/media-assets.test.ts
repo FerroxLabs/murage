@@ -455,7 +455,11 @@ describe("workspace assets", () => {
     expect(range.status).toBe(206); expect(range.headers!["content-type"]).toBe("audio/wav"); expect((await drain(range)).equals(audio.subarray(44, 1044))).toBe(true);
     // A stale or foreign revision never opens the file.
     expect((await resolve(f, { source: "workspace", scope, relativePath: "outputs/take one.wav", revision: "r1.stalestalestale" })).body).toMatchObject({ asset: { availability: "changed" } });
-    const otherRevision = mediaWorkspaceRevision(join(f.workspaces, f.otherBotId), "outputs/take one.wav", stat);
+    // The same file, the same stat, named under another root: a revision now
+    // reads the bytes at its path, so the other root is an alias of this folder.
+    const otherRoot = join(f.workspaces, "same-folder-other-root"); symlinkSync(root, otherRoot, "dir");
+    const otherRevision = mediaWorkspaceRevision(otherRoot, "outputs/take one.wav", stat);
+    expect(otherRevision).not.toBe(revision);
     expect((await resolve(f, { source: "workspace", scope, relativePath: "outputs/take one.wav", revision: otherRevision })).body).toMatchObject({ asset: { availability: "changed" } });
     // Another conversation cannot reach this workspace; an unknown scope is hidden.
     expect((await resolve(f, { source: "workspace", scope: { botId: f.otherBotId, threadId: f.otherThreadId }, relativePath: "outputs/take one.wav", revision })).body).toMatchObject({ asset: { availability: "missing" } });
@@ -491,7 +495,9 @@ describe("workspace assets", () => {
     writeFileSync(join(root, "real", "clip.png"), png());
     const canonicalRoot = fs.realpathSync.native(root), scope = { botId: f.botId, threadId: f.threadId };
     const rev = (relative: string, path: string) => mediaWorkspaceRevision(canonicalRoot, relative, fs.lstatSync(path));
-    expect((await resolve(f, { source: "workspace", scope, relativePath: "linked.png", revision: rev("linked.png", secret) })).body).toMatchObject({ asset: { availability: "denied" } });
+    // A link has no revision of its own; even the genuine revision of the file it points at is denied.
+    const secretRevision = mediaWorkspaceRevision(fs.realpathSync.native(f.workspaces), "secret.png", fs.lstatSync(secret));
+    expect((await resolve(f, { source: "workspace", scope, relativePath: "linked.png", revision: secretRevision })).body).toMatchObject({ asset: { availability: "denied" } });
     expect((await resolve(f, { source: "workspace", scope, relativePath: "memory/note.png", revision: rev("memory/note.png", join(root, "memory", "note.png")) })).body).toMatchObject({ asset: { availability: "denied" } });
     expect((await resolve(f, { source: "workspace", scope, relativePath: "CLAUDE.md", revision: rev("CLAUDE.md", join(root, "CLAUDE.md")) })).body).toMatchObject({ asset: { availability: "denied" } });
     expect((await resolve(f, { source: "workspace", scope, relativePath: "via-link/clip.png", revision: rev("via-link/clip.png", join(root, "real", "clip.png")) })).body).toMatchObject({ asset: { availability: "denied" } });

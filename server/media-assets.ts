@@ -39,6 +39,7 @@ import {
 } from "../shared/media-assets.ts";
 import { isFileRevision, isWorkspaceRelativePath, isWorkspaceScopeRef, type WorkspaceScopeRef } from "../shared/workspace-files.ts";
 import { hiddenRoute, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
+import { workspaceRevisionOf } from "./workspace-revision.ts";
 
 export interface MediaAssetsDeps {
   dataDir: string;
@@ -274,10 +275,15 @@ const errno = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.
 const cleanName = (value: string) => value.replace(/\p{Cc}/gu, " ").trim().slice(0, 200) || "media";
 
 /** Same opaque identity as R3-T1 `workspaceFileRevision(root, relativePath,
- * stat)`: sha256 over the canonical root, the relative path and the artifact
- * source fingerprint. A revision issued for another root never matches. */
+ * stat)` (server/workspace-revision.ts): sha256 over the canonical root, the
+ * relative path, the artifact source fingerprint and, within the text limit,
+ * the file's own bytes at that path. A revision issued for another root or
+ * another content never matches. Throws when the file at that path is not
+ * the observed state or cannot be read: no revision exists for it. */
 export function mediaWorkspaceRevision(root: string, relativePath: string, stat: Stats): string {
-  return `r1.${createHash("sha256").update(JSON.stringify([root, relativePath, fingerprint(stat)])).digest("base64url")}`;
+  const result = workspaceRevisionOf(root, relativePath, stat);
+  if (!result.ok) fail(409, "changed", "This media changed. Open it again.");
+  return result.revision;
 }
 
 export function mediaAssetIdFor(ref: NormalizedRef): string {
@@ -427,7 +433,9 @@ function locateWorkspace(ref: Extract<NormalizedRef, { source: "workspace" }>, d
       continue;
     }
     if (!stat.isFile() || stat.nlink !== 1) return { ...located, outcome: { state: "unsupported" } };
-    const revision = mediaWorkspaceRevision(root, ref.relativePath, stat);
+    const current = workspaceRevisionOf(root, ref.relativePath, stat);
+    if (!current.ok) return { ...located, outcome: { state: current.reason === "changed" ? "changed" : "unsupported" } };
+    const revision = current.revision;
     if (ref.revision !== undefined && revision !== ref.revision) return { ...located, outcome: { state: "changed" } };
     return { ...located, outcome: { state: "ready", path, stat, revision, observed } };
   }

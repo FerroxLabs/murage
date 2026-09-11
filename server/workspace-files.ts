@@ -44,6 +44,7 @@ import {
   type WorkspaceSearchRequest, type WorkspaceSearchResponse, type WorkspaceWriteRequest,
 } from "../shared/workspace-files.ts";
 import { hiddenRoute, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
+import { sha256Hex, workspaceRevisionOf } from "./workspace-revision.ts";
 
 /** Server facts a lane may need. Adding a field is a one-line change to the
  * deps object in server/index.ts; routing itself never changes. */
@@ -87,10 +88,16 @@ const fold = (value: string) => value.normalize("NFC").toLowerCase();
 const byKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const cleanLabel = (value: string) => value.replace(/\p{Cc}/gu, " ").trim().slice(0, 100);
 
-/** Opaque identity of one observed regular file. F4-T1 recomputes it from a
- * fresh lstat and compares; the client never parses it. */
-export function workspaceFileRevision(rootIdentity: string, relativePath: string, stat: Stats): FileRevision {
-  return `r1.${digest(JSON.stringify([rootIdentity, relativePath, artifactSourceFingerprint(stat)]))}` as FileRevision;
+/** Opaque identity of one observed regular file state: the canonical root,
+ * the path, the lstat fingerprint and, within the text limit, the SHA-256 of
+ * its bytes (server/workspace-revision.ts says why metadata alone is not
+ * enough). F4-T1 recomputes it from a fresh lstat and compares; the client
+ * never parses it. Undefined when the file is no longer that state or cannot
+ * be read: no revision is issued for a state nobody could verify. `bytes`
+ * must be exactly the verified content of `stat` when given. */
+export function workspaceFileRevision(root: string, relativePath: string, stat: Stats, bytes?: Uint8Array): FileRevision | undefined {
+  const result = workspaceRevisionOf(root, relativePath, stat, bytes);
+  return result.ok ? result.revision : undefined;
 }
 
 export interface ResolvedWorkspace {
@@ -225,7 +232,10 @@ function describeEntry(root: string, relativePath: string, child: Child): Worksp
   if (!stat.isFile()) return { ...base, kind: "other", state: "unsupported" };
   // Hard-linked files cannot be saved or edited safely; no revision invites it.
   if (stat.nlink !== 1) return { ...base, kind: "file", state: "unsupported", bytes: stat.size, modifiedAt };
-  return { ...base, kind: "file", state: "local", bytes: stat.size, modifiedAt, revision: workspaceFileRevision(root, relativePath, stat) };
+  // A file that changed under this listing or cannot be read is still listed,
+  // without a revision until a listing can observe one state of it.
+  const revision = workspaceFileRevision(root, relativePath, stat);
+  return { ...base, kind: "file", state: "local", bytes: stat.size, modifiedAt, ...(revision ? { revision } : {}) };
 }
 
 function encodeCursor(prefix: string, value: unknown): string {
@@ -543,6 +553,15 @@ function requireRegularFile(stat: Stats): void {
 }
 const sameState = (a: Stats, b: Stats) => artifactSourceFingerprint(a) === artifactSourceFingerprint(b);
 
+/** The revision (and content digest) of a state a request acts on, or the
+ * refusal that state deserves. */
+function requireRevision(root: string, relativePath: string, stat: Stats, bytes?: Uint8Array): { revision: FileRevision; sha256: string | null } {
+  const result = workspaceRevisionOf(root, relativePath, stat, bytes);
+  if (result.ok) return result;
+  if (result.reason === "changed") conflict(undefined, CHANGED_DURING_READ);
+  fail("not-found", "That file could not be read.");
+}
+
 /** Bytes of exactly the observed file state, or a refusal. */
 function readStable(path: string, expected: Stats): Buffer {
   if (expected.size > WORKSPACE_TEXT_MAX_BYTES) fail("too-large", "This file is too large to open as text here. Download it or open it in another app.");
@@ -603,7 +622,7 @@ export function readWorkspaceFile(deps: WorkspaceFilesDeps, request: WorkspaceRe
   assertUnchanged(observed.directories);
   const { bom, content } = decodeWorkspaceText(bytes);
   return {
-    scope, relativePath, revision: workspaceFileRevision(root, relativePath, observed.stat), encoding: "utf-8", bom,
+    scope, relativePath, revision: requireRevision(root, relativePath, observed.stat, bytes).revision, encoding: "utf-8", bom,
     newline: workspaceNewlineStyle(content), bytes: bytes.length, modifiedAt: Math.trunc(observed.stat.mtimeMs), content,
   };
 }
@@ -612,8 +631,9 @@ export function readWorkspaceFile(deps: WorkspaceFilesDeps, request: WorkspaceRe
  * F4-T5: authorize one workspace file for a native open/reveal.
  *
  * Same root resolution, link, hard-link and private-file policy as a read.
- * Nothing is read and no size limit applies, because the operating system
- * opens the file, not Murage. The answer carries the canonical root and the
+ * No size limit applies, because the operating system opens the file, not
+ * Murage; only a file within the text limit is read, to name its revision
+ * exactly as discovery does. The answer carries the canonical root and the
  * observed file identity so the owned main process can rebuild the path and
  * refuse if anything moved between this answer and the OS call.
  */
@@ -628,7 +648,7 @@ export function nativeWorkspaceFile(deps: WorkspaceFilesDeps, request: Workspace
   requireRegularFile(observed.stat);
   assertUnchanged(observed.directories);
   return {
-    scope, relativePath, root, revision: workspaceFileRevision(root, relativePath, observed.stat),
+    scope, relativePath, root, revision: requireRevision(root, relativePath, observed.stat).revision,
     bytes: observed.stat.size, identity: artifactSourceFingerprint(observed.stat),
   };
 }
@@ -715,6 +735,7 @@ export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: Workspace
   const content = Buffer.from(request.content, "utf8");
   const bytes = request.bom ? Buffer.concat([UTF8_BOM, content]) : content;
   if (bytes.length > WORKSPACE_TEXT_MAX_BYTES) fail("too-large", "This document is larger than 2 MiB and cannot be saved here.");
+  const bytesSha256 = sha256Hex(bytes);
   const { root, rootStat } = readyRoot(deps, scope);
   requireAuthorizedRoot(deps, scope, root);
   const create = request.baseRevision === null;
@@ -736,11 +757,13 @@ export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: Workspace
     } else {
       if (!observed.stat) fail("not-found", MOVED);
       requireRegularFile(observed.stat);
-      previousRevision = workspaceFileRevision(root, relativePath, observed.stat);
+      const previous = requireRevision(root, relativePath, observed.stat);
+      previousRevision = previous.revision;
       if (previousRevision !== request.baseRevision) conflict(previousRevision);
       // Saving exactly what is on disk changes nothing: no rewrite, no new
-      // revision, no saved version.
-      if (observed.stat.size === bytes.length && observed.stat.size <= WORKSPACE_TEXT_MAX_BYTES && readStable(observed.path, observed.stat).equals(bytes)) {
+      // revision, no saved version. The revision just verified carries the
+      // digest of those bytes.
+      if (observed.stat.size === bytes.length && previous.sha256 === bytesSha256) {
         assertUnchanged(observed.directories);
         return receipt(request, previousRevision, previousRevision, bytes.length);
       }
@@ -762,6 +785,8 @@ export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: Workspace
     } else {
       if (!now) fail("not-found", MOVED);
       requireRegularFile(now);
+      // Content included: an equal-length rewrite inside one timestamp tick
+      // keeps every metadata field and must still refuse.
       const onDisk = workspaceFileRevision(root, relativePath, now);
       if (onDisk !== previousRevision) conflict(onDisk);
       renameSync(temp, observed.path);
@@ -771,9 +796,13 @@ export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: Workspace
     // Report the committed revision. If something replaced the file in the
     // instant after the commit, say so instead of claiming that state.
     const after = lstatOptional(observed.path);
-    if (!after || !sameNode(after, staged)) conflict(after ? currentRevision(root, relativePath, observed.path) : undefined,
-      "Your changes were saved, but the file changed again right away. Open it again to see the current version.");
-    return receipt(request, previousRevision, workspaceFileRevision(root, relativePath, after), bytes.length, artifactId);
+    const changedAgain = "Your changes were saved, but the file changed again right away. Open it again to see the current version.";
+    if (!after || !sameNode(after, staged)) conflict(after ? currentRevision(root, relativePath, observed.path) : undefined, changedAgain);
+    // Same node is not same bytes: the receipt names a revision only if it is
+    // exactly the content this save wrote.
+    const saved = workspaceRevisionOf(root, relativePath, after);
+    if (!saved.ok || saved.sha256 !== bytesSha256) conflict(saved.ok ? saved.revision : undefined, changedAgain);
+    return receipt(request, previousRevision, saved.revision, bytes.length, artifactId);
   } catch (error) {
     if (error instanceof WorkspaceFileError) throw error;
     if (committed) throw new WorkspaceFileError("revision-conflict", "Your changes were saved, but the file could not be checked afterwards. Open it again.");
@@ -817,7 +846,8 @@ export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSa
   const observed = observeFile(root, rootStat, parts);
   if (!observed.stat) fail("not-found", NOT_FOUND);
   requireRegularFile(observed.stat);
-  if (workspaceFileRevision(root, relativePath, observed.stat) !== request.revision) conflict(workspaceFileRevision(root, relativePath, observed.stat));
+  const chosen = requireRevision(root, relativePath, observed.stat);
+  if (chosen.revision !== request.revision) conflict(chosen.revision);
   let artifact: Artifact;
   try { artifact = registerWorkspaceFile(deps, scope, root, relativePath, request.name?.trim()); }
   catch (error) {
@@ -829,9 +859,11 @@ export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSa
     if (now !== request.revision) conflict(now);
     fail("write-failed", error.message);
   }
-  // Unchanged before and after the verified copy means the copy is exactly
-  // the chosen revision (any content change moves ctime, so a revision never
-  // comes back).
+  // The copy is exactly the chosen revision: its own SHA-256 is the digest the
+  // revision carries (within the text limit), and the file is still that
+  // revision after the copy. Timestamps alone cannot promise this — an
+  // equal-length rewrite inside one timestamp tick keeps all of them.
+  if (chosen.sha256 !== null && artifact.sha256 !== chosen.sha256) conflict(currentRevision(root, relativePath, observed.path));
   assertUnchanged(observed.directories);
   const after = currentRevision(root, relativePath, observed.path);
   if (after !== request.revision) conflict(after);
