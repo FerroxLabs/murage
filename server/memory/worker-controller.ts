@@ -25,10 +25,14 @@ export class MemoryWorkerController {
   private queries=new Map<string,{resolve:(value:{hits:IndexHit[];vectorRows:number;degradedReason?:string})=>void;reject:(error:Error)=>void;cleanup:()=>void}>();
   error: string | null=null;
   /** Stale requeues so far per job (id:source revision), since its last
-   * publication or deferral (RED2K). In memory: a restart resets the leases
-   * too, and an entry lives only between a refused publication and the
-   * job's next settle. Bounded in size in case a requeued job is cancelled by
-   * a newer source revision before it is claimed again. */
+   * publication or deferral (RED2K) — a publication of the worker's result,
+   * the stale deferral past the bound, or the worker's own deferral in
+   * failWork (RED2L): each ends the lease cycle the count belongs to. In
+   * memory: a restart resets the leases too, and an entry lives only between
+   * a refused publication and the job's next settle. Bounded in size in case
+   * a requeued job is cancelled by a newer source revision before it is
+   * claimed again; the eviction is of the oldest entry, never the live job's
+   * own (it is re-inserted as the newest on every requeue, RED2L). */
   private staleRequeues=new Map<string,number>();
   private consolidationAbort=new AbortController();
   private consolidationTasks=new Set<Promise<void>>();
@@ -143,7 +147,12 @@ export class MemoryWorkerController {
   private failWork(reason: string) {
     if(!this.work)return;
     this.error=reason;
-    try {publishMemoryWork(this.work,this.owner,{id:this.work.id,leaseGeneration:this.work.leaseGeneration,status:"deferred",nextCursor:this.work.cursor,chunks:[],reason});}
+    try {
+      publishMemoryWork(this.work,this.owner,{id:this.work.id,leaseGeneration:this.work.leaseGeneration,status:"deferred",nextCursor:this.work.cursor,chunks:[],reason});
+      // The deferral ends this lease cycle as a publication does: the next
+      // claim starts its stale count afresh (RED2L).
+      this.staleRequeues.delete(this.staleKey(this.work));
+    }
     catch(error) {
       // Superseded work is deliberately not acknowledged as a deferral, but
       // the job must not sit leased with nobody working it: release the
@@ -168,6 +177,11 @@ export class MemoryWorkerController {
       let requeued=false;
       try { requeued=requeueStaleMemoryWork(this.work,this.owner); } catch { /* the database is unavailable; the lease expires on its own */ }
       if(requeued){
+        // Re-insert as the newest entry: Map.set on an existing key keeps its
+        // insertion position, and the bound below evicts the oldest, which
+        // used to be this live job's own counter once 256 cancelled entries
+        // were left behind (RED2L).
+        this.staleRequeues.delete(key);
         this.staleRequeues.set(key,count);
         if(this.staleRequeues.size>256)this.staleRequeues.delete(this.staleRequeues.keys().next().value!);
       } else this.staleRequeues.delete(key);
