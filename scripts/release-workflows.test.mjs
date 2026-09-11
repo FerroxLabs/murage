@@ -356,7 +356,8 @@ describe("scoped Ubuntu human confirmation", () => {
   // human-results, not test-results/ from the repository.
   it("runs the human specs with their evidence outside the checkout", () => {
     const ci = load("ci.yml");
-    const evidence = "${{ runner.temp }}/murage-e2e";
+    // SAFEWIPE1: the rig wipes this directory, so the name carries a "scratch" segment.
+    const evidence = "${{ runner.temp }}/murage-e2e-scratch";
     const scoped = ci.jobs["human-confirmation"];
     expect(scoped.steps.find(step => step.name === "Confirm selected human specs").env.MURAGE_E2E_DATA_DIR).toBe(evidence);
     expect(scoped.steps.find(step => step.name === "Upload human screenshots and traces").with.path).toBe(`${evidence}/human-results`);
