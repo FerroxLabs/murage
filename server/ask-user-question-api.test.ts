@@ -47,7 +47,9 @@ const makeBot = async (name: string, instanceId = "verification") => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId, model } });
   expect(created.status).toBe(201);
   const bot = created.body.bot;
-  expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, autoReview: "enforce" })).status).toBe(200);
+  // Auto on a bot that never chose a computer drives this Mac, so the
+  // desktop dialog's acknowledgement rides along (AUTOOP2 finding 1).
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, autoReview: "enforce", acknowledgeLocalAuto: true })).status).toBe(200);
   return bot as { id: string; threadId: string };
 };
 

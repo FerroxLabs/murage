@@ -5,6 +5,7 @@ import {
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
+  localAutoHostPlatform,
   localComputerDisabledReason,
   localComputerSelectable,
 } from "./local-computer";
@@ -120,4 +121,16 @@ describe("autoNeedsLocalComputerWarning", () => {
       expect(autoNeedsLocalComputerWarning(input)).toBe(expected);
     });
   }
+});
+
+describe("localAutoHostPlatform", () => {
+  const host = (platform: "darwin" | "linux" | "win32" | "other") => ({ host: { platform, label: "", homeDir: "" } } as never);
+  it("uses the announced desktop platform", () => {
+    expect(localAutoHostPlatform(host("darwin"), "Mozilla/5.0 (X11; Linux x86_64)")).toBe("darwin");
+    expect(localAutoHostPlatform(host("linux"), "Mozilla/5.0 (Macintosh; Intel Mac OS X)")).toBe("linux");
+  });
+  it("lets the UA stand in for a plain browser on a Mac, where the harness is on the same machine", () => {
+    expect(localAutoHostPlatform(host("other"), "Mozilla/5.0 (Macintosh; Intel Mac OS X)")).toBe("darwin");
+    expect(localAutoHostPlatform(host("other"), "Mozilla/5.0 (X11; Linux x86_64)")).toBe("other");
+  });
 });

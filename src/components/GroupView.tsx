@@ -41,6 +41,8 @@ import { groupActivityRuns } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { StoppedRow } from "./StoppedRow";
+import { hostStoppedReason } from "../../shared/host-stop";
 import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
@@ -256,7 +258,9 @@ const Transcript = memo(function Transcript({
               />
             </div>
           ) : m.kind === "activity" && m.tool ? (
-            m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
+            hostStoppedReason(m.tool.name) ? (
+              <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
+            ) : m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
               <RoomToolChip message={m} />
             ) : null
           ) : m.kind === "text" && (m.text || m.attachments?.length) ? (

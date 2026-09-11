@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldMountLocalComputer } from "./local-routing.ts";
+import { autoMountsLocalComputer, shouldMountLocalComputer } from "./local-routing.ts";
 
 describe("local computer routing", () => {
   it("never lets Linux Auto fall back to the user's desktop", () => {
@@ -56,5 +56,23 @@ describe("local computer routing", () => {
         providerSupportsLocal: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("autoMountsLocalComputer (the one Auto-consent rule for both PATCH routes)", () => {
+  it("treats a bot that never chose a computer as this Mac, like an explicit local", () => {
+    expect(autoMountsLocalComputer(undefined, "darwin")).toBe(true);
+    expect(autoMountsLocalComputer("local", "darwin")).toBe(true);
+    expect(autoMountsLocalComputer("local", "linux")).toBe(true);
+  });
+
+  it("never mounts the desktop for a default destination off macOS, or for any other destination", () => {
+    expect(autoMountsLocalComputer(undefined, "linux")).toBe(false);
+    expect(autoMountsLocalComputer(undefined, "win32")).toBe(false);
+    expect(autoMountsLocalComputer("local", "win32")).toBe(false);
+    for (const computer of ["cloud", "vm", "browser", "off"] as const) {
+      expect(autoMountsLocalComputer(computer, "darwin"), computer).toBe(false);
+      expect(autoMountsLocalComputer(computer, "linux"), computer).toBe(false);
+    }
   });
 });
