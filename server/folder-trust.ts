@@ -20,6 +20,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { readPersistedJson } from "./persisted-state.ts";
@@ -168,19 +169,109 @@ export function linkedWorktreeMainRoot(root: string): string | null {
   return canonicalFolder(mainWorkdir);
 }
 
+export interface FolderTrustKeyOptions {
+  /** The Fuigo home whose `worktrees.db` the engine consults for this turn
+   * (`fuigoHomeFromEnv`); null/undefined = no registry — a provider-routed
+   * turn runs under a per-turn temporary FUIGO_HOME that has none, so the
+   * key is git's alone. */
+  fuigoHome?: string | null;
+}
+
 /** The trust key for a folder: the canonical git root when the folder sits in
  * a repository whose root is recordable, else the canonical folder itself.
  * A linked git worktree keys on its MAIN checkout's root (FUIGOTRUST3), so
  * every worktree of a repository shares one key with the checkout a
- * standalone `fuigo --trust` was run in. Mirrors upstream `workspace_key`
- * (fuigo-workspace/src/trust.rs) minus its managed-worktree registry
- * collapse (`~/.fuigo/worktrees.db`, a `fuigo -w` bookkeeping database
- * Murage does not read). */
-export function folderTrustKey(folder: string): string {
-  const root = gitRootOf(folder);
-  const key = root ? linkedWorktreeMainRoot(root) ?? root : null;
+ * standalone `fuigo --trust` was run in. With a Fuigo home, a fuigo-managed
+ * worktree (`fuigo -w`, FUIGOTRUST4) keys on its RECORDED source repo's git
+ * root first, whatever git says about it. Mirrors upstream `workspace_key`
+ * (fuigo-workspace/src/trust.rs): registry, then git topology, then the
+ * over-broad-root fallback to the folder itself. */
+export function folderTrustKey(folder: string, options: FolderTrustKeyOptions = {}): string {
+  const key = gitDerivedTrustKey(folder, options.fuigoHome ?? null);
   if (key && !isUnrecordableTrustRoot(key)) return key;
   return canonicalFolder(folder);
+}
+
+/** Upstream `git_derived_workspace_key`: the key before the over-broad
+ * check. A managed worktree collapses onto the git root of its recorded
+ * source (upstream: `Repository::discover(source).workdir()`, else the
+ * recorded path itself when the source is gone); otherwise git decides. */
+function gitDerivedTrustKey(folder: string, fuigoHome: string | null): string | null {
+  const source = fuigoHome ? managedWorktreeSourceRepo(folder, fuigoHome) : null;
+  if (source) return gitRootOf(source) ?? canonicalFolder(source);
+  const root = gitRootOf(folder);
+  return root ? linkedWorktreeMainRoot(root) ?? root : null;
+}
+
+// ── the engine's managed-worktree registry (read-only) ────────────────────
+//
+// `fuigo -w` creates its worktrees under `<FUIGO_HOME>/worktrees/<repo>/<label>`
+// and records each in `<FUIGO_HOME>/worktrees.db` (SQLite, fuigo-fast-worktree
+// src/db: table `worktrees`, `path` UNIQUE and `source_repo`, both stored
+// canonical by `register_worktree`). Upstream `source_repo_for_cwd`
+// (fuigo-workspace/src/worktree/mod.rs) answers only for a cwd under the
+// worktrees dir — the prefix test is on the cwd AS GIVEN against the home as
+// the engine resolves it (`FUIGO_HOME` verbatim, else the canonical
+// `<home>/.fuigo`) — walks the cwd up to the worktrees dir looking each path
+// up canonicalized (`WorktreeDb::get`), and returns the first record's
+// `source_repo`; a record's status is not consulted. Murage reads the same
+// file read-only and never creates it (the engine's own open would); a
+// database it cannot open or query is treated as the engine treats one it
+// cannot open: logged, and no collapse.
+
+export const UPSTREAM_WORKTREES_DB = "worktrees.db";
+const UPSTREAM_WORKTREES_DIR = "worktrees";
+const warnedWorktreesDb = new Set<string>();
+
+/** The recorded source repo of the fuigo-managed worktree containing
+ * `folder`, or null (no registry I/O for a folder outside the worktrees
+ * dir). Mirrors upstream `source_repo_for_cwd`. */
+export function managedWorktreeSourceRepo(folder: string, fuigoHome: string): string | null {
+  const worktreesDir = join(fuigoHome, UPSTREAM_WORKTREES_DIR);
+  if (!pathStartsWith(folder, worktreesDir) || relative(worktreesDir, folder) === "") return null;
+  const file = join(fuigoHome, UPSTREAM_WORKTREES_DB);
+  if (!isFile(file)) return null;
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(file, { readOnly: true });
+  } catch (error) {
+    warnWorktreesDb(file, error);
+    return null;
+  }
+  try {
+    const byPath = db.prepare("SELECT source_repo FROM worktrees WHERE path = ?");
+    let path = folder;
+    while (pathStartsWith(path, worktreesDir) && relative(worktreesDir, path) !== "") {
+      // `WorktreeDb::get` treats a string with a `/` as a path (canonicalized
+      // before the lookup) and anything else as an id or label — so a
+      // backslash-only spelling never matches by path, on the engine's side
+      // and on this one
+      if (path.includes("/")) {
+        const row = byPath.get(canonicalFolder(path)) as { source_repo?: unknown } | undefined;
+        if (row && typeof row.source_repo === "string" && row.source_repo) return row.source_repo;
+      }
+      const parent = dirname(path);
+      if (parent === path) break;
+      path = parent;
+    }
+    return null;
+  } catch (error) {
+    warnWorktreesDb(file, error);
+    return null;
+  } finally {
+    try {
+      db.close();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
+function warnWorktreesDb(file: string, error: unknown): void {
+  const message = `[folder-trust] could not read the Fuigo worktree registry ${file}: ${error instanceof Error ? error.message : String(error)}`;
+  if (warnedWorktreesDb.has(message)) return;
+  warnedWorktreesDb.add(message);
+  console.warn(message);
 }
 
 /** The directories the upstream loaders walk: `folder` up to and including
@@ -228,7 +319,9 @@ export interface FolderTrustScanOptions {
  * bounded set of stat calls along the cwd → git-root chain, no parsing. */
 export function scanFolderTrustSources(folder: string, options: FolderTrustScanOptions = {}): FolderTrustScan {
   const start = canonicalFolder(folder);
-  const key = folderTrustKey(start);
+  // the key the ENGINE will use for this turn: the registry prefix test is
+  // on the folder as given, so the folder is passed uncanonicalized
+  const key = folderTrustKey(folder, options);
   const sources: string[] = [];
   // deduplicated case-insensitively: on a case-insensitive filesystem (macOS
   // APFS, Windows) "AGENTS.md" and "Agents.md" stat as the same file
@@ -246,7 +339,7 @@ export function scanFolderTrustSources(folder: string, options: FolderTrustScanO
   for (const dir of dirs) for (const name of SKILL_DIRS) if (isDir(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_FILES) if (isFile(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_DIRS) if (isDir(join(dir, name))) hit(name);
-  const upstream = options.fuigoHome ? upstreamTrustsFolder(readUpstreamTrustedFolders(options.fuigoHome), start) : false;
+  const upstream = options.fuigoHome ? upstreamTrustsFolder(readUpstreamTrustedFolders(options.fuigoHome), folder, options) : false;
   return { key, folder: start, sources, ...(upstream ? { upstreamTrusted: true as const } : {}) };
 }
 
@@ -458,12 +551,14 @@ function pathStartsWith(path: string, prefix: string): boolean {
  * hand-edited record below the root covers nothing), the deepest decides;
  * on a depth tie every tied record must say trusted; over-broad keys (home,
  * a filesystem root, a relative path) are ignored. A linked worktree is
- * queried by its main checkout's root (FUIGOTRUST3), so a standalone
- * `fuigo --trust` on the main repository covers its worktrees. */
-export function upstreamTrustsFolder(records: ReadonlyMap<string, boolean>, folder: string): boolean {
+ * queried by its main checkout's root (FUIGOTRUST3), and a fuigo-managed
+ * worktree by its recorded source repo's root when `options.fuigoHome`
+ * names the registry (FUIGOTRUST4), so a standalone `fuigo --trust` on the
+ * source repository covers its worktrees. */
+export function upstreamTrustsFolder(records: ReadonlyMap<string, boolean>, folder: string, options: FolderTrustKeyOptions = {}): boolean {
   if (!records.size) return false;
-  const query = folderTrustKey(canonicalFolder(folder));
-  const queryKey = folderTrustKey(query);
+  const query = folderTrustKey(folder, options);
+  const queryKey = folderTrustKey(query, options);
   let bestDepth: number | null = null;
   let trusted = false;
   for (const [raw, decision] of records) {
@@ -471,7 +566,7 @@ export function upstreamTrustsFolder(records: ReadonlyMap<string, boolean>, fold
     // components ignore a trailing separator); the tie rule then applies
     const recorded = raw.length > 1 ? raw.replace(/[\\/]+$/, "") || raw : raw;
     if (isUnrecordableTrustRoot(recorded) || !pathStartsWith(query, recorded)) continue;
-    if (folderTrustKey(recorded) !== queryKey) continue;
+    if (folderTrustKey(recorded, options) !== queryKey) continue;
     const depth = recorded.split(/[\\/]+/).filter(Boolean).length;
     if (bestDepth !== null && depth < bestDepth) continue;
     if (bestDepth !== null && depth === bestDepth) trusted &&= decision;
@@ -584,28 +679,50 @@ export class FolderTrustStore {
     return this.seededFrom;
   }
 
+  /** The keys a lookup consults, most specific first: the engine's key for
+   * the turn (with its registry, FUIGOTRUST4) and the folder's own git key.
+   * A picker records the folder by its own key (it knows no turn); a card on
+   * a native turn records the engine's. Both must answer the next turn, so a
+   * managed worktree is not asked again about a source repo the person
+   * already decided on — in either place. */
+  private keysFor(folder: string, options: FolderTrustKeyOptions): string[] {
+    const own = folderTrustKey(folder);
+    const engine = options.fuigoHome ? folderTrustKey(folder, options) : own;
+    return engine === own ? [own] : [engine, own];
+  }
+
   /** The recorded decision for the folder's trust key, if any. */
-  decision(folder: string): FolderTrustDecision | undefined {
-    return this.folders.get(folderTrustKey(folder))?.decision;
+  decision(folder: string, options: FolderTrustKeyOptions = {}): FolderTrustDecision | undefined {
+    return this.record(folder, options)?.decision;
   }
 
-  record(folder: string): FolderTrustRecord | undefined {
-    return this.folders.get(folderTrustKey(folder));
+  record(folder: string, options: FolderTrustKeyOptions = {}): FolderTrustRecord | undefined {
+    for (const key of this.keysFor(folder, options)) {
+      const record = this.folders.get(key);
+      if (record) return record;
+    }
+    return undefined;
   }
 
-  /** Remember a decision for the folder's whole workspace (its trust key).
-   * Unrecordable roots (home, a filesystem root) are never written: Fuigo
-   * never gates them, so a record would only mislead. Returns the key. */
-  remember(folder: string, decision: FolderTrustDecision, source: FolderTrustSource): string | null {
-    const key = folderTrustKey(folder);
+  /** Remember a decision for the folder's whole workspace (its trust key —
+   * the engine's, when the turn's Fuigo home is known). Unrecordable roots
+   * (home, a filesystem root) are never written: Fuigo never gates them, so
+   * a record would only mislead. Returns the key. */
+  remember(folder: string, decision: FolderTrustDecision, source: FolderTrustSource, options: FolderTrustKeyOptions & { key?: string } = {}): string | null {
+    // a card answers for the key it asked about (the engine's key for that
+    // turn, carried by the question), which may no longer be derivable once
+    // the turn's home is gone
+    const key = options.key ?? folderTrustKey(folder, options);
     if (isUnrecordableTrustRoot(key)) return null;
     this.folders.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder) });
     this.persist();
     return key;
   }
 
-  forget(folder: string): boolean {
-    const removed = this.folders.delete(folderTrustKey(folder));
+  /** Forget every record a lookup for the folder would find. */
+  forget(folder: string, options: FolderTrustKeyOptions = {}): boolean {
+    let removed = false;
+    for (const key of this.keysFor(folder, options)) removed = this.folders.delete(key) || removed;
     if (removed) this.persist();
     return removed;
   }
