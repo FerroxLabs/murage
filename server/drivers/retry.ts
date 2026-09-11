@@ -111,6 +111,70 @@ export function classifyError(err: FailureInput): ErrorClassification {
   return { transient: false, reason: "unknown" };
 }
 
+/** How far one launch attempt's user message got toward the engine.
+ *
+ * - `unsent`: no write was attempted yet.
+ * - `in-flight`: bytes were handed to the pipe and the write has not reported.
+ * - `written`: the write reported success. The engine may have accepted it.
+ * - `refused`: the write reported failure (or the pipe was already closed), so
+ *   the newline-terminated message never reached the engine whole.
+ */
+export type SubmissionState = "unsent" | "in-flight" | "written" | "refused";
+
+/** Monotonic accepted/output boundary for one launch attempt (A1, U-17).
+ * It is separate from any UI streaming de-dup flag: nothing here ever resets,
+ * so completed text or tool activity cannot make a replay look safe again. */
+export interface AttemptBoundary {
+  readonly submission: SubmissionState;
+  readonly sawOutput: boolean;
+  markInFlight(): void;
+  markWritten(): void;
+  markRefused(): void;
+  /** Any engine output for the attempt: text, reasoning, a completed block,
+   * tool use or a tool result. */
+  markOutput(): void;
+}
+
+const SUBMISSION_RANK: Record<SubmissionState, number> = {
+  unsent: 0,
+  "in-flight": 1,
+  written: 2,
+  refused: 2,
+};
+
+export function createAttemptBoundary(): AttemptBoundary {
+  let submission: SubmissionState = "unsent";
+  let sawOutput = false;
+  // Only forward moves apply. `written` and `refused` are both final, so a
+  // late callback can never turn a written message back into a refused one.
+  const advance = (next: SubmissionState) => {
+    if (SUBMISSION_RANK[next] > SUBMISSION_RANK[submission]) submission = next;
+  };
+  return {
+    get submission() {
+      return submission;
+    },
+    get sawOutput() {
+      return sawOutput;
+    },
+    markInFlight: () => advance("in-flight"),
+    markWritten: () => advance("written"),
+    markRefused: () => advance("refused"),
+    markOutput: () => {
+      sawOutput = true;
+    },
+  };
+}
+
+/** True only when the failure is proven to precede acceptance: the user
+ * message never reached the engine and the engine produced nothing. An
+ * in-flight or written message means acceptance is unknown, and unknown
+ * acceptance must fail visibly rather than replay the turn (U-17). */
+export function isPreAcceptFailure(boundary: Pick<AttemptBoundary, "submission" | "sawOutput">): boolean {
+  if (boundary.sawOutput) return false;
+  return boundary.submission === "unsent" || boundary.submission === "refused";
+}
+
 /** Capped exponential delay with jitter, in milliseconds. Attempt 0 (the
  * first retry) waits ~1s, then ~3s, then ~8s; beyond that the cap holds.
  * Jitter stays within ±25% so tests can bound it and a thundering herd of

@@ -271,6 +271,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.FAKE_CLAUDE_DUMP;
     delete process.env.FAKE_CLAUDE_TRANSIENTS;
     delete process.env.FAKE_CLAUDE_PARTIAL_FAILS;
+    delete process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS;
+    delete process.env.FAKE_CLAUDE_FAIL_AFTER;
+    delete process.env.FAKE_CLAUDE_SIDE_EFFECTS;
     delete process.env.FAKE_CLAUDE_STATE;
     delete process.env.FAKE_CLAUDE_RETRY_SCALE;
     delete process.env.ANTHROPIC_API_KEY;
@@ -1187,12 +1190,17 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(error.message).toContain("simulated crash");
   });
 
-  it("auto-retries transient exits, then completes with exactly one final message", async () => {
-    process.env.FAKE_CLAUDE_TRANSIENTS = "2";
+  // U-17: only a launch that died before its prompt was written may be
+  // relaunched. The pre-accept fixture never reads stdin, and a prompt far
+  // larger than any OS pipe buffer makes the driver's write report refusal.
+  const PRE_ACCEPT_PROMPT = "x".repeat(4 * 1024 * 1024);
+
+  it("auto-retries transient pre-accept exits, then completes with exactly one final message", async () => {
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "2";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-retry", text: "go" });
+    await instance.adapter.sendTurn({ threadId: "t-retry", text: PRE_ACCEPT_PROMPT });
 
     await recorder.until((e) => e.type === "turn.completed" && e.ok === true);
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
@@ -1201,30 +1209,33 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // exactly one settled reply across all three launches
     const replies = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text");
     expect(replies).toHaveLength(1);
+    expect(readFileSync(join(scratch, "launches"), "utf8")).toBe("3");
   }, 20_000);
 
   it("stops retrying at the attempt cap and settles the turn as failed", async () => {
-    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "9";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-cap");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-cap", text: "go" });
+    await instance.adapter.sendTurn({ threadId: "t-cap", text: PRE_ACCEPT_PROMPT });
 
-    await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
     expect(retries.map((e) => e.attempt)).toEqual([1, 2]);
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
+    // the prompt never reached the CLI on the last launch either
+    expect(done).toMatchObject({ stopReason: "stdin_write_failed" });
   }, 20_000);
 
   it("gives a later turn on the same thread a fresh retry budget", async () => {
-    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "9";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-fresh-budget");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
 
-    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: "one" });
+    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}one` });
     const firstDone = await recorder.until((e) => e.type === "turn.completed");
-    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: "two" });
+    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}two` });
     await recorder.until((e) => e.type === "turn.completed" && e.eventId !== firstDone.eventId);
 
     expect(recorder.events.filter((e) => e.type === "turn.retrying").map((e) => e.attempt)).toEqual([1, 2, 1, 2]);
@@ -1237,6 +1248,58 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
     expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
   }, 20_000);
+
+  it("never replays a transient exit once the prompt was written (U-17)", async () => {
+    // this fixture reads the prompt, then exits with 503-shaped stderr
+    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-written");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-written", text: "go" });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+    const error = recorder.events.find((e) => e.type === "runtime.error")!;
+    expect(error.message).toContain("503");
+    expect(readFileSync(join(scratch, "launches-written"), "utf8")).toBe("1");
+  }, 20_000);
+
+  it.each(["tool", "text", "reasoning"] as const)(
+    "never replays a turn after %s output and a connection reset (A1)",
+    async (failAfter) => {
+      const launches = join(scratch, `launches-after-${failAfter}`);
+      const sideEffects = join(scratch, `side-effects-${failAfter}`);
+      process.env.FAKE_CLAUDE_FAIL_AFTER = failAfter;
+      process.env.FAKE_CLAUDE_STATE = launches;
+      process.env.FAKE_CLAUDE_SIDE_EFFECTS = sideEffects;
+      process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+      await create();
+      const threadId = `t-after-${failAfter}`;
+      await instance.adapter.sendTurn({ threadId, text: "run the sentinel action" });
+
+      const done = await recorder.until((e) => e.threadId === threadId && e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+      const events = recorder.events.filter((e) => e.threadId === threadId);
+      expect(events.some((e) => e.type === "turn.retrying")).toBe(false);
+      expect(events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+      const error = events.find((e) => e.type === "runtime.error")!;
+      expect(error.message).toContain("ECONNRESET");
+      // one launch: the CLI was never started a second time for this turn
+      expect(readFileSync(launches, "utf8")).toBe("1");
+      if (failAfter === "tool") {
+        expect(events.some((e) => e.type === "item.started" && e.itemType === "tool")).toBe(true);
+        expect(events.some((e) => e.type === "item.completed" && e.itemType === "tool")).toBe(true);
+        expect(readFileSync(sideEffects, "utf8").trim().split("\n")).toHaveLength(1);
+      } else if (failAfter === "text") {
+        // the completed block reset the UI de-dup flag; the boundary did not
+        expect(events.some((e) => e.type === "item.completed" && e.itemType === "assistant_text")).toBe(true);
+      } else {
+        expect(events.some((e) => e.type === "content.delta" && e.streamKind === "reasoning_text")).toBe(true);
+      }
+    },
+    20_000,
+  );
 
   it("never retries after assistant text already streamed (duplicate-text hazard)", async () => {
     process.env.FAKE_CLAUDE_TRANSIENTS = "9";
@@ -1252,11 +1315,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   }, 20_000);
 
   it("an interrupt during the retry backoff cancels cleanly without a zombie relaunch", async () => {
-    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "9";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-cancel");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "60"; // long backoff — we cancel inside it
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-cancel-backoff", text: "go" });
+    await instance.adapter.sendTurn({ threadId: "t-cancel-backoff", text: PRE_ACCEPT_PROMPT });
 
     await recorder.until((e) => e.type === "turn.retrying");
     await instance.adapter.interruptTurn("t-cancel-backoff");
@@ -1264,6 +1327,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // no second launch ever happened: no further retries, no extra replies
     expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
     expect(recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text")).toHaveLength(0);
+    expect(readFileSync(join(scratch, "launches-cancel"), "utf8")).toBe("1");
   }, 30_000);
 
 

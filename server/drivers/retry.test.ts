@@ -1,6 +1,64 @@
 import { describe, expect, it } from "vitest";
 
-import { BACKOFF_BASE_MS, RETRY_MAX_ATTEMPTS, classifyError, computeBackoff } from "./retry.ts";
+import {
+  BACKOFF_BASE_MS,
+  RETRY_MAX_ATTEMPTS,
+  classifyError,
+  computeBackoff,
+  createAttemptBoundary,
+  isPreAcceptFailure,
+} from "./retry.ts";
+
+describe("attempt boundary (A1, U-17)", () => {
+  it("allows a replay only before the message was written and before any output", () => {
+    const unsent = createAttemptBoundary();
+    expect(unsent.submission).toBe("unsent");
+    expect(isPreAcceptFailure(unsent)).toBe(true);
+
+    const refused = createAttemptBoundary();
+    refused.markInFlight();
+    refused.markRefused();
+    expect(refused.submission).toBe("refused");
+    expect(isPreAcceptFailure(refused)).toBe(true);
+  });
+
+  it("treats an in-flight or written message as unknown acceptance", () => {
+    const inFlight = createAttemptBoundary();
+    inFlight.markInFlight();
+    expect(isPreAcceptFailure(inFlight)).toBe(false);
+
+    const written = createAttemptBoundary();
+    written.markInFlight();
+    written.markWritten();
+    expect(isPreAcceptFailure(written)).toBe(false);
+  });
+
+  it("never lets output or a written message be undone", () => {
+    const boundary = createAttemptBoundary();
+    boundary.markOutput();
+    expect(isPreAcceptFailure(boundary)).toBe(false);
+    // nothing on the interface resets output, and a late refusal after a
+    // successful write cannot make the attempt look unsent
+    boundary.markInFlight();
+    boundary.markWritten();
+    boundary.markRefused();
+    expect(boundary.submission).toBe("written");
+    expect(boundary.sawOutput).toBe(true);
+
+    const refusedThenWritten = createAttemptBoundary();
+    refusedThenWritten.markRefused();
+    refusedThenWritten.markWritten();
+    refusedThenWritten.markInFlight();
+    expect(refusedThenWritten.submission).toBe("refused");
+  });
+
+  it("blocks a replay when output arrived even though the write was refused", () => {
+    const boundary = createAttemptBoundary();
+    boundary.markRefused();
+    boundary.markOutput();
+    expect(isPreAcceptFailure(boundary)).toBe(false);
+  });
+});
 
 describe("classifyError", () => {
   it("calls provider rate limits transient", () => {

@@ -164,6 +164,25 @@ describe("GrokDriver turns (fake fetch)", () => {
     expect(calls).toBe(1);
   }, 20_000);
 
+  it("fails a stream that ends without a terminal frame and keeps its partial reply (A3)", async () => {
+    // HTTP 200, one content frame, then clean EOF: no finish_reason, no [DONE]
+    script = [{ sse: `data: ${JSON.stringify({ choices: [{ delta: { content: "cut off mid" } }] })}\n` }];
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-truncated", text: "go" });
+    const done = await recorder.until((e) => e.threadId === "t-truncated" && e.type === "turn.completed");
+
+    expect(done).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(recorder.events.find((e) => e.type === "item.completed")).toMatchObject({
+      itemType: "assistant_text",
+      text: "cut off mid",
+    });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({
+      message: "xAI stream ended before the provider signalled completion",
+    });
+    expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(0);
+    expect(calls).toBe(1);
+  }, 20_000);
+
   it("an interrupt during the retry backoff cancels cleanly without another attempt", async () => {
     script = [{ status: 503 }];
     process.env.FAKE_GROK_RETRY_SCALE = "60"; // long backoff — we cancel inside it
