@@ -31,6 +31,7 @@ import {
   registerArtifact, type ArtifactScope,
 } from "./artifacts.ts";
 import type { Artifact } from "../shared/artifacts.ts";
+import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { ProjectFolderLeaseError, type ProjectFolderLeases } from "./project-folder-leases.ts";
 import type { ProjectTurnLeases } from "./project-turn-leases.ts";
 import type { Store } from "./store.ts";
@@ -69,7 +70,9 @@ export interface WorkspaceFilesDeps {
    * `bot-writing`. A live turn is still refused at once. Without it the
    * synchronous `projectFolders` admission applies unchanged. */
   projectTurns?: Pick<ProjectTurnLeases, "acquireRestoreWhenStopped">;
-  /** Bound for that wait: the engine's close budget (`providerCloseDeadlineMs`). */
+  /** Bound for that wait. Defaults to the engine's close budget
+   * (`providerCloseDeadlineMs`, read at each save so a fixture can shorten
+   * it); a caller that passes `projectTurns` alone still waits. */
   stoppedTurnCloseMs?: () => number;
 }
 
@@ -762,14 +765,18 @@ export interface WorkspaceSaveVersionHooks {
  * stopped is waited for — bounded by the engine's close budget — because its
  * writer lease outlives the Stop until the engine's terminal event; at the
  * bound the answer is `workspace_stopped_turn_closing`, which says to retry.
- * An unusable path is `root-changed`. Returns only once the hold is taken. */
+ * An unusable path is `root-changed`, and so is anything the registry throws
+ * that is not its own refusal (a `ProjectFolderLeaseError`): only a busy
+ * folder may answer `bot-writing`, on either admission path. Returns only
+ * once the hold is taken. */
 async function holdWorkspace(deps: WorkspaceFilesDeps, leaseOwner: string, root: string): Promise<void> {
   if (!deps.projectFolders) fail("bot-writing", CANNOT_CONFIRM);
   if (deps.projectTurns) {
-    const admission = await deps.projectTurns.acquireRestoreWhenStopped(leaseOwner, root, { timeoutMs: deps.stoppedTurnCloseMs?.() ?? 0 });
+    const timeoutMs = deps.stoppedTurnCloseMs ? deps.stoppedTurnCloseMs() : providerCloseDeadlineMs();
+    const admission = await deps.projectTurns.acquireRestoreWhenStopped(leaseOwner, root, { timeoutMs });
     if (admission.ok) return;
     if (admission.reason === "still-closing") fail("workspace_stopped_turn_closing", STOPPED_TURN_CLOSING);
-    if (admission.code === "conflict" || admission.code === "owner-in-use") fail("bot-writing", BOT_WRITING);
+    if (admission.reason === "conflict" && (admission.code === "conflict" || admission.code === "owner-in-use")) fail("bot-writing", BOT_WRITING);
     fail("root-changed", ROOT_CHANGED);
   }
   try { deps.projectFolders.acquireRestore(leaseOwner, root); }

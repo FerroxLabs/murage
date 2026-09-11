@@ -16,7 +16,12 @@ interface TurnLease {
  * - `conflict`: a live writer, another restore, or an unusable path holds
  *   the folder — refuse at once, exactly as before.
  * - `still-closing`: every holder is a stopped turn whose engine has not
- *   released the folder within the bound — refuse, tell the user to retry. */
+ *   released the folder within the bound — refuse, tell the user to retry.
+ * - `error`: the registry threw something other than its own refusal. Not a
+ *   busy folder: a caller answers as it would for an unusable path (the
+ *   synchronous `acquireRestore` path has always done so), never as a
+ *   writing bot. The real registry throws only `ProjectFolderLeaseError`; a
+ *   test double or a later change may not. */
 export type RestoreAdmission =
   | { ok: true; lease: ProjectFolderLease }
   | { ok: false; reason: "still-closing" }
@@ -24,7 +29,8 @@ export type RestoreAdmission =
    * `invalid-path`, ...) so a caller can tell a busy folder from an unusable
    * path (STOPRESTORE2: the workspace editor answers `bot-writing` for the
    * former and `root-changed` for the latter). */
-  | { ok: false; reason: "conflict"; code: ProjectFolderLeaseError["code"] };
+  | { ok: false; reason: "conflict"; code: ProjectFolderLeaseError["code"] }
+  | { ok: false; reason: "error"; error: unknown };
 
 /** Writer admission bookkeeping for provider generations, not an OS lock.
  * Revoking a capability does not prove that its provider stopped writing. */
@@ -109,12 +115,12 @@ export class ProjectTurnLeases {
     for (;;) {
       try { return { ok: true, lease: this.folders.acquireRestore(ownerId, cwd) }; }
       catch (error) {
-        if (!(error instanceof ProjectFolderLeaseError)) return { ok: false, reason: "conflict", code: "conflict" };
+        if (!(error instanceof ProjectFolderLeaseError)) return { ok: false, reason: "error", error };
         if (error.code !== "conflict") return { ok: false, reason: "conflict", code: error.code };
       }
       let blockers: ProjectFolderLease[];
       try { blockers = this.folders.conflicts(cwd, "restore"); }
-      catch (error) { return { ok: false, reason: "conflict", code: error instanceof ProjectFolderLeaseError ? error.code : "conflict" }; }
+      catch (error) { return error instanceof ProjectFolderLeaseError ? { ok: false, reason: "conflict", code: error.code } : { ok: false, reason: "error", error }; }
       // Released between the refusal and this check: acquire on the next pass.
       if (blockers.length === 0) continue;
       if (!blockers.every(lease => lease.mode === "writer" && this.owners.get(lease.ownerId)?.stopRequested === true)) {
