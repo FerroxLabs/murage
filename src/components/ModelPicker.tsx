@@ -8,6 +8,7 @@ import { EngineSetup, needsCli } from "./EngineSetup";
 import { cn } from "@/lib/cn";
 import { COMPACT_SQUARE } from "@/lib/compact-chip";
 import { useBotSettingsNavigation } from "./bot-settings-drafts";
+import { localEngineSupport } from "../../shared/local-models";
 import { OPEN_LOCAL_MODELS_EVENT, OPEN_MODEL_PICKER_EVENT } from "@/lib/local-models-view";
 const PREFS="murage-model-picker-v1";
 function preferences():{favorites:string[];recent:string[]}{try{const value=JSON.parse(localStorage.getItem(PREFS)??"{}");return{favorites:Array.isArray(value.favorites)?value.favorites.filter((s:unknown)=>typeof s==="string").slice(0,100):[],recent:Array.isArray(value.recent)?value.recent.filter((s:unknown)=>typeof s==="string").slice(0,12):[]};}catch{return{favorites:[],recent:[]};}}
@@ -30,7 +31,8 @@ export function ModelPicker({bot,threadId,className,contained=false,label}:{bot:
   const rows=useMemo(()=>engine?pickerModels(engine,connections):[],[engine,connections]);const ordered=useMemo(()=>orderedPickerModels(rows,query,prefs.favorites,prefs.recent),[rows,query,prefs]);
   // Spec V3: the Local rail is always answered for. No local server on this
   // computer is a state with a next step, not an absence the user has to notice.
-  const noLocalServer=useMemo(()=>localPickerRows(rows).length===0,[rows]);
+  // The "add one" row is a next step only for an engine that can use a local server (spec V3, "no dead ends"): never for gemini/cursor/… and never while the engine is still loading.
+const noLocalServer=useMemo(()=>!!engine&&localEngineSupport(engine.driverKind)!=="none"&&localPickerRows(rows).length===0,[engine,rows]);
   const selectedKey=pickerKey(bot.modelSelection);const selected=rows.find(row=>row.key===selectedKey);const selectedConnection=connections.find(c=>c.id===bot.modelSelection.connectionId);const selectedLabel=selected?.label??active?.models.options.find(o=>o.id===bot.modelSelection.model)?.label??unavailableSelectionLabel(bot.modelSelection.model);
   const save=(next:typeof prefs)=>{setPrefs(next);try{localStorage.setItem(PREFS,JSON.stringify(next));}catch{}};
   const pick=(selection:ModelSelection)=>{save({...prefs,recent:[pickerKey(selection),...prefs.recent.filter(k=>k!==pickerKey(selection))].slice(0,12)});dispatch({type:'setModel',botId:bot.id,threadId,selection:{...selection,...(selection.instanceId===bot.modelSelection.instanceId&&bot.modelSelection.effort?{effort:bot.modelSelection.effort}:{})}});setOpen(false);trigger.current?.focus();};
@@ -40,7 +42,7 @@ export function ModelPicker({bot,threadId,className,contained=false,label}:{bot:
   const manageLocal=()=>{manage();setTimeout(()=>window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)),0);};
   // Settings → Models → Local models sends a tested model back here: the next
   // step after "Tools work" is choosing it, which only this menu can do.
-  useEffect(()=>{const show=()=>{setEngineId(bot.modelSelection.instanceId);setQuery("");setLimit(30);setOpen(true);};window.addEventListener(OPEN_MODEL_PICKER_EVENT,show);return()=>window.removeEventListener(OPEN_MODEL_PICKER_EVENT,show);},[bot.modelSelection.instanceId]);
+  useEffect(()=>{const show=(event:Event)=>{const model=(event as CustomEvent<{model?:string}>).detail?.model;setEngineId(bot.modelSelection.instanceId);setQuery(typeof model==="string"?model:"");setLimit(30);setOpen(true);};window.addEventListener(OPEN_MODEL_PICKER_EVENT,show);return()=>window.removeEventListener(OPEN_MODEL_PICKER_EVENT,show);},[bot.modelSelection.instanceId]);
   let previousGroup="";
   return <div ref={root} className={cn(contained?'w-full':'relative',className)}>
     <div className={cn(contained&&'flex items-center justify-between gap-4')}>{contained&&label}<button ref={trigger} type="button" disabled={Boolean(threadId&&bot.busy)} aria-label={threadId?`Thread model: ${selectedLabel}${bot.modelSelection.effort?` · ${bot.modelSelection.effort} effort`:""}`:undefined} aria-haspopup="dialog" aria-expanded={open} onClick={()=>{setEngineId(bot.modelSelection.instanceId);setQuery("");setLimit(30);setOpen(v=>!v);}} title={`${active?.displayName??'Unavailable engine'} · ${selectedLabel}${selectedConnection?` · ${selectedConnection.label}`:''}`} className={cn('flex items-center gap-1.5 rounded-full border border-hairline/40 bg-control/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised-hover',!contained&&active&&COMPACT_SQUARE)}>{active&&<ProviderMark driverKind={active.driverKind} size={14}/>}<span className={cn('max-w-[160px] truncate',!contained&&active&&'@max-4xl/chathead:hidden')}>{selectedLabel}</span><ChevronDown size={14}/></button></div>

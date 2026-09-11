@@ -90,6 +90,11 @@ describe("a local row names its machine (spec V3)", () => {
     expect(contextLabel(65_536)).toBe("64K context");
     expect(contextLabel(131_072)).toBe("128K context");
     expect(contextLabel(200_000)).toBe("200K context");
+    // cloud catalogs report decimal windows (server/provider-connections context_length): never a binary K
+    expect(contextLabel(128_000)).toBe("128K context");
+    expect(contextLabel(163_840)).toBe("164K context");
+    expect(contextLabel(256_000)).toBe("256K context");
+    expect(contextLabel(32_768)).toBe("32K context");
     expect(contextLabel(0)).toBe("");
   });
 
@@ -106,6 +111,10 @@ describe("a pick that outlived its server", () => {
     expect(unavailableSelectionLabel("srv_abcdefgh::qwen3.8-27b")).toBe("qwen3.8-27b · local server unavailable");
     expect(unavailableSelectionLabel("ollama::qwen3.8-27b:latest")).toBe("qwen3.8-27b:latest · local server unavailable");
     expect(unavailableSelectionLabel("gpt-5")).toBe("gpt-5");
+    // a cloud pick that dropped out of its catalog is not a local server: never accuse it of being one
+    expect(unavailableSelectionLabel("flux::flux-auto")).toBe("flux::flux-auto");
+    expect(unavailableSelectionLabel("openrouter::anthropic/claude-sonnet-4")).toBe("openrouter::anthropic/claude-sonnet-4");
+    expect(unavailableSelectionLabel("lmstudio::qwen")).toBe("qwen · local server unavailable");
   });
 });
 

@@ -27,6 +27,7 @@ import {
   mergeLocalInject,
   resolveInjectId,
 } from "./local-inject.ts";
+import { BUILT_IN_LOCAL_HOST_IDS, localPickerModel } from "../../shared/local-models.ts";
 
 const scratchDirs: string[] = [];
 
@@ -35,6 +36,14 @@ afterEach(() => {
 });
 
 describe("inject ids", () => {
+  it("the renderer's list of built-in host ids is exactly LOCAL_HOSTS", () => {
+    // shared/local-models.ts cannot import the server module, so the list is
+    // copied there and pinned here: a new host added to one must be added to
+    // the other, or the picker will call its orphaned pick a cloud model.
+    expect([...BUILT_IN_LOCAL_HOST_IDS].sort()).toEqual(LOCAL_HOSTS.map((host) => host.id).sort());
+    for (const host of LOCAL_HOSTS) expect(localPickerModel(encodeInjectId(host.id, "m"))).toEqual({ host: host.id, model: "m" });
+    expect(localPickerModel("flux::flux-auto")).toBeNull();
+  });
   it("round-trips a host and API id", () => {
     expect(decodeInjectId(encodeInjectId("omlx", "GLM-5.2-fp8"))).toEqual({
       host: "omlx",

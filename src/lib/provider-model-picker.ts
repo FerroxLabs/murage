@@ -2,6 +2,7 @@
 // Apache-2.0): scoped identity, honest metadata and bounded grouped discovery.
 import type { PublicProviderConnection, ProviderModel } from "../../shared/provider-connections.ts";
 import { providerEngineProtocol } from "../../shared/provider-engine.ts";
+import { localPickerModel } from "../../shared/local-models.ts";
 export interface PickerSelection { instanceId: string; model: string; connectionId?: string }
 export interface PickerEngine { instanceId: string; driverKind: string; displayName: string; enabled?: boolean; snapshot: {state: "available"|"unavailable"; authenticated?: boolean}; models: {default:string;options:Array<{id:string;label:string;custom?:boolean;provider?:string;localServer?:string;localTools?:"pass"|"partial"|"failed"}>} }
 export interface PickerModel { key: string; selection: PickerSelection; label: string; group: string; provider: string; contextWindow?: number; pricing?: ProviderModel["pricing"]; stale?: boolean;
@@ -27,7 +28,9 @@ export function priceBand(price: ProviderModel["pricing"]): string { const n=pri
 /** "64K context" for a 65536-token window and "200K context" for 200000: a
  *  power-of-two window is what a local server reports (`-c 65536`), and it
  *  must read the same here as on the Local models card that showed it. */
-export function contextLabel(value: unknown): string { if(typeof value!=="number"||!Number.isFinite(value)||value<=0)return "";const unit=value%1024===0?1024:1000;return `${Math.round(value/unit)}K context`; }
+/** A local server reports a power-of-two window (65536 -> "64K"); cloud catalogs report decimal ones (128000 -> "128K"). Only a power of two is a binary K. */
+export function contextK(value: number): string { const unit=value>=1024&&(value&(value-1))===0?1024:1000;return `${Math.round(value/unit)}K`; }
+export function contextLabel(value: unknown): string { if(typeof value!=="number"||!Number.isFinite(value)||value<=0)return "";return `${contextK(value)} context`; }
 export function pickerModels(instance: PickerEngine, connections: readonly PublicProviderConnection[]): PickerModel[] {
   const rows: PickerModel[]=[];
   if(instance.enabled===false)return rows;
@@ -77,8 +80,8 @@ export function localRowNote(row: PickerModel): string {
  *  or stops answering; the raw id is not a name anyone chose, so the chip
  *  says the model and the fact instead, until another model is picked. */
 export function unavailableSelectionLabel(model: string): string {
-  const local = /^[^:\s]+::(.+)$/.exec(model);
-  return local ? `${local[1]} · local server unavailable` : model;
+  const local = localPickerModel(model);
+  return local ? `${local.model} · local server unavailable` : model;
 }
 /** The picker's warning marker, in plain words. Empty when there is nothing to
  *  warn about — an untested model is not accused of anything. */

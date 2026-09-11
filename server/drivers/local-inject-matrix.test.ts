@@ -425,13 +425,18 @@ describe("loaded host probes", () => {
 });
 
 describe("Qwen / Hermes ACP turns", () => {
-  it("Qwen argv is --acp -m <api-id>, never the encoded picker id", async () => {
+  it("Qwen argv is --acp --auth-type openai -m <api-id>, never the encoded picker id", async () => {
+    // 0.1.52 LOCAL-MODELS E2: a local turn selects the openai auth type and
+    // points OPENAI_* at the local host, because qwen 0.15.6 refuses
+    // session/new with "Authentication required" when no auth type is
+    // selected (live proof in docs/plans/0152-LOCAL-MODELS-PROOF.md; the same
+    // rationale as server/drivers/acp/qwen.test.ts). Never the Flux URL or key.
     const home = scratchHome("murage-qwen-turn-");
     const dump = join(home, "env.json");
     const instance = await QwenAgentDriver.create({
       instanceId: "qwen",
       displayName: "Qwen",
-      environment: { HOME: home, FAKE_ACP_DUMP: dump },
+      environment: { HOME: home, FAKE_ACP_DUMP: dump, OPENAI_API_KEY: "sk-flux-should-not-leak" },
       enabled: true,
       config: { cli: FAKE_ACP, fullAuto: true },
     });
@@ -439,8 +444,12 @@ describe("Qwen / Hermes ACP turns", () => {
     try {
       await instance.adapter.sendTurn({ threadId: "t-qwen", text: "hi", model: "omlx::gemma-4-31b-it-bf16" });
       await recorder.until((e) => e.type === "turn.completed");
-      const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
-      expect(seen.argv).toEqual(["--acp", "-m", "gemma-4-31b-it-bf16"]);
+      const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
+      expect(seen.argv).toEqual(["--acp", "--auth-type", "openai", "-m", "gemma-4-31b-it-bf16"]);
+      expect(seen.env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+      expect(seen.env.OPENAI_BASE_URL).not.toContain("fluxrouter");
+      expect(seen.env.OPENAI_API_KEY).toBe("omlx");
+      expect(Object.values(seen.env)).not.toContain("sk-flux-should-not-leak");
     } finally {
       await instance.dispose();
     }
