@@ -28,10 +28,19 @@
 //                     Like the engine it also reads the user's own store,
 //                     `<FUIGO_HOME | ~/.fuigo>/trusted_folders.toml`: a
 //                     `[folders."<cwd>"]` table with `trusted = true` trusts
-//                     the folder at build without `--trust`. With
+//                     the folder at build without `--trust` (a linked git
+//                     worktree is keyed on its main checkout, like the
+//                     engine's workspace_key). With
 //                     FAKE_ACP_TRUST_PROMPT_FIRST=1 the prompt completes at
 //                     once while its trust request is still open — the real
-//                     engine's timing when the turn outruns the card)
+//                     engine's timing when the turn outruns the card. With
+//                     FAKE_ACP_TRUST_STORE_REJECTED=1 the store reads as
+//                     EMPTY whatever it says — the engine's `toml` crate
+//                     rejecting a hand-edited document — so the fake asks
+//                     although Murage's own reader may have accepted it.
+//                     With FAKE_ACP_TRUST_FAIL_PROMPT=1 the prompt FAILS
+//                     with a JSON-RPC error while its trust request is
+//                     still open — a turn that fails under a late card)
 //                   | elicitation-form | elicitation-url | elicitation-legacy
 //                     (ACP `elicitation/create` form / url, and the older
 //                     `session/elicitation` spelling); the client's reply is
@@ -77,11 +86,11 @@
 //   FAKE_ACP_EXIT_GATE   with TERM=gate, exit once this file exists (max 10 s)
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { spawn } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -304,13 +313,29 @@ let onPermissionAnswered: (() => void) | null = null;
 // trusted when the session was built (argv --trust, the way `fuigo --trust`
 // grants the process cwd up front)
 let folderTrustInteractive = false;
-// the engine's own store (fuigo-workspace/src/trust.rs): exact-key match is
-// enough for a fixture — the server's reader mirrors the real cascade
+// the engine's own store (fuigo-workspace/src/trust.rs): an exact match on
+// the workspace key is enough for a fixture — the server's reader mirrors
+// the real cascade. The key is the cwd's git root, collapsed onto the main
+// checkout's root for a linked worktree (`workspace_key`; the conventional
+// `<main>/.git` layout only), else the cwd itself.
+const fakeWorkspaceKey = (): string => {
+  const cwd = process.cwd();
+  try {
+    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const common = resolve(cwd, execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    const gitDir = resolve(cwd, execFileSync("git", ["rev-parse", "--git-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    if (top && realpathSync.native(common) !== realpathSync.native(gitDir) && basename(common) === ".git") return realpathSync.native(dirname(common));
+    return top ? realpathSync.native(top) : cwd;
+  } catch {
+    return cwd;
+  }
+};
 const storeTrustsCwd = (): boolean => {
+  if (process.env.FAKE_ACP_TRUST_STORE_REJECTED === "1") return false;
   const home = process.env.FUIGO_HOME || join(process.env.HOME || process.env.USERPROFILE || homedir(), ".fuigo");
   try {
     const text = readFileSync(join(home, "trusted_folders.toml"), "utf8");
-    const table = text.indexOf(`[folders."${process.cwd()}"]`);
+    const table = text.indexOf(`[folders."${fakeWorkspaceKey()}"]`);
     if (table < 0) return false;
     const body = text.slice(table).split("\n").slice(1).join("\n");
     const next = body.search(/^\[/m);
@@ -636,6 +661,10 @@ function handle(msg: any) {
         // tears the child down (the client always answers: a known decision
         // at once, a card when the owner does, and a cancel when the turn
         // ends).
+        if (pendingPermissionId === 9006 && process.env.FAKE_ACP_TRUST_FAIL_PROMPT === "1") {
+          out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "fake-acp: simulated prompt failure while the trust request is open" } });
+          return;
+        }
         if (pendingPermissionId === 9006 && !process.env.FAKE_ACP_TRUST_PROMPT_FIRST) {
           onPermissionAnswered = answer;
           return;
