@@ -44,6 +44,14 @@ import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
 import { resolveInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
 import { createServerChildLifecycle, awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
+import {
+  createMainWindowOpenHandler,
+  createOpenExternalHandler,
+  mainAppPermissionCheckAllowed,
+  mainAppPermissionRequestAllowed,
+  ownedMainSenderGate,
+} from "./app-permissions.mjs";
+import { mainRendererOrigin } from "./main-trust.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName, withSavableFile } from "./save-file.mjs";
@@ -1867,6 +1875,16 @@ function backgroundForEvent(event){
 ipcMain.handle("startup-background:status",event=>backgroundForEvent(event).status());
 ipcMain.handle("startup-background:update",(event,patch)=>backgroundForEvent(event).update(patch));
 
+// The origin the owned main window should show, read lazily because the
+// packaged server port is chosen at boot. null (never trusted) if unparsable.
+function trustedRendererOrigin() {
+  return mainRendererOrigin({ packaged: app.isPackaged, serverPort: SERVER_PORT, devUrl: DEV_URL });
+}
+
+function ownedMainContents() {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+}
+
 function createWindow({quiet=false}={}) {
   if (app.isPackaged && desktopRecoveryMode) return showDesktopRecovery();
   const primary = screen.getPrimaryDisplay();
@@ -1910,10 +1928,19 @@ function createWindow({quiet=false}={}) {
     if (mainWindow === win) mainWindow = null;
   });
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: "deny" };
-  });
+  // Popups never open inside Murage. Credential-free http(s) links go to the
+  // default browser; the startup error page's own server-log link opens that
+  // one file. Everything else is refused (S1-T2, adapted from OpenMausBot #986).
+  win.webContents.setWindowOpenHandler(createMainWindowOpenHandler({
+    openExternal: (url) => shell.openExternal(url),
+    openDiagnosticsLog: async () => {
+      const error = await shell.openPath(path.join(LOG_DIR, "server.log"));
+      if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE");
+    },
+    currentUrl: () => (win.isDestroyed() ? "" : win.webContents.getURL()),
+    diagnosticsLogHref: () => (app.isPackaged ? pathToFileURL(path.join(LOG_DIR, "server.log")).href : null),
+    warn: (message) => console.warn(`[external-link] ${message}`),
+  }));
   win.webContents.on("did-finish-load", () => deliverPackageInstall(win));
 
   // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
@@ -2270,20 +2297,13 @@ ipcMain.handle("desktop:skin", (_event, skin) => {
   return true;
 });
 
-ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
-  if (typeof rawUrl !== "string") throw new Error("A web address is required");
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new Error("That web address is invalid");
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("Only web links can be opened");
-  }
-  await shell.openExternal(url.toString());
-  return true;
-});
+// Connector login, plugin/team links and browser-panel "open in browser" all
+// come from the owned main window's top frame. Any other sender is refused
+// before the address is parsed; the address must be credential-free http(s).
+ipcMain.handle("desktop:open-external", createOpenExternalHandler({
+  isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
+  openExternal: (url) => shell.openExternal(url),
+}));
 
 // The Box VNC viewer must be a top-level page for its token exchange. A
 // sandboxed modal BrowserWindow satisfies that requirement while keeping the
@@ -2604,6 +2624,29 @@ const desktopStartup = app.whenReady().then(async () => {
   });
   secureCredentials = secureCredentialState.read();
   const hostedAccount = ensureCompanionAccountService();
+  // Main-app permissions (S1-T2, adapted from OpenMausBot #986). Only the owned
+  // main window's top frame on the renderer origin gets the microphone,
+  // notifications, clipboard and full screen, plus Electron's empty media
+  // routing into the guarded display handler below. Camera, devices and every
+  // foreign, opaque, subframe or unowned-window request are refused. The viewer,
+  // browser, VM workspace and server windows keep their own deny-by-default
+  // partitions and are not governed by this default-session policy.
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    let allowed = false;
+    try {
+      allowed = mainAppPermissionRequestAllowed({ contents, permission, details, ownedContents: ownedMainContents(), origin: trustedRendererOrigin() });
+    } catch {
+      allowed = false;
+    }
+    callback(allowed);
+  });
+  session.defaultSession.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
+    try {
+      return mainAppPermissionCheckAllowed({ contents, permission, requestingOrigin, details, ownedContents: ownedMainContents(), origin: trustedRendererOrigin() });
+    } catch {
+      return false;
+    }
+  });
   // Display capture remains user-initiated. The renderer first sends a
   // short-lived one-shot intent, then calls getDisplayMedia in the same click.
   // The handler binds that request to the same frame/origin, rejects audio,
