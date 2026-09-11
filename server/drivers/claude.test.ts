@@ -1838,3 +1838,116 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
     expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 });
+
+// A4: stream-json stdout and the ask socket are framed with a byte bound
+// before any parse. An oversized frame fails its own turn (never a replay)
+// and ends that retained process; other threads, and the next turn on the
+// same thread, run normally.
+describe("ClaudeDriver bounded ingress (A4)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+
+  const create = async () => {
+    instance = await ClaudeDriver.create({
+      instanceId: "claude-bounded",
+      displayName: "Claude Bounded",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+  /** No event on the thread may carry the dropped frame's content. */
+  const noLargePayload = (threadId: string) =>
+    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+  });
+  afterEach(async () => {
+    recorder?.stop();
+    await instance?.dispose();
+  });
+
+  it("fails only the turn whose frame is over the limit, even when a success result follows it", async () => {
+    await create();
+    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__" });
+    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hi" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "runtime.error",
+      threadId: "t-oversize",
+      message: expect.stringMatching(/^Claude sent a protocol message larger than 32 MiB/),
+    }));
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "item.completed", itemType: "assistant_text", threadId: "t-ordinary", text: "hello from fake claude",
+    }));
+    expect(noLargePayload("t-oversize")).toBe(true);
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === oversized.turnId)).toHaveLength(1);
+  });
+
+  it("runs the next turn on the same thread in a fresh process after an overflow", async () => {
+    await create();
+    const first = await instance.adapter.sendTurn({ threadId: "t-again", text: "__fixture_oversize_frame__" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({ threadId: "t-again", text: "hi again" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "item.completed", itemType: "assistant_text", turnId: second.turnId, text: "hello from fake claude",
+    }));
+  });
+
+  it("fails an unterminated oversized frame without waiting for a newline", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__" });
+    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
+    expect(noLargePayload("t-open")).toBe(true);
+  });
+
+  it("still carries a valid 14 MiB multibyte frame intact", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: true });
+    const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.turnId === turnId);
+    expect(Buffer.byteLength((reply as { text: string } | undefined)?.text ?? "")).toBe(14 * 1024 * 1024);
+  });
+
+  it("drops an ask connection whose frame is over the limit and keeps serving others", async () => {
+    const asks: Array<{ id: string }> = [];
+    const broker = await createPermissionBroker({
+      socketPaths: brokerSocketCandidates("t-ask-oversize"),
+      onAsk: (ask) => asks.push(ask),
+      onResolve: () => {},
+    });
+    try {
+      const flooding = await connectSocket(broker.socketPath);
+      const closed = new Promise<void>((resolve) => flooding.once("close", () => resolve()));
+      flooding.on("error", () => {});
+      flooding.write(`{"t":"ask","id":"ask-huge","tool":"Bash","input":{"command":"${"a".repeat(32 * 1024 * 1024 + 1)}`);
+      await closed;
+      expect(asks).toEqual([]);
+
+      const healthy = await connectSocket(broker.socketPath);
+      const answers = answerQueue(healthy);
+      healthy.write(JSON.stringify({ t: "ask", id: "ask-small", tool: "Bash", input: { command: "echo hi" } }) + "\n");
+      await expect.poll(() => asks.length).toBe(1);
+      expect(broker.answer("ask-small", "allow")).toBe(true);
+      expect(await answers()).toMatchObject({ id: "ask-small", behavior: "allow" });
+      healthy.end();
+    } finally {
+      broker.close();
+    }
+  });
+});

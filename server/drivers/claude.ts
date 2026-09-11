@@ -53,6 +53,7 @@ import {
   resolveInjectId,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
 /** Whether `claude` has been signed in.
@@ -374,79 +375,81 @@ export async function createPermissionBroker(opts: {
   let boundPath = opts.socketPaths[0] ?? "";
   const connectionHandler = (conn: import("node:net").Socket) => {
     conn.on("error", () => {});
-    let buf = "";
-    conn.on("data", (chunk) => {
-      buf += chunk;
-      let nl;
-      while ((nl = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        let msg: any;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (msg.t !== "ask") continue;
-        const askId = String(msg.id ?? newId());
-        const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
-        if (closed) {
-          // Closure is terminal and takes precedence over every active-turn
-          // rule, including duplicate-id rejection. Never register a pending
-          // entry or notify onAsk, but always answer an existing connection:
-          // permission-proxy.ts only resolves on an explicit answer (or a
-          // connection error/close), so a silent drop would hang the tool.
-          try {
-            conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
-          } catch {}
-          continue;
-        }
-        // A retained Claude process keeps its proxy connection between
-        // turns. Late/background asks must still fail closed without opening
-        // a card for a turn that has already settled.
-        if (opts.isActive && !opts.isActive()) {
-          try {
-            conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
-          } catch {}
-          continue;
-        }
-        // `pending` is server-scoped, not per-connection: two asks with the
-        // same id — a buggy/adversarial client, never a legitimate retry
-        // (permission-proxy mints a fresh randomUUID per ask) — would
-        // otherwise let the second `pending.set` silently overwrite the
-        // first, orphaning it as an unanswerable card once the first
-        // resolves and deletes the shared key. Reject before either ask
-        // becomes visible to onAsk.
-        if (pending.has(askId)) {
-          // askId is client-controlled; JSON.stringify escapes newlines and
-          // control characters so it can't corrupt the log line or terminal.
-          console.error(`permission broker on ${boundPath}: duplicate ask id ${JSON.stringify(askId)} — denying`);
-          try {
-            conn.write(JSON.stringify({ t: "answer", id: askId, behavior: "deny", message: DUPLICATE_ASK_ID_NOTE }) + "\n");
-          } catch {}
-          continue;
-        }
-        const ask: Ask = { id: askId, kind, tool: msg.tool ?? "tool", input: msg.input ?? {}, at: Date.now() };
-        const finish = (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource) => {
-          if (!pending.delete(askId)) return;
-          clearTimeout(timer);
-          try {
-            conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message }) + "\n");
-          } catch {}
-          opts.onResolve({ ...ask, behavior, source });
-        };
-        const timer = setTimeout(
-          () =>
-            kind === "question"
-              ? finish("answer", QUESTION_TIMEOUT_NOTE, "timeout")
-              : finish("deny", DENY_TIMEOUT_NOTE, "timeout"),
-          timeoutMs,
-        );
-        timer.unref?.();
-        pending.set(askId, { ask, finish });
-        opts.onAsk(ask);
-      }
+    // The ask proxy runs in the engine's process tree, so its socket is
+    // engine-controlled ingress too (A4). An oversized ask is never parsed:
+    // dropping the connection makes permission-proxy answer every ask on it
+    // with a deny.
+    const askLines = createBoundedLineSplitter({
+      onLine: (line) => handleAskLine(line),
+      onOverflow: () => conn.destroy(),
     });
+    conn.on("data", (chunk: Buffer) => askLines.push(chunk));
+    const handleAskLine = (line: string) => {
+      let msg: any;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (msg.t !== "ask") return;
+      const askId = String(msg.id ?? newId());
+      const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
+      if (closed) {
+        // Closure is terminal and takes precedence over every active-turn
+        // rule, including duplicate-id rejection. Never register a pending
+        // entry or notify onAsk, but always answer an existing connection:
+        // permission-proxy.ts only resolves on an explicit answer (or a
+        // connection error/close), so a silent drop would hang the tool.
+        try {
+          conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
+        } catch {}
+        return;
+      }
+      // A retained Claude process keeps its proxy connection between
+      // turns. Late/background asks must still fail closed without opening
+      // a card for a turn that has already settled.
+      if (opts.isActive && !opts.isActive()) {
+        try {
+          conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
+        } catch {}
+        return;
+      }
+      // `pending` is server-scoped, not per-connection: two asks with the
+      // same id — a buggy/adversarial client, never a legitimate retry
+      // (permission-proxy mints a fresh randomUUID per ask) — would
+      // otherwise let the second `pending.set` silently overwrite the
+      // first, orphaning it as an unanswerable card once the first
+      // resolves and deletes the shared key. Reject before either ask
+      // becomes visible to onAsk.
+      if (pending.has(askId)) {
+        // askId is client-controlled; JSON.stringify escapes newlines and
+        // control characters so it can't corrupt the log line or terminal.
+        console.error(`permission broker on ${boundPath}: duplicate ask id ${JSON.stringify(askId)} — denying`);
+        try {
+          conn.write(JSON.stringify({ t: "answer", id: askId, behavior: "deny", message: DUPLICATE_ASK_ID_NOTE }) + "\n");
+        } catch {}
+        return;
+      }
+      const ask: Ask = { id: askId, kind, tool: msg.tool ?? "tool", input: msg.input ?? {}, at: Date.now() };
+      const finish = (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource) => {
+        if (!pending.delete(askId)) return;
+        clearTimeout(timer);
+        try {
+          conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message }) + "\n");
+        } catch {}
+        opts.onResolve({ ...ask, behavior, source });
+      };
+      const timer = setTimeout(
+        () =>
+          kind === "question"
+            ? finish("answer", QUESTION_TIMEOUT_NOTE, "timeout")
+            : finish("deny", DENY_TIMEOUT_NOTE, "timeout"),
+        timeoutMs,
+      );
+      timer.unref?.();
+      pending.set(askId, { ask, finish });
+      opts.onAsk(ask);
+    };
   };
   // Bind the first candidate that will take a listener. A broker that
   // never came up used to be silent — every approval then timed out into a
@@ -1221,19 +1224,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
       };
 
-      let buf = "";
-      // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
-      // multibyte characters that straddle two reads and corrupts the text
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => {
-        buf += chunk;
-        let nl;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl);
-          buf = buf.slice(nl + 1);
+      // Byte-bounded framing (A4): UTF-8 is decoded per complete line, so a
+      // multibyte character split across reads stays intact, and one frame
+      // never holds more than ENGINE_FRAME_MAX_BYTES of the shared process.
+      const stdoutLines = createBoundedLineSplitter({
+        onLine: (line) => {
           if (line.trim()) handleLine(line);
-        }
+        },
+        onOverflow: (overflow) => {
+          appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: { frameOverflow: overflow } });
+          // The stream is unrecoverable: fail the turn it belongs to (never a
+          // replay — settle() clears the retry budget and the turn), then end
+          // this retained process so no later frame is read out of context.
+          if (session.turn && !session.turn.settled) {
+            emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: frameOverflowMessage("Claude", overflow) });
+            settle(false, FRAME_TOO_LARGE);
+          }
+          if (sessions.get(threadId) === session) closeSession(threadId, FRAME_TOO_LARGE);
+          if (child.exitCode === null) killCliTree(child);
+        },
       });
+      child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
 
       child.stderr.on("data", (c) => {
         session.stderr += c;
