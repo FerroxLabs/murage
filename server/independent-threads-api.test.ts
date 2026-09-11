@@ -1,11 +1,15 @@
 import { once } from "node:events";
 import { connect, type Socket } from "node:net";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
+const FAKE_ACP=join(dirname(fileURLToPath(import.meta.url)),"testing","fake-acp-cli.ts");
+const processAlive=(pid:number)=>{try{process.kill(pid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code==="EPERM";}};
 let fixture:VerificationServer,headers:Record<string,string>,modelOne:string,modelTwo:string;
+const acpFile=(name:string)=>join(fixture.info.dataDir,`close-confirmed-${name}`);
 const sockets:Socket[]=[];
 const api=async(method:string,path:string,body?:unknown,owner=true)=>{
   const response=await fetch(`${fixture.info.url}${path}`,{method,headers:{"content-type":"application/json",...(owner?headers:{})},body:body===undefined?undefined:JSON.stringify(body)});
@@ -19,6 +23,8 @@ beforeAll(async()=>{
     const fs=await import('node:fs');const path=await import('node:path');
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     cfg.instances.second={...cfg.instances.verification,displayName:'Second isolated account',environment:{FAKE_CLAUDE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'second-dump.json')}};
+    const acp=(name)=>path.join(process.env.MURAGE_DATA_DIR,'close-confirmed-'+name);
+    cfg.instances.acpStop={driver:'customAcp',displayName:'Close-confirmed ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_TERM:'gate',FAKE_ACP_PID_FILE:acp('pid'),FAKE_ACP_TERM_MARK:acp('term'),FAKE_ACP_EXIT_GATE:acp('gate'),FAKE_ACP_RPC_DUMP:acp('rpc')}};
     fs.writeFileSync(file,JSON.stringify(cfg));process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
   `});
   const proof=await api("GET","/api/desktop-secret",undefined,false);headers={"x-murage-surface":"desktop","x-murage-surface-secret":proof.body.secret};
@@ -85,6 +91,38 @@ it("refuses a competing working-directory launch without touching its peer's run
   expect(existsSync(join(fixture.info.dataDir,"second-dump.json"))).toBe(false);
   expect((await botState(bot.id)).tasks.find((task:any)=>task.threadId===bot.first).busy).toBe(true);
   await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});
+},30000);
+it("keeps a stopped ACP thread's working folder until its engine process has closed",async()=>{
+  const created=(await api("POST","/api/bots",{name:"Close-confirmed stop fixture",modelSelection:{instanceId:"verification",model:modelOne}})).body.bot;
+  expect((await api("PATCH",`/api/bots/${created.id}`,{computer:"off",browser:false,composio:false})).status).toBe(200);
+  const shared=acpFile("project"),unrelated=acpFile("unrelated");mkdirSync(shared);mkdirSync(unrelated);
+  const acpThread=created.threadId;
+  expect((await api("PATCH",`/api/bots/${created.id}/tasks/${acpThread}`,{modelSelection:{instanceId:"acpStop",model:"agent-default"},cwd:shared})).status).toBe(200);
+  const waiting=(await api("POST",`/api/bots/${created.id}/tasks`,{title:"Same folder"})).body.task;
+  const sibling=(await api("POST",`/api/bots/${created.id}/tasks`,{title:"Unrelated folder"})).body.task;
+  expect((await api("PATCH",`/api/bots/${created.id}/tasks/${waiting.threadId}`,{cwd:shared})).status).toBe(200);
+  expect((await api("PATCH",`/api/bots/${created.id}/tasks/${sibling.threadId}`,{cwd:unrelated})).status).toBe(200);
+  expect((await api("POST",`/api/bots/${created.id}/messages`,{threadId:acpThread,text:"close-confirmed fixture"})).status).toBe(202);
+  await expect.poll(()=>{try{return readFileSync(acpFile("rpc"),"utf8").includes("session/prompt");}catch{return false;}},{timeout:10000}).toBe(true);
+  const pid=Number(readFileSync(acpFile("pid"),"utf8"));
+  await hold(created.id,sibling.threadId,"close-confirmed-unrelated");
+  const stopping=api("POST",`/api/bots/${created.id}/interrupt`,{threadId:acpThread});
+  if(process.platform!=="win32"){
+    // POSIX delivers SIGTERM to a handler, so the engine can outlive its
+    // termination request until the gate opens. Windows taskkill /F cannot be
+    // intercepted; there only the post-close invariants below are observable.
+    await expect.poll(()=>existsSync(acpFile("term")),{timeout:10000}).toBe(true);
+    expect((await api("POST",`/api/bots/${created.id}/messages`,{threadId:waiting.threadId,text:"close-confirmed competing folder"})).status).toBe(202);
+    await expect.poll(async()=>(await messages(waiting.threadId)).some(message=>message.tool?.name?.includes("Another thread is using this working folder")),{timeout:5000}).toBe(true);
+    expect(JSON.stringify(dump().prompt)).not.toContain("close-confirmed competing folder");
+    expect(processAlive(pid)).toBe(true);
+    writeFileSync(acpFile("gate"),"");
+  }
+  expect((await stopping).status).toBe(200);
+  expect(processAlive(pid)).toBe(false);
+  await hold(created.id,waiting.threadId,"close-confirmed-replacement");
+  expect((await botState(created.id)).tasks.find((task:any)=>task.threadId===sibling.threadId).busy).toBe(true);
+  for(const threadId of [waiting.threadId,sibling.threadId])await api("POST",`/api/bots/${created.id}/interrupt`,{threadId});
 },30000);
 it("routes owner defaults separately and refuses ambiguous legacy multi-thread settings",async()=>{
   const created=(await api("POST","/api/bots",{name:"Defaults fixture",modelSelection:{instanceId:"verification",model:modelOne}})).body.bot;
