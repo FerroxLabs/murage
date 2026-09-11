@@ -182,6 +182,12 @@ if (argv[0] === "models" || argv.includes("--list-models")) {
 }
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+// Mirrors ENGINE_FRAME_MAX_BYTES in server/drivers/bounded-lines.ts (this
+// fake stays dependency-free). "é" is two UTF-8 bytes: the text alone is one
+// KiB over the limit, so the limit is counted in bytes, not characters.
+const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
+const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
+const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
 const rpcMethods: string[] = [];
 const recordMethod = (method: string) => {
@@ -529,6 +535,28 @@ function handle(msg: any) {
         );
       };
       const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+      // Bounded-ingress fixtures (A4), keyed on the prompt so one fake can
+      // run an oversized turn beside an ordinary one.
+      if (promptText.includes("__fixture_oversize_frame__")) {
+        // a VALID frame one KiB over the limit, then a clean success: the
+        // driver must fail the turn rather than read past the dropped frame
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: fixtureOversizeText() } } } });
+        complete();
+        return;
+      }
+      if (promptText.includes("__fixture_oversize_open_frame__")) {
+        // an oversized frame that never ends; stay alive until stopped
+        process.stdout.write(`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"${fixtureOversizeText()}`);
+        setInterval(() => {}, 1_000);
+        return;
+      }
+      if (promptText.includes("__fixture_large_frame__")) {
+        // an inline image at the harness's 10 MiB image cap: near the size a
+        // real frame reaches, and well inside the frame limit
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "image", data: fixtureLargeImageBase64(), mimeType: "image/png" } } } });
+        complete();
+        return;
+      }
       if (mode === "chief-delegate" && promptText.includes("CHIEF_RESULT_CONTEXT")) {
         const sawDelegatedResult =
           promptText.includes("@LongWorker replied to the delegated task")

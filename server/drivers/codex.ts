@@ -36,6 +36,7 @@ import { fluxIdIsRoutable } from "../flux-surface.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
+import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -553,55 +554,64 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
       };
 
-      let buf = "";
-      // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
-      // multibyte characters that straddle two reads and corrupts the text
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => {
-        if (abandoned || state.settled) return;
-        buf += chunk;
-        let nl;
-        while (!state.settled && (nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl);
-          buf = buf.slice(nl + 1);
-          if (!line.trim()) continue;
-          let msg: any;
-          try {
-            msg = JSON.parse(line);
-          } catch {
-            continue;
-          }
-          // The native tee is a plain file people paste into issues. A
-          // generated image would put megabytes of base64 in it and the
-          // provider's own filesystem path beside them; keep the SHAPE and
-          // lose both, the same trade server/redact.ts makes for secrets.
-          const loggedMessage = msg.method === "item/completed" && msg.params?.item?.type === "imageGeneration"
-            ? {
-                ...msg,
-                params: {
-                  ...msg.params,
-                  item: {
-                    ...msg.params.item,
-                    result: `[generated image omitted · ${String(msg.params.item.result ?? "").length} base64 chars]`,
-                    savedPath: undefined,
-                  },
-                },
-              }
-            : msg;
-          appendNative(threadId, { dir: "in", source: "codex.app-server", msg: loggedMessage });
-          if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
-            const pend = rpcPending.get(msg.id);
-            if (pend) {
-              rpcPending.delete(msg.id);
-              msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
-            }
-          } else if (msg.id !== undefined && msg.method) {
-            handleServerRequest(msg);
-          } else if (msg.method) {
-            handleNotification(msg);
-          }
-        }
+      // Byte-bounded framing (A4): UTF-8 is decoded per complete line, so a
+      // multibyte character split across reads stays intact, and one frame
+      // never holds more than ENGINE_FRAME_MAX_BYTES of the shared process.
+      const stdoutLines = createBoundedLineSplitter({
+        onLine: (line) => handleStdoutLine(line),
+        onOverflow: (overflow) => {
+          if (abandoned) return;
+          appendNative(threadId, { dir: "in", source: "codex.app-server", msg: { frameOverflow: overflow } });
+          if (state.settled) return;
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: frameOverflowMessage("Codex", overflow) });
+          void settle(false, FRAME_TOO_LARGE);
+        },
       });
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (abandoned || state.settled) return;
+        stdoutLines.push(chunk);
+      });
+      const handleStdoutLine = (line: string) => {
+        // a completion earlier in the same read ends the turn: later lines
+        // from that read are not this turn's output
+        if (abandoned || state.settled) return;
+        if (!line.trim()) return;
+        let msg: any;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          return;
+        }
+        // The native tee is a plain file people paste into issues. A
+        // generated image would put megabytes of base64 in it and the
+        // provider's own filesystem path beside them; keep the SHAPE and
+        // lose both, the same trade server/redact.ts makes for secrets.
+        const loggedMessage = msg.method === "item/completed" && msg.params?.item?.type === "imageGeneration"
+          ? {
+              ...msg,
+              params: {
+                ...msg.params,
+                item: {
+                  ...msg.params.item,
+                  result: `[generated image omitted · ${String(msg.params.item.result ?? "").length} base64 chars]`,
+                  savedPath: undefined,
+                },
+              },
+            }
+          : msg;
+        appendNative(threadId, { dir: "in", source: "codex.app-server", msg: loggedMessage });
+        if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
+          const pend = rpcPending.get(msg.id);
+          if (pend) {
+            rpcPending.delete(msg.id);
+            msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
+          }
+        } else if (msg.id !== undefined && msg.method) {
+          handleServerRequest(msg);
+        } else if (msg.method) {
+          handleNotification(msg);
+        }
+      };
 
       let stderr = "";
       child.stderr.on("data", (c) => {
