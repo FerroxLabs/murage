@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "../database.ts";
 import { redactSecretsInText } from "../redact.ts";
 import type { MemoryEvidenceHandle } from "../../shared/memory.ts";
@@ -40,11 +41,84 @@ export function saveMemoryCandidate(text: string, evidence: MemoryEvidenceHandle
   });
 }
 
-export function approveMemory(ticket: object, id: string, version: number, options: {pin?: boolean; scopeId?: string} = {}) {
+/** What the owner decides about an owner pin on the fact a correction replaces. */
+export type CorrectionPinChoice = "transfer" | "unpin";
+/** `changed`: the target was corrected or replaced after the proposal.
+ * `unavailable`: forgotten, archived, missing or an ambiguous derivation. */
+export type CorrectionTargetStatus = "current" | "changed" | "unavailable";
+export interface CorrectionTargetReview {
+  status: CorrectionTargetStatus;
+  target: { id: string; version: number; text: string; state: string; ownerPinned: boolean; scopeId: string } | null;
+}
+
+/** The exact target version an agent-proposed correction was made against
+ * (`supersedes_id` plus its single recorded derivation), or null when the
+ * candidate is not a correction proposal. Approval never guesses a target. */
+export function readCorrectionTarget(db: DatabaseSync, id: string, version: number): CorrectionTargetReview | null {
+  const candidate = db.prepare("SELECT supersedes_id FROM memory_records WHERE id=? AND version=?").get(id,version);
+  if (!candidate || typeof candidate.supersedes_id !== "string" || !candidate.supersedes_id) return null;
+  const targetId = candidate.supersedes_id;
+  const links = db.prepare("SELECT parent_version FROM memory_derivations WHERE child_id=? AND child_version=? AND parent_id=?").all(id,version,targetId);
+  if (links.length !== 1) return {status:"unavailable",target:null};
+  const row = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(targetId,Number(links[0].parent_version));
+  if (!row) return {status:"unavailable",target:null};
+  const target = {id:targetId,version:Number(row.version),text:String(row.text),state:String(row.state),ownerPinned:row.owner_pinned===1,scopeId:String(row.scope_id)};
+  const latest = Number(db.prepare("SELECT max(version) AS version FROM memory_records WHERE id=?").get(targetId)?.version);
+  const tombstoned = db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(targetId,target.version);
+  if (tombstoned || target.state === "deleted" || target.state === "archived" || target.state === "candidate") return {status:"unavailable",target};
+  if (latest !== target.version || target.state !== "active") return {status:"changed",target};
+  return {status:"current",target};
+}
+
+/** Evidence must still be exactly what the owner reviewed: active sources at
+ * the recorded revision, not tombstoned, spans inside the stored text. */
+function assertEvidenceCurrent(db: DatabaseSync, id: string, version: number) {
+  const handles = db.prepare("SELECT source_id,source_revision,end_byte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,version);
+  if (!handles.length) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+  for (const handle of handles) {
+    const source = db.prepare("SELECT s.state,s.revision,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?").get(handle.source_revision,handle.source_id);
+    if (!source || source.state !== "active" || source.revision !== handle.source_revision) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+    if (db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(handle.source_id,handle.source_revision)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+    const text = JSON.parse(String(source.payload)).text;
+    if (typeof text !== "string" || Number(handle.end_byte) > Buffer.byteLength(text)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+  }
+}
+
+/** Owner approval of an agent-proposed correction (audit C1, decision U-16):
+ * validate the exact recorded target version, revalidate the candidate's
+ * evidence, then supersede only that target and activate the replacement in
+ * one transaction. A pinned target needs an explicit transfer/unpin choice. */
+function approveCorrection(db: DatabaseSync, record: Record<string, unknown>, review: CorrectionTargetReview, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice}) {
+  // A correction replaces one reviewed fact in its own audience. Promotion and
+  // an implicit pin flag are separate owner decisions, never folded in here.
+  if (options.pin !== undefined || (options.scopeId !== undefined && options.scopeId !== record.scope_id)) throw new Error("MEMORY_CORRECTION_OPTIONS_INVALID");
+  if (options.correctionPin !== undefined && options.correctionPin !== "transfer" && options.correctionPin !== "unpin") throw new Error("MEMORY_CORRECTION_OPTIONS_INVALID");
+  if (!review.target || review.status === "unavailable") throw new Error("MEMORY_CORRECTION_TARGET_UNAVAILABLE");
+  if (review.status === "changed") throw new Error("MEMORY_CORRECTION_TARGET_CHANGED");
+  const target = review.target;
+  if (target.scopeId !== record.scope_id) throw new Error("MEMORY_CORRECTION_SCOPE_MISMATCH");
+  assertEvidenceCurrent(db,String(record.id),Number(record.version));
+  if (target.ownerPinned && options.correctionPin === undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_REQUIRED");
+  // The owner chose for a pin that is no longer there: the review is stale.
+  if (!target.ownerPinned && options.correctionPin !== undefined) throw new Error("MEMORY_CORRECTION_PIN_CHANGED");
+  const retired = db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=? AND state='active'").run(Date.now(),target.id,target.version);
+  if (retired.changes !== 1) throw new Error("MEMORY_CORRECTION_TARGET_CHANGED");
+  const activated = db.prepare("UPDATE memory_records SET state='active',owner_pinned=? WHERE id=? AND version=? AND state='candidate'")
+    .run(target.ownerPinned && options.correctionPin === "transfer" ? 1 : 0,String(record.id),Number(record.version));
+  if (activated.changes !== 1) throw new Error("MEMORY_VERSION_CONFLICT");
+  db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
+  db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
+  return String(record.id);
+}
+
+export function approveMemory(ticket: object, id: string, version: number, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice} = {}) {
   requireMemoryOwner(ticket);
   return transaction(db => {
     const record = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state='candidate'").get(id,version);
     if (!record) throw new Error("MEMORY_VERSION_CONFLICT");
+    const correction = readCorrectionTarget(db,id,version);
+    if (correction) return approveCorrection(db,record,correction,options);
+    if (options.correctionPin !== undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_INVALID");
     db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
     if (options.scopeId && options.scopeId !== record.scope_id) {
       if (!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(options.scopeId)) throw new Error("MEMORY_SCOPE_UNKNOWN");

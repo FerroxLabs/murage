@@ -12,6 +12,11 @@
 // through untouched, and with no gate configured the bridge remains the
 // frame-preserving pipe (apart from local ping replies).
 //
+// A configured gate fails CLOSED (0.1.52 decision U-11, audit A5): when the
+// harness control endpoint times out, errors or answers malformed, nobody can
+// say the person is not driving, so a tools/call is refused with reconnect
+// guidance instead of being forwarded.
+//
 // Two behaviors live here so neither entry point can drift:
 //   1. Exit without truncation. `process.exit()` in a close/error handler
 //      discards whatever is still buffered on stdout — a final MCP result
@@ -25,7 +30,12 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { Readable, Writable } from "node:stream";
 
-import { CONTROL_REFUSAL_PLAIN, createControlClient } from "./control-client.ts";
+import {
+  CONTROL_REFUSAL_PLAIN,
+  CONTROL_UNAVAILABLE_PLAIN,
+  ControlUnavailableError,
+  createControlClient,
+} from "./control-client.ts";
 import { augmentedPath } from "./env-path.ts";
 
 // 45s of TOTAL silence before the bridge even probes. An MCP session is
@@ -173,14 +183,20 @@ export function createLineSplitter(onLine: (line: string) => void, maxBytes = MA
  * held-check is async, and answering frame N+1 before frame N would
  * reorder the agent's protocol stream. Only a `tools/call` is ever
  * refused; every other frame — handshakes, tools/list, notifications,
- * lines that are not JSON — passes through untouched. */
+ * lines that are not JSON — passes through untouched.
+ *
+ * A held-check that rejects means the hold is unknown. The gate then fails
+ * closed: the tools/call is refused with `unavailableText` (reconnect
+ * guidance), never forwarded. */
 export function createGateInterceptor(options: {
   isHeld: () => Promise<boolean>;
   forward: (line: string) => unknown;
   refuse: (line: string) => unknown;
   refusalText?: string;
+  unavailableText?: string;
 }): (line: string) => Promise<void> {
   const refusalText = options.refusalText ?? CONTROL_REFUSAL_PLAIN;
+  const unavailableText = options.unavailableText ?? CONTROL_UNAVAILABLE_PLAIN;
   let queue: Promise<void> = Promise.resolve();
   return (line: string) => {
     queue = queue.then(async () => {
@@ -195,8 +211,11 @@ export function createGateInterceptor(options: {
         await options.forward(line);
         return;
       }
-      const held = await options.isHeld().catch(() => false);
-      if (!held) {
+      const verdict = await options.isHeld().then(
+        (held) => (held ? "held" : "free"),
+        () => "unavailable" as const,
+      );
+      if (verdict === "free") {
         await options.forward(line);
         return;
       }
@@ -204,7 +223,10 @@ export function createGateInterceptor(options: {
         JSON.stringify({
           jsonrpc: "2.0",
           id: frame.id ?? null,
-          result: { content: [{ type: "text", text: refusalText }], isError: true },
+          result: {
+            content: [{ type: "text", text: verdict === "held" ? refusalText : unavailableText }],
+            isError: true,
+          },
         }),
       );
     });
@@ -215,7 +237,7 @@ export function createGateInterceptor(options: {
 export function createMcpBridgeInterceptor(options: {
   answer: (line: string) => unknown;
   forward: (line: string) => unknown;
-  gate?: { isHeld: () => Promise<boolean>; refusalText?: string };
+  gate?: { isHeld: () => Promise<boolean>; refusalText?: string; unavailableText?: string };
 }): (line: string) => Promise<void> {
   const afterPing = options.gate
     ? createGateInterceptor({ ...options.gate, forward: options.forward, refuse: options.answer })
@@ -319,7 +341,18 @@ export function runMcpBridge(options: BridgeOptions): void {
         detach();
       }
     },
-    ...(client ? { gate: { isHeld: async () => (await client.state(true)).held } } : {}),
+    ...(client
+      ? {
+        gate: {
+          isHeld: async () => {
+            const state = await client.state(true);
+            // Unknown is not "free": the gate refuses with reconnect guidance.
+            if (!state.available) throw new ControlUnavailableError();
+            return state.held;
+          },
+        },
+      }
+      : {}),
   }), () => child.stdin.end(), transportFailed);
   pipeMcpLines(child.stdout, answer, () => {}, transportFailed);
 

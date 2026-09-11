@@ -106,6 +106,21 @@ describe("appendNative", () => {
     expect(log).toContain("box-7");
   });
 
+  it("masks bare xAI, Groq and Hugging Face keys in an ordinary reply and keeps the prose", () => {
+    // Synthetic fixtures assembled at runtime (#987); never real keys.
+    const alnum = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const keys = [`${"xa" + "i-"}${alnum.slice(0, 24)}`, `${"gs" + "k_"}${alnum.slice(0, 40)}`, `${"h" + "f_"}${alnum.slice(0, 30)}`];
+    appendNative("t-bare-keys", {
+      dir: "in",
+      source: "acp",
+      msg: { method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `Try ${keys.join(" then ")} tomorrow.` } } } },
+    });
+
+    const log = readFileSync(join(NATIVE_DIR, "t-bare-keys.ndjson"), "utf8");
+    for (const key of keys) expect(log).not.toContain(key);
+    expect(log).toContain(`Try «redacted ${keys[0]!.length} chars» then «redacted ${keys[1]!.length} chars» then «redacted ${keys[2]!.length} chars» tomorrow.`);
+  });
+
   it("writes the log private to the user", () => {
     appendNative("t-mode", { dir: "in", source: "acp", msg: { hello: "world" } });
     const mode = statSync(join(NATIVE_DIR, "t-mode.ndjson")).mode & 0o777;

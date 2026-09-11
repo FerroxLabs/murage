@@ -1,13 +1,34 @@
 import { useState } from "react";
 import type { MemoryRecord } from "../../shared/memory";
+import { t } from "../lib/i18n";
 
 export interface MemoryAudience { id: string; kind: string; ownerKey: string; label: string }
+export type CorrectionPinChoice = "transfer" | "unpin";
+/** The exact fact an agent-proposed correction would replace (server
+ * `readCorrectionTarget`). `changed`/`unavailable` cannot be approved. */
+export interface MemoryCorrectionReview {
+  status: "current" | "changed" | "unavailable";
+  target: { id: string; version: number; text: string; state: string; ownerPinned: boolean; scopeId: string } | null;
+}
 export interface MemoryInspection {
   record: MemoryRecord;
   evidence: Array<{ sourceId: string; revision: number; startByte: number; endByte: number; text: string; path?: string; hash: string; speaker: string }>;
   lineage: Array<{ id: string; version: number }>;
+  correction?: MemoryCorrectionReview | null;
 }
 export type MemoryAction = Record<string, unknown> & { action: string };
+
+/** The approve request for a candidate, or null while approval is not allowed.
+ * A correction that replaces a pinned fact needs the owner's explicit pin
+ * choice; nothing is preselected (decision U-16). */
+export function candidateApproval(record: MemoryRecord, correction: MemoryCorrectionReview | null | undefined, pinChoice: CorrectionPinChoice | ""): MemoryAction | null {
+  if (record.state !== "candidate") return null;
+  const approve = { action: "approve", id: record.id, version: record.version };
+  if (!correction) return approve;
+  if (correction.status !== "current" || !correction.target) return null;
+  if (!correction.target.ownerPinned) return approve;
+  return pinChoice ? { ...approve, correctionPin: pinChoice } : null;
+}
 export const memoryInputClass = "w-full min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 export const memoryButtonClass = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 
@@ -20,8 +41,12 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
   const [destination, setDestination] = useState("");
   const [confirmForget, setConfirmForget] = useState(false);
   const [skillBot, setSkillBot] = useState("");
+  const [pinChoice, setPinChoice] = useState<CorrectionPinChoice | "">("");
   const audience = audiences.find(item => item.id === record.scopeId)?.label ?? "Unavailable audience";
   const active = record.state === "active";
+  const proposal = record.state === "candidate" ? inspection.correction ?? null : null;
+  const approval = candidateApproval(record, proposal, pinChoice);
+  const choosePin = proposal?.status === "current" && proposal.target?.ownerPinned === true;
   return <section aria-label="Memory details" className="space-y-4 rounded-xl border border-hairline/50 bg-panel p-4" data-memory-detail-id={record.id}>
     <div className="flex items-center justify-between gap-3"><h3 className="text-[15px] font-medium">Memory details</h3><button className={memoryButtonClass} onClick={onClose}>Close details</button></div>
     <p className="text-[12px] text-ink-secondary">{audience} · Record: {record.state} · Version {record.version} · {record.assertion.replaceAll("-", " ")} · <time dateTime={new Date(record.validFrom).toISOString()}>{new Date(record.validFrom).toLocaleString()}</time></p>
@@ -40,8 +65,24 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
     </div>
     <fieldset disabled={busy} className="space-y-4">
       <legend className="sr-only">Review memory</legend>
+      {proposal && <div className="space-y-2 rounded-lg border border-hairline/40 p-3" data-testid="memory-correction-review">
+        <h4 className="text-[13px] font-medium">{t("memoryCorrection.title")}</h4>
+        {proposal.target && <>
+          <p className="text-[12px] text-ink-secondary">{t("memoryCorrection.replaces", { version: proposal.target.version })}</p>
+          <p className="whitespace-pre-wrap break-words text-[13px]" data-testid="memory-correction-target-text">{proposal.target.text}</p>
+        </>}
+        {proposal.status === "current" && <p className="text-[12px] text-ink-secondary">{t("memoryCorrection.effect")}</p>}
+        {proposal.status === "changed" && <p role="alert" className="text-[12px] text-danger">{t("memoryCorrection.changed")}</p>}
+        {proposal.status === "unavailable" && <p role="alert" className="text-[12px] text-danger">{t("memoryCorrection.unavailable")}</p>}
+        {choosePin && <fieldset className="space-y-1">
+          <legend className="text-[13px]">{t("memoryCorrection.pinLegend")}</legend>
+          <label className="flex min-h-10 items-center gap-2 text-[13px]"><input type="radio" name={`memory-correction-pin-${record.id}`} value="transfer" required checked={pinChoice === "transfer"} onChange={() => setPinChoice("transfer")} />{t("memoryCorrection.pinTransfer")}</label>
+          <label className="flex min-h-10 items-center gap-2 text-[13px]"><input type="radio" name={`memory-correction-pin-${record.id}`} value="unpin" required checked={pinChoice === "unpin"} onChange={() => setPinChoice("unpin")} />{t("memoryCorrection.pinUnpin")}</label>
+          {!pinChoice && <p className="text-[12px] text-ink-secondary">{t("memoryCorrection.pinRequired")}</p>}
+        </fieldset>}
+      </div>}
       <div className="flex flex-wrap gap-2">
-        {record.state === "candidate" && <button className={memoryButtonClass} onClick={() => void onAction({ action: "approve", id: record.id, version: record.version }, "Candidate approved.")}>Approve candidate</button>}
+        {record.state === "candidate" && <button className={memoryButtonClass} disabled={!approval} onClick={() => { if (approval) void onAction(approval, proposal ? t("memoryCorrection.approved") : "Candidate approved."); }}>{proposal ? t("memoryCorrection.approve") : "Approve candidate"}</button>}
         {active && <button className={memoryButtonClass} onClick={() => void onAction({ action: "pin", id: record.id, version: record.version, pinned: !record.ownerPinned }, record.ownerPinned ? "Memory unpinned." : "Memory pinned.")}>{record.ownerPinned ? "Unpin memory" : "Pin memory"}</button>}
       </div>
       {active && <>
