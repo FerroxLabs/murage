@@ -11,6 +11,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { approvalKey, autoVerdict } from "../auto-approve.ts";
+import { shouldReview } from "../auto-review.ts";
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import { newId, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
@@ -659,6 +661,117 @@ describe("PiDriver turns (fake CLI)", () => {
     unsubscribe();
     const done = await recorder.until((event) => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+  });
+
+  type OpenedAsk = { requestId: string; requestType: string; tool: string; summary: string; approvalScope?: "local-computer" };
+  const hostControl = {
+    localComputer: { command: process.execPath, args: ["host-mcp.js"], env: {}, scope: "local-computer" as const },
+  };
+
+  it("carries local-computer scope on a host-control confirmation from open through resolve", async () => {
+    await create("host-confirm");
+    const threadId = `t-host-scope-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "click it", integrations: hostControl });
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    expect(opened).toMatchObject({
+      requestId: "ask-host",
+      requestType: "permission",
+      tool: "Allow click on your computer?",
+      approvalScope: "local-computer",
+    });
+
+    await expect(instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" })).resolves.toBe("allowed-once");
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === turnId)).toMatchObject({
+      behavior: "allow",
+      source: "user",
+      approvalScope: "local-computer",
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true });
+  });
+
+  it("keeps remembered grants from auto-approving a Pi host action and keeps it out of AI review", async () => {
+    await create("host-confirm");
+    const threadId = `t-host-policy-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "click it", integrations: hostControl });
+    const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as unknown as OpenedAsk;
+
+    // Every grant a user could have remembered for this card, with Auto off —
+    // run through the same join server/index.ts applies to request.opened.
+    const remembered = {
+      autoApprove: false,
+      alwaysAllow: [
+        opened.tool,
+        approvalKey(opened.tool, opened.summary)!,
+        approvalKey(opened.tool, opened.summary, "local-computer")!,
+      ],
+    };
+    const verdict = autoVerdict(remembered, opened.tool, opened.summary, { scope: opened.approvalScope });
+    expect(verdict).toMatchObject({ approve: null, source: "local-computer-block" });
+    expect(shouldReview({ source: verdict.source, mode: "enforce", unattended: false, approvalScope: opened.approvalScope })).toBe(false);
+    expect(shouldReview({ source: "no-grant", mode: "enforce", unattended: false, approvalScope: opened.approvalScope })).toBe(false);
+    // Explicit Auto on this computer keeps its separate, warned-about behavior.
+    expect(autoVerdict({ autoApprove: true }, opened.tool, opened.summary, { scope: opened.approvalScope }).approve).toBe(
+      `auto-approved ${opened.tool}`,
+    );
+
+    await expect(instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" })).resolves.toBe("rejected");
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === turnId)).toMatchObject({
+      behavior: "deny",
+      approvalScope: "local-computer",
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+  });
+
+  it("leaves ordinary asks, isolated computers and questions unscoped so ordinary grants still work", async () => {
+    // An ordinary permission ask with no host control.
+    await create("permission");
+    const plain = `t-plain-scope-${newId()}`;
+    const first = await instance.adapter.sendTurn({ threadId: plain, text: "go" });
+    const ordinary = (await recorder.until((e) => e.type === "request.opened" && e.turnId === first.turnId)) as unknown as OpenedAsk;
+    expect(ordinary).not.toHaveProperty("approvalScope");
+    expect(
+      autoVerdict({ alwaysAllow: [approvalKey(ordinary.tool, ordinary.summary)!] }, ordinary.tool, ordinary.summary, {
+        scope: ordinary.approvalScope,
+      }),
+    ).toMatchObject({ source: "always-allow" });
+    await instance.adapter.respondToRequest(plain, "ask-1", { behavior: "allow" });
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === first.turnId)).not.toHaveProperty(
+      "approvalScope",
+    );
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    recorder.stop();
+    await instance.dispose();
+
+    // An isolated computer (Cua VM / VPS) mounts without host-control scope.
+    await create("host-confirm");
+    const vm = `t-vm-scope-${newId()}`;
+    const second = await instance.adapter.sendTurn({
+      threadId: vm,
+      text: "click it",
+      integrations: { localComputer: { command: process.execPath, args: ["vm-mcp.js"], env: {} } },
+    });
+    expect(await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId)).not.toHaveProperty(
+      "approvalScope",
+    );
+    await instance.adapter.respondToRequest(vm, "ask-host", { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    recorder.stop();
+    await instance.dispose();
+
+    // A question on a host-controlling turn is not a permission.
+    await create("question");
+    const asked = `t-question-scope-${newId()}`;
+    const third = await instance.adapter.sendTurn({ threadId: asked, text: "go", integrations: hostControl });
+    const question = await recorder.until((e) => e.type === "request.opened" && e.turnId === third.turnId);
+    expect(question).toMatchObject({ requestType: "question" });
+    expect(question).not.toHaveProperty("approvalScope");
+    await expect(
+      instance.adapter.respondToRequest(asked, "ask-q", { behavior: "answer", message: "main" }),
+    ).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === third.turnId)).not.toHaveProperty(
+      "approvalScope",
+    );
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === third.turnId);
   });
 
   it("respondToRequest is unavailable for an ask that is not pending", async () => {

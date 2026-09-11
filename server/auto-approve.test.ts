@@ -252,6 +252,21 @@ describe("autoDecision", () => {
       }),
     ).toBeNull();
   });
+
+  it("stops a remembered exact-title grant for a host ask once the scope is carried", () => {
+    // Pi's host gate asks with extension-composed text, not an MCP tool name.
+    // Before A7 the driver dropped the scope, so this bare-title grant
+    // auto-approved a later host action with Auto off.
+    const title = "Allow click on your computer?";
+    expect(autoVerdict({ alwaysAllow: [title] }, title, title)).toMatchObject({ source: "always-allow" });
+    expect(autoVerdict({ alwaysAllow: [title] }, title, title, { scope: "local-computer" })).toEqual({
+      approve: null,
+      source: "no-grant",
+    });
+    expect(
+      autoVerdict({ alwaysAllow: [title, `local-computer:${title}`] }, title, title, { scope: "local-computer" }),
+    ).toEqual({ approve: null, source: "local-computer-block", rule: `local-computer:${title}` });
+  });
 });
 
 describe("unattended turns", () => {
