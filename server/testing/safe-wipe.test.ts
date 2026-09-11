@@ -258,6 +258,85 @@ describe("installSafeWipeGuard", () => {
     expect(() => assertNotProtected(String(pathToFileURL(probe)), opts)).not.toThrow();
   });
 
+  it("judges a URL-like object the way node:fs does: by its pathname, not String(target) (FOLLOW7)", () => {
+    // fs does not require `instanceof URL`: toPathIfFileURL duck-types any
+    // object with a truthy href and protocol (and no legacy url.parse
+    // `auth`/`path`), then fileURLToPath reads its hostname and pathname.
+    // So a cross-realm URL or a hand-rolled object reaches the original
+    // rmSync while a guard that only knew `instanceof URL` judged
+    // String(obj) = "[object Object]" under cwd and let it through. The
+    // probe is a nonexistent child of the fake home's data dir, never the
+    // real one.
+    const probe = join(FAKE_HOME, ".murage", "safe-wipe-ducktype-probe-does-not-exist");
+    const real = pathToFileURL(probe);
+    const duck = { href: real.href, protocol: "file:", hostname: "", pathname: real.pathname };
+    expect(duck instanceof URL).toBe(false);
+    expect(wipeTargetPath(duck)).toBe(probe);
+    expect(() => assertNotProtected(wipeTargetPath(duck), opts)).toThrow(/lies inside the Murage data directory/);
+    // Node deletes the object's pathname, so an href that names a scratch
+    // path must not launder a protected pathname.
+    const decoy = { ...duck, href: pathToFileURL(join(scratch, "decoy")).href };
+    expect(wipeTargetPath(decoy)).toBe(probe);
+    expect(() => assertNotProtected(wipeTargetPath(decoy), opts)).toThrow(/lies inside the Murage data directory/);
+    // fs's test is `href && protocol` (truthy, any type), not "string href":
+    // fileURLToPath reads only hostname and pathname, so a numeric, boolean,
+    // object or Buffer href over a protected pathname is still deleted by
+    // raw fs and must be judged by that pathname, not "[object Object]".
+    for (const href of [1, true, {}, Buffer.from("x")]) {
+      const oddHref = { href, protocol: "file:", hostname: "", pathname: real.pathname };
+      expect(wipeTargetPath(oddHref)).toBe(probe);
+      expect(() => assertNotProtected(wipeTargetPath(oddHref), opts)).toThrow(/lies inside the Murage data directory/);
+    }
+    // Shapes node:fs does not treat as URLs keep the string fallback: a
+    // legacy url.parse object (`auth` or `path` defined), a falsy href or
+    // protocol, and a non-file scheme (fs itself then throws
+    // ERR_INVALID_URL_SCHEME before deleting anything).
+    expect(wipeTargetPath({ ...duck, path: real.pathname })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, auth: null })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, href: "" })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, href: 0 })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, protocol: "" })).toBe("[object Object]");
+    expect(wipeTargetPath({ href: "https://example.com/x", protocol: "https:" })).toBe("https://example.com/x");
+  });
+
+  it("refuses a recursive delete aimed by a URL-like object at a directory another process leases (FOLLOW7)", async () => {
+    // Live fire through the installed guard, at a temp fixture (never a real
+    // location) that a real child process leases. A guard that only knew
+    // `instanceof URL` judged "[object Object]" and let the original rmSync
+    // delete the fixture and the marker.
+    const held = join(scratch, "held-duck", "data"); mkdirSync(held, { recursive: true });
+    const marker = join(held, "messages.db"); writeFileSync(marker, "marker");
+    const lease = writeLease(held, leaseHolder!.pid!);
+    const free = join(scratch, "held-duck", "free"); mkdirSync(free, { recursive: true });
+    const heldUrl = pathToFileURL(held);
+    const freeUrl = pathToFileURL(free);
+    // PathLike is typed string | Buffer | URL; the runtime accepts this
+    // shape anyway, which is the whole point.
+    const duckLike = (fields: Partial<URL>) => ({ href: heldUrl.href, protocol: "file:", hostname: "", pathname: heldUrl.pathname, ...fields }) as unknown as URL;
+    const duck = duckLike({});
+    expect(() => fs.rmSync(duck, { recursive: true, force: true })).toThrow(SafeWipeRefused);
+    await expect(fs.promises.rm(duck, { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
+    await expect(new Promise((resolve, reject) => fs.rm(duck, { recursive: true, force: true }, (e) => e ? reject(e) : resolve(null)))).rejects.toBeInstanceOf(SafeWipeRefused);
+    // fs deletes the pathname, so a scratch href cannot launder a leased pathname...
+    expect(() => fs.rmSync(duckLike({ href: freeUrl.href }), { recursive: true, force: true })).toThrow(SafeWipeRefused);
+    expect(existsSync(marker)).toBe(true);
+    // ...nor can a truthy non-string href, which fs accepts just the same
+    // (its test is `href && protocol`, and fileURLToPath never reads href).
+    for (const href of [1, true, {}, Buffer.from("x")] as unknown[] as string[]) {
+      expect(() => fs.rmSync(duckLike({ href }), { recursive: true, force: true })).toThrow(SafeWipeRefused);
+      await expect(fs.promises.rm(duckLike({ href }), { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
+      expect(existsSync(marker)).toBe(true);
+    }
+    // ...and a leased href over a free pathname is the ordinary temp delete
+    // fs would perform: judged by the pathname, admitted, and only `free` goes.
+    fs.rmSync(duckLike({ pathname: freeUrl.pathname }), { recursive: true, force: true });
+    expect(existsSync(free)).toBe(false);
+    expect(existsSync(marker)).toBe(true);
+    rmSync(lease);
+    fs.rmSync(duck, { recursive: true, force: true });
+    expect(existsSync(held)).toBe(false);
+  });
+
   it("refuses a recursive delete aimed by URL or Buffer at a directory another process leases (FOLLOW7)", async () => {
     // Live fire through the installed guard, at a temp fixture (never a real
     // location): the lease names the real child process spawned above, so
