@@ -3,8 +3,13 @@
 // and that release touches the room and the bot only while this attempt still
 // owns the room — a room another owner already took is never idled by a
 // stale exit.
+//
+// RED2L (RED2K verifier): the one exit before the room claim (Stop while the
+// browser capability is minted) releases through releaseUnclaimedRoomTurn:
+// the bot idle by the activity it set, its browser capability, the queues —
+// never the room claim or the skill-authoring claim, which it does not hold.
 import { describe, expect, it } from "vitest";
-import { releaseUnstartedRoomTurn, type UnstartedRoomTurnReleaseDeps } from "./room-turn-release.ts";
+import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn, type UnstartedRoomTurnReleaseDeps } from "./room-turn-release.ts";
 
 const harness = (state: { busyBotId: string | null; busy: Record<string, boolean> }) => {
   const calls: string[] = [];
@@ -62,5 +67,25 @@ describe("releaseUnstartedRoomTurn", () => {
     await expect(releaseUnstartedRoomTurn(deps, turn(false))).resolves.toBe("released");
     expect(state.busyBotId).toBeNull();
     expect(calls).toEqual(["room:room", "clear:room:thread", "browser:thread:gen-1", "drain"]);
+  });
+});
+
+describe("releaseUnclaimedRoomTurn", () => {
+  it("idles the bot by the activity it set, releases this owner's browser capability and drains the queues, without reading or clearing the room claim", async () => {
+    // A stale claim of a previous attempt names this bot; it is not this
+    // attempt's and is left alone. The room is never consulted.
+    const state = { busyBotId: "scout", busy: { scout: true } };
+    const { calls, deps } = harness(state);
+    await releaseUnclaimedRoomTurn(deps, { threadId: "thread", botId: "scout", ownerId: "gen-1" });
+    expect(state).toEqual({ busyBotId: "scout", busy: { scout: false } });
+    expect(calls).toEqual(["idle:scout", "browser:thread:gen-1", "drain"]);
+  });
+
+  it("does not idle a bot Stop already idled, but still releases the browser capability and drains", async () => {
+    const state = { busyBotId: null, busy: { scout: false } };
+    const { calls, deps } = harness(state);
+    await releaseUnclaimedRoomTurn(deps, { threadId: "thread", botId: "scout", ownerId: "gen-1" });
+    expect(state).toEqual({ busyBotId: null, busy: { scout: false } });
+    expect(calls).toEqual(["browser:thread:gen-1", "drain"]);
   });
 });
