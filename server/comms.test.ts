@@ -859,6 +859,81 @@ describe("comms e2e (fake ACP fleet)", () => {
     90_000,
   );
 
+  it(
+    "releases a delegation waiting on a bot that a provider reload retired",
+    async () => {
+      // The retiring loop in reloadProviders settles a direct run before the
+      // new fleet is attached, and every reload runs under the config
+      // mutation guard, so its idle retry used to run while admission was
+      // closed and release nothing. The handoff must reach the rebuilt fleet
+      // as the same retry period, not as a new busy attempt.
+      rmSync(gateFile, { force: true });
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "RetiredHelper",
+        modelSelection: { instanceId: "helperGate", model: "fake-model" },
+      });
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${asker.id}`, {
+        name: "RetiredAsker",
+        modelSelection: { instanceId: "askerDelegate", model: "fake-model" },
+      });
+
+      expect((await api("POST", `/api/bots/${helper.id}/messages`, { text: "hold until reload" })).status).toBe(202);
+      await waitUntil(async () => {
+        const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+        return Boolean(current?.busy);
+      }, 10_000, "helper never went busy");
+
+      // The asker's delegate_bot queues behind the busy helper: its own turn
+      // settles, the drain finds the helper busy and parks the handoff.
+      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "hey @RetiredHelper please pick this up" })).status).toBe(202);
+      const waitingChip = (m: any) => m.kind === "activity" && m.tool?.name === "Delegation to @RetiredHelper waiting — they're busy (retry 1/3 when they finish)";
+      await waitUntil(async () => {
+        const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        return current.messages.some(waitingChip) && !current.busy;
+      }, 30_000, "delegation never parked behind the busy helper");
+
+      expect((await api("PUT", "/api/config", { xai: { key: `xai_retired_${Date.now()}` } })).status).toBe(200);
+      writeFileSync(gateFile, "go");
+
+      let askerBot: any;
+      await waitUntil(async () => {
+        askerBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        return askerBot.messages.some(
+          (m: any) => m.kind === "text" && m.from?.botId === helper.id
+            && m.text?.includes("replied to the delegated task") && m.text?.includes("delegated task"),
+        );
+      }, 30_000, "provider reload left the waiting delegation stranded");
+      // Idle follows the reply once the helper's child confirms its close.
+      let helperBot: any;
+      await waitUntil(async () => {
+        helperBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === helper.id);
+        return !helperBot.busy;
+      }, 10_000, "helper stayed busy after its delegated reply");
+      // The reload retired the helper's held turn (no turn.completed from the
+      // disposed fleet) and the delegated prompt then ran on the new fleet.
+      expect(helperBot.messages.some(
+        (m: any) => m.kind === "activity" && m.tool?.name === "error: turn interrupted because provider settings changed",
+      )).toBe(true);
+      expect(helperBot.messages.some(
+        (m: any) => m.role === "user" && m.kind === "text" && m.text?.includes("[Delegated by @RetiredAsker"),
+      )).toBe(true);
+      // One busy period, one retry chip: the reload's release is the retry.
+      expect(askerBot.messages.filter(waitingChip)).toHaveLength(1);
+      expect(askerBot.messages.some(
+        (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy (retry 2/3"),
+      )).toBe(false);
+      expect(askerBot.messages.some(
+        (m: any) => m.kind === "activity" && m.tool?.name?.startsWith("Delegation to @RetiredHelper canceled"),
+      )).toBe(false);
+    },
+    75_000,
+  );
+
   // ── ask_bot timeout conversion ──────────────────────────────────────
   // A peer that is legitimately slow (rendering, long tool runs) used to
   // hit ask_bot's fixed ceiling and the reply was simply lost — the other

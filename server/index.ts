@@ -532,7 +532,7 @@ utilityParentPort?.on("message", (event) => {
     if (browserCleanup.receive(message)) return;
     if (applyProviderBankFenceMessage(message)) {
       // Admission closed while the desktop reconciled; drain once it reopens.
-      if (!providerBankDispatchFenced()) scheduleCoordinationDrain();
+      if (!providerBankDispatchFenced()) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); }
       return;
     }
     if (!applyDesktopBrowserConnectionMessage(message)) composio.applyManagedBrokerMessage(message);
@@ -586,7 +586,7 @@ function finishProviderConfigMutation(): void {
   providerConfigBusy = false;
   // Reload/rollback may have released idle targets while admission was closed.
   // Drain only after the final fleet is attached and the mutation guard clears.
-  if (providerFleetReady) scheduleCoordinationDrain();
+  if (providerFleetReady) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); }
 }
 function holdCoordinationSlot(threadId: string): () => void {
   if (coordinationSlots.has(threadId) || !coordinationHasCapacity()) throw new Error("COORDINATION_CAPACITY: wait for a running handoff");
@@ -3384,7 +3384,18 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
 // bot without that event, so every explicit idle release calls this same
 // coalesced retry hook. The microtask lets the releasing state machine finish
 // before another turn claims the bot.
+//
+// A release can land while admission is closed: reloadProviders retires
+// direct runs before the new fleet is attached, and every caller of it holds
+// the config-mutation guard until after the reload, so a retry that ran then
+// found providerFleetReady false or providerConfigBusy true and released
+// nothing — the handoff stayed "waiting — retry 1/3" until an unrelated
+// drain happened by. The retry is kept instead and replayed when admission
+// reopens (finishProviderConfigMutation, the Flux fence, the desktop bank
+// fence), so a delegation waiting on a reloaded bot runs on the new fleet.
 const delegationRetryBots = new Set<string>();
+const deferredDelegationRetries = new Set<string>();
+const coordinationAdmissionClosed = () => providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady;
 function retryDelegationsWaitingOn(botId: string): void {
   if (delegationRetryBots.has(botId)) return;
   delegationRetryBots.add(botId);
@@ -3393,11 +3404,20 @@ function retryDelegationsWaitingOn(botId: string): void {
     if (store.bot(botId)?.busy) return;
     const threadId = store.bot(botId)?.threadId;
     if (threadId) coordinationSlots.get(threadId)?.();
-    if (providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady) return;
+    if (coordinationAdmissionClosed()) { deferredDelegationRetries.add(botId); return; }
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
   });
+}
+/** Re-run the idle releases that arrived while admission was closed. Each
+ * goes back through the same hook, so a bot that has since become busy again
+ * waits for its own settle as usual. */
+function replayDeferredDelegationRetries(): void {
+  if (coordinationAdmissionClosed() || !deferredDelegationRetries.size) return;
+  const bots = [...deferredDelegationRetries];
+  deferredDelegationRetries.clear();
+  for (const botId of bots) retryDelegationsWaitingOn(botId);
 }
 
 bus.subscribe((event: RuntimeEvent) => {
@@ -6952,7 +6972,7 @@ function readFluxConnectionState(): FluxCredentialState {
 const fluxConnectionTransaction = new FluxConnectionTransaction({
   read: readFluxConnectionState,
   assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error("Finish running work before changing Flux credentials."), { status: 409 }); },
-  fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) scheduleCoordinationDrain(); },
+  fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); } },
   apply: async (state, external, restore) => {
     const previous = cfg.modelProviders?.bank;
     const bank = state.bank ?? "[]", apiKey = state.workspaceKey ?? "", connectionAliases = state.aliases ?? [];
