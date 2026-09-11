@@ -32,7 +32,7 @@ import { hostStoppedReason } from "../shared/host-stop.ts";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>;
-let sessionGate: string, terminalGate: string, redispatchHold: string, dumpPath: string, agentsEnvPath: string;
+let sessionGate: string, terminalGate: string, redispatchHold: string, browserHold: string, dumpPath: string, agentsEnvPath: string;
 const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json() as any };
@@ -50,7 +50,7 @@ const disclosures = (threadId: string) => {
   finally { db.close(); }
 };
 const serverLog = () => readFileSync(fixture.info.logPath, "utf8");
-const resetGates = () => { for (const path of [sessionGate, `${sessionGate}.waiting`, terminalGate, `${terminalGate}.emitted`, redispatchHold, `${redispatchHold}.waiting`, `${redispatchHold}.armed`, dumpPath, agentsEnvPath]) rmSync(path, { force: true }); };
+const resetGates = () => { for (const path of [sessionGate, `${sessionGate}.waiting`, terminalGate, `${terminalGate}.emitted`, redispatchHold, `${redispatchHold}.waiting`, `${redispatchHold}.armed`, browserHold, `${browserHold}.waiting`, `${browserHold}.armed`, dumpPath, agentsEnvPath]) rmSync(path, { force: true }); };
 const createBot = async (name: string) => {
   const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "late").models.options;
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "late", model: models[0].id } });
@@ -123,10 +123,36 @@ posixOnly("a refused child's late terminal event does not stop the re-dispatch",
         fs.writeFileSync(hold+'.waiting',threadId);
         await new Promise(resolve=>{const poll=setInterval(()=>{if(!fs.existsSync(hold))return;clearInterval(poll);resolve();},20);});
       };
+      // Fixture hold on the browser capability's registration (RED2L): the
+      // engine binary is the node executable (found, never run) and its
+      // version check — the one await between a room member's busy claim
+      // and its room claim — is held, one-shot, while <browser-hold>.armed
+      // exists, and released by <browser-hold>. Same shape as
+      // server/testing/unified-browser-fixture.mjs.
+      process.env.MURAGE_AGENT_BROWSER_PATH=process.execPath;
+      const { registerHooks } = await import('node:module');
+      const browserHold=path.join(dataDir,'browser-hold');
+      registerHooks({ load(url, context, nextLoad) {
+        if(!url.endsWith('/browser-engine.ts'))return nextLoad(url, context);
+        const source=fs.readFileSync(new URL(url),'utf8');
+        const start=source.indexOf('export async function verifyAgentBrowserBinary(');
+        const end=source.indexOf('export async function ensureChrome(',start);
+        if(start<0||end<0)throw new Error('Browser version fixture anchor changed');
+        return { format:'module-typescript', shortCircuit:true, source: source.slice(0,start)+\`
+export async function verifyAgentBrowserBinary(binary, env) {
+  const fs = await import('node:fs');
+  const hold = \${JSON.stringify(browserHold)};
+  if (!fs.existsSync(hold + '.armed')) return;
+  fs.rmSync(hold + '.armed', { force: true });
+  fs.writeFileSync(hold + '.waiting', env.AGENT_BROWSER_SESSION ?? '');
+  await new Promise(resolve => { const poll = setInterval(() => { if (!fs.existsSync(hold)) return; clearInterval(poll); resolve(); }, 20); });
+}
+\`+source.slice(end) };
+      } });
       const file=path.join(dataDir,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       // The skill recorder is on, so a hop-0 member turn takes the round's
       // skill-authoring claim (the fixture driver declares agentsMcp).
-      cfg.features={...(cfg.features??{}),skillRecorder:true};
+      cfg.features={...(cfg.features??{}),skillRecorder:true,browser:true};
       cfg.instances.late={driver:'fakeLateTerminal',displayName:'Late-terminal fixture',
         environment:{FAKE_LATE_SESSION_GATE:path.join(dataDir,'late-session-gate'),FAKE_LATE_TERMINAL_GATE:path.join(dataDir,'late-terminal-gate'),FAKE_LATE_DUMP:path.join(dataDir,'late-dump.jsonl'),FAKE_LATE_AGENTS_ENV:path.join(dataDir,'late-agents-env.json')}};
       fs.writeFileSync(file,JSON.stringify(cfg));
@@ -134,6 +160,7 @@ posixOnly("a refused child's late terminal event does not stop the re-dispatch",
     sessionGate = join(fixture.info.dataDir, "late-session-gate");
     terminalGate = join(fixture.info.dataDir, "late-terminal-gate");
     redispatchHold = join(fixture.info.dataDir, "redispatch-hold");
+    browserHold = join(fixture.info.dataDir, "browser-hold");
     dumpPath = join(fixture.info.dataDir, "late-dump.jsonl");
     agentsEnvPath = join(fixture.info.dataDir, "late-agents-env.json");
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
@@ -340,5 +367,93 @@ posixOnly("a refused child's late terminal event does not stop the re-dispatch",
     expect(dispatches()[2]).toEqual({ turnId: expect.any(String), threadId: room.threadId, skillAuthoring: true });
     expect(chips(await messages(room.threadId))).toEqual([]);
     expect(chips(await messages(member.threadId))).toEqual([]);
+  }, 120000);
+  // RED2L (RED2K verifier): one exit sits BEFORE the room claim. A member
+  // turn marks the bot working, then mints its browser capability — the one
+  // await between that busy claim and the room claim — and re-checks; a
+  // Stop landing inside that window used to idle the bot inline without
+  // draining the queues. A continuation parked for the member while it was
+  // busy there (a credential card on its own thread answered in that
+  // window) stayed parked until some unrelated turn.completed. The exit now
+  // releases through releaseUnclaimedRoomTurn (server/room-turn-release.ts):
+  // the bot idle by the activity it set — never the room, which it does not
+  // own — this attempt's browser capability released, the queues drained.
+  // Held by a fixture hold on the browser engine's version check; the
+  // member's browser is switched on only after its 1:1 turn, so the room
+  // turn is the first to mint (and hold) its capability.
+  it("room member path: Stop while the browser capability is minted, before the room claim, drains a continuation queued for the member and idles it", async () => {
+    const member = await createBot("Stopped before claim member"), other = await createBot("Stopped before claim other");
+    const createdRoom = await api("POST", "/api/groups", { name: "Stopped before claim room", memberIds: [member.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } } });
+    expect(createdRoom.status).toBe(201);
+    const room = createdRoom.body.group as { id: string; threadId: string };
+    const idle = async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; };
+    resetGates();
+    const directRepliesBefore = (await replies(member.threadId)).length;
+    // A credential request card on the member's own thread, raised by the
+    // member's turn there while the session gate holds it; the turn completes.
+    expect((await api("POST", `/api/bots/${member.id}/messages`, { threadId: member.threadId, text: "a turn that asks for a credential" })).status).toBe(202);
+    await expect.poll(() => existsSync(`${sessionGate}.waiting`), { timeout: 15000 }).toBe(true);
+    const agentsEnv = JSON.parse(readFileSync(agentsEnvPath, "utf8")) as Record<string, string>;
+    expect(agentsEnv.MURAGE_THREAD_ID).toBe(member.threadId);
+    const card = await fetch(`${fixture.info.url}/api/internal/request-credential`, { method: "POST", headers: { authorization: `Bearer ${agentsEnv.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ fromBotId: member.id, fromThreadId: member.threadId, credentialId: "openaiImageApiKey", reason: "queued continuation under test" }) });
+    expect(card.status).toBe(201);
+    const { messageId } = await card.json() as { messageId: string };
+    writeFileSync(sessionGate, "");
+    await expect.poll(async () => (await botState(member.id)).busy, { timeout: 15000 }).toBe(false);
+    await expect.poll(async () => (await replies(member.threadId)).length, { timeout: 15000 }).toBe(directRepliesBefore + 1);
+    expect(dispatches()).toEqual([{ turnId: expect.any(String), threadId: member.threadId, skillAuthoring: true }]);
+    // The member's browser goes on now: its room turn is the first to mint
+    // the capability, and the engine's version check is held.
+    expect((await api("PATCH", `/api/bots/${member.id}`, { browser: true })).status).toBe(200);
+    writeFileSync(`${browserHold}.armed`, "");
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "room turn stopped while its browser capability was being minted" })).status).toBe(202);
+    await expect.poll(() => existsSync(`${browserHold}.waiting`), { timeout: 15000 }).toBe(true);
+    // Inside the window: the member is busy (its activity), the room claim
+    // is not yet taken, nothing dispatched.
+    expect((await botState(member.id)).busy).toBe(true);
+    expect((await groupState(room.id)).busyBotId ?? null).toBeNull();
+    expect(dispatches()).toHaveLength(1);
+    // Answered while the member is busy: the continuation of its own thread
+    // is parked for when the member settles.
+    const dismissed = await api("POST", `/api/bots/${member.id}/secret-cards/${messageId}/dismiss`, { threadId: member.threadId });
+    expect(dismissed.status).toBe(200);
+    expect(dismissed.body).toEqual({ dismissed: true, resumed: true });
+    expect((await messages(member.threadId)).find(message => message.id === messageId)?.secret).toMatchObject({ dismissed: true, resumed: true });
+    expect(dispatches()).toHaveLength(1);
+    // Stop the member while its capability is still being minted, then let
+    // the mint finish: the turn's own re-check sees the Stop.
+    expect((await api("POST", `/api/bots/${member.id}/interrupt`, {})).status).toBe(200);
+    writeFileSync(browserHold, "");
+
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => (await botState(member.id)).busy, { timeout: 15000 }).toBe(false);
+    // The parked continuation is drained by the unstarted exit itself — no
+    // provider turn ran, so no turn.completed would ever retry it — and runs
+    // on the member's thread to a reply. Without the drain it stays parked
+    // here.
+    await expect.poll(async () => (await replies(member.threadId)).length, { timeout: 15000 }).toBe(directRepliesBefore + 2);
+    await expect.poll(async () => (await botState(member.id)).busy, { timeout: 15000 }).toBe(false);
+    expect((await replies(member.threadId)).at(-1)?.text).toBe("Hello from late");
+    expect(chips(await messages(member.threadId))).toEqual([]);
+    // The stopped room turn never dispatched and posted nothing.
+    expect(dispatches()).toEqual([
+      { turnId: expect.any(String), threadId: member.threadId, skillAuthoring: true },
+      { turnId: expect.any(String), threadId: member.threadId, skillAuthoring: true },
+    ]);
+    expect(chips(await messages(room.threadId))).toEqual([]);
+    expect((await replies(room.threadId)).length).toBe(0);
+    expect(stoppedNotices(await messages(room.threadId))).toHaveLength(0);
+    // and the room is free: the next message runs to a reply, with the
+    // member's browser capability minted without a hold.
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "runs after the room turn stopped before its claim" })).status).toBe(202);
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => (await replies(room.threadId)).length, { timeout: 15000 }).toBe(1);
+    expect((await replies(room.threadId))[0].from.botId).toBe(member.id);
+    expect(dispatches()).toHaveLength(3);
+    expect(dispatches()[2]).toEqual({ turnId: expect.any(String), threadId: room.threadId, skillAuthoring: true });
+    expect(chips(await messages(room.threadId))).toEqual([]);
+    expect(chips(await messages(member.threadId))).toEqual([]);
+    expect(existsSync(`${browserHold}.armed`)).toBe(false);
   }, 120000);
 });
