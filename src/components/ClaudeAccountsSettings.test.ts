@@ -200,9 +200,17 @@ describe("claudeAccountChanger", () => {
     const failed = section({ request: async () => { throw new Error("Account name is taken."); } });
     await failed.change("POST", undefined, { displayName: "Work" });
     expect(failed.log).toEqual(["busy true", "error Account name is taken.", "busy false"]);
+    // FOLLOW4: the store's refreshInstances now rejects when GET
+    // /api/instances fails, so this path is live from EnginesSettings. Its
+    // message names what could not refresh — the engine list, not the
+    // section's own list, which was drawn — and how to probe it again.
     const refresh = section({ fleet: () => { refresh.log.push("fleet"); return Promise.reject(new Error("offline")); } });
     await refresh.change("DELETE", "claude-work");
-    expect(refresh.log).toEqual(["busy true", "request DELETE", "draw DELETE", "load", "busy false", "fleet", "error Saved, but the account list could not refresh. Use Refresh accounts to check its current state."]);
+    expect(refresh.log).toEqual(["busy true", "request DELETE", "draw DELETE", "load", "busy false", "fleet", "error Saved, but the engine list could not refresh. Switch to another window and back to probe the engines again."]);
+    // The section's own list failing keeps its own message.
+    const list = section({ load: async () => { throw new Error("offline"); } });
+    await list.change("PATCH", "claude-work", { displayName: "Work" });
+    expect(list.log).toEqual(["busy true", "request PATCH", "draw PATCH", "error Saved, but the account list could not refresh. Use Refresh accounts to check its current state.", "busy false", "fleet"]);
   });
 
   it("works without a page to refresh", async () => {
@@ -211,12 +219,7 @@ describe("claudeAccountChanger", () => {
     expect(log).toEqual(["busy true", "request POST", "draw POST", "load", "busy false"]);
   });
 
-  it("is the sequence the section runs, with EnginesSettings' refresh as its fleet", () => {
-    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ClaudeAccountsSettings.tsx"), "utf8");
-    expect(source).toMatch(/const \[change\] = useState\(\(\) => claudeAccountChanger\(\{/);
-    expect(source).toContain("fleet: () => fleet.current?.()");
-    expect(source).not.toMatch(/await onChanged/);
-    const engines = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "EnginesSettings.tsx"), "utf8");
-    expect(engines.match(/<ClaudeAccountsSettings onChanged=\{refreshInstances\} \/>/g)).toHaveLength(2);
-  });
+  // The wiring — EnginesSettings hands the store's refreshInstances to the
+  // section as onChanged — is pinned by rendering in EnginesSettings.test.ts;
+  // the sequence in the real browser by claude-accounts.human.spec.ts.
 });

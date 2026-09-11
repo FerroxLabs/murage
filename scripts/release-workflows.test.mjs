@@ -348,6 +348,25 @@ describe("scoped Ubuntu human confirmation", () => {
     expect(job.steps.find(step => step.name === "Confirm selected human specs").run).toContain('playwright test "${human_paths[@]}" --retries=0 --trace=on');
     expect(job.steps.find(step => step.name === "Upload human screenshots and traces").if).toBe("always()");
   });
+
+  // FOLLOW4 (CLAC3 verifier): the root playwright.config.ts routes its
+  // outputDir through src/e2e/evidence.ts, which refuses to run without
+  // MURAGE_E2E_DATA_DIR, so every CI step that runs it sets the variable to
+  // a directory outside the checkout and uploads that directory's
+  // human-results, not test-results/ from the repository.
+  it("runs the human specs with their evidence outside the checkout", () => {
+    const ci = load("ci.yml");
+    const evidence = "${{ runner.temp }}/murage-e2e";
+    const scoped = ci.jobs["human-confirmation"];
+    expect(scoped.steps.find(step => step.name === "Confirm selected human specs").env.MURAGE_E2E_DATA_DIR).toBe(evidence);
+    expect(scoped.steps.find(step => step.name === "Upload human screenshots and traces").with.path).toBe(`${evidence}/human-results`);
+    const test = ci.jobs.test;
+    expect(test.steps.find(step => step.name === "Run human specs").env.MURAGE_E2E_DATA_DIR).toBe(evidence);
+    expect(test.steps.find(step => step.name === "Upload human spec traces on failure").with.path).toBe(`${evidence}/human-results`);
+    for (const job of Object.values(ci.jobs)) {
+      for (const step of job.steps ?? []) expect(String(step.with?.path ?? ""), step.name).not.toMatch(/(^|\n)\s*test-results\s*($|\n)/);
+    }
+  });
 });
 
 describe("no upstream identity ships in .github/", () => {

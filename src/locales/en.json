@@ -3,6 +3,7 @@
   "claudeAccounts.removed": "Removed from Murage. Login and credential files were retained.",
   "claudeAccounts.saved": "Account settings saved.",
   "claudeAccounts.refreshError": "Saved, but the account list could not refresh. Use Refresh accounts to check its current state.",
+  "claudeAccounts.fleetRefreshError": "Saved, but the engine list could not refresh. Switch to another window and back to probe the engines again.",
   "claudeAccounts.changeError": "Account change failed.",
   "claudeAccounts.listUnreadable": "Could not read the Claude account list. Use Refresh accounts to try again.",
   "claudeAccounts.copied": "Copied sign-in command for {name}.",

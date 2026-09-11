@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { ProjectTurnLeases, PROJECT_TURN_TOMBSTONE_LIMIT } from "./project-turn-leases.ts";
 
 const roots: string[] = [];
@@ -157,17 +157,27 @@ it("restore admission refuses when one holder is stopped but another is live, or
 it("restore admission reports a throw that is not the registry's own refusal as an error, not a conflict", async () => {
   const { cwd, leases } = fixture();
   const exploded = new TypeError("registry exploded");
+  // FOLLOW4: every caller folds this into an unusable-path answer, so the
+  // throw is logged here, once per event, name and message and no path.
+  const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const logged = () => warned.mock.calls.map(call => call.map(String).join(" ")).filter(line => line.includes("registry exploded"));
   const acquireRestore = leases.folders.acquireRestore;
   leases.folders.acquireRestore = () => { throw exploded; };
   const started = Date.now();
   await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "error", error: exploded });
   expect(Date.now() - started).toBeLessThan(1_000);
+  expect(logged()).toHaveLength(1);
+  expect(logged()[0]).toMatch(/TypeError: registry exploded/);
+  expect(logged()[0]).not.toContain(cwd);
   // The same from the conflict check that follows a `conflict` refusal.
   leases.folders.acquireRestore = acquireRestore;
   leases.acquire("thread", "generation", cwd);
   leases.markDispatched("generation");
   leases.folders.conflicts = () => { throw exploded; };
   await expect(leases.acquireRestoreWhenStopped("restore:2", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "error", error: exploded });
+  expect(logged()).toHaveLength(2);
+  expect(logged()[1]).not.toContain(cwd);
+  warned.mockRestore();
 });
 
 it("restore admission reports a stopped writer that does not release within the bound as still closing", async () => {

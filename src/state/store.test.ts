@@ -1271,3 +1271,35 @@ describe("answerCard routing", () => {
     expect(urls).not.toContain("/api/bots/echo/cards/q");
   });
 });
+
+
+// FOLLOW4 (CLAC3 verifier). refreshInstances used to swallow its own failure,
+// so a caller that had just saved something — an account change in
+// ClaudeAccountsSettings, an Enable in EnginesSettings — could never say that
+// the engine list it shows may be stale: their "could not refresh" paths were
+// dead. The store now rejects when GET /api/instances fails; callers with
+// nothing to tell the user catch it themselves.
+describe("refreshInstances", () => {
+  async function refreshWith(instances: (url: string) => Response) {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : String(input);
+      return Promise.resolve(url.includes("/api/instances") ? instances(url) : new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+    }) as typeof fetch;
+    try {
+      let refresh: (() => Promise<void>) | null = null;
+      const Probe = () => { refresh = useStore().refreshInstances; return null; };
+      renderToStaticMarkup(createElement(StoreProvider, null, createElement(Probe)));
+      expect(refresh).toBeTypeOf("function");
+      return await refresh!();
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  it("resolves when the engine list answers", async () => {
+    await expect(refreshWith(() => new Response(JSON.stringify({ instances: [] }), { status: 200, headers: { "content-type": "application/json" } }))).resolves.toBeUndefined();
+  });
+
+  it("rejects with the server's reason when the engine list does not answer", async () => {
+    await expect(refreshWith(() => new Response(JSON.stringify({ error: "Engine probe failed" }), { status: 503, headers: { "content-type": "application/json" } }))).rejects.toThrow("Engine probe failed");
+  });
+});

@@ -36,6 +36,9 @@ export function NoEngines() {
     setRechecking(true);
     try {
       await refreshInstances();
+    } catch {
+      // Offline or server down: the setup screen stays as it is, and the
+      // next Check again asks once more (refreshInstances rejects, FOLLOW4).
     } finally {
       setRechecking(false);
     }
