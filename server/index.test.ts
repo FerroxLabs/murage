@@ -6693,7 +6693,18 @@ describe("harness HTTP API", () => {
       profile: { name: "External Store" },
     });
     expect(saved.status).toBe(200);
-    expect(saved.body.composio).toEqual({ configured: true, mode: "self-hosted" });
+    // configStatus().composio also carries the connected-apps panel fields
+    // (design §6.4). A pasted workspace key is BYOK: no broker, no migration,
+    // and no FluxRouter broker in a dev harness.
+    expect(saved.body.composio).toEqual({
+      configured: true,
+      mode: "self-hosted",
+      broker: null,
+      migration: { state: "none", legacyUntil: null },
+      fluxConfigured: false,
+      fluxBrokerEnabled: false,
+      freeRunsRemainingToday: null,
+    });
     expect(saved.body.opencodeGo).toEqual({ configured: true });
     expect(saved.body.profile).toEqual({ name: "External Store", email: "" });
     expect(JSON.stringify(saved.body)).not.toContain("ak_good");
@@ -6708,7 +6719,7 @@ describe("harness HTTP API", () => {
     // A later ordinary setting save reloads config; the in-process secure-env
     // override must keep Composio configured until the next app launch.
     expect((await desktopApi("PUT", "/api/config", { profile: { name: "Grace" } })).status).toBe(200);
-    expect((await api("GET", "/api/config")).body.composio).toEqual({ configured: true, mode: "self-hosted" });
+    expect((await api("GET", "/api/config")).body.composio).toMatchObject({ configured: true, mode: "self-hosted" });
   });
 
   it.skipIf(process.platform === "win32")("stores the credentials file with owner-only permissions", () => {

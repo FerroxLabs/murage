@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { InstallationRow } from "./index";
 import {
   authorize,
+  billableCallCount,
   catalog,
+  confirmClaim,
+  configuredInstant,
+  issueClaim,
+  migrationGate,
+  route,
+  signClaimAssertion,
   connectedServices,
   connectionStatus,
   createSession,
@@ -23,6 +31,22 @@ const multiAccount = {
   max_accounts_per_toolkit: 5,
   require_explicit_selection: true,
 };
+
+/** An installations row the way `authenticate` returns it. The claim columns
+ * are null for every install that has never been offered to FluxRouter, which
+ * is what the whole existing fleet looks like. */
+function installRow(overrides: Partial<InstallationRow> = {}): InstallationRow {
+  return {
+    id: "install-1",
+    composio_user_id: "murage_stable",
+    session_id: "trs_multi",
+    disabled_at: null,
+    claim_issued_at: null,
+    claim_confirmed_at: null,
+    last_claim_jti: null,
+    ...overrides,
+  };
+}
 
 function session(id: string, userId: string, configured = true) {
   return {
@@ -137,12 +161,7 @@ describe("connected-apps broker boundaries", () => {
       return Response.json(session("trs_legacy", "murage_stable", false));
     });
 
-    await expect(ensureSession({
-      id: "install-1",
-      composio_user_id: "murage_stable",
-      session_id: "trs_legacy",
-      disabled_at: null,
-    }, env as never, ctx as never)).resolves.toMatchObject({ sessionId: "trs_new", multiAccountConfigured: true });
+    await expect(ensureSession(installRow({ session_id: "trs_legacy" }), env as never, ctx as never)).resolves.toMatchObject({ sessionId: "trs_new", multiAccountConfigured: true });
     const creation = fetchCalls.find((call) => call.init?.method === "POST");
     expect(JSON.parse(String(creation?.init?.body))).toMatchObject({ user_id: "murage_stable", multi_account: multiAccount });
     expect(dbRuns.some((run) => run.values[0] === "trs_new" && run.values[2] === "install-1")).toBe(true);
@@ -201,12 +220,7 @@ describe("connected-apps broker boundaries", () => {
       if (url.includes("/connected_accounts/ca_work") && init?.method === "DELETE") return Response.json({ success: true });
       return Response.json({ error: "not found" }, { status: 404 });
     });
-    const installation = {
-      id: "install-1",
-      composio_user_id: "murage_stable",
-      session_id: "trs_multi",
-      disabled_at: null,
-    };
+    const installation = installRow();
 
     const statusResponse = await connectionStatus(
       new URL("https://broker.example/v1/connectors?services=gmail"),
@@ -518,7 +532,7 @@ describe("bounded request bodies", () => {
       body: stream,
       duplex: "half",
     } as RequestInit);
-    const installation = { id: "install-1", composio_user_id: "murage_stable", session_id: "trs_multi", disabled_at: null };
+    const installation = installRow();
 
     const response = await proxyMcp(request, installation, spiedEnv as never, ctx as never);
     expect(response.status).toBe(413);
@@ -540,7 +554,7 @@ describe("bounded request bodies", () => {
     });
     const payload = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     const request = new Request("https://broker.test/v1/mcp", { method: "POST", body: payload });
-    const installation = { id: "install-1", composio_user_id: "murage_stable", session_id: "trs_multi", disabled_at: null };
+    const installation = installRow();
 
     const response = await proxyMcp(request, installation, { ...env, DAILY_CALL_CEILING: "off" } as never, ctx as never);
     expect(response.status).toBe(200);
@@ -573,7 +587,7 @@ describe("bounded request bodies", () => {
 });
 
 describe("write-safe account inventory for new links", () => {
-  const installation = { id: "install-1", composio_user_id: "murage_stable", session_id: "trs_multi", disabled_at: null };
+  const installation = installRow();
 
   function linkHarness(inventory: () => Response) {
     const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
@@ -641,5 +655,310 @@ describe("write-safe account inventory for new links", () => {
     })));
     expect((await harness.link("sixth")).status).toBe(409);
     expect(harness.links()).toHaveLength(2);
+  });
+});
+
+// ── moving an install to FluxRouter ────────────────────────────────────
+// The whole point of the three legs is that nothing destructive happens until
+// the last one. These tests are written against that: an assertion that is
+// signed and then dropped on the floor must leave the install exactly as it
+// was, because the ways leg 2 can fail (FluxRouter 5xx, a paused claim route,
+// a rate limit, no network) are all ordinary.
+
+const CLAIM_JWK = {
+  kty: "OKP",
+  crv: "Ed25519",
+  d: "KSGQAa7uJcCVg4x3PCeSx8vdAhnbLBiuv5jU8k487gI",
+  x: "FAcqeKx9x_BMTFpNjOEG2vA_i7ka60FBQAqMoGi3LUo",
+  kid: "murage-claim-test",
+};
+const CLAIM_PUBLIC_JWK = { kty: "OKP", crv: "Ed25519", x: CLAIM_JWK.x };
+const BROKER_TOKEN_HASH = "b".repeat(64);
+const DAY_MS = 86_400_000;
+
+function decodeSegment(segment: string): Record<string, unknown> {
+  const padded = segment.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(segment.length / 4) * 4, "=");
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))));
+}
+
+/** Verify exactly as FluxRouter will: public key only, signature over the
+ * signing input, nothing trusted from the payload until it checks out. */
+async function verifyAssertion(assertion: string) {
+  const [header, payload, signature] = assertion.split(".");
+  const key = await crypto.subtle.importKey("jwk", CLAIM_PUBLIC_JWK, { name: "Ed25519" }, false, ["verify"]);
+  const raw = signature.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(signature.length / 4) * 4, "=");
+  const valid = await crypto.subtle.verify(
+    { name: "Ed25519" },
+    key,
+    Uint8Array.from(atob(raw), (c) => c.charCodeAt(0)),
+    new TextEncoder().encode(`${header}.${payload}`),
+  );
+  return { valid, header: decodeSegment(header), payload: decodeSegment(payload) };
+}
+
+/** A D1 stand-in that records every statement and answers `first()`, which the
+ * claim routes and the call fuse both need. */
+function claimEnv(overrides: Record<string, unknown> = {}, row: InstallationRow = installRow()) {
+  const statements: Array<{ sql: string; values: unknown[] }> = [];
+  const env = {
+    COMPOSIO_API_KEY: "ak_test",
+    CLAIM_MODE: "open",
+    MIGRATION_GATE: "on",
+    CLAIM_GRACE_SECONDS: "900",
+    CLAIM_ISSUED_FALLBACK_SECONDS: "604800",
+    LEGACY_BROKER_UNTIL: "",
+    CLAIM_UNTIL: "",
+    CLAIM_SIGNING_JWK: JSON.stringify(CLAIM_JWK),
+    DAILY_CALL_CEILING: "off",
+    SESSION_LIMITER: { limit: async () => ({ success: true }) },
+    REGISTRATION_LIMITER: { limit: async () => ({ success: true }) },
+    DB: {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              run: async () => { statements.push({ sql, values }); },
+              first: async () => { statements.push({ sql, values }); return row; },
+            };
+          },
+        };
+      },
+    },
+    ...overrides,
+  };
+  return { env, statements, ctx: { waitUntil(promise: Promise<unknown>) { void promise; } } };
+}
+
+const claimRequest = (body: unknown = { audience: "fluxrouter-composio", brokerTokenSha256: BROKER_TOKEN_HASH }) =>
+  new Request("https://broker.test/v1/claims", { method: "POST", body: JSON.stringify(body) });
+
+describe("issuing a claim assertion", () => {
+  it("signs the stored Composio user id with a key FluxRouter only ever verifies", async () => {
+    const { env, statements } = claimEnv();
+    const response = await issueClaim(claimRequest(), installRow(), env as never);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { assertion: string; jti: string; expiresAt: number };
+    expect(body.jti).toMatch(/^[0-9a-f-]{36}$/);
+
+    const { valid, header, payload } = await verifyAssertion(body.assertion);
+    expect(valid).toBe(true);
+    expect(header).toEqual({ alg: "EdDSA", typ: "murage-composio-claim+jwt", kid: "murage-claim-test" });
+    expect(payload).toMatchObject({
+      iss: "murage-composio",
+      aud: "fluxrouter-composio",
+      sub: "install-1",
+      // From D1, never recomputed from anything the client sent.
+      cuid: "murage_stable",
+      bth: BROKER_TOKEN_HASH,
+      jti: body.jti,
+    });
+    expect(Number(payload.exp) - Number(payload.iat)).toBe(300);
+
+    // Issuance records that it happened and remembers which assertion, so a
+    // confirmation can only settle the one it belongs to.
+    const update = statements.find((statement) => statement.sql.includes("claim_issued_at"));
+    expect(update?.values).toContain(body.jti);
+    expect(update?.sql).toContain("COALESCE(claim_issued_at");
+    expect(update?.sql).not.toContain("claim_confirmed_at");
+  });
+
+  it("never stores or logs the broker-token hash it was given", async () => {
+    const { env, statements } = claimEnv();
+    const logged = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const response = await issueClaim(claimRequest(), installRow(), env as never);
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(statements)).not.toContain(BROKER_TOKEN_HASH);
+    const lines = logged.mock.calls.flat().join(" ");
+    expect(lines).toContain("claim issued");
+    expect(lines).not.toContain(BROKER_TOKEN_HASH);
+    // Nor the assertion itself: it is a bearer credential for five minutes.
+    expect(lines).not.toContain("eyJ");
+    logged.mockRestore();
+  });
+
+  it.each([
+    ["a foreign audience", { audience: "somebody-else", brokerTokenSha256: BROKER_TOKEN_HASH }],
+    ["a malformed token hash", { audience: "fluxrouter-composio", brokerTokenSha256: "not-a-hash" }],
+    ["no binding at all", { audience: "fluxrouter-composio" }],
+  ])("refuses to sign for %s", async (_label, body) => {
+    const { env, statements } = claimEnv();
+    const response = await issueClaim(claimRequest(body), installRow(), env as never);
+    expect(response.status).toBe(400);
+    expect(statements.some((statement) => statement.sql.includes("claim_issued_at"))).toBe(false);
+  });
+
+  it("stays closed until Sean opens it, and closes again at CLAIM_UNTIL", async () => {
+    const closed = claimEnv({ CLAIM_MODE: "closed" });
+    expect((await issueClaim(claimRequest(), installRow(), closed.env as never)).status).toBe(503);
+
+    const ended = claimEnv({ CLAIM_UNTIL: new Date(Date.now() - 1000).toISOString() });
+    const response = await issueClaim(claimRequest(), installRow(), ended.env as never);
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ code: "claims_closed" });
+  });
+
+  it("answers 503 rather than 500 when the signing key was never deployed", async () => {
+    const { env } = claimEnv({ CLAIM_SIGNING_JWK: "" });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect((await issueClaim(claimRequest(), installRow(), env as never)).status).toBe(503);
+    logged.mockRestore();
+  });
+});
+
+describe("confirming a claim", () => {
+  it("settles only the assertion it names", async () => {
+    const row = installRow({ last_claim_jti: "11111111-1111-4111-8111-111111111111" });
+    const { env, statements } = claimEnv({}, row);
+    const wrong = await confirmClaim(
+      new Request("https://broker.test/v1/claims/confirm", { method: "POST", body: JSON.stringify({ jti: "22222222-2222-4222-8222-222222222222" }) }),
+      row,
+      env as never,
+    );
+    expect(wrong.status).toBe(409);
+    await expect(wrong.json()).resolves.toMatchObject({ code: "claim_unknown" });
+    expect(statements.some((statement) => statement.sql.includes("claim_confirmed_at"))).toBe(false);
+
+    const right = await confirmClaim(
+      new Request("https://broker.test/v1/claims/confirm", { method: "POST", body: JSON.stringify({ jti: row.last_claim_jti }) }),
+      row,
+      env as never,
+    );
+    expect(right.status).toBe(200);
+    await expect(right.json()).resolves.toMatchObject({ confirmed: true });
+    expect(statements.some((statement) => statement.sql.includes("COALESCE(claim_confirmed_at"))).toBe(true);
+  });
+
+  it("rejects a confirmation for an install that was never issued one", async () => {
+    const row = installRow();
+    const { env } = claimEnv({}, row);
+    const response = await confirmClaim(
+      new Request("https://broker.test/v1/claims/confirm", { method: "POST", body: JSON.stringify({ jti: "33333333-3333-4333-8333-333333333333" }) }),
+      row,
+      env as never,
+    );
+    expect(response.status).toBe(409);
+  });
+});
+
+describe("the migration gate", () => {
+  const now = Date.UTC(2026, 8, 11, 12, 0, 0);
+
+  it("does not retire an install just because an assertion was signed", () => {
+    const { env } = claimEnv();
+    // Six days after issuance, with no confirmation: leg 2 may simply have
+    // failed, and this install is still the only place these apps work.
+    const issued = installRow({ claim_issued_at: now - 6 * DAY_MS });
+    expect(migrationGate(issued, env as never, now)).toBeNull();
+  });
+
+  it("retires an install once FluxRouter accepted it and the grace period passed", () => {
+    const { env } = claimEnv();
+    const justConfirmed = installRow({ claim_confirmed_at: now - 60_000 });
+    expect(migrationGate(justConfirmed, env as never, now)).toBeNull();
+
+    const settled = installRow({ claim_confirmed_at: now - 1_000_000 });
+    const response = migrationGate(settled, env as never, now);
+    expect(response?.status).toBe(410);
+  });
+
+  it("retires an install that redeemed at FluxRouter and never confirmed, after seven days", () => {
+    const { env } = claimEnv();
+    const stale = installRow({ claim_issued_at: now - 8 * DAY_MS });
+    expect(migrationGate(stale, env as never, now)?.status).toBe(410);
+  });
+
+  it("serves every claimed install again with MIGRATION_GATE off", () => {
+    // The FluxRouter-rollback switch. The desktop kept its Worker token for
+    // exactly this, and both brokers point at the same Composio user.
+    const { env } = claimEnv({ MIGRATION_GATE: "off" });
+    expect(migrationGate(installRow({ claim_confirmed_at: now - 1_000_000 }), env as never, now)).toBeNull();
+    expect(migrationGate(installRow({ claim_issued_at: now - 30 * DAY_MS }), env as never, now)).toBeNull();
+  });
+
+  it("retires everyone at the cut-off, whatever the gate says", async () => {
+    const { env } = claimEnv({ MIGRATION_GATE: "off", LEGACY_BROKER_UNTIL: new Date(now - 1000).toISOString() });
+    const response = migrationGate(installRow(), env as never, now);
+    expect(response?.status).toBe(410);
+    await expect(response?.json()).resolves.toMatchObject({ code: "legacy_broker_retired" });
+  });
+
+  it("treats an unparseable cut-off as no cut-off rather than as now", () => {
+    // A typo in a deploy var must not retire the whole fleet.
+    const { env } = claimEnv({ LEGACY_BROKER_UNTIL: "next tuesday" });
+    expect(migrationGate(installRow(), env as never, now)).toBeNull();
+    expect(configuredInstant("next tuesday")).toBeNull();
+    expect(configuredInstant("")).toBeNull();
+    expect(configuredInstant("2026-12-15T00:00:00Z")).toBe(Date.UTC(2026, 11, 15));
+  });
+});
+
+describe("the gate's place in the route table", () => {
+  function routeEnv(row: InstallationRow, overrides: Record<string, unknown> = {}) {
+    const { env, ctx } = claimEnv(overrides, row);
+    return { env, ctx };
+  }
+  const authorized = { authorization: `Bearer ${"a".repeat(64)}` };
+
+  it("keeps identity and both claim legs answering after an install has moved", async () => {
+    const row = installRow({ claim_confirmed_at: Date.now() - 1_000_000, last_claim_jti: "44444444-4444-4444-8444-444444444444" });
+    const { env, ctx } = routeEnv(row);
+
+    const me = await route(new Request("https://broker.test/v1/me", { headers: authorized }), env as never, ctx as never);
+    expect(me.status).toBe(200);
+    await expect(me.json()).resolves.toEqual({ installationId: "install-1", claimIssued: false, claimConfirmed: true });
+
+    const reissue = await route(new Request("https://broker.test/v1/claims", { method: "POST", headers: authorized, body: JSON.stringify({ audience: "fluxrouter-composio", brokerTokenSha256: BROKER_TOKEN_HASH }) }), env as never, ctx as never);
+    expect(reissue.status).toBe(200);
+
+    const confirm = await route(new Request("https://broker.test/v1/claims/confirm", { method: "POST", headers: authorized, body: JSON.stringify({ jti: row.last_claim_jti }) }), env as never, ctx as never);
+    expect(confirm.status).toBe(200);
+  });
+
+  it("answers a moved install's data calls with 410, never 401", async () => {
+    // A 401 makes an old desktop delete its token, and with it the identity
+    // the claim and every rollback depend on.
+    const row = installRow({ claim_confirmed_at: Date.now() - 1_000_000 });
+    const { env, ctx } = routeEnv(row);
+    for (const request of [
+      new Request("https://broker.test/v1/mcp", { method: "POST", headers: authorized, body: "{}" }),
+      new Request("https://broker.test/v1/catalog", { headers: authorized }),
+      new Request("https://broker.test/v1/connectors/connected", { headers: authorized }),
+      new Request("https://broker.test/v1/connectors?services=gmail", { headers: authorized }),
+    ]) {
+      const response = await route(request, env as never, ctx as never);
+      expect(response.status).toBe(410);
+      await expect(response.json()).resolves.toMatchObject({ code: "migrated_to_flux" });
+    }
+  });
+
+  it("still answers claims after the data cut-off", async () => {
+    const row = installRow({ last_claim_jti: "55555555-5555-4555-8555-555555555555" });
+    const { env, ctx } = routeEnv(row, { LEGACY_BROKER_UNTIL: new Date(Date.now() - 1000).toISOString() });
+    const data = await route(new Request("https://broker.test/v1/catalog", { headers: authorized }), env as never, ctx as never);
+    expect(data.status).toBe(410);
+    await expect(data.json()).resolves.toMatchObject({ code: "legacy_broker_retired" });
+
+    const claim = await route(new Request("https://broker.test/v1/claims", { method: "POST", headers: authorized, body: JSON.stringify({ audience: "fluxrouter-composio", brokerTokenSha256: BROKER_TOKEN_HASH }) }), env as never, ctx as never);
+    expect(claim.status).toBe(200);
+    const confirm = await route(new Request("https://broker.test/v1/claims/confirm", { method: "POST", headers: authorized, body: JSON.stringify({ jti: row.last_claim_jti }) }), env as never, ctx as never);
+    expect(confirm.status).toBe(200);
+  });
+});
+
+describe("the daily call fuse counts executions, not requests", () => {
+  it("ignores every MCP message that Composio does not bill", () => {
+    const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+    expect(billableCallCount(encode({ jsonrpc: "2.0", id: 1, method: "initialize" }))).toBe(0);
+    expect(billableCallCount(encode({ jsonrpc: "2.0", id: 2, method: "tools/list" }))).toBe(0);
+    expect(billableCallCount(encode({ jsonrpc: "2.0", method: "notifications/initialized" }))).toBe(0);
+    expect(billableCallCount(encode({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "GMAIL_SEND_EMAIL" } }))).toBe(1);
+    expect(billableCallCount(encode([
+      { jsonrpc: "2.0", id: 4, method: "tools/call" },
+      { jsonrpc: "2.0", id: 5, method: "tools/list" },
+      { jsonrpc: "2.0", id: 6, method: "tools/call" },
+    ]))).toBe(2);
+    // A body we cannot read counts as one: this is a fuse, and under-counting
+    // is the direction that lets a runaway install through.
+    expect(billableCallCount(new TextEncoder().encode("not json"))).toBe(1);
   });
 });

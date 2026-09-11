@@ -279,6 +279,9 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** Store a provider credential with OS-backed encryption. */
   mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   mutateFluxConnection: (input) => ipcRenderer.invoke("flux-connection:mutate", input),
+  /** Move this install's connected apps onto the FluxRouter account (the
+   * consent button in Connected apps). Resolves the secret-free claim state. */
+  claimLegacyComposio: () => ipcRenderer.invoke("composio:claim-legacy"),
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 
   /** In-app auto-update. State object:

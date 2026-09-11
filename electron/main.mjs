@@ -62,12 +62,20 @@ import { createWorkspaceFileActionHandler } from "./workspace-file-actions.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import {
+  applyComposioCredentialResult,
+  composioLegacyBrokerUntil,
   deriveManagedComposioCredentials,
+  fluxComposioAccess,
+  fluxComposioBrokerUrl,
   MANAGED_COMPOSIO_UPDATE_OPTIONS,
   managedComposioAccess,
   managedComposioChildEnvironment,
   normalizeManagedComposioBrokerUrl,
+  publicComposioLegacyClaim,
+  readComposioLegacyClaim,
 } from "./managed-composio.mjs";
+import { ensureFluxComposioBrokerToken } from "./flux-composio-token.mjs";
+import { claimLegacyComposioInstall, prepareLegacyComposioClaim } from "./composio-legacy-claim.mjs";
 import {
   createManagedCompanionTunnel,
   managedCompanionTunnelAccess,
@@ -503,6 +511,30 @@ function composioBrokerUrl() {
   return normalizeManagedComposioBrokerUrl(
     configured || (app.isPackaged ? DEFAULT_COMPOSIO_BROKER_URL : ""),
   );
+}
+
+/** The FluxRouter-hosted connected-apps broker, "" while it is off. Both
+ * release constants are gated on `app.isPackaged` inside the helper, so a dev
+ * run never points at production FluxRouter with a developer's account. */
+function fluxComposioBrokerUrlValue() {
+  return fluxComposioBrokerUrl(process.env, { packaged: app.isPackaged });
+}
+
+/** The instant after which the Murage Worker broker stops being used. */
+function composioLegacyUntilValue() {
+  return composioLegacyBrokerUntil(process.env, { packaged: app.isPackaged });
+}
+
+/** Whether THIS process mints the FluxRouter broker token and runs the legacy
+ * claim. Packaged only, like Worker registration: the token is minted from
+ * the encrypted Flux key and delivered to the server child over its private
+ * port, and a dev shell has neither — its Flux key lives in the harness's
+ * config.json and the harness is a separate `pnpm dev:server` process this
+ * shell never forks (`syncManagedComposioCredentials` has no `serverProc`).
+ * The dev harness mints for itself instead: server/flux-composio-dev-token.ts,
+ * from the same stored key, so dev and packaged land on the same account. */
+function fluxComposioLifecycleEnabled() {
+  return app.isPackaged && Boolean(fluxComposioBrokerUrlValue()) && !credentialStoreUnavailable;
 }
 
 // The packaged app has no terminal: everything about the server child's life
@@ -1191,7 +1223,7 @@ async function startServerOn(port) {
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
     MURAGE_FLUX_AMBIENT_KEY: secureCredentials.fluxConnectionManaged !== "true" && secureCredentials.fluxApiKey && process.env.FLUX_API_KEY !== secureCredentials.fluxApiKey ? process.env.FLUX_API_KEY ?? "" : "",
-  });
+  }, { fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyUntil: composioLegacyUntilValue() });
   delete childEnv.MURAGE_BROWSER_CONNECTION;
   slog(`fork ${entry} port=${port}`);
   const proc = utilityProcess.fork(entry, [], {
@@ -1206,6 +1238,13 @@ async function startServerOn(port) {
       if (receiveDesktopSurfaceSecret(message)) return;
       if (receiveBrowserControlHold(message)) return;
       if (receiveBrowserLifecycleCleanup(proc, message)) return;
+      // FluxRouter revoked the connected-apps broker token (a re-keyed or
+      // blocked Flux key). Re-mint now rather than at the next timer tick, so
+      // connected apps come back within one request instead of ten minutes.
+      if (message?.type === "murage:flux-composio-token-rejected") {
+        if (fluxComposioLifecycleEnabled()) void runComposioLifecycle({ force: true }).catch(() => {});
+        return;
+      }
     } catch (error) {
       slog(`browser private sync rejected: ${error?.message ?? error}`);
     }
@@ -1294,13 +1333,113 @@ async function startServerPackaged() {
 function syncManagedComposioCredentials() {
   if (!serverProc) return;
   try {
+    const legacyUntil = composioLegacyUntilValue();
+    const fluxBrokerUrl = fluxComposioBrokerUrlValue();
     serverProc.postMessage({
       type: "murage:managed-composio",
-      access: managedComposioAccess(composioBrokerUrl(), secureCredentials),
+      // The Murage Worker broker, until its cut-off.
+      access: managedComposioAccess(composioBrokerUrl(), secureCredentials, { legacyUntil }),
+      // The FluxRouter broker. The URL travels even without a token, so the
+      // harness can tell "this build has FluxRouter connected apps but no
+      // token yet" from "this build has none".
+      fluxBrokerUrl,
+      fluxAccess: fluxComposioAccess(fluxBrokerUrl, secureCredentials),
+      legacyUntil,
+      legacyClaim: publicComposioLegacyClaim(secureCredentials),
+      accountKind: secureCredentials.fluxComposioAccountKind ?? null,
+      tokenError: secureCredentials.fluxComposioTokenError ?? null,
     });
   } catch (error) {
     slog(`connected-apps credential sync failed: ${error?.message ?? error}`);
   }
+}
+
+// ── connected-apps credential lifecycle ────────────────────────────────
+// Minting the FluxRouter broker token and moving a Worker-registered install
+// onto a FluxRouter account are network work. `updateSecureCredentialDocument`
+// serializes every credential write, so running that network INSIDE it would
+// block a concurrent "save my Flux key" for tens of seconds. Instead each pass
+// reads a snapshot, does its network outside the lock, and writes under the
+// lock only if the credentials it derived from are unchanged
+// (`applyComposioCredentialResult`). A stale result is discarded and the next
+// tick recomputes it.
+const COMPOSIO_LIFECYCLE_INTERVAL_MS = 10 * 60_000;
+const COMPOSIO_LIFECYCLE_BACKOFF_MS = 60 * 60_000;
+let composioLifecycleTimer = null;
+let composioLifecycleRunning = null;
+let composioLifecycleNextAt = 0;
+
+function composioLifecycleOptions() {
+  return {
+    fetchImpl: globalThis.fetch,
+    log: slog,
+    timeoutSignal: (milliseconds) => AbortSignal.any([
+      managedComposioShutdown.signal,
+      AbortSignal.timeout(milliseconds),
+    ]),
+  };
+}
+
+/** One pass of the lifecycle: mint or refresh the broker token, then advance
+ * the legacy claim. `claim` forces the three legs (the consent button).
+ * Never throws; connected apps are optional background work. */
+async function runComposioLifecycle({ claim = false, force = false } = {}) {
+  // A pass already running satisfies a background trigger, but NOT the consent
+  // button: that pass is almost certainly the boot prepare, which deliberately
+  // does not claim. Queueing behind it is the difference between the button
+  // working and the button doing nothing visible.
+  if (composioLifecycleRunning) {
+    if (!claim) return composioLifecycleRunning;
+    return composioLifecycleRunning.catch(() => {}).then(() => runComposioLifecycle({ claim, force }));
+  }
+  const run = (async () => {
+    const fluxBrokerUrl = fluxComposioBrokerUrlValue();
+    if (!fluxComposioLifecycleEnabled() || !secureCredentialState) {
+      return publicComposioLegacyClaim(secureCredentials);
+    }
+    const snapshot = { ...secureCredentials };
+    const options = { ...composioLifecycleOptions(), fluxBrokerUrl, legacyBrokerUrl: composioBrokerUrl(), fluxKey: snapshot.fluxApiKey ?? "" };
+    let rateLimited = false;
+    const onRateLimited = () => { rateLimited = true; };
+    let next = snapshot;
+    try {
+      next = await ensureFluxComposioBrokerToken({ ...options, credentials: next, onRateLimited, force });
+      const state = readComposioLegacyClaim(next);
+      if (claim || state.state === "pending" || (state.state === "claimed" && state.confirmPending)) {
+        next = await claimLegacyComposioInstall({ ...options, credentials: next, onRateLimited });
+      } else if (state.state === "none" || state.state === "offered") {
+        next = await prepareLegacyComposioClaim({ ...options, credentials: next, onRateLimited });
+      }
+    } catch (error) {
+      if (!desktopShutdownStarted) slog(`connected-apps lifecycle failed: ${error?.message ?? error}`);
+    }
+    composioLifecycleNextAt = Date.now() + (rateLimited ? COMPOSIO_LIFECYCLE_BACKOFF_MS : COMPOSIO_LIFECYCLE_INTERVAL_MS);
+    try {
+      await updateSecureCredentialDocument((current) => {
+        const applied = applyComposioCredentialResult(current, snapshot, next);
+        if (!applied.applied) slog("connected-apps lifecycle result discarded: credentials changed while it ran");
+        return applied.credentials;
+      }, undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS);
+    } catch (error) {
+      if (!desktopShutdownStarted) slog(`connected-apps lifecycle write failed: ${error?.message ?? error}`);
+    }
+    syncManagedComposioCredentials();
+    return publicComposioLegacyClaim(secureCredentials);
+  })().finally(() => { composioLifecycleRunning = null; });
+  composioLifecycleRunning = run;
+  return run;
+}
+
+/** The retry clock. Pending claims and confirmations used to wait for the next
+ * boot; now they retry while the app is open, backing off after a 429. */
+function startComposioLifecycleTimer() {
+  if (composioLifecycleTimer || !fluxComposioLifecycleEnabled()) return;
+  composioLifecycleNextAt = Date.now() + COMPOSIO_LIFECYCLE_INTERVAL_MS;
+  composioLifecycleTimer = setInterval(() => {
+    if (desktopShutdownStarted || Date.now() < composioLifecycleNextAt) return;
+    void runComposioLifecycle().catch(() => {});
+  }, 60_000);
+  composioLifecycleTimer.unref?.();
 }
 
 // The page is built at failure time (not import time): the message depends on
@@ -2640,7 +2779,29 @@ ipcMain.handle("flux-connection:mutate", async (_event, input) => {
     // Flux also writes the provider bank, so it settles the same fence first.
     updateDocument: fenceProviderDocumentUpdate(updateSecureCredentialDocument, { reconciliation: providerBankReconciliation, post: postModelProviderCommit }),
     post: (route, body) => modelProviderCommitRequest(route, { body, failure: "Could not save Flux connection." }),
+  }).then((status) => {
+    // The connected-apps broker token is minted from the STORED Flux key, so a
+    // key that just arrived (or just left) changes it. Removing the key clears
+    // and revokes the token; the claim state is left alone, because the user's
+    // connections did not move.
+    if (fluxComposioLifecycleEnabled()) {
+      void runComposioLifecycle().catch(() => {});
+      startComposioLifecycleTimer();
+    }
+    return status;
   });
+});
+
+// The consent button in Connected apps. It is the ONLY trigger for a shared
+// (team) FluxRouter account, because every holder of that account's keys would
+// then be able to use these connections.
+ipcMain.handle("composio:claim-legacy", async () => {
+  if (credentialStoreUnavailable) throw new Error("The operating-system credential store is unavailable");
+  if (!fluxComposioBrokerUrlValue()) throw new Error("FluxRouter connected apps are not available in this build");
+  // A dev shell holds no Worker token to move (they live in the packaged
+  // app's encrypted store); the migration can only be exercised packaged.
+  if (!app.isPackaged) throw new Error("Moving connected apps runs from the installed Murage app, not a development launch");
+  return runComposioLifecycle({ claim: true });
 });
 
 ipcMain.handle("model-provider:mutate", async (_event, input) => {
@@ -2904,8 +3065,15 @@ const desktopStartup = app.whenReady().then(async () => {
     // Optional writer: an unchanged derivation (registration aborted at quit,
     // transient broker outage) skips native encryption. A 401 invalidation or
     // a completed registration still persists through the same queue.
+    //
+    // `registrationAllowed` is false once the FluxRouter broker is configured:
+    // connected apps then come from a FluxRouter account and a new install
+    // must never mint another anonymous Worker identity. An existing Worker
+    // token is left untouched — it is what the claim moves, and what the app
+    // falls back to while FluxRouter is unreachable.
     void updateSecureCredentialDocument(deriveManagedComposioCredentials({
       brokerUrl: composioBrokerUrl(),
+      registrationAllowed: !fluxComposioBrokerUrlValue(),
       timeoutSignal: (milliseconds) => AbortSignal.any([
         managedComposioShutdown.signal,
         AbortSignal.timeout(milliseconds),
@@ -2914,6 +3082,13 @@ const desktopStartup = app.whenReady().then(async () => {
     }), undefined, MANAGED_COMPOSIO_UPDATE_OPTIONS).finally(syncManagedComposioCredentials).catch(() => {
       if (!desktopShutdownStarted) slog("connected-apps registration did not complete");
     });
+  }
+  // FluxRouter connected apps: mint the broker token, then PREPARE the legacy
+  // claim (health + /v1/me). Boot never asks the Worker to sign a claim for a
+  // shared account — that waits for the user's button in Connected apps.
+  if (fluxComposioLifecycleEnabled()) {
+    void runComposioLifecycle().catch(() => {});
+    startComposioLifecycleTimer();
   }
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"
