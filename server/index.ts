@@ -47,6 +47,7 @@ import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIden
 import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema } from "./claude-accounts.ts";
 import { persistableClaudeInstances, replaceClaudeAccountInstances, restoreClaudeAccountInstances } from "./claude-account-config.ts";
+import { listClaudeAccounts } from "./claude-account-list.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
@@ -6978,15 +6979,11 @@ async function describedInstances() {
     }
   });
 }
-async function describedClaudeAccounts() {
-  const descriptions = await registry.describe();
-  return Object.entries(persistableClaudeInstances(cfg)).filter(([, entry]) => entry.driver === "claudeAgent").map(([instanceId, entry]) => {
-    const config = entry.config && typeof entry.config === "object" && !Array.isArray(entry.config) ? entry.config : {};
-    const cli = "cli" in config && typeof config.cli === "string" ? config.cli : "claude";
-    const instance = descriptions.find(instance => instance.instanceId === instanceId);
-    return { instanceId, displayName: entry.displayName || instanceId, ...claudeAccountInfo(instanceId, entry, cli),
-      snapshot: instance?.snapshot ?? { state: "unavailable", reason: "Account engine is unavailable." } };
-  });
+/** Probes Claude account instances only (`only` narrows a change receipt to
+ * its own account). registry.describe() refreshed every catalog and probed
+ * every engine on each accounts list refresh (CLAC2). */
+function describedClaudeAccounts(only?: string) {
+  return listClaudeAccounts(registry, persistableClaudeInstances(cfg), only);
 }
 function claudeAccountReferenced(instanceId: string) {
   return store.bots.some(bot => bot.modelSelection.instanceId === instanceId || (bot.tasks ?? []).some(task =>
@@ -7690,7 +7687,7 @@ const server = createServer(async (req, res) => {
           return json(res, 500, { error: "Claude account activation failed. The previous configuration was restored." });
         }
         if (method === "DELETE") return json(res, 200, { removed: true, credentialsRetained: true });
-        const account = (await describedClaudeAccounts()).find(account => account.instanceId === target);
+        const account = (await describedClaudeAccounts(target)).find(account => account.instanceId === target);
         return json(res, method === "POST" ? 201 : 200, { account });
       } finally { finishProviderConfigMutation(); }
     }
