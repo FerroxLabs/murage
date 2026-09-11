@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { SPAWNED_PROXIES,SERVER_ROOT } from "../proxy-paths.ts";
 import { DATA_DIR } from "../config.ts";
 import { database,transaction } from "../database.ts";
-import { claimMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, publishMemoryWork, requeueStaleMemoryWork } from "./jobs.ts";
+import { claimMemoryJob, deferStaleMemoryWork, heartbeatMemoryJob, isStaleMemoryPublication, publishMemoryWork, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
 import { memoryState } from "./repository.ts";
 import { resultSchema, type MemoryWork,type MemorySearchInput } from "./worker-protocol.ts";
 import type { IndexHit } from "./index.ts";
@@ -24,6 +24,12 @@ export class MemoryWorkerController {
   private indexRequestId:string|null=null;
   private queries=new Map<string,{resolve:(value:{hits:IndexHit[];vectorRows:number;degradedReason?:string})=>void;reject:(error:Error)=>void;cleanup:()=>void}>();
   error: string | null=null;
+  /** Stale requeues so far per job (id:source revision), since its last
+   * publication or deferral (RED2K). In memory: a restart resets the leases
+   * too, and an entry lives only between a refused publication and the
+   * job's next settle. Bounded in size in case a requeued job is cancelled by
+   * a newer source revision before it is claimed again. */
+  private staleRequeues=new Map<string,number>();
   private consolidationAbort=new AbortController();
   private consolidationTasks=new Set<Promise<void>>();
   private nextConsolidationPoll=0;
@@ -111,9 +117,10 @@ export class MemoryWorkerController {
           // Not a worker failure, so no attempt is spent and no error is
           // reported for it.
           if(!isStaleMemoryPublication(error))throw error;
-          this.requeueStale(error);this.work=null;setImmediate(()=>this.tick());return;
+          this.settleStale(error);this.work=null;setImmediate(()=>this.tick());return;
         }
         this.error=null;
+        this.staleRequeues.delete(this.staleKey(this.work));
         if(result.status==="complete") {
           // Capture is already durable. A failed derived checkpoint must not
           // recast that committed source job as a failed capture.
@@ -141,16 +148,38 @@ export class MemoryWorkerController {
       // Superseded work is deliberately not acknowledged as a deferral, but
       // the job must not sit leased with nobody working it: release the
       // holder's own lease so the next claim picks it up at once.
-      if(isStaleMemoryPublication(error))this.requeueStale(error);
+      if(isStaleMemoryPublication(error))this.settleStale(error,reason);
     }
     this.work=null;
   }
-  private requeueStale(error: unknown) {
+  private staleKey(work: MemoryWork) { return `${work.id}:${work.revision}`; }
+  /** A publication refused as stale: requeue the holder's own live lease with
+   * no attempt spent, up to STALE_MEMORY_REQUEUE_LIMIT times per job; past
+   * that the job is deferred with one attempt spent (the reason of the
+   * failure being settled, or MEMORY_STALE_REQUEUE_LIMIT for a refused
+   * result), so the attempt cap ends a job the authority never stands still
+   * for, and the row and the log say why (RED2K). */
+  private settleStale(error: unknown, failReason?: string) {
     if(!this.work)return;
-    const reason=error instanceof Error?error.message:String(error);
-    let requeued=false;
-    try { requeued=requeueStaleMemoryWork(this.work,this.owner); } catch { /* the database is unavailable; the lease expires on its own */ }
-    console.warn(`[memory] worker result for job ${this.work.id} was ${reason} (the authority moved while the job was leased); ${requeued?"requeued for the next claim":"lease no longer held, nothing to requeue"}`);
+    const stale=error instanceof Error?error.message:String(error);
+    const key=this.staleKey(this.work);
+    const count=(this.staleRequeues.get(key)??0)+1;
+    if(count<=STALE_MEMORY_REQUEUE_LIMIT){
+      let requeued=false;
+      try { requeued=requeueStaleMemoryWork(this.work,this.owner); } catch { /* the database is unavailable; the lease expires on its own */ }
+      if(requeued){
+        this.staleRequeues.set(key,count);
+        if(this.staleRequeues.size>256)this.staleRequeues.delete(this.staleRequeues.keys().next().value!);
+      } else this.staleRequeues.delete(key);
+      console.warn(`[memory] worker result for job ${this.work.id} was ${stale} (the authority moved while the job was leased); ${requeued?`requeued for the next claim (stale requeue ${count} of ${STALE_MEMORY_REQUEUE_LIMIT})`:"lease no longer held, nothing to requeue"}`);
+      return;
+    }
+    this.staleRequeues.delete(key);
+    const reason=failReason??"MEMORY_STALE_REQUEUE_LIMIT";
+    this.error=reason;
+    let deferred=false;
+    try { deferred=deferStaleMemoryWork(this.work,this.owner,reason); } catch { /* the database is unavailable; the lease expires on its own */ }
+    console.warn(`[memory] worker result for job ${this.work.id} was ${stale} after ${STALE_MEMORY_REQUEUE_LIMIT} stale requeues (the authority kept moving while the job was leased); ${deferred?`deferred with an attempt spent (${reason})`:"lease no longer held, nothing to defer"}`);
   }
   async stop() {
     this.stopping=true;if(this.timer)clearInterval(this.timer);this.timer=null;

@@ -18,7 +18,16 @@
 //                            `<path>.emitted` afterwards). interruptTurn itself
 //                            resolves at once, with no stop result.
 //   FAKE_LATE_DUMP           path: append one JSON line per sendTurn
-//                            ({turnId, threadId}) so a test can count dispatches.
+//                            ({turnId, threadId, skillAuthoring}) so a test can
+//                            count dispatches and see which ran with the
+//                            skill-authoring tools (agentsMcp is declared, so a
+//                            hop-0 turn takes the round's claim when the skill
+//                            recorder feature is on; the agents integration is
+//                            otherwise ignored here).
+//   FAKE_LATE_AGENTS_ENV     path: overwritten per sendTurn with the agents
+//                            integration's env as JSON (the turn's comms token
+//                            and thread), so a test can act as that turn on
+//                            /api/internal while the session gate holds it.
 // An uninterrupted turn replies "Hello from late" and completes on its own.
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import type {
@@ -60,6 +69,7 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
       const sessionGate = input.environment.FAKE_LATE_SESSION_GATE;
       const terminalGate = input.environment.FAKE_LATE_TERMINAL_GATE;
       const dump = input.environment.FAKE_LATE_DUMP;
+      const agentsEnvPath = input.environment.FAKE_LATE_AGENTS_ENV;
       const listeners = new Set<RuntimeEventListener>();
       const emit = (event: EmittedEvent) => {
         const full = { eventId: newEventId(), provider: LATE_TERMINAL_DRIVER_KIND, providerInstanceId: input.instanceId, createdAt: new Date().toISOString(), ...event } as RuntimeEvent;
@@ -77,10 +87,12 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
         snapshot: async () => ({ state: "available", version: "0.0.0-late" }),
         adapter: {
           provider: LATE_TERMINAL_DRIVER_KIND,
-          capabilities: { sessionModelSwitch: "unsupported" },
+          capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true },
           sendTurn: async (turn) => {
             const turnId = `late-turn-${++turnCounter}`;
-            if (dump) appendFileSync(dump, `${JSON.stringify({ turnId, threadId: turn.threadId })}\n`);
+            const skillAuthoring = turn.integrations?.agents?.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
+            if (dump) appendFileSync(dump, `${JSON.stringify({ turnId, threadId: turn.threadId, skillAuthoring })}\n`);
+            if (agentsEnvPath && turn.integrations?.agents) writeFileSync(agentsEnvPath, JSON.stringify(turn.integrations.agents.env));
             if (sessionGate && !existsSync(sessionGate)) {
               writeFileSync(`${sessionGate}.waiting`, turnId);
               await waitForFile(sessionGate, 25);

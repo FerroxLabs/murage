@@ -5,7 +5,7 @@ import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
 import { setMemoryMode } from "./repository.ts";
 import { captureWork } from "./chunks.ts";
-import { claimMemoryJob, heartbeatMemoryJob, publishMemoryWork, requeueStaleMemoryWork } from "./jobs.ts";
+import { claimMemoryJob, deferStaleMemoryWork, heartbeatMemoryJob, publishMemoryWork, requeueStaleMemoryWork } from "./jobs.ts";
 import { extractCandidates, memoryExtractionMessages } from "./extract.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
 
@@ -65,6 +65,35 @@ it("requeues a job at once when its publication is refused as stale, fencing the
   publishMemoryWork(retry,"B",captureWork(retry),1700);
   expect(database().prepare("SELECT status,attempts FROM memory_jobs").get()).toMatchObject({status:"complete",attempts:0});
   expect(database().prepare("SELECT count(*) AS n FROM memory_records").get()?.n).toBe(1);
+});
+// RED2K: past the stale-requeue bound the controller defers the job with an
+// attempt spent instead — the ordinary deferral row (backoff, attempt cap,
+// reason), fenced to the holder's own live lease like the requeue.
+it("defers a stale-refused job with one attempt spent, the ordinary backoff and the attempt cap, fenced to the holder's live lease",()=>{
+  source();const first=claimMemoryJob("A",1000)!;
+  database().exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
+  expect(()=>publishMemoryWork(first,"A",captureWork(first),1500)).toThrow("STALE_MEMORY_SOURCE");
+  expect(deferStaleMemoryWork(first,"A","MEMORY_STALE_REQUEUE_LIMIT",1500)).toBe(true);
+  // first attempt: 5 s backoff, the reason on the row, the lease released
+  expect(database().prepare("SELECT status,attempts,retry_at,lease_owner,lease_until,error FROM memory_jobs").get()).toMatchObject({status:"deferred",attempts:1,retry_at:6500,lease_owner:null,lease_until:0,error:"MEMORY_STALE_REQUEUE_LIMIT"});
+  // not before the backoff; a repeat by the old holder is fenced
+  expect(claimMemoryJob("B",6000)).toBeNull();
+  expect(deferStaleMemoryWork(first,"A","MEMORY_STALE_REQUEUE_LIMIT",6000)).toBe(false);
+  const second=claimMemoryJob("B",6500)!;
+  expect(second.id).toBe(first.id);
+  expect(second.policyRevision).toBe(first.policyRevision+1);
+  // the old holder cannot defer B's lease either
+  expect(deferStaleMemoryWork(first,"A","MEMORY_STALE_REQUEUE_LIMIT",7000)).toBe(false);
+  expect(database().prepare("SELECT status,lease_owner,attempts FROM memory_jobs").get()).toMatchObject({status:"leased",lease_owner:"B",attempts:1});
+  // second attempt: 30 s backoff
+  expect(deferStaleMemoryWork(second,"B","MEMORY_WORKER_TIMEOUT",7000)).toBe(true);
+  expect(database().prepare("SELECT status,attempts,retry_at,error FROM memory_jobs").get()).toMatchObject({status:"deferred",attempts:2,retry_at:37000,error:"MEMORY_WORKER_TIMEOUT"});
+  // third attempt: the cap ends it, with the reason on the row
+  const third=claimMemoryJob("C",37000)!;
+  expect(deferStaleMemoryWork(third,"C","MEMORY_STALE_REQUEUE_LIMIT",37500)).toBe(true);
+  expect(database().prepare("SELECT status,attempts,error FROM memory_jobs").get()).toMatchObject({status:"failed",attempts:3,error:"MEMORY_STALE_REQUEUE_LIMIT"});
+  expect(claimMemoryJob("D",90000)).toBeNull();
+  expect(database().prepare("SELECT count(*) AS n FROM memory_records").get()?.n).toBe(0);
 });
 it("does not requeue a job a newer source revision cancelled under the lease",()=>{
   source();const work=claimMemoryJob("A",1000)!;
