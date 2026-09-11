@@ -57,7 +57,9 @@ import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { StoppedRow } from "./StoppedRow";
+import { FolderTrustRow } from "./FolderTrustRow";
 import { hostStoppedReason } from "../../shared/host-stop";
+import { folderTrustNotice } from "../../shared/folder-trust";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
@@ -994,6 +996,10 @@ const MessagesList = memo(function MessagesList({
               // plain tool runs stay out unless Settings → Tool calls is on.
               const stoppedReason = hostStoppedReason(m.tool?.name);
               if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
+              // a folder-trust notice is the same kind of thing: what the turn
+              // ran without (or gains next time), visible with Tool calls off
+              const trustNotice = folderTrustNotice(m.tool?.name);
+              if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} />;
               if (m.tool?.name.startsWith("error:")) {
                 return (
                   <ErrorRow

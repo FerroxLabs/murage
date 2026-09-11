@@ -239,6 +239,24 @@ close a set of audited gaps, and all seven language packs are complete.
   `auto` mode stops auto-running discarding git checkout/switch/stash and
   `rg --hostname-bin`; those now reach Murage's permission card. The
   1.0.12 `ask_user_question` gate and question card path are unchanged.
+- **Folder trust is a question, not a silent loss (FUIGOTRUST1).** Left
+  alone, 1.0.13's gate would have dropped every workspace's AGENTS.md,
+  CLAUDE.md, .mcp.json, skills and hooks from every hosted Fuigo turn
+  unless the person had run `fuigo --trust` in a terminal. Murage now asks
+  once per folder: a folder chosen in a working-folder picker is trusted
+  when it is chosen (the picker says so), and any other folder with those
+  files — a bot-created folder, a clone, a subfolder with its own repo —
+  raises a "Trust this folder?" card naming what it contains, before the
+  engine starts; the answer is remembered per folder (Settings shows it,
+  with Forget). Trust is passed to Fuigo as `--trust`, so the same turn
+  reads the instructions; Don't trust runs the turn without them and the
+  conversation shows what was left out; nobody answering in time ends the
+  turn as a stopped turn. Auto mode never trusts a folder, and only the
+  desktop or the paired Telegram channel can. Murage also advertises
+  Fuigo's interactive trust capability and answers its request from the
+  same decision. Proven against the bundled 1.0.13 binary on a local model:
+  an AGENTS.md canary is absent untrusted and present the moment the card
+  is answered Trust.
 - **Images can be saved without touching the source.** Choosing the source
   file itself (or a hard/symlink alias) as the Save destination is a no-op
   rather than a truncation; every other destination is written to an

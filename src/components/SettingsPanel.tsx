@@ -16,6 +16,7 @@ import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
 import { BotRoleControl } from "./BotRoleControl";
 import { BotSetupAction } from "./BotIntakeCard";
 import { BotSkillsPanel } from "./BotSkillsPanel";
+import { FolderTrustNote } from "./FolderTrustNote";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
@@ -168,6 +169,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
           New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"}; start a new task to use the new folder.
         </div>
       )}
+      <FolderTrustNote folder={bot.cwd} />
     </div>
   );
 }
