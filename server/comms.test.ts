@@ -312,7 +312,12 @@ describe("comms e2e (fake ACP fleet)", () => {
       expect(inbound.text).toContain("ping from fake");
       const rnote = helperBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name === "Message from @Asker");
       expect(rnote?.comm?.groupId).toBe(note.comm.groupId);
-      expect(helperBot.busy).toBeFalsy();
+      // B's idle follows its confirmed child close (A2), after the reply
+      // that A's turn already folded in: wait on the transition.
+      await waitUntil(async () => {
+        const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+        return !current.busy;
+      }, 10_000, "B stayed busy after its reply reached A");
     },
     40_000,
   );
@@ -986,8 +991,13 @@ describe("comms e2e (fake ACP fleet)", () => {
             && m.text?.includes("ping from fake"),
         );
       }, 30_000, "late reply never landed on the asker's thread");
-      const helperBot = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
-      expect(helperBot.busy).toBeFalsy();
+      // The reply is mirrored at turn.completed; the peer's idle follows
+      // once its child's close is confirmed (A2 awaitTurnTeardown), so idle
+      // is a transition to wait on, not a snapshot to take alongside the reply.
+      await waitUntil(async () => {
+        const helperBot = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+        return !helperBot.busy;
+      }, 10_000, "peer stayed busy after its late reply was delivered");
     },
     75_000,
   );
