@@ -2407,7 +2407,13 @@ ipcMain.handle("skill-recorder:start", (event) => {
   return startRecorder(win);
 });
 ipcMain.handle("skill-recorder:stop", () => stopRecorder());
-ipcMain.handle("skill-recorder:save", (_event, payload) => saveSkillRecording(payload));
+// B1: the recording lands under the installation this process owns (the
+// selected one after a separate restore), never the env/default original.
+ipcMain.handle("skill-recorder:save", createSkillRecordingSaveHandler({
+  ...ownedMainRenderer,
+  activeRoot: activeNativeDataRoot,
+  saveRecording: saveSkillRecording,
+}));
 
 // ── companion sidecar ──────────────────────────────────────────────────
 // The renderer gets these and nothing else: it can turn the companion on and
