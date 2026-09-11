@@ -17,6 +17,19 @@
 // admitting ignorance.
 export const CREDENTIAL_READ_DELAYS_MS = [100, 200, 400, 800];
 
+/** Forward one serialized credential update while keeping it visible to the
+ * shutdown and recovery drains until it settles. Options such as
+ * `skipUnchanged` pass through untouched; the state decides what they mean. */
+export async function trackedCredentialUpdate(state, writes, derive, afterPersist, options) {
+  const write = state.update(derive, afterPersist, options);
+  writes.add(write);
+  try {
+    return await write;
+  } finally {
+    writes.delete(write);
+  }
+}
+
 const message = (error) => (error instanceof Error ? error.message : String(error));
 
 export async function readSecureCredentials({
