@@ -59,6 +59,10 @@ export const MEDIA_ROUTES = {
   resolve: `${MEDIA_ROUTE_PREFIX}/resolve`,
   /** GET/HEAD `${bytes}/<assetId>?cap=<token>`; single byte range, 206/416 */
   bytes: `${MEDIA_ROUTE_PREFIX}/bytes`,
+  /** POST MediaReferenceRequest -> MediaReferenceResponse (desktop proof).
+   * F5-T4 "Use as reference": pins one image of a conversation into a
+   * conversation attachment the next message can carry. Nothing is billed. */
+  reference: `${MEDIA_ROUTE_PREFIX}/reference`,
 } as const;
 
 export interface MediaResolveResponse {
@@ -123,7 +127,9 @@ export type ImageReferenceSource =
   /** A file in the current task workspace, optionally pinned to a revision. */
   | { kind: "workspace"; relativePath: string; revision?: FileRevision };
 
-export interface ResolveImageReferenceRequest { source: ImageReferenceSource }
+/** One source (frozen K0 shape) or, additively in F5-T4, up to four sources
+ * resolved all-or-nothing: if one fails, none is prepared. */
+export type ResolveImageReferenceRequest = { source: ImageReferenceSource } | { sources: ImageReferenceSource[] };
 
 export interface ResolvedImageReference {
   /** Opaque reference id usable in image MCP `reference_ids`. */
@@ -134,6 +140,25 @@ export interface ResolvedImageReference {
   source: ImageReferenceSource["kind"];
   width?: number;
   height?: number;
+}
+
+/** POST /api/internal/resolve-image-reference answer. `reference` is present
+ * only for the single-`source` form. */
+export interface ResolveImageReferenceResponse { references: ResolvedImageReference[]; reference?: ResolvedImageReference }
+
+/** Why a reference was refused. One refusal refuses the whole request. */
+export const IMAGE_REFERENCE_ERROR_CODES = ["invalid-request", "unavailable", "denied", "missing", "changed", "unsupported", "too-large", "storage"] as const;
+export type ImageReferenceErrorCode = typeof IMAGE_REFERENCE_ERROR_CODES[number];
+export interface ImageReferenceErrorBody { error: string; code: ImageReferenceErrorCode; /** 0-based source that failed. */ index?: number }
+
+/** Desktop "Use as reference". The conversation is named explicitly and the
+ * source must belong to it; `botId` picks the member workspace in a room. */
+export interface MediaReferenceRequest { threadId: string; botId?: string; source: ImageReferenceSource }
+export interface MediaReferenceResponse {
+  reference: ResolvedImageReference;
+  /** The conversation attachment holding the pinned bytes, as a composer
+   * image chip needs it. `path` is Murage's own attachment path. */
+  attachment: { path: string; name: string; mime: ImageReferenceMime; bytes: number };
 }
 
 export function isImageReferenceSource(value: unknown): value is ImageReferenceSource {

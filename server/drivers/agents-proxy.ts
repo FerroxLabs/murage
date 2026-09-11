@@ -221,10 +221,19 @@ const ROUTINE_FIELDS_SCHEMA = {
 const TOOLS = [
   { name: "register_artifact", description: "Save a completed report or deliverable into Murage Files. First create the real file inside this task's working folder, then register its relative path. In Murage's own task workspace, finished files written under outputs/ are saved to Files automatically when the turn completes successfully, so they need no registration; use this tool for other files and custom project folders. Murage verifies and preserves the bytes before showing a downloadable card. Do not pass absolute paths, private setup/memory files or credentials. A filename in prose is not a saved deliverable.", inputSchema: { type: "object", required: ["relative_path"], additionalProperties: false, properties: { relative_path: { type: "string", minLength: 1, maxLength: 4096 }, name: { type: "string", minLength: 1, maxLength: 200 } } } },
   { name: "list_image_models", description: "List Murage's configured image connections, selected default and supported generation/edit models. This checks metadata only; no image is generated. Image tools use server-owned keys, never a CLI subscription.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "generate_image", description: "Create one image, or edit up to four existing image attachments from this exact conversation. Murage shows the owner a paid-operation approval with connection/model before any provider request. GPT Image 2 is the default where configured. Use list_image_models to inspect choices. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request; do not retry or switch billing connections after timeout/uncertain failure. Generated output is saved in this bot's private generated-images workspace and attached to this conversation. One image attempt per turn.", inputSchema: { type: "object", properties: {
+  { name: "resolve_image_reference", description: "Prepare up to four reference images for an image edit, from this exact conversation only: an image attachment it already shows (uploaded by the person or generated earlier), a saved Files image of this conversation pinned by its sha256, or an image file inside this task's workspace named by its relative path (optionally pinned to a revision). Murage checks the exact bytes (PNG, JPEG or WebP; at most 10 MB each and 20 MB together), shows the prepared images in the conversation and returns their ids for generate_image reference_ids. If any source fails, none is prepared. Nothing is generated or billed. A reference image is not a numeric seed. Never pass absolute paths, URLs or another conversation's files.", inputSchema: { type: "object", required: ["sources"], additionalProperties: false, properties: {
+    sources: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", additionalProperties: false, properties: {
+      attachment_id: { type: "string", maxLength: 180, description: "An image attachment name already in this conversation, e.g. the basename of an attached-image path or a generated image's referenceId." },
+      artifact_id: { type: "string", description: "A saved Files image of this conversation; requires sha256." },
+      sha256: { type: "string", description: "The saved file's sha256, pinning its exact version." },
+      relative_path: { type: "string", minLength: 1, maxLength: 4096, description: "An image file relative to this task's workspace." },
+      revision: { type: "string", maxLength: 256, description: "Optional workspace revision; a changed file is then refused." },
+    } } },
+  } } },
+  { name: "generate_image", description: "Create one image, or edit up to four reference images from this exact conversation. Murage shows the owner a paid-operation approval with connection/model and reference count before any provider request; if the chosen model cannot edit with references, the request fails with the reason before approval. GPT Image 2 is the default where configured. Use list_image_models to inspect choices. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request; do not retry or switch billing connections after timeout/uncertain failure. Generated output is saved in this bot's private generated-images workspace, attached to this conversation and saved to Files. One image attempt per turn.", inputSchema: { type: "object", properties: {
     request_id: {type:"string",minLength:1,maxLength:80}, prompt:{type:"string",minLength:1,maxLength:4000}, operation:{type:"string",enum:["generate","edit"]},
     connection_id:{type:"string"},model:{type:"string"},quality:{type:"string",enum:["low","medium","high"]},size:{type:"string",enum:["1024x1024","1536x1024","1024x1536"]},
-    reference_ids:{type:"array",maxItems:4,items:{type:"string"},description:"Attachment filenames/IDs already visible in this conversation; never file paths."}
+    reference_ids:{type:"array",maxItems:4,items:{type:"string"},description:"Image attachment ids already in this conversation (uploaded or generated) or ids returned by resolve_image_reference; never file paths."}
   },required:["request_id","prompt"],additionalProperties:false } },
 
   {
@@ -538,12 +547,29 @@ function confirmationResult(r: Json, fallback: string): { text: string } {
   };
 }
 
+/** MCP snake_case source -> the frozen ImageReferenceSource shape. A mixed or
+ * unknown source is forwarded as invalid so the harness refuses it with its
+ * own explanation instead of this proxy guessing. */
+function imageReferenceSource(value: unknown): unknown {
+  if (!jsonRecord(value)) return { kind: "invalid" };
+  const keys = Object.keys(value).sort().join(",");
+  if (keys === "attachment_id") return { kind: "attachment", attachmentId: value.attachment_id };
+  if (keys === "artifact_id,sha256") return { kind: "artifact", artifactId: value.artifact_id, sha256: value.sha256 };
+  if (keys === "relative_path") return { kind: "workspace", relativePath: value.relative_path };
+  if (keys === "relative_path,revision") return { kind: "workspace", relativePath: value.relative_path, revision: value.revision };
+  return { kind: "invalid" };
+}
+
 async function callTool(name: string, args: Json): Promise<{ text: string; isError?: boolean }> {
   if (name === "register_artifact") {
     const result = await api("/api/internal/register-artifact", { method: "POST", body: JSON.stringify({ relativePath: args.relative_path, ...(args.name === undefined ? {} : { name: args.name }) }) });
     return { text: JSON.stringify(result) };
   }
   if (name === "list_image_models") return { text: JSON.stringify(await api("/api/internal/image-models")) };
+  if (name === "resolve_image_reference") {
+    const sources = Array.isArray(args.sources) ? args.sources.map(imageReferenceSource) : args.sources;
+    return { text: JSON.stringify(await api("/api/internal/resolve-image-reference", { method: "POST", body: JSON.stringify({ sources }) })) };
+  }
   if (name === "generate_image") {
     const result = await api("/api/internal/generate-image", { method: "POST", signal: AbortSignal.timeout(300_000), body: JSON.stringify({
       requestId: args.request_id, prompt: args.prompt, operation: args.operation, connectionId: args.connection_id,
