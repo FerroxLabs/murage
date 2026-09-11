@@ -12,6 +12,7 @@ import {
   reducer,
   useStore,
   visibleNotificationThread,
+  type Action,
   type Bot,
   type Group,
   type Message,
@@ -418,6 +419,55 @@ describe("where a fresh sign-in lands", () => {
     const next = reducer(state, { type: "send", botId: askBot.id, text: "ok" });
     expect(next.bots[0]?.messages.find((message) => message.id === "ask")?.card?.dismissed).toBeUndefined();
     expect(next.bots[0]?.messages.find((message) => message.id === "q")?.card?.dismissed).toBe(true);
+  });
+
+  // 0.1.52 ASK2. A question is not a card you can wave away: whoever asked it
+  // is waiting, so closing it has to mean something definite.
+  const questionBot: Bot = {
+    ...bot,
+    messages: [
+      ...bot.messages,
+      {
+        id: "ask",
+        role: "bot",
+        kind: "options",
+        card: {
+          title: "Question",
+          subtitle: "Ship it?",
+          options: ["Yes", "No"],
+          requestId: "r1",
+          questions: [
+            { id: "q1", question: "Ship it?", options: [{ label: "Yes" }, { label: "No" }], multiSelect: false, allowOther: true },
+          ],
+        },
+        at: 3,
+      },
+    ],
+    activeLeafId: "ask",
+  };
+  const questionState = { ...initialState, bots: [questionBot], selectedId: questionBot.id };
+  const askCard = (state: ReturnType<typeof reducer>) =>
+    state.bots[0]?.messages.find((message) => message.id === "ask")?.card;
+
+  it("never hides a live question locally — the server's patch settles it", () => {
+    // Hiding it here would leave the bot waiting on a card nobody can see.
+    // dismissCard's request branch sends an explicit skip instead.
+    expect(askCard(reducer(questionState, { type: "dismissCard", botId: questionBot.id, messageId: "ask" }))?.dismissed).toBeUndefined();
+    expect(askCard(reducer(questionState, { type: "send", botId: questionBot.id, text: "ok" }))?.dismissed).toBeUndefined();
+  });
+
+  it("waits for the server on an answer or a skip rather than guessing the outcome", () => {
+    const actions: Action[] = [
+      { type: "answerQuestion", threadId: "t1", requestId: "r1", behavior: "answer", answers: [{ id: "q1", selected: ["Yes"] }] },
+      { type: "answerQuestion", threadId: "t1", requestId: "r1", behavior: "skip" },
+      { type: "sendQuestionAsMessage", botId: "echo", threadId: "t1", requestId: "r1", text: "Q: Ship it?\nA: Yes", answers: [{ id: "q1", selected: ["Yes"] }] },
+    ];
+    for (const action of actions) {
+      const next = reducer(questionState, action);
+      expect(askCard(next)?.answered).toBeUndefined();
+      expect(askCard(next)?.dismissed).toBeUndefined();
+      expect(next).toBe(questionState);
+    }
   });
 });
 

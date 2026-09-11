@@ -106,6 +106,11 @@ async function handle(msg: any) {
     const args = msg.params?.arguments ?? {};
     const askId = randomUUID();
     const isQuestion = name === "ask_user";
+    // Claude Code routes its own AskUserQuestion tool through this permission
+    // host (it never auto-approves it in any mode). The CLI names the tool,
+    // so this is a trusted signal, not model text: it is a QUESTION for the
+    // owner, never a permission a rule or a reviewer may answer.
+    const isClaudeQuestion = name === "approve" && args.tool_name === "AskUserQuestion";
     // the CLI may include its own suggested permission rules; on allow we
     // hand them straight back as updatedPermissions so claude stops asking
     // at its own layer — no invented rule syntax (agentcal)
@@ -119,15 +124,28 @@ async function handle(msg: any) {
       if (conn.destroyed) return dead();
       const ask = isQuestion
         ? { t: "ask", id: askId, kind: "question", tool: "ask_user", input: { question: args.question, choices: args.choices } }
-        : { t: "ask", id: askId, tool: args.tool_name, input: args.input };
+        : isClaudeQuestion
+          ? { t: "ask", id: askId, kind: "question", tool: "AskUserQuestion", input: args.input }
+          : { t: "ask", id: askId, tool: args.tool_name, input: args.input };
       try {
         conn.write(JSON.stringify(ask) + "\n");
       } catch {
         dead();
       }
     });
-    let text = answer.message || "No answer was given — use your best judgment.";
-    if (!isQuestion) {
+    let text = answer.message || "The owner did not answer. Do not assume an answer.";
+    if (isClaudeQuestion) {
+      // Claude reads the owner's picks from updatedInput.answers, keyed by
+      // question text (the broker already built that map). Anything else —
+      // a skip, a timeout, the turn ending — is an honest deny with a note:
+      // an allow without answers would make Claude report "The user did not
+      // answer the questions." as if that were the owner's choice.
+      const answers = answer.answers && typeof answer.answers === "object" && !Array.isArray(answer.answers) ? answer.answers : null;
+      text =
+        answer.behavior === "answer" && answers && Object.keys(answers).length
+          ? JSON.stringify({ behavior: "allow", updatedInput: { ...args.input, answers } })
+          : JSON.stringify({ behavior: "deny", message: answer.message || "The owner did not answer. Do not assume an answer." });
+    } else if (!isQuestion) {
       if (answer.behavior === "allow") {
         const result: AllowPermissionResult = { behavior: "allow", updatedInput: args.input ?? {} };
         if (answer.always && suggestions) result.updatedPermissions = suggestions;

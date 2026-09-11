@@ -33,6 +33,11 @@ export type DecisionKind =
   | "user-denied"
   | "review-would-approve"
   | "review-would-deny"
+  /** 0.1.52 ASK2: a question the engine stopped waiting on with no answer
+   * (timeout, turn end, restart), and one the owner explicitly skipped.
+   * An answer itself is conversation, not authorization, and is not logged. */
+  | "question-expired"
+  | "question-skipped"
   | "log-omitted";
 
 /** Who or what produced the decision. The AutoVerdictSource values carry

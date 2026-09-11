@@ -7,6 +7,7 @@
 
 import type { ProviderErrorInfo } from "../shared/provider-error.ts";
 import type { MemoryBundle } from "../shared/memory.ts";
+import type { QuestionAnswer, QuestionSpec } from "../shared/questions.ts";
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -133,6 +134,12 @@ export type RuntimeEvent = RuntimeEventBase &
          * (Pi `select`; an ACP tool call named as a question tool). Policy
          * never auto-approves, remembers or AI-reviews such an ask. */
         questionTool?: true;
+        /** 0.1.52 ASK2 (K0 amendment, additive): the structured questions of
+         * a `question` request — header chip, options with descriptions,
+         * multi-select, free text, secret. `summary` and `choices` stay the
+         * first question's text and labels so older consumers (voice, older
+         * clients) degrade gracefully. */
+        questions?: QuestionSpec[];
       }
     | {
         type: "request.resolved";
@@ -318,7 +325,11 @@ export interface ProviderAdapter {
   respondToRequest(
     threadId: ThreadId,
     requestId: string,
-    decision: { behavior: "allow" | "deny" | "answer"; message?: string },
+    /** 0.1.52 ASK2 (additive): `answers` carries the owner's validated
+     * per-question picks for a structured question; `message` is the same
+     * answer as plain text for drivers that only read one string. A `deny`
+     * on a question is an honest "no answer" (skipped), never a refusal. */
+    decision: { behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[] },
   ): Promise<RequestOutcome>;
   /** Deliver a user message into the RUNNING turn on this thread. Resolves
    * false when there is no live turn to steer (the caller then sends it as
