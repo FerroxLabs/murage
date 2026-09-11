@@ -627,6 +627,37 @@ describe("ACP turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: true });
   });
 
+  it("answers a card 'Yes' with the ONE-TIME option even when the engine lists 'allow always' first (LFU2)", async () => {
+    // Fuigo's real edit prompt (1.0.11 and 1.0.12, read off the wire) puts
+    // `allow_always` "allow all edits during this session" ahead of
+    // `allow_once`. A card answer is one decision; taking the first `allow*`
+    // handed the engine a session-wide grant that Murage's approval layer
+    // never saw again.
+    const dump = join(scratch, "decision.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "permission-session-first");
+    await instance.adapter.sendTurn({ threadId: "t-perm-once", text: "go" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ requestType: "permission", tool: "shell" });
+
+    await instance.adapter.respondToRequest("t-perm-once", (opened as any).requestId, { behavior: "allow" });
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "allow", source: "user" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "allow-once" } });
+  });
+
+  it("answers a card 'No' with the one-time reject, never a standing one (LFU2)", async () => {
+    const dump = join(scratch, "decision.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "permission-session-first");
+    await instance.adapter.sendTurn({ threadId: "t-perm-deny-once", text: "go" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.respondToRequest("t-perm-deny-once", (opened as any).requestId, { behavior: "deny" });
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "reject-once" } });
+  });
+
   it("never lets fullAuto answer a question tool routed through request_permission (ASK1)", async () => {
     process.env.FAKE_ACP_MODE = "question-tool";
     instance = await GrokAgentDriver.create({

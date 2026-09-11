@@ -9,6 +9,11 @@
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
 //   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
+//                   | permission-session-first (same ask, but the options are
+//                     ordered the way Fuigo's edit prompt really orders them:
+//                     `allow_always` "allow all edits this session" BEFORE
+//                     `allow_once`; the client's reply is written to
+//                     FAKE_ACP_DUMP as `decision`)
 //                   | question-tool (AskUserQuestion routed through request_permission)
 //                   | fuigo-question (Fuigo's `_fuigo/ask_user_question` ext request)
 //                   | fuigo-elicit (Fuigo's `_fuigo/mcp/elicit` bridge of an MCP form elicitation)
@@ -844,7 +849,7 @@ function handle(msg: any) {
         });
         return;
       }
-      if (mode === "permission" || mode === "question-tool") {
+      if (mode === "permission" || mode === "question-tool" || mode === "permission-session-first") {
         // ask the client to approve a tool, then complete once answered.
         // question-tool: the agent routes its AskUserQuestion tool through
         // request_permission (named in the tool call), exactly the shape a
@@ -870,10 +875,17 @@ function handle(msg: any) {
                   },
                 }
               : { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
-            options: [
-              { optionId: "allow-once", kind: "allow_once" },
-              { optionId: "reject", kind: "reject_once" },
-            ],
+            options: mode === "permission-session-first"
+              // verbatim order and ids from a Fuigo 1.0.12 `Write` prompt
+              ? [
+                  { optionId: "allow-edits-session", kind: "allow_always", name: "Yes, allow all edits during this session" },
+                  { optionId: "allow-once", kind: "allow_once", name: "Yes" },
+                  { optionId: "reject-once", kind: "reject_once", name: "No, and tell Fuigo what to do differently" },
+                ]
+              : [
+                  { optionId: "allow-once", kind: "allow_once" },
+                  { optionId: "reject", kind: "reject_once" },
+                ],
           },
         });
         return;
