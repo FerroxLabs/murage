@@ -12,8 +12,10 @@ const expectedKeys = [
   "saving", "create", "save", "cancel",
   // b5e28ce8 fix(engines): keep Engines settings mounted on an unreadable Claude account list (RED2F)
   "listUnreadable",
+  // FOLLOW4 fix(engines): refreshInstances reports its failure; the section names the engine list
+  "fleetRefreshError",
 ].map(name => `claudeAccounts.${name}`);
-it("provides all 22 account action messages and preserves placeholders in seven packs", () => {
+it("provides all 23 account action messages and preserves placeholders in seven packs", () => {
   expect([...keys].sort()).toEqual([...expectedKeys].sort());
   for (const code of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
     setLocale(code);
