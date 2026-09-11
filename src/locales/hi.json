@@ -566,6 +566,9 @@
   "folderTrust.statusUndecided": "अभी निर्णय नहीं हुआ — यहाँ का पहला टर्न पूछेगा",
   "folderTrust.statusUpstream": "आपके अपने Fuigo इंस्टॉल द्वारा विश्वसनीय (fuigo --trust) — Murage को जो भी याद हो, इसकी फ़ाइलें लागू होती हैं",
   "folderTrust.statusNothing": "यहाँ अभी विश्वास करने के लिए कुछ नहीं है",
+  "folderTrust.statusRefused": "इस बॉट की बारियाँ शुरू नहीं होंगी: {reason}",
+  "folderTrust.statusNotGated": "इस बॉट के इंजन द्वारा नियंत्रित नहीं — फ़ोल्डर की फ़ाइलें हमेशा की तरह लागू होती हैं",
+  "folderTrust.perMember": "प्रति सदस्य — हर सदस्य का अपना इंजन तय करता है:",
   "folderTrust.forget": "भूल जाएँ",
   "folderTrust.forgetError": "इस फ़ोल्डर का विश्वास निर्णय भुलाया नहीं जा सका।"
 }

@@ -569,6 +569,9 @@
       "folderTrust.statusUndecided": "c3066ea9a3e812bd3b2b50410f6bb85b68d4acd4d22f41b1c69507912406bc9b",
       "folderTrust.statusUpstream": "b56f78571e38ac4202f1ab3a93c6c7ee1fa9aa8b70abd3ec33e977fa06c42246",
       "folderTrust.statusNothing": "bf9b3098ae66c7ec4fa904c21c0f46f362d8091e9081dcb6664884d2b0f9186f",
+      "folderTrust.statusRefused": "e382102363584cf7a10373f0e91e9412451c983f706265be6ab81ef768c89624",
+      "folderTrust.statusNotGated": "01dd7a19de17413c863c9e236d3e3e5d5bb43a5abbd769809144206ed86457e7",
+      "folderTrust.perMember": "cac1ad896547dfad99390cf2b2fd9b6ccd0010cc95cf3e914a1e71931f341e4c",
       "folderTrust.forget": "a6bd489d955044992dd33f0f18fee68c83842c20eb0f6f50cb96f07b7d6dd8dd",
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
@@ -1140,6 +1143,9 @@
       "folderTrust.statusUndecided": "c3066ea9a3e812bd3b2b50410f6bb85b68d4acd4d22f41b1c69507912406bc9b",
       "folderTrust.statusUpstream": "b56f78571e38ac4202f1ab3a93c6c7ee1fa9aa8b70abd3ec33e977fa06c42246",
       "folderTrust.statusNothing": "bf9b3098ae66c7ec4fa904c21c0f46f362d8091e9081dcb6664884d2b0f9186f",
+      "folderTrust.statusRefused": "e382102363584cf7a10373f0e91e9412451c983f706265be6ab81ef768c89624",
+      "folderTrust.statusNotGated": "01dd7a19de17413c863c9e236d3e3e5d5bb43a5abbd769809144206ed86457e7",
+      "folderTrust.perMember": "cac1ad896547dfad99390cf2b2fd9b6ccd0010cc95cf3e914a1e71931f341e4c",
       "folderTrust.forget": "a6bd489d955044992dd33f0f18fee68c83842c20eb0f6f50cb96f07b7d6dd8dd",
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
@@ -1711,6 +1717,9 @@
       "folderTrust.statusUndecided": "c3066ea9a3e812bd3b2b50410f6bb85b68d4acd4d22f41b1c69507912406bc9b",
       "folderTrust.statusUpstream": "b56f78571e38ac4202f1ab3a93c6c7ee1fa9aa8b70abd3ec33e977fa06c42246",
       "folderTrust.statusNothing": "bf9b3098ae66c7ec4fa904c21c0f46f362d8091e9081dcb6664884d2b0f9186f",
+      "folderTrust.statusRefused": "e382102363584cf7a10373f0e91e9412451c983f706265be6ab81ef768c89624",
+      "folderTrust.statusNotGated": "01dd7a19de17413c863c9e236d3e3e5d5bb43a5abbd769809144206ed86457e7",
+      "folderTrust.perMember": "cac1ad896547dfad99390cf2b2fd9b6ccd0010cc95cf3e914a1e71931f341e4c",
       "folderTrust.forget": "a6bd489d955044992dd33f0f18fee68c83842c20eb0f6f50cb96f07b7d6dd8dd",
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
@@ -2282,6 +2291,9 @@
       "folderTrust.statusUndecided": "c3066ea9a3e812bd3b2b50410f6bb85b68d4acd4d22f41b1c69507912406bc9b",
       "folderTrust.statusUpstream": "b56f78571e38ac4202f1ab3a93c6c7ee1fa9aa8b70abd3ec33e977fa06c42246",
       "folderTrust.statusNothing": "bf9b3098ae66c7ec4fa904c21c0f46f362d8091e9081dcb6664884d2b0f9186f",
+      "folderTrust.statusRefused": "e382102363584cf7a10373f0e91e9412451c983f706265be6ab81ef768c89624",
+      "folderTrust.statusNotGated": "01dd7a19de17413c863c9e236d3e3e5d5bb43a5abbd769809144206ed86457e7",
+      "folderTrust.perMember": "cac1ad896547dfad99390cf2b2fd9b6ccd0010cc95cf3e914a1e71931f341e4c",
       "folderTrust.forget": "a6bd489d955044992dd33f0f18fee68c83842c20eb0f6f50cb96f07b7d6dd8dd",
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
@@ -2853,6 +2865,9 @@
       "folderTrust.statusUndecided": "c3066ea9a3e812bd3b2b50410f6bb85b68d4acd4d22f41b1c69507912406bc9b",
       "folderTrust.statusUpstream": "b56f78571e38ac4202f1ab3a93c6c7ee1fa9aa8b70abd3ec33e977fa06c42246",
       "folderTrust.statusNothing": "bf9b3098ae66c7ec4fa904c21c0f46f362d8091e9081dcb6664884d2b0f9186f",
+      "folderTrust.statusRefused": "e382102363584cf7a10373f0e91e9412451c983f706265be6ab81ef768c89624",
+      "folderTrust.statusNotGated": "01dd7a19de17413c863c9e236d3e3e5d5bb43a5abbd769809144206ed86457e7",
+      "folderTrust.perMember": "cac1ad896547dfad99390cf2b2fd9b6ccd0010cc95cf3e914a1e71931f341e4c",
       "folderTrust.forget": "a6bd489d955044992dd33f0f18fee68c83842c20eb0f6f50cb96f07b7d6dd8dd",
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
@@ -3424,6 +3439,9 @@
       "folderTrust.statusUndecided": "c3066ea9a3e812bd3b2b50410f6bb85b68d4acd4d22f41b1c69507912406bc9b",
       "folderTrust.statusUpstream": "b56f78571e38ac4202f1ab3a93c6c7ee1fa9aa8b70abd3ec33e977fa06c42246",
       "folderTrust.statusNothing": "bf9b3098ae66c7ec4fa904c21c0f46f362d8091e9081dcb6664884d2b0f9186f",
+      "folderTrust.statusRefused": "e382102363584cf7a10373f0e91e9412451c983f706265be6ab81ef768c89624",
+      "folderTrust.statusNotGated": "01dd7a19de17413c863c9e236d3e3e5d5bb43a5abbd769809144206ed86457e7",
+      "folderTrust.perMember": "cac1ad896547dfad99390cf2b2fd9b6ccd0010cc95cf3e914a1e71931f341e4c",
       "folderTrust.forget": "a6bd489d955044992dd33f0f18fee68c83842c20eb0f6f50cb96f07b7d6dd8dd",
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
@@ -3995,6 +4013,9 @@
       "folderTrust.statusUndecided": "c3066ea9a3e812bd3b2b50410f6bb85b68d4acd4d22f41b1c69507912406bc9b",
       "folderTrust.statusUpstream": "b56f78571e38ac4202f1ab3a93c6c7ee1fa9aa8b70abd3ec33e977fa06c42246",
       "folderTrust.statusNothing": "bf9b3098ae66c7ec4fa904c21c0f46f362d8091e9081dcb6664884d2b0f9186f",
+      "folderTrust.statusRefused": "e382102363584cf7a10373f0e91e9412451c983f706265be6ab81ef768c89624",
+      "folderTrust.statusNotGated": "01dd7a19de17413c863c9e236d3e3e5d5bb43a5abbd769809144206ed86457e7",
+      "folderTrust.perMember": "cac1ad896547dfad99390cf2b2fd9b6ccd0010cc95cf3e914a1e71931f341e4c",
       "folderTrust.forget": "a6bd489d955044992dd33f0f18fee68c83842c20eb0f6f50cb96f07b7d6dd8dd",
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     }

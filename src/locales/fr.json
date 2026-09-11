@@ -566,6 +566,9 @@
   "folderTrust.statusUndecided": "Pas encore décidé — le premier tour ici posera la question",
   "folderTrust.statusUpstream": "Approuvé par votre propre installation Fuigo (fuigo --trust) — ses fichiers s'appliquent quoi que Murage ait retenu",
   "folderTrust.statusNothing": "Rien à approuver ici pour l'instant",
+  "folderTrust.statusRefused": "Les tours de ce bot ne démarreraient pas : {reason}",
+  "folderTrust.statusNotGated": "Non contrôlé par le moteur de ce bot — les fichiers du dossier s'appliquent comme toujours",
+  "folderTrust.perMember": "Par membre — le moteur de chaque membre décide lui-même :",
   "folderTrust.forget": "Oublier",
   "folderTrust.forgetError": "Impossible d'oublier la décision d'approbation de ce dossier."
 }
