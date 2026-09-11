@@ -346,16 +346,34 @@ export async function safeWipe(target, options = {}) {
   throw lastError;
 }
 
+/** Mirror of node:fs's own URL test (internal/url isURL, used by
+ * toPathIfFileURL): fs never checks `instanceof URL`, it duck-types any
+ * object with a truthy href and protocol that is not a legacy url.parse
+ * result (`auth`/`path` defined). A cross-realm URL or a hand-rolled
+ * { href, protocol, hostname, pathname } therefore reaches the real delete.
+ * @param {unknown} target
+ * @returns {target is { href: string; protocol: string }} */
+const isUrlLike = (target) => Boolean(target) && typeof target === "object"
+  && typeof target.href === "string" && target.href !== ""
+  && typeof target.protocol === "string" && target.protocol !== ""
+  && target.auth === undefined && target.path === undefined;
+
 /**
  * The path a node:fs delete names, as a string, from any of the spellings
- * fs accepts: a `file:` URL, a Buffer, or a string. `String(url)` is
- * "file:///..." which resolves to a nonexistent path under the checkout and
- * is judged unprotected, so a URL used to walk past the guard (FOLLOW7).
+ * fs accepts: a `file:` URL or URL-like object, a Buffer, or a string.
+ * `String(url)` is "file:///..." (and String(object) is "[object Object]")
+ * which resolves to a nonexistent path under the checkout and is judged
+ * unprotected, so a URL or a duck-typed one used to walk past the guard
+ * (FOLLOW7). The path is taken with fileURLToPath(target) rather than
+ * `new URL(target.href)` because fs deletes what the object's hostname and
+ * pathname name, not what its href says; and it throws the same
+ * ERR_INVALID_FILE_URL_HOST fs would for a shape fs cannot turn into a path,
+ * so nothing is deleted in that case either.
  * @param {string | URL | Buffer | unknown} target
  * @returns {string}
  */
 export function wipeTargetPath(target) {
-  if (target instanceof URL) return target.protocol === "file:" ? fileURLToPath(target) : String(target);
+  if (isUrlLike(target)) return target.protocol === "file:" ? fileURLToPath(target) : String(target.href);
   if (Buffer.isBuffer(target)) return target.toString();
   return String(target);
 }
@@ -367,8 +385,8 @@ let guardInstalled = false;
  * node --test preload so files that were never routed through safeWipeSync
  * still cannot reach a data directory. Named imports see the patch because
  * Node's builtin ESM facades are re-synced after the assignment. The target
- * is judged by the path it names whether it is a string, a `file:` URL or a
- * Buffer (wipeTargetPath).
+ * is judged by the path it names whether it is a string, a `file:` URL, a
+ * URL-like object fs would duck-type, or a Buffer (wipeTargetPath).
  * @param {import("./safe-wipe.d.mts").SafeWipeOptions} [options]
  */
 export function installSafeWipeGuard(options = {}) {

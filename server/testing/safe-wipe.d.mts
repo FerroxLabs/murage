@@ -46,7 +46,7 @@ export declare function assertNotProtected(target: string, options?: SafeWipeOpt
 export declare function safeWipeSync(target: string, options?: SafeWipeOptions): string;
 /** assertSafeToWipe on every attempt, then fs/promises rm with retries. Returns the canonical path. */
 export declare function safeWipe(target: string, options?: SafeWipeOptions): Promise<string>;
-/** The path a node:fs delete names, from a string, `file:` URL or Buffer, for the guard's judgement. */
+/** The path a node:fs delete names, from a string, `file:` URL, URL-like object (fs duck-types `{ href, protocol }` and deletes its `pathname`) or Buffer, for the guard's judgement. */
 export declare function wipeTargetPath(target: unknown): string;
 /** Patch node:fs so every recursive delete in this process runs assertNotProtected. Idempotent; true when it installed. */
 export declare function installSafeWipeGuard(options?: SafeWipeOptions): boolean;

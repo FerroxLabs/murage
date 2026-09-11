@@ -158,8 +158,12 @@ single judgement before the loop turned that beat into a one-off refusal on
 a green suite (FOLLOW7). `installSafeWipeGuard()` patches `node:fs` so every
 recursive `rm` / `rmSync` / `rmdir` in the process runs the deny rules,
 judging the target by the path it names whether it is a string, a `file:`
-URL or a Buffer (`String(url)` is `file:///...`, a nonexistent path under the
-checkout, which a URL once used to walk past the guard — FOLLOW7) —
+URL, a URL-like object or a Buffer (`String(url)` is `file:///...` and
+`String(object)` is `[object Object]`, nonexistent paths under the checkout,
+which a URL once used to walk past the guard — FOLLOW7; `node:fs` never
+checks `instanceof URL`, it duck-types any `{ href, protocol }` and deletes
+the object's `pathname`, so the guard mirrors that test and judges the
+`pathname`, not the `href`) —
 the vitest setup file installs it, and `pnpm test:electron` preloads it
 (`--import ./server/testing/safe-wipe-preload.mjs`) for `node --test` files,
 which get no faked home.
@@ -206,7 +210,9 @@ child process holds it) while a dead or self-owned lease is admitted; a
 symlink inside scratch that points at protected data refused; the
 process-wide guard refusing `fs.rmSync` / `fs.promises.rm` / callback
 `fs.rm` on protected paths while letting temp deletes through, and refusing
-the same delete when the target is spelled as a `file:` URL or a Buffer.
+the same delete when the target is spelled as a `file:` URL, a hand-rolled
+URL-like object (judged by its `pathname`, so a scratch `href` cannot launder
+a leased `pathname`) or a Buffer.
 `cleanup.test.ts` covers `removeTempDir` and `safeWipe` re-judging the lease
 on every attempt: an owner that dies mid-teardown no longer refuses the
 wipe, one that outlives every attempt still does, and nothing is deleted
