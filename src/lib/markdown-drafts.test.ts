@@ -72,6 +72,27 @@ describe("bounds", () => {
     expect(planClearDraft(existing, "missing")).toEqual({ result: { ok: true, cleared: false } });
   });
 
+  // Fix round 2: draft revision counters restart in every session, so a
+  // crashed session's record (revision 9) must never look "newer" than a new
+  // session's typing (revision 1) and survive the save that replaced it.
+  it("compares revisions only within one writer and clears the earlier session's record it covers", () => {
+    const crashed = record("a.md", { draftRevision: 9, updatedAt: 7 });
+    const key = crashed.key;
+    const covers = { draftRevision: 9, updatedAt: 7 };
+    expect(planClearDraft([crashed], key, { upToDraftRevision: 1, writer: "w-new", covers })).toEqual({ delete: [key], result: { ok: true, cleared: true } });
+    // Another writer's record this session never saw is someone's unsaved
+    // work in another window: a bounded clear keeps it, whatever its revision.
+    const otherWindow = record("a.md", { draftRevision: 1, updatedAt: 8, writer: "w-other" });
+    expect(planClearDraft([otherWindow], key, { upToDraftRevision: 5, writer: "w-new", covers })).toEqual({ result: { ok: true, cleared: false } });
+    expect(planClearDraft([otherWindow], key, { upToDraftRevision: 5, writer: "w-new", covers: { writer: "w-other", draftRevision: 1, updatedAt: 8 } }).result).toEqual({ ok: true, cleared: true });
+    // This writer's own newer typing is still kept, and an unbounded clear
+    // still removes anything.
+    const mine = record("a.md", { draftRevision: 4, writer: "w-new" });
+    expect(planClearDraft([mine], key, { upToDraftRevision: 3, writer: "w-new", covers })).toEqual({ result: { ok: true, cleared: false } });
+    expect(planClearDraft([mine], key, { upToDraftRevision: 4, writer: "w-new", covers }).result).toEqual({ ok: true, cleared: true });
+    expect(planClearDraft([otherWindow], key).result).toEqual({ ok: true, cleared: true });
+  });
+
   it("maps storage errors to visible failures", () => {
     expect(draftFailureFrom(new DOMException("full", "QuotaExceededError"))).toEqual({ ok: false, code: "storage-quota", message: "full" });
     expect(draftFailureFrom({ name: "NS_ERROR_DOM_QUOTA_REACHED" })).toEqual({ ok: false, code: "storage-quota" });
@@ -98,6 +119,9 @@ describe("draft store", () => {
     expect(await store.clear(report, { upToDraftRevision: 2 })).toEqual({ ok: true, cleared: false });
     expect(await store.clear(report, { upToDraftRevision: 3 })).toEqual({ ok: true, cleared: true });
     expect(backend.records().map(item => item.threadId)).toEqual(["thread-2"]);
+    // The writer is stored with the record and read back.
+    await store.preserve(report, { baseRevision: rev("r0"), content: "mine", draftRevision: 1, writer: "w-1" });
+    expect(await store.load(report)).toMatchObject({ ok: true, record: { writer: "w-1", draftRevision: 1 } });
   });
 
   it("reports a bound refusal without touching the stored drafts", async () => {

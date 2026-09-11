@@ -47,11 +47,14 @@ import {
 import {
   MARKDOWN_DRAFT_MAX_BYTES,
   MARKDOWN_DRAFT_MAX_COUNT,
+  draftStamp,
   type MarkdownDraftErrorCode,
   type MarkdownDraftRecord,
   type MarkdownDraftStore,
+  type StoredDraftStamp,
 } from "@/lib/markdown-drafts";
 import {
+  EMPTY_MARKDOWN_DOC,
   MARKDOWN_RICH_EDIT_MAX_BYTES,
   analyzeMarkdownFidelity,
   composeMarkdownDocument,
@@ -114,6 +117,10 @@ export interface MarkdownEditorControllerOptions {
    * `connect()` or the first `subscribe`, so an instance React creates and
    * discards (StrictMode double-invokes state initializers) never listens. */
   connect?: boolean;
+  /** Stamped on every draft this controller preserves (default: random).
+   * Draft revision counters restart in every session, so a stored record is
+   * only compared by revision with records of the same writer. */
+  draftWriterId?: string;
 }
 
 const defaultSchedule: ScheduleTimer = (callback, delayMs) => {
@@ -123,6 +130,19 @@ const defaultSchedule: ScheduleTimer = (callback, delayMs) => {
 
 function defaultRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `save-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sameViewValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  // Reason lists are rebuilt on every analysis; equal lists are no change,
+  // so re-analysing during render never notifies subscribers.
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
+/** Editor content for a rich body. Tiptap parses an empty string as HTML
+ * (not Markdown), so an empty body loads the empty document instead. */
+export function richEditorContent(body: string): { content: string; contentType: "markdown" } | { content: typeof EMPTY_MARKDOWN_DOC } {
+  return body === "" ? { content: EMPTY_MARKDOWN_DOC } : { content: body, contentType: "markdown" };
 }
 
 export type SaveResult =
@@ -157,6 +177,11 @@ export class MarkdownEditorController {
   private restoreSettled = false;
   /** A stored draft that could not be restored because typing had started. */
   private heldDraft: MarkdownDraftRecord | null = null;
+  /** The record the stored-draft lookup found, from an earlier session. Once
+   * it is restored or given up, a bounded clear removes it: its revision
+   * counter is not this session's and cannot be compared with it. */
+  private seenStoredDraft: StoredDraftStamp | null = null;
+  private readonly draftWriter: string;
   private snapshot: MarkdownEditorSnapshot;
   private editor: Editor | null = null;
   private detachEditorListener: (() => void) | null = null;
@@ -177,6 +202,7 @@ export class MarkdownEditorController {
   constructor(options: MarkdownEditorControllerOptions) {
     this.options = options;
     this.session = options.session;
+    this.draftWriter = options.draftWriterId ?? `draft-writer-${defaultRequestId()}`;
     this.snapshot = { session: this.session.getState(), view: this.view };
     if ((options.initialMode ?? "auto") === "auto") this.setMode("rich");
     else this.analyze(this.session.getState().draft);
@@ -211,7 +237,7 @@ export class MarkdownEditorController {
 
   private setView(patch: Partial<MarkdownEditorView>): void {
     const next = { ...this.view, ...patch };
-    const changed = (Object.keys(patch) as (keyof MarkdownEditorView)[]).some(key => next[key] !== this.view[key]);
+    const changed = (Object.keys(patch) as (keyof MarkdownEditorView)[]).some(key => !sameViewValue(next[key], this.view[key]));
     if (!changed) return;
     this.view = next;
     this.emit();
@@ -298,7 +324,8 @@ export class MarkdownEditorController {
     }
     this.richParts = report.parts;
     this.editorDraft = state.draft;
-    editor.commands.setContent(report.parts.body, { emitUpdate: false, contentType: "markdown" });
+    const next = richEditorContent(report.parts.body);
+    editor.commands.setContent(next.content, { emitUpdate: false, ...("contentType" in next ? { contentType: next.contentType } : {}) });
   }
 
   private analyze(text: string): MarkdownFidelityReport {
@@ -413,6 +440,7 @@ export class MarkdownEditorController {
     const record = loaded.record;
     if (!record) return false;
     this.draftMayExist = true;
+    this.seenStoredDraft = draftStamp(record);
     const state = this.session.getState();
     if (hasUnsavedChanges(state) && record.content !== state.draft && record.content !== state.savedContent) {
       // Typing started before the stored draft was read. Restoring it would
@@ -524,6 +552,7 @@ export class MarkdownEditorController {
       content: state.draft,
       draftRevision: state.draftRevision,
       mode: state.mode,
+      writer: this.draftWriter,
     });
     if (this.disposed) return;
     const current = this.session.getState();
@@ -544,7 +573,14 @@ export class MarkdownEditorController {
     if (!drafts) return;
     this.draftMayExist = false;
     this.attemptedDraftRevision = null;
-    const result = await drafts.clear(this.session.getState().identity, upToDraftRevision === undefined ? {} : { upToDraftRevision });
+    // Bounded by this writer's revision: its own newer typing stays, the
+    // earlier session's record this session restored or gave up goes (it is
+    // never compared by revision), and nothing is judged for a writer this
+    // session never saw.
+    const result = await drafts.clear(
+      this.session.getState().identity,
+      upToDraftRevision === undefined ? {} : { upToDraftRevision, writer: this.draftWriter, covers: this.seenStoredDraft },
+    );
     if (this.disposed) return;
     if (!result.ok) this.setView({ draftStatus: "failed", draftError: result.code });
     else if (!hasUnsavedChanges(this.session.getState())) this.setView({ draftStatus: "idle", draftError: null, recoveredDraftAt: null });
@@ -676,12 +712,11 @@ export function draftStatusMessage(view: MarkdownEditorView): string | null {
 function RichSurface({ controller, documentKey, readOnly }: { controller: MarkdownEditorController; documentKey: string; readOnly: boolean }) {
   // Computed once per mount: later changes arrive through the controller as
   // `setContent(..., { emitUpdate: false })`, never by recreating the editor.
-  const initialBody = useMemo(() => controller.richBody() ?? "", [controller, documentKey]);
+  const initialContent = useMemo(() => richEditorContent(controller.richBody() ?? ""), [controller, documentKey]);
   const editor = useEditor({
     immediatelyRender: typeof window !== "undefined",
     extensions: createMarkdownExtensions(),
-    content: initialBody,
-    contentType: "markdown",
+    ...initialContent,
     injectCSS: false,
     editable: !readOnly,
     editorProps: {
