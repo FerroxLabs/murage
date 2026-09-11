@@ -92,12 +92,26 @@ function readVerified(path: string, limit: number, expected?: Stats) {
     return bytes;
   } finally { closeSync(fd); }
 }
+/** Extensions saved as kind `text`: plain documents and data, plus the source
+ * and configuration formats a bot writes. A text artifact previews inline
+ * (chat card, Files, workspace) within ARTIFACT_PREVIEW_MAX_BYTES and only when
+ * its bytes decode as UTF-8; the preview is served as text/plain and never
+ * executed, so a wider list changes what is shown, not what runs. Formats that
+ * are also images (.svg) or commonly hold credentials (.env, .pem, .key) stay
+ * `other` and download only. */
+export const ARTIFACT_TEXT_EXTENSIONS: readonly string[] = Object.freeze([
+  ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".log", ".rst", ".adoc", ".tex", ".diff", ".patch",
+  ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
+  ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".xml", ".css", ".scss", ".less", ".sql", ".graphql", ".gql", ".proto",
+  ".go", ".rs", ".rb", ".php", ".java", ".kt", ".kts", ".swift", ".c", ".h", ".cpp", ".hpp", ".cc", ".cs", ".m", ".lua", ".r",
+  ".pl", ".ex", ".exs", ".erl", ".hs", ".scala", ".clj", ".dart", ".vue", ".svelte",
+]);
 function format(path: string): { kind: ArtifactKind; mime: string; extension: string } {
   const extension = extname(path).toLowerCase();
   if ([".html", ".htm"].includes(extension)) return { kind: "html", mime: "text/html", extension };
   const images: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
   if (images[extension]) return { kind: "image", mime: images[extension], extension };
-  if ([".txt", ".md", ".csv", ".tsv", ".json", ".log"].includes(extension)) return { kind: "text", mime: "text/plain", extension };
+  if (ARTIFACT_TEXT_EXTENSIONS.includes(extension)) return { kind: "text", mime: "text/plain", extension };
   return { kind: "other", mime: "application/octet-stream", extension: /^\.[a-z0-9]{1,12}$/.test(extension) ? extension : ".bin" };
 }
 function storage(path: string) {
