@@ -1,7 +1,6 @@
 import { defineConfig } from "@playwright/test";
-import { laneEvidenceDir } from "./lane-data-dir";
-// MURAGE_E2E_DATA_DIR is required; evidence lands inside it (lane-data-dir.ts).
-const out = laneEvidenceDir("artifact-cards-results");
+import { evidenceDir } from "./evidence";
+const out = evidenceDir("artifact-cards");
 export default defineConfig({ testDir: ".", testMatch: "artifact-cards.human.spec.ts", workers: 1, retries: 0,
   timeout: 90_000, expect: { timeout: 7_000 }, reporter: "list",
   outputDir: out, use: { headless: true, screenshot: "only-on-failure", trace: "retain-on-failure" } });

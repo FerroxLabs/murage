@@ -6,8 +6,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { claudeAccountsAfterChange, claudeAccountsFrom, claudeAccountsListOrder, type ClaudeAccount } from "./ClaudeAccountsSettings";
+import { describe, expect, it, vi } from "vitest";
+import { claudeAccountChanger, claudeAccountsAfterChange, claudeAccountsFrom, claudeAccountsListOrder, type ClaudeAccount, type ClaudeAccountChangeSection } from "./ClaudeAccountsSettings";
 
 const account: ClaudeAccount = {
   instanceId: "claude-work", displayName: "Work", managed: true, isDefault: false,
@@ -126,5 +126,97 @@ describe("claudeAccountsListOrder", () => {
     expect(source.match(/order\.request\(\)/g)).toHaveLength(1);
     expect(source).toMatch(/const fresh = order\.request\(\);\s+try \{\s+const payload = await api\("\/api\/claude-accounts"\);\s+if \(!fresh\(\)\) return;/);
     expect(source).toMatch(/order\.receipt\(\);\s+setAccounts\(current => claudeAccountsAfterChange/);
+  });
+});
+
+// EnginesSettings passes onChanged={refreshInstances}: GET /api/instances,
+// which refreshes every catalog and snapshots every engine. Awaiting it inside
+// `busy` greyed every account button for one full-fleet probe per create,
+// rename or remove (CLAC2 verifier, CLAC3). The section is interactive once
+// its own receipt and list are drawn; the fleet refresh follows, serialized.
+describe("claudeAccountChanger", () => {
+  const deferred = <T,>() => { let resolve!: (value: T) => void, reject!: (cause: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+  const section = (overrides: Partial<ClaudeAccountChangeSection> = {}) => {
+    const log: string[] = [];
+    const hooks: ClaudeAccountChangeSection = {
+      request: async method => { log.push(`request ${method}`); return { account }; },
+      draw: method => log.push(`draw ${method}`),
+      load: async () => { log.push("load"); },
+      fleet: () => { log.push("fleet"); return Promise.resolve(); },
+      busy: value => log.push(`busy ${value}`),
+      error: message => log.push(`error ${message}`),
+      ...overrides,
+    };
+    return { log, hooks, change: claudeAccountChanger(hooks) };
+  };
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  it("clears busy before the fleet refresh is requested, and waits for it before finishing", async () => {
+    const probe = deferred<void>();
+    const { log, change } = section({ fleet: () => { log.push("fleet"); return probe.promise; } });
+    const done = change("POST", undefined, { displayName: "Work" });
+    await vi.waitFor(() => expect(log).toContain("fleet"));
+    expect(log).toEqual(["busy true", "request POST", "draw POST", "load", "busy false", "fleet"]);
+    let finished = false; void done.then(() => { finished = true; });
+    await settle();
+    expect(finished).toBe(false);
+    probe.resolve();
+    await done;
+    expect(log).toEqual(["busy true", "request POST", "draw POST", "load", "busy false", "fleet"]);
+  });
+
+  it("takes the next change while the fleet refresh is still pending, and requests its refresh only after the first answered", async () => {
+    const probes: Array<ReturnType<typeof deferred<void>>> = [];
+    const { log, change } = section({ fleet: () => { const probe = deferred<void>(); probes.push(probe); log.push(`fleet ${probes.length}`); return probe.promise; } });
+    const first = change("POST", undefined, { displayName: "Work" });
+    await vi.waitFor(() => expect(log).toContain("fleet 1"));
+    const second = change("PATCH", "claude-work", { displayName: "Work renamed" });
+    await vi.waitFor(() => expect(log).toContain("draw PATCH"));
+    await settle();
+    expect(log).toEqual(["busy true", "request POST", "draw POST", "load", "busy false", "fleet 1", "busy true", "request PATCH", "draw PATCH", "load", "busy false"]);
+    probes[0]!.resolve();
+    await first;
+    await vi.waitFor(() => expect(log).toContain("fleet 2"));
+    probes[1]!.resolve();
+    await second;
+    expect(probes).toHaveLength(2);
+  });
+
+  it("ignores a change while one is in flight, but not while only the fleet refresh is", async () => {
+    const receipt = deferred<unknown>(), probe = deferred<void>();
+    const { log, change } = section({ request: async () => { log.push("request"); return receipt.promise; }, fleet: () => { log.push("fleet"); return probe.promise; } });
+    const first = change("POST"); const dropped = change("POST");
+    await dropped;
+    expect(log).toEqual(["busy true", "request"]);
+    receipt.resolve({ account });
+    await vi.waitFor(() => expect(log).toContain("fleet"));
+    const taken = change("PATCH", "claude-work");
+    await vi.waitFor(() => expect(log).toContain("draw PATCH"));
+    probe.resolve(); await first; await taken;
+    expect(log.filter(entry => entry.startsWith("request"))).toHaveLength(2);
+  });
+
+  it("does not refresh the fleet after a failed change, and reports a failed fleet refresh without greying the section", async () => {
+    const failed = section({ request: async () => { throw new Error("Account name is taken."); } });
+    await failed.change("POST", undefined, { displayName: "Work" });
+    expect(failed.log).toEqual(["busy true", "error Account name is taken.", "busy false"]);
+    const refresh = section({ fleet: () => { refresh.log.push("fleet"); return Promise.reject(new Error("offline")); } });
+    await refresh.change("DELETE", "claude-work");
+    expect(refresh.log).toEqual(["busy true", "request DELETE", "draw DELETE", "load", "busy false", "fleet", "error Saved, but the account list could not refresh. Use Refresh accounts to check its current state."]);
+  });
+
+  it("works without a page to refresh", async () => {
+    const { log, change } = section({ fleet: () => undefined });
+    await change("POST", undefined, { displayName: "Work" });
+    expect(log).toEqual(["busy true", "request POST", "draw POST", "load", "busy false"]);
+  });
+
+  it("is the sequence the section runs, with EnginesSettings' refresh as its fleet", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ClaudeAccountsSettings.tsx"), "utf8");
+    expect(source).toMatch(/const \[change\] = useState\(\(\) => claudeAccountChanger\(\{/);
+    expect(source).toContain("fleet: () => fleet.current?.()");
+    expect(source).not.toMatch(/await onChanged/);
+    const engines = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "EnginesSettings.tsx"), "utf8");
+    expect(engines.match(/<ClaudeAccountsSettings onChanged=\{refreshInstances\} \/>/g)).toHaveLength(2);
   });
 });

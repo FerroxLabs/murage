@@ -370,15 +370,17 @@ import { searchWeb, SearchError } from "./web-search.ts";
 import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
+import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { TelegramService } from "./telegram-service.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
-import { shouldMountLocalComputer } from "./local-routing.ts";
+import { autoMountsLocalComputer, shouldMountLocalComputer } from "./local-routing.ts";
 // 0.1.52 K0 delegation seams (docs/plans/0152-CONTRACTS.md).
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { hostStoppedActivityName } from "../shared/host-stop.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";
@@ -476,7 +478,10 @@ function selectedProviderRoute(selection: ModelSelection, driverKind: string): P
   validateProviderTurnRoute(driverKind, route); return route;
 }
 /** A turn the host stops on its own (not the user's Stop) settles as cancelled
- * with no error card, so the conversation says why it ended (STOP1). */
+ * with no error card, so the conversation says why it ended (STOP1). The
+ * "stopped:" name prefix (shared/host-stop.ts) is what the transcripts key
+ * on: a neutral stopped row that stays visible in a 1:1 thread even with
+ * Settings → Tool calls off, never the red error card (STOP2). */
 function noteHostStoppedTurn(threadId: string, botId: string, reason: string): void {
   const bot = store.bot(botId);
   try {
@@ -486,7 +491,7 @@ function noteHostStoppedTurn(threadId: string, botId: string, reason: string): v
       ...(bot && store.groupByThread(threadId) ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}),
       // ok:false: a settled, not-successful chip. No "error:" prefix, so no
       // error card and no Retry.
-      tool: { name: `Stopped — ${reason}`, ok: false },
+      tool: { name: hostStoppedActivityName(reason), ok: false },
     });
   } catch { /* the thread may already be gone */ }
 }
@@ -552,7 +557,7 @@ utilityParentPort?.on("message", (event) => {
     if (browserCleanup.receive(message)) return;
     if (applyProviderBankFenceMessage(message)) {
       // Admission closed while the desktop reconciled; drain once it reopens.
-      if (!providerBankDispatchFenced()) scheduleCoordinationDrain();
+      if (!providerBankDispatchFenced()) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); }
       return;
     }
     if (!applyDesktopBrowserConnectionMessage(message)) composio.applyManagedBrokerMessage(message);
@@ -606,7 +611,7 @@ function finishProviderConfigMutation(): void {
   providerConfigBusy = false;
   // Reload/rollback may have released idle targets while admission was closed.
   // Drain only after the final fleet is attached and the mutation guard clears.
-  if (providerFleetReady) scheduleCoordinationDrain();
+  if (providerFleetReady) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); }
 }
 function holdCoordinationSlot(threadId: string): () => void {
   if (coordinationSlots.has(threadId) || !coordinationHasCapacity()) throw new Error("COORDINATION_CAPACITY: wait for a running handoff");
@@ -885,6 +890,9 @@ type DirectTurnDispatchClaim = {
   phase: "setup" | "dispatching";
 };
 class DirectTurnSetupCancelled extends Error {}
+/** server/memory: assertMemoryAccess and deliverMemoryDisclosure refuse with
+ * exactly this message when the authority a dispatch prepared under has moved. */
+const isMemoryContextRevoked = (error: unknown) => error instanceof Error && error.message === "MEMORY_CONTEXT_REVOKED";
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directRuns = new IndependentThreadRuns<BotRecord>();
 function botForDirectThread(botId:string,threadId:string):BotRecord|null {
@@ -912,6 +920,10 @@ async function interruptDirectThread(botId:string,threadId:string):Promise<void>
   if(run&&claim?.phase!=="dispatching"&&directRuns.current(run)){
     if(screenPollers.get(botId)?.threadId===threadId)await finalScreenFrame(botId,threadId);
     directRuns.release(run);store.setTaskActivity(botId,threadId,"idle");
+    // The bot reads idle now, but a legacy "requested, not observed" stop
+    // keeps the folder writer lease until the engine's terminal event. Mark
+    // it so a restore inside that window waits for the release (STOPRESTORE1).
+    projectTurnLeases.markStopRequested(run.generation);
   }
 }
 /** One visible notice per retained generation; the caller keeps the lease. */
@@ -1315,7 +1327,9 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
-const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders };
+// STOPRESTORE2: the workspace editor's overwrite hold waits for a stopped
+// turn's lease the way a restore does (projectTurns + the engine close budget).
+const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders, projectTurns: projectTurnLeases, stoppedTurnCloseMs: providerCloseDeadlineMs };
 const outputPublisher = createOutputPublisher(featureRouteDeps);
 const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
 function turnMemoryAccess(botId: string, threadId: string, generation: string): MemoryAccess {
@@ -2555,6 +2569,9 @@ const activeVpsThreads = new Map<string, string>();
 // A restore mutates and cleans a project work tree. Claim the bot across the
 // entire async Git operation so a turn cannot start in that folder midway.
 const checkpointRestoreLeases = new Set<string>();
+/** Restore refused because the only holder of the folder is a turn the user
+ * already stopped whose engine did not close within its budget. Retryable. */
+const RESTORE_STOPPED_TURN_CLOSING_ERROR = "A stopped turn is still closing and holds this project folder. Wait a moment and retry the restore.";
 const LOCAL_VM_IDLE_MS = 8 * 60 * 60_000;
 const localVmIdles = new Map<string, LocalVmIdleTimer>();
 
@@ -3447,7 +3464,18 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
 // bot without that event, so every explicit idle release calls this same
 // coalesced retry hook. The microtask lets the releasing state machine finish
 // before another turn claims the bot.
+//
+// A release can land while admission is closed: reloadProviders retires
+// direct runs before the new fleet is attached, and every caller of it holds
+// the config-mutation guard until after the reload, so a retry that ran then
+// found providerFleetReady false or providerConfigBusy true and released
+// nothing — the handoff stayed "waiting — retry 1/3" until an unrelated
+// drain happened by. The retry is kept instead and replayed when admission
+// reopens (finishProviderConfigMutation, the Flux fence, the desktop bank
+// fence), so a delegation waiting on a reloaded bot runs on the new fleet.
 const delegationRetryBots = new Set<string>();
+const deferredDelegationRetries = new Set<string>();
+const coordinationAdmissionClosed = () => providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady;
 function retryDelegationsWaitingOn(botId: string): void {
   if (delegationRetryBots.has(botId)) return;
   delegationRetryBots.add(botId);
@@ -3456,11 +3484,20 @@ function retryDelegationsWaitingOn(botId: string): void {
     if (store.bot(botId)?.busy) return;
     const threadId = store.bot(botId)?.threadId;
     if (threadId) coordinationSlots.get(threadId)?.();
-    if (providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady) return;
+    if (coordinationAdmissionClosed()) { deferredDelegationRetries.add(botId); return; }
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
   });
+}
+/** Re-run the idle releases that arrived while admission was closed. Each
+ * goes back through the same hook, so a bot that has since become busy again
+ * waits for its own settle as usual. */
+function replayDeferredDelegationRetries(): void {
+  if (coordinationAdmissionClosed() || !deferredDelegationRetries.size) return;
+  const bots = [...deferredDelegationRetries];
+  deferredDelegationRetries.clear();
+  for (const botId of bots) retryDelegationsWaitingOn(botId);
 }
 
 bus.subscribe((event: RuntimeEvent) => {
@@ -3704,6 +3741,10 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
+    /** Server-owned: this is the single re-dispatch of a turn whose prepared
+     * memory context was revoked before the provider accepted it (see the
+     * catch below). Never taken from a request body. */
+    memoryRedispatch?: boolean;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -4203,7 +4244,10 @@ async function startTurn(
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
-        let bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        // The just-appended user message is already captured; keep its own
+        // chunk out of this turn's recall (MEMJSON2).
+        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript]};
+        let bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);
         let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
           memoryRefreshed=true;
@@ -4221,7 +4265,7 @@ async function startTurn(
           bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
             if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
             else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-          },{availableContextTokens});
+          },memoryOptions);
           // The same await can invalidate disclosed history; re-filter with the
           // original authority rather than replaying a pre-reset snapshot.
           const allowed=filterMemoryReplay(threadId,activeMessages,access);
@@ -4406,7 +4450,27 @@ async function startTurn(
       }
       if (!ownsLatestGeneration) return;
       recordMemorySettlement(threadId, dispatchClaimId, "setup-failed");
-      const message = e instanceof Error ? e.message : String(e);
+      // The memory context this dispatch prepared was revoked before the
+      // provider accepted it: the authority moved under the turn. The usual
+      // cause is a task created for this bot while a sibling turn sat in its
+      // dispatch window — a new thread changes the roster, and the roster
+      // policy revokes every disclosure for that (p02, "existing-task" still
+      // revokes) — or another bot, room or owner memory change in the same
+      // window. The guarantee is that no turn runs on revoked context, and
+      // the provider turn was stopped above before anything could; it is not
+      // that the person's message is lost. Re-prepare under the current
+      // authority and dispatch once more with the same user message; a
+      // second refusal, or an admission refusal now, reports as before.
+      let failure: unknown = e;
+      if (isMemoryContextRevoked(e) && !opts?.memoryRedispatch) {
+        console.warn(`[memory] context revoked during dispatch on thread ${threadId}; re-preparing once`);
+        store.setTaskActivity(bot.id, threadId, "idle");
+        try {
+          await startTurn(botId, text, { ...opts, threadId, userMessage, memoryRedispatch: true });
+          return;
+        } catch (redispatchError) { failure = redispatchError; }
+      }
+      const message = failure instanceof Error ? failure.message : String(failure);
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
@@ -5367,7 +5431,7 @@ async function runGroupMemberTurn(
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-    },{availableContextTokens});
+    },{availableContextTokens,excludeMessageIds:latestUser?[latestUser.id]:[]});
     const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
     text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
@@ -7015,7 +7079,7 @@ function readFluxConnectionState(): FluxCredentialState {
 const fluxConnectionTransaction = new FluxConnectionTransaction({
   read: readFluxConnectionState,
   assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error("Finish running work before changing Flux credentials."), { status: 409 }); },
-  fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) scheduleCoordinationDrain(); },
+  fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); } },
   apply: async (state, external, restore) => {
     const previous = cfg.modelProviders?.bank;
     const bank = state.bank ?? "[]", apiKey = state.workspaceKey ?? "", connectionAliases = state.aliases ?? [];
@@ -7894,7 +7958,9 @@ const server = createServer(async (req, res) => {
       if(requiredKind==="memory") {
         if(method!=="POST")return json(res,405,{error:"memory routes require POST"});
         const access=memoryAccess(internalCapabilities,internalClaim,()=>({bots:store.bots,groups:store.groups}));
-        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker));
+        // Turn-local handles (m1, m2, …) resolve only through the receipt of
+        // the dispatch this capability was minted for (MEMJSON2).
+        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker,memoryDispatches.get(internalClaim.threadId)));
       }
       const internalEventId = internalOwner.eventId;
       const admitEventAction = (kind: "create" | "handoff", admissionId: string) => {
@@ -10888,12 +10954,21 @@ const server = createServer(async (req, res) => {
       // create the combination — a bot curling the loopback API from a tool
       // call, a script, a stale client — is refused. The renderer dialog
       // alone is not a boundary; this check is.
-      const wantsComputer = body.computer !== undefined ? body.computer : existingBot?.computer;
+      // The rule is the RESOLVED destination, not the literal field: a bot
+      // that never chose a computer (`undefined`, the "Auto" destination)
+      // mounts this computer on macOS exactly as an explicit "local" does,
+      // so Auto on it needs the same acknowledgement — the same
+      // `autoMountsLocalComputer` the thread route applies. Anything else
+      // would let Auto onto a fresh Mac bot's desktop at profile level with
+      // no warning while the thread route asked for one (AUTOOP2 finding 1).
+      // The acknowledgement is never persisted: the granted combination
+      // itself is the proof, so once local Auto stands, re-asserting it or
+      // patching unrelated fields needs no re-ack, while leaving the local
+      // computer ends the grant and coming back needs the warning again.
+      const wantsComputer = body.computer === null ? undefined : body.computer !== undefined ? body.computer : existingBot?.computer;
       const wantsAuto = body.autoApprove !== undefined ? body.autoApprove : existingBot?.autoApprove === true;
-      const alreadyGranted = existingBot?.computer === "local" && existingBot?.autoApprove === true;
-      const autoMayUseLocal = body.computer === null && shouldMountLocalComputer({ requested: undefined,
-        hostPlatform: process.platform, providerSupportsLocal: true });
-      if ((wantsComputer === "local" || autoMayUseLocal) && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
+      const alreadyGranted = existingBot?.autoApprove === true && autoMountsLocalComputer(existingBot.computer);
+      if (autoMountsLocalComputer(wantsComputer) && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
         return json(res, 400, {
           error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)",
         });
@@ -11415,9 +11490,17 @@ const server = createServer(async (req, res) => {
       const restoreOwner = "restore:" + randomUUID();
       let result: checkpoints.RestoreResult;
       try {
-        let lease;
-        try { lease = projectTurnLeases.folders.acquireRestore(restoreOwner, parsed.data.cwd); }
-        catch { return json(res, 409, { error: "Another turn or restore is using this project folder, or its path is unavailable. Stop that work before restoring files." }); }
+        // A turn the user already stopped may still hold the folder while
+        // its engine closes (the bot reads idle before the terminal event).
+        // Wait for that release up to the engine's close budget; a live
+        // turn or another restore is refused at once (STOPRESTORE1).
+        const admission = await projectTurnLeases.acquireRestoreWhenStopped(restoreOwner, parsed.data.cwd, { timeoutMs: providerCloseDeadlineMs() });
+        if (!admission.ok) {
+          return admission.reason === "still-closing"
+            ? json(res, 409, { error: RESTORE_STOPPED_TURN_CLOSING_ERROR, code: "restore_stopped_turn_closing" })
+            : json(res, 409, { error: "Another turn or restore is using this project folder, or its path is unavailable. Stop that work before restoring files.", code: "restore_folder_in_use" });
+        }
+        const lease = admission.lease;
         projectTurnLeases.folders.assertCurrent(restoreOwner);
         result = await checkpoints.restore(bot.id, lease.canonicalPath, parsed.data.hash, {
           assertCurrent: () => { projectTurnLeases.folders.assertCurrent(restoreOwner); },
@@ -11969,7 +12052,7 @@ const server = createServer(async (req, res) => {
       if(body.modelSelection!==undefined){const checked=checkedModelSelection(body.modelSelection,{selection:current.modelSelection,busy:false},body.requireAvailableModel===true);if(!checked.ok)return json(res,checked.status,{error:checked.error});patch.modelSelection=checked.selection;}
       if(body.autoApprove!==undefined){
         if(typeof body.autoApprove!=="boolean")return json(res,400,{error:"autoApprove must be true or false"});
-        if(body.autoApprove&&!current.autoApprove&&shouldMountLocalComputer({requested:current.computer==="vm"||current.computer==="browser"?"off":current.computer,hostPlatform:process.platform,providerSupportsLocal:true})&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first"});
+        if(body.autoApprove&&!current.autoApprove&&autoMountsLocalComputer(current.computer)&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)"});
         patch.autoApprove=body.autoApprove;
       }
       if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;}

@@ -274,10 +274,15 @@ const startInternalFixtureTurn = async (botId: string, groupId?: string, text = 
     expect(started.body.steered).not.toBe(true);
     expect(started.body.queued).not.toBe(true);
   }
-  const dump = await readJsonFileWhenReady<{
-    pid: number;
-    mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> };
-  }>(fakeClaudeDump);
+  let dump: { pid: number; mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> } };
+  try {
+    dump = await readJsonFileWhenReady(fakeClaudeDump);
+  } catch (error) {
+    // The fixture engine never reported a launch: say what the harness was
+    // doing instead of "matcher did not succeed", so a stalled dispatch is
+    // diagnosable from the failure alone.
+    throw new Error(`${fixtureTurnDiagnostics(botId, groupId ? undefined : selected.threadId)}\n\ncaused by: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const env = dump.mcpConfig.mcpServers.agents!.env;
   expect(env.MURAGE_BOT_ID).toBe(botId);
   expect(env.MURAGE_COMMS_TOKEN).toMatch(/^[a-f0-9]{48}$/);
@@ -285,6 +290,66 @@ const startInternalFixtureTurn = async (botId: string, groupId?: string, text = 
     dump, env,
     headers: { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" },
   };
+};
+
+/** What the harness and its engine were doing when a fixture turn never
+ * launched: the thread's native protocol tail (session opens and closes with
+ * their reasons), the harness stderr tail, and the thread's last messages. */
+const fixtureTurnDiagnostics = (botId: string, threadId: string | undefined): string => {
+  const tail = (text: string, bytes: number) => (text.length > bytes ? `…${text.slice(-bytes)}` : text);
+  const native = threadId ? (() => {
+    try { return tail(readFileSync(join(home, ".murage", "native", `${threadId}.ndjson`), "utf8"), 4_000); }
+    catch (error) { return `(no native log: ${error instanceof Error ? error.message : String(error)})`; }
+  })() : "(group turn: no single thread)";
+  const messages = (() => {
+    if (!threadId) return "(group turn: no single thread)";
+    const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT at, role, kind, substr(json, 1, 300) AS json FROM messages WHERE thread_id = ? ORDER BY at DESC LIMIT 6").all(threadId);
+      return JSON.stringify(rows.reverse());
+    } catch (error) { return `(messages unavailable: ${error instanceof Error ? error.message : String(error)})`; }
+    finally { db.close(); }
+  })();
+  return [
+    `fixture turn for bot ${botId}${threadId ? ` thread ${threadId}` : ""} never launched the fake engine (no ${fakeClaudeDump})`,
+    `--- native log tail ---`, native,
+    `--- harness stderr tail ---`, tail(stderr, 3_000),
+    `--- last messages ---`, messages,
+  ].join("\n");
+};
+
+/** Stop a fixture turn and wait until its engine process is gone.
+ *
+ * A Stop on the Claude driver is "requested, not observed" (contracts.ts):
+ * `POST /interrupt` signals the CLI and returns, the bot reads idle at once,
+ * and the driver settles the turn only when that child closes. The next turn
+ * on the same thread is dispatched behind that close (`resetSession` waits
+ * for it before spawning), so a test that stopped a turn and started another
+ * had `startInternalFixtureTurn`'s 5 s launch wait also covering the old
+ * engine's teardown — on a loaded 48-worker box that is what timed out
+ * ("routes approved image MCP requests", Hetzner full runs). The real state
+ * to wait on is the stopped process itself: its pid is in the launch dump
+ * and it must exit after SIGTERM (a CLI that does not is a genuine defect),
+ * so the launch wait measures only the new launch. Bounded by the driver's
+ * own reset budget for that same close. */
+const stopFixtureTurn = async (botId: string, turn: { dump: { pid: number } }, threadId?: string) => {
+  const stopped = await api("POST", `/api/bots/${botId}/interrupt`, threadId ? { threadId } : undefined);
+  expect(stopped.status, JSON.stringify(stopped.body)).toBe(200);
+  await expect.poll(() => {
+    try { process.kill(turn.dump.pid, 0); return false; }
+    catch { return true; }
+  }, { timeout: 10_000, message: `stopped fixture engine pid ${turn.dump.pid} is still running` }).toBe(true);
+};
+
+/** The memory settlement of every turn on a thread, oldest first. */
+const turnMemoryOutcomes = (threadId: string): string[] => {
+  const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+  try {
+    return db.prepare("SELECT outcome FROM memory_sources WHERE thread_id=? AND kind='turn' ORDER BY rowid").all(threadId)
+      .map((row) => String((row as { outcome: unknown }).outcome));
+  } finally {
+    db.close();
+  }
 };
 
 const storedMessageCount = (threadId: string): number => {
@@ -1351,11 +1416,13 @@ describe("harness HTTP API", () => {
       expect(asking.body.auto).toBe(false);
       expect(asking.operator).toMatchObject({ autoApprove: false, computer: "off", approvePeerComms: false, composio: false });
       expect(asking.operator.tasks[0]).toMatchObject({ autoApprove: false });
-      expect((await api("POST", `/api/bots/${chief.id}/interrupt`)).status).toBe(200);
+      await stopFixtureTurn(chief.id, turn);
 
-      // 2. The person put the Chief in Auto: the operator inherits it, with
-      //    the computer OFF so this Auto can never drive the person's desktop.
-      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { autoApprove: true })).status).toBe(200);
+      // 2. The person put the Chief in Auto — acknowledging the local-computer
+      //    warning, since a Chief that never chose a computer drives this Mac
+      //    (AUTOOP2 finding 1): the operator inherits it, with the computer
+      //    OFF so this Auto can never drive the person's desktop.
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
       turn = await startInternalFixtureTurn(chief.id);
       const auto = await createOperator(turn.headers, chief.threadId, "Auto operator");
       expect(auto.status).toBe(201);
@@ -1363,8 +1430,7 @@ describe("harness HTTP API", () => {
       expect(auto.operator).toMatchObject({ autoApprove: true, computer: "off", approvePeerComms: false, composio: false });
       expect(auto.operator.tasks[0]).toMatchObject({ autoApprove: true });
       expect(auto.operator.alwaysAllow ?? []).toEqual([]);
-      expect((await api("POST", `/api/bots/${chief.id}/interrupt`)).status).toBe(200);
-      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === chief.id)?.busy, { timeout: 5_000 }).toBe(false);
+      await stopFixtureTurn(chief.id, turn);
 
       // 3. Same Chief, same Auto, but the turn was started by a webhook with
       //    nobody at the keyboard: an unattended turn hands out no Auto.
@@ -1401,6 +1467,94 @@ describe("harness HTTP API", () => {
     } finally {
       await api("POST", `/api/bots/${chief.id}/interrupt`);
       if (webhookId) await desktopApi("DELETE", `/api/webhooks/${webhookId}`);
+      for (const botId of createdIds) await desktopApi("DELETE", `/api/bots/${botId}`);
+      await desktopApi("DELETE", `/api/bots/${chief.id}`);
+    }
+  }, 60_000);
+
+  it("create_bot reads the Auto of the task that calls it, not the Chief's profile bit (AUTOOP2 finding 2)", async () => {
+    // AUTOOP1's scenario had one task, so the profile bit and the task bit
+    // always agreed and a resolver that read the profile would have passed.
+    // Here the Chief has two tasks — A in Ask, B in Auto — and the profile
+    // bit is ON: an operator created from A must ask, one created from B
+    // must not. Mutation-checked: resolving `chief.autoApprove` instead of
+    // `store.projectBotForTask(chief.id, fromThreadId)` yields Auto from A.
+    const chief = (await api("POST", "/api/bots")).body.bot;
+    const taskA: string = chief.threadId;
+    let taskB: string | undefined;
+    const createdIds: string[] = [];
+    const chiefTasks = async () => {
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      return state.bots.find((bot: { id: string }) => bot.id === chief.id).tasks as Array<{ threadId: string; autoApprove: boolean }>;
+    };
+    const createOperator = async (headers: Record<string, string>, fromThreadId: string, name: string) => {
+      const response = await fetch(`${BASE}/api/internal/create-bot`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ fromBotId: chief.id, fromThreadId, name, role: "Research operator", instructions: "Report concise findings." }),
+      });
+      const body = (await response.json()) as { id?: string; auto?: boolean; error?: string };
+      if (body.id) createdIds.push(body.id);
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      const operator = state.bots.find((bot: { id: string }) => bot.id === body.id);
+      return { status: response.status, body, operator };
+    };
+    // A multi-task bot's Stop must name the thread (independent threads).
+    const settle = (threadId: string, turn: { dump: { pid: number } }) => stopFixtureTurn(chief.id, turn, threadId);
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, {
+        section: "Auto inheritance test",
+        chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+      taskB = (await api("POST", `/api/bots/${chief.id}/tasks`, { title: "Auto task" })).body.task.threadId as string;
+      expect(taskB).not.toBe(taskA);
+      // Task B in Auto (acknowledged — a Chief with no chosen computer drives
+      // this Mac), then the profile bit ON as a default that leaves A alone.
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}/tasks/${taskB}`, { autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { settingsScope: "defaults", autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
+      const stored = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")).find((entry: { id: string }) => entry.id === chief.id);
+      expect(stored.autoApprove).toBe(true);
+      expect(await chiefTasks()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ threadId: taskA, autoApprove: false }),
+        expect.objectContaining({ threadId: taskB, autoApprove: true }),
+      ]));
+
+      // From task A (Ask): the operator asks, whatever the profile says.
+      expect((await api("POST", `/api/bots/${chief.id}/tasks/${taskA}`)).status).toBe(200);
+      let turn = await startInternalFixtureTurn(chief.id);
+      expect(turn.env.MURAGE_THREAD_ID).toBe(taskA);
+      const fromAsk = await createOperator(turn.headers, taskA, "Operator from task A");
+      expect(fromAsk.status).toBe(201);
+      expect(fromAsk.body.auto).toBe(false);
+      expect(fromAsk.operator).toMatchObject({ autoApprove: false, computer: "off" });
+      expect(fromAsk.operator.tasks[0]).toMatchObject({ autoApprove: false });
+      await settle(taskA, turn);
+
+      // From task B (Auto): the operator inherits it, computer off.
+      expect((await api("POST", `/api/bots/${chief.id}/tasks/${taskB}`)).status).toBe(200);
+      turn = await startInternalFixtureTurn(chief.id);
+      expect(turn.env.MURAGE_THREAD_ID).toBe(taskB);
+      const fromAuto = await createOperator(turn.headers, taskB, "Operator from task B");
+      expect(fromAuto.status).toBe(201);
+      expect(fromAuto.body.auto).toBe(true);
+      expect(fromAuto.operator).toMatchObject({ autoApprove: true, computer: "off", approvePeerComms: false, composio: false });
+      expect(fromAuto.operator.tasks[0]).toMatchObject({ autoApprove: true });
+      await settle(taskB, turn);
+
+      // And the other way round: profile bit OFF, task B still Auto — the
+      // live task bit is what create_bot reads, in both directions.
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { settingsScope: "defaults", autoApprove: false })).status).toBe(200);
+      expect(await chiefTasks()).toEqual(expect.arrayContaining([expect.objectContaining({ threadId: taskB, autoApprove: true })]));
+      turn = await startInternalFixtureTurn(chief.id);
+      expect(turn.env.MURAGE_THREAD_ID).toBe(taskB);
+      const stillAuto = await createOperator(turn.headers, taskB, "Operator from task B again");
+      expect(stillAuto.status).toBe(201);
+      expect(stillAuto.body.auto).toBe(true);
+      expect(stillAuto.operator).toMatchObject({ autoApprove: true, computer: "off" });
+      await settle(taskB, turn);
+    } finally {
+      for (const threadId of [taskA, taskB]) if (threadId) await api("POST", `/api/bots/${chief.id}/interrupt`, { threadId });
       for (const botId of createdIds) await desktopApi("DELETE", `/api/bots/${botId}`);
       await desktopApi("DELETE", `/api/bots/${chief.id}`);
     }
@@ -1628,7 +1782,7 @@ describe("harness HTTP API", () => {
       let card=await pendingCard();expect(existsSync(receipt)).toBe(false);
       expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"deny"})).status).toBe(200);
       expect((await denied.result).isError).toBe(true);expect(existsSync(receipt)).toBe(false);
-      await api("POST",`/api/bots/${bot.id}/interrupt`);
+      await stopFixtureTurn(bot.id,turn);
       turn=await startInternalFixtureTurn(bot.id);
       const args={request_id:"generate",prompt:"Synthetic image fixture",connection_id:"openai",model:"gpt-image-2"};
       const generated=imageCall(turn.env,args);proxies.push(generated.proxy);card=await pendingCard();
@@ -1640,7 +1794,7 @@ describe("harness HTTP API", () => {
       expect(JSON.stringify(payload)).not.toContain("fixture-image-key");expect(JSON.parse(readFileSync(receipt,"utf8"))).toMatchObject({calls:1,model:"gpt-image-2",n:1,references:0});
       const repeat=imageCall(turn.env,args);proxies.push(repeat.proxy);expect(JSON.parse((await repeat.result).content[0].text).artifact.id).toBe(payload.artifact.id);
       expect(JSON.parse(readFileSync(receipt,"utf8")).calls).toBe(1);
-      await api("POST",`/api/bots/${bot.id}/interrupt`);
+      await stopFixtureTurn(bot.id,turn);
       expect((await fetch(`${BASE}/api/internal/image-models`,{headers:turn.headers})).status).toBe(401);
       turn=await startInternalFixtureTurn(bot.id);
       const edit=imageCall(turn.env,{request_id:"edit",prompt:"Edit the synthetic fixture",operation:"edit",reference_ids:[payload.artifact.referenceId]});proxies.push(edit.proxy);
@@ -1690,7 +1844,7 @@ describe("harness HTTP API", () => {
       // The fixture counter is shared by the whole server process, so count from this test's first POST.
       const firstCall = lastCall().calls as number;
       expect(lastCall()).toMatchObject({provider:"xai",url:"https://api.x.ai/v1/images/generations",references:0,quality:"low",responseFormat:"b64_json"});
-      await api("POST",`/api/bots/${bot.id}/interrupt`);
+      await stopFixtureTurn(bot.id,turn);
 
       // xAI: JSON edit with the `image` field carrying the exact attachment bytes, no quality.
       turn = await startInternalFixtureTurn(bot.id);
@@ -1699,7 +1853,7 @@ describe("harness HTTP API", () => {
       expect(lastCall()).toEqual({calls:firstCall+1,url:"https://api.x.ai/v1/images/edits",provider:"xai",model:"grok-imagine-image-2.0",n:1,references:1,referenceHashes:[sha256(source.payload.artifact.path)],
         quality:null,responseFormat:"b64_json",providerRouting:null,singleImageField:true,multiImageField:false,redirect:"error"});
       expect(xaiEdit.payload.metadata).toMatchObject({provider:"xai",operation:"edit",referenceCount:1});
-      await api("POST",`/api/bots/${bot.id}/interrupt`);
+      await stopFixtureTurn(bot.id,turn);
 
       // OpenRouter: editing is offered only after the pinned endpoint check.
       const openRouterSettings = await desktopApi("POST","/api/images/settings",{enabled:true,connectionId:"openrouter",model:"openai/gpt-image-2"});
@@ -1760,7 +1914,7 @@ describe("harness HTTP API", () => {
       let card = await pendingCard();
       expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
       const generated = JSON.parse((await source).content[0].text).artifact;
-      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await stopFixtureTurn(bot.id, turn);
       // An owner-authorized workspace image in this task's own workspace, as
       // the server itself resolves that folder.
       const folder = await desktopApi("GET", `/api/artifacts/workspace?botId=${bot.id}&threadId=${bot.threadId}`);
@@ -2699,6 +2853,8 @@ describe("harness HTTP API", () => {
       color: "purple",
       mascotExpression: "focused",
       autoApprove: true,
+      // AUTOOP2: a bot that never chose a computer mounts this Mac, so profile-level Auto needs the acknowledgement (harmless elsewhere).
+      acknowledgeLocalAuto: true,
       alwaysAllow: ["Bash:git"],
     });
     await desktopApi("PATCH", `/api/bots/${second.id}`, {
@@ -4497,10 +4653,72 @@ describe("harness HTTP API", () => {
     } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
   });
 
+  it("requires the warning acknowledgement for profile-level Auto on a bot that never chose a computer (AUTOOP2 finding 1)", async () => {
+    // A fresh bot has no `computer`, which resolves to THIS computer on
+    // macOS (the "Auto" destination). The thread route already refused Auto
+    // there without the acknowledgement; the profile route only looked at an
+    // explicit "local" or null, so the settings-panel switch (and any script
+    // curling loopback) could put a fresh Mac bot in Auto on the person's
+    // own desktop with no warning at all. One rule now, on the RESOLVED
+    // destination, for every path to Auto.
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect(bot.computer).toBeUndefined();
+      expect(bot.autoApprove).toBeFalsy();
+      const mountsThisComputer = process.platform === "darwin";
+      const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
+      const blindTask = await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { autoApprove: true });
+      const afterBlind = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
+      if (mountsThisComputer) {
+        expect(blind.status).toBe(400);
+        expect(blind.body.error).toContain("acknowledgeLocalAuto");
+        // The thread route and the profile route agree on the same bot.
+        expect(blindTask.status).toBe(400);
+        expect(blindTask.body.error).toContain("acknowledgeLocalAuto");
+        expect(afterBlind.autoApprove).toBeFalsy();
+        expect(afterBlind.tasks[0].autoApprove).toBeFalsy();
+      } else {
+        // Linux and Windows never mount the desktop for a default
+        // destination, so Auto there needs no warning on either route.
+        expect(blind.status).toBe(200);
+        expect(blindTask.status).toBe(200);
+        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: false })).status).toBe(200);
+      }
+      // The dialog's acknowledgement grants it; the flag is never stored.
+      const acked = await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, acknowledgeLocalAuto: true });
+      expect(acked.status).toBe(200);
+      expect(acked.body.bot).toMatchObject({ autoApprove: true });
+      expect(acked.body.bot.computer).toBeUndefined();
+      expect(acked.body.bot.acknowledgeLocalAuto).toBeUndefined();
+      const stored = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")).find((entry: { id: string }) => entry.id === bot.id);
+      expect(stored).not.toHaveProperty("acknowledgeLocalAuto");
+      // Once granted, unrelated PATCHes and re-asserting Auto need no re-ack:
+      // the granted combination is the persisted proof.
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { name: "Acknowledged" })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(200);
+      // Naming this computer explicitly is the same desktop the person
+      // already acknowledged on macOS; on a host whose default destination
+      // never mounted it, "local" is a new grant and asks again.
+      const explicit = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
+      expect(explicit.status).toBe(mountsThisComputer ? 200 : 400);
+      if (!mountsThisComputer) expect(explicit.body.error).toContain("acknowledgeLocalAuto");
+      // Leaving this computer ends the grant; coming back to the default
+      // destination with Auto still on needs the warning again on macOS.
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
+      const back = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null });
+      expect(back.status).toBe(mountsThisComputer ? 400 : 200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null, acknowledgeLocalAuto: true })).status).toBe(200);
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
   it("grants Auto on this computer only through the warning acknowledgement", async () => {
     const created = await api("POST", "/api/bots");
     const bot = created.body.bot;
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).body.bot.autoApprove).toBe(
+    // Auto with the computer OFF needs no warning on any host. (A fresh
+    // bot's default destination is this computer on macOS, so Auto there
+    // would already be the acknowledged grant — AUTOOP2 finding 1 — and
+    // this test is about the explicit "local" path.)
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off", autoApprove: true })).body.bot.autoApprove).toBe(
       true,
     );
 
@@ -8300,7 +8518,7 @@ describe("internal capability authority", () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     try {
       const first = await startInternalFixtureTurn(bot.id);
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      await stopFixtureTurn(bot.id, first);
       expect((await fetch(`${BASE}/api/internal/agents?self=${bot.id}`, { headers: first.headers })).status).toBe(401);
       const second = await startInternalFixtureTurn(bot.id);
       expect(second.env.MURAGE_COMMS_TOKEN).not.toBe(first.env.MURAGE_COMMS_TOKEN);
@@ -8321,20 +8539,16 @@ describe("internal capability authority", () => {
         fromBotId: bot.id, fromThreadId: bot.threadId,
         credentialId: "openaiImageApiKey", reason: "must not append after revocation",
       }, turn.headers);
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
-      // Interrupt acknowledges cancellation; provider teardown can still append
-      // its terminal activity. Settle that before measuring rejected-body writes.
-      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
-        .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
-      { timeout: 5_000 }).toBe(false);
       // Idle is not teardown for the Claude driver: interrupt releases the
       // run as soon as the kill is requested (A2 kept Claude's retained
-      // sessions on that contract), and the child's close still appends its
-      // "claude exited … before result" chip afterwards. That chip is the
-      // fixture's deterministic end of teardown, so measure only after it.
-      await expect.poll(async () => (await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`)).body.messages
-        .some((message: { kind: string; tool?: { name?: string } }) => message.kind === "activity" && message.tool?.name?.startsWith("error: claude exited")),
-      { timeout: 5_000 }).toBe(true);
+      // sessions on that contract) and the child closes afterwards. Since
+      // STOP1 a user Stop settles as cancelled — turn.completed ok:true
+      // "cancelled", no "claude exited … before result" chip — so the
+      // fixture's end of teardown is the stopped engine process being gone
+      // (stopFixtureTurn) and its terminal fold having recorded the memory
+      // outcome "cancelled" (STOP2); measure only after both.
+      await stopFixtureTurn(bot.id, turn);
+      await expect.poll(() => turnMemoryOutcomes(bot.threadId).at(-1), { timeout: 5_000 }).toBe("cancelled");
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
       expect(response.status).toBe(401);
@@ -8591,7 +8805,7 @@ describe("internal capability authority", () => {
       expect(results.filter((result) => result.body.taskId)).toHaveLength(16);
       expect(results.filter((result) => result.status === 429)).toHaveLength(2);
       const receipt = results.find((result) => result.body.taskId)!.body.taskId!;
-      expect((await api("POST", `/api/bots/${source.id}/interrupt`)).status).toBe(200);
+      await stopFixtureTurn(source.id, first);
       const second = await startInternalFixtureTurn(source.id);
       const url = `${BASE}/api/internal/delegations/${receipt}?fromBotId=${source.id}&fromThreadId=${source.threadId}&wait_ms=0`;
       expect((await fetch(url, { headers: first.headers })).status).toBe(401);

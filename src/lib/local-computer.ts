@@ -73,8 +73,22 @@ export function autoSelectsLocalComputer({
   return platform !== "linux" && computer !== "cloud" && capabilitiesReady && localSelectable;
 }
 
+/** The host platform the local-Auto warning decides on. In a plain browser
+ *  (the dev rig, the browser door) the host is not announced as a desktop,
+ *  but the harness runs on the same machine, so the UA stands in for it. */
+export function localAutoHostPlatform(
+  capabilities: Pick<DesktopCapabilities, "host">,
+  userAgent: string = typeof navigator === "undefined" ? "" : navigator.userAgent,
+): DesktopCapabilities["host"]["platform"] {
+  return capabilities.host.platform === "other" && /Mac/.test(userAgent) ? "darwin" : capabilities.host.platform;
+}
+
 /** Whether switching a bot to Auto hands it THIS computer, and so must show
- *  the local-computer warning and send `acknowledgeLocalAuto`.
+ *  the local-computer warning and send `acknowledgeLocalAuto`. Applies to
+ *  every Auto switch in the renderer — the composer chip (thread level) and
+ *  the settings panel switch (profile level) alike — because the server
+ *  refuses either without the acknowledgement (`autoMountsLocalComputer`
+ *  in server/local-routing.ts).
  *
  *  Mirrors the server's own rule for the thread route
  *  (`shouldMountLocalComputer` in server/local-routing.ts, used by

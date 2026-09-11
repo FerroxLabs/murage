@@ -56,7 +56,7 @@ pnpm exec vitest run server/telegram-approvals.test.ts server/telegram-transport
 The card in a real browser (keyboard, both skins, phone width, screenshots):
 
 ```sh
-pnpm exec playwright test -c src/e2e/question-card.config.ts
+MURAGE_E2E_DATA_DIR=<scratch dir outside the repo> pnpm exec playwright test -c src/e2e/question-card.config.ts
 ```
 
 The live round trip against the installed `claude` binary — it calls

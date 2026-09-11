@@ -438,6 +438,7 @@
   "markdownEditor.richOff.roundTripChanged": "Rich editing is off: the rich editor would rewrite this file's formatting. Source mode keeps every byte.",
   "markdownEditor.richOff.parseFailed": "Rich editing is off: the rich editor could not read this Markdown. Source mode keeps every byte.",
   "markdownEditor.saveError.botWriting": "File not saved: a bot is writing to this workspace. Your changes are still here; try again when it finishes.",
+  "markdownEditor.saveError.stoppedTurnClosing": "File not saved: a stopped bot turn is still closing in this workspace. Your changes are still here; wait a moment and save again.",
   "markdownEditor.saveError.tooLarge": "File not saved: it is larger than the editor can save. Your changes are still here.",
   "markdownEditor.saveError.notFound": "File not saved: the file is no longer in this workspace. Your changes are still here.",
   "markdownEditor.saveError.network": "File not saved: Murage could not be reached. Your changes are still here.",
@@ -542,5 +543,7 @@
   "artifactCard.smaller": "Smaller",
   "composer.tooLarge": "Not sent: this message is {size}, and one message can be up to {limit}. Shorten it or split it into smaller messages. Your text is still here.",
   "composer.refusedTooLarge": "Not sent: Murage refused this message because it is too large ({size}). Shorten it or split it into smaller messages. Your text is still here.",
-  "composer.dismissNotice": "Dismiss"
+  "composer.dismissNotice": "Dismiss",
+  "hostStop.label": "Stopped — {reason}",
+  "hostStop.description": "Murage stopped this turn. Send another message to continue."
 }

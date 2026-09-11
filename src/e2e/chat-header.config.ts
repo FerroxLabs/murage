@@ -1,9 +1,8 @@
 import { defineConfig } from "@playwright/test";
-import { laneEvidenceDir } from "./lane-data-dir";
+import { evidenceDir } from "./evidence";
 
-// Screenshots and traces go where the lane was told to put its evidence;
-// MURAGE_E2E_DATA_DIR keeps a lane's artifacts out of the shared tree.
-const out = process.env.MURAGE_E2E_EVIDENCE_DIR ?? laneEvidenceDir("chat-header-results");
+// Screenshots and traces go where the lane was told to put its evidence.
+const out = evidenceDir("chat-header", process.env.MURAGE_E2E_EVIDENCE_DIR);
 
 export default defineConfig({
   testDir: ".",

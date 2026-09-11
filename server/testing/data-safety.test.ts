@@ -74,18 +74,31 @@ const VITEST_INCLUDE = [/^server\/.*\.test\.ts$/, /^electron\/.*\.test\.mjs$/, /
 const tracked = (): string[] => execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
   .split("\0").filter(Boolean);
 
+/** A JS/TS recursive delete whose options object spans lines. */
+const JS_DELETE_MULTILINE = /\b(?:rmSync|rm|rmdirSync|rmdir)\s*\((?:[^;()]|\([^;()]*\))*?\brecursive\s*:\s*true/g;
+
 const findDeletes = (file: string): string[] => {
   const hits: string[] = [];
   const text = readFileSync(join(ROOT, file), "utf8");
   const shellLike = /\.(?:sh|yml|yaml|ps1|nsh|nsi|py)$/.test(file);
-  text.split("\n").forEach((line, index) => {
+  const lines = text.split("\n");
+  const isComment = (line: string) => { const t = line.trim(); return t.startsWith("//") || t.startsWith("*") || t.startsWith("#"); };
+  lines.forEach((line, index) => {
     const trimmed = line.trim();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("#")) return;
+    if (isComment(line)) return;
     if (NOT_A_DELETE.test(line) && !/\b(?:rmSync|rm|rmdirSync|rmdir|rimraf)\s*\(/.test(line)) return;
     if (JS_DELETE.test(line) || (shellLike && SHELL_DELETE.test(line)) || (!shellLike && /["'`][^"'`]*\brm\s+-[a-zA-Z]*[rR]/.test(line))) {
       hits.push(`${file}:${index + 1}: ${trimmed.slice(0, 140)}`);
     }
   });
+  if (!shellLike) {
+    for (const match of text.matchAll(JS_DELETE_MULTILINE)) {
+      if (!match[0].includes("\n")) continue; // the per-line pass already has it
+      const index = text.slice(0, match.index).split("\n").length - 1;
+      if (isComment(lines[index])) continue;
+      hits.push(`${file}:${index + 1}: ${match[0].replace(/\s+/g, " ").slice(0, 140)}`);
+    }
+  }
   return hits;
 };
 
@@ -116,7 +129,8 @@ describe("data safety: recursive deletes", () => {
 
   it("human specs and configs read MURAGE_E2E_DATA_DIR only through lane-data-dir.ts, with no fallback", () => {
     const offenders: string[] = [];
-    for (const file of files.filter(f => f.startsWith("src/e2e/") && f !== "src/e2e/lane-data-dir.ts")) {
+    // evidence.test.ts is a vitest test of that contract and sets the variable on purpose.
+    for (const file of files.filter(f => f.startsWith("src/e2e/") && f !== "src/e2e/lane-data-dir.ts" && !/\.test\.ts$/.test(f))) {
       const text = readFileSync(join(ROOT, file), "utf8");
       text.split("\n").forEach((line, index) => {
         if (/process\.env\.MURAGE_E2E_DATA_DIR/.test(line)) offenders.push(`${file}:${index + 1}: ${line.trim().slice(0, 120)}`);
@@ -126,26 +140,29 @@ describe("data safety: recursive deletes", () => {
     const helper = readFileSync(join(ROOT, "src/e2e/lane-data-dir.ts"), "utf8");
     expect(helper).not.toMatch(/MURAGE_E2E_DATA_DIR\s*(?:\|\||\?\?)/);
     expect(helper).toMatch(/assertSafeToWipe\(/);
+    // evidence.ts (every config's outputDir, which Playwright wipes) resolves
+    // its root through lane-data-dir.ts and admits an override the same way.
+    const evidence = readFileSync(join(ROOT, "src/e2e/evidence.ts"), "utf8");
+    expect(evidence).toMatch(/laneDataDir\(/);
+    expect(evidence).toMatch(/assertSafeToWipe\(resolve\(override\)/);
   });
 
-  it("every Playwright outputDir is evidence under the lane data dir, the repo's .planning or test-results, or an operator-named evidence dir", () => {
+  it("every Playwright outputDir (which Playwright wipes) comes from evidenceDir/evidenceRoot, never a literal path", () => {
     const bad: string[] = [];
     for (const file of files.filter(f => /^src\/e2e\/.*\.config\.ts$/.test(f))) {
       const text = readFileSync(join(ROOT, file), "utf8");
       const match = /outputDir\s*:\s*([^,}]+)/.exec(text);
       if (!match) { bad.push(`${file}: no outputDir`); continue; }
       const expr = match[1].trim();
-      const ok = /^["'`]\.\.\/\.\.\/(?:\.planning|test-results)\//.test(expr)
-        || /^out$/.test(expr)
-        || /laneEvidenceDir\(/.test(expr)
-        || /^process\.env\.MURAGE_(?:E2E_OUTPUT|E2E_EVIDENCE_DIR|WATCH_UI_OUTPUT)\s*(?:\?\?|\|\|)\s*["'`]\.\.\/\.\.\/\.planning\//.test(expr);
-      if (!ok) bad.push(`${file}: outputDir ${expr}`);
-      if (/^out$/.test(expr)) {
-        const decl = /const out\s*=\s*([^;]+);/.exec(text)?.[1] ?? "";
-        const declOk = /laneEvidenceDir\(/.test(decl) && !/MURAGE_E2E_DATA_DIR/.test(decl)
-          && !/["'`]\.\.\/\.\.\/(?!\.planning\/|test-results\/)/.test(decl);
-        if (!declOk) bad.push(`${file}: out = ${decl.trim()}`);
+      const viaEvidence = (source: string) => /\bevidence(?:Dir|Root)\(/.test(source) && !/MURAGE_E2E_DATA_DIR/.test(source) && !/["'`]\.\.\//.test(source);
+      if (viaEvidence(expr)) continue;
+      if (/^[A-Za-z_$][\w$]*$/.test(expr)) {
+        const decl = new RegExp(`const ${expr}\\s*=\\s*([^;]+);`).exec(text)?.[1] ?? "";
+        if (viaEvidence(decl)) continue;
+        bad.push(`${file}: ${expr} = ${decl.trim()}`);
+        continue;
       }
+      bad.push(`${file}: outputDir ${expr}`);
     }
     expect(bad).toEqual([]);
   });

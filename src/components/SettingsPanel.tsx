@@ -11,7 +11,7 @@ import { requestNotificationPermission } from "@/lib/notify";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
-import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
+import { autoNeedsLocalComputerWarning, instanceSupportsLocalComputer, localAutoHostPlatform, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
 import { BotRoleControl } from "./BotRoleControl";
 import { BotSetupAction } from "./BotIntakeCard";
@@ -786,7 +786,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               checked={Boolean(bot.autoApprove)}
               aria-label="Auto mode"
               onClick={() => {
-                if (!bot.autoApprove && bot.computer === "local") setLocalAutoWarning("auto");
+                // Same rule as the composer chip and the server: a bot that
+                // never chose a computer mounts this Mac too, so switching it
+                // to Auto shows the warning instead of a refused PATCH.
+                if (autoNeedsLocalComputerWarning({ platform: localAutoHostPlatform(capabilities), computer: bot.computer, autoApprove: bot.autoApprove })) setLocalAutoWarning("auto");
                 else patch({ autoApprove: !bot.autoApprove });
               }}
             />

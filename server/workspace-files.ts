@@ -31,7 +31,9 @@ import {
   registerArtifact, type ArtifactScope,
 } from "./artifacts.ts";
 import type { Artifact } from "../shared/artifacts.ts";
+import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { ProjectFolderLeaseError, type ProjectFolderLeases } from "./project-folder-leases.ts";
+import type { ProjectTurnLeases } from "./project-turn-leases.ts";
 import type { Store } from "./store.ts";
 import { SURFACE_QUERY, SURFACE_SECRET_QUERY } from "./sse-visibility.ts";
 import {
@@ -60,6 +62,18 @@ export interface WorkspaceFilesDeps {
    * for its commit window. Without it an overwrite cannot prove that no bot
    * is writing, so it is refused (Save a copy still works). */
   projectFolders?: Pick<ProjectFolderLeases, "acquireRestore" | "release">;
+  /** STOPRESTORE2: turn-aware admission over the same registry
+   * (`projectTurnLeases` in server/index.ts). A turn the user already
+   * stopped keeps its writer lease until its engine closes, while the bot
+   * already reads idle; with this, an overwrite inside that window waits for
+   * the release (bounded by `stoppedTurnCloseMs`) instead of answering
+   * `bot-writing`. A live turn is still refused at once. Without it the
+   * synchronous `projectFolders` admission applies unchanged. */
+  projectTurns?: Pick<ProjectTurnLeases, "acquireRestoreWhenStopped">;
+  /** Bound for that wait. Defaults to the engine's close budget
+   * (`providerCloseDeadlineMs`, read at each save so a fixture can shorten
+   * it); a caller that passes `projectTurns` alone still waits. */
+  stoppedTurnCloseMs?: () => number;
 }
 
 /** Names read from one directory per request, hidden and private included.
@@ -477,6 +491,9 @@ const MOVED = "The file was moved or deleted since it was opened. Save a copy to
 const CHANGED = "The file changed since it was opened. Your changes were not saved over it; compare, reload or save a copy.";
 const CHANGED_DURING_READ = "The file changed while it was being read. Open it again.";
 const BOT_WRITING = "A bot is working in this workspace right now, so the file was not saved over. Your changes are kept; save again when it finishes, or save a copy.";
+/** The only holder of the workspace is a turn the user already stopped whose
+ * engine did not close within its budget (STOPRESTORE2). Retryable. */
+const STOPPED_TURN_CLOSING = "A stopped bot turn is still closing and holds this workspace, so the file was not saved over. Your changes are kept; wait a moment and save again, or save a copy.";
 const CANNOT_CONFIRM = "Murage cannot confirm that no bot is writing in this workspace, so the file was not saved over. Save a copy instead.";
 const NOT_SAVED = "The file could not be saved. The original was preserved.";
 
@@ -743,9 +760,37 @@ export interface WorkspaceSaveVersionHooks {
   beforeKeep?: () => void;
 }
 
+/** Hold the workspace for an overwrite's commit window. A live bot turn (or
+ * another hold) refuses at once with `bot-writing`. A turn the user already
+ * stopped is waited for — bounded by the engine's close budget — because its
+ * writer lease outlives the Stop until the engine's terminal event; at the
+ * bound the answer is `workspace_stopped_turn_closing`, which says to retry.
+ * An unusable path is `root-changed`, and so is anything the registry throws
+ * that is not its own refusal (a `ProjectFolderLeaseError`): only a busy
+ * folder may answer `bot-writing`, on either admission path. Returns only
+ * once the hold is taken. */
+async function holdWorkspace(deps: WorkspaceFilesDeps, leaseOwner: string, root: string): Promise<void> {
+  if (!deps.projectFolders) fail("bot-writing", CANNOT_CONFIRM);
+  if (deps.projectTurns) {
+    const timeoutMs = deps.stoppedTurnCloseMs ? deps.stoppedTurnCloseMs() : providerCloseDeadlineMs();
+    const admission = await deps.projectTurns.acquireRestoreWhenStopped(leaseOwner, root, { timeoutMs });
+    if (admission.ok) return;
+    if (admission.reason === "still-closing") fail("workspace_stopped_turn_closing", STOPPED_TURN_CLOSING);
+    if (admission.reason === "conflict" && (admission.code === "conflict" || admission.code === "owner-in-use")) fail("bot-writing", BOT_WRITING);
+    fail("root-changed", ROOT_CHANGED);
+  }
+  try { deps.projectFolders.acquireRestore(leaseOwner, root); }
+  catch (error) {
+    if (error instanceof ProjectFolderLeaseError && (error.code === "conflict" || error.code === "owner-in-use")) fail("bot-writing", BOT_WRITING);
+    fail("root-changed", ROOT_CHANGED);
+  }
+}
+
 /** Revision-conditioned atomic Markdown write. Never silent: a changed,
- * moved, replaced or bot-busy file is refused and left exactly as it is. */
-export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: WorkspaceWriteRequest | unknown, hooks: WorkspaceWriteHooks = {}): SaveReceipt {
+ * moved, replaced or bot-busy file is refused and left exactly as it is.
+ * Asynchronous only for the bot-active hold (`holdWorkspace`); from the hold
+ * to the commit nothing yields, so no bot turn can start inside the window. */
+export async function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: WorkspaceWriteRequest | unknown, hooks: WorkspaceWriteHooks = {}): Promise<SaveReceipt> {
   const request = parseWorkspaceWriteRequest(body);
   const { scope, relativePath } = request;
   const parts = fileParts(relativePath);
@@ -760,12 +805,14 @@ export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: Workspace
   const leaseOwner = `workspace-save:${randomUUID()}`;
   let held = false, temp: string | undefined, committed = false;
   if (!create) {
-    if (!deps.projectFolders) fail("bot-writing", CANNOT_CONFIRM);
-    try { deps.projectFolders.acquireRestore(leaseOwner, root); held = true; }
-    catch (error) {
-      if (error instanceof ProjectFolderLeaseError && (error.code === "conflict" || error.code === "owner-in-use")) fail("bot-writing", BOT_WRITING);
-      fail("root-changed", ROOT_CHANGED);
-    }
+    await holdWorkspace(deps, leaseOwner, root);
+    held = true;
+    // The hold may have waited: the conversation must still resolve to and
+    // authorize the folder the hold was taken on, or nothing is written.
+    try {
+      if (readyRoot(deps, scope).root !== root) fail("root-changed", ROOT_CHANGED);
+      requireAuthorizedRoot(deps, scope, root);
+    } catch (error) { deps.projectFolders!.release(leaseOwner); throw error; }
   }
   try {
     const observed = observeFile(root, rootStat, parts);
@@ -945,7 +992,7 @@ export async function workspaceFilesRoute(request: DelegatedRequest, deps: Works
         if ((error as { status?: unknown } | undefined)?.status === 413) fail("too-large", "This document is too large to save here.");
         fail("invalid-request", write ? "Invalid save request." : "Invalid save-version request.");
       }
-      if (write) return { status: 200, headers: NO_STORE, body: writeWorkspaceMarkdown(deps, body) };
+      if (write) return { status: 200, headers: NO_STORE, body: await writeWorkspaceMarkdown(deps, body) };
       return { status: 201, headers: NO_STORE, body: saveWorkspaceVersion(deps, body) };
     }
     return errorResult("not-found", "no such route");
