@@ -33,7 +33,11 @@ const INSTRUCTION_FILES = ["AGENTS.md", "AGENT.md", "Agents.md", "CLAUDE.md", "C
 const RULES_DIRS = [".fuigo/rules", ".claude/rules", ".cursor/rules"];
 /** Project skill and command roots (`skill_config_dirs` × SKILL_SUBDIRS + COMMAND_SUBDIR). */
 const SKILL_DIRS = [".fuigo", ".agents", ".claude", ".cursor"].flatMap((d) => [`${d}/skills`, `${d}/commands`]);
-/** Code-exec and policy sources: MCP, LSP, hooks, plugins, agents, permission rules, env. */
+/** Code-exec and policy sources: MCP, LSP, hooks, plugins, agents, permission rules, env.
+ * `.fuigo/config.toml` counts by presence; upstream gates it only when it carries
+ * `[mcp_servers]`, `[plugins].paths` or `[permission]` rules, so a config that
+ * sets nothing of the kind may see a card the engine would not have raised —
+ * an honest question about the folder either way, never a missed one. */
 const CONFIG_FILES = [".mcp.json", ".fuigo/config.toml", ".fuigo/lsp.json", ".cursor/mcp.json", ".cursor/hooks.json", ".claude/settings.json", ".claude/settings.local.json", ".envrc"];
 const CONFIG_DIRS = [".fuigo/hooks", ".fuigo/plugins", ".claude/plugins", ".fuigo/agents", ".claude/agents", ".fuigo/roles", ".fuigo/personas", ".fuigo/workflows"];
 
