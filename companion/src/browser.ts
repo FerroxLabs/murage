@@ -1745,11 +1745,19 @@ export type BrowserBindMode = "auto" | "loopback" | "tailnet";
  * So a disagreement refuses the address. It does not guess which of the two is
  * Tailscale's, and it does not average them.
  *
- * A missing CLI answer is not a disagreement — Tailscale may simply not be
- * installed where we looked, and the interface address is then the only
- * evidence there is. A CLI answer with no matching interface *is* refused:
- * nothing can bind an address the kernel does not have, and saying so beats
- * an EADDRNOTAVAIL three frames away. */
+ * A missing CLI answer is refused too, with its own sentence. It used to be
+ * accepted — Tailscale may simply not be installed where we looked, and the
+ * interface address was then "the only evidence there is". But an interface
+ * address in 100.64.0.0/10 is not evidence of Tailscale at all; it is exactly
+ * what a carrier NAT, another VPN or a container bridge also produces, and
+ * with no CLI answer there is nothing to cross-check it against. A bind that
+ * claims to be the tailnet needs Tailscale to have said so. `auto` turns that
+ * refusal into loopback, where `tailscale serve` can still front the door;
+ * explicit `tailnet` refuses to start. Neither widens to anything else.
+ *
+ * A CLI answer with no matching interface is refused as well: nothing can
+ * bind an address the kernel does not have, and saying so beats an
+ * EADDRNOTAVAIL three frames away. */
 export function tailnetBindAddress(
   fromInterfaces: string | null,
   reported: string | null,
@@ -1770,6 +1778,14 @@ export function tailnetBindAddress(
     };
   }
   if (!fromInterfaces) return { refused: "this machine has no Tailscale address" };
+  if (!reported) {
+    return {
+      refused:
+        `this machine has ${fromInterfaces} in the 100.64.0.0/10 range, but Tailscale did not confirm it — ` +
+        `its command line tool was not found, is not signed in, or did not answer — and an address in that ` +
+        `range is not proof on its own that it belongs to Tailscale`,
+    };
+  }
   return { address: fromInterfaces };
 }
 
@@ -1799,7 +1815,8 @@ export function browserBindHost(
   }
   throw new Error(
     `the browser door is set to bind the Tailscale address and cannot: ${resolved.refused}. ` +
-      "Bring Tailscale up, or set MURAGE_BROWSER_BIND=loopback and put `tailscale serve` in front",
+      "Bring Tailscale up and signed in where Murage can run its command line tool, or set " +
+      "MURAGE_BROWSER_BIND=loopback and put `tailscale serve` in front",
   );
 }
 
