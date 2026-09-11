@@ -163,7 +163,7 @@ function serverLauncher({ proc, poll, track, environment = {} }) {
     app:{isPackaged:true,getPath:()=>"/fixture/user-data"}, companionToken:"private-companion",
     modelProviderCommitToken:"private-model-provider-commit",
     secureCredentials:{},credentialStoreUnavailable:false,desktopSurfaceSecret:"",browserHost:null,
-    managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null,
+    managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null, fluxComposioBrokerUrlValue:()=>"", composioLegacyUntilValue:()=>"",
     harnessResourceEnvironment:()=>({}),workspaceCredentialEnv:()=>({}),slog:()=>{},
     utilityProcess:{fork:(_entry,_args,options)=>{proc.environment=options.env;return proc;}},
     receiveDesktopSurfaceSecret:()=>false,receiveBrowserControlHold:()=>false,receiveBrowserLifecycleCleanup:()=>false,syncBrowserConnection:()=>{},
@@ -255,7 +255,7 @@ test("actual quit cancels stalled optional registration but drains its credentia
   const credentials = createSecureCredentialState({ composioBrokerToken: "a".repeat(64), composioInstallationId: "revoked" }, () => persist.promise);
   const writes = [];
   const scope = {
-    app: { isPackaged: true }, composioBrokerUrl: () => "http://127.0.0.1:12345",
+    app: { isPackaged: true }, composioBrokerUrl: () => "http://127.0.0.1:12345", fluxComposioBrokerUrlValue: () => "", fluxComposioLifecycleEnabled: () => false,
     credentialStoreUnavailable: false, desktopShutdownStarted: false,
     managedComposioShutdown: controller, slog() {}, syncManagedComposioCredentials() {},
     MANAGED_COMPOSIO_UPDATE_OPTIONS,
