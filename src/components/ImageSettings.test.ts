@@ -141,4 +141,14 @@ describe("ImageSettingsView", () => {
     expect(html).toContain("No supported image connections are available.");
     expect(html).not.toContain("Image model");
   });
+  it("claims no model capability on a keyless install, keeps enabling blocked and Refresh available (IMGSET1)", () => {
+    // The user smoke's keyless fixture reaches exactly this snapshot: the server
+    // lists no image connection, so there is no model to state a capability for.
+    const html = render({ enabled: false, connections: [], selected: null, catalog: null });
+    expect(html).not.toContain("data-image-capability");
+    expect(html).not.toMatch(/Creates and edits images\.|Creates images only\.|Editing is unavailable with this model\.|This model cannot generate images here\./);
+    expect(html).toMatch(/<input type="checkbox" [^>]*disabled=""/);
+    expect(html).toMatch(/<button type="button"[^>]*>Refresh connections<\/button>/);
+    expect(html).not.toMatch(/<button type="button"[^>]*disabled=""[^>]*>Refresh connections/);
+  });
 });
