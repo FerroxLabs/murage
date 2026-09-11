@@ -4,13 +4,19 @@ import { basename, dirname, extname, isAbsolute, join, parse, resolve } from "no
 import { homedir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview, ArtifactQuery, ArtifactRegistration } from "../shared/artifacts.ts";
-import { isOutputProducer } from "../shared/output-publication.ts";
+import { isOutputProducer, type OutputProducer } from "../shared/output-publication.ts";
 import { redactSecretsInText } from "./redact.ts";
 
 export const ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
 export const ARTIFACT_STORAGE_MAX_BYTES = 512 * 1024 * 1024;
 export const ARTIFACT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
-export interface ArtifactScope { botId: string; botName: string; workspaceRoot: string; threadId?: string; runId?: string; threadAvailable?: boolean }
+/** `managedOutput` marks a Murage-owned output root (generated images) that
+ * authorizes reading saved rows only. Registration never selects it unless a
+ * trusted host publisher asks for it; it is not a task working folder. */
+export interface ArtifactScope { botId: string; botName: string; workspaceRoot: string; threadId?: string; runId?: string; threadAvailable?: boolean; managedOutput?: boolean }
+/** Host-only provenance for trusted automatic producers. Never read from a
+ * request body. */
+export interface ArtifactProvenance { producer?: OutputProducer; publicationId?: string; allowManagedOutput?: boolean }
 export interface ArtifactAccess { owner: boolean; scopes: readonly ArtifactScope[] }
 export class ArtifactError extends Error {
   readonly status: number;
@@ -149,9 +155,12 @@ function publicRow(row: Row, scope: ArtifactScope, storageRoot: string): Artifac
 
 /** Trusted caller provides the exact currently authorized workspace; input
  * cannot choose an absolute root or claim another run's provenance. */
-export function registerArtifact(db: DatabaseSync, storageRoot: string, input: ArtifactRegistration, access: ArtifactAccess): Artifact {
-  const scope = accessScopes(access).find(scope => scope.botId === input.botId && scope.threadId === input.threadId && scope.threadAvailable !== false);
+export function registerArtifact(db: DatabaseSync, storageRoot: string, input: ArtifactRegistration, access: ArtifactAccess, provenance: ArtifactProvenance = {}): Artifact {
+  const scope = accessScopes(access).find(scope => scope.botId === input.botId && scope.threadId === input.threadId && scope.threadAvailable !== false
+    && (scope.managedOutput === true) === (provenance.allowManagedOutput === true));
   if (!scope) fail(404, "This task's file scope is unavailable.");
+  if (provenance.producer !== undefined && !isOutputProducer(provenance.producer)) fail(400, "Invalid file producer.");
+  if (provenance.publicationId !== undefined && (typeof provenance.publicationId !== "string" || !/^[a-f0-9-]{36}$/.test(provenance.publicationId))) fail(400, "Invalid file publication.");
   if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 200)) fail(400, "Use a short file title.");
   try {
     const root = rootPath(scope.workspaceRoot), source = sourceFile(root, input.relativePath);
@@ -174,8 +183,8 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
       if (hash(readVerified(blob, ARTIFACT_MAX_BYTES)) !== sha256) fail(409, "The saved copy failed verification.");
     }
     const id = randomUUID(), name = clean(input.name?.trim() || basename(input.relativePath), 200), run = scope.runId ?? "";
-    db.prepare("INSERT OR IGNORE INTO artifacts(id,name,kind,mime,bytes,sha256,extension,created_at,bot_id,thread_id,run_id,source_root,relative_path,source_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, name, fileFormat.kind, fileFormat.mime, bytes.length, sha256, fileFormat.extension, Date.now(), input.botId, input.threadId, run, root, input.relativePath, fingerprint(source.stat));
+    db.prepare("INSERT OR IGNORE INTO artifacts(id,name,kind,mime,bytes,sha256,extension,created_at,bot_id,thread_id,run_id,source_root,relative_path,source_fingerprint,producer,publication_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, name, fileFormat.kind, fileFormat.mime, bytes.length, sha256, fileFormat.extension, Date.now(), input.botId, input.threadId, run, root, input.relativePath, fingerprint(source.stat), provenance.producer ?? null, provenance.publicationId ?? null);
     const row = db.prepare("SELECT * FROM artifacts WHERE bot_id=? AND thread_id=? AND run_id=? AND source_root=? AND relative_path=? AND sha256=?")
       .get(input.botId, input.threadId, run, root, input.relativePath, sha256) as unknown as Row;
     return publicRow(row, { ...scope, workspaceRoot: root }, directoryPath);

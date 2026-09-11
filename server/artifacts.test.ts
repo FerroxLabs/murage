@@ -165,3 +165,20 @@ it("describes registry metadata without reading the saved payload and preserves 
   expect(artifactsRequest(f.db, f.storage, { method: "GET", path: `/api/artifacts/${saved.id}` }, { owner: true, scopes: [] }).status).toBe(404);
   expect(() => readArtifact(f.db, f.storage, saved.id, f.access)).toThrow("saved copy changed");
 });
+
+it("records trusted producer provenance and selects a managed output root only for the host publisher", () => {
+  const f = fixture(), managed = join(f.root, "managed-images"), publicationId = "5b0f7c2a-9d1e-4c3b-8a7f-112233445566";
+  mkdirSync(managed); writeFileSync(join(managed, "image.png"), "png-fixture-bytes");
+  const managedScope = { botId: "bot", botName: "Research bot", threadId: "thread", runId: "operation", workspaceRoot: managed, managedOutput: true };
+  const both: ArtifactAccess = { owner: true, scopes: [managedScope, f.access.scopes[0]!] };
+  // Manual/tool registration skips the managed root even when it is listed first.
+  expect(registerArtifact(f.db, f.storage, f.input, both)).toMatchObject({ relativePath: "report.html", runId: "run" });
+  expect(() => registerArtifact(f.db, f.storage, { ...f.input, relativePath: "image.png" }, { owner: true, scopes: [managedScope] })).toThrow("unavailable");
+  const image = registerArtifact(f.db, f.storage, { ...f.input, relativePath: "image.png", name: "Generated image" }, { owner: true, scopes: [managedScope] },
+    { producer: "image-operation", publicationId, allowManagedOutput: true });
+  expect(image).toMatchObject({ producer: "image-operation", runId: "operation", kind: "image", sourceConversationAvailable: true });
+  expect(f.db.prepare("SELECT producer, publication_id FROM artifacts WHERE id=?").get(image.id)).toEqual({ producer: "image-operation", publication_id: publicationId });
+  expect(listArtifacts(f.db, f.storage, { kind: "image" }, both).items.map(item => item.id)).toEqual([image.id]);
+  expect(() => registerArtifact(f.db, f.storage, f.input, f.access, { producer: "invented" as never })).toThrow("producer");
+  expect(() => registerArtifact(f.db, f.storage, f.input, f.access, { publicationId: "../receipt" })).toThrow("publication");
+});

@@ -1629,6 +1629,61 @@ describe("harness HTTP API", () => {
     }
   }, 40000);
 
+  // R3-T4: an approved generated image enters Files exactly once; repeating
+  // the request returns the same saved result with no provider call.
+  it("saves an approved generated image to Files once and repeats the request without provider work", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Image Files fixture" })).body.bot;
+    const receipt = join(home, "image-fixture-calls.json");
+    const proxies: ChildProcess[] = [];
+    const imageCall = (env: Record<string, string>, args: Record<string, unknown>) => {
+      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+      proxies.push(proxy);
+      let stdout = "", stderr = "";
+      const result = new Promise<any>((resolve, reject) => {
+        const timer = setTimeout(() => { proxy.kill(); reject(new Error("Image MCP timed out: " + stderr)); }, 15_000);
+        proxy.stderr.on("data", chunk => { stderr += chunk; });
+        proxy.stdout.on("data", chunk => {
+          stdout += chunk;
+          for (const line of stdout.split("\n")) { try { const value = JSON.parse(line); if (value.id === 42) { clearTimeout(timer); proxy.stdin.end(); resolve(value.result); return; } } catch {} }
+        });
+        proxy.on("error", reject);
+      });
+      proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "generate_image", arguments: args } }) + "\n");
+      return result;
+    };
+    const messages = async () => (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id).messages;
+    try {
+      expect((await desktopApi("PATCH", "/api/config?secretStorage=external", { imageGen: { key: "fixture-image-key" } })).status).toBe(200);
+      expect((await desktopApi("POST", "/api/images/settings", { enabled: true, connectionId: "openai", model: "gpt-image-2" })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      const args = { request_id: "files-once", prompt: "Synthetic Files image", connection_id: "openai", model: "gpt-image-2" };
+      const first = imageCall(turn.env, args);
+      let card: any;
+      await expect.poll(async () => { card = (await messages()).find((message: any) => message.card?.tool === "generate_image" && !message.card.answered); return Boolean(card); }).toBe(true);
+      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      const result = await first;
+      expect(result.isError).not.toBe(true);
+      const payload = JSON.parse(result.content[0].text);
+      const calls = JSON.parse(readFileSync(receipt, "utf8")).calls;
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
+      expect(payload.artifact.artifactId).toEqual(expect.any(String));
+      const saved = await desktopApi("GET", `/api/artifacts/${payload.artifact.artifactId}`);
+      expect(saved.body.artifact).toMatchObject({ kind: "image", producer: "image-operation", sha256: createHash("sha256").update(png).digest("hex"),
+        threadId: bot.threadId, sourceConversationAvailable: true, relativePath: payload.artifact.path.split(/[\\/]/).at(-1) });
+      expect((await desktopApi("GET", `/api/artifacts?botId=${bot.id}&kind=image`)).body.items.map((item: { id: string }) => item.id)).toEqual([payload.artifact.artifactId]);
+      expect((await desktopApi("GET", `/api/artifacts/${payload.artifact.artifactId}/preview`)).body.content).toBe(`data:image/png;base64,${png.toString("base64")}`);
+      const repeat = JSON.parse((await imageCall(turn.env, args)).content[0].text);
+      expect(repeat.artifact).toEqual(payload.artifact);
+      expect(JSON.parse(readFileSync(receipt, "utf8")).calls).toBe(calls);
+      expect((await messages()).filter((message: { attachments?: unknown[] }) => message.attachments?.length)).toHaveLength(1);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      for (const proxy of proxies) if (proxy.exitCode === null) await waitForExit(proxy, { signal: "SIGTERM" });
+      await desktopApi("PATCH", "/api/config", { imageGen: { key: "", enabled: false } });
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 40_000);
+
   it("routes scoped native search without exposing credentials or allowing retired turns", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const requestFile = join(home, "search-fixture-calls.json");
@@ -7460,7 +7515,9 @@ describe("internal capability authority", () => {
     const bot = (await api("POST", "/api/bots", { name: "Artifact API fixture" })).body.bot;
     try {
       const { headers } = await startInternalFixtureTurn(bot.id, undefined, "__fixture_hold_authority__");
-      const workspace = join(home, ".murage", "workspaces", bot.id);
+      // Since 0.1.51 a new task is pinned to its own thread workspace, which is
+      // the scope register_artifact resolves against.
+      const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
       mkdirSync(join(workspace, "reports"), { recursive: true });
       const bytes = "<h1>Morning report fixture</h1>";
       writeFileSync(join(workspace, "reports", "morning.html"), bytes);
@@ -7486,6 +7543,86 @@ describe("internal capability authority", () => {
     } finally {
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  // R3-T3 (U-02): a terminal fake turn that writes a real report under the
+  // managed task workspace's outputs/ without calling register_artifact.
+  const outputFixture = async (name: string) => {
+    const bot = (await api("POST", "/api/bots", { name })).body.bot;
+    const state = async () => (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id);
+    const cards = async () => (await state()).messages.filter((message: { artifactIds?: string[] }) => message.artifactIds?.length);
+    const terminals = async () => (await state()).messages.filter((message: { turnTerminal?: boolean }) => message.turnTerminal).length;
+    const turn = async (text: string) => {
+      await expect.poll(async () => Boolean((await state())?.busy), { timeout: 5_000 }).toBe(false);
+      const before = await terminals();
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text })).status).toBe(202);
+      await expect.poll(async () => (await terminals()) > before && !(await state()).busy, { timeout: 15_000 }).toBe(true);
+    };
+    const receipts = () => {
+      const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+      try { return db.prepare("SELECT stage, path_token, artifact_id, message_id FROM output_publications WHERE bot_id=? AND producer='shell-output' ORDER BY created_at").all(bot.id) as Array<Record<string, unknown>>; }
+      finally { db.close(); }
+    };
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).status).toBe(200);
+    const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
+    return { bot, cards, turn, receipts, workspace };
+  };
+
+  it("publishes a shell-written outputs/ report without register_artifact as one saved file and one persisted card", async () => {
+    const f = await outputFixture("Output publication fixture");
+    try {
+      await f.turn("__fixture_finish_turn__ __fixture_write_output__:outputs/weekly/report.html");
+      await expect.poll(async () => (await f.cards()).length, { timeout: 5_000 }).toBe(1);
+      const [card] = await f.cards();
+      expect(card.artifactIds).toHaveLength(1);
+      const id = card.artifactIds[0];
+      const report = join(f.workspace, "outputs", "weekly", "report.html");
+      const bytes = readFileSync(report);
+      const described = await desktopApi("GET", `/api/artifacts/${id}`);
+      expect(described.body.artifact).toMatchObject({
+        sha256: createHash("sha256").update(bytes).digest("hex"), producer: "shell-output", relativePath: "outputs/weekly/report.html",
+        threadId: f.bot.threadId, sourceState: "current", sourceConversationAvailable: true, runId: expect.any(String),
+      });
+      expect((await desktopApi("GET", `/api/artifacts?botId=${f.bot.id}`)).body.items.map((item: { id: string }) => item.id)).toEqual([id]);
+
+      // A later turn that writes nothing adds no card and no second saved file.
+      const writtenAt = statSync(report).mtimeMs;
+      await f.turn("__fixture_finish_turn__ plain follow-up without outputs");
+      expect(statSync(report).mtimeMs).toBe(writtenAt);
+      expect((await f.cards()).map((message: { id: string }) => message.id)).toEqual([card.id]);
+      expect((await desktopApi("GET", `/api/artifacts?botId=${f.bot.id}`)).body.total).toBe(1);
+
+      // Open/reopen keep that exact saved revision after the original changes.
+      writeFileSync(report, "changed after publication");
+      const preview = await desktopApi("GET", `/api/artifacts/${id}/preview`);
+      expect(preview.body.content).toBe(bytes.toString("utf8"));
+      expect(preview.body.artifact).toMatchObject({ id, sourceState: "changed" });
+      const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+      try {
+        const stored = (db.prepare("SELECT json FROM messages WHERE thread_id=?").all(f.bot.threadId) as Array<{ json: string }>)
+          .map(row => JSON.parse(row.json) as { id: string; artifactIds?: string[] }).filter(message => message.artifactIds?.includes(id));
+        expect(stored.map(message => message.id)).toEqual([card.id]);
+      } finally { db.close(); }
+      expect(f.receipts()).toEqual([{ stage: "registered", path_token: "outputs/weekly/report.html", artifact_id: id, message_id: card.id }]);
+    } finally {
+      await api("POST", `/api/bots/${f.bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${f.bot.id}`);
+    }
+  });
+
+  it("keeps outputs from a failed turn as retained receipts without saving or announcing them", async () => {
+    const f = await outputFixture("Failed output fixture");
+    try {
+      await f.turn("__fixture_write_output__:outputs/draft.html __fixture_fail_turn__");
+      await expect.poll(() => f.receipts().length, { timeout: 5_000 }).toBe(1);
+      expect(f.receipts()).toEqual([{ stage: "retained", path_token: "outputs/draft.html", artifact_id: null, message_id: null }]);
+      expect(await f.cards()).toEqual([]);
+      expect((await desktopApi("GET", `/api/artifacts?botId=${f.bot.id}`)).body.total).toBe(0);
+      expect(readFileSync(join(f.workspace, "outputs", "draft.html"), "utf8")).toContain("Fixture report");
+    } finally {
+      await api("POST", `/api/bots/${f.bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${f.bot.id}`);
     }
   });
 
