@@ -1028,6 +1028,20 @@ describe("delegated turn status helpers", () => {
     expect(lines).toEqual(["tool: step-6", "tool: step-7", "tool: step-8"]);
   });
 
+  it("summarizeDelegatedActivity spells a host-stop notice as a stop, not a tool run (STOP2)", () => {
+    // shared/host-stop.ts: the notice's tool name is "stopped: <reason>";
+    // the caller reading the summary must see the stop as the harness
+    // presents it everywhere else, never the raw prefix as a "tool:" line.
+    const lines = summarizeDelegatedActivity([
+      { at: 1_100, kind: "activity", tool: { name: "Bash" } },
+      { at: 1_200, kind: "activity", tool: { name: "stopped: the model connection it was using was changed or turned off" } },
+    ], 1_000, 5);
+    expect(lines).toEqual([
+      "tool: Bash",
+      "Stopped — the model connection it was using was changed or turned off",
+    ]);
+  });
+
   it("reports nothing at all when the peer has produced nothing since dispatch", () => {
     // The empty list is the signal the proxy renders as "may be stuck", so
     // a pre-dispatch transcript must not leak into it and look like work.
