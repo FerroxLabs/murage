@@ -10,8 +10,9 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy, WrapText } from "lucide-react";
-import { codeLanguageLabel, codeLineLabel } from "@/lib/code-block";
+import { Check, Copy, Download, WrapText } from "lucide-react";
+import { codeFileName, codeLanguageLabel, codeLineLabel, saveCodeSnippet } from "@/lib/code-block";
+import { t } from "@/lib/i18n";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 
 // react-markdown drops every data: URL. Raster image bytes already inside the
@@ -70,11 +71,12 @@ export function CodeBlock({ code, lang, streaming }: { code: string; lang: strin
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const [wrapped, setWrapped] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const copyRevision = useRef(0);
   const currentCode = useRef(code); currentCode.current = code;
   useEffect(() => {
-    copyRevision.current++; setCopied(false); setCopyError(false); clearTimeout(copyTimer.current);
+    copyRevision.current++; setCopied(false); setCopyError(false); setSaveError(false); clearTimeout(copyTimer.current);
     return () => { copyRevision.current++; clearTimeout(copyTimer.current); };
   }, [code]);
 
@@ -133,12 +135,23 @@ export function CodeBlock({ code, lang, streaming }: { code: string; lang: strin
     } catch { if (revision === copyRevision.current) setCopyError(true); }
   };
 
+  // #979 (adapted): Save hands the same bytes Copy would to the browser's own
+  // download. The browser owns the save dialog and its cancel, so there is no
+  // "Saved" state here: a click is not proof a file was written.
+  const saveName = codeFileName(lang);
+  const save = () => {
+    setSaveError(false);
+    try { if (!saveCodeSnippet(saveName, code)) setSaveError(true); }
+    catch { setSaveError(true); }
+  };
+
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
       <div className="flex items-center justify-between gap-2 border-b border-hairline/30 bg-raised/30 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-2"><span title={codeLanguageLabel(lang)} className="min-w-0 truncate rounded border border-hairline/40 bg-raised px-1.5 py-0.5 text-[11px] font-medium text-ink">{codeLanguageLabel(lang)}</span><span className="shrink-0 text-[11px] text-ink-secondary">{codeLineLabel(code)}</span></div>
         <div className="flex shrink-0 items-center gap-1">
         <button type="button" aria-label={wrapped ? "Disable line wrapping" : "Wrap long lines"} aria-pressed={wrapped} onClick={() => setWrapped(value => !value)} className="flex min-h-8 items-center gap-1 rounded px-2 text-[11px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"><WrapText size={13} aria-hidden="true" /><span className="max-sm:hidden">{wrapped ? "Unwrap" : "Wrap"}</span></button>
+        <button type="button" onClick={save} aria-label={t("chatCode.saveAs", { name: saveName })} title={t("chatCode.saveAs", { name: saveName })} className="flex min-h-8 items-center gap-1 rounded px-2 text-[11px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"><Download size={13} aria-hidden="true" /><span className="max-sm:hidden">{t("chatCode.save")}</span></button>
         <button
           type="button"
           onClick={() => void copy()}
@@ -152,6 +165,7 @@ export function CodeBlock({ code, lang, streaming }: { code: string; lang: strin
         </div>
       </div>
       {copyError && <p role="alert" className="px-3 py-2 text-[12px] text-danger">Could not copy. Select the code and copy it manually.</p>}
+      {saveError && <p role="alert" className="px-3 py-2 text-[12px] text-danger">{t("chatCode.saveFailed")}</p>}
       {html ? (
         <div
           className={"text-[13px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:m-0 [&_pre]:p-3 " + (wrapped ? "overflow-x-hidden [&_pre]:!whitespace-pre-wrap [&_code]:!whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]" : "overflow-x-auto")}
