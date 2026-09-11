@@ -8225,6 +8225,14 @@ describe("internal capability authority", () => {
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
         .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
       { timeout: 5_000 }).toBe(false);
+      // Idle is not teardown for the Claude driver: interrupt releases the
+      // run as soon as the kill is requested (A2 kept Claude's retained
+      // sessions on that contract), and the child's close still appends its
+      // "claude exited … before result" chip afterwards. That chip is the
+      // fixture's deterministic end of teardown, so measure only after it.
+      await expect.poll(async () => (await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`)).body.messages
+        .some((message: { kind: string; tool?: { name?: string } }) => message.kind === "activity" && message.tool?.name?.startsWith("error: claude exited")),
+      { timeout: 5_000 }).toBe(true);
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
       expect(response.status).toBe(401);
