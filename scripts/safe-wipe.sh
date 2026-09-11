@@ -18,8 +18,12 @@
 # A refusal prints "safe-wipe REFUSED ..." and returns 2. Nothing is deleted.
 
 _safe_wipe_canon() {
-  # realpath of the deepest existing prefix + the rest, without requiring the leaf
-  local p=$1 suffix=""
+  # realpath of the deepest existing prefix + the rest, without requiring the leaf.
+  # A symlink leaf is judged by its target even when the target does not exist.
+  local p=$1 suffix="" hops=0 t
+  while [ -L "$p" ] && [ $hops -lt 32 ]; do
+    t=$(readlink "$p"); case "$t" in /*) p=$t ;; *) p="$(dirname "$p")/$t" ;; esac; hops=$((hops+1))
+  done
   while [ ! -e "$p" ] && [ "$p" != "/" ] && [ -n "$p" ]; do
     suffix="/$(basename "$p")$suffix"; p=$(dirname "$p")
   done

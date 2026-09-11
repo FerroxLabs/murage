@@ -142,11 +142,20 @@ describe("assertSafeToWipe refuses", () => {
     expect(assertSafeToWipe(foreign, opts).admitted).toBe("tmpdir");
   });
 
-  it("a scratch-looking symlink that points at a protected directory", () => {
+  it("a scratch-looking symlink that points at a protected directory, existing or not", () => {
     const link = join(scratch, "link-scratch");
     symlinkSync(join(userInfo().homedir, ".murage"), link);
     expect(canonicalPath(link)).toBe(canonicalPath(join(userInfo().homedir, ".murage")));
     refuses(link, /Murage data directory|home directory/, {});
+    // Dangling: the target does not exist (CI has no ~/.murage), and a link
+    // to a path under a fake home outside tmp is still judged by its target.
+    const dangling = join(scratch, "link-dangling");
+    symlinkSync(join(FAKE_HOME, ".murage", "workspaces"), dangling);
+    expect(canonicalPath(dangling)).toBe(join(FAKE_HOME, ".murage", "workspaces"));
+    refuses(dangling, /Murage data directory/);
+    // A link to a link, and a relative link, resolve the same way.
+    const hop = join(scratch, "link-hop"); symlinkSync("link-dangling", hop);
+    refuses(hop, /Murage data directory/);
   });
 
   it("does not delete on refusal", () => {
