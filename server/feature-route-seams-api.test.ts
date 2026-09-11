@@ -26,26 +26,29 @@ beforeAll(async () => {
 afterAll(async () => { await fixture?.close(); });
 
 it("delegates workspace-file and media prefixes to their modules for the desktop only", async () => {
-  const cases: Array<[string, string, unknown]> = [
-    ["GET", "/api/workspace-files", undefined],
-    ["GET", "/api/workspace-files/list?botId=b&threadId=t", undefined],
-    ["POST", "/api/workspace-files/write", {}],
-    ["GET", "/api/media", undefined],
-    ["POST", "/api/media/resolve", {}],
+  // F5-T1 filled media: the bare prefix is not a route and an empty resolve
+  // body is refused. Workspace files stay the K0 skeleton until R3-T1/F4-T1.
+  const cases: Array<[string, string, unknown, number, string]> = [
+    ["GET", "/api/workspace-files", undefined, 501, "not-implemented"],
+    ["GET", "/api/workspace-files/list?botId=b&threadId=t", undefined, 501, "not-implemented"],
+    ["POST", "/api/workspace-files/write", {}, 501, "not-implemented"],
+    ["GET", "/api/media", undefined, 404, "no-such-route"],
+    ["POST", "/api/media/resolve", {}, 400, "invalid-request"],
   ];
-  for (const [method, path, body] of cases) {
+  for (const [method, path, body, status, code] of cases) {
     expect((await call(method, path, {}, body)).status, `remote ${method} ${path}`).toBe(404);
     expect((await call(method, path, { ...desktop, "x-murage-companion": "1" }, body)).status, `companion ${method} ${path}`).toBe(404);
     const owner = await call(method, path, desktop, body);
-    expect(owner.status, `desktop ${method} ${path}`).toBe(501);
-    expect(owner.body).toMatchObject({ code: "not-implemented" });
+    expect(owner.status, `desktop ${method} ${path}`).toBe(status);
+    if (code !== "no-such-route") expect(owner.body).toMatchObject({ code });
   }
-  // Byte URLs are exempt from the desktop header (U-03 capabilities) but stay
-  // hidden from everyone else until F5-T1 can issue a capability.
+  // Byte URLs are exempt from the desktop header (U-03 capabilities): only a
+  // capability issued by resolve authorizes them (server/media-assets-http.test.ts),
+  // so an unknown asset is hidden from everyone, desktop proof or not.
   expect((await call("GET", "/api/media/bytes/asset-1")).status).toBe(404);
   const head = await call("HEAD", "/api/media/bytes/asset-1");
   expect([head.status, head.text]).toEqual([404, ""]);
-  expect((await call("GET", "/api/media/bytes/asset-1", desktop)).status).toBe(501);
+  expect((await call("GET", "/api/media/bytes/asset-1", desktop)).status).toBe(404);
   // A look-alike path is not captured by the prefix.
   expect((await call("GET", "/api/workspace-filesx", desktop)).status).not.toBe(501);
 });

@@ -58,10 +58,12 @@ describe("K0 skeleton modules", () => {
       expect(await workspaceFilesRoute(call(path, true, "POST"), deps)).toMatchObject({ status: 501, body: { code: "not-implemented" } });
     }
     expect(await workspaceFilesRoute(call("/api/workspace-filesx", true), deps)).toEqual(hiddenRoute());
-    for (const path of ["/api/media/resolve", "/api/media/bytes/asset-1"]) {
-      expect(await mediaAssetsRoute(call(path, false), deps)).toEqual(hiddenRoute());
-      expect(await mediaAssetsRoute(call(path, true), deps)).toMatchObject({ status: 501, body: { code: "not-implemented" } });
-    }
+    // F5-T1 filled media: resolve is POST-only for the desktop, and bytes need
+    // a capability issued by resolve (server/media-assets.test.ts).
+    expect(await mediaAssetsRoute(call("/api/media/resolve", false), deps)).toEqual(hiddenRoute());
+    expect(await mediaAssetsRoute(call("/api/media/resolve", true), deps)).toMatchObject({ status: 405 });
+    expect(await mediaAssetsRoute(call("/api/media/resolve", true, "POST"), deps)).toMatchObject({ status: 400, body: { code: "invalid-request" } });
+    for (const desktop of [false, true]) expect(await mediaAssetsRoute(call("/api/media/bytes/asset-1", desktop), deps)).toMatchObject({ ...hiddenRoute(), headers: { "referrer-policy": "no-referrer" } });
   });
 
   it("answers the internal reference route with 405/501 without reading the body", async () => {
