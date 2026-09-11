@@ -173,8 +173,6 @@ beforeAll(async () => {
           ]),
           FAKE_CLAUDE_REPLY_STATE: join(home, "stop-scoped-worker-replies.txt"),
           FAKE_CLAUDE_REPLY_GATE: join(home, "release-stop-scoped-worker"),
-          FAKE_CLAUDE_TRANSIENTS: "1",
-          FAKE_CLAUDE_STATE: join(home, "stop-scoped-worker-launches.txt"),
         },
         config: { cli: FAKE_CLAUDE },
       },
@@ -841,7 +839,7 @@ describe("goal-driven channel runs", () => {
               messages: (bot.messages ?? []).slice(-20).map(messageMetadata) }));
         } catch { diagnostics.snapshotUnavailable = true; }
         diagnostics.counters = Object.fromEntries([
-          "stop-scoped-lead-replies.txt", "stop-scoped-worker-replies.txt", "stop-scoped-worker-launches.txt",
+          "stop-scoped-lead-replies.txt", "stop-scoped-worker-replies.txt",
         ].map((name) => { try { return [name, readFileSync(join(home, name), "utf8").slice(0, 32)]; }
           catch { return [name, null]; } }));
         try {
