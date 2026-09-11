@@ -14,10 +14,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { connectorActionLabel, mergeCompleteConnectorStatus } from "./PluginsPanel";
+import { connectorActionLabel, connectorPrimaryAction, mergeCompleteConnectorStatus } from "./PluginsPanel";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const panel = readFileSync(join(here, "PluginsPanel.tsx"), "utf8");
+const en = JSON.parse(readFileSync(join(here, "../locales/en.json"), "utf8")) as Record<string, string>;
 const composio = readFileSync(join(here, "../../server/composio.ts"), "utf8");
 
 describe("pending OAuth recovery", () => {
@@ -28,6 +29,27 @@ describe("pending OAuth recovery", () => {
       expect(connectorActionLabel("ready", { ...pending, canContinue: true })).toBe("Continue");
       expect(connectorActionLabel("error", { ...pending, canContinue: false })).toBe("Unavailable");
     }
+  });
+
+  it("labels every new account before authorization, including the first, and keeps pending recovery", () => {
+    const retained = "https://connect.composio.dev/link/slack";
+    expect(connectorPrimaryAction({})).toBe("label-account");
+    expect(connectorPrimaryAction({ pending: false, pendingUrl: retained })).toBe("label-account");
+    expect(connectorPrimaryAction({ pending: true })).toBe("check-status");
+    expect(connectorPrimaryAction({ pending: true, pendingUrl: retained })).toBe("continue");
+  });
+
+  it("authorizes a service only from the confirmed label form", () => {
+    // Before #758 the first account called connect(card.slug) straight from
+    // the button. The only remaining call site carries the confirmed alias.
+    expect([...panel.matchAll(/\bconnect\(card\.slug[^)]*\)/g)].map((match) => match[0])).toEqual(["connect(card.slug, alias)"]);
+  });
+
+  it("words the first and an additional account label differently", () => {
+    expect(panel).toContain('t("connectedApps.alias.firstLabel", { service: card.label })');
+    expect(panel).toContain('t("connectedApps.alias.anotherLabel", { service: card.label })');
+    expect(en["connectedApps.alias.firstLabel"]).toBe("Label for the new {service} account");
+    expect(en["connectedApps.alias.anotherLabel"]).toBe("Label for another {service} account");
   });
 
   it("keeps the previous account inventory when its current status cannot be read", () => {
