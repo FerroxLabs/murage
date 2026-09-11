@@ -1323,7 +1323,9 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
-const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders };
+// STOPRESTORE2: the workspace editor's overwrite hold waits for a stopped
+// turn's lease the way a restore does (projectTurns + the engine close budget).
+const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders, projectTurns: projectTurnLeases, stoppedTurnCloseMs: providerCloseDeadlineMs };
 const outputPublisher = createOutputPublisher(featureRouteDeps);
 const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
 function turnMemoryAccess(botId: string, threadId: string, generation: string): MemoryAccess {
