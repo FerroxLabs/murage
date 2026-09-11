@@ -85,11 +85,14 @@ describe("route delegation writer", () => {
 });
 
 describe("K0 skeleton modules", () => {
-  it("hide workspace-file and media routes from non-desktop callers and answer 501 to the desktop", async () => {
+  it("hide workspace-file and media routes from non-desktop callers and answer the desktop", async () => {
     for (const path of ["/api/workspace-files", "/api/workspace-files/list", "/api/workspace-files/write"]) {
       expect(await workspaceFilesRoute(call(path, false), deps)).toEqual(hiddenRoute());
-      expect(await workspaceFilesRoute(call(path, true, "POST"), deps)).toMatchObject({ status: 501, body: { code: "not-implemented" } });
     }
+    // R3-T1 filled discovery (root/list/search, GET only); F4-T1 still owns write.
+    expect(await workspaceFilesRoute(call("/api/workspace-files/write", true, "POST"), deps)).toMatchObject({ status: 501, body: { code: "not-implemented" } });
+    expect(await workspaceFilesRoute(call("/api/workspace-files/list", true, "POST"), deps)).toMatchObject({ status: 400, body: { code: "invalid-request" } });
+    expect(await workspaceFilesRoute(call("/api/workspace-files", true, "POST"), deps)).toMatchObject({ status: 404, body: { code: "not-found" } });
     expect(await workspaceFilesRoute(call("/api/workspace-filesx", true), deps)).toEqual(hiddenRoute());
     // F5-T1 filled media: resolve is POST-only for the desktop, and bytes need
     // a capability issued by resolve (server/media-assets.test.ts).
