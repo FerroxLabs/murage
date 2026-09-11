@@ -54,7 +54,7 @@ const DEVICE = { id: "dev_1", name: "Sean's iPhone", cloudDesktopAccess: false }
 
 /** A device store with one paired device, one pairing credential, and one
  * live session. Structural, so the whole world is four fields. */
-const sessions = new Map<string, { expiresAt: number }>();
+const sessions = new Map<string, { id: string; expiresAt: number }>();
 let redeemable = "murage_pair_good";
 const devices: BrowserDeviceStore = {
   redeem: (credential) =>
@@ -64,13 +64,17 @@ const devices: BrowserDeviceStore = {
   openSession: (deviceId) => {
     if (deviceId !== DEVICE.id) return null;
     const value = `murage_browser_${sessions.size}_${Math.random().toString(36).slice(2)}`;
-    const session = { expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
+    const session = { id: `session_${Math.random().toString(36).slice(2)}`, expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
     sessions.set(value, session);
     return { value, session };
   },
   resolveSession: (value) => {
     const session = value ? sessions.get(value) : undefined;
-    return session ? { device: DEVICE, session } : null;
+    return session ? { device: DEVICE, session, sessionId: session.id } : null;
+  },
+  sessionDeadline: (sessionId) => {
+    for (const session of sessions.values()) if (session.id === sessionId) return session.expiresAt;
+    return null;
   },
   closeSession: (value) => (value ? sessions.delete(value) : false),
   renewSession: (value) => {
@@ -80,7 +84,8 @@ const devices: BrowserDeviceStore = {
     // working the moment the new one exists.
     sessions.delete(value!);
     const next = `murage_browser_renewed_${sessions.size}_${Math.random().toString(36).slice(2)}`;
-    const renewed = { expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
+    // Same record identity, as the registry keeps it.
+    const renewed = { id: session.id, expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
     sessions.set(next, renewed);
     return { value: next, session: renewed };
   },

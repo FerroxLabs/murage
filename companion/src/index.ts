@@ -391,6 +391,11 @@ const service = (): ServiceInfo => ({
 });
 
 const connectedDevices = createConnectedDeviceTracker();
+// A browser session that stops being a sign-in — signed out, evicted by a
+// newer sign-in, found expired, or taken with its device — takes its live
+// streams with it. Device revoke still ends every stream through
+// `disconnectDevice` below; this is the narrower boundary.
+devices.onSessionEnded(({ sessionId }) => connectedDevices.disconnectSession(sessionId));
 const proxy = createProxyHandler({
     harnessPort: HARNESS_PORT,
     companionToken,

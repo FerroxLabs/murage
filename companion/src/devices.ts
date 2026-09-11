@@ -356,6 +356,16 @@ export class DeviceRegistry {
   private replay: PairingReplay | null = null;
   private replayExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSeenWrites = new Map<string, number>();
+  /** A process-local name for each session RECORD.
+   *
+   * Live streams have to be ended when their session ends, and the cookie
+   * cannot name the session for that: renewal rotates the hash in place while
+   * the session carries on. The record object itself is the identity —
+   * `renewSession` mutates it where it sits, and every way a session ends
+   * removes that object — so the id is keyed on the object and never written
+   * to disk. A restart drops every stream anyway. */
+  private sessionIds = new WeakMap<BrowserSession, string>();
+  private sessionEndListeners = new Set<(ended: { deviceId: string; sessionId: string }) => void>();
 
   /** Load the paired fleet, normalising as it goes.
    *
@@ -635,6 +645,65 @@ export class DeviceRegistry {
     return device;
   }
 
+  /** The stable, process-local id of one session record. */
+  private sessionId(session: BrowserSession): string {
+    let id = this.sessionIds.get(session);
+    if (!id) {
+      id = randomUUID();
+      this.sessionIds.set(session, id);
+    }
+    return id;
+  }
+
+  /** Be told when a browser session stops being an authorisation: signed out,
+   * evicted by a newer sign-in, found expired, or taken with its device.
+   *
+   * Called only once the end is real — for sign-out, eviction and revoke that
+   * means after the change is on disk. A listener that throws does not stop
+   * the others. Returns the unsubscribe. */
+  onSessionEnded(listener: (ended: { deviceId: string; sessionId: string }) => void): () => void {
+    this.sessionEndListeners.add(listener);
+    return () => {
+      this.sessionEndListeners.delete(listener);
+    };
+  }
+
+  private sessionsEnded(deviceId: string, ended: readonly BrowserSession[]): void {
+    for (const session of ended) {
+      // A session nobody ever asked the id of cannot have a stream filed
+      // under it, so there is nothing to tell anyone.
+      const sessionId = this.sessionIds.get(session);
+      if (!sessionId) continue;
+      for (const listener of this.sessionEndListeners) {
+        try {
+          listener({ deviceId, sessionId });
+        } catch {
+          /* one listener failing must not keep another session's stream open */
+        }
+      }
+    }
+  }
+
+  /** When a live session must next be looked at again, or null when it is no
+   * longer an authorisation at all.
+   *
+   * This is what a long-lived stream asks instead of re-presenting its cookie.
+   * It follows the record, so a legitimate renewal moves the answer forward
+   * and a deleted or expired record answers null — nothing here revives a row
+   * or touches `lastSeenAt`, because a connection that merely stays open is
+   * not evidence that anybody is using the session. */
+  sessionDeadline(sessionId: string, now = Date.now()): number | null {
+    for (const device of this.devices) {
+      for (const session of device.sessions ?? []) {
+        if (this.sessionIds.get(session) !== sessionId) continue;
+        if (sessionExpired(session, now)) return null;
+        // `sessionExpired` needs strictly more than the idle window, hence +1.
+        return Math.min(session.expiresAt, session.lastSeenAt + SESSION_IDLE_MS + 1);
+      }
+    }
+    return null;
+  }
+
   /** Open a browser session against an already-paired device.
    *
    * Returns the raw cookie value, which is the only time it exists in the
@@ -671,6 +740,10 @@ export class DeviceRegistry {
       device.sessions = previous;
       return null;
     }
+    // Evicted or found expired on the way in: whatever the new list no longer
+    // holds has stopped being a sign-in, and its streams go with it.
+    const kept = new Set(device.sessions);
+    this.sessionsEnded(device.id, (previous ?? []).filter((s) => !kept.has(s)));
     return { value, session };
   }
 
@@ -683,7 +756,10 @@ export class DeviceRegistry {
    * Expiry is evaluated on read, both bounds: the absolute cap, and the
    * rolling idle window. `lastSeenAt` is written at most once an hour, and a
    * failed write must never fail the request. */
-  resolveSession(value: string | undefined, now = Date.now()): { device: DeviceRecord; session: BrowserSession } | null {
+  resolveSession(
+    value: string | undefined,
+    now = Date.now(),
+  ): { device: DeviceRecord; session: BrowserSession; sessionId: string } | null {
     if (!value) return null;
     const hash = sha256(value);
     for (const device of this.devices) {
@@ -698,6 +774,9 @@ export class DeviceRegistry {
         } catch {
           /* it is already refused; the file can catch up */
         }
+        // Expiry is a fact about the clock, not about the file, so its
+        // streams end whether or not the write above landed.
+        this.sessionsEnded(device.id, [session]);
         return null;
       }
       if (now - session.lastSeenAt > LAST_SEEN_WRITE_MS) {
@@ -708,7 +787,7 @@ export class DeviceRegistry {
           /* the session is still good; the timestamp can wait */
         }
       }
-      return { device, session };
+      return { device, session, sessionId: this.sessionId(session) };
     }
     return null;
   }
@@ -784,8 +863,10 @@ export class DeviceRegistry {
       if (!before) continue;
       const kept = device.sessions!.filter((s) => !sameDigest(s.hash, hash));
       if (kept.length === before) continue;
+      const ended = device.sessions!.filter((s) => !kept.includes(s));
       device.sessions = kept.length ? kept : undefined;
       this.persist();
+      this.sessionsEnded(device.id, ended);
       return true;
     }
     return false;
@@ -794,11 +875,12 @@ export class DeviceRegistry {
   /** Take a phone's access away. False when there was no such device — a
    * revoke that quietly matched nothing would read as success on the page. */
   revoke(id: string): boolean {
-    const before = this.devices.length;
-    this.devices = this.devices.filter((d) => d.id !== id);
-    if (this.devices.length === before) return false;
+    const removed = this.devices.find((d) => d.id === id);
+    if (!removed) return false;
+    this.devices = this.devices.filter((d) => d !== removed);
     this.lastSeenWrites.delete(id);
     this.persist();
+    this.sessionsEnded(id, removed.sessions ?? []);
     return true;
   }
 

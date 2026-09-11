@@ -67,6 +67,7 @@ const store: BrowserDeviceStore = {
   },
   openSession: (deviceId, label) => registry.openSession(deviceId, label),
   resolveSession: (value) => registry.resolveSession(value),
+  sessionDeadline: (sessionId) => registry.sessionDeadline(sessionId),
   closeSession: (value) => registry.closeSession(value),
   renewSession: (value) => registry.renewSession(value),
 };
