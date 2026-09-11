@@ -9,7 +9,7 @@ import { z } from "zod";
 import { DATA_DIR } from "../config.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
 import { database, transaction } from "../database.ts";
-import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope } from "./authority.ts";
+import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget } from "./authority.ts";
 import { forgetMemory, memoryDeletionStatus } from "./forget.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
@@ -33,7 +33,9 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("list"),query:z.string().max(4096).optional(),scopeId:id.optional(),botId:id.optional(),state:z.enum(["candidate","active","archived","superseded","deleted"]).optional(),cursor:z.string().max(512).optional(),view:z.enum(["search","important","recent","review"]).optional()}).strict(),
   z.object({action:z.literal("inspect"),id,version}).strict(),
   z.object({action:z.literal("review-as-skill"),id,version,botId:id}).strict(),
-  z.object({action:z.literal("approve"),id,version}).strict(),
+  // correctionPin is the owner's explicit choice when an approved correction
+  // replaces a pinned fact; it is never defaulted (decision U-16).
+  z.object({action:z.literal("approve"),id,version,correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
   z.object({action:z.literal("archive"),id,version}).strict(),
   z.object({action:z.literal("restore-archive"),id,version}).strict(),
   z.object({action:z.literal("pin"),id,version,pinned:z.boolean()}).strict(),
@@ -154,7 +156,8 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
     const current=getRecord(input.id,input.version);let remaining=32768;
     const evidence=db.prepare("SELECT e.*,s.speaker,v.payload,v.content_hash FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision WHERE e.record_id=? AND e.record_version=? LIMIT 21").all(input.id,input.version);
     if(evidence.length>20)throw new Error("MEMORY_RESPONSE_LIMIT");
-    return {record:current,evidence:evidence.map(row=>{const payload=JSON.parse(String(row.payload)),bytes=Buffer.from(payload.text??"").subarray(Number(row.start_byte),Number(row.end_byte));if(bytes.length>remaining)throw new Error("MEMORY_RESPONSE_LIMIT");remaining-=bytes.length;return {sourceId:String(row.source_id),revision:Number(row.source_revision),startByte:Number(row.start_byte),endByte:Number(row.end_byte),text:bytes.toString("utf8"),path:typeof payload.path==="string"?payload.path:undefined,hash:String(row.content_hash),speaker:String(row.speaker)};}),lineage:db.prepare("SELECT parent_id AS id,parent_version AS version FROM memory_derivations WHERE child_id=? AND child_version=? LIMIT 100").all(input.id,input.version)};
+    return {record:current,evidence:evidence.map(row=>{const payload=JSON.parse(String(row.payload)),bytes=Buffer.from(payload.text??"").subarray(Number(row.start_byte),Number(row.end_byte));if(bytes.length>remaining)throw new Error("MEMORY_RESPONSE_LIMIT");remaining-=bytes.length;return {sourceId:String(row.source_id),revision:Number(row.source_revision),startByte:Number(row.start_byte),endByte:Number(row.end_byte),text:bytes.toString("utf8"),path:typeof payload.path==="string"?payload.path:undefined,hash:String(row.content_hash),speaker:String(row.speaker)};}),lineage:db.prepare("SELECT parent_id AS id,parent_version AS version FROM memory_derivations WHERE child_id=? AND child_version=? LIMIT 100").all(input.id,input.version),
+      correction:current.state==="candidate"?readCorrectionTarget(db,input.id,input.version):null};
   }
   if(input.action==="review-as-skill"){
     const bot=roster.bots.find(item=>item.id===input.botId);
@@ -173,7 +176,7 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   }
   if(input.action==="archive"){archiveMemoryRecord(ticket,input.id,input.version);return {record:getRecord(input.id,input.version)};}
   if(input.action==="restore-archive"){restoreArchivedMemoryRecord(ticket,input.id,input.version);return {record:getRecord(input.id,input.version)};}
-  if(input.action==="approve"){approveMemory(ticket,input.id,input.version);reindex(input.id,input.version);return {record:getRecord(input.id,input.version)};}
+  if(input.action==="approve"){approveMemory(ticket,input.id,input.version,input.correctionPin?{correctionPin:input.correctionPin}:{});reindex(input.id,input.version);return {record:getRecord(input.id,input.version)};}
   if(input.action==="pin"){pinMemory(ticket,input.id,input.version,input.pinned);return {record:getRecord(input.id,input.version)};}
   if(input.action==="correct"){const next=correctMemory(ticket,input.id,input.version,input.text);reindex(input.id,next);return {record:getRecord(input.id,next)};}
   if(input.action==="promote"){
