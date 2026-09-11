@@ -10,8 +10,14 @@ after every further lane merge (see "How to refresh this draft" at the end).
   lane's version bump and locale acceptance.
 - Version: `package.json` moves to `0.1.52` (the only surface
   `scripts/release-guard.mjs version` reads).
-- Merged commits since 0.1.51: `15c3cbd6`, `4f7e28c2`, `58750971`, `228d22c7`,
-  `24824218`, `a87969b2`, plus Q1-T4's `7f8d8f29` and `0359d529`.
+- Merged commits since 0.1.51 (`git log --no-merges acaee1db..release/v0.1.52`):
+  `4f7e28c2`, `58750971`, `228d22c7`, `24824218`, `a87969b2`, plus Q1-T4's
+  `7f8d8f29` and `0359d529`.
+- Already shipped in 0.1.51, not a 0.1.52 change: `15c3cbd6` "fix(packaging):
+  sign Windows recovery helper" is the parent of the `acaee1db` baseline
+  (`git merge-base --is-ancestor 15c3cbd6 acaee1db` is true) and the 0.1.51
+  Windows evidence was taken from the signed build. It must not appear in the
+  0.1.52 notes.
 
 Framing rule for the published notes: every entry says what the user gets
 (added, enhanced, hardened, tightened). No entry is called a bug fix. Every
@@ -81,8 +87,6 @@ state.
   and the internal image-reference route require desktop proof; the companion
   and remote allowlists stay default-deny for them, and companion-marked
   requests are refused on every media route, capability or not.
-- **Windows recovery helper is signed.** The after-pack step now signs the
-  recovery helper alongside the main executable.
 
 **Quality**
 
@@ -140,11 +144,12 @@ while section 3 has unmerged lanes with user-facing scope.
 
 ## 3. Merge ledger (drives sections 1 and 2)
 
-Merged into `release/v0.1.52` when this draft was written:
+Merged into `release/v0.1.52` when this draft was written (every row is a
+commit returned by `git log --no-merges acaee1db..release/v0.1.52`, plus this
+lane's own commits; nothing older than the `acaee1db` baseline belongs here):
 
 | Lane / task | Commit | User-visible? | Draft entry |
 |---|---|---|---|
-| post-0.1.51 packaging | `15c3cbd6` | packaging | Windows recovery helper signed |
 | K0 contracts (U-02, U-03, U-04, A2, B6) | `4f7e28c2` | foundation | shared contracts, schema, trust helper, desktop-only routes, close-confirmed stop |
 | F4-T0 Tiptap pins (U-05) | `58750971` | dependency | editor dependencies pinned |
 | Q1-T1 (D5) | `228d22c7` | test only | concurrency proof per platform |
@@ -188,8 +193,8 @@ and 0.1.51 did not update it.
 | 34 | `**Fuigo 1.0.7 is bundled. ...` | `**Fuigo 1.0.10 is bundled. ...` (`scripts/prepare-fuigo.mjs` pins `FUIGO_VERSION = "1.0.10"`) |
 | 144 | `**Fuigo 1.0.7 is Murage’s bundled agent harness**, ...` | `**Fuigo 1.0.10 is Murage’s bundled agent harness**, ...` |
 | 107 | `**In 0.1.47, managed memory starts off.**` | `**Managed memory starts off.**` (still true; drop the version so the sentence does not age) |
-| 170 | `Keyword retrieval and owner controls; no local semantic runtime in 0.1.47.` | `Keyword retrieval and owner controls; no local semantic runtime on Intel Macs in this release.` |
-| 17 | `2,237 skills` | Verify against the shipped library at freeze (`skills-library/` has 2,238 entries in this tree including non-skill files); keep the number only if it matches the packaged count. |
+| 170 | `Keyword retrieval and owner controls; no local semantic runtime in 0.1.47.` | `Keyword retrieval and owner controls; no local semantic runtime in this release.` (the row is already the Intel Mac row; drop the version so it does not age) |
+| 17 | `2,237 skills` | Already matches: `skills-library/` holds 2,237 skill directories (one `SKILL.md` each) plus the `.wayland-import.json` metadata file, which is not a skill. Keep `2,237` unless a merged lane adds or removes a skill directory; re-count with `find skills-library -name SKILL.md | wc -l` at freeze. |
 | 3, 40, 50, 66, 103, 120 | `*-0.1.47.png` screenshot and hero assets | Keep unless a merged UI lane (U0-T1 header, F4-T3 workspace pane, F5 media) changes the pictured surfaces; then capture new screenshots on the frozen candidate and rename with `0.1.52`. Do not rename assets without new captures. |
 | 168 | `Windows browser: The embedded browser is disabled because of an upstream Electron sandbox issue.` | Re-verify against the 0.1.52 Windows package before publication; no merged commit changes it. |
 
