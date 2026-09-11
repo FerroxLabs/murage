@@ -123,7 +123,14 @@ function needsSudo() {
  */
 export function buildUpArgs(opts) {
   if (!opts?.keyFile) throw new Error("buildUpArgs requires a keyFile path, never a raw key");
-  const args = ["up", `--auth-key=file:${opts.keyFile}`];
+  // `--reset`: this argv states EVERY setting the deployment cares about, so
+  // whatever tailscaled still holds from an earlier run is not wanted. Without
+  // it the daemon keeps the prefs of a `tailscale up` that FAILED (observed
+  // live: a key not permitted to hold `tag:murage` leaves `advertise-tags`
+  // set on a logged-out daemon), and the rerun that fixes the tag is refused
+  // with "changing settings via 'tailscale up' requires mentioning all
+  // non-default flags" — setup could not repair its own failed enrolment.
+  const args = ["up", "--reset", `--auth-key=file:${opts.keyFile}`];
   if (opts.hostname) args.push(`--hostname=${opts.hostname}`);
   const tags = (opts.tags ?? []).filter(Boolean);
   if (tags.length) args.push(`--advertise-tags=${tags.join(",")}`);

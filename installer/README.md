@@ -288,6 +288,15 @@ A rerun is idempotent, and needs fewer inputs than the first run, not more:
 So the second `murage setup --non-interactive` on a provisioned box carries no
 secrets at all.
 
+Enrolment itself is repairable, too. `tailscale up` is always run with
+`--reset`, because setup states every setting it wants (`--accept-routes=false`,
+`--ssh=false`, the hostname, the tags or none) and nothing the daemon remembers
+from an earlier run is wanted. Without it, an enrolment refused by the control
+plane (an auth key that may not hold `tag:murage`, say) leaves those prefs on
+the logged-out daemon, and the rerun that fixes the tag is refused with
+"requires mentioning all non-default flags". Proven on a real box; see
+`.planning/0152-LINUX-PROOF.md`.
+
 ### Exit codes
 
 | Code | Meaning |

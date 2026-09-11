@@ -243,7 +243,7 @@ test("the door port is 8813 — not the harness, and not the cloudflared gateway
 
 test("enrolment points the proxy at the door port, never at the harness", async () => {
   const { run, calls } = fakeRunner([
-    ["up --auth-key", { status: 0 }],
+    ["up --reset --auth-key", { status: 0 }],
     ["tailscale status --json", { stdout: JSON.stringify(RUNNING) }],
     ["serve --bg", { status: 0 }],
     [
@@ -375,7 +375,7 @@ test("doorAnswers refuses a bad port instead of probing something else", async (
 
 test("enroll skips the proxy entirely when the door is not answering", async () => {
   const { run, calls } = fakeRunner([
-    ["up --auth-key", { status: 0 }],
+    ["up --reset --auth-key", { status: 0 }],
     ["tailscale status --json", { stdout: JSON.stringify(RUNNING) }],
   ]);
   const r = await enroll({
