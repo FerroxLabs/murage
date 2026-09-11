@@ -370,6 +370,7 @@ import { searchWeb, SearchError } from "./web-search.ts";
 import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
+import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { TelegramService } from "./telegram-service.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
@@ -912,6 +913,10 @@ async function interruptDirectThread(botId:string,threadId:string):Promise<void>
   if(run&&claim?.phase!=="dispatching"&&directRuns.current(run)){
     if(screenPollers.get(botId)?.threadId===threadId)await finalScreenFrame(botId,threadId);
     directRuns.release(run);store.setTaskActivity(botId,threadId,"idle");
+    // The bot reads idle now, but a legacy "requested, not observed" stop
+    // keeps the folder writer lease until the engine's terminal event. Mark
+    // it so a restore inside that window waits for the release (STOPRESTORE1).
+    projectTurnLeases.markStopRequested(run.generation);
   }
 }
 /** One visible notice per retained generation; the caller keeps the lease. */
@@ -2555,6 +2560,9 @@ const activeVpsThreads = new Map<string, string>();
 // A restore mutates and cleans a project work tree. Claim the bot across the
 // entire async Git operation so a turn cannot start in that folder midway.
 const checkpointRestoreLeases = new Set<string>();
+/** Restore refused because the only holder of the folder is a turn the user
+ * already stopped whose engine did not close within its budget. Retryable. */
+const RESTORE_STOPPED_TURN_CLOSING_ERROR = "A stopped turn is still closing and holds this project folder. Wait a moment and retry the restore.";
 const LOCAL_VM_IDLE_MS = 8 * 60 * 60_000;
 const localVmIdles = new Map<string, LocalVmIdleTimer>();
 
@@ -11415,9 +11423,17 @@ const server = createServer(async (req, res) => {
       const restoreOwner = "restore:" + randomUUID();
       let result: checkpoints.RestoreResult;
       try {
-        let lease;
-        try { lease = projectTurnLeases.folders.acquireRestore(restoreOwner, parsed.data.cwd); }
-        catch { return json(res, 409, { error: "Another turn or restore is using this project folder, or its path is unavailable. Stop that work before restoring files." }); }
+        // A turn the user already stopped may still hold the folder while
+        // its engine closes (the bot reads idle before the terminal event).
+        // Wait for that release up to the engine's close budget; a live
+        // turn or another restore is refused at once (STOPRESTORE1).
+        const admission = await projectTurnLeases.acquireRestoreWhenStopped(restoreOwner, parsed.data.cwd, { timeoutMs: providerCloseDeadlineMs() });
+        if (!admission.ok) {
+          return admission.reason === "still-closing"
+            ? json(res, 409, { error: RESTORE_STOPPED_TURN_CLOSING_ERROR, code: "restore_stopped_turn_closing" })
+            : json(res, 409, { error: "Another turn or restore is using this project folder, or its path is unavailable. Stop that work before restoring files.", code: "restore_folder_in_use" });
+        }
+        const lease = admission.lease;
         projectTurnLeases.folders.assertCurrent(restoreOwner);
         result = await checkpoints.restore(bot.id, lease.canonicalPath, parsed.data.hash, {
           assertCurrent: () => { projectTurnLeases.folders.assertCurrent(restoreOwner); },
