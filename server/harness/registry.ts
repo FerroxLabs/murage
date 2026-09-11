@@ -157,6 +157,24 @@ export class ProviderRegistry {
     await Promise.allSettled(this.instances().map(instance => this.refreshCatalog(instance, dueOnly)));
   }
 
+  /** Health of only these instances, for callers that need no model catalog:
+   * no catalog refresh runs and no other engine is probed. describe() probes
+   * the whole fleet, which held the Claude accounts section disabled for
+   * seconds after every change (CLAC2). An id the registry lacks is omitted. */
+  async snapshots(instanceIds: Iterable<InstanceId>): Promise<Map<InstanceId, ProviderSnapshot>> {
+    const rows = await Promise.all([...new Set(instanceIds)].map(async (instanceId): Promise<[InstanceId, ProviderSnapshot] | undefined> => {
+      const entry = this.byId.get(instanceId);
+      if (!entry) return undefined;
+      if (entry.shadow) return [instanceId, { state: "unavailable", reason: entry.shadow.reason }];
+      try {
+        return [instanceId, await entry.live.snapshot()];
+      } catch (e) {
+        return [instanceId, { state: "unavailable", reason: e instanceof Error ? e.message : String(e) }];
+      }
+    }));
+    return new Map(rows.filter((row): row is [InstanceId, ProviderSnapshot] => row !== undefined));
+  }
+
   /** instance snapshots for the model picker: id, driver, models, health */
   async describe() {
     // Multiple instances may share a driver. Scan each default binary once
