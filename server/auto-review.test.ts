@@ -40,6 +40,16 @@ describe("shouldReview", () => {
     expect(shouldReview(context({ approvalScope: "local-computer" }))).toBe(false);
   });
 
+  it("excludes a scoped Pi host-control card from AI review whatever the grant outcome", () => {
+    // pi.ts stamps local-computer scope on every permission ask of a
+    // host-controlling turn (A7), so none of them reach the reviewer.
+    for (const source of sources) {
+      for (const mode of ["shadow", "enforce"] as const) {
+        expect(shouldReview(context({ source, mode, approvalScope: "local-computer" }))).toBe(false);
+      }
+    }
+  });
+
   it("supports watch mode but stays off by default", () => {
     expect(shouldReview(context({ mode: "shadow" }))).toBe(true);
     expect(shouldReview(context({ mode: "off" }))).toBe(false);

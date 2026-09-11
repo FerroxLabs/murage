@@ -5,10 +5,13 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | interleave | turn-error | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | question | interleave | turn-error | no-models | exit-early
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
+//   FAKE_PI_SET_MODEL ok (default) | reject (success:false with pi's error text) | silent (never answers)
+//   FAKE_PI_SESSION   ok (default) | reject (new_session / switch_session answer success:false)
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
-//                  and env hygiene (no leaked secrets into the pi child).
+//                  and env hygiene (no leaked secrets into the pi child). Model
+//                  pins, thinking levels and received prompts are appended too.
 
 import { appendFileSync, readFileSync } from "node:fs";
 
@@ -132,6 +135,22 @@ const streamPermissionTurn = () => {
   // wait for the answer before finishing
 };
 
+// host-confirm: the pi-mcp-extension's gate before a host computer tool runs —
+// a `ctx.ui.confirm` ask whose title the extension composes. Held like
+// permission until extension_ui_response arrives.
+const streamHostConfirmTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: "Allow click on your computer?", message: "Run computer:click" });
+};
+
+// question: an `input` ask, which is a question for the human, not a permission.
+const streamQuestionTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "extension_ui_request", id: "ask-q", method: "input", title: "Which branch should I use?" });
+};
+
 /** Scripted text → tool → text → tool → text turn for order-contract tests. */
 const streamInterleaveTurn = () => {
   send({ type: "agent_start" });
@@ -186,11 +205,19 @@ function handle(cmd: any) {
       });
       return;
     case "new_session":
+      if (process.env.FAKE_PI_SESSION === "reject") {
+        send({ type: "response", command: "new_session", success: false, error: "Could not create session directory" });
+        return;
+      }
       sessionCounter += 1;
       currentSessionFile = `/fake/pi-session-${sessionCounter}.json`;
       send({ type: "response", command: "new_session", success: true, data: { sessionId: `s-${sessionCounter}`, sessionFile: currentSessionFile } });
       return;
     case "switch_session":
+      if (process.env.FAKE_PI_SESSION === "reject") {
+        send({ type: "response", command: "switch_session", success: false, error: `Session file not found: ${cmd.sessionPath}` });
+        return;
+      }
       currentSessionFile = cmd.sessionPath ?? currentSessionFile;
       send({ type: "response", command: "switch_session", success: true, data: { sessionId: "s-resumed", sessionFile: currentSessionFile } });
       return;
@@ -201,6 +228,13 @@ function handle(cmd: any) {
         } catch {
           /* never let dumping break a run */
         }
+      }
+      // pi answers an unknown provider/model with success:false and its own
+      // error text; a wedged pi never answers at all.
+      if (process.env.FAKE_PI_SET_MODEL === "silent") return;
+      if (process.env.FAKE_PI_SET_MODEL === "reject") {
+        send({ type: "response", command: "set_model", success: false, error: `Model not found: ${cmd.provider}/${cmd.modelId}` });
+        return;
       }
       send({ type: "response", command: "set_model", success: true, data: { id: cmd.modelId, provider: cmd.provider } });
       return;
@@ -217,16 +251,26 @@ function handle(cmd: any) {
       send({ type: "response", command: "set_thinking_level", success: true });
       return;
     case "prompt":
+      // record receipt so a test can prove a prompt was (or was never) sent
+      if (process.env.FAKE_PI_DUMP) {
+        try {
+          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ prompt: true }) + "\n");
+        } catch {
+          /* never let dumping break a run */
+        }
+      }
       // acknowledge acceptance; the completion comes via events
       send({ type: "response", command: "prompt", success: true });
       if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
+      else if (mode === "host-confirm") streamHostConfirmTurn();
+      else if (mode === "question") streamQuestionTurn();
       else if (mode === "interleave") streamInterleaveTurn();
       else if (mode === "turn-error") streamErrorTurn();
       else streamTurn();
       return;
     case "extension_ui_response":
-      if (cmd.id === "ask-1") finishPermissionTurn();
+      if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q") finishPermissionTurn();
       return;
     case "abort":
       send({ type: "turn_end", message: { stopReason: "cancelled", usage: { input: 0, output: 0 } }, usage: { input: 0, output: 0 } });
