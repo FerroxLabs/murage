@@ -17,6 +17,14 @@
 //                   | question-tool (AskUserQuestion routed through request_permission)
 //                   | fuigo-question (Fuigo's `_fuigo/ask_user_question` ext request)
 //                   | fuigo-elicit (Fuigo's `_fuigo/mcp/elicit` bridge of an MCP form elicitation)
+//                   | folder-trust (Fuigo 1.0.13's folder-trust gate: with
+//                     `--trust` in argv the folder is trusted and the reply
+//                     quotes ./AGENTS.md; without it the fake sends
+//                     `_fuigo/folder_trust/request` after session/new IF the
+//                     client advertised `fuigo/folderTrust.interactive`, writes
+//                     the answer to FAKE_ACP_DUMP as `decision`, and — like the
+//                     real engine, which reads instructions at session build —
+//                     still replies with AGENTS.md withheld this session)
 //                   | elicitation-form | elicitation-url | elicitation-legacy
 //                     (ACP `elicitation/create` form / url, and the older
 //                     `session/elicitation` spelling); the client's reply is
@@ -63,7 +71,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { isAbsolute } from "node:path";
 
@@ -284,6 +292,19 @@ const configCalls: Array<{ method: string; params: unknown }> = [];
 // pending server→client permission request id → resolver
 let pendingPermissionId: number | null = null;
 let onPermissionAnswered: (() => void) | null = null;
+// folder-trust mode: what the client advertised and whether the folder was
+// trusted when the session was built (argv --trust, the way `fuigo --trust`
+// grants the process cwd up front)
+let folderTrustInteractive = false;
+const folderTrustedAtBuild = argv.includes("--trust");
+const agentsMdForReply = () => {
+  if (!folderTrustedAtBuild) return "withheld";
+  try {
+    return readFileSync("AGENTS.md", "utf8").trim();
+  } catch {
+    return "absent";
+  }
+};
 
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
 type McpEntry = { command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
@@ -407,6 +428,7 @@ function handle(msg: any) {
         process.exit(3);
       }
       const authMethods = mode === "no-auth" ? [] : [{ id: "cached_token" }];
+      folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.initialize = msg.params ?? null;
         writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -442,6 +464,25 @@ function handle(msg: any) {
         ...(opts ? { configOptions: opts } : {}),
         ...(mdls ? { models: mdls } : {}),
       });
+      if (mode === "folder-trust") {
+        // Fuigo's `maybe_spawn_interactive_trust_prompt`: after the session
+        // reply, only for an interactive client, only when the store has no
+        // grant. Detached from the prompt: the client may answer it before or
+        // after it sends session/prompt.
+        dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, requested: false };
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+        if (!folderTrustedAtBuild && folderTrustInteractive) {
+          (dumpState.folderTrust as { requested: boolean }).requested = true;
+          if (process.env.FAKE_ACP_DUMP) writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+          pendingPermissionId = 9006;
+          out({
+            jsonrpc: "2.0",
+            id: pendingPermissionId,
+            method: "_fuigo/folder_trust/request",
+            params: { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: process.cwd(), configKinds: ["instructions"] },
+          });
+        }
+      }
       break;
     }
     case "session/load": {
@@ -559,6 +600,26 @@ function handle(msg: any) {
         );
       };
       const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+      if (mode === "folder-trust") {
+        // the reply says what the session was built with, the way a real
+        // turn's answer would (or would not) carry an AGENTS.md instruction
+        const answer = () => {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `agents: ${agentsMdForReply()}` } } } });
+          complete();
+        };
+        // The real engine's prompt runs gated while its request is open; the
+        // fake instead finishes the turn only once the client has answered,
+        // so a test can read the answer from the dump before the driver
+        // tears the child down (the client always answers: a known decision
+        // at once, a card when the owner does, and a cancel when the turn
+        // ends).
+        if (pendingPermissionId === 9006) {
+          onPermissionAnswered = answer;
+          return;
+        }
+        answer();
+        return;
+      }
       // Bounded-ingress fixtures (A4), keyed on the prompt so one fake can
       // run an oversized turn beside an ordinary one.
       if (fixtureRequested(promptText, "__fixture_oversize_frame__")) {

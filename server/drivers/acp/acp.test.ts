@@ -6,11 +6,11 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly —
 // resolveCliSpawn turns it into `node <script>`, so these run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
@@ -22,6 +22,7 @@ import { KimiAgentDriver } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
+import { QUESTION_TIMEOUT_MS } from "../../../shared/questions.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -1731,5 +1732,278 @@ describe("ACP bounded ingress (A4)", () => {
     const image = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_image");
     expect(image).toMatchObject({ threadId: "t-large", data: expect.any(String) });
     expect((image as { data: string }).data).toHaveLength(4 * Math.ceil((10 * 1024 * 1024) / 3));
+  });
+});
+
+// Folder trust through Murage (0.1.52 FUIGOTRUST1). Fuigo 1.0.13 gates a
+// folder's AGENTS.md / CLAUDE.md, .mcp.json, skills and hooks behind a trust
+// decision it cannot ask for over Murage's piped spawn. The core decides
+// BEFORE the spawn from the server's record or a question card, passes the
+// decision as `--trust`, advertises `fuigo/folderTrust.interactive` and
+// answers the engine's own request from the same decision. The fake reads
+// ./AGENTS.md into its reply only when it was built trusted — the same
+// session-build timing as the real engine.
+describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+  let scratch: string;
+  let folder: string;
+  let dump: string;
+  const CANARY = "canary-say-the-word-pelican";
+
+  const FolderTrustDriver = createAcpDriver({
+    ...SELECT_MODEL_SUPPORT,
+    driverKind: "folderTrustTest",
+    selectModel: undefined,
+    folderTrust: true,
+    // Fuigo's shape: the flag rides argv, before the subcommand
+    spawnArgs: (_config, _turn, ctx) => [...(ctx?.folderTrusted ? ["--trust"] : []), "agent", "stdio"],
+  });
+
+  const create = async (driver = FolderTrustDriver) => {
+    process.env.FAKE_ACP_MODE = "folder-trust";
+    process.env.FAKE_ACP_DUMP = dump;
+    instance = await driver.create({
+      instanceId: "acp-trust-test",
+      displayName: "ACP Trust Test",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+  const readDump = () => JSON.parse(readFileSync(dump, "utf8"));
+  const assistantText = () =>
+    recorder.events
+      .filter((e): e is Extract<typeof e, { itemType: "assistant_text" }> => e.type === "item.completed" && (e as any).itemType === "assistant_text")
+      .map((e) => e.text)
+      .join("\n");
+  const chips = () => recorder.events.filter((e) => e.type === "item.started").map((e) => (e as { title?: string }).title ?? "");
+  const answer = (threadId: string, requestId: string, label: string) =>
+    instance.adapter.respondToRequest(threadId, requestId, {
+      behavior: "answer",
+      message: label,
+      answers: [{ id: "folderTrust", selected: [label] }],
+    });
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    scratch = mkdtempSync(join(tmpdir(), "murage-acp-trust-"));
+    folder = join(scratch, "project");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "AGENTS.md"), `# project\n${CANARY}\n`);
+    dump = join(scratch, "dump.json");
+  });
+
+  afterEach(async () => {
+    delete process.env.FAKE_ACP_MODE;
+    delete process.env.FAKE_ACP_DUMP;
+    recorder?.stop();
+    await instance?.dispose();
+    await removeTempDir(scratch);
+  });
+
+  it("a remembered trusted folder never sees a card: --trust goes on argv, the capability is advertised, AGENTS.md is read", async () => {
+    await create();
+    await instance.adapter.sendTurn({
+      threadId: "t-trusted",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, decision: "trust", sources: ["AGENTS.md"] },
+    });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+    expect(assistantText()).toContain(CANARY);
+    const wire = readDump();
+    expect(wire.argv).toEqual(["--trust", "agent", "stdio"]);
+    expect(wire.initialize.clientCapabilities._meta).toEqual({ "fuigo/folderTrust": { interactive: true } });
+    // the engine's store is trusted, so it never asked
+    expect(wire.folderTrust).toMatchObject({ trustedAtBuild: true, requested: false });
+    expect(chips()).toEqual([]);
+  });
+
+  it("no record: the card is raised BEFORE anything is spawned; Trust answers it, the engine starts with --trust and reads AGENTS.md", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId: "t-ask",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md", ".mcp.json"] },
+    });
+    await recorder.until((e) => e.type === "turn.started");
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({
+      turnId,
+      requestType: "question",
+      tool: "folder_trust",
+      choices: ["Trust this folder", "Don't trust"],
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md", ".mcp.json"] },
+      questions: [
+        {
+          id: "folderTrust",
+          header: "Folder trust",
+          multiSelect: false,
+          allowOther: false,
+          options: [{ label: "Trust this folder" }, { label: "Don't trust" }],
+        },
+      ],
+    });
+    expect((opened as any).questions[0].question).toContain(folder);
+    expect((opened as any).questions[0].question).toContain("AGENTS.md, .mcp.json");
+    // nothing has been spawned: no process, no argv dump
+    expect(existsSync(dump)).toBe(false);
+    expect(instance.adapter.hasSession("t-ask")).toBe(true);
+
+    await expect(answer("t-ask", (opened as any).requestId, "Trust this folder")).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "answer", source: "user" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(assistantText()).toContain(CANARY);
+    expect(readDump().argv).toEqual(["--trust", "agent", "stdio"]);
+    expect(chips()).toEqual([]);
+    // exactly one turn.started for the whole turn, card included
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+  });
+
+  it("Don't trust: the engine starts without --trust, its own request is answered reject, the reply has no AGENTS.md, and a chip says what was withheld", async () => {
+    await create();
+    await instance.adapter.sendTurn({
+      threadId: "t-reject",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+    });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await expect(answer("t-reject", (opened as any).requestId, "Don't trust")).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: null });
+    expect(assistantText()).toBe("agents: withheld");
+    expect(assistantText()).not.toContain(CANARY);
+    const wire = readDump();
+    expect(wire.argv).toEqual(["agent", "stdio"]);
+    expect(wire.folderTrust).toMatchObject({ trustedAtBuild: false, interactive: true, requested: true });
+    expect(wire.decision).toEqual({ outcome: "reject" });
+    expect(chips()).toEqual(["untrusted folder: AGENTS.md"]);
+    expect(recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "tool")).toMatchObject({ ok: true });
+  });
+
+  it("a remembered 'Don't trust' runs untrusted with the chip and no card", async () => {
+    await create();
+    await instance.adapter.sendTurn({
+      threadId: "t-remembered-reject",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, decision: "reject", sources: ["AGENTS.md", "CLAUDE.md"] },
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+    expect(assistantText()).toBe("agents: withheld");
+    expect(readDump().decision).toEqual({ outcome: "reject" });
+    expect(chips()).toEqual(["untrusted folder: AGENTS.md, CLAUDE.md"]);
+  });
+
+  it("a skipped card is an honest no-answer: the turn runs untrusted, nothing is remembered by the driver, the chip shows", async () => {
+    await create();
+    await instance.adapter.sendTurn({
+      threadId: "t-skip",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+    });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await expect(instance.adapter.respondToRequest("t-skip", (opened as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(assistantText()).toBe("agents: withheld");
+    expect(readDump().decision).toEqual({ outcome: "reject" });
+    expect(chips()).toEqual(["untrusted folder: AGENTS.md"]);
+  });
+
+  it("when the server's scan named nothing but the engine still asks, the card comes from the engine's own kinds and a late Trust is noted as applying next turn", async () => {
+    await create();
+    await instance.adapter.sendTurn({
+      threadId: "t-late",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, sources: [] },
+    });
+    // no pre-spawn card: the spawn happened first (argv without --trust)
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(existsSync(dump)).toBe(true);
+    expect(readDump().argv).toEqual(["agent", "stdio"]);
+    expect(opened).toMatchObject({ requestType: "question", tool: "folder_trust", folderTrust: { sources: ["AGENTS.md / CLAUDE.md"] } });
+    await expect(answer("t-late", (opened as any).requestId, "Trust this folder")).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(readDump().decision).toEqual({ outcome: "trust" });
+    // built untrusted, so this session's reply still lacks the instruction —
+    // exactly what the chip says
+    expect(assistantText()).toBe("agents: withheld");
+    expect(chips()).toEqual(["trusted folder: AGENTS.md / CLAUDE.md"]);
+  });
+
+  it("nobody answers: the turn ends as a stopped turn (STOP2), not a hang and not a guess, with nothing spawned", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({
+        threadId: "t-timeout",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+      });
+      const opened = recorder.events.find((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({ tool: "folder_trust" });
+      vi.advanceTimersByTime(QUESTION_TIMEOUT_MS);
+      const resolved = recorder.events.find((e) => e.type === "request.resolved");
+      expect(resolved).toMatchObject({ behavior: "deny", source: "timeout" });
+      const done = recorder.events.find((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+      expect(chips()).toEqual([`stopped: nobody decided whether to trust ${folder} in time; send the message again to be asked`]);
+      expect(existsSync(dump)).toBe(false);
+      expect(instance.adapter.hasSession("t-timeout")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Stop while the card is open settles the turn as cancelled at once, close-confirmed, with nothing spawned", async () => {
+    await create();
+    await instance.adapter.sendTurn({
+      threadId: "t-stop",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+    });
+    await recorder.until((e) => e.type === "request.opened");
+    await expect(instance.adapter.interruptTurn("t-stop")).resolves.toEqual({ closeConfirmed: true });
+    expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
+    expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(existsSync(dump)).toBe(false);
+  });
+
+  it("a driver whose engine does not gate folders ignores the record: no card, no capability, no --trust", async () => {
+    process.env.FAKE_ACP_MODE = "folder-trust";
+    process.env.FAKE_ACP_DUMP = dump;
+    instance = await GrokAgentDriver.create({
+      instanceId: "acp-trust-test",
+      displayName: "ACP Trust Test",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    expect(instance.adapter.capabilities.folderTrust).toBe(false);
+    await instance.adapter.sendTurn({
+      threadId: "t-plain",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+    const wire = readDump();
+    expect(wire.argv).not.toContain("--trust");
+    expect(wire.initialize.clientCapabilities._meta).toBeUndefined();
+    expect(wire.folderTrust).toMatchObject({ requested: false });
   });
 });
