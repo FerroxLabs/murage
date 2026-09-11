@@ -365,8 +365,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             });
             const outcome = await interruptibleDelay(delayMs * options.retryScale, abort.signal).promise;
             if (outcome === "elapsed" && !abort.signal.aborted) continue;
+            // Stopped during the backoff: the user's Stop, not a failure —
+            // the shared cancelled state every driver uses (STOP1).
             active.delete(turn.threadId);
-            emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok: false, stopReason: "interrupted", cost: null });
+            emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
             return;
           }
           if (outcome) {
@@ -387,11 +389,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
           active.delete(turn.threadId);
           if (!aborted) emit({ ...base(turn.threadId, turnId), type: "runtime.error", message: error.message });
+          // An abort is Murage stopping the turn (interruptTurn, stopAll):
+          // settle as cancelled like every other driver's user Stop (STOP1).
           emit({
             ...base(turn.threadId, turnId),
             type: "turn.completed",
-            ok: false,
-            stopReason: aborted ? "interrupted" : outcome?.stopReason ?? "error",
+            ok: aborted,
+            stopReason: aborted ? "cancelled" : outcome?.stopReason ?? "error",
             cost: null,
           });
           return;

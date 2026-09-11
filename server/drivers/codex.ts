@@ -689,6 +689,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       });
       child.on("close", (code) => {
         if (abandoned) return;
+        if (!state.settled && stopRequested) {
+          // Murage killed the app-server to stop this turn: a cancellation,
+          // not an engine crash — no runtime error card, same terminal state
+          // as the ACP and Pi drivers (STOP1).
+          settle(true, "cancelled");
+          return;
+        }
         if (!state.settled) {
           emit({
             ...base(threadId, turnId),
@@ -778,7 +785,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (!stopRequested) {
             void launchAttempt(attempt).catch(() => {});
           } else {
-            settle(false, "interrupted");
+            // a Stop during the backoff is a user cancellation (STOP1)
+            settle(true, "cancelled");
           }
           return;
         }

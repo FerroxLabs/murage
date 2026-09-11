@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ]
+  },
+  "include": [
+    "memory-provenance-fuigo.human.spec.ts",
+    "memory-provenance-fuigo.config.ts"
+  ],
+  "exclude": []
+}

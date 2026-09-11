@@ -35,6 +35,11 @@
 //                      (timers run before pipe reads in the event loop).
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
+//   FAKE_CLAUDE_SIGTERM_DELAY_MS a CLI that takes this long to close after
+//                      SIGTERM (the real CLI tears down MCP children and
+//                      flushes before exiting). The turn's writer lease is
+//                      released only at that close, so a test can stand
+//                      inside the Stop → close window deterministically.
 //
 //   FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS how many launches die with transient
 //                      stderr at startup WITHOUT reading stdin (counted in
@@ -502,6 +507,13 @@ const playTurn = (prompt: JsonValue) => {
   if ((mode === "hang" && !finishNow) || promptText(prompt).includes("__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
+    if (promptText(prompt).includes("__fixture_error_result_on_stop__")) {
+      // A CLI that reports its own interruption: on SIGTERM it writes an
+      // error result for the running turn, then exits.
+      process.once("SIGTERM", () => {
+        process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, stop_reason: null, total_cost_usd: 0 }) + "\n", () => process.exit(143));
+      });
+    }
     const gateDir = process.env.FAKE_CLAUDE_FINISH_GATE_DIR;
     const gate = gateDir ? join(gateDir, String(process.pid)) : undefined;
     const timer = setInterval(() => {
@@ -589,6 +601,14 @@ const playTurn = (prompt: JsonValue) => {
     finish();
   }
 };
+
+// Slow close: keep running for the configured delay after SIGTERM, then exit
+// the way a signalled process does. Without the variable Node's default
+// handler exits at once, as before.
+const sigtermDelayMs = Number(process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS);
+if (Number.isFinite(sigtermDelayMs) && sigtermDelayMs > 0) {
+  process.on("SIGTERM", () => { setTimeout(() => process.exit(143), sigtermDelayMs); });
+}
 
 let buf = "";
 process.stdin.on("data", (c) => {

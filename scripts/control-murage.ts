@@ -252,6 +252,8 @@ export async function runControlMurage(
 export interface VerificationServer {
   info: { url: string; pid: number; dataDir: string; logPath: string };
   fixtureDumpPath: string;
+  /** Writing a file named after a held fake CLI's pid here lets that turn finish normally. */
+  fixtureFinishGateDir: string;
   child: ChildProcess;
   /** Stop the owned process and reload its same isolated profile without reseeding. */
   restart(): Promise<void>;
@@ -270,7 +272,9 @@ export async function launchVerificationServer(
   const dataDir = mkdtempSync(join(tmpdir(), "murage-verify-data-"));
   const fixtureTemp = join(dataDir, "tmp");
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
+  const fixtureFinishGateDir = join(dataDir, "finish-fake");
   mkdirSync(fixtureTemp, { recursive: true });
+  mkdirSync(fixtureFinishGateDir, { recursive: true });
   const evidenceDir = join(tmpdir(), "murage-verification-evidence");
   mkdirSync(evidenceDir, { recursive: true });
   let logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
@@ -308,6 +312,7 @@ export async function launchVerificationServer(
     MURAGE_WEBHOOK_PORT: String(port + 1),
     FAKE_CLAUDE_MODE: "happy",
     FAKE_CLAUDE_DUMP: fixtureDumpPath,
+    FAKE_CLAUDE_FINISH_GATE_DIR: fixtureFinishGateDir,
     PATH: "",
   });
   // Optional fixture-owned observation only. Existing callers retain exactly
@@ -358,6 +363,7 @@ export async function launchVerificationServer(
   const fixture: VerificationServer = {
     info: { url, pid: child.pid!, dataDir, logPath },
     fixtureDumpPath,
+    fixtureFinishGateDir,
     child,
     async restart() {
       if (closed || restarting) throw new ControlMurageError("verification fixture is closed or restarting");

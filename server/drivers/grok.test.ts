@@ -194,10 +194,11 @@ describe("GrokDriver turns (fake fetch)", () => {
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
     expect(calls).toBe(1);
+    // STOP1: a Stop during the backoff is a cancellation, not a failure
     expect(recorder.events.at(-1)).toMatchObject({
       type: "turn.completed",
-      ok: false,
-      stopReason: "interrupted",
+      ok: true,
+      stopReason: "cancelled",
     });
   }, 20_000);
 

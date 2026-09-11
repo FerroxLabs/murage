@@ -1316,6 +1316,96 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("create_bot operators inherit the Chief's Auto only when a human enabled it, computer off (AUTOOP1)", async () => {
+    // The parked feature made every Chief-created operator start in Auto —
+    // a model granting itself unattended tools. Shipped form: the operator
+    // inherits exactly the Auto bit the person switched on for the Chief in
+    // the calling conversation, and never from an unattended turn.
+    const chief = (await api("POST", "/api/bots")).body.bot;
+    const createdIds: string[] = [];
+    let webhookId: string | undefined;
+    const createOperator = async (headers: Record<string, string>, fromThreadId: string, name: string) => {
+      const response = await fetch(`${BASE}/api/internal/create-bot`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ fromBotId: chief.id, fromThreadId, name, role: "Research operator", instructions: "Report concise findings." }),
+      });
+      const body = (await response.json()) as { id?: string; auto?: boolean; error?: string };
+      if (body.id) createdIds.push(body.id);
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      const operator = state.bots.find((bot: { id: string }) => bot.id === body.id);
+      return { status: response.status, body, operator };
+    };
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, {
+        section: "Auto inheritance test",
+        chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+
+      // 1. Chief in Ask mode: the operator asks too. Nothing about the call
+      //    can turn Auto on.
+      let turn = await startInternalFixtureTurn(chief.id);
+      const asking = await createOperator(turn.headers, chief.threadId, "Asking operator");
+      expect(asking.status).toBe(201);
+      expect(asking.body.auto).toBe(false);
+      expect(asking.operator).toMatchObject({ autoApprove: false, computer: "off", approvePeerComms: false, composio: false });
+      expect(asking.operator.tasks[0]).toMatchObject({ autoApprove: false });
+      expect((await api("POST", `/api/bots/${chief.id}/interrupt`)).status).toBe(200);
+
+      // 2. The person put the Chief in Auto: the operator inherits it, with
+      //    the computer OFF so this Auto can never drive the person's desktop.
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { autoApprove: true })).status).toBe(200);
+      turn = await startInternalFixtureTurn(chief.id);
+      const auto = await createOperator(turn.headers, chief.threadId, "Auto operator");
+      expect(auto.status).toBe(201);
+      expect(auto.body.auto).toBe(true);
+      expect(auto.operator).toMatchObject({ autoApprove: true, computer: "off", approvePeerComms: false, composio: false });
+      expect(auto.operator.tasks[0]).toMatchObject({ autoApprove: true });
+      expect(auto.operator.alwaysAllow ?? []).toEqual([]);
+      expect((await api("POST", `/api/bots/${chief.id}/interrupt`)).status).toBe(200);
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === chief.id)?.busy, { timeout: 5_000 }).toBe(false);
+
+      // 3. Same Chief, same Auto, but the turn was started by a webhook with
+      //    nobody at the keyboard: an unattended turn hands out no Auto.
+      const hook = await desktopApi("POST", "/api/webhooks", {
+        name: "Team builder",
+        prompt: "__fixture_hold_authority__",
+        botId: chief.id,
+        runOn: "ember",
+      });
+      expect(hook.status).toBe(201);
+      webhookId = hook.body.webhook.id;
+      rmSync(fakeClaudeDump, { force: true });
+      const delivered = await fetch(hook.body.credential.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "build the team" }),
+      });
+      expect(delivered.status).toBe(202);
+      const dump = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump, 20_000);
+      const env = dump.mcpConfig.mcpServers.agents.env;
+      expect(env.MURAGE_BOT_ID).toBe(chief.id);
+      expect(env.MURAGE_THREAD_ID).not.toBe(chief.threadId);
+      const unattended = await createOperator(
+        { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" },
+        env.MURAGE_THREAD_ID,
+        "Webhook operator",
+      );
+      expect(unattended.status).toBe(201);
+      expect(unattended.body.auto).toBe(false);
+      expect(unattended.operator).toMatchObject({ autoApprove: false, computer: "off" });
+      expect(unattended.operator.tasks[0]).toMatchObject({ autoApprove: false });
+      writeFileSync(join(home, "finish-fake", String(dump.pid)), "finish");
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === chief.id)?.busy, { timeout: 10_000 }).toBe(false);
+    } finally {
+      await api("POST", `/api/bots/${chief.id}/interrupt`);
+      if (webhookId) await desktopApi("DELETE", `/api/webhooks/${webhookId}`);
+      for (const botId of createdIds) await desktopApi("DELETE", `/api/bots/${botId}`);
+      await desktopApi("DELETE", `/api/bots/${chief.id}`);
+    }
+  }, 60_000);
+
   it("rejects null and array task, channel, and bot mutation bodies", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const room = (await api("POST", "/api/groups", { name: "Object bodies", memberIds: [bot.id] })).body.group;

@@ -77,6 +77,7 @@ import {
   type IntakeCandidate,
   type IntakeCardData,
 } from "../shared/intake-turn.ts";
+import { MESSAGE_REQUEST_MAX_BYTES, messageTooLargeRefusal } from "../shared/message-limits.ts";
 import {
   CREDENTIAL_TARGETS,
   credentialResumeOutcome,
@@ -318,6 +319,7 @@ import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
@@ -368,6 +370,7 @@ import { searchWeb, SearchError } from "./web-search.ts";
 import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
 import { applyNotificationPreferences, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
+import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { TelegramService } from "./telegram-service.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
@@ -376,6 +379,7 @@ import { shouldMountLocalComputer } from "./local-routing.ts";
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
+import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";
@@ -472,12 +476,28 @@ function selectedProviderRoute(selection: ModelSelection, driverKind: string): P
   const route = { connectionId: connection.id, preset: connection.preset, protocol, baseUrl: connection.baseUrl, apiKey: connection.key, model: selection.model, revision: connection.revision };
   validateProviderTurnRoute(driverKind, route); return route;
 }
+/** A turn the host stops on its own (not the user's Stop) settles as cancelled
+ * with no error card, so the conversation says why it ended (STOP1). */
+function noteHostStoppedTurn(threadId: string, botId: string, reason: string): void {
+  const bot = store.bot(botId);
+  try {
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      ...(bot && store.groupByThread(threadId) ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}),
+      // ok:false: a settled, not-successful chip. No "error:" prefix, so no
+      // error card and no Retry.
+      tool: { name: `Stopped — ${reason}`, ok: false },
+    });
+  } catch { /* the thread may already be gone */ }
+}
 function providerRouteIsCurrent(route: ProviderTurnRoute | undefined): boolean { return !route || providerConnections.isCurrent(route.connectionId, route.revision); }
 providerConnections.subscribe(changedIds => {
   for (const [threadId, active] of activeProviderSelections) if (changedIds.includes(active.route.connectionId) && !providerRouteIsCurrent(active.route)) {
     cancelDirectTurnDispatch(active.botId, threadId); revokeInternalThread(threadId);
     void registry.get(active.instanceId)?.adapter.interruptTurn(threadId).catch(() => {});
     activeProviderSelections.delete(threadId);
+    noteHostStoppedTurn(threadId, active.botId, "the model connection it was using was changed or turned off");
   }
 });
 
@@ -893,6 +913,10 @@ async function interruptDirectThread(botId:string,threadId:string):Promise<void>
   if(run&&claim?.phase!=="dispatching"&&directRuns.current(run)){
     if(screenPollers.get(botId)?.threadId===threadId)await finalScreenFrame(botId,threadId);
     directRuns.release(run);store.setTaskActivity(botId,threadId,"idle");
+    // The bot reads idle now, but a legacy "requested, not observed" stop
+    // keeps the folder writer lease until the engine's terminal event. Mark
+    // it so a restore inside that window waits for the release (STOPRESTORE1).
+    projectTurnLeases.markStopRequested(run.generation);
   }
 }
 /** One visible notice per retained generation; the caller keeps the lease. */
@@ -1104,7 +1128,8 @@ function hostComputerIntegration(botId: string, threadId: string, generation: st
  * synchronous half of ask_bot. Subscribes to the bus, folds assistant_text
  * for that thread, resolves on turn.completed (or a 4-min ceiling). */
 type AskBotOutcome = {
-  status: "reply" | "failed" | "timeout" | "error";
+  /** "stopped": the target's turn was stopped before it finished (STOP1). */
+  status: "reply" | "failed" | "stopped" | "timeout" | "error";
   text: string;
   /** Provider's stop reason when the turn completed not-ok. */
   stopReason?: string | null;
@@ -1131,10 +1156,11 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
       // newer ask_bot waiter with the old partial reply.
       if (shouldIgnoreProviderEvent(e)) return;
       if (e.threadId !== threadId) return;
-      if (e.type === "item.completed" && e.itemType === "assistant_text") {
+      if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) {
         text += (text ? "\n" : "") + e.text;
       } else if (e.type === "turn.completed") {
-        if (e.ok) finish({ status: "reply", text: text || "(the bot finished without a text reply)" });
+        if (turnSucceeded(e)) finish({ status: "reply", text: text || "(the bot finished without a text reply)" });
+        else if (turnStopped(e)) finish({ status: "stopped", text, stopReason: e.stopReason ?? null });
         else finish({ status: "failed", text, stopReason: e.stopReason ?? null });
       }
     });
@@ -2256,6 +2282,11 @@ function requestBehavior(value: unknown): "allow" | "deny" | "answer" | null {
 // the last settled assistant text per thread, so a "finished" notification
 // can carry what the bot actually said
 const lastReply = new Map<string, string>();
+/** A reply item that only copied memory provenance JSON is held back until its
+ * turn completes; a turn with nothing else to show ends with a retryable
+ * notice instead of presenting that JSON as the answer (MEMJSON1). */
+const memoryEchoReplies = new Map<string, { turnId?: string; text: string }>();
+const MEMORY_ECHO_NOTICE = "error: The reply only repeated internal memory references instead of answering. Retry to ask again.";
 
 /** Put a notification on the wire. Clients decide what to do with it — a
  * desktop notification now, a push to a paired phone later. */
@@ -2529,6 +2560,9 @@ const activeVpsThreads = new Map<string, string>();
 // A restore mutates and cleans a project work tree. Claim the bot across the
 // entire async Git operation so a turn cannot start in that folder midway.
 const checkpointRestoreLeases = new Set<string>();
+/** Restore refused because the only holder of the folder is a turn the user
+ * already stopped whose engine did not close within its budget. Retryable. */
+const RESTORE_STOPPED_TURN_CLOSING_ERROR = "A stopped turn is still closing and holds this project folder. Wait a moment and retry the restore.";
 const LOCAL_VM_IDLE_MS = 8 * 60 * 60_000;
 const localVmIdles = new Map<string, LocalVmIdleTimer>();
 
@@ -2679,6 +2713,10 @@ bus.subscribe((event: RuntimeEvent) => {
     case "item.completed":
       if (event.itemType === "assistant_text") {
         const text = event.text;
+        if (isMemoryProvenanceEcho(text)) {
+          memoryEchoReplies.set(event.threadId, { turnId: event.turnId, text });
+          break;
+        }
         pushMessage({ role: "bot", kind: "text", text, turnId: event.turnId });
         // kept so "finished" can say what it finished with, rather than
         // just that something ended
@@ -3040,8 +3078,30 @@ bus.subscribe((event: RuntimeEvent) => {
           });
         }
       }
-      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, event.ok ? "completed" : event.stopReason === "cancelled" ? "cancelled" : "failed");
-      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, event.ok ? "completed" : "failed");
+      // A stopped turn settles ok:true with stopReason "cancelled" (ACP, Pi,
+      // Claude, Codex). It is still not a completed turn: memory must drop
+      // its unfinished assistant intentions (STOP1).
+      const terminalOutcome = turnOutcome(event);
+      // MEMJSON1: a finished turn whose only visible reply was the memory
+      // reference JSON is not an answer; surface the notice and settle failed.
+      const memoryEcho = memoryEchoReplies.get(event.threadId);
+      memoryEchoReplies.delete(event.threadId);
+      const echoOnlyReply = Boolean(memoryEcho && turnSucceeded(event)
+        && (!memoryEcho.turnId || !event.turnId || memoryEcho.turnId === event.turnId)
+        && !store.messagesFor(event.threadId).some((message) =>
+          message.role === "bot" && message.kind === "text" && message.turnId === completedTurnId
+          && Boolean(message.text?.trim() || message.attachments?.length)));
+      if (memoryEcho && echoOnlyReply) {
+        pushMessage({
+          role: "bot",
+          kind: "activity",
+          tool: { name: MEMORY_ECHO_NOTICE, ok: false, errorDetails: redactSecretsInText(memoryEcho.text).slice(0, 4096) },
+          turnId: completedTurnId,
+        });
+      }
+      const settledOutcome = echoOnlyReply ? "failed" : terminalOutcome;
+      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, settledOutcome);
+      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, settledOutcome);
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
       const reply = lastReply.get(event.threadId) ?? "";
@@ -3151,10 +3211,15 @@ bus.subscribe((event: RuntimeEvent) => {
       // the request was mirrored there when the delegation drained, and a
       // channel that only ever shows requests is half a record. Mirror the
       // reply on success; mirror a failed/stopped terminal chip otherwise.
-      const delegationFailureName = !event.ok && event.stopReason?.trim()
-        ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
-        : undefined;
-      finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
+      // A stopped turn settles ok:true "cancelled" but is not a finished
+      // delegation: the receipt must not read "done" (STOP1).
+      const delegationStopped = turnStopped(event);
+      const delegationFailureName = delegationStopped
+        ? DELEGATION_STOPPED_NAME
+        : !event.ok && event.stopReason?.trim()
+          ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
+          : undefined;
+      finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -3220,11 +3285,14 @@ function delegationSource(
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
  * Some harness paths settle a busy bot without a provider turn.completed
  * event, so they call this same finalizer explicitly. */
+const DELEGATION_STOPPED_NAME = "Delegated turn was stopped before it finished";
+
 function finalizeDelegationWatch(
   threadId: string,
   ok: boolean,
   reply = "",
   failureName = "Delegated turn did not finish",
+  stopped = false,
 ): boolean {
   const watched = delegationWatch.get(threadId);
   if (!watched) return false;
@@ -3261,7 +3329,9 @@ function finalizeDelegationWatch(
         tool: {
           name: ok
             ? `Delegation to @${targetName} completed without a text reply`
-            : `Delegation to @${targetName} failed — ${failureName}`,
+            : stopped
+              ? `Delegation to @${targetName} was stopped before it finished`
+              : `Delegation to @${targetName} failed — ${failureName}`,
           ok,
         },
       });
@@ -3413,7 +3483,7 @@ bus.subscribe((event: RuntimeEvent) => {
   // no owner, so the discard falls back to thread-wide there — bounded by
   // the rule in discardDelegations that an item which has already outlived a
   // turn is never collateral.
-  if (!event.ok) discardDelegations(commsBus, event.threadId, store.botByThread(event.threadId)?.id);
+  if (!turnSucceeded(event)) discardDelegations(commsBus, event.threadId, store.botByThread(event.threadId)?.id);
   else drainDelegations(commsBus, approvalBus, event.threadId, runDelegatedTurn);
   // A settling bot frees itself as a delegation TARGET too: handoffs that
   // found it busy earlier were kept queued (bounded retries) on their own
@@ -5353,9 +5423,9 @@ async function runGroupMemberTurn(
       if (shouldIgnoreProviderEvent(e)) return;
       if (e.threadId !== threadId) return;
       if (providerTurnId && e.turnId && e.turnId !== providerTurnId) return;
-      if (e.type === "item.completed" && e.itemType === "assistant_text") replyText += `\n${e.text}`;
+      if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) replyText += `\n${e.text}`;
       else if (e.type === "turn.completed") {
-        if (orchestration && !e.ok) {
+        if (orchestration && !turnSucceeded(e)) {
           orchestration.result.stopReason = e.stopReason ?? null;
           finish("provider_failed");
         } else {
@@ -8343,6 +8413,15 @@ const server = createServer(async (req, res) => {
           });
           return json(res, 200, { timeout: true, taskId, toBotName: currentTarget.name, waitedMs: ASK_BOT_TIMEOUT_MS });
         }
+        if (outcome.status === "stopped") {
+          // A stopped turn is not a reply (STOP1): say so where the exchange
+          // lives, and hand back any partial text marked as unfinished.
+          mirrorActivity(commsBus, currentTarget, channel, "Turn was stopped before it finished", false);
+          const partial = outcome.text.trim();
+          return json(res, 200, { botName: currentTarget.name, text: partial
+            ? `(the bot's turn was stopped before it finished; partial reply follows)\n\n${partial}`
+            : "(the bot's turn was stopped before it finished)" });
+        }
         if (outcome.status === "failed" && !outcome.text.trim()) {
           // No partial answer to hand back — mirror the failure where the
           // exchange lives, with the provider's reason instead of silence.
@@ -8477,12 +8556,24 @@ const server = createServer(async (req, res) => {
         const chief = store.bot(fromBotId);
         if (!chief) return json(res, 403, { error: "unknown sender" });
         const fromThreadId = String(body.fromThreadId ?? chief.threadId);
-        if (!connectorThread(chief.id, fromThreadId)) {
+        const chiefConversation = connectorThread(chief.id, fromThreadId);
+        if (!chiefConversation) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
         if (!chief.chiefOfStaff) {
           return json(res, 403, { error: "only a section's Chief of Staff can create operator bots" });
         }
+        // Whether the new operator starts in Auto is INHERITED, never
+        // granted: it is exactly the Auto bit a person switched on for the
+        // Chief in the conversation making this call, resolved the way the
+        // permission host resolves it (the task in a 1:1, the profile in a
+        // channel — see `request.opened`). A Chief in Ask mode creates
+        // operators in Ask mode, so a model cannot hand out an Auto the human
+        // never enabled on this computer. An unattended turn (a webhook, a
+        // channel automation, or a hop from one) inherits nothing: Auto is
+        // something a person switched on for turns they are present for.
+        const chiefAsSeenByPermissions = chiefConversation.group ? chief : store.projectBotForTask(chief.id, fromThreadId);
+        const inheritedAuto = chiefAsSeenByPermissions?.autoApprove === true && !isUnattended(fromThreadId);
         // Which team the specialist joins. A section Chief keeps verbatim
         // inheritance (today's behaviour). The WORKSPACE Chief must name a
         // team: inheriting her own section would make her the direct manager
@@ -8594,10 +8685,17 @@ const server = createServer(async (req, res) => {
           { seedMessages: false },
         );
         createSlot.commit();
+        // The operator's Auto is bounded to what Auto already means for a
+        // bot the person enabled it on: the destructive/sensitive guards,
+        // question tools, credential cards and peer comms still reach the
+        // human. It is narrower than the Chief's — the computer is OFF, so
+        // this Auto can never click or type on the person's own desktop and
+        // never needs the local-computer acknowledgement.
         const safeBot = store.patchBot(created.id, {
           composio: false,
-          autoApprove: false,
+          autoApprove: inheritedAuto,
           approvePeerComms: false,
+          computer: "off",
         })!;
         // Elected after the record exists, and as a SECTION lead: the scope
         // argument is what keeps this from reaching the workspace tier.
@@ -8612,6 +8710,9 @@ const server = createServer(async (req, res) => {
           // So the caller's next create_bot knows the team now has a lead
           // rather than having to re-read list_bots to find out.
           lead: finalBot.chiefOfStaff === true,
+          // Whether the operator inherited the Chief's Auto, so the caller
+          // can tell the person which of its team will ask before acting.
+          auto: finalBot.autoApprove === true,
         });
         } finally { createSlot.release(); }
       }
@@ -10265,12 +10366,16 @@ const server = createServer(async (req, res) => {
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
-      const body = await readBody(req);
+      // One message's bound (shared/message-limits.ts), not the generic
+      // 1 MB body limit: the composer checks the same number before sending.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      const tooLarge = messageTooLargeRefusal(text);
+      if (tooLarge) return json(res, 413, tooLarge);
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such group" });
       if (body.mode !== undefined && body.mode !== "chat" && body.mode !== "goal") {
@@ -10815,6 +10920,7 @@ const server = createServer(async (req, res) => {
         patch.alwaysAllow = withoutQuestionGrants([...new Set(body.alwaysAllow as string[])]).slice(0, 200);
       }
       if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
+        if (existingBot.busy) noteHostStoppedTurn(existingBot.threadId, existingBot.id, "this computer was switched off for the bot");
         cancelDirectTurnDispatch(existingBot.id, existingBot.threadId);
         await registry
           .get(existingBot.modelSelection.instanceId)
@@ -11317,9 +11423,17 @@ const server = createServer(async (req, res) => {
       const restoreOwner = "restore:" + randomUUID();
       let result: checkpoints.RestoreResult;
       try {
-        let lease;
-        try { lease = projectTurnLeases.folders.acquireRestore(restoreOwner, parsed.data.cwd); }
-        catch { return json(res, 409, { error: "Another turn or restore is using this project folder, or its path is unavailable. Stop that work before restoring files." }); }
+        // A turn the user already stopped may still hold the folder while
+        // its engine closes (the bot reads idle before the terminal event).
+        // Wait for that release up to the engine's close budget; a live
+        // turn or another restore is refused at once (STOPRESTORE1).
+        const admission = await projectTurnLeases.acquireRestoreWhenStopped(restoreOwner, parsed.data.cwd, { timeoutMs: providerCloseDeadlineMs() });
+        if (!admission.ok) {
+          return admission.reason === "still-closing"
+            ? json(res, 409, { error: RESTORE_STOPPED_TURN_CLOSING_ERROR, code: "restore_stopped_turn_closing" })
+            : json(res, 409, { error: "Another turn or restore is using this project folder, or its path is unavailable. Stop that work before restoring files.", code: "restore_folder_in_use" });
+        }
+        const lease = admission.lease;
         projectTurnLeases.folders.assertCurrent(restoreOwner);
         result = await checkpoints.restore(bot.id, lease.canonicalPath, parsed.data.hash, {
           assertCurrent: () => { projectTurnLeases.folders.assertCurrent(restoreOwner); },
@@ -11371,10 +11485,13 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const body = await readBody(req);
+      // The composer routes a typed answer here, so it carries a message's bound.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
+      const tooLarge = typeof body.text === "string" ? messageTooLargeRefusal(body.text) : null;
+      if (tooLarge) return json(res, 413, tooLarge);
       const messageId = typeof body.messageId === "string" ? body.messageId : "";
       if (!/^[\w-]+$/.test(messageId)) return json(res, 400, { error: "messageId required" });
       const message = store.messagesFor(bot.threadId).find((entry) => entry.id === messageId);
@@ -11453,12 +11570,16 @@ const server = createServer(async (req, res) => {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
-      const body = await readBody(req);
+      // One message's bound (shared/message-limits.ts), not the generic
+      // 1 MB body limit: the composer checks the same number before sending.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      const tooLarge = messageTooLargeRefusal(text);
+      if (tooLarge) return json(res, 413, tooLarge);
       const bot = requestedDirectBot(m[1],body.threadId);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
@@ -11593,10 +11714,13 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages\/([\w-]+)\/edit$/);
     if (m && method === "POST") {
       const messageId = m[2];
-      const body = await readBody(req);
+      // An edit replaces a message, so it has the same bound as a send.
+      const body = await readBody(req, MESSAGE_REQUEST_MAX_BYTES);
       const bot = requestedDirectBot(m[1],body.threadId);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      const tooLarge = messageTooLargeRefusal(text);
+      if (tooLarge) return json(res, 413, tooLarge);
       // everything from here down is synchronous, so two racing edits can
       // never both get past this check: startTurn flips busy before the
       // next request is handled
