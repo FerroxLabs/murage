@@ -1090,7 +1090,33 @@ describe("ensureQwenInjectModel", () => {
 });
 
 describe("live Custom lists on every local CLI harness", () => {
-  it("merges probed host models onto Kimi, Droid, and Antigravity", async () => {
+  it("refuses a leftover local pick on Antigravity instead of running agy's own model under its name", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-local-"));
+    scratchDirs.push(home);
+    const instance = await AntigravityDriver.create({
+      instanceId: "agy-local",
+      displayName: "Antigravity",
+      environment: { HOME: home },
+      enabled: true,
+      config: { cli: FAKE_AGY, fullAuto: true },
+    });
+    try {
+      const recorder = recordEvents(instance.adapter);
+      await instance.adapter.sendTurn({ threadId: "t-agy-local", text: "hi", model: "omlx::GLM-5.2-fp8" });
+      await recorder.until((event) => event.type === "turn.completed");
+      const error = recorder.events.find((event) => event.type === "runtime.error") as { message?: string } | undefined;
+      expect(error?.message).toContain("can't run local models");
+      expect(recorder.events.find((event) => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "unsupported_model" });
+      recorder.stop();
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  // 0.1.52 spec E3 changes this test's intent: Antigravity has no base-URL or
+  // key input, so its local rows never reached the local host. They are now
+  // hidden ("no dead ends"); Kimi and Droid keep theirs.
+  it("merges probed host models onto Kimi and Droid, and lists none on Antigravity", async () => {
     const previous = globalThis.fetch;
     globalThis.fetch = (async (url: string | URL) => {
       if (String(url).includes(":8080")) {
@@ -1130,11 +1156,13 @@ describe("live Custom lists on every local CLI harness", () => {
           config: { cli: FAKE_AGY, fullAuto: true },
         }),
       );
-      for (const instance of instances) {
+      const [kimi, droid, agy] = instances;
+      for (const instance of [kimi!, droid!]) {
         expect(instance.models.options.some((option) => option.id === "omlx::GLM-5.2-fp8" && option.custom)).toBe(
           true,
         );
       }
+      expect(agy!.models.options.some((option) => option.id.includes("::"))).toBe(false);
     } finally {
       globalThis.fetch = previous;
       for (const instance of instances) await instance.dispose();

@@ -51,6 +51,26 @@ import {
   mergeLocalInject,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { localContextWindow, type LocalHost } from "./local-inject.ts";
+import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
+import { primeLocalContext } from "../local-server-probe.ts";
+
+/** Pi's window for a local model whose server has not reported one. */
+const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
+const PI_UNKNOWN_MAX_TOKENS = 16384;
+/** Local OpenAI-compatible servers (serving research §3; pi-mono models.md):
+ *  no `developer` role, no `store`, and `max_tokens` rather than
+ *  `max_completion_tokens`. Only missing keys are added to an existing row. */
+const PI_LOCAL_COMPAT: Record<string, unknown> = {
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: true,
+  supportsStore: false,
+  maxTokensField: "max_tokens",
+};
+
+function piMaxTokens(contextWindow: number): number {
+  return Math.min(PI_UNKNOWN_MAX_TOKENS, Math.max(1024, Math.floor(contextWindow / 4)));
+}
 
 const DRIVER_KIND = "piAgent";
 const PI_ARGS = ["--mode", "rpc", "--no-session"];
@@ -232,29 +252,40 @@ export function ensurePiInjectModel(
           baseUrl: host.baseUrl,
           api: "openai-completions",
           apiKey: hostApiKey(host, env),
-          compat: { supportsDeveloperRole: false, supportsReasoningEffort: true },
+          compat: { ...PI_LOCAL_COMPAT },
           models: [] as Array<Record<string, unknown>>,
         };
   existing.baseUrl = host.baseUrl;
   existing.api = typeof existing.api === "string" && existing.api ? existing.api : "openai-completions";
   existing.apiKey = hostApiKey(host, env);
   if (!existing.compat) {
-    existing.compat = { supportsDeveloperRole: false, supportsReasoningEffort: true };
+    existing.compat = { ...PI_LOCAL_COMPAT };
+  } else if (isPlainObject(existing.compat)) {
+    existing.compat = { ...PI_LOCAL_COMPAT, ...existing.compat };
   }
   const models: Array<Record<string, unknown>> = Array.isArray(existing.models)
     ? existing.models.filter(
         (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
       )
     : [];
-  if (!models.some((row) => row.id === inject.model)) {
+  // Spec T2: the window the server actually loaded, not a fixed 131k. A row
+  // still carrying the old fixed pair (Murage wrote it) is corrected once a
+  // real value is known; a row the user sized differently is left alone.
+  const probed = localContextWindow(inject.host, inject.model);
+  const contextWindow = probed ?? PI_UNKNOWN_CONTEXT_WINDOW;
+  const current = models.find((row) => row.id === inject.model);
+  if (!current) {
     models.push({
       id: inject.model,
       name: inject.model,
       reasoning: true,
       input: ["text"],
-      contextWindow: 131072,
-      maxTokens: 16384,
+      contextWindow,
+      maxTokens: piMaxTokens(contextWindow),
     });
+  } else if (probed && current.contextWindow === PI_UNKNOWN_CONTEXT_WINDOW && current.maxTokens === PI_UNKNOWN_MAX_TOKENS) {
+    current.contextWindow = probed;
+    current.maxTokens = piMaxTokens(probed);
   }
   existing.models = models;
   providers[inject.host] = existing;
@@ -266,6 +297,22 @@ export function ensurePiInjectModel(
     // Windows ignores POSIX modes; keep the inject even if chmod is unsupported.
   }
   return split;
+}
+
+/** Spec A3: drop the provider Murage wrote for a removed local server. */
+export function removePiLocalHost(
+  host: LocalHost,
+  env: Record<string, string | undefined> = process.env,
+): "removed" | "absent" {
+  const path = join(piAgentDir(env), "models.json");
+  const existing = readNativeJsonConfig(path, env.HOME || env.USERPROFILE || homedir());
+  if (!existing) return "absent";
+  const providers = existing.value.providers;
+  if (!isPlainObject(providers) || !Object.hasOwn(providers, host.id)) return "absent";
+  const next = { ...providers };
+  delete next[host.id];
+  writeFileSync(path, `${JSON.stringify({ ...existing.value, providers: next }, null, 2)}\n`, { mode: 0o600 });
+  return "removed";
 }
 
 /** The pi-side default model, read from ~/.pi/agent/settings.json so the
@@ -500,6 +547,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // MCP temp files. If model setup fails, there is nothing sensitive to
       // clean up yet.
       if (requestedModel) {
+        // Read the server's loaded context first, so a new models.json row
+        // carries the real window (spec T2) even before any catalog refresh.
+        await primeLocalContext(requestedModel, { ...process.env, ...input.environment });
         ensurePiInjectModel(requestedModel, { ...process.env, ...input.environment });
       }
 

@@ -20,7 +20,8 @@
 // ARGV ORDER IS A TRAP, AND FUIGO INHERITS IT FROM GROK BUILD. `-m` placed
 // before the `agent` subcommand is silently ACCEPTED and then IGNORED — see
 // the note on `spawnArgs`, which carries the live transcript.
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 
@@ -30,6 +31,16 @@ import { fluxKey } from "../../flux-config.ts";
 import { FLUX_TIERS, mergeFluxCatalog } from "../../flux-surface.ts";
 import { execCli } from "../../procs.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
+import {
+  cachedLocalTestFor,
+  decodeInjectId,
+  hostApiKey,
+  localContextWindow,
+  localHost,
+  mergeLocalInject,
+  type LocalHost,
+} from "../local-inject.ts";
+import { quoteToml, readTomlConfigForEdit, removeTomlTables, tomlTables } from "./kimi.ts";
 
 /** CONTRACT with the wiring in flux-routing.ts / builtIn.ts / the picker's
  *  defaultSelection. Renaming this renames the engine everywhere. */
@@ -215,7 +226,100 @@ async function resolveModels(
   // to this function has had `FLUX_API_KEY` deleted by the strip
   // (core.ts:204-205). Passing it would gate the catalog on a variable that is
   // guaranteed absent and drop every Flux row on a keyed install.
-  return mergeFluxCatalog(catalog, DRIVER_KIND);
+  // Local models sit alongside the cloud catalog (spec E1): live rows from the
+  // detected and user-added servers are appended after the Flux tiers, which
+  // keep leading the list and keep the default.
+  return mergeFluxCatalog(await mergeLocalInject(catalog, env), DRIVER_KIND);
+}
+
+/** Prefix of every `[model.*]` table Murage owns in Fuigo's config. */
+const FUIGO_LOCAL_PREFIX = "murage-local-";
+
+/** Stable, bare-safe table name for one server+model. The digest keeps two
+ *  model ids that sanitize to the same text apart. */
+export function fuigoLocalSlug(host: LocalHost, model: string): string {
+  const readable = model
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "model";
+  const digest = createHash("sha256").update(`${host.id} ${model}`).digest("hex").slice(0, 8);
+  return `${FUIGO_LOCAL_PREFIX}${host.id}-${readable}-${digest}`;
+}
+
+/** Env var the child reads the server key from — the key never lands in the file. */
+export function fuigoLocalKeyEnv(host: LocalHost): string {
+  return `MURAGE_LOCAL_${host.id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
+}
+
+/** Chat completions unless the Local models test showed only another surface
+ *  works (fuigo-sampling-types ApiBackend: chat_completions|responses|messages). */
+function fuigoApiBackend(host: LocalHost, model: string): "chat_completions" | "responses" | "messages" {
+  const test = cachedLocalTestFor(host.id, model);
+  if (!test || test.surfaces.chat) return "chat_completions";
+  if (test.surfaces.responses) return "responses";
+  if (test.surfaces.messages) return "messages";
+  return "chat_completions";
+}
+
+/**
+ * Spec E1: write a `[model."murage-local-…"]` entry (model, base_url, name,
+ * env_key, api_backend, context_window when known) into the config.toml under
+ * Fuigo's home (FUIGO_HOME, else ~/.fuigo) and hand back that name for `-m`.
+ * Fuigo reads base_url / env_key / api_backend straight off a `[model.*]`
+ * override (fuigo-shell config.rs ConfigModelOverride; README "Custom Models"),
+ * so no `[model_providers]` table and no default change is needed — Flux
+ * routing stays exactly as it was. Idempotent: an identical table is not
+ * rewritten; a changed one is replaced in place of the old one.
+ *
+ * The server key goes into the child env under `env_key`, never into the file.
+ * A config.toml Murage cannot read is refused, not overwritten (0.1.52 A8).
+ */
+export function ensureFuigoLocalModel(modelId: string, env: Record<string, string | undefined> = process.env): string {
+  const inject = decodeInjectId(modelId);
+  if (!inject) return modelId;
+  const host = localHost(inject.host);
+  if (!host) return modelId;
+  const slug = fuigoLocalSlug(host, inject.model);
+  const keyEnv = fuigoLocalKeyEnv(host);
+  const window = localContextWindow(host.id, inject.model);
+  const block = [
+    `[model.${quoteToml(slug)}]`,
+    `model = ${quoteToml(inject.model)}`,
+    `base_url = ${quoteToml(host.baseUrl)}`,
+    `name = ${quoteToml(`${inject.model} (${host.label})`)}`,
+    `env_key = ${quoteToml(keyEnv)}`,
+    `api_backend = "${fuigoApiBackend(host, inject.model)}"`,
+    ...(window ? [`context_window = ${window}`] : []),
+    "",
+  ].join("\n");
+  const dir = fuigoHome(env);
+  const path = join(dir, "config.toml");
+  const text = readTomlConfigForEdit(path, env.HOME || env.USERPROFILE || homedir()) ?? "";
+  const existing = tomlTables(text).find((table) => table.name === `model.${slug}`);
+  if (!existing || text.slice(existing.headingStart, existing.end).trim() !== block.trim()) {
+    const { text: without } = removeTomlTables(text, (name) => name === `model.${slug}`);
+    const prefix = without && !without.endsWith("\n") ? `${without}\n\n` : without ? `${without}\n` : "";
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(path, `${prefix}${block}`, { mode: 0o600 });
+  }
+  env[keyEnv] = hostApiKey(host, env);
+  return slug;
+}
+
+/** Spec A3: drop every `[model."murage-local-<server>-…"]` table for a removed server. */
+export function removeFuigoLocalHost(
+  host: LocalHost,
+  env: Record<string, string | undefined> = process.env,
+): "removed" | "absent" {
+  const path = join(fuigoHome(env), "config.toml");
+  const text = readTomlConfigForEdit(path, env.HOME || env.USERPROFILE || homedir());
+  if (text === null) return "absent";
+  const { text: next, removed } = removeTomlTables(text, (name) => name.startsWith(`model.${FUIGO_LOCAL_PREFIX}${host.id}-`));
+  if (!removed) return "absent";
+  writeFileSync(path, next, { mode: 0o600 });
+  return "removed";
 }
 
 const support: AcpSupport = {
@@ -228,6 +332,11 @@ const support: AcpSupport = {
 
   models: STATIC_FUIGO_MODELS,
   resolveModels,
+  // A local pick (`host::model`) becomes Murage's own `[model.*]` entry and
+  // `-m` names that entry (spec E1). Settled here, not in applyTurnEnv,
+  // because argv is built from this return value; the env key is set on the
+  // same child env object the spawn uses. Every other id is passed through.
+  resolveTurnModel: (model, env) => (model && decodeInjectId(model) ? ensureFuigoLocalModel(model, env) : model),
 
   // Fuigo's own enum: None | Minimal | Low | Medium | High | Xhigh | Max
   // (fuigo-sampling-types/src/types.rs:750-759). Murage's EFFORT_LEVELS

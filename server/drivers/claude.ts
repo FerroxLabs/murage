@@ -615,7 +615,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     let models = STATIC_CLAUDE_MODELS;
     const refreshModels = async () => {
       try {
-        const resolved = await mergeLocalInject(readClaudeModelCatalog(catalogEnv), catalogEnv);
+        // Local rows only after a Local models test proved /v1/messages (spec E3).
+        const resolved = await mergeLocalInject(readClaudeModelCatalog(catalogEnv), catalogEnv, fetch, { driver: DRIVER_KIND });
         // Flux rows are gated on claudeAgent having an implemented surface AND
         // a configured key; the key is read from config/process.env, never
         // from catalogEnv, which is frozen at create().
