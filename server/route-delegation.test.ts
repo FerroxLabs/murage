@@ -4,7 +4,8 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { hiddenRoute, notImplemented, responseGone, sendDelegated, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 import { workspaceFilesRoute } from "./workspace-files.ts";
-import { mediaAssetsRoute, resolveImageReferenceRoute } from "./media-assets.ts";
+import { mediaAssetsRoute } from "./media-assets.ts";
+import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { createOutputPublisher } from "./output-publication.ts";
 
 const servers: Server[] = [];
@@ -103,10 +104,11 @@ describe("K0 skeleton modules", () => {
     for (const desktop of [false, true]) expect(await mediaAssetsRoute(call("/api/media/bytes/asset-1", desktop), deps)).toMatchObject({ ...hiddenRoute(), headers: { "referrer-policy": "no-referrer" } });
   });
 
-  it("answers the internal reference route with 405/501 without reading the body", async () => {
+  // F5-T4 filled the reference route (intended behavior change from 501).
+  it("answers the internal reference route with 405, and 400 for a body without sources", async () => {
     const claim = { botId: "bot", threadId: "thread", generation: "g1" };
     expect(await resolveImageReferenceRoute(call("/api/internal/resolve-image-reference", false), claim, deps)).toMatchObject({ status: 405 });
-    expect(await resolveImageReferenceRoute(call("/api/internal/resolve-image-reference", false, "POST"), claim, deps)).toMatchObject({ status: 501, body: { code: "not-implemented" } });
+    expect(await resolveImageReferenceRoute(call("/api/internal/resolve-image-reference", false, "POST"), claim, deps)).toMatchObject({ status: 400, body: { code: "invalid-request" } });
   });
 
   it("starts with no-op output publication hooks that never throw", async () => {

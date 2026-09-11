@@ -240,6 +240,7 @@ describe("agents-proxy MCP surface", () => {
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
       "register_artifact",
       "list_image_models",
+      "resolve_image_reference",
       "generate_image",
       "web_search",
       "list_bots",
