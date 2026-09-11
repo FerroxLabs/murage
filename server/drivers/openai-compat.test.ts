@@ -230,6 +230,47 @@ describe("OpenAICompatDriver", () => {
     await inst.dispose();
   });
 
+  it("fails a turn on an in-band stream error and keeps the partial reply (A3)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith("/models")) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        // OpenRouter's mid-stream failure shape: HTTP 200 was already sent,
+        // so the error arrives as an envelope with finish_reason "error"
+        return new Response(
+          'data: {"choices":[{"delta":{"content":"partial"}}]}\n' +
+            'data: {"error":{"message":"Provider returned error","code":502},"choices":[{"delta":{"content":""},"finish_reason":"error"}]}\n' +
+            "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-inband-error",
+      displayName: "In-band error",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" },
+      environment: { TEST_KEY: "secret" },
+    });
+    const recorder = recordEvents(inst.adapter);
+
+    await inst.adapter.sendTurn({ threadId: "thread-inband", text: "prompt", model: "vendor/model" });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+
+    expect(completed).toMatchObject({ ok: false, stopReason: "provider_error" });
+    expect(recorder.events).toContainEqual(
+      expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text: "partial" }),
+    );
+    expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "runtime.error",
+      message: "upstream stream error: Provider returned error, code 502",
+    }));
+    recorder.stop();
+    await inst.dispose();
+  });
+
   it("decodes a default model and provider from config", () => {
     const cfg = OpenAICompatDriver.decodeConfig({
       model: "deepseek/deepseek-v4-flash-0731",

@@ -25,14 +25,18 @@ interface Completion {
   text: string;
   reasoning: string;
   usage: Usage | null;
+  /** The provider's finish_reason, when a choice carried one. */
+  finishReason: string | null;
 }
 
 interface CompletionJson {
   choices?: Array<{
     message?: { content?: unknown; reasoning_content?: unknown };
     delta?: { content?: unknown; reasoning_content?: unknown };
+    finish_reason?: unknown;
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+  error?: unknown;
 }
 
 interface NativeLog {
@@ -62,6 +66,25 @@ interface RuntimeOptions<Config> {
   retryScale?: number;
 }
 
+/** Why a streamed reply is not a successful completion. */
+type FailedStreamStop = "incomplete" | "provider_error" | "empty_response";
+
+/** A streamed reply that missed the terminal contract, reported an in-band
+ * provider error, or produced nothing. It carries whatever output did arrive,
+ * so the turn keeps it marked failed instead of dropping it or calling it
+ * complete (A3). */
+class StreamOutcomeError extends Error {
+  readonly partial: Completion;
+  readonly stopReason: FailedStreamStop;
+
+  constructor(message: string, partial: Completion, stopReason: FailedStreamStop, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "StreamOutcomeError";
+    this.partial = partial;
+    this.stopReason = stopReason;
+  }
+}
+
 const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
   usage
     ? { input: usage.prompt_tokens ?? 0, output: usage.completion_tokens ?? 0 }
@@ -69,6 +92,24 @@ const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
 
 const asError = (value: unknown): Error =>
   value instanceof Error ? value : new Error(String(value));
+
+/** The provider's in-band error envelope, when a body is one. OpenAI-style
+ * endpoints send `{"error": {...}}` with HTTP 200 once streaming has begun. */
+const inBandErrorDetail = (body: CompletionJson): string | null => {
+  const { error } = body;
+  if (error === undefined || error === null || error === false) return null;
+  if (typeof error === "string") return error.trim() || "unspecified error";
+  if (typeof error === "object") {
+    const { message, code, type } = error as { message?: unknown; code?: unknown; type?: unknown };
+    const parts = [
+      typeof message === "string" ? message.trim() : "",
+      typeof code === "string" || typeof code === "number" ? `code ${code}` : "",
+      typeof type === "string" ? type.trim() : "",
+    ].filter(Boolean);
+    return parts.join(", ") || "unspecified error";
+  }
+  return "unspecified error";
+};
 
 /** Shared runtime for the three providers that speak OpenAI chat completions. */
 export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>): ProviderInstance {
@@ -95,29 +136,35 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     providerRoute?: ProviderTurnRoute,
   ): Promise<Completion> => {
+    const label = providerRoute?.preset ?? options.httpErrorLabel;
+    const secret = providerRoute?.apiKey ?? options.apiKey;
+    const redact = (value: string) => (secret ? value.replaceAll(secret, "[redacted]") : value);
     const timeout = AbortSignal.timeout(options.timeoutMs);
     const response = await fetch(`${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`, {
       method: "POST",
-      headers: { authorization: `Bearer ${providerRoute?.apiKey ?? options.apiKey}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
       body: JSON.stringify(options.requestBody(model, messages, stream)),
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
     if (!response.ok) {
       const rawBody = await response.text().catch(() => "");
-      const secret = providerRoute?.apiKey ?? options.apiKey;
-      const body = secret ? rawBody.replaceAll(secret, "[redacted]") : rawBody;
-      throw new Error(`${providerRoute?.preset ?? options.httpErrorLabel} HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+      const body = redact(rawBody);
+      throw new Error(`${label} HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
     }
 
     if (!stream) {
-      const json = await response.json() as CompletionJson;
-      const message = json.choices?.[0]?.message;
+      const json = ((await response.json()) ?? {}) as CompletionJson;
+      const errorDetail = inBandErrorDetail(json);
+      if (errorDetail !== null) throw new Error(redact(`${label} error: ${errorDetail}`).slice(0, 300));
+      const choice = json.choices?.[0];
+      const message = choice?.message;
       return {
         text: typeof message?.content === "string" ? message.content : "",
         reasoning: options.reasoning && typeof message?.reasoning_content === "string"
           ? message.reasoning_content
           : "",
         usage: usageFrom(json.usage),
+        finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : null,
       };
     }
 
@@ -127,47 +174,106 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     let text = "";
     let reasoning = "";
     let usage: Usage | null = null;
+    let finishReason: string | null = null;
+    let sawDone = false;
+    let unreadableFrames = 0;
+    const partial = (): Completion => ({ text, reasoning, usage, finishReason });
+    const failure = (why: string, stopReason: FailedStreamStop, cause?: unknown) =>
+      new StreamOutcomeError(redact(`${label} ${why}`).slice(0, 300), partial(), stopReason, cause);
+
+    /** Folds one SSE line. Returns true once the [DONE] marker arrives. */
+    const consumeLine = (rawLine: string): boolean => {
+      const line = rawLine.trim();
+      // comments (": keep-alive") and event/id/retry fields carry no payload
+      if (!line.startsWith("data:")) return false;
+      const data = line.slice(5).trim();
+      if (!data) return false;
+      if (data === "[DONE]") {
+        sawDone = true;
+        return true;
+      }
+      let chunk: CompletionJson;
+      try {
+        chunk = JSON.parse(data) as CompletionJson;
+      } catch {
+        unreadableFrames++;
+        return false;
+      }
+      if (!chunk || typeof chunk !== "object" || Array.isArray(chunk)) {
+        unreadableFrames++;
+        return false;
+      }
+      const errorDetail = inBandErrorDetail(chunk);
+      if (errorDetail !== null) throw failure(`stream error: ${errorDetail}`, "provider_error");
+      const choice = chunk.choices?.[0];
+      const delta = choice?.delta;
+      const reasoningDelta = options.reasoning && typeof delta?.reasoning_content === "string"
+        ? delta.reasoning_content
+        : "";
+      const contentDelta = typeof delta?.content === "string" ? delta.content : "";
+      if (reasoningDelta) {
+        reasoning += reasoningDelta;
+        onDelta?.(reasoningDelta, "reasoning_text");
+      }
+      if (contentDelta) {
+        text += contentDelta;
+        onDelta?.(contentDelta, "assistant_text");
+      }
+      if (chunk.usage) usage = usageFrom(chunk.usage);
+      if (typeof choice?.finish_reason === "string" && choice.finish_reason) {
+        if (choice.finish_reason === "error") {
+          throw failure('stream ended with finish_reason "error"', "provider_error");
+        }
+        // Keep reading: usage and [DONE] commonly follow the finish frame.
+        finishReason = choice.finish_reason;
+      }
+      return false;
+    };
+
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     try {
       readLoop: for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        let result: Awaited<ReturnType<typeof reader.read>>;
+        try {
+          result = await reader.read();
+        } catch (value) {
+          const cause = asError(value);
+          if (cause.name === "AbortError") throw cause;
+          throw failure(`stream failed: ${cause.message}`, "incomplete", cause);
+        }
+        if (result.done) {
+          // A final frame can arrive without its trailing newline. Flush the
+          // decoder and fold what is left before judging the stream.
+          buffer += decoder.decode();
+          if (buffer) consumeLine(buffer);
+          buffer = "";
+          break;
+        }
+        buffer += decoder.decode(result.value, { stream: true });
         let newline: number;
         while ((newline = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newline).trim();
+          const line = buffer.slice(0, newline);
           buffer = buffer.slice(newline + 1);
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") break readLoop;
-          let chunk: CompletionJson;
-          try {
-            chunk = JSON.parse(data) as CompletionJson;
-          } catch {
-            continue;
-          }
-          const delta = chunk.choices?.[0]?.delta;
-          const reasoningDelta = options.reasoning && typeof delta?.reasoning_content === "string"
-            ? delta.reasoning_content
-            : "";
-          const contentDelta = typeof delta?.content === "string" ? delta.content : "";
-          if (reasoningDelta) {
-            reasoning += reasoningDelta;
-            onDelta?.(reasoningDelta, "reasoning_text");
-          }
-          if (contentDelta) {
-            text += contentDelta;
-            onDelta?.(contentDelta, "assistant_text");
-          }
-          if (chunk.usage) usage = usageFrom(chunk.usage);
+          if (consumeLine(line)) break readLoop;
         }
       }
     } finally {
       await reader.cancel().catch(() => {});
     }
-    return { text, reasoning, usage };
+    // A dropped frame may have carried reply text, so the output is uncertain.
+    if (unreadableFrames > 0) {
+      throw failure(
+        `stream contained ${unreadableFrames} unreadable frame${unreadableFrames === 1 ? "" : "s"}`,
+        "incomplete",
+      );
+    }
+    // The terminal contract: [DONE], or a finish frame followed by clean EOF.
+    if (!sawDone && finishReason === null) {
+      throw failure("stream ended before the provider signalled completion", "incomplete");
+    }
+    return partial();
   };
 
   const messagesFor = (turn: SendTurnInput): OpenAIChatMessage[] => [
@@ -188,6 +294,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const abort = new AbortController();
     const messages = messagesFor(turn);
     const model = turn.providerRoute?.model || turn.model || options.models().default;
+    const label = turn.providerRoute?.preset ?? options.httpErrorLabel;
     active.set(turn.threadId, abort);
     appendNative(turn.threadId, {
       dir: "out",
@@ -199,22 +306,28 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
     void (async () => {
       let attempt = 0;
-      let streamedText = false;
+      // One-way: once text or reasoning has streamed, a replay would repeat
+      // output the user already saw. Never reset across attempts.
+      let sawOutput = false;
       for (;;) {
         try {
           const completion = await complete(messages, model, true, abort.signal, (delta, streamKind) => {
-            if (streamKind === "assistant_text") streamedText = true;
+            sawOutput = true;
             emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta });
           }, turn.providerRoute);
+          const reply = completion.text.trim() ? completion.text : completion.reasoning;
+          if (!reply.trim()) {
+            const finish = completion.finishReason && completion.finishReason !== "stop"
+              ? ` (finish_reason "${completion.finishReason}")`
+              : "";
+            throw new StreamOutcomeError(`${label} returned an empty reply${finish}`, completion, "empty_response");
+          }
           appendNative(turn.threadId, {
             dir: "in",
             source: options.nativeLog.source,
             msg: options.nativeLog.incoming(completion),
           });
-          const reply = completion.text.trim() ? completion.text : completion.reasoning;
-          if (reply.trim()) {
-            emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: reply });
-          }
+          emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: reply });
           if (completion.usage) {
             emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...completion.usage });
           }
@@ -233,11 +346,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         } catch (value) {
           const error = asError(value);
           const aborted = error.name === "AbortError";
+          const outcome = error instanceof StreamOutcomeError ? error : null;
           const verdict = classifyError(error);
           if (
             options.retryScale !== undefined &&
             !aborted &&
-            !streamedText &&
+            !sawOutput &&
             verdict.transient &&
             attempt < RETRY_MAX_ATTEMPTS - 1
           ) {
@@ -255,13 +369,29 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok: false, stopReason: "interrupted", cost: null });
             return;
           }
+          if (outcome) {
+            appendNative(turn.threadId, {
+              dir: "in",
+              source: options.nativeLog.source,
+              msg: options.nativeLog.incoming(outcome.partial),
+            });
+            // Keep what the provider did send. The failed terminal below marks
+            // that reply failed; it is never presented as a completed answer.
+            const kept = outcome.partial.text.trim() ? outcome.partial.text : outcome.partial.reasoning;
+            if (kept.trim()) {
+              emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: kept });
+            }
+            if (outcome.partial.usage) {
+              emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...outcome.partial.usage });
+            }
+          }
           active.delete(turn.threadId);
           if (!aborted) emit({ ...base(turn.threadId, turnId), type: "runtime.error", message: error.message });
           emit({
             ...base(turn.threadId, turnId),
             type: "turn.completed",
             ok: false,
-            stopReason: aborted ? "interrupted" : "error",
+            stopReason: aborted ? "interrupted" : outcome?.stopReason ?? "error",
             cost: null,
           });
           return;
