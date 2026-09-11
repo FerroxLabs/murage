@@ -18,6 +18,7 @@ import {
   localRowNote,
   localToolsWarning,
   pickerModels,
+  showNoLocalServerRow,
   unavailableSelectionLabel,
   type PickerEngine,
 } from "./provider-model-picker";
@@ -120,10 +121,46 @@ describe("a pick that outlived its server", () => {
 
 describe("the rail is a state, not an absence", () => {
   it("has one row to show when this computer has no local server at all", () => {
-    const rows = pickerModels(engine([{ id: "gpt-5", label: "GPT-5" }]), []);
+    const cloudOnly = engine([{ id: "gpt-5", label: "GPT-5" }]);
+    const rows = pickerModels(cloudOnly, []);
     expect(localPickerRows(rows)).toEqual([]);
+    expect(showNoLocalServerRow(cloudOnly, rows)).toBe(true);
     // The row the picker then renders says both what is true and where to fix it.
     expect(NO_LOCAL_SERVER_ROW).toContain("No local server detected");
     expect(NO_LOCAL_SERVER_ROW).toContain("Settings → Models");
+  });
+
+  it("drops the row as soon as a tools engine carries a local row", () => {
+    const withServer = engine([
+      { id: "gpt-5", label: "GPT-5" },
+      { id: "srv_abcdefgh::qwen3.8-27b", label: "qwen3.8-27b", custom: true, localServer: "llama.cpp on seanbeast", localTools: "pass" },
+    ]);
+    expect(showNoLocalServerRow(withServer, pickerModels(withServer, []))).toBe(false);
+  });
+
+  it("never claims 'no local server' on a chat-only engine (openai-compat, grok)", () => {
+    // These drivers reach a server but never receive local rows (they do not
+    // merge the Local models inject), so the row would be shown permanently —
+    // even while a server is detected and tested in Settings → Models, and
+    // even when openai-compat is pointed at that very server. Their Engines
+    // line already says "chat only (no tools)"; the rail stays quiet.
+    for (const driverKind of ["openai-compat", "grok"]) {
+      const chatOnly: PickerEngine = {
+        ...engine([{ id: "qwen3.8-27b", label: "qwen3.8-27b", custom: true }]),
+        instanceId: driverKind,
+        driverKind,
+      };
+      const rows = pickerModels(chatOnly, []);
+      expect(rows.map((row) => row.group)).toEqual([CUSTOM_MODELS_GROUP]);
+      expect(localPickerRows(rows)).toEqual([]);
+      expect(showNoLocalServerRow(chatOnly, rows)).toBe(false);
+    }
+  });
+
+  it("has no rail at all on an engine that cannot use a local server, or before the engine loads", () => {
+    const gemini: PickerEngine = { ...engine([{ id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }]), instanceId: "gemini", driverKind: "gemini" };
+    expect(showNoLocalServerRow(gemini, pickerModels(gemini, []))).toBe(false);
+    expect(showNoLocalServerRow(null, [])).toBe(false);
+    expect(showNoLocalServerRow(undefined, [])).toBe(false);
   });
 });

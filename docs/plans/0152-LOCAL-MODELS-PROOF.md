@@ -182,6 +182,17 @@ px and 1440 px, light and dark:
 Each `*.viewport.png` beside a screenshot is the same moment at the real
 window size.
 
+Fix round 2 (verifier): the rail's "No local server detected" row was gated
+on `localEngineSupport !== "none"`, which included the chat-only drivers
+(openai-compat, grok). Those drivers never merge the Local models inject, so
+their catalogs never carry a local row and the message was shown permanently
+there — even with a server detected and tested, and even with openai-compat
+pointed at that server. The gate is now `showNoLocalServerRow()` in
+`src/lib/provider-model-picker.ts`: only a `tools` driver, with no local row.
+Pinned in `src/lib/provider-model-picker.test.ts` ("never claims 'no local
+server' on a chat-only engine"), which fails under the old gate. The spec
+above was re-run, 10/10, with screens under `evidence-LM2/screens-fix2/`.
+
 What those screens showed, and what changed for them, is in the commit
 `test(local-models): walk the section, the rail and the engines line in the
 real renderer, and fix what it showed`: 64K vs 66K, the repeated server name,
