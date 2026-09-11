@@ -494,6 +494,7 @@
   "questions.keepAnswering": "Keep answering",
   "questions.keys": "1–9 to pick · Enter to send · Esc to skip",
   "questions.answered": "Answered",
+  "questions.settledAt": "{label} · {time}",
   "questions.skipped": "You skipped this question.",
   "questions.expired": "Expired",
   "questions.expiredNote": "{name} stopped waiting for an answer. Your answer can still reach it as a message.",
