@@ -33,7 +33,7 @@
 // Playwright specs (TypeScript) and scripts share one implementation; the
 // types live in safe-wipe.d.mts. It must stay free of imports from server/
 // (beyond the pure lease module) so it loads before any data dir is chosen.
-import fs, { lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import fs, { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { homedir as osHomedir, hostname, tmpdir as osTmpdir, userInfo } from "node:os";
@@ -68,8 +68,16 @@ const caseFold = (path, platform) => (platform === "win32" || platform === "darw
  * leaf to exist, so a link inside a scratch tree that points at real data is
  * judged by where it points. Never throws: an unreadable prefix falls back
  * to the lexical path. */
-export function canonicalPath(target) {
+export function canonicalPath(target, depth = 0) {
   const absolute = resolve(target);
+  // A symlink leaf is judged by where it points even when the target does
+  // not exist yet (realpath fails on a dangling link and would otherwise
+  // hand back the link itself, i.e. a scratch-looking name).
+  if (depth < 32) {
+    try {
+      if (lstatSync(absolute).isSymbolicLink()) return canonicalPath(resolve(dirname(absolute), readlinkSync(absolute)), depth + 1);
+    } catch { /* not a link, or unreadable: fall through to the prefix walk */ }
+  }
   let current = absolute;
   const suffix = [];
   for (;;) {

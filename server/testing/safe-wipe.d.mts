@@ -34,7 +34,7 @@ export declare class SafeWipeRefused extends Error {
   constructor(path: string, reason: string);
 }
 
-/** Symlink-resolved path whose leaf need not exist. */
+/** Symlink-resolved path whose leaf need not exist; a symlink leaf resolves to its target even when dangling. */
 export declare function canonicalPath(target: string): string;
 /** Throws SafeWipeRefused unless `target` may be deleted recursively. */
 export declare function assertSafeToWipe(target: string, options?: SafeWipeOptions): { path: string; admitted: SafeWipeAdmission };
