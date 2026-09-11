@@ -230,7 +230,7 @@ import {
   queuedSteeredMessage,
   queueSteeredMessage,
 } from "./steer-queue.ts";
-import { releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
+import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
 import {
   cancelChannelMessage,
   drainChannelMessages,
@@ -5393,16 +5393,17 @@ async function runGroupMemberTurn(
     }, internalGeneration);
     if (browser) integrations.browser = browser.integration;
   }
-  // Stop/delete may land while Electron is registering the capability. The
-  // callback above prevents publication; this second check also unwinds the
-  // room's setup claim so no provider turn starts after Stop returned.
+  // Stop/delete may land while the capability is being minted. The callback
+  // above prevents publication; this second check also unwinds the bot's
+  // setup claim so no provider turn starts after Stop returned. The room is
+  // not claimed yet, so this is the pre-claim release: the bot idle by the
+  // activity set above, this attempt's browser capability released and the
+  // queues drained — an inline exit here used to skip the drain, leaving a
+  // continuation parked for this bot until an unrelated turn settled
+  // (RED2L, server/room-turn-release.ts).
   const browserReadyBot = store.bot(readyBot.id);
   if (isCancelled?.() || !browserReadyBot || !browserReadyBot.busy) {
-    await releaseBrowserCapabilityForThread(threadId);
-    if (browserReadyBot?.busy) {
-      store.setActivity(browserReadyBot.id, "idle");
-      retryDelegationsWaitingOn(browserReadyBot.id);
-    }
+    await releaseUnclaimedRoomTurn(unstartedRoomTurnReleaseDeps, { threadId, botId: bot.id, ownerId: internalGeneration });
     return false;
   }
 
