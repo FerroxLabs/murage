@@ -558,6 +558,7 @@
   "folderTrust.expiredNote": "Ninguém decidiu a tempo, então este turno foi interrompido. Envie a mensagem novamente para ser consultado.",
   "folderTrust.lateFinishedNote": "O turno terminou antes que alguém respondesse, então foi executado sem os arquivos desta pasta. Envie outra mensagem para ser consultado novamente.",
   "folderTrust.lateStoppedNote": "O turno foi interrompido antes que alguém respondesse; ele estava sendo executado sem os arquivos desta pasta. Envie outra mensagem para ser consultado novamente.",
+  "folderTrust.lateFailedNote": "O turno falhou antes que alguém respondesse; ele estava sendo executado sem os arquivos desta pasta. Envie outra mensagem para ser consultado novamente.",
   "folderTrust.lateTimeoutNote": "Ninguém respondeu enquanto o turno estava em execução, então ele foi executado sem os arquivos desta pasta. Envie outra mensagem para ser consultado novamente.",
   "folderTrust.pickerNote": "Uma pasta escolhida aqui é considerada confiável: seus arquivos AGENTS.md, CLAUDE.md, .mcp.json e habilidades são aplicados aos turnos do bot.",
   "folderTrust.statusTrusted": "Confiável",

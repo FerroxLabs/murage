@@ -2258,7 +2258,7 @@ async function answerRequest(
  * told so honestly (or is gone), the card stays visible as Expired with
  * "Send as a message", and an unattended one keeps needing the owner in the
  * Inbox and buzzes once more. Idempotent: a settled card is left alone. */
-function expireQuestionCard(threadId: string, message: Message, folderTrustLate?: "finished" | "stopped" | "timeout"): void {
+function expireQuestionCard(threadId: string, message: Message, folderTrustLate?: "finished" | "stopped" | "failed" | "timeout"): void {
   const card = message.card;
   if (!card || card.answered || !isQuestionCard(card)) return;
   store.patchMessage(threadId, message.id, {

@@ -313,9 +313,11 @@ export function QuestionCardView({
               ? t("folderTrust.lateFinishedNote")
               : card.folderTrust?.late === "stopped"
                 ? t("folderTrust.lateStoppedNote")
-                : card.folderTrust?.late === "timeout"
-                  ? t("folderTrust.lateTimeoutNote")
-                  : t("folderTrust.expiredNote")
+                : card.folderTrust?.late === "failed"
+                  ? t("folderTrust.lateFailedNote")
+                  : card.folderTrust?.late === "timeout"
+                    ? t("folderTrust.lateTimeoutNote")
+                    : t("folderTrust.expiredNote")
             : secret
               ? t("questions.secretExpired")
               : t("questions.expiredNote", { name })}

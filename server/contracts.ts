@@ -156,11 +156,12 @@ export type RuntimeEvent = RuntimeEventBase &
         /** 0.1.52 FUIGOTRUST2 (additive): a folder-trust card raised from
          * the engine's own request AFTER the engine had started (the
          * server's scan named nothing) closed without a decision — the turn
-         * `finished` on its own, was `stopped`, or the ask hit its
+         * `finished` on its own, was `stopped`, `failed` (a spawn or rpc
+         * error, an early exit — FUIGOTRUST3), or the ask hit its
          * `timeout` while the turn ran on. The engine ran this turn
          * untrusted either way; the card says which, never "the turn was
          * stopped because nobody decided". */
-        folderTrustLate?: "finished" | "stopped" | "timeout";
+        folderTrustLate?: "finished" | "stopped" | "failed" | "timeout";
       }
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
