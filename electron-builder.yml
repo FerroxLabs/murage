@@ -207,6 +207,7 @@ win:
     certificateProfileName: ferroxlabs
 
 nsis:
+  include: build/windows-sandbox-acl.nsh
   oneClick: true
   perMachine: false
   shortcutName: Murage

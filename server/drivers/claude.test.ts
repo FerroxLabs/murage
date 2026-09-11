@@ -335,6 +335,41 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect((settled[0] as any).text).toBe("hello from fake claude");
   });
 
+  it.each(["not-logged-in", "not-logged-in-success-result"])("routes signed-out CLI mode %s to setup and one failed auth terminal", async mode => {
+    await create(mode);
+    await instance.adapter.sendTurn({ threadId: "t-auth", text: "hi" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([
+      expect.objectContaining({ message: "Not logged in · Please run /login", setup: true, authRequired: true }),
+    ]);
+    expect(recorder.events.some((event: any) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
+    expect(recorder.events.some(event => event.type === "content.delta")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toEqual([
+      expect.objectContaining({ ok: false, stopReason: "auth_required" }),
+    ]);
+  });
+
+  it.each(["anthropic", "flux"] as const)("routes a selected %s provider authentication failure to its connection, never native Claude login", async preset => {
+    await create("not-logged-in");
+    await instance.adapter.sendTurn({ threadId: "t-provider-auth", text: "hi", model: "claude-fixture",
+      providerRoute: { connectionId: "fixture-provider", revision: "fixture-revision", preset, protocol: "anthropic", baseUrl: preset === "flux" ? "https://fluxrouter.ai/api/v1" : "https://api.anthropic.com", apiKey: "fixture-only-not-real", model: "claude-fixture" } });
+    await recorder.until(event => event.type === "turn.completed");
+    const failure = recorder.events.find(event => event.type === "runtime.error");
+    expect(failure).toMatchObject({ setup: false, message: expect.stringContaining("selected model provider") });
+    expect(failure).not.toHaveProperty("authRequired");
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "auth_required" });
+  });
+
+  it("keeps unflagged assistant text about login as a normal reply", async () => {
+    const text = "You are not logged in to npm; run npm login.";
+    await create("happy", { FAKE_CLAUDE_REPLIES: JSON.stringify([text]) });
+    await instance.adapter.sendTurn({ threadId: "t-login-text", text: "explain sign-in" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text }));
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
+  });
+
   it("keeps user and system prompts off argv and strips identity env vars", async () => {
     await create();
     const dump = join(scratch, "dump.json");

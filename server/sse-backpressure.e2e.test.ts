@@ -4,7 +4,7 @@ import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse, type SseRecorder } from "./testing/sse.ts";
@@ -18,6 +18,43 @@ const secret = "1234abcd".repeat(8);
 const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
 const streams: SseRecorder[] = [];
 const sockets: Socket[] = [];
+let stderrTail = "";
+const testBots: Array<{ id: string; threadId: string }> = [];
+
+function closeConnections() {
+  for (const recorder of streams.splice(0)) recorder.close();
+  for (const socket of sockets.splice(0)) socket.destroy();
+}
+
+async function failureDiagnostics() {
+  // Never print environment, credentials, message contents or raw stderr.
+  const read = async (path: string): Promise<Record<string, any>> => {
+    try {
+      const response = await fetch(`${base}${path}`, { headers: desktop, signal: AbortSignal.timeout(2000) });
+      return response.ok ? await response.json() as Record<string, any> : { httpStatus: response.status };
+    } catch { return { unavailable: true }; }
+  };
+  const health = await read("/api/health");
+  const list = await read("/api/bots?messages=0");
+  const bots = await Promise.all(testBots.slice(-4).map(async (bot) => {
+    const current = list.bots?.find((entry: { id: string }) => entry.id === bot.id);
+    const messages = await read(`/api/threads/${bot.threadId}/messages`);
+    return {
+      id: bot.id, busy: current?.busy,
+      messages: messages.messages?.slice(-8).map((message: { text?: string; role?: string }) => ({
+        role: ["user", "assistant", "system"].includes(message.role ?? "") ? message.role : "other",
+        textLength: typeof message.text === "string" ? message.text.length : 0,
+      })),
+    };
+  }));
+  return {
+    childExitCode: child?.exitCode, childSignal: child?.signalCode,
+    stderrTailBytes: Buffer.byteLength(stderrTail),
+    stderrCodes: [...new Set(stderrTail.match(/\b(?:MEMORY_[A-Z_]+|EACCES|ENOENT|EPIPE|ECONNRESET|ERR_[A-Z_]+)\b/g) ?? [])],
+    metrics: health.eventStreams, bots,
+    streams: streams.map((recorder) => ({ frames: recorder.frames.length })),
+  };
+}
 
 async function api(method: string, path: string, body?: unknown) {
   const response = await fetch(`${base}${path}`, {
@@ -26,6 +63,9 @@ async function api(method: string, path: string, body?: unknown) {
   });
   const data = await response.json() as Record<string, any>;
   if (!response.ok) throw new Error(`${method} ${path}: ${response.status} ${JSON.stringify(data)}`);
+  if (method === "POST" && path === "/api/bots" && data.bot) {
+    testBots.push({ id: data.bot.id, threadId: data.bot.threadId });
+  }
   return data;
 }
 const metrics = async () => (await api("GET", "/api/health")).eventStreams;
@@ -55,20 +95,32 @@ describe.skipIf(process.platform === "win32")("bounded SSE at the actual TCP bou
       env: { PATH: process.env.PATH, HOME: dataDir, USERPROFILE: dataDir, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, MURAGE_SSE_HEARTBEAT_MS: "100" },
       stdio: ["ignore", "ignore", "pipe"],
     });
-    let error = "";
-    child.stderr!.on("data", (chunk) => { error = (error + chunk).slice(-4000); });
+    child.stderr!.on("data", (chunk) => { stderrTail = (stderrTail + chunk).slice(-4000); });
     const deadline = Date.now() + 20_000;
     for (;;) {
-      if (child.exitCode !== null) throw new Error(`fixture exited: ${error}`);
+      if (child.exitCode !== null) throw new Error(`fixture exited: ${stderrTail}`);
       if (await fetch(`${base}/api/health`).then((response) => response.ok).catch(() => false)) break;
-      if (Date.now() > deadline) throw new Error(`fixture did not start: ${error}`);
+      if (Date.now() > deadline) throw new Error(`fixture did not start: ${stderrTail}`);
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }, 30_000);
 
+  beforeEach(() => { testBots.length = 0; stderrTail = ""; });
+
+  afterEach(async (context) => {
+    try {
+      if (context.task.result?.state === "fail") {
+        console.error("SSE fixture failure metadata:", JSON.stringify(await failureDiagnostics()));
+      }
+    } finally {
+      closeConnections();
+      // Abort propagation is asynchronous; settle it before the next admission test.
+      await expect.poll(async () => (await metrics()).clients).toBe(0);
+    }
+  });
+
   afterAll(async () => {
-    for (const recorder of streams) recorder.close();
-    for (const socket of sockets) socket.destroy();
+    closeConnections();
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(dataDir);
   });

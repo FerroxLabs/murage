@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // Call mode — the bot on the line.
 //
 // The loop is deliberately HALF-DUPLEX: the microphone is live only when
@@ -85,16 +86,16 @@ export function CallTargetButton({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const helpId = useId();
   const label = active
-    ? `Hang up on ${targetName}`
+    ? t("calls.hangUpOn", { name: targetName })
     : !capabilitiesReady
-      ? "Checking call availability"
+      ? t("calls.checkingAvailability")
       : !supported
-        ? "Calls currently need the macOS desktop app"
+        ? t("calls.macOnly")
         : !configured
           ? "Set up a voice in an agent profile to make calls"
           : !voiceReady
             ? "Pick a voice in an agent profile to make calls"
-            : `Call ${targetName}`;
+            : t("calls.call", { name: targetName });
 
   const reason = !capabilitiesReady
     ? "Checking whether this device can make calls."

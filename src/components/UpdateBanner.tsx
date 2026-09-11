@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // Auto-update popup — a small card floating bottom-left, driven by the
 // preload's updater bridge. Renders nothing in the browser/dev (no bridge)
 // and while idle/checking; appears only when actionable: an update to
@@ -64,7 +65,7 @@ export function UpdateBanner() {
               : "Restarting to update…"
             : s.status === "handed-off"
               ? "Finish in a terminal"
-              : "Update check failed";
+              : "Update could not finish";
   const subtitle =
     s.status === "available"
       ? "A newer version is ready to download."
@@ -95,7 +96,7 @@ export function UpdateBanner() {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold text-ink">{title}</div>
-          <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary" title={subtitle}>
+          <div className="mt-0.5 break-words text-[12.5px] text-ink-secondary" role={s.status === "error" ? "alert" : undefined} title={subtitle}>
             {subtitle}
           </div>
         </div>
@@ -147,7 +148,7 @@ export function UpdateBanner() {
             <button
               onClick={() => {
                 setPending("download");
-                void updater.download();
+                void updater.download().finally(() => setPending(null));
               }}
               disabled={pending !== null}
               className={primaryAction}
@@ -158,7 +159,7 @@ export function UpdateBanner() {
                 </>
               ) : (
                 <>
-                  <ArrowDownToLine size={13} /> Download
+                  <ArrowDownToLine size={13} /> {t("updates.download")}
                 </>
               )}
             </button>
@@ -167,7 +168,7 @@ export function UpdateBanner() {
             <button
               onClick={() => {
                 setPending("install");
-                void updater.install();
+                void updater.install().finally(() => setPending(null));
               }}
               disabled={pending !== null}
               className={primaryAction}
@@ -182,7 +183,7 @@ export function UpdateBanner() {
                 </>
               ) : (
                 <>
-                  <RefreshCw size={13} /> Restart to update
+                  <RefreshCw size={13} /> {t("updates.restart")}
                 </>
               )}
             </button>
@@ -191,17 +192,17 @@ export function UpdateBanner() {
             <button
               onClick={() => {
                 setPending("check");
-                void updater.check();
+                void updater.retry().finally(() => setPending(null));
               }}
               disabled={pending !== null}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-control py-1.5 text-[13px] text-ink hover:bg-raised-hover disabled:text-ink-secondary disabled:hover:bg-control"
             >
               {pending === "check" ? (
                 <>
-                  <Loader2 size={13} className="animate-spin" /> Checking…
+                  <Loader2 size={13} className="animate-spin" /> Trying again…
                 </>
               ) : (
-                "Try again"
+                t("updates.retry")
               )}
             </button>
           )}
@@ -211,7 +212,7 @@ export function UpdateBanner() {
             className="rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-50 disabled:hover:bg-transparent"
           >
             {/* after a hand-off there is nothing left to postpone */}
-            {s.status === "handed-off" ? "Done" : "Later"}
+            {s.status === "handed-off" ? "Done" : t("updates.later")}
           </button>
         </div>
       )}

@@ -269,6 +269,7 @@ type SkillRecordingPayload = {
         download(): Promise<void>;
         /** apply the download: quit-and-install, or copy the command and open a terminal */
         install(): Promise<void>;
+        retry(): Promise<void>;
         onState(cb: (s: UpdaterState) => void): () => void;
       };
     };

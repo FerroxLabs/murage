@@ -1,5 +1,6 @@
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "./provider-routing.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
+import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
 import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
 import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
@@ -2667,7 +2668,7 @@ bus.subscribe((event: RuntimeEvent) => {
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, 160)}`, ok: false, setup: event.setup, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.providerError ? { providerError: event.providerError } : {}) },
+        tool: { name: `error: ${redactSecretsInText(event.message).slice(0, 160)}`, ok: false, setup: event.setup, authRequired: event.authRequired, errorDetails: redactSecretsInText([event.message, event.details].filter(Boolean).join("\n")).slice(0, 4096), ...(event.providerError ? { providerError: event.providerError } : {}) },
       });
       // a setup error means the engine could not even start: the bot is
       // dead until something changes, not merely idle. The next successful
@@ -12185,6 +12186,10 @@ const server = createServer(async (req, res) => {
   }
 });
 
+const stopModelCatalogRefresh = startModelCatalogRefresh(async signal => {
+  await Promise.all([registry.refreshModelCatalogs(), providerConnections.refreshDue(signal)]);
+});
+
 calendarCalls.start();
 
 server.listen(PORT, "127.0.0.1", () => {
@@ -12215,6 +12220,7 @@ server.listen(PORT, "127.0.0.1", () => {
 
 const gracefulShutdown = createGracefulShutdown({
   cleanup: [
+    () => stopModelCatalogRefresh(),
     () => {
       revokeAllInternalTurns();
       server.close();

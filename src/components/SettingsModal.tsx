@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // App settings, as a real modal with sections rather than one long panel.
 // Per-bot settings (persona, model, computer) stay in SettingsPanel — this
 // is the stuff shared by every bot: who you are, your keys, and the
@@ -138,7 +139,7 @@ function ProfileFields() {
   );
 }
 
-function UpdatesRow() {
+export function UpdatesRow() {
   const s = useUpdaterState();
   if (!window.muragebox?.updater) return null;
   const updater = window.muragebox.updater;
@@ -148,28 +149,35 @@ function UpdatesRow() {
       : s?.status === "available"
         ? `${s.version} available`
         : s?.status === "downloading"
-          ? `Downloading ${Math.round(s.percent ?? 0)}%`
+          ? s.percent == null ? "Starting download…" : `Downloading ${Math.round(s.percent)}%`
           : s?.status === "downloaded"
-            ? `${s.version} ready — restart to apply`
+            ? s.installMode === "handoff" ? `${s.version} ready — finish in a terminal` : `${s.version} ready — restart to apply`
+            : s?.status === "installing"
+              ? "Preparing the update…"
+              : s?.status === "handed-off"
+                ? "Install command copied. Finish in a terminal."
             : s?.status === "error"
-              ? `Check failed: ${s.message ?? "unknown error"}`
+              ? `Update could not finish: ${s.message ?? "unknown error"}`
               : "You're on the latest version we know of.";
   return (
-    <Card title="Updates" subtitle={label}>
+    <Card title={t("updates.title")} subtitle={label}>
       <button
         onClick={() => {
           if (s?.status === "available") return void updater.download();
           if (s?.status === "downloaded") return void updater.install();
+          if (s?.status === "error") return void updater.retry();
           void updater.check();
         }}
-        disabled={s?.status === "checking" || s?.status === "downloading"}
+        disabled={s?.status === "checking" || s?.status === "downloading" || s?.status === "installing"}
         className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
       >
         {s?.status === "available"
-          ? "Download"
+          ? t("updates.download")
           : s?.status === "downloaded"
-            ? "Restart and install"
-            : "Check for updates"}
+            ? s.installMode === "handoff" ? "Install" : t("updates.restartInstall")
+            : s?.status === "installing" ? "Preparing…"
+              : s?.status === "error" ? t("updates.retry")
+            : t("updates.check")}
       </button>
     </Card>
   );
