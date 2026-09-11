@@ -20,7 +20,9 @@ export interface SafeWipeOptions {
    * location (a config admitting MURAGE_E2E_DATA_DIR while last run's harness
    * may still own it). Deletes always scan. Default true. */
   checkLeases?: boolean;
-  /** rm retry budget; a refusal is never retried. */
+  /** rm retry budget. safeWipeSync judges once and never retries a refusal;
+   * safeWipe re-judges on every attempt (a just-killed lease owner reads as
+   * live until reaped) and throws a refusal that outlives the budget. */
   maxRetries?: number;
   retryDelay?: number;
 }
@@ -42,7 +44,9 @@ export declare function assertSafeToWipe(target: string, options?: SafeWipeOptio
 export declare function assertNotProtected(target: string, options?: SafeWipeOptions): void;
 /** assertSafeToWipe, then rmSync recursive+force. Returns the canonical path. */
 export declare function safeWipeSync(target: string, options?: SafeWipeOptions): string;
-/** assertSafeToWipe, then fs/promises rm with retries. Returns the canonical path. */
+/** assertSafeToWipe on every attempt, then fs/promises rm with retries. Returns the canonical path. */
 export declare function safeWipe(target: string, options?: SafeWipeOptions): Promise<string>;
+/** The path a node:fs delete names, from a string, `file:` URL or Buffer, for the guard's judgement. */
+export declare function wipeTargetPath(target: unknown): string;
 /** Patch node:fs so every recursive delete in this process runs assertNotProtected. Idempotent; true when it installed. */
 export declare function installSafeWipeGuard(options?: SafeWipeOptions): boolean;

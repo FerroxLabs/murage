@@ -7,11 +7,12 @@ import fs, { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSy
 import { rm } from "node:fs/promises";
 import { hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { dataDirLeasePaths } from "../../electron/data-dir-lease.mjs";
 import { waitForExit } from "./cleanup.ts";
-import { assertNotProtected, assertSafeToWipe, canonicalPath, installSafeWipeGuard, SafeWipeRefused, safeWipe, safeWipeSync } from "./safe-wipe.mjs";
+import { assertNotProtected, assertSafeToWipe, canonicalPath, installSafeWipeGuard, SafeWipeRefused, safeWipe, safeWipeSync, wipeTargetPath } from "./safe-wipe.mjs";
 
 // A home that is NOT under the OS temp dir, so the data-dir rules apply to
 // it the way they apply to a real account. It never has to exist.
@@ -241,5 +242,39 @@ describe("installSafeWipeGuard", () => {
   it("assertNotProtected admits an ordinary non-scratch path (deny-only)", () => {
     expect(() => assertNotProtected("/srv/builds/out", opts)).not.toThrow();
     expect(() => assertNotProtected(join(FAKE_HOME, ".murage"), opts)).toThrow(SafeWipeRefused);
+  });
+
+  it("judges a URL or Buffer target by the path it names, not by String(target) (FOLLOW7)", () => {
+    // fs accepts file: URLs and Buffers. String(url) is "file:///..." which
+    // resolves to a nonexistent path under the checkout and is judged
+    // unprotected, so a URL used to walk straight past the guard. The probe
+    // is a nonexistent child of the fake home's data dir: never the real one.
+    const probe = join(FAKE_HOME, ".murage", "safe-wipe-url-probe-does-not-exist");
+    expect(wipeTargetPath(pathToFileURL(probe))).toBe(probe);
+    expect(wipeTargetPath(Buffer.from(probe))).toBe(probe);
+    expect(wipeTargetPath(probe)).toBe(probe);
+    expect(() => assertNotProtected(wipeTargetPath(pathToFileURL(probe)), opts)).toThrow(/lies inside the Murage data directory/);
+    expect(() => assertNotProtected(wipeTargetPath(Buffer.from(probe)), opts)).toThrow(/lies inside the Murage data directory/);
+    expect(() => assertNotProtected(String(pathToFileURL(probe)), opts)).not.toThrow();
+  });
+
+  it("refuses a recursive delete aimed by URL or Buffer at a directory another process leases (FOLLOW7)", async () => {
+    // Live fire through the installed guard, at a temp fixture (never a real
+    // location): the lease names the real child process spawned above, so
+    // the deny rules refuse it however the path is spelled. A guard that
+    // still judged String(url) would delete the fixture and the marker.
+    const held = join(scratch, "held-url", "data"); mkdirSync(held, { recursive: true });
+    const marker = join(held, "messages.db"); writeFileSync(marker, "marker");
+    const lease = writeLease(held, leaseHolder!.pid!);
+    const url = pathToFileURL(held);
+    expect(() => fs.rmSync(url, { recursive: true, force: true })).toThrow(SafeWipeRefused);
+    expect(() => fs.rmSync(Buffer.from(held), { recursive: true, force: true })).toThrow(SafeWipeRefused);
+    await expect(fs.promises.rm(url, { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
+    await expect(new Promise((resolve, reject) => fs.rm(url, { recursive: true, force: true }, (e) => e ? reject(e) : resolve(null)))).rejects.toBeInstanceOf(SafeWipeRefused);
+    expect(existsSync(marker)).toBe(true);
+    rmSync(lease);
+    // Once the lease is gone the same URL is an ordinary temp delete.
+    fs.rmSync(url, { recursive: true, force: true });
+    expect(existsSync(held)).toBe(false);
   });
 });

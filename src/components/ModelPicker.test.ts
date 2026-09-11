@@ -17,7 +17,11 @@ import { ModelPickerNotices, refreshModelPickerCatalog } from "./ModelPicker";
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
   id, label: id, enabled: true, catalog: { models: [], ...catalog },
 } as unknown as PublicProviderConnection);
-const fleetLine = "The engine list could not refresh; the engines shown are the last known ones. Use Refresh models to probe them again.";
+// The line points at the focus re-probe (the store re-probes the fleet on
+// window focus), not at Refresh models: that button also re-POSTs every
+// enabled provider's catalog refresh, which is far more than a fleet probe
+// (FOLLOW7; the wording claudeAccounts.fleetRefreshError already uses).
+const fleetLine = "The engine list could not refresh; the engines shown are the last known ones. Switch to another window and back to probe the engines again.";
 const partialLine = "Some model lists could not refresh. Their last saved models are preserved; check Models settings for details.";
 
 describe("refreshModelPickerCatalog", () => {

@@ -148,10 +148,18 @@ and refuses — whatever the above says — when it
   prove it dead" is not "safe").
 
 A refusal throws `SafeWipeRefused` naming the path and the rule; nothing is
-deleted and a refusal is never retried. `safeWipeSync` / `safeWipe` are
-`assertSafeToWipe` followed by `rm` recursive+force (with retries for a
-just-killed child). `installSafeWipeGuard()` patches `node:fs` so every
-recursive `rm` / `rmSync` / `rmdir` in the process runs the deny rules —
+deleted while it stands. `safeWipeSync` is `assertSafeToWipe` followed by
+`rmSync` recursive+force and never retries a refusal. The async teardowns
+(`safeWipe`, `removeTempDir` in `server/testing/cleanup.ts`) re-run
+`assertSafeToWipe` on every attempt of their bounded retry loop and throw a
+refusal that outlives it: the lease rule reads a just-killed owner as live
+until the OS reaps it (`process.kill(pid, 0)` answers for a zombie), so a
+single judgement before the loop turned that beat into a one-off refusal on
+a green suite (FOLLOW7). `installSafeWipeGuard()` patches `node:fs` so every
+recursive `rm` / `rmSync` / `rmdir` in the process runs the deny rules,
+judging the target by the path it names whether it is a string, a `file:`
+URL or a Buffer (`String(url)` is `file:///...`, a nonexistent path under the
+checkout, which a URL once used to walk past the guard — FOLLOW7) —
 the vitest setup file installs it, and `pnpm test:electron` preloads it
 (`--import ./server/testing/safe-wipe-preload.mjs`) for `node --test` files,
 which get no faked home.
@@ -181,7 +189,7 @@ root through it and admits an override (`MURAGE_E2E_OUTPUT`,
 ## 3. Verifying
 
 ```
-pnpm exec vitest run server/testing/safe-wipe.test.ts server/testing/safe-wipe-sh.test.ts server/testing/data-safety.test.ts src/e2e/evidence.test.ts
+pnpm exec vitest run server/testing/safe-wipe.test.ts server/testing/safe-wipe-sh.test.ts server/testing/cleanup.test.ts server/testing/data-safety.test.ts src/e2e/evidence.test.ts
 pnpm test:electron          # node --test with the guard preloaded
 node --test installer/test/*.test.mjs
 ```
@@ -197,10 +205,18 @@ a directory whose lease is held by a live foreign process refused (a real
 child process holds it) while a dead or self-owned lease is admitted; a
 symlink inside scratch that points at protected data refused; the
 process-wide guard refusing `fs.rmSync` / `fs.promises.rm` / callback
-`fs.rm` on protected paths while letting temp deletes through.
+`fs.rm` on protected paths while letting temp deletes through, and refusing
+the same delete when the target is spelled as a `file:` URL or a Buffer.
+`cleanup.test.ts` covers `removeTempDir` and `safeWipe` re-judging the lease
+on every attempt: an owner that dies mid-teardown no longer refuses the
+wipe, one that outlives every attempt still does, and nothing is deleted
+while it stands.
 `safe-wipe-sh.test.ts` drives `scripts/safe-wipe.sh` from bash through the
 same matrix (faked and real home, `TMPDIR` misconfiguration, cwd, roots,
-`MURAGE_DATA_DIR`, live and dead leases, symlinks, `SAFE_WIPE_WITHIN`).
+`MURAGE_DATA_DIR`, live and dead leases, symlinks, `SAFE_WIPE_WITHIN`). It
+is skipped on Windows: no `.sh` script runs there, and its live-lease case
+needs a `kill -0` that knows a Windows pid, which MSYS `kill` without `-W`
+does not.
 `data-safety.test.ts` is the repository scan (section 4), including
 recursive deletes whose options object spans lines.
 

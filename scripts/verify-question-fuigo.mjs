@@ -23,7 +23,7 @@
 //
 // Evidence (never the key, never provider headers) is written to --output:
 // the wire log the driver keeps (native/<threadId>.ndjson), the transcript,
-// and per-check booleans. The wire log is the proof that 1.0.12 still speaks
+// and per-check booleans. The wire log is the proof that the pinned version still speaks
 // the ask/answer shapes the driver implements.
 import { spawn, execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
