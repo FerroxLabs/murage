@@ -524,5 +524,8 @@
   "chatHeader.botFolderAt": "此机器人的文件夹：{path}",
   "chatHeader.noDedicatedWorkspace": "没有专用工作区文件夹；改为列出为此机器人保存的文件。",
   "chatHeader.usageMenu": "用量：{usage}",
-  "chatHeader.usageDetail": "打开代理资料页，其中的“用量”卡片提供完整明细。"
+  "chatHeader.usageDetail": "打开代理资料页，其中的“用量”卡片提供完整明细。",
+  "composer.tooLarge": "未发送：这条消息有 {size}，而单条消息最多 {limit}。请缩短它，或拆成几条较小的消息。你的文字仍然保留在这里。",
+  "composer.refusedTooLarge": "未发送：Murage 拒绝了这条消息，因为它太大了（{size}）。请缩短它，或拆成几条较小的消息。你的文字仍然保留在这里。",
+  "composer.dismissNotice": "关闭"
 }
