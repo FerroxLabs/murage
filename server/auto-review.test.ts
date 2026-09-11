@@ -26,6 +26,7 @@ describe("shouldReview", () => {
     "local-computer-block",
     "destructive-guard",
     "sensitive-guard",
+    "question-tool",
     "no-grant",
   ];
 
@@ -47,6 +48,19 @@ describe("shouldReview", () => {
       for (const mode of ["shadow", "enforce"] as const) {
         expect(shouldReview(context({ source, mode, approvalScope: "local-computer" }))).toBe(false);
       }
+    }
+  });
+
+  it("never reviews a question, in watch or enforce mode, whatever source a caller passes", () => {
+    for (const mode of ["shadow", "enforce"] as const) {
+      for (const tool of ["AskUserQuestion", "mcp__muragebox__ask_user", "elicitation", "_fuigo/ask_user_question"]) {
+        expect(shouldReview(context({ mode, tool }))).toBe(false);
+      }
+      // Pi `select`: identified by the driver flag, not the title
+      expect(shouldReview(context({ mode, tool: "Pick a target", question: true }))).toBe(false);
+      expect(shouldReview(context({ mode, source: "question-tool" }))).toBe(false);
+      // an ordinary undecided permission is still reviewed
+      expect(shouldReview(context({ mode, tool: "Bash" }))).toBe(true);
     }
   });
 
@@ -85,6 +99,14 @@ describe("review protocol", () => {
       reason: "writes remote state",
     });
     expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it("never sends a question to the reviewer or returns a verdict for one", async () => {
+    const generate = vi.fn().mockResolvedValue('{"allow":true,"reason":"looks fine"}');
+    await expect(
+      requestReview(generate, { tool: "AskUserQuestion", summary: "Which branch?", persona: "Scout" }),
+    ).resolves.toBeNull();
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it("fails closed when unsupported, broken, or slow", async () => {

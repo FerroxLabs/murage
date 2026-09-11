@@ -84,7 +84,7 @@ import {
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
 
-import { approvalKey, autoVerdict, approvalHoldNote } from "./auto-approve.ts";
+import { approvalKey, autoVerdict, approvalHoldNote, isQuestionGrant, isQuestionTool, withoutQuestionGrants } from "./auto-approve.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -2571,8 +2571,16 @@ bus.subscribe((event: RuntimeEvent) => {
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
       const unattended = permission && asker && event.requestId ? isUnattended(event.threadId) : false;
+      // A question tool filed as a permission (Claude's AskUserQuestion via
+      // the permission host, Pi `select`, a Codex form elicitation) is still
+      // a question: never auto-approved, never remembered, never reviewed.
+      const questionAsk = permission && (event.questionTool === true || isQuestionTool(event.tool));
       const verdict = permission && asker && event.requestId
-        ? autoVerdict(asker, event.tool, event.summary, { unattended, scope: event.approvalScope })
+        ? autoVerdict(asker, event.tool, event.summary, {
+            unattended,
+            scope: event.approvalScope,
+            question: event.questionTool === true,
+          })
         : null;
       if (verdict?.approve && asker && event.requestId) {
         const settled = verdict.approve;
@@ -2661,10 +2669,10 @@ bus.subscribe((event: RuntimeEvent) => {
           // the exact grant "always allow" would remember, decided here so
           // client and server can never derive it differently
           allowKey:
-            permission && !event.approvalScope
+            permission && !event.approvalScope && !questionAsk
               ? approvalKey(event.tool, event.summary, event.approvalScope)
               : undefined,
-          held: permission ? approvalHoldNote(verdict) : undefined,
+          held: questionAsk ? approvalHoldNote({ approve: null, source: "question-tool" }) : permission ? approvalHoldNote(verdict) : undefined,
           approvalScope: event.approvalScope,
         },
       });
@@ -2680,6 +2688,8 @@ bus.subscribe((event: RuntimeEvent) => {
           mode: reviewMode,
           unattended: Boolean(unattended),
           approvalScope: event.approvalScope,
+          tool: event.tool,
+          question: questionAsk,
         })
       ) {
         // Review stays on the provider boundary that opened the request.
@@ -2711,7 +2721,7 @@ bus.subscribe((event: RuntimeEvent) => {
         tool: event.tool,
         summary: event.summary,
         decision: "card-shown",
-        source: !permission ? "question" : verdict ? verdict.source : "no-grant",
+        source: !permission ? "question" : verdict ? verdict.source : questionAsk ? "question-tool" : "no-grant",
         rule: verdict?.rule,
         unattended: unattended || undefined,
       });
@@ -2726,7 +2736,7 @@ bus.subscribe((event: RuntimeEvent) => {
         if (bot)store.setTaskActivity(bot.id,event.threadId,"waiting-on-you");
         else if (asker.busy) store.setActivity(asker.id, "waiting-on-you");
         notify(buildNotification(
-          permission ? "approval" : "question",
+          permission && !questionAsk ? "approval" : "question",
           asker,
           (routineRun && routineSourceThread(routineRun)) || event.threadId,
           event.summary,
@@ -10281,6 +10291,9 @@ const server = createServer(async (req, res) => {
       const bot = requestedDirectBot(m[1],body.threadId);
       if (!bot) return json(res, 404, { error: "no such bot" });
       if (!allowKey) return json(res, 400, { error: "allowKey required" });
+      // A question is answered by the owner every time; no grant speaks for
+      // them, even over a card an older build rendered with this key.
+      if (isQuestionGrant(allowKey)) return json(res, 400, { error: "questions cannot be always allowed" });
       const pending = store.messagesFor(bot.threadId).some((message) =>
         message.card?.requestId &&
         !message.card.answered &&
@@ -10514,7 +10527,8 @@ const server = createServer(async (req, res) => {
         if (!Array.isArray(body.alwaysAllow) || body.alwaysAllow.some((t: unknown) => typeof t !== "string")) {
           return json(res, 400, { error: "alwaysAllow must be a list of tool keys" });
         }
-        patch.alwaysAllow = [...new Set(body.alwaysAllow as string[])].slice(0, 200);
+        // question-tool grants are dropped, never stored (see isQuestionGrant)
+        patch.alwaysAllow = withoutQuestionGrants([...new Set(body.alwaysAllow as string[])]).slice(0, 200);
       }
       if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
         cancelDirectTurnDispatch(existingBot.id, existingBot.threadId);

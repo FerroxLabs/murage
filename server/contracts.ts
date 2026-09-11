@@ -128,6 +128,11 @@ export type RuntimeEvent = RuntimeEventBase &
         summary: string;
         choices?: string[];
         approvalScope?: "local-computer";
+        /** 0.1.52 ASK1 (additive): the driver's trusted signal that this ask
+         * is a question to the owner even though it is filed as a permission
+         * (Pi `select`; an ACP tool call named as a question tool). Policy
+         * never auto-approves, remembers or AI-reviews such an ask. */
+        questionTool?: true;
       }
     | {
         type: "request.resolved";

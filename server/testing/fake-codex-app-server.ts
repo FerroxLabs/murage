@@ -213,6 +213,24 @@ process.stdin.on("data", (chunk) => {
               requestedSchema: { type: "object", properties: {} },
             },
           });
+        } else if (mode === "form-elicitation") {
+          // A plain MCP form elicitation: the server asks the OWNER for input
+          // (no codex_approval_kind), which is a question, not a tool approval.
+          out({
+            jsonrpc: "2.0",
+            id: 101,
+            method: "mcpServer/elicitation/request",
+            params: {
+              serverName: "deployer",
+              mode: "form",
+              message: "Which environment should I deploy to?",
+              requestedSchema: {
+                type: "object",
+                properties: { environment: { type: "string", enum: ["staging", "production"] } },
+                required: ["environment"],
+              },
+            },
+          });
         } else if (mode === "approval" || mode === "windows-command") {
           const approvalCommand = mode === "windows-command" ? command : "rm -rf scratch";
           out({ jsonrpc: "2.0", id: 100, method: "execCommandApproval", params: { command: approvalCommand } });

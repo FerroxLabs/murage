@@ -452,6 +452,32 @@ describe("Store", () => {
     );
   });
 
+  it("strips remembered question-tool grants from bots and their tasks on load (ASK1)", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    // what an older build could have written after "Always allow" on a question
+    const botsFile = join(DATA_DIR, "bots.json");
+    const legacy: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
+    const record = legacy.find((candidate) => candidate.id === bot.id)!;
+    expect(record.tasks?.length).toBeGreaterThan(0);
+    record.alwaysAllow = ["AskUserQuestion", "Bash:git", "local-computer:mcp__muragebox__ask_user", "Read"];
+    record.tasks![0]!.alwaysAllow = ["mcp__srv__AskUserQuestion", "Bash:npm", "clarify"];
+    writeFileSync(botsFile, JSON.stringify(legacy));
+
+    const reloaded = new Store(selection);
+    const persisted: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
+    const saved = persisted.find((candidate) => candidate.id === bot.id)!;
+    expect(saved.alwaysAllow).toEqual(["Bash:git", "Read"]);
+    expect(saved.tasks![0]!.alwaysAllow).toEqual(["Bash:npm"]);
+    expect(reloaded.taskByThread(bot.id, saved.tasks![0]!.threadId)?.alwaysAllow).toEqual(["Bash:npm"]);
+    expect(reloaded.bot(bot.id)?.alwaysAllow ?? []).not.toContain("AskUserQuestion");
+
+    // idempotent: a clean list survives the next load unchanged
+    new Store(selection);
+    const again: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
+    expect(again.find((candidate) => candidate.id === bot.id)?.alwaysAllow).toEqual(["Bash:git", "Read"]);
+  });
+
   it("persists a bot's effort level across a restart, defaulting to unset", () => {
     const store = new Store(selection);
     const bot = store.createBot();

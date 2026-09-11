@@ -10,6 +10,8 @@
 //   3. an unattended block writes its row — the audit row that says "this
 //      would have auto-approved, and only the block stood in the way"
 //   4. GET /api/decisions pages newest-last with ?limit=
+//   5. a question tool (AskUserQuestion) reaches the owner as a card with a
+//      `question-tool` row — never auto-approved, remembered or reviewed
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -129,6 +131,13 @@ posixOnly("authorization decisions are logged", () => {
           grok: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "permission" },
+            config: { cli: FAKE_CLI, fullAuto: false },
+          },
+          // an engine that routes its AskUserQuestion tool through the
+          // permission request, the way Claude Code reaches the permission host
+          asker: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "question-tool" },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
         },
@@ -271,6 +280,55 @@ posixOnly("authorization decisions are logged", () => {
       expect(row!.rule).toBe("shell:echo");
       expect(row!.unattended).toBe(true);
       expect(row!.botId).toBe(bot.id);
+    },
+    90_000,
+  );
+
+  it(
+    "a question tool is never auto-approved, remembered or reviewed (ASK1)",
+    async () => {
+      // Auto mode on, the reviewer in enforce, and a grant for the question
+      // tool itself: the live configuration of every bot that hit the defect.
+      const created = await api("POST", "/api/bots", { modelSelection: { instanceId: "asker", model: "fake-model" } });
+      expect(created.status).toBe(201);
+      const patched = await desktopApi("PATCH", `/api/bots/${created.body.bot.id}`, {
+        name: "Curious",
+        autoApprove: true,
+        autoReview: "enforce",
+        alwaysAllow: ["AskUserQuestion", "local-computer:AskUserQuestion", "shell:echo"],
+        modelSelection: { instanceId: "asker", model: "fake-model" },
+      });
+      expect(patched.status).toBe(200);
+      const bot = patched.body.bot;
+      // the settings route drops question grants instead of storing them
+      expect(bot.alwaysAllow).toEqual(["shell:echo"]);
+
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "ask me" })).status).toBe(202);
+      const card = await waitForBotCard(bot.id);
+      expect(card, "the question was answered by a rule instead of reaching the owner").not.toBeNull();
+      const requestId = card.card.requestId as string;
+      expect(card.card.tool).toBe("AskUserQuestion");
+      expect(card.card.allowKey, "a question card must not offer Always allow").toBeUndefined();
+      expect(card.card.held).toMatch(/question/i);
+
+      const shown = await waitForDecision((r) => r.decision === "card-shown" && r.requestId === requestId);
+      expect(shown, "the question card was never logged").not.toBeNull();
+      expect(shown!.source).toBe("question-tool");
+      expect(shown!.botId).toBe(bot.id);
+
+      // a key an older build rendered on the card cannot be granted either
+      const grant = await desktopApi("POST", `/api/bots/${bot.id}/always-allow`, { allowKey: "AskUserQuestion" });
+      expect(grant.status).toBe(400);
+      expect(grant.body.error).toMatch(/questions cannot be always allowed/);
+
+      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
+      expect(await waitForDecision((r) => r.decision === "user-denied" && r.requestId === requestId)).not.toBeNull();
+
+      const rows = (await api("GET", "/api/decisions")).body.decisions as DecisionRow[];
+      const machine = rows.filter(
+        (r) => r.botId === bot.id && (r.decision === "auto-approved" || r.decision.startsWith("review-")),
+      );
+      expect(machine, "a rule or the reviewer decided a question").toEqual([]);
     },
     90_000,
   );

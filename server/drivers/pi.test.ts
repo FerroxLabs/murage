@@ -722,6 +722,43 @@ describe("PiDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   });
 
+  it("marks a select ask as a question the harness never auto-approves, remembers or reviews (ASK1)", async () => {
+    await create("permission");
+    const threadId = `t-select-question-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+    const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as unknown as OpenedAsk & {
+      questionTool?: true;
+    };
+    expect(opened).toMatchObject({ requestType: "permission", tool: "Run bash: echo hi?", questionTool: true });
+
+    // The join server/index.ts applies, with every grant a user could hold and Auto on.
+    const everything = { autoApprove: true, alwaysAllow: [opened.tool, `local-computer:${opened.tool}`] };
+    const verdict = autoVerdict(everything, opened.tool, opened.summary, {
+      scope: opened.approvalScope,
+      question: opened.questionTool === true,
+    });
+    expect(verdict).toEqual({ approve: null, source: "question-tool" });
+    for (const mode of ["shadow", "enforce"] as const) {
+      expect(
+        shouldReview({ source: "no-grant", mode, unattended: false, approvalScope: undefined, tool: opened.tool, question: opened.questionTool === true }),
+      ).toBe(false);
+    }
+    await instance.adapter.respondToRequest(threadId, "ask-1", { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    recorder.stop();
+    await instance.dispose();
+
+    // A confirm stays an ordinary permission: no question signal.
+    await create("host-confirm");
+    const plain = `t-confirm-plain-${newId()}`;
+    const second = await instance.adapter.sendTurn({ threadId: plain, text: "click it" });
+    const confirm = await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
+    expect(confirm).toMatchObject({ requestType: "permission" });
+    expect(confirm).not.toHaveProperty("questionTool");
+    await instance.adapter.respondToRequest(plain, "ask-host", { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+  });
+
   it("leaves ordinary asks, isolated computers and questions unscoped so ordinary grants still work", async () => {
     // An ordinary permission ask with no host control.
     await create("permission");

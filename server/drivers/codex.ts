@@ -358,18 +358,28 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           method === "mcpServer/elicitation/request" &&
           params?._meta?.codex_approval_kind === "mcp_tool_call";
         const isQuestion = method === "item/tool/requestUserInput";
+        // Any other MCP elicitation is a form asking the OWNER for input, not
+        // a tool approval. It used to fall through as "shell" — auto-accepted
+        // in fullAuto and by the harness's auto mode, with a {decision} reply
+        // that is not even the elicitation result shape. It is named as a
+        // question tool so no mode answers it; the full form (fields, values)
+        // arrives with the question card.
+        const isFormElicitation = method === "mcpServer/elicitation/request" && !isMcpElicitation;
+        const isElicitation = isMcpElicitation || isFormElicitation;
         const mcpTool = isMcpElicitation
           ? String(params.message ?? "").match(/tool \"([^\"]+)\"/)?.[1]
           : undefined;
         const tool =
           isMcpElicitation
             ? (mcpTool ?? "mcp")
+            : isFormElicitation
+            ? "elicitation"
             : method === "item/fileChange/requestApproval" || method === "applyPatchApproval"
             ? "edit"
             : isQuestion
               ? "ask_user"
               : "shell";
-        if (config.fullAuto && !isQuestion) {
+        if (config.fullAuto && !isQuestion && !isFormElicitation) {
           return send({
             jsonrpc: "2.0",
             id: msg.id,
@@ -380,7 +390,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         const requestId = newId();
         const summary =
-          isMcpElicitation && typeof params.message === "string"
+          isElicitation && typeof params.message === "string"
             ? params.message
             : typeof params.command === "string"
             ? params.command
@@ -405,7 +415,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             send({
               jsonrpc: "2.0",
               id: msg.id,
-              result: isMcpElicitation
+              result: isElicitation
                 ? behavior === "allow"
                   ? { action: "accept", content: {} }
                   : { action: "decline" }
