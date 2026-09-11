@@ -25,6 +25,7 @@ import {
   recorderHelperBinary,
   recorderHelperBundle,
 } from "./build-recorder-helper.mjs";
+import { createHelperExit, stopOwnedHelper } from "./helper-stop.mjs";
 
 export { compileSkillMarkdown, saveSkillRecording, skillSlug } from "./skill-recording-store.mjs";
 
@@ -38,7 +39,12 @@ const BINARY = app.isPackaged
   ? path.join(BUNDLE, "Contents", "MacOS", "recorder-helper")
   : recorderHelperBinary;
 
+// The one owned recorder session. It stays set while a requested stop is
+// pending and is cleared only when the helper's exit is observed (B5).
 let active = null;
+// Bumped by every Start and every explicit Stop, so a Start that had to wait
+// for an earlier helper cannot launch after a newer Start or Stop.
+let startGeneration = 0;
 
 function ensureBuilt() {
   if (app.isPackaged) return;
@@ -58,11 +64,28 @@ export function recorderPermissionStatus() {
   return { supported: true };
 }
 
-export function startRecorder(win) {
-  stopRecorder();
+export async function startRecorder(win) {
+  const generation = ++startGeneration;
+  const previous = stopOwnedRecorder();
+  if (previous) {
+    // A helper that has not exited is still owned (its rejection says why).
+    // Never start a second global event tap beside it.
+    await previous;
+    if (generation !== startGeneration) throw new Error("Recording was stopped before it started.");
+  }
   const permission = recorderPermissionStatus();
   if (!permission.supported) throw new Error("Skill recording is currently available on macOS.");
   ensureBuilt();
+  return launchRecorderSession(win);
+}
+
+/**
+ * Launch and own one helper session; resolves when the helper reports its
+ * first event. startRecorder applies the platform and build gates first; this
+ * is exported so the lifecycle tests can drive it with a fake `open` waiter
+ * on every CI platform.
+ */
+export function launchRecorderSession(win) {
   const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "murage-recorder-"));
   const outputPath = path.join(sessionDir, "events.ndjson");
   const errorPath = path.join(sessionDir, "stderr.log");
@@ -101,7 +124,7 @@ export function startRecorder(win) {
     resolveReady = resolve;
     rejectReady = reject;
   });
-  const session = { proc, sessionDir, outputPath, errorPath, stopPath };
+  const session = { proc, sessionDir, outputPath, errorPath, stopPath, stopRequested: false, exit: createHelperExit() };
   active = session;
   let offset = 0;
   let buffer = "";
@@ -122,7 +145,8 @@ export function startRecorder(win) {
       if (!line) continue;
       try {
         const event = JSON.parse(line);
-        if (active === session) {
+        // Events flushed after a requested stop are not part of the recording.
+        if (active === session && !session.stopRequested) {
           emit(win, "skill-recorder:event", event);
           if (!readySettled) {
             readySettled = true;
@@ -147,12 +171,15 @@ export function startRecorder(win) {
     drain();
     const detail = readError(errorPath);
     cleanup();
+    session.exit.markExited();
     if (!readySettled) {
       readySettled = true;
       rejectReady(new Error(detail || "The action recorder could not start"));
     }
     if (active !== session) return;
     active = null;
+    // A requested stop is not an unexpected end.
+    if (session.stopRequested) return;
     emit(win, "skill-recorder:end", {
       code,
       reason: code === 0 ? "stopped" : detail || "recorder-helper-exited",
@@ -160,18 +187,22 @@ export function startRecorder(win) {
   });
   proc.on("error", (error) => {
     cleanup();
+    session.exit.markExited();
     if (!readySettled) {
       readySettled = true;
       rejectReady(error);
     }
     if (active !== session) return;
     active = null;
+    if (session.stopRequested) return;
     emit(win, "skill-recorder:end", { code: 1, reason: error.message });
   });
   const timeout = setTimeout(() => {
     if (readySettled) return;
     readySettled = true;
-    stopRecorder();
+    // The session stays owned until its helper exits; if this stop fails, the
+    // next Stop, Start or Quit signals it again.
+    void stopSession(session).catch(() => {});
     rejectReady(new Error("The action recorder did not become ready. Check Accessibility and Input Monitoring permissions."));
   }, 5_000);
   timeout.unref();
@@ -186,12 +217,25 @@ function readError(file) {
   }
 }
 
-export function stopRecorder() {
-  if (!active) return { recording: false };
-  const session = active;
-  active = null;
-  try {
-    writeFileSync(session.stopPath, "stop");
-  } catch {}
+function stopSession(session) {
+  return stopOwnedHelper(session, {
+    name: "The action recorder",
+    writeMarker: () => writeFileSync(session.stopPath, "stop"),
+  });
+}
+
+function stopOwnedRecorder() {
+  return active ? stopSession(active) : null;
+}
+
+/**
+ * Stop the owned recorder. Resolves `{ recording: false }` once its helper has
+ * exited (or when nothing is owned). Rejects, keeping the session owned for a
+ * retry, when the stop marker cannot be written or the helper has not exited
+ * within the owned-work deadline.
+ */
+export async function stopRecorder() {
+  startGeneration += 1;
+  await stopOwnedRecorder();
   return { recording: false };
 }
