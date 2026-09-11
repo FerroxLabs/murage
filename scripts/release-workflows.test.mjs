@@ -252,11 +252,17 @@ describe("scoped CI confirmation", () => {
     expect(scoped.env.VITEST_FILE).toBe("${{ inputs.vitest_file }}");
     expect(scoped.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
     expect(scoped.run.trim().split("\n").slice(1)).toEqual([
-      'test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"', "pnpm check:contrast", 'pnpm exec vitest run "${test_paths[@]}"', "pnpm broker:test",
+      'test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"', "pnpm check:contrast", 'pnpm exec vitest run "${test_paths[@]}"', "pnpm broker:check", "pnpm broker:test",
       "pnpm test:electron", "pnpm test:packaged-server",
     ]);
     expect(workflow.jobs.test.name).toContain("Scoped CI confirmation");
     expect(steps.some(step => step.run === "pnpm typecheck")).toBe(true);
+    // The Worker is compiled on every run (FLUXCFG follow-up 6): broker:check
+    // sits between the repo typecheck and the tests, on every platform.
+    const brokerCheck = steps.findIndex(step => step.run === "pnpm broker:check");
+    expect(brokerCheck).toBeGreaterThan(steps.findIndex(step => step.run === "pnpm typecheck"));
+    expect(brokerCheck).toBeLessThan(steps.indexOf(full));
+    expect(steps[brokerCheck].if).toBeUndefined();
     expect(steps.some(step => step.run === "pnpm check:electron")).toBe(true);
   });
 });

@@ -15,12 +15,18 @@ export const ARTIFACT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
  * trusted host publisher asks for it; it is not a task working folder. */
 export interface ArtifactScope { botId: string; botName: string; workspaceRoot: string; threadId?: string; runId?: string; threadAvailable?: boolean; managedOutput?: boolean }
 /** Host-only provenance for trusted automatic producers. Never read from a
- * request body. */
-export interface ArtifactProvenance { producer?: OutputProducer; publicationId?: string; allowManagedOutput?: boolean }
+ * request body. `expectedSha256` names the exact bytes the caller verified
+ * (a workspace revision's content digest): a source that hashes to anything
+ * else is refused with `reason` "content-changed" before any copy or row is
+ * written, so a refused registration leaves nothing in Files. */
+export interface ArtifactProvenance { producer?: OutputProducer; publicationId?: string; allowManagedOutput?: boolean; expectedSha256?: string }
 export interface ArtifactAccess { owner: boolean; scopes: readonly ArtifactScope[] }
 export class ArtifactError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) { super(message); this.status = status; }
+  /** "content-changed": the source no longer holds the bytes the caller
+   * verified (`expectedSha256`). Nothing was written. */
+  readonly reason?: "content-changed";
+  constructor(status: number, message: string, reason?: "content-changed") { super(message); this.status = status; if (reason !== undefined) this.reason = reason; }
 }
 function fail(status: number, message: string): never { throw new ArtifactError(status, message); }
 const hash = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -180,7 +186,11 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
     const root = rootPath(scope.workspaceRoot), source = sourceFile(root, input.relativePath);
     const bytes = readVerified(source.path, ARTIFACT_MAX_BYTES, source.stat);
     if (source.observed.some(([path, stat]) => !same(stat, lstatSync(path)))) fail(409, "The file location changed during verification.");
-    const sha256 = hash(bytes), fileFormat = format(input.relativePath), directoryPath = storage(storageRoot), blob = join(directoryPath, sha256 + fileFormat.extension);
+    const sha256 = hash(bytes);
+    // Before the blob and the row: a save-version or keep-previous copy is
+    // exactly the revision the caller verified, or it is nothing at all.
+    if (provenance.expectedSha256 !== undefined && sha256 !== provenance.expectedSha256) throw new ArtifactError(409, "The file changed before it could be saved.", "content-changed");
+    const fileFormat = format(input.relativePath), directoryPath = storage(storageRoot), blob = join(directoryPath, sha256 + fileFormat.extension);
     let exists = false;
     try { exists = hash(readVerified(blob, ARTIFACT_MAX_BYTES)) === sha256; if (!exists) fail(409, "The saved copy failed verification."); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
