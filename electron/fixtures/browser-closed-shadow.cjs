@@ -3,6 +3,7 @@
 process.stdout.write("fixture-entered\n");
 const { once } = require("node:events");
 const { join } = require("node:path");
+const { createServer } = require("node:http");
 const { app, BrowserWindow, WebContentsView, nativeImage } = require("electron");
 const { createBrowserSurfaceManager } = require("../browser-surface.cjs");
 process.stdout.write("fixture-modules-loaded\n");
@@ -51,7 +52,17 @@ async function closeFixture(manager, browserView, owner) {
   }
 }
 
+// The preload exposes the bridge only on the origin main names at window
+// creation (0.1.52 S1-T3, B6), so the probe serves its page from loopback and
+// passes that origin the way main.mjs does. An opaque data: document in the
+// same window configuration must get no bridge at all.
 async function verifySandboxedPreload() {
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end("<!doctype html><title>preload probe</title>");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
   const probe = new BrowserWindow({
     show: false,
     webPreferences: {
@@ -59,22 +70,31 @@ async function verifySandboxedPreload() {
       nodeIntegration: false,
       preload: join(__dirname, "..", "preload.cjs"),
       sandbox: true,
+      additionalArguments: [`--murage-renderer-origin=${origin}`],
     },
   });
-  try {
-    await probe.loadURL("data:text/html,<title>preload probe</title>");
-    const exposed = await probe.webContents.executeJavaScript(`({
+  const inspect = () => probe.webContents.executeJavaScript(`({
       muragebox: typeof window.muragebox,
       platform: window.muragebox?.platform,
       browser: typeof window.muragebox?.browser,
     })`);
+  try {
+    await probe.loadURL(`${origin}/`);
+    const exposed = await inspect();
     const expectedBrowser = process.platform === "win32" ? "undefined" : "object";
     if (exposed.muragebox !== "object" || exposed.platform !== process.platform || exposed.browser !== expectedBrowser) {
       throw new Error(`sandboxed preload bridge was not exposed correctly: ${JSON.stringify(exposed)}`);
     }
     process.stdout.write("sandboxed-preload-bridge-loaded\n");
+    await probe.loadURL("data:text/html,<title>foreign preload probe</title>");
+    const foreign = await inspect();
+    if (foreign.muragebox !== "undefined") {
+      throw new Error(`sandboxed preload exposed the bridge to a foreign document: ${JSON.stringify(foreign)}`);
+    }
+    process.stdout.write("sandboxed-preload-foreign-origin-refused\n");
   } finally {
     if (!probe.isDestroyed()) probe.destroy();
+    await new Promise((resolve) => server.close(resolve));
   }
 }
 
