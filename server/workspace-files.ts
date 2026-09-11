@@ -39,7 +39,7 @@ import {
   WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES, WORKSPACE_SEARCH_QUERY_MAX_LENGTH, WORKSPACE_TEXT_MAX_BYTES,
   isFileRevision, isWorkspaceRelativePath, isWorkspaceScopeRef,
   type FileRevision, type SaveReceipt, type WorkspaceEntry, type WorkspaceFileErrorBody, type WorkspaceFileErrorCode, type WorkspaceListRequest,
-  type WorkspaceListResponse, type WorkspaceNewline, type WorkspaceReadRequest, type WorkspaceReadResult, type WorkspaceRootInfo,
+  type WorkspaceListResponse, type WorkspaceNativeFile, type WorkspaceNewline, type WorkspaceReadRequest, type WorkspaceReadResult, type WorkspaceRootInfo,
   type WorkspaceRootState, type WorkspaceSaveVersionRequest, type WorkspaceSaveVersionResponse, type WorkspaceScopeRef,
   type WorkspaceSearchRequest, type WorkspaceSearchResponse, type WorkspaceWriteRequest,
 } from "../shared/workspace-files.ts";
@@ -608,6 +608,31 @@ export function readWorkspaceFile(deps: WorkspaceFilesDeps, request: WorkspaceRe
   };
 }
 
+/**
+ * F4-T5: authorize one workspace file for a native open/reveal.
+ *
+ * Same root resolution, link, hard-link and private-file policy as a read.
+ * Nothing is read and no size limit applies, because the operating system
+ * opens the file, not Murage. The answer carries the canonical root and the
+ * observed file identity so the owned main process can rebuild the path and
+ * refuse if anything moved between this answer and the OS call.
+ */
+export function nativeWorkspaceFile(deps: WorkspaceFilesDeps, request: WorkspaceReadRequest): WorkspaceNativeFile {
+  const { scope, relativePath } = request;
+  if (!isWorkspaceScopeRef(scope)) fail("invalid-request", "Choose a bot and conversation.");
+  const parts = fileParts(relativePath);
+  const { root, rootStat } = readyRoot(deps, scope);
+  requireAuthorizedRoot(deps, scope, root);
+  const observed = observeFile(root, rootStat, parts);
+  if (!observed.stat) fail("not-found", NOT_FOUND);
+  requireRegularFile(observed.stat);
+  assertUnchanged(observed.directories);
+  return {
+    scope, relativePath, root, revision: workspaceFileRevision(root, relativePath, observed.stat),
+    bytes: observed.stat.size, identity: artifactSourceFingerprint(observed.stat),
+  };
+}
+
 /** Exact shape check for a write body; the path is checked separately. */
 export function parseWorkspaceWriteRequest(body: unknown): WorkspaceWriteRequest {
   const invalid = (): never => fail("invalid-request", "Invalid save request.");
@@ -850,10 +875,12 @@ export async function workspaceFilesRoute(request: DelegatedRequest, deps: Works
       const { scope, values } = queryParams(url, ["query", "cursor"]);
       return { status: 200, headers: NO_STORE, body: searchWorkspace(deps, { scope, query: values.query ?? "", ...(values.cursor !== undefined ? { cursor: values.cursor } : {}) }) };
     }
-    if (path === WORKSPACE_FILES_ROUTES.read) {
-      if (request.method !== "GET") fail("invalid-request", "Reading a workspace file uses GET.");
+    if (path === WORKSPACE_FILES_ROUTES.read || path === WORKSPACE_FILES_ROUTES.native) {
+      const native = path === WORKSPACE_FILES_ROUTES.native;
+      if (request.method !== "GET") fail("invalid-request", native ? "Opening a workspace file uses GET." : "Reading a workspace file uses GET.");
       const { scope, values } = queryParams(url, ["path"]);
-      return { status: 200, headers: NO_STORE, body: readWorkspaceFile(deps, { scope, relativePath: values.path ?? "" }) };
+      const relativePath = values.path ?? "";
+      return { status: 200, headers: NO_STORE, body: native ? nativeWorkspaceFile(deps, { scope, relativePath }) : readWorkspaceFile(deps, { scope, relativePath }) };
     }
     if (path === WORKSPACE_FILES_ROUTES.write || path === WORKSPACE_FILES_ROUTES.saveVersion) {
       if (request.method !== "POST") fail("invalid-request", "Saving uses POST.");
