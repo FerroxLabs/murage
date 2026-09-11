@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  engineAcceptsImages,
   appendPastedText,
   attachmentBasename,
   attachmentImageUrl,
@@ -232,5 +233,29 @@ describe("playable media hints", () => {
   it("reads the basename, so a directory that looks like a song is not one", () => {
     expect(mediaHintForPath("/desk/album.mp3/notes.txt")).toBeNull();
     expect(mediaHintForPath("/desk/album.txt/track.mp3")).toEqual({ kind: "audio", mime: "audio/mpeg" });
+  });
+});
+
+describe("engineAcceptsImages", () => {
+  const loaded = [
+    { instanceId: "claude", capabilities: { images: true } },
+    { instanceId: "grok", capabilities: { images: false } },
+    { instanceId: "legacy", capabilities: {} },
+  ];
+  it("does not refuse while the engine list has not loaded yet (the reload window)", () => {
+    expect(engineAcceptsImages([], "claude")).toBe(true);
+    expect(engineAcceptsImages([], "grok")).toBe(true);
+  });
+  it("accepts an engine that reports image support once the list has loaded", () => {
+    expect(engineAcceptsImages(loaded, "claude")).toBe(true);
+  });
+  it("refuses an engine that reports no image support, or does not say", () => {
+    expect(engineAcceptsImages(loaded, "grok")).toBe(false);
+    expect(engineAcceptsImages(loaded, "legacy")).toBe(false);
+  });
+  it("refuses an engine missing from a loaded list, and a bot with no engine", () => {
+    expect(engineAcceptsImages(loaded, "removed-engine")).toBe(false);
+    expect(engineAcceptsImages(loaded, undefined)).toBe(false);
+    expect(engineAcceptsImages([], undefined)).toBe(false);
   });
 });
