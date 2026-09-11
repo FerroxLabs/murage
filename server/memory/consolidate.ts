@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
 import { extractCandidates, memoryExtractionMessages, type TextOnlyExtractor } from "./extract.ts";
 import { redactSecretsInText } from "../redact.ts";
+import { threadCheckpointId } from "./checkpoints.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
@@ -42,7 +43,7 @@ export function refreshMemoryCheckpoint(completedJobId:string){
   return transaction(db=>{
     const source=completedSource(completedJobId);
     if(!source.thread_id)return {status:"deferred" as const,reason:"source-has-no-thread"};
-    const id=`checkpoint:${hash(JSON.stringify([source.scope_id,source.thread_id]))}`;
+    const id=threadCheckpointId(String(source.scope_id),String(source.thread_id));
     const previous=db.prepare("SELECT * FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(id);
     if(previous?.owner_pinned===1||previous?.assertion==="owner-statement")return {status:"deferred" as const,reason:"owner-controlled-checkpoint"};
     const handles:Handle[]=previous?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,previous.version) as unknown as Handle[]:[];

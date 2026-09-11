@@ -72,3 +72,29 @@ export function autoSelectsLocalComputer({
 }): boolean {
   return platform !== "linux" && computer !== "cloud" && capabilitiesReady && localSelectable;
 }
+
+/** Whether switching a bot to Auto hands it THIS computer, and so must show
+ *  the local-computer warning and send `acknowledgeLocalAuto`.
+ *
+ *  Mirrors the server's own rule for the thread route
+ *  (`shouldMountLocalComputer` in server/local-routing.ts, used by
+ *  `PATCH /api/bots/:id/tasks/:threadId`): an explicit "local" mounts the
+ *  computer on macOS and Linux, and a bot that never chose a computer mounts
+ *  it on macOS — the established macOS Auto behaviour. "vm" and "browser"
+ *  are not local; "cloud" and "off" never are. Without this the composer's
+ *  mode chip asked the server for Auto with no acknowledgement on every
+ *  fresh Mac bot, was refused, and the person saw a red banner instead of
+ *  the warning. */
+export function autoNeedsLocalComputerWarning({
+  platform,
+  computer,
+  autoApprove,
+}: {
+  platform: DesktopCapabilities["host"]["platform"];
+  computer: Bot["computer"];
+  autoApprove: Bot["autoApprove"];
+}): boolean {
+  if (autoApprove) return false;
+  if (computer === "local") return platform === "darwin" || platform === "linux";
+  return computer === undefined && platform === "darwin";
+}

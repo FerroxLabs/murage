@@ -1,7 +1,7 @@
 import { database, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
-import { assertMemoryBundle, hydrateMemoryRecord } from "./bundle.ts";
+import { assertMemoryBundle, hydrateDisclosedMemoryRecord, supersededThreadCheckpoint } from "./bundle.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
 export function prepareMemoryDisclosure(bundle: MemoryBundle, access: MemoryAccess, driverInstance: string) {
@@ -36,7 +36,7 @@ function revoked(row: Disclosure, access: MemoryAccess): boolean {
   if (row.state === "revoked" || row.policy_revision !== access.policyRevision || row.deletion_epoch !== access.deletionEpoch) return true;
   try {
     const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
-    for (const record of records) hydrateMemoryRecord(record.id,record.version,access);
+    for (const record of records) hydrateDisclosedMemoryRecord(record.id,record.version,access);
     const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
     for (const source of sources) {
       const current = database().prepare("SELECT scope_id,state,revision FROM memory_sources WHERE id=?").get(source.id);
@@ -135,7 +135,8 @@ export function filterMemoryReplay<T extends {id:string}>(threadId: string, mess
       for(const ref of refs){
         if(bad)break;
         const current=db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(ref.id,ref.version);
-        if(!current||current.state!=="active"||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(ref.id,ref.version)){bad=true;break;}
+        // The thread's own superseded checkpoint is stale, not revoked (bundle.ts).
+        if(!current||(current.state!=="active"&&!supersededThreadCheckpoint(ref.id,ref.version,access))||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(ref.id,ref.version)){bad=true;break;}
         const parents=db.prepare(`WITH RECURSIVE parents(id,version) AS (
           SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d
           JOIN parents p ON d.child_id=p.id AND d.child_version=p.version LIMIT 1025)

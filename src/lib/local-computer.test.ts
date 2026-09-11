@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Bot, InstanceInfo } from "@/state/store";
 import {
+  autoNeedsLocalComputerWarning,
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
@@ -99,4 +100,24 @@ describe("local computer UI eligibility", () => {
       }),
     ).toBe(false);
   });
+});
+
+describe("autoNeedsLocalComputerWarning", () => {
+  const cases: Array<[string, Parameters<typeof autoNeedsLocalComputerWarning>[0], boolean]> = [
+    ["a fresh Mac bot (no computer chosen) hands Auto this Mac", { platform: "darwin", computer: undefined, autoApprove: false }, true],
+    ["an explicit local computer on macOS", { platform: "darwin", computer: "local", autoApprove: false }, true],
+    ["an explicit local computer on Linux", { platform: "linux", computer: "local", autoApprove: false }, true],
+    ["a fresh Linux bot mounts nothing by default", { platform: "linux", computer: undefined, autoApprove: false }, false],
+    ["a fresh Windows bot mounts nothing", { platform: "win32", computer: undefined, autoApprove: false }, false],
+    ["a cloud box is not this computer", { platform: "darwin", computer: "cloud", autoApprove: false }, false],
+    ["computer off is not this computer", { platform: "darwin", computer: "off", autoApprove: false }, false],
+    ["a VM is not this computer", { platform: "darwin", computer: "vm", autoApprove: false }, false],
+    ["the browser is not this computer", { platform: "darwin", computer: "browser", autoApprove: false }, false],
+    ["already on Auto: nothing to acknowledge", { platform: "darwin", computer: "local", autoApprove: true }, false],
+  ];
+  for (const [name, input, expected] of cases) {
+    it(name, () => {
+      expect(autoNeedsLocalComputerWarning(input)).toBe(expected);
+    });
+  }
 });

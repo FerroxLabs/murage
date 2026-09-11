@@ -65,6 +65,8 @@ const FIXTURE = `
   createRoot(document.getElementById('stage')).render(
     h(QuestionCardView, {
       card, botName: 'Sable',
+      // the connected card passes the moment its own answer was confirmed
+      settledAt: params.get('state') === 'answered' ? Date.now() : null,
       onSubmit: (answers) => window.sent.push({ kind: 'submit', answers }),
       onSkip: () => window.sent.push({ kind: 'skip' }),
       onSendAsMessage: (answers, text) => window.sent.push({ kind: 'message', answers, text }),
@@ -304,6 +306,82 @@ test("reads in both skins and at phone width", async ({ page }, testInfo) => {
       const shot = testInfo.outputPath(`question-card-${skin}-${width}.png`);
       await page.screenshot({ path: shot, fullPage: true });
       await testInfo.attach(`question-card-${skin}-${width}`, { path: shot, contentType: "image/png" });
+    }
+  }
+});
+
+// The look of it (0.1.52 QCARD1). Every state Sean sees — untouched, picked
+// on both kinds of question, an "Other" typed in, answered, expired — at
+// phone, tablet and desktop width in both skins, plus the keyboard ring on a
+// focused question. Not a pixel diff: a set of pictures for a person to look
+// at. `QCARD_EVIDENCE_DIR` puts them somewhere that survives the run.
+test("looks like it belongs in the transcript, in every state, width and skin", async ({ page }, testInfo) => {
+  const dir = process.env.QCARD_EVIDENCE_DIR;
+  const states = ["open", "picked", "other", "focused", "answered", "expired"] as const;
+  for (const skin of ["dark", "light"] as const) {
+    for (const width of [390, 640, 1024] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const state of states) {
+        const query = state === "answered" || state === "expired" ? `?skin=${skin}&state=${state}` : `?skin=${skin}`;
+        await open(page, query);
+        const card = page.getByRole("region", { name: "Question from Sable" });
+        await expect(card).toBeVisible();
+        if (state === "picked" || state === "expired") {
+          await page.getByRole("radio", { name: /Detailed/ }).click();
+          await page.getByRole("checkbox", { name: /Intro/ }).click();
+          await page.getByRole("checkbox", { name: /Outro/ }).click();
+        }
+        if (state === "other") {
+          await page.getByLabel("Your own answer to: Which format should the report use?").fill("Whatever is shortest");
+          await page.getByRole("checkbox", { name: /Findings/ }).click();
+        }
+        if (state === "focused") {
+          await page.keyboard.press("Tab"); // Skip question
+          await page.keyboard.press("Tab"); // the first question, ring on
+          await page.keyboard.press("1");
+        }
+        // nothing full-bleed, nothing off the edge, at any width
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        const box = await card.boundingBox();
+        expect(box, `${skin} ${width} ${state}: card box`).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(16);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width - 16 + 1);
+        // a picked row is an accent edge, never a grey slab: the fill is a
+        // translucent accent, so it differs from the unpicked row's fill and
+        // is not the raised-hover grey
+        if (state === "picked") {
+          const [picked, plain] = await Promise.all([
+            page.getByRole("radio", { name: /Detailed/ }).evaluate((el) => getComputedStyle(el).backgroundColor),
+            page.getByRole("radio", { name: /Summary/ }).evaluate((el) => getComputedStyle(el).backgroundColor),
+          ]);
+          expect(picked).not.toBe(plain);
+          // Tailwind 4 emits `oklab(... / a)` or `rgba(..., a)`: either way,
+          // the accent shows through, so the alpha is under one
+          const alpha = Number(picked.match(/(?:\/\s*|,\s*)([\d.]+)\)$/)?.[1] ?? "1");
+          expect(alpha, picked).toBeLessThan(1);
+          expect(alpha, picked).toBeGreaterThan(0);
+        }
+        // the sub-card keeps 16px of air around its words, and the key ring
+        // sits outside its border (outline-offset), never on the content
+        if (state === "focused") {
+          const group = page.getByRole("radiogroup", { name: "Which format should the report use?" });
+          await expect(group).toBeFocused();
+          const style = await group.evaluate((el) => {
+            const cs = getComputedStyle(el);
+            return { padding: cs.paddingLeft, outlineWidth: cs.outlineWidth, outlineOffset: cs.outlineOffset };
+          });
+          expect(style.padding).toBe("16px");
+          expect(style.outlineWidth).toBe("2px");
+          expect(style.outlineOffset).toBe("2px");
+        }
+        const name = `question-card-${skin}-${width}-${state}.png`;
+        const shot = dir ? join(dir, name) : testInfo.outputPath(name);
+        // let the 150ms colour transitions on the rows finish, so the picture
+        // shows the settled state rather than a half-faded tick
+        await page.waitForTimeout(250);
+        await page.screenshot({ path: shot, fullPage: true });
+        await testInfo.attach(name, { path: shot, contentType: "image/png" });
+      }
     }
   }
 });
