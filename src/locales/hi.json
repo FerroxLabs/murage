@@ -4,6 +4,7 @@
   "claudeAccounts.saved": "खाते की सेटिंग सहेजी गई।",
   "claudeAccounts.refreshError": "सहेज दिया गया, लेकिन खातों की सूची रीफ़्रेश नहीं हो सकी। मौजूदा स्थिति जाँचने के लिए खाते रीफ़्रेश करें का उपयोग करें।",
   "claudeAccounts.changeError": "खाता बदलना विफल रहा।",
+  "claudeAccounts.listUnreadable": "Claude खातों की सूची पढ़ी नहीं जा सकी। फिर से कोशिश करने के लिए खाते रीफ़्रेश करें का उपयोग करें।",
   "claudeAccounts.copied": "{name} का साइन-इन कमांड कॉपी किया गया।",
   "claudeAccounts.copyError": "कॉपी नहीं हो सका। ऊपर दिया कमांड चुनकर कॉपी करें।",
   "claudeAccounts.refresh": "खाते रीफ़्रेश करें",

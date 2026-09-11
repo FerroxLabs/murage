@@ -3,8 +3,18 @@ import { en, locales } from "@/locales";
 import { setLocale, t } from "./i18n";
 afterEach(() => { setLocale("en"); });
 const keys = Object.keys(en).filter(key => key.startsWith("claudeAccounts.")) as Array<keyof typeof en>;
-it("provides all 21 account action messages and preserves placeholders in seven packs", () => {
-  expect(keys).toHaveLength(21);
+// The complete claudeAccounts.* set, grouped by the commit that added each key.
+// A new account string must be translated in all seven packs and listed here.
+const expectedKeys = [
+  // 655c1d42 fix(i18n): translate account safety actions
+  "added", "removed", "saved", "refreshError", "changeError", "copied", "copyError", "refresh", "add", "safety",
+  "instructionsTitle", "instructions", "terminal", "copySignIn", "removeConfirm", "confirmRemoval", "cancelRemoval",
+  "saving", "create", "save", "cancel",
+  // b5e28ce8 fix(engines): keep Engines settings mounted on an unreadable Claude account list (RED2F)
+  "listUnreadable",
+].map(name => `claudeAccounts.${name}`);
+it("provides all 22 account action messages and preserves placeholders in seven packs", () => {
+  expect([...keys].sort()).toEqual([...expectedKeys].sort());
   for (const code of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
     setLocale(code);
     for (const key of keys) {

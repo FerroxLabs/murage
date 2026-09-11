@@ -4,6 +4,7 @@
   "claudeAccounts.saved": "账户设置已保存。",
   "claudeAccounts.refreshError": "已保存，但无法刷新账户列表。请使用“刷新账户”检查当前状态。",
   "claudeAccounts.changeError": "账户更改失败。",
+  "claudeAccounts.listUnreadable": "无法读取 Claude 账户列表。请使用“刷新账户”重试。",
   "claudeAccounts.copied": "已复制 {name} 的登录命令。",
   "claudeAccounts.copyError": "无法复制。请选中并复制上方命令。",
   "claudeAccounts.refresh": "刷新账户",
