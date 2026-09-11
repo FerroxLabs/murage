@@ -8,8 +8,10 @@
 // talk. A bot package carries rooms[] and routines[], and its import path
 // creates the group, sets the bulletin and rolls the whole thing back on
 // failure (server/index.ts:6403-6414).
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const WT = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams";
 const OUT = process.argv.includes("--out")
@@ -51,7 +53,9 @@ function scheduleFrom(cadence) {
   return null;
 }
 
-rmSync(OUT, { recursive: true, force: true });
+// --out may name any directory; only OS temp, a scratch-marked path or a
+// path inside this repository is ever replaced, never a data directory.
+safeWipeSync(OUT, { within: resolve(dirname(fileURLToPath(import.meta.url)), "..") });
 mkdirSync(join(OUT, "teams"), { recursive: true });
 
 const catalog = [];

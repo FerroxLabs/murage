@@ -19,6 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const LOCALES_DIR = join(dirname(SCRIPT_PATH), "..", "src", "locales");
@@ -302,7 +303,7 @@ function runModel(prompt) {
     });
     return stdout;
   } finally {
-    rmSync(workDir, { recursive: true, force: true });
+    safeWipeSync(workDir);
   }
 }
 

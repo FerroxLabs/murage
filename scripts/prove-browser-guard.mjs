@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { createServer } from 'node:http';
 import { UnifiedBrowserController } from '../server/browser-control.ts';
 import { createNativeBrowser } from '../server/browser-native-relay.ts';
 import { agentBrowserIntegration } from '../server/browser-engine.ts';
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const target=`${process.platform}-${process.arch}`, suffix=process.platform==='win32'?'.exe':'';
 const chromeDir={'darwin-arm64':'mac-arm64','darwin-x64':'mac-x64','win32-x64':'win64','linux-x64':'linux64'}[target];
 const root=mkdtempSync(join(tmpdir(),'murage-c11-guard-'));
@@ -32,5 +33,5 @@ try{
   await native.command(['eval','globalThis.__murageGuard=()=>false;document.querySelector("#ordinary").type="password";document.querySelector("#ordinary").dispatchEvent(new InputEvent("input",{bubbles:true,data:"fake"}));document.querySelector("#ordinary").type="text"']);
   if(!await native.protected())throw new Error('Page cleared sticky protected-input guard');checks.push({name:'isolated-sticky-taint-resists-page-reset',pass:true});
 }catch(error){checks.push({error:error.message});process.exitCode=1;}
-finally{await controller.close().catch(e=>{cleanupError=e.message;process.exitCode=1;});await new Promise(r=>server.close(r));if(!cleanupError)rmSync(root,{recursive:true,force:true});writeFileSync(join(evidence,`${target}-guard.json`),JSON.stringify({target,checks,cleanupError},null,2));}
+finally{await controller.close().catch(e=>{cleanupError=e.message;process.exitCode=1;});await new Promise(r=>server.close(r));if(!cleanupError)safeWipeSync(root);writeFileSync(join(evidence,`${target}-guard.json`),JSON.stringify({target,checks,cleanupError},null,2));}
 console.log(JSON.stringify({target,checks,cleanupError},null,2));

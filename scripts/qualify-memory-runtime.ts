@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { pipeline as copyStream } from "node:stream/promises";
 import { DatabaseSync, backup } from "node:sqlite";
 import { mkdtempSync } from "node:fs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(repo, "shared/memory-model-manifest.json"), "utf8")) as {
@@ -74,7 +75,7 @@ async function sqliteProbe() {
     try { if (!(restored.prepare("SELECT id FROM job WHERE id='gold'").get())) throw new Error("backup lost committed outbox"); }
     finally { restored.close(); }
     return {node: process.version, platform: process.platform, arch: process.arch, sqlite: "PASS", fts5: "PASS", fullTransaction: "PASS", backup: "PASS"};
-  } finally { db.close(); rmSync(root, {recursive: true, force: true}); }
+  } finally { db.close(); safeWipeSync(root); }
 }
 
 async function main() {

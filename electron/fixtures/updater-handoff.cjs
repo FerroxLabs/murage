@@ -7,10 +7,11 @@
 // placed on PATH stands in for the terminal emulator, and is discovered and
 // executed by the real child_process.
 
-const { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs");
+const { chmodSync, existsSync, mkdtempSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { app, clipboard } = require("electron");
+const { safeWipeSync } = require("../../server/testing/safe-wipe.mjs");
 
 if (process.platform === "linux") app.commandLine.appendSwitch("no-sandbox");
 
@@ -59,7 +60,7 @@ async function main() {
     const withoutTerminal = await handOff([staged]);
     if (withoutTerminal.terminalOpened === false) say("no-terminal-is-reported-honestly");
     if (clipboard.readText() === expected) say("clipboard-written-even-without-a-terminal");
-    rmSync(empty, { recursive: true, force: true });
+    safeWipeSync(empty);
 
     // A download that vanished must be reported, not turned into a command
     // that installs nothing — empty list and a path that used to exist.
@@ -78,7 +79,7 @@ async function main() {
     );
   } finally {
     process.env.PATH = realPath;
-    rmSync(workspace, { recursive: true, force: true });
+    safeWipeSync(workspace);
   }
 
   say("fixture-complete");

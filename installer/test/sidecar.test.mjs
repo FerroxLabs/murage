@@ -44,6 +44,7 @@ import {
 import { DOOR_NONCE_FILE, createDoorNonce, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { readEnvFile } from "../lib/env-file.mjs";
 import { serveOrigin } from "../lib/tailscale.mjs";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "murage.mjs");
 /** The checkout, so the cross-lane guard can read the sidecar's own parser. */
@@ -54,7 +55,7 @@ const scratch = () => {
   scratchDirs.push(dir);
   return dir;
 };
-after(() => { for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true }); });
+after(() => { for (const dir of scratchDirs) safeWipeSync(dir); });
 const SECRET = "tskey-auth-kRDeadBeef-NEVERPUTMEINARGV";
 const LOOPBACK_ONLY_SERVER = `server.listen(PORT, "127.0.0.1", () => {});`;
 

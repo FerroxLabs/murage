@@ -26,7 +26,6 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -34,6 +33,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const require = createRequire(import.meta.url);
 const { app } = require("electron");
@@ -227,7 +227,7 @@ async function main() {
     return;
   }
 
-  rmSync(workspace, { recursive: true, force: true });
+  safeWipeSync(workspace);
   if (feedServer) await new Promise((resolve) => feedServer.close(resolve));
   console.log(`[smoke-linux-update] OK — updated 0.0.1 → ${offered} in place`);
   if (candidateFeed) console.log("[smoke-linux-update] POST-PUBLICATION REQUIRED: rerun without --candidate-feed to prove the live GitHub feed and download path; candidate proof does not cover differential downloads.");

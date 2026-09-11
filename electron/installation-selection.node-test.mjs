@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
 import { allocateSeparateInstallation, planSeparateInstallation, publishInstallationSelection, resolveInstallationSelection } from "./installation-selection.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const roots = [];
-test.afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+test.afterEach(() => { for (const root of roots.splice(0)) safeWipeSync(root); });
 function fixture() {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-selection-test-"))); roots.push(root);
   const userData = path.join(root, "desktop"), original = path.join(root, "original"); mkdirSync(userData); mkdirSync(original);

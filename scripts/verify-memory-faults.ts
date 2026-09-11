@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { backup, DatabaseSync } from "node:sqlite";
 import { validateCorpus, requireMeasuredHit } from "../server/memory/testing/contracts.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const self=fileURLToPath(import.meta.url),repo=fileURLToPath(new URL("..",import.meta.url)),argv=process.argv.slice(2);
 const arg=(name:string,fallback="")=>{const i=argv.indexOf(name);if(i<0)return fallback;const value=argv[i+1];if(!value||value.startsWith("--"))throw Error(`Missing ${name}`);return value;};
@@ -585,7 +586,7 @@ async function main(){
       const code=await new Promise<number|null>((done,reject)=>{child.once("exit",done);child.once("error",reject);});
       let result:Result;try{result=JSON.parse(output.trim().split("\n").at(-1)??"");assert.equal(result.id,protocol.id);assert(["PASS","FAIL","UNVERIFIED"].includes(result.status));}catch{result={id:protocol.id,status:"FAIL",observations:{exitCode:code},error:errorOutput||"No valid fault receipt"};}
       results.push(result);process.stderr.write(`P10 fault ${protocol.id}: ${result.status}\n`);
-    }finally{shutdown.delete(cleanup);clearTimeout(timer);clearTimeout(force);await terminate(child);if(existsSync(join(root,".preserve-owned-mount"))||existsSync(join(root,".preserve-timeout")))process.stderr.write(`Preserved task-owned fault fixture: ${root}\n`);else rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:200});}
+    }finally{shutdown.delete(cleanup);clearTimeout(timer);clearTimeout(force);await terminate(child);if(existsSync(join(root,".preserve-owned-mount"))||existsSync(join(root,".preserve-timeout")))process.stderr.write(`Preserved task-owned fault fixture: ${root}\n`);else safeWipeSync(root, { maxRetries: 5, retryDelay: 200 });}
   }
   const focusedPassed=results.length===selectedIds.length&&results.every(result=>result.status==="PASS");
   const receipt={version:1,phase:normalUse?"P10-normal-use":"P10-faults",status:diagnostic?"DIAGNOSTIC_ONLY":focusedPassed?(normalUse?"NORMAL_USE_PASS":results.length===12?"ACCEPTED":"FOCUSED_PASS"):"BLOCKED",node:process.version,platform:process.platform,arch:process.arch,fixtureSha256:sha(raw),identity,

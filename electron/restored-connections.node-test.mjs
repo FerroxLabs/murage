@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition, RESTORED_CONNECTIONS_FILE } from "./restored-connections.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 test("fresh connection paths cannot reuse the original credential or device directories", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "murage-connection-profile-"));
@@ -19,7 +20,7 @@ test("fresh connection paths cannot reuse the original credential or device dire
     assert.equal(profile.companionState, path.join(data, "connection-profiles", id, "companion"));
     assert.equal(existsSync(profile.directory), false, "reading policy must not create connection state");
     assert.equal(readFileSync(old, "utf8"), "private-old-canary");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 test("damaged or redirected marker fails closed rather than falling back to old connections", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "murage-connection-marker-"));
@@ -34,7 +35,7 @@ test("damaged or redirected marker fails closed rather than falling back to old 
       symlinkSync(path.join(root, "missing"), file);
       assert.throws(() => restoredConnectionProfile(root), error => error.code === "RESTORE_REVIEW_REQUIRED");
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 test("connection filtering preserves native provider and Fuigo inheritance", () => {
   const env = { COMPOSIO_API_KEY: "old-project", MURAGE_COMPOSIO_BROKER_TOKEN: "old-broker", MURAGE_COMPANION_DIR: "/old/devices", ANTHROPIC_API_KEY: "native-provider", HOME: "/native-home", FUIGO_CONFIG: "/native-config" };

@@ -13,7 +13,7 @@
 import electron from "electron";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ import { mainAppPermissionCheckAllowed, mainAppPermissionRequestAllowed } from "
 import { createMainNavigationGuard, createOwnedMainIpc, rendererOriginArguments } from "../electron/main-ipc-trust.mjs";
 import { isOwnedMainSender } from "../electron/main-trust.mjs";
 import screenPreview from "../electron/screen-preview.cjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 if (!process.versions.electron) {
   const data = mkdtempSync(join(tmpdir(), "murage-permission-smoke-"));
@@ -31,7 +32,7 @@ if (!process.versions.electron) {
     if (result.error) throw result.error;
     code = result.status ?? 1;
   } finally {
-    rmSync(data, { recursive: true, force: true });
+    safeWipeSync(data);
   }
   process.exit(code);
 }
