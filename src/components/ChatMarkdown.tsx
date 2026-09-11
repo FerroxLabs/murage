@@ -200,7 +200,7 @@ function LocalFileLink({ filePath, children }: { filePath: string; children?: Re
         type="button"
         onClick={() => void save()}
         title={`Save a copy — ${filePath}`}
-        className="break-words text-left text-accent underline decoration-accent/40 hover:decoration-accent"
+        className="[overflow-wrap:anywhere] text-left text-accent underline decoration-accent/40 hover:decoration-accent"
       >
         {children}
       </button>
@@ -284,8 +284,16 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             );
           },
           code({ children }: { children?: ReactNode }) {
+            // Adapted from OpenMausBot #1023: a path or identifier can be wider
+            // than the bubble, and a token with no break opportunity has nowhere
+            // to go but out of it. `.chat-md` (styles.css) already inherits
+            // `overflow-wrap: anywhere`; upstream's `break-words` would override
+            // that with `break-word`, which does not lower min-content, so a long
+            // token in a table cell or a content-sized file-link button would
+            // still push out. Inline code, links and file links state `anywhere`
+            // themselves so a nearer `break-words` can never downgrade it.
             return (
-              <code className="rounded bg-inset px-1 py-px text-[13px]">{children}</code>
+              <code className="rounded bg-inset px-1 py-px text-[13px] [overflow-wrap:anywhere]">{children}</code>
             );
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
@@ -296,7 +304,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
                 href={href}
                 target="_blank"
                 rel="noreferrer"
-                className="break-words text-accent underline decoration-accent/40 hover:decoration-accent"
+                className="[overflow-wrap:anywhere] text-accent underline decoration-accent/40 hover:decoration-accent"
               >
                 {children}
               </a>
