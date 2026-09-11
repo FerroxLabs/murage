@@ -140,6 +140,10 @@ export type RuntimeEvent = RuntimeEventBase &
          * first question's text and labels so older consumers (voice, older
          * clients) degrade gracefully. */
         questions?: QuestionSpec[];
+        /** 0.1.52 FUIGOTRUST1 (additive): this question decides trust for a
+         * folder. The server persists it on the card and, once the owner
+         * answers, records the decision for the folder's trust key. */
+        folderTrust?: { key: string; folder: string; sources: string[] };
       }
     | {
         type: "request.resolved";
@@ -243,6 +247,22 @@ export interface SendTurnInput {
     custom?: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
   };
   cwd?: string;
+  /** 0.1.52 FUIGOTRUST1 (additive): Murage's folder-trust record for `cwd`,
+   * handed only to drivers whose engine gates repo-local sources behind a
+   * trust decision (`capabilities.folderTrust`). `decision` is the remembered
+   * answer for the folder's trust key; absent means nobody has decided yet,
+   * and the driver raises a question card before the engine starts when
+   * `sources` names anything the folder would contribute. */
+  folderTrust?: FolderTrustTurnInput;
+}
+
+/** See `SendTurnInput.folderTrust`. `sources` are display names from the
+ * server's scan (server/folder-trust.ts): "AGENTS.md", ".mcp.json", …. */
+export interface FolderTrustTurnInput {
+  key: string;
+  folder: string;
+  decision?: "trust" | "reject";
+  sources: string[];
 }
 
 export interface TurnStartResult {
@@ -295,6 +315,11 @@ export interface ProviderAdapter {
      * MCP servers from config). Same rule as composioMcp: an entry in the
      * config says the servers exist, not that this engine can reach them. */
     customMcp?: boolean;
+    /** True when the engine gates a folder's repo-local sources (AGENTS.md,
+     * .mcp.json, skills, hooks) behind a per-folder trust decision that the
+     * driver takes from `SendTurnInput.folderTrust` (Fuigo 1.0.13). The
+     * server scans the folder and hands the record only to such drivers. */
+    folderTrust?: boolean;
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   /** Request a stop. A driver that can observe teardown resolves with a

@@ -82,6 +82,9 @@ export interface OptionCardData {
   /** Raised during a run nobody was watching (routine, webhook, Telegram);
    * an expired one of these stays in the Inbox as needing the owner. */
   unattended?: boolean;
+  /** 0.1.52 FUIGOTRUST1: this question decides trust for a folder (shared/
+   * folder-trust.ts). Its answer is recorded for the folder's trust key. */
+  folderTrust?: { key: string; folder: string; sources: string[] };
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: RoutineRequestCardData;

@@ -92,6 +92,9 @@ export interface OptionCardData {
   expired?: boolean;
   sentAsMessage?: boolean;
   unattended?: boolean;
+  /** A folder-trust question (shared/folder-trust.ts): the answer is a
+   * decision about the folder, remembered by the server. */
+  folderTrust?: { key: string; folder: string; sources: string[] };
   /** Persisted proposal used by the server when the user confirms it. */
   routineRequest?: RoutineRequestCardData;
   routineProposalDigest?: string;
