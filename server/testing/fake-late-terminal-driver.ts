@@ -23,7 +23,10 @@
 //                            skill-authoring tools (agentsMcp is declared, so a
 //                            hop-0 turn takes the round's claim when the skill
 //                            recorder feature is on; the agents integration is
-//                            otherwise ignored here).
+//                            otherwise ignored here). browserMcp is declared
+//                            too, so a bot with the browser on mints its
+//                            capability before the room claim (RED2L); the
+//                            browser integration is likewise ignored.
 //   FAKE_LATE_AGENTS_ENV     path: overwritten per sendTurn with the agents
 //                            integration's env as JSON (the turn's comms token
 //                            and thread), so a test can act as that turn on
@@ -87,7 +90,7 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
         snapshot: async () => ({ state: "available", version: "0.0.0-late" }),
         adapter: {
           provider: LATE_TERMINAL_DRIVER_KIND,
-          capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true },
+          capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true, browserMcp: true },
           sendTurn: async (turn) => {
             const turnId = `late-turn-${++turnCounter}`;
             const skillAuthoring = turn.integrations?.agents?.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";

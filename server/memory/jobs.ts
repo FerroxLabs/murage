@@ -65,7 +65,11 @@ export function requeueStaleMemoryWork(work: MemoryWork, worker: string): boolea
  * room or task creation moves the revision once), so genuine races still
  * cost nothing; past it the job spends an attempt through the ordinary
  * deferral path, so the attempt cap (3) ends a job that can never publish
- * under a standing authority, with the reason on the row. */
+ * under a standing authority, with the reason on the row. The count is kept
+ * by the worker controller per job and source revision and is cleared
+ * whenever the job settles — its result published, or the job deferred,
+ * whether past this bound or by the worker's own deferral (RED2L) — so a
+ * re-claimed job is refused up to this many times again, free. */
 export const STALE_MEMORY_REQUEUE_LIMIT = 5;
 
 /** Defer a job whose publication was refused as stale, spending one attempt
