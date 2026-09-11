@@ -35,6 +35,11 @@
 //                      (timers run before pipe reads in the event loop).
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
+//   FAKE_CLAUDE_SIGTERM_DELAY_MS a CLI that takes this long to close after
+//                      SIGTERM (the real CLI tears down MCP children and
+//                      flushes before exiting). The turn's writer lease is
+//                      released only at that close, so a test can stand
+//                      inside the Stop → close window deterministically.
 //
 //   FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS how many launches die with transient
 //                      stderr at startup WITHOUT reading stdin (counted in
@@ -596,6 +601,14 @@ const playTurn = (prompt: JsonValue) => {
     finish();
   }
 };
+
+// Slow close: keep running for the configured delay after SIGTERM, then exit
+// the way a signalled process does. Without the variable Node's default
+// handler exits at once, as before.
+const sigtermDelayMs = Number(process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS);
+if (Number.isFinite(sigtermDelayMs) && sigtermDelayMs > 0) {
+  process.on("SIGTERM", () => { setTimeout(() => process.exit(143), sigtermDelayMs); });
+}
 
 let buf = "";
 process.stdin.on("data", (c) => {
