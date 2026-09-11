@@ -1353,9 +1353,11 @@ describe("harness HTTP API", () => {
       expect(asking.operator.tasks[0]).toMatchObject({ autoApprove: false });
       expect((await api("POST", `/api/bots/${chief.id}/interrupt`)).status).toBe(200);
 
-      // 2. The person put the Chief in Auto: the operator inherits it, with
-      //    the computer OFF so this Auto can never drive the person's desktop.
-      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { autoApprove: true })).status).toBe(200);
+      // 2. The person put the Chief in Auto — acknowledging the local-computer
+      //    warning, since a Chief that never chose a computer drives this Mac
+      //    (AUTOOP2 finding 1): the operator inherits it, with the computer
+      //    OFF so this Auto can never drive the person's desktop.
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
       turn = await startInternalFixtureTurn(chief.id);
       const auto = await createOperator(turn.headers, chief.threadId, "Auto operator");
       expect(auto.status).toBe(201);
@@ -1401,6 +1403,97 @@ describe("harness HTTP API", () => {
     } finally {
       await api("POST", `/api/bots/${chief.id}/interrupt`);
       if (webhookId) await desktopApi("DELETE", `/api/webhooks/${webhookId}`);
+      for (const botId of createdIds) await desktopApi("DELETE", `/api/bots/${botId}`);
+      await desktopApi("DELETE", `/api/bots/${chief.id}`);
+    }
+  }, 60_000);
+
+  it("create_bot reads the Auto of the task that calls it, not the Chief's profile bit (AUTOOP2 finding 2)", async () => {
+    // AUTOOP1's scenario had one task, so the profile bit and the task bit
+    // always agreed and a resolver that read the profile would have passed.
+    // Here the Chief has two tasks — A in Ask, B in Auto — and the profile
+    // bit is ON: an operator created from A must ask, one created from B
+    // must not. Mutation-checked: resolving `chief.autoApprove` instead of
+    // `store.projectBotForTask(chief.id, fromThreadId)` yields Auto from A.
+    const chief = (await api("POST", "/api/bots")).body.bot;
+    const taskA: string = chief.threadId;
+    let taskB: string | undefined;
+    const createdIds: string[] = [];
+    const chiefTasks = async () => {
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      return state.bots.find((bot: { id: string }) => bot.id === chief.id).tasks as Array<{ threadId: string; autoApprove: boolean }>;
+    };
+    const createOperator = async (headers: Record<string, string>, fromThreadId: string, name: string) => {
+      const response = await fetch(`${BASE}/api/internal/create-bot`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ fromBotId: chief.id, fromThreadId, name, role: "Research operator", instructions: "Report concise findings." }),
+      });
+      const body = (await response.json()) as { id?: string; auto?: boolean; error?: string };
+      if (body.id) createdIds.push(body.id);
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      const operator = state.bots.find((bot: { id: string }) => bot.id === body.id);
+      return { status: response.status, body, operator };
+    };
+    const settle = async (threadId: string) => {
+      // A multi-task bot's Stop must name the thread (independent threads).
+      expect((await api("POST", `/api/bots/${chief.id}/interrupt`, { threadId })).status).toBe(200);
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === chief.id)?.busy, { timeout: 5_000 }).toBe(false);
+    };
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, {
+        section: "Auto inheritance test",
+        chiefOfStaff: true,
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+      taskB = (await api("POST", `/api/bots/${chief.id}/tasks`, { title: "Auto task" })).body.task.threadId as string;
+      expect(taskB).not.toBe(taskA);
+      // Task B in Auto (acknowledged — a Chief with no chosen computer drives
+      // this Mac), then the profile bit ON as a default that leaves A alone.
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}/tasks/${taskB}`, { autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { settingsScope: "defaults", autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
+      const stored = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")).find((entry: { id: string }) => entry.id === chief.id);
+      expect(stored.autoApprove).toBe(true);
+      expect(await chiefTasks()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ threadId: taskA, autoApprove: false }),
+        expect.objectContaining({ threadId: taskB, autoApprove: true }),
+      ]));
+
+      // From task A (Ask): the operator asks, whatever the profile says.
+      expect((await api("POST", `/api/bots/${chief.id}/tasks/${taskA}`)).status).toBe(200);
+      let turn = await startInternalFixtureTurn(chief.id);
+      expect(turn.env.MURAGE_THREAD_ID).toBe(taskA);
+      const fromAsk = await createOperator(turn.headers, taskA, "Operator from task A");
+      expect(fromAsk.status).toBe(201);
+      expect(fromAsk.body.auto).toBe(false);
+      expect(fromAsk.operator).toMatchObject({ autoApprove: false, computer: "off" });
+      expect(fromAsk.operator.tasks[0]).toMatchObject({ autoApprove: false });
+      await settle(taskA);
+
+      // From task B (Auto): the operator inherits it, computer off.
+      expect((await api("POST", `/api/bots/${chief.id}/tasks/${taskB}`)).status).toBe(200);
+      turn = await startInternalFixtureTurn(chief.id);
+      expect(turn.env.MURAGE_THREAD_ID).toBe(taskB);
+      const fromAuto = await createOperator(turn.headers, taskB, "Operator from task B");
+      expect(fromAuto.status).toBe(201);
+      expect(fromAuto.body.auto).toBe(true);
+      expect(fromAuto.operator).toMatchObject({ autoApprove: true, computer: "off", approvePeerComms: false, composio: false });
+      expect(fromAuto.operator.tasks[0]).toMatchObject({ autoApprove: true });
+      await settle(taskB);
+
+      // And the other way round: profile bit OFF, task B still Auto — the
+      // live task bit is what create_bot reads, in both directions.
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { settingsScope: "defaults", autoApprove: false })).status).toBe(200);
+      expect(await chiefTasks()).toEqual(expect.arrayContaining([expect.objectContaining({ threadId: taskB, autoApprove: true })]));
+      turn = await startInternalFixtureTurn(chief.id);
+      expect(turn.env.MURAGE_THREAD_ID).toBe(taskB);
+      const stillAuto = await createOperator(turn.headers, taskB, "Operator from task B again");
+      expect(stillAuto.status).toBe(201);
+      expect(stillAuto.body.auto).toBe(true);
+      expect(stillAuto.operator).toMatchObject({ autoApprove: true, computer: "off" });
+      await settle(taskB);
+    } finally {
+      for (const threadId of [taskA, taskB]) if (threadId) await api("POST", `/api/bots/${chief.id}/interrupt`, { threadId });
       for (const botId of createdIds) await desktopApi("DELETE", `/api/bots/${botId}`);
       await desktopApi("DELETE", `/api/bots/${chief.id}`);
     }
@@ -4497,10 +4590,72 @@ describe("harness HTTP API", () => {
     } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
   });
 
+  it("requires the warning acknowledgement for profile-level Auto on a bot that never chose a computer (AUTOOP2 finding 1)", async () => {
+    // A fresh bot has no `computer`, which resolves to THIS computer on
+    // macOS (the "Auto" destination). The thread route already refused Auto
+    // there without the acknowledgement; the profile route only looked at an
+    // explicit "local" or null, so the settings-panel switch (and any script
+    // curling loopback) could put a fresh Mac bot in Auto on the person's
+    // own desktop with no warning at all. One rule now, on the RESOLVED
+    // destination, for every path to Auto.
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      expect(bot.computer).toBeUndefined();
+      expect(bot.autoApprove).toBeFalsy();
+      const mountsThisComputer = process.platform === "darwin";
+      const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
+      const blindTask = await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { autoApprove: true });
+      const afterBlind = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
+      if (mountsThisComputer) {
+        expect(blind.status).toBe(400);
+        expect(blind.body.error).toContain("acknowledgeLocalAuto");
+        // The thread route and the profile route agree on the same bot.
+        expect(blindTask.status).toBe(400);
+        expect(blindTask.body.error).toContain("acknowledgeLocalAuto");
+        expect(afterBlind.autoApprove).toBeFalsy();
+        expect(afterBlind.tasks[0].autoApprove).toBeFalsy();
+      } else {
+        // Linux and Windows never mount the desktop for a default
+        // destination, so Auto there needs no warning on either route.
+        expect(blind.status).toBe(200);
+        expect(blindTask.status).toBe(200);
+        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: false })).status).toBe(200);
+      }
+      // The dialog's acknowledgement grants it; the flag is never stored.
+      const acked = await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, acknowledgeLocalAuto: true });
+      expect(acked.status).toBe(200);
+      expect(acked.body.bot).toMatchObject({ autoApprove: true });
+      expect(acked.body.bot.computer).toBeUndefined();
+      expect(acked.body.bot.acknowledgeLocalAuto).toBeUndefined();
+      const stored = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")).find((entry: { id: string }) => entry.id === bot.id);
+      expect(stored).not.toHaveProperty("acknowledgeLocalAuto");
+      // Once granted, unrelated PATCHes and re-asserting Auto need no re-ack:
+      // the granted combination is the persisted proof.
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { name: "Acknowledged" })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(200);
+      // Naming this computer explicitly is the same desktop the person
+      // already acknowledged on macOS; on a host whose default destination
+      // never mounted it, "local" is a new grant and asks again.
+      const explicit = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
+      expect(explicit.status).toBe(mountsThisComputer ? 200 : 400);
+      if (!mountsThisComputer) expect(explicit.body.error).toContain("acknowledgeLocalAuto");
+      // Leaving this computer ends the grant; coming back to the default
+      // destination with Auto still on needs the warning again on macOS.
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
+      const back = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null });
+      expect(back.status).toBe(mountsThisComputer ? 400 : 200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null, acknowledgeLocalAuto: true })).status).toBe(200);
+    } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
+  });
+
   it("grants Auto on this computer only through the warning acknowledgement", async () => {
     const created = await api("POST", "/api/bots");
     const bot = created.body.bot;
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).body.bot.autoApprove).toBe(
+    // Auto with the computer OFF needs no warning on any host. (A fresh
+    // bot's default destination is this computer on macOS, so Auto there
+    // would already be the acknowledged grant — AUTOOP2 finding 1 — and
+    // this test is about the explicit "local" path.)
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off", autoApprove: true })).body.bot.autoApprove).toBe(
       true,
     );
 
