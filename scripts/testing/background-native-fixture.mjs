@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { createBackgroundLifecycle } from "../../electron/background-lifecycle.mjs";
+import { rendererOriginArguments } from "../../electron/main-ipc-trust.mjs";
 
 app.setPath("userData",process.env.MURAGE_BACKGROUND_USER_DATA);app.setPath("sessionData",process.env.MURAGE_BACKGROUND_USER_DATA);app.setName("Murage background verification");
 app.on("window-all-closed",()=>{}); // The fixture writes its receipt before its own final quit.
@@ -15,7 +16,8 @@ void app.whenReady().then(async()=>{
 try{
   const root=fileURLToPath(new URL("../../",import.meta.url));
   ipcMain.on("desktop:surface-secret",event=>{event.returnValue="isolated-fixture";});
-  win=new BrowserWindow({width:900,height:760,show:true,webPreferences:{contextIsolation:true,preload:join(root,"electron/preload.cjs")}});
+  // The preload exposes the bridge only on the origin main names (B6, main-ipc-trust.mjs).
+  win=new BrowserWindow({width:900,height:760,show:true,webPreferences:{contextIsolation:true,preload:join(root,"electron/preload.cjs"),additionalArguments:rendererOriginArguments(process.env.MURAGE_BACKGROUND_URL)}});
   lifecycle=createBackgroundLifecycle({platform:process.platform,window:()=>win,loadPreferences:()=>({}),savePreferences:()=>{},
     login:{read:()=>({supported:true,openAtLogin:login}),write:value=>{login=value;loginWrites++;}},
     createTray:open=>{const image=nativeImage.createFromPath(join(root,"electron/resources/app-icon.png"));const resized=image.resize({width:18,height:18});diagnostics.image={empty:image.isEmpty(),size:image.getSize(),trayEmpty:resized.isEmpty(),traySize:resized.getSize()};tray=new Tray(resized);tray.on("click",open);return tray;},

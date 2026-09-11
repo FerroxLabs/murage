@@ -1,6 +1,6 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
@@ -51,7 +51,8 @@ import {
   mainAppPermissionRequestAllowed,
   ownedMainSenderGate,
 } from "./app-permissions.mjs";
-import { mainRendererOrigin } from "./main-trust.mjs";
+import { isOwnedMainSender, mainRendererOrigin } from "./main-trust.mjs";
+import { createMainNavigationGuard, createOwnedMainIpc, rendererOriginArguments } from "./main-ipc-trust.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName } from "./save-file.mjs";
@@ -156,6 +157,21 @@ const browserConnectionStore = createDescriptorStore({
 });
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
+// B6 (S1-T3): every IPC registration in this file goes through the owned-main
+// sender gate. `ipcMain` here is that gate, not Electron's, so a handler added
+// later cannot forget it: another window, a subframe, a detached frame or a
+// navigated-away origin is refused before any listener runs. The recovery
+// window, which checks its own exact file sender, is the one raw registrar.
+const refusedIpcChannels = new Set();
+const ipcMain = createOwnedMainIpc({
+  ipcMain: electronIpcMain,
+  isTrusted: (event) => isOwnedMainSender(event, { window: mainWindow, origin: trustedRendererOrigin() }),
+  onRefused: (channel) => {
+    if (refusedIpcChannels.has(channel)) return;
+    refusedIpcChannels.add(channel);
+    slog(`refused ${channel} from a sender other than the main Murage window`);
+  },
+});
 let backgroundLifecycle=null;
 let unreadCount = 0;
 let unreadOverlayIcon = null;
@@ -1689,7 +1705,7 @@ ipcMain.handle("browser:forget-profile", async (event, partitionId) => {
 
 ipcMain.on("screen:preview-intent", (event) => {
   event.returnValue = displayMediaGuard.begin(event.senderFrame);
-});
+}, { refusedReturnValue: false });
 
 // Synchronous on purpose: the preload reads this once while the page is
 // still loading, so the first `fetch` and the first `EventSource` already
@@ -1698,9 +1714,11 @@ ipcMain.on("screen:preview-intent", (event) => {
 //
 // "" in development — there is no forked child to have sent one, and the dev
 // renderer asks the harness directly instead (GET /api/desktop-secret).
+// Any sender other than the owned window's top frame on the renderer origin
+// gets "" (B6), exactly what a harness-less development renderer sees.
 ipcMain.on("desktop:surface-secret", (event) => {
   event.returnValue = desktopSurfaceSecret;
-});
+}, { refusedReturnValue: "" });
 
 ipcMain.on("desktop:unread-count", (event, value) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
@@ -1722,7 +1740,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
       ? "Another process answered on Murage's ports. Close that process before retrying startup; restoring data will not resolve a port conflict."
       : "Murage could not finish startup. Keep the original installation while you inspect recovery options.";
   const recovery = openInstallationRecoveryWindow({
-    BrowserWindow, ipcMain, dialog, baseDir: __dirname,
+    BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,
     context: { reason, ownership, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     canRestoreSeparate: canRestoreSeparateInstallation,
@@ -1912,6 +1930,8 @@ function createWindow({quiet=false}={}) {
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
+      // The preload exposes the bridge only on this origin (B6).
+      additionalArguments: rendererOriginArguments(trustedRendererOrigin()),
     },
   });
   mainWindow = win;
@@ -1940,6 +1960,17 @@ function createWindow({quiet=false}={}) {
     diagnosticsLogHref: () => (app.isPackaged ? pathToFileURL(path.join(LOG_DIR, "server.log")).href : null),
     warn: (message) => console.warn(`[external-link] ${message}`),
   }));
+  // The privileged preload must never end up on another origin (B6). A link
+  // that would navigate the app away opens in the default browser when it is
+  // a credential-free web address; anything else, and every main-frame
+  // redirect off the renderer origin, is refused.
+  const navigationGuard = createMainNavigationGuard({
+    origin: trustedRendererOrigin,
+    openExternal: (url) => shell.openExternal(url),
+    warn: (message) => console.warn(`[navigation] ${message}`),
+  });
+  win.webContents.on("will-navigate", navigationGuard.willNavigate);
+  win.webContents.on("will-redirect", navigationGuard.willRedirect);
   win.webContents.on("did-finish-load", () => deliverPackageInstall(win));
 
   // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
@@ -2055,6 +2086,8 @@ function createWindow({quiet=false}={}) {
               cuaCrashReason,
               cuaRetryStatus,
               health,
+              desktopSurfaceSecretIssued: typeof window.muragebox.desktopSurfaceSecret === "string"
+                && window.muragebox.desktopSurfaceSecret.length > 0,
               location: window.location.href,
               title: document.title,
             };
@@ -2065,6 +2098,11 @@ function createWindow({quiet=false}={}) {
           throw new Error(
             `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
           );
+        }
+        // B6: the owned-main gate must still issue the secret to the real
+        // renderer's preload, or the app would look like a paired phone.
+        if (!result.desktopSurfaceSecretIssued) {
+          throw new Error("the desktop surface secret was not issued to the owned main window");
         }
         if (process.env.MURAGE_SMOKE_BUNDLED_CUA === "1") {
           const connection = await cuaReady;
@@ -2756,9 +2794,10 @@ const desktopStartup = app.whenReady().then(async () => {
       { useSystemPicker: false },
     );
   }
-  registerCuaIpc();
+  // The owned-main gate above, not Electron's raw ipcMain (B6).
+  registerCuaIpc(ipcMain);
   androidDevice.registerIpc(ipcMain);
-  registerUpdaterIpc();
+  registerUpdaterIpc(ipcMain);
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
