@@ -17,12 +17,27 @@ export interface ClaudeAccount {
  * readable error for the section's alert. It must never reach render: an
  * undefined list threw in `accounts.find`, React unmounted the whole Engines
  * settings tree, and an Enable click landed on a button already gone (RED2F). */
+const readableAccount = (account: unknown): account is ClaudeAccount => Boolean(account) && typeof account === "object"
+  && typeof (account as ClaudeAccount).instanceId === "string" && typeof (account as ClaudeAccount).displayName === "string";
 export function claudeAccountsFrom(payload: unknown): ClaudeAccount[] {
   const accounts = payload && typeof payload === "object" ? (payload as { accounts?: unknown }).accounts : undefined;
-  const readable = Array.isArray(accounts) && accounts.every(account => Boolean(account) && typeof account === "object"
-    && typeof (account as ClaudeAccount).instanceId === "string" && typeof (account as ClaudeAccount).displayName === "string");
-  if (!readable) throw new Error(t("claudeAccounts.listUnreadable"));
-  return accounts as ClaudeAccount[];
+  if (!Array.isArray(accounts) || !accounts.every(readableAccount)) throw new Error(t("claudeAccounts.listUnreadable"));
+  return accounts;
+}
+/** A successful change's own receipt, applied before the list refresh. POST and
+ * PATCH answer with the account after a full engine probe; the refresh that
+ * follows (GET) probes every engine again, and drawing only after it left a
+ * created account missing for seconds under "Account added. Sign in explicitly
+ * below" (CLAC1). An unreadable receipt keeps the drawn list unchanged, so only
+ * a validated body reaches render and the refresh still reconciles it. */
+export function claudeAccountsAfterChange(accounts: ClaudeAccount[], method: string, id: string | undefined, receipt: unknown): ClaudeAccount[] {
+  const body = receipt && typeof receipt === "object" ? receipt as { account?: unknown; removed?: unknown } : {};
+  if (method === "DELETE") return id && body.removed === true ? accounts.filter(account => account.instanceId !== id) : accounts;
+  const account = body.account;
+  if (!readableAccount(account) || (method === "PATCH" && account.instanceId !== id)) return accounts;
+  const index = accounts.findIndex(entry => entry.instanceId === account.instanceId);
+  if (index >= 0) return accounts.map((entry, position) => position === index ? account : entry);
+  return method === "POST" ? [...accounts, account] : accounts;
 }
 const button = "rounded-lg border border-hairline/40 px-3 py-2 text-xs text-ink hover:bg-raised/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
 const input = "mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
@@ -42,8 +57,9 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     if (gate.current) return;
     gate.current = true; setBusy(true); setError(""); setNotice("");
     try {
-      await api(`/api/claude-accounts${id ? `/${encodeURIComponent(id)}` : ""}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const receipt = await api(`/api/claude-accounts${id ? `/${encodeURIComponent(id)}` : ""}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
       setEditing(null); setRemoving(null);
+      setAccounts(current => claudeAccountsAfterChange(current, method, id, receipt));
       setNotice(t(method === "POST" ? "claudeAccounts.added" : method === "DELETE" ? "claudeAccounts.removed" : "claudeAccounts.saved"));
       try { await load(); await onChanged?.(); }
       catch { setError(t("claudeAccounts.refreshError")); }
