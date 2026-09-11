@@ -57,6 +57,8 @@ test.beforeAll(async () => {
           }
           window.fixtureStore = {state,dispatch,refreshInstances};
           const which = new URL(location.href).searchParams.get('component');
+          // CTA1: the connected-apps panel is locked until a key exists; the OAuth fixtures run on the person's own Composio key.
+          if (new URL(location.href).searchParams.get('composio') === 'own') state.config.composio = {mode:'self-hosted',configured:true};
           if (which === 'engines-api') state.instances[0].driverKind = 'openai-compat';
           let element;
           if (which === 'engines' || which === 'engines-api') {
@@ -157,7 +159,7 @@ async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
     }
     return route.fulfill({ json: {} });
   });
-  await page.goto(`${origin}/__capabilities?component=plugins`);
+  await page.goto(`${origin}/__capabilities?component=plugins&composio=own`);
   await expect(page.getByRole("dialog", { name: "Plugins", exact: true })).toBeVisible();
   return fixture;
 }
