@@ -2092,6 +2092,9 @@ describe("harness HTTP API", () => {
       const frame = await events.until(frame => frame.kind === "config" && frame.webSearch?.provider === "exa");
       expect(frame.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true });
       expect(JSON.stringify(frame)).not.toContain(secret);
+      // FOLLOW5: the pushed frame replaces the renderer's config wholesale,
+      // so the harness announcement must ride on it too, not only on the GET.
+      expect(frame.harness).toEqual({ platform: process.platform });
       for (const get of [api, desktopApi]) {
         const visible = await get("GET", "/api/config");
         expect(visible.body.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true });
@@ -4666,6 +4669,12 @@ describe("harness HTTP API", () => {
       expect(bot.computer).toBeUndefined();
       expect(bot.autoApprove).toBeFalsy();
       const mountsThisComputer = process.platform === "darwin";
+      // FOLLOW5: the rule below runs on THIS process's platform, and the
+      // renderer's copy must run on the same one rather than on the
+      // browser's UA (a Linux tab through the browser door on a Mac harness
+      // got a bare 400 and no dialog). The harness announces it on the
+      // config route the renderer already reads at startup, on both doors.
+      for (const get of [api, desktopApi]) expect((await get("GET", "/api/config")).body.harness).toEqual({ platform: process.platform });
       const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
       const blindTask = await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { autoApprove: true });
       const afterBlind = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
