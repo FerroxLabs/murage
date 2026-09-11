@@ -17,6 +17,31 @@ function fixture() {
   writeFileSync(join(workspace, input.relativePath), content);
   return { root, workspace, storage, file, db, access, input, content };
 }
+it("upgrades the 0.1.51 schema idempotently with producer columns and the output receipt table", () => {
+  const root = mkdtempSync(join(tmpdir(), "murage-artifact-schema-")); roots.push(root);
+  const legacy = new DatabaseSync(join(root, "messages.db")); databases.push(legacy);
+  legacy.exec(`CREATE TABLE artifacts (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL, extension TEXT NOT NULL, created_at INTEGER NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
+    source_root TEXT NOT NULL, relative_path TEXT NOT NULL, source_fingerprint TEXT NOT NULL, UNIQUE(bot_id,thread_id,run_id,source_root,relative_path,sha256))`);
+  legacy.prepare("INSERT INTO artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run("0f2a1c3e-1111-4222-8333-944455566677", "old", "text", "text/plain", 1, "a".repeat(64), ".txt", 1, "bot", "thread", "", root, "old.txt", "[]");
+  initializeArtifacts(legacy); initializeArtifacts(legacy);
+  const columns = (legacy.prepare("PRAGMA table_info(artifacts)").all() as Array<{ name: string; notnull: number }>);
+  expect(columns.filter(column => ["producer", "publication_id"].includes(column.name)).map(column => [column.name, column.notnull])).toEqual([["producer", 0], ["publication_id", 0]]);
+  expect(legacy.prepare("SELECT producer, publication_id FROM artifacts").get()).toEqual({ producer: null, publication_id: null });
+  const receipt = legacy.prepare(`INSERT INTO output_publications(id,producer,bot_id,thread_id,run_id,path_token,sha256,mime,bytes,stage,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(producer,bot_id,thread_id,run_id,path_token,sha256) DO NOTHING`);
+  receipt.run("r1", "shell-output", "bot", "thread", "run", "outputs/report.html", "b".repeat(64), "text/html", 10, "retained", 1, 1);
+  receipt.run("r2", "shell-output", "bot", "thread", "run", "outputs/report.html", "b".repeat(64), "text/html", 10, "retained", 2, 2);
+  expect(legacy.prepare("SELECT id, artifact_id, attachment_id, error_category FROM output_publications").all()).toEqual([{ id: "r1", artifact_id: null, attachment_id: null, error_category: null }]);
+});
+it("reports only a recognized trusted producer on saved rows", () => {
+  const f = fixture(), saved = registerArtifact(f.db, f.storage, f.input, f.access);
+  expect(saved.producer).toBeUndefined();
+  f.db.prepare("UPDATE artifacts SET producer='shell-output' WHERE id=?").run(saved.id);
+  expect(describeArtifact(f.db, f.storage, saved.id, f.access).producer).toBe("shell-output");
+  f.db.prepare("UPDATE artifacts SET producer='invented' WHERE id=?").run(saved.id);
+  expect(describeArtifact(f.db, f.storage, saved.id, f.access).producer).toBeUndefined();
+});
 it("verifies real bytes, stores one immutable copy and returns the same identity on duplicate registration", () => {
   const f = fixture(), saved = registerArtifact(f.db, f.storage, f.input, f.access);
   expect(saved).toMatchObject({ name: "Weekly report", filename: "Weekly report.html", botId: "bot", threadId: "thread", runId: "run", sourceState: "current", savedState: "available" });
