@@ -4057,6 +4057,18 @@ describe("harness HTTP API", () => {
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       )?.busy).toBe(true);
+      // busy is set at dispatch, before the provider accepts the turn. A new
+      // task changes the bot's thread set, which the memory roster policy
+      // treats as a revocation (p02: "existing-task" still revokes), so a
+      // task created inside that window refuses the sibling turn at
+      // acceptance and it settles. The task record's lastInstanceId is
+      // written only after acceptance: wait for it before admitting the task.
+      await expect.poll(() => {
+        try {
+          const bots = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")) as Array<{ id: string; tasks?: Array<{ threadId: string; lastInstanceId?: string }> }>;
+          return bots.find((candidate) => candidate.id === bot.id)?.tasks?.find((task) => task.threadId === before.threadId)?.lastInstanceId;
+        } catch { return undefined; }
+      }, { timeout: 5_000 }).toBe("claude");
       const admitted = await held.finish();
       expect(admitted.status).toBe(201);
       expect(admitted.body.task).toMatchObject({ title: "Delayed task", busy: false });
@@ -8225,6 +8237,14 @@ describe("internal capability authority", () => {
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
         .find((candidate: { id: string }) => candidate.id === bot.id)?.busy,
       { timeout: 5_000 }).toBe(false);
+      // Idle is not teardown for the Claude driver: interrupt releases the
+      // run as soon as the kill is requested (A2 kept Claude's retained
+      // sessions on that contract), and the child's close still appends its
+      // "claude exited … before result" chip afterwards. That chip is the
+      // fixture's deterministic end of teardown, so measure only after it.
+      await expect.poll(async () => (await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`)).body.messages
+        .some((message: { kind: string; tool?: { name?: string } }) => message.kind === "activity" && message.tool?.name?.startsWith("error: claude exited")),
+      { timeout: 5_000 }).toBe(true);
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
       expect(response.status).toBe(401);

@@ -6865,9 +6865,18 @@ async function reloadProviders() {
     directRuns.release(run);clearDirectTurnDispatch(run.threadId,run.generation);
     if(screenPollers.get(run.botId)?.threadId===run.threadId)stopScreenPoller(run.botId);
     releaseLocalVmThread(run.threadId);
+    if(activeVpsThreads.get(run.botId)===run.threadId)activeVpsThreads.delete(run.botId);
     recordMemorySettlement(run.threadId,run.generation,"interrupted");
+    // A retired direct run may be a delegated turn. No turn.completed will
+    // follow from the disposed fleet, and the bot is already idle by the time
+    // the aggregate sweep below runs, so its receipt, channel chip and
+    // coordination slot settle here — a slot left behind would count against
+    // MAX_CONCURRENT_HANDOFFS for the life of the process.
+    finalizeDelegationWatch(run.threadId,false,"","Delegated turn did not finish — provider settings changed");
+    coordinationSlots.get(run.threadId)?.();
     store.setTaskActivity(run.botId,run.threadId,"idle");
     store.appendMessage(run.threadId,{role:"bot",kind:"activity",tool:{name:"error: turn interrupted because provider settings changed",ok:false}});
+    retryDelegationsWaitingOn(run.botId);
   }
   await registry.load(instanceConfigs(cfg));
   bus.attach(registry.instances());
