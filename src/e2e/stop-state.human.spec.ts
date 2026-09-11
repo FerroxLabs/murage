@@ -80,6 +80,17 @@ async function open(page: Page, name: string) {
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
   if (await invitation.count()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
 }
+/** Pick a task thread and wait until the renderer has switched to it. The
+ * composer is keyed on the bot's current thread, so text typed before the
+ * switch lands is discarded with the old composer and Enter sends nothing;
+ * the picker's label reads the same thread id, so once it shows the title
+ * the composer on screen is the new thread's. */
+async function selectThread(page: Page, title: string) {
+  const picker = page.getByRole("button", { name: "All threads", exact: true });
+  await picker.click();
+  await page.getByRole("button", { name: new RegExp(`^${title}`) }).click();
+  await expect(picker).toContainText(title);
+}
 async function expectNormalStoppedState(page: Page, composer: string, threadId: string) {
   await expect(page.getByRole("button", { name: "Stop this turn", exact: true })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: composer, exact: true })).toBeEnabled();
@@ -91,8 +102,7 @@ async function expectNormalStoppedState(page: Page, composer: string, threadId: 
 
 test("Stop on a running Claude chat turn shows the normal stopped state, not an error card", async ({ page }, info) => {
   await open(page, BOT);
-  await page.getByRole("button", { name: "All threads", exact: true }).click();
-  await page.getByRole("button", { name: new RegExp(`^${TASK}`) }).click();
+  await selectThread(page, TASK);
   const composer = `Message ${BOT}`;
   const text = "__fixture_hold_authority__ STOP1 chat request";
   rmSync(fixture.fixtureDumpPath, { force: true });
@@ -144,8 +154,7 @@ test("a host stop shows why the turn ended in a 1:1 thread with Tool calls off",
   // Tool calls stays at its default (off): the row must not depend on it.
   expect((await api("GET", "/api/config")).features?.showToolCalls).not.toBe(true);
   await open(page, BOT);
-  await page.getByRole("button", { name: "All threads", exact: true }).click();
-  await page.getByRole("button", { name: new RegExp(`^${HOST_TASK}`) }).click();
+  await selectThread(page, HOST_TASK);
   const composer = `Message ${BOT}`;
   const text = "__fixture_hold_authority__ STOP2 host stop request";
   rmSync(fixture.fixtureDumpPath, { force: true });
