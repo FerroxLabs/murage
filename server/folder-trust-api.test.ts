@@ -15,7 +15,7 @@
 //      skip remembers nothing.
 //
 // Same server-spawn pattern as engine-questions-api.test.ts.
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -63,6 +63,11 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
   mkdirSync(join(homeDir, ".murage"), { recursive: true });
   mkdirSync(join(homeDir, ".fuigo"), { recursive: true });
   writeFileSync(join(homeDir, ".fuigo", "auth.json"), "{}");
+  // FUIGOTRUST3 (4): a second Fuigo install with its own FUIGO_HOME (and so
+  // its own trusted_folders.toml), the way an instance configured with an
+  // environment override runs
+  mkdirSync(join(homeDir, "other-fuigo-home"), { recursive: true });
+  writeFileSync(join(homeDir, "other-fuigo-home", "auth.json"), "{}");
   const dumpFile = join(homeDir, "fake-acp-dump.json");
   writeFileSync(
     join(homeDir, ".murage", "config.json"),
@@ -71,6 +76,7 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       instances: {
         fuigo: { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile }, config: { cli: FAKE_ACP, fullAuto: false } },
         "fuigo-late": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile, FAKE_ACP_TRUST_PROMPT_FIRST: "1" }, config: { cli: FAKE_ACP, fullAuto: false } },
+        "fuigo-other-home": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile, FUIGO_HOME: join(homeDir, "other-fuigo-home") }, config: { cli: FAKE_ACP, fullAuto: false } },
       },
     }),
   );
@@ -187,7 +193,9 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     // nothing was spawned while the card waits — no argv dump yet
     expect(existsSync(dump)).toBe(false);
     // auto mode did not answer it, and it is logged as a card a rule may not answer
-    expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "card-shown" && row.source === "question")).toBe(true);
+    // (the decision log is an async queued append — decision-log.ts `drain` —
+    // so the row can land a moment after the card is visible)
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "card-shown" && row.source === "question"), { timeout: 5_000 }).toBe(true);
 
     // a companion surface (no desktop proof) cannot decide trust
     const companion = await answerTrust(bot, card.card.requestId, "Trust this folder", {});
@@ -202,7 +210,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect(await botText(bot.threadId)).toContain("canary-card-osprey");
     expect(readDump().argv).toContain("--trust");
     expect(await trustRecord(workspace)).toMatchObject({ record: { decision: "trust", source: "card" } });
-    expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-trusted" && row.source === "user")).toBe(true);
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-trusted" && row.source === "user"), { timeout: 5_000 }).toBe(true);
     const settledCard = (await messages(bot.threadId)).find((m) => m.card?.requestId === card.card.requestId)!;
     expect(settledCard.card).toMatchObject({ answered: "answer", answers: [{ id: "folderTrust", selected: ["Trust this folder"] }] });
 
@@ -232,7 +240,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect(await activities(bot.threadId)).toContain("untrusted folder: AGENTS.md, .fuigo/skills");
     expect((await activities(bot.threadId)).filter((name) => name.startsWith("error:"))).toEqual([]);
     expect(await trustRecord(workspace)).toMatchObject({ record: { decision: "reject", source: "card" } });
-    expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-untrusted")).toBe(true);
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-untrusted"), { timeout: 5_000 }).toBe(true);
 
     // remembered: the next turn gets the chip, not a card
     await send(bot, "again");
@@ -292,6 +300,90 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject", source: "card" } });
     } finally {
       rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
+    }
+  });
+
+  // FUIGOTRUST3 (2): Murage's own release lanes are linked git worktrees; a
+  // standalone `fuigo --trust` on the main checkout covers them, and so
+  // must the picker note and the turn
+  it("(2b) a bot in a linked git worktree runs under the main checkout's standalone grant: the picker says upstream, no card, no --trust, no chip, AGENTS.md read", async () => {
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: home } });
+    const main = join(home, "main-checkout");
+    mkdirSync(main, { recursive: true });
+    git(main, "init", "-q", ".");
+    git(main, "commit", "-q", "--allow-empty", "-m", "init");
+    const lane = join(home, "lane-worktree");
+    git(main, "worktree", "add", "-q", "-b", "lane", lane);
+    writeFileSync(join(lane, "AGENTS.md"), "# lane\ncanary-worktree-heron\n");
+    const bot = await makeBot("Worktree bot");
+    // picked, then forgotten: Murage has no record of its own and would
+    // raise the card for the worktree's AGENTS.md — but the user's own
+    // Fuigo trusts the main checkout, which the engine keys the worktree on
+    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(main)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    try {
+      expect((await request("PATCH", `/api/bots/${bot.id}`, { cwd: lane })).status).toBe(200);
+      // the picker recorded the worktree under the main checkout's key
+      expect(await trustRecord(main)).toMatchObject({ record: { decision: "trust", source: "picker" } });
+      expect((await request("DELETE", `/api/folder-trust?folder=${encodeURIComponent(lane)}`)).status).toBe(200);
+      expect((await trustRecord(main)).record).toBeNull();
+      // the picker note: the worktree keys on the main checkout, which the
+      // user's own Fuigo trusts
+      const status = await trustRecord(lane);
+      expect(status).toMatchObject({ key: realpathSync.native(main), folder: realpathSync.native(lane), sources: ["AGENTS.md"], gated: true, upstreamTrusted: true });
+      await send(bot);
+      await settled(bot);
+      expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(0);
+      expect(await botText(bot.threadId)).toContain("canary-worktree-heron");
+      expect(await activities(bot.threadId)).not.toContain("untrusted folder: AGENTS.md");
+      const wire = readDump();
+      expect(wire.argv).not.toContain("--trust");
+      expect(wire.folderTrust, JSON.stringify(wire)).toMatchObject({ trustedAtBuild: true, requested: false });
+      expect((await trustRecord(lane)).record).toBeNull();
+    } finally {
+      rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
+    }
+  });
+
+  // FUIGOTRUST3 (4): the picker note reads the store of the bot's OWN
+  // instance, not the first Fuigo install's
+  it("(4) GET /api/folder-trust?bot= reads the trusted_folders.toml of that bot's instance; without a bot, the first Fuigo instance's", async () => {
+    const project = join(home, "two-homes-project");
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, "AGENTS.md"), "# two homes\n");
+    const first = await makeBot("First-home bot", "fuigo");
+    const other = await makeBot("Other-home bot", "fuigo-other-home");
+    const status = (folder: string, botId?: string) => request("GET", `/api/folder-trust?folder=${encodeURIComponent(folder)}${botId ? `&bot=${botId}` : ""}`);
+    // only the OTHER install trusts the folder
+    writeFileSync(join(home, "other-fuigo-home", "trusted_folders.toml"), `[folders."${realpathSync.native(project)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    try {
+      expect((await status(project)).body).toMatchObject({ upstreamTrusted: false });
+      expect((await status(project, first.id)).body).toMatchObject({ upstreamTrusted: false });
+      expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: true, sources: ["AGENTS.md"] });
+      // and the other way round: only the FIRST install trusts it
+      rmSync(join(home, "other-fuigo-home", "trusted_folders.toml"), { force: true });
+      writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(project)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+      expect((await status(project)).body).toMatchObject({ upstreamTrusted: true });
+      expect((await status(project, first.id)).body).toMatchObject({ upstreamTrusted: true });
+      expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: false });
+      // an unknown bot is an error, not silently the first install
+      expect((await status(project, "no-such-bot")).status).toBe(404);
+      // the note under the other bot's picker matches what its turn does:
+      // its engine's store does not trust the folder, so (picked, then
+      // forgotten) the card is raised
+      expect((await request("PATCH", `/api/bots/${other.id}`, { cwd: project })).status).toBe(200);
+      expect((await request("DELETE", `/api/folder-trust?folder=${encodeURIComponent(project)}`)).status).toBe(200);
+      expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: false, record: null });
+      await send(other);
+      await expect.poll(async () => Boolean(await openTrustCard(other.threadId)), { timeout: 20_000 }).toBe(true);
+      const card = (await openTrustCard(other.threadId))!;
+      expect((await answerTrust(other, card.card.requestId, "Don't trust")).status).toBe(200);
+      await settled(other);
+      expect(readDump().argv).not.toContain("--trust");
+      expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: false, record: { decision: "reject" } });
+    } finally {
+      rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
+      rmSync(join(home, "other-fuigo-home", "trusted_folders.toml"), { force: true });
     }
   });
 

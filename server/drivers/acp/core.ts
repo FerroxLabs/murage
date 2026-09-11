@@ -524,7 +524,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let child: ReturnType<typeof spawnCli> | null = null;
         let teardown: ReturnType<TurnTeardowns["track"]> | null = null;
         let spawned = false;
-        const state = { settled: false, finished: false, promptSent: false, cancelRequested: false, text: "" };
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "" };
         const asks = new Map<string, AcpAskFinish>();
         let nextId = 1;
         let sessionId: string | null = null;
@@ -596,6 +596,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (state.settled) return;
           state.settled = true;
           state.finished = ok && stopReason === null;
+          state.failed = !ok;
           lifecycle.record("turn_settled", {
             reason: cause,
             settled: true,
@@ -727,8 +728,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // FUIGOTRUST2 (6): a late card (the engine had already started)
             // closed by nobody: the turn finished, was stopped, or the ask
             // timed out while the turn ran on — untrusted in every case.
+            // FUIGOTRUST3 (3): a turn that FAILED (spawn or rpc error, an
+            // early exit) is named as such, not as stopped.
             const folderTrustLate = late && source !== "user"
-              ? source === "timeout" ? "timeout" : state.finished ? "finished" : "stopped"
+              ? source === "timeout" ? "timeout" : state.finished ? "finished" : state.failed ? "failed" : "stopped"
               : undefined;
             emit({
               ...base(threadId, turnId),
@@ -770,12 +773,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const params = raw.params && typeof raw.params === "object" ? raw.params : raw;
           const reply = (decision: FolderTrustDecision | "skipped") =>
             send({ jsonrpc: "2.0", id: msg.id, result: { outcome: decision === "trust" ? "trust" : "reject" } });
-          // the user's own Fuigo store trusts the folder (FUIGOTRUST2): the
-          // engine would not ask, but if it does the answer is its own
-          if (upstreamTrusted) return reply("trust");
-          if (folderTrusted) return reply(folderTrusted);
           const kinds = Array.isArray(params.configKinds) ? params.configKinds : [];
           const sources = folderSources().length ? folderSources() : folderTrustKindNames(kinds);
+          // FUIGOTRUST3 (1): the engine asks ONLY when its own store did not
+          // trust the folder, so a request on an `upstreamTrusted` turn means
+          // Murage's reading of trusted_folders.toml and the engine's
+          // disagree (a hand-edited document Murage's parser accepts but the
+          // engine's rejects). The engine's reading is the one that runs;
+          // a grant is never given on Murage's reading alone — the owner's
+          // own record answers, else the owner is asked now.
+          if (folderTrusted) {
+            reply(folderTrusted);
+            // the turn runs untrusted after all: the chip `upstreamTrusted`
+            // suppressed before the spawn is owed now
+            if (upstreamTrusted && folderTrusted === "reject" && sources.length && !state.settled) noteFolderTrust(folderTrustWithheldName(sources));
+            return;
+          }
           flushAssistantText();
           askFolderTrust(sources, (decision) => {
             folderTrusted = decision === "trust" || decision === "reject" ? decision : "skipped";

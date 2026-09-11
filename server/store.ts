@@ -87,7 +87,7 @@ export interface OptionCardData {
    * `late` (FUIGOTRUST2): a card raised from the engine's own request after
    * it had started, closed by nobody — the turn `finished`, was `stopped`,
    * or the ask hit its `timeout` — and so ran untrusted. */
-  folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "timeout" };
+  folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: RoutineRequestCardData;

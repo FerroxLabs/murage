@@ -558,6 +558,7 @@
   "folderTrust.expiredNote": "Niemand hat rechtzeitig entschieden, daher wurde dieser Zug gestoppt. Senden Sie die Nachricht erneut, um noch einmal gefragt zu werden.",
   "folderTrust.lateFinishedNote": "Der Zug wurde beendet, bevor jemand geantwortet hat, daher lief er ohne die Dateien dieses Ordners. Senden Sie eine weitere Nachricht, um erneut gefragt zu werden.",
   "folderTrust.lateStoppedNote": "Der Zug wurde gestoppt, bevor jemand geantwortet hat; er lief bis dahin ohne die Dateien dieses Ordners. Senden Sie eine weitere Nachricht, um erneut gefragt zu werden.",
+  "folderTrust.lateFailedNote": "Der Zug ist fehlgeschlagen, bevor jemand geantwortet hat; er lief bis dahin ohne die Dateien dieses Ordners. Senden Sie eine weitere Nachricht, um erneut gefragt zu werden.",
   "folderTrust.lateTimeoutNote": "Niemand hat während des Zugs geantwortet, daher lief er ohne die Dateien dieses Ordners. Senden Sie eine weitere Nachricht, um erneut gefragt zu werden.",
   "folderTrust.pickerNote": "Ein hier ausgewählter Ordner gilt als vertrauenswürdig: Seine AGENTS.md, CLAUDE.md, .mcp.json und Skills gelten für die Züge des Bots.",
   "folderTrust.statusTrusted": "Vertrauenswürdig",

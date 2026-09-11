@@ -558,6 +558,7 @@
   "folderTrust.expiredNote": "Nobody decided in time, so this turn was stopped. Send the message again to be asked.",
   "folderTrust.lateFinishedNote": "The turn finished before anyone answered, so it ran without this folder's files. Send another message to be asked again.",
   "folderTrust.lateStoppedNote": "The turn was stopped before anyone answered; it had been running without this folder's files. Send another message to be asked again.",
+  "folderTrust.lateFailedNote": "The turn failed before anyone answered; it had been running without this folder's files. Send another message to be asked again.",
   "folderTrust.lateTimeoutNote": "Nobody answered while the turn was running, so it ran without this folder's files. Send another message to be asked again.",
   "folderTrust.pickerNote": "A folder you choose here is trusted: its AGENTS.md, CLAUDE.md, .mcp.json and skills apply to the bot's turns.",
   "folderTrust.statusTrusted": "Trusted",

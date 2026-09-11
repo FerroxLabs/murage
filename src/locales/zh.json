@@ -558,6 +558,7 @@
   "folderTrust.expiredNote": "无人及时做出决定，因此本回合已停止。请重新发送消息以再次收到询问。",
   "folderTrust.lateFinishedNote": "本回合在有人回答之前已经结束，因此运行时未使用此文件夹的文件。请发送另一条消息以再次收到询问。",
   "folderTrust.lateStoppedNote": "本回合在有人回答之前已被停止；此前它一直在未使用此文件夹文件的情况下运行。请发送另一条消息以再次收到询问。",
+  "folderTrust.lateFailedNote": "本回合在有人回答之前已失败；此前它一直在未使用此文件夹文件的情况下运行。请发送另一条消息以再次收到询问。",
   "folderTrust.lateTimeoutNote": "本回合运行期间无人回答，因此运行时未使用此文件夹的文件。请发送另一条消息以再次收到询问。",
   "folderTrust.pickerNote": "你在此选择的文件夹将被视为受信任：其 AGENTS.md、CLAUDE.md、.mcp.json 和技能将应用于机器人的回合。",
   "folderTrust.statusTrusted": "已信任",

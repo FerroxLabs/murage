@@ -558,6 +558,7 @@
   "folderTrust.expiredNote": "Nadie decidió a tiempo, así que este turno se detuvo. Envía el mensaje de nuevo para que se te pregunte.",
   "folderTrust.lateFinishedNote": "El turno terminó antes de que alguien respondiera, así que se ejecutó sin los archivos de esta carpeta. Envía otro mensaje para que se te pregunte de nuevo.",
   "folderTrust.lateStoppedNote": "El turno se detuvo antes de que alguien respondiera; se había estado ejecutando sin los archivos de esta carpeta. Envía otro mensaje para que se te pregunte de nuevo.",
+  "folderTrust.lateFailedNote": "El turno falló antes de que alguien respondiera; se había estado ejecutando sin los archivos de esta carpeta. Envía otro mensaje para que se te pregunte de nuevo.",
   "folderTrust.lateTimeoutNote": "Nadie respondió mientras el turno se ejecutaba, así que se ejecutó sin los archivos de esta carpeta. Envía otro mensaje para que se te pregunte de nuevo.",
   "folderTrust.pickerNote": "Una carpeta que elijas aquí es de confianza: sus AGENTS.md, CLAUDE.md, .mcp.json y habilidades se aplican a los turnos del bot.",
   "folderTrust.statusTrusted": "De confianza",
