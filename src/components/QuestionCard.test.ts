@@ -346,6 +346,17 @@ describe("the folder-trust card", () => {
     expect(markup).toMatch(/role="radio"[^>]*disabled=""/);
   });
 
+  it("a late trust card closed by the turn itself says the turn ran untrusted — finished, stopped or timed out — never 'stopped because nobody decided'", () => {
+    const finished = render(trustCard({ answered: "expired", expired: true, folderTrust: { key: "/repo", folder: "/repo", sources: ["AGENTS.md / CLAUDE.md"], late: "finished" } }));
+    expect(finished).toContain("The turn finished before anyone answered, so it ran without this folder&#x27;s files.");
+    expect(finished).not.toContain("so this turn was stopped");
+    expect(finished).not.toContain("Send as a message");
+    const stopped = render(trustCard({ answered: "expired", expired: true, folderTrust: { key: "/repo", folder: "/repo", sources: ["AGENTS.md"], late: "stopped" } }));
+    expect(stopped).toContain("The turn was stopped before anyone answered; it had been running without this folder&#x27;s files.");
+    const timeout = render(trustCard({ answered: "expired", expired: true, folderTrust: { key: "/repo", folder: "/repo", sources: ["AGENTS.md"], late: "timeout" } }));
+    expect(timeout).toContain("Nobody answered while the turn was running, so it ran without this folder&#x27;s files.");
+  });
+
   it("shows the decision read-only once made", () => {
     const answered = render(trustCard({ answered: "answer", answers: [{ id: "folderTrust", selected: ["Don't trust"] }] }));
     expect(answered).toContain('data-question-state="answered"');

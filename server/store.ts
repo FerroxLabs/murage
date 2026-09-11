@@ -83,8 +83,11 @@ export interface OptionCardData {
    * an expired one of these stays in the Inbox as needing the owner. */
   unattended?: boolean;
   /** 0.1.52 FUIGOTRUST1: this question decides trust for a folder (shared/
-   * folder-trust.ts). Its answer is recorded for the folder's trust key. */
-  folderTrust?: { key: string; folder: string; sources: string[] };
+   * folder-trust.ts). Its answer is recorded for the folder's trust key.
+   * `late` (FUIGOTRUST2): a card raised from the engine's own request after
+   * it had started, closed by nobody — the turn `finished`, was `stopped`,
+   * or the ask hit its `timeout` — and so ran untrusted. */
+  folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "timeout" };
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: RoutineRequestCardData;

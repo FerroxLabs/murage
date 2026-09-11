@@ -7,7 +7,11 @@ import { t } from "@/lib/i18n";
 interface FolderTrustStatus {
   gated: boolean;
   sources: string[];
-  record: { decision: "trust" | "reject"; decidedAt: number; source: "picker" | "card" } | null;
+  record: { decision: "trust" | "reject"; decidedAt: number; source: "picker" | "card" | "upgrade" } | null;
+  /** The user's own Fuigo install trusts this workspace (its
+   * trusted_folders.toml): the engine applies the folder's files whatever
+   * Murage remembers, so the note says so instead of a Murage decision. */
+  upstreamTrusted?: boolean;
 }
 
 /** The one line under a working-folder picker (FUIGOTRUST1): a folder chosen
@@ -52,21 +56,24 @@ export function FolderTrustNote({ folder }: { folder: string | undefined }) {
   };
 
   const record = status?.record ?? null;
+  const upstream = status?.upstreamTrusted === true;
   const statusLabel = !status || !folder
     ? null
-    : !status.gated || (!status.sources.length && !record)
+    : !status.gated || (!status.sources.length && !record && !upstream)
       ? t("folderTrust.statusNothing")
-      : record
-        ? record.decision === "trust" ? t("folderTrust.statusTrusted") : t("folderTrust.statusUntrusted")
-        : t("folderTrust.statusUndecided");
+      : upstream
+        ? t("folderTrust.statusUpstream")
+        : record
+          ? record.decision === "trust" ? t("folderTrust.statusTrusted") : t("folderTrust.statusUntrusted")
+          : t("folderTrust.statusUndecided");
 
   return (
     <div className="mt-2 text-[12px] text-ink-secondary" data-testid="folder-trust-note">
       <div>{t("folderTrust.pickerNote")}</div>
       {statusLabel && (
-        <div className="mt-1 flex flex-wrap items-center gap-1.5" data-folder-trust-status={record?.decision ?? (status?.gated ? "undecided" : "none")}>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5" data-folder-trust-status={upstream ? "upstream" : record?.decision ?? (status?.gated ? "undecided" : "none")}>
           <span className="inline-flex items-center gap-1">
-            {record?.decision === "reject" ? <ShieldOff size={12} aria-hidden /> : <ShieldCheck size={12} aria-hidden />}
+            {record?.decision === "reject" && !upstream ? <ShieldOff size={12} aria-hidden /> : <ShieldCheck size={12} aria-hidden />}
             {statusLabel}
           </span>
           {status?.sources.length ? <span className="font-mono text-[11.5px]">{status.sources.join(", ")}</span> : null}

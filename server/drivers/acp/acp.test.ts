@@ -6,13 +6,14 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly —
 // resolveCliSpawn turns it into `node <script>`, so these run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
+import type { ProviderTurnRoute } from "../../provider-routing.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
@@ -1979,6 +1980,173 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
     expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(existsSync(dump)).toBe(false);
+  });
+
+  // ── FUIGOTRUST2 follow-ups ──────────────────────────────────────────────
+
+  // (1) a provider-routed turn binds a per-turn temp FUIGO_HOME under
+  // <DATA_DIR>/native/provider-turns before the card; the close handler that
+  // removes it only exists once a child was spawned.
+  const providerTurnsDir = () => join(NATIVE_DIR, "provider-turns");
+  const providerTurnHomes = () => (existsSync(providerTurnsDir()) ? readdirSync(providerTurnsDir()).filter((n) => n.startsWith("fuigoAgent-")) : []);
+  const routedDriver = createAcpDriver({
+    ...SELECT_MODEL_SUPPORT,
+    driverKind: "fuigoAgent",
+    selectModel: undefined,
+    folderTrust: true,
+    spawnArgs: (_config, _turn, ctx) => [...(ctx?.folderTrusted ? ["--trust"] : []), "agent", "stdio"],
+  });
+  const route: ProviderTurnRoute = { connectionId: "conn-1", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:9/v1", apiKey: "k", model: "m", revision: "r1" };
+
+  it("a Stop while the card is open removes the routed turn's temporary FUIGO_HOME (nothing was spawned to clean it up)", async () => {
+    await create(routedDriver);
+    const before = providerTurnHomes();
+    await instance.adapter.sendTurn({
+      threadId: "t-routed-stop",
+      text: "go",
+      cwd: folder,
+      providerRoute: route,
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+    });
+    await recorder.until((e) => e.type === "request.opened");
+    // the binding exists while the card waits
+    expect(providerTurnHomes().length).toBe(before.length + 1);
+    await expect(instance.adapter.interruptTurn("t-routed-stop")).resolves.toEqual({ closeConfirmed: true });
+    expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(providerTurnHomes()).toEqual(before);
+    expect(existsSync(dump)).toBe(false);
+  });
+
+  it("a card nobody answers removes the routed turn's temporary FUIGO_HOME too", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await create(routedDriver);
+      const before = providerTurnHomes();
+      await instance.adapter.sendTurn({
+        threadId: "t-routed-timeout",
+        text: "go",
+        cwd: folder,
+        providerRoute: route,
+        folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+      });
+      expect(providerTurnHomes().length).toBe(before.length + 1);
+      vi.advanceTimersByTime(QUESTION_TIMEOUT_MS);
+      expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(providerTurnHomes()).toEqual(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a launch that fails after the card is answered removes the temporary FUIGO_HOME", async () => {
+    await create(routedDriver);
+    const before = providerTurnHomes();
+    await instance.adapter.sendTurn({
+      threadId: "t-routed-throw",
+      text: "go",
+      cwd: folder,
+      providerRoute: route,
+      folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
+    });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(providerTurnHomes().length).toBe(before.length + 1);
+    // the cwd vanishes before the answer: the spawn fails (ENOENT) after
+    // the card, the turn fails as spawn_error, and the binding still goes
+    await removeTempDir(folder);
+    mkdirSync(scratch, { recursive: true });
+    await expect(answer("t-routed-throw", (opened as any).requestId, "Trust this folder")).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "spawn_error" });
+    await expect.poll(() => providerTurnHomes(), { timeout: 5_000 }).toEqual(before);
+  });
+
+  // (2) the user's own Fuigo store already trusts the folder: the engine
+  // answers Trusted from it before it asks, so Murage neither asks nor
+  // claims "untrusted" — whatever its own record says.
+  it("an upstream-trusted folder never sees a card and never a withheld chip, even over a Murage 'Don't trust'", async () => {
+    await create();
+    // the fake honours <FUIGO_HOME>/trusted_folders.toml like the engine
+    const fuigoHome = join(scratch, "fuigo-home");
+    mkdirSync(fuigoHome, { recursive: true });
+    // the engine stores canonical keys (realpath), never the spelling it was given
+    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders."${realpathSync.native(folder)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    process.env.FUIGO_HOME = fuigoHome;
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "t-upstream",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, sources: ["AGENTS.md"], upstreamTrusted: true },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+      expect(assistantText()).toContain(CANARY);
+      const wire = readDump();
+      // no --trust: the engine's own store speaks; Murage rewrites nothing
+      expect(wire.argv).toEqual(["agent", "stdio"]);
+      expect(wire.folderTrust).toMatchObject({ trustedAtBuild: true, requested: false });
+      expect(chips()).toEqual([]);
+
+      recorder.stop();
+      recorder = recordEvents(instance.adapter);
+      await instance.adapter.sendTurn({
+        threadId: "t-upstream-reject",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, decision: "reject", sources: ["AGENTS.md"], upstreamTrusted: true },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+      // the turn ran trusted (the engine's store), so no "untrusted folder" chip may claim otherwise
+      expect(assistantText()).toContain(CANARY);
+      expect(chips()).toEqual([]);
+    } finally {
+      delete process.env.FUIGO_HOME;
+    }
+  });
+
+  // (6) the late-request path when the turn completes before anyone answers
+  it("late request, turn finishes first: the card closes as finished-untrusted and the withheld chip names what the engine asked about", async () => {
+    process.env.FAKE_ACP_TRUST_PROMPT_FIRST = "1";
+    try {
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({
+        threadId: "t-late-finished",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, sources: [] },
+      });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({ tool: "folder_trust", folderTrust: { sources: ["AGENTS.md / CLAUDE.md"] } });
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ turnId, ok: true, stopReason: null });
+      // the ask was closed by the turn's own end, and says so
+      expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system", folderTrustLate: "finished" });
+      expect(assistantText()).toBe("agents: withheld");
+      expect(chips()).toEqual(["untrusted folder: AGENTS.md / CLAUDE.md"]);
+      // the chip is inside the turn, before turn.completed
+      const chipAt = recorder.events.findIndex((e) => e.type === "item.started");
+      const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
+      expect(chipAt).toBeGreaterThan(-1);
+      expect(chipAt).toBeLessThan(doneAt);
+      expect(readDump().decision).toEqual({ outcome: "reject" });
+    } finally {
+      delete process.env.FAKE_ACP_TRUST_PROMPT_FIRST;
+    }
+  });
+
+  it("late request, Stop before anyone answers: the card closes as stopped-untrusted with the withheld chip", async () => {
+    await create();
+    await instance.adapter.sendTurn({
+      threadId: "t-late-stopped",
+      text: "go",
+      cwd: folder,
+      folderTrust: { key: folder, folder, sources: [] },
+    });
+    await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.interruptTurn("t-late-stopped");
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system", folderTrustLate: "stopped" });
+    expect(chips()).toEqual(["untrusted folder: AGENTS.md / CLAUDE.md"]);
   });
 
   it("a driver whose engine does not gate folders ignores the record: no card, no capability, no --trust", async () => {
