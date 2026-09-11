@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/state/store";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 import { t } from "@/lib/i18n";
@@ -42,13 +42,22 @@ export function artifactPreviewHtml(content: string) {
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer">${template.innerHTML}`;
 }
 
-export function ArtifactCard({ artifact, busy, onPreview, onDownload, onSource, onNativeAction, onOpenHere }: {
-  artifact: Artifact; busy?: boolean; onPreview: () => void; onDownload: () => void;
+export function ArtifactCard({ artifact, busy, onPreview, onDownload, onSource, onNativeAction, onOpenHere, inline, inlineNote }: {
+  artifact: Artifact; busy?: boolean;
+  /** What Preview does. Absent when the card already shows the thing
+   * (INLINE1): a card with the image, player or document in it offers no
+   * Preview button at all. */
+  onPreview?: () => void; onDownload: () => void;
   onSource?: () => void; onNativeAction?: NativeAction;
   /** Open the WORKING file this saved version came from, beside the chat
    * (F4-T3). Offered only while the original is still current: the pane
    * shows the live file, not the saved bytes. */
   onOpenHere?: () => void;
+  /** Content embedded in the card between its metadata and its buttons
+   * (INLINE1): the image, the player or the bounded document. */
+  inline?: ReactNode;
+  /** One sentence under the buttons, e.g. why the inline preview is absent. */
+  inlineNote?: string;
 }) {
   const available = artifact.savedState === "available";
   const native = (action: "open" | "reveal") => {
@@ -62,14 +71,16 @@ export function ArtifactCard({ artifact, busy, onPreview, onDownload, onSource, 
     {artifact.sourceState !== "current" && <p className="mt-2 text-[12px] text-ink-secondary">{artifact.sourceState === "missing" ? "Original file is missing." : artifact.sourceState === "changed" ? "Original file has changed." : "Original location is unavailable."} The saved version is retained.</p>}
     {!available && <p role="status" className="mt-2 text-[12px] text-danger">Saved copy is unavailable. Register the original again if it is still available.</p>}
     {!artifact.sourceConversationAvailable && <p className="mt-2 text-[12px] text-ink-secondary">The source conversation is no longer available. The file remains saved.</p>}
+    {inline && <div className="mt-3 min-w-0" data-artifact-inline-slot="">{inline}</div>}
     <div className="mt-3 flex flex-wrap gap-2">
-      {artifact.kind !== "other" && <button className={button} disabled={busy || !available} onClick={onPreview}>Preview</button>}
+      {onPreview && artifact.kind !== "other" && <button className={button} disabled={busy || !available} onClick={onPreview}>Preview</button>}
       {onOpenHere && artifact.sourceState === "current" && <button className={button} data-pane-action="open-here" aria-label={t("workspacePane.openHereNamed", { name: artifact.relativePath })} onClick={onOpenHere}>{t("workspacePane.openHere")}</button>}
       <button className={button} disabled={busy || !available} onClick={onDownload}>Download</button>
       {onSource && artifact.sourceConversationAvailable && <button className={button} onClick={onSource}>Source conversation</button>}
       {onNativeAction && <><button className={button} disabled={busy || !available} onClick={() => native("open")}>Open in app</button><button className={button} disabled={busy || !available} onClick={() => native("reveal")}>Show in folder</button></>}
     </div>
-    {artifact.kind === "other" && <p className="mt-2 text-[12px] text-ink-secondary">Preview is unavailable for this format. Download to review it.</p>}
+    {inlineNote && <p className="mt-2 text-[12px] text-ink-secondary">{inlineNote}</p>}
+    {artifact.kind === "other" && !inline && <p className="mt-2 text-[12px] text-ink-secondary">Preview is unavailable for this format. Download to review it.</p>}
   </article>;
 }
 

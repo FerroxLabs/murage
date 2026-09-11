@@ -398,13 +398,16 @@ test("after a restart the cards, the saved versions and the working file's curre
   await expect(first).toContainText("Original file has changed. The saved version is retained.");
   await expect(second).toContainText("Original file has changed. The saved version is retained.");
   await expect(first.getByRole("button", { name: /^Open the working file/ })).toHaveCount(0);
-  await first.getByRole("button", { name: "Preview", exact: true }).click();
+  // INLINE1: the retained bytes are rendered inside the card itself, not the
+  // working file, and the card offers no Preview that leaves the chat.
+  const retained = first.locator('[data-artifact-inline="markdown"]');
+  await expect(retained).toContainText(`Written by the fixture engine to ${RELATIVE_PATH}`);
+  await expect(retained).not.toContainText("Reviewed by the owner");
+  await expect(first.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
+  await first.screenshot({ path: testInfo.outputPath("after-restart-card-retained.png") });
+  await page.locator('[data-header-labelled="folder"]').click();
   const files = page.getByRole("dialog", { name: "Files", exact: true });
   await expect(files).toBeVisible();
-  const preview = files.getByRole("region", { name: "File preview" });
-  await expect(preview).toContainText(`Written by the fixture engine to ${RELATIVE_PATH}`);
-  await expect(preview).not.toContainText("Reviewed by the owner");
-  await preview.screenshot({ path: testInfo.outputPath("after-restart-files-retained.png") });
 
   // Reopening the working file from Files shows the current revision, and a
   // further edit saves against it without a conflict.
