@@ -14,6 +14,7 @@ import {
   readComposioLegacyClaim,
   writeComposioLegacyClaim,
 } from "./managed-composio.mjs";
+import { COMPOSIO_LEGACY_BROKER_UNTIL, FLUX_COMPOSIO_BROKER_URL } from "./composio-release-config.mjs";
 
 const TOKEN = "a".repeat(64);
 
@@ -182,6 +183,19 @@ describe("managed Composio desktop registration", () => {
 describe("the desktop's side of moving connected apps to FluxRouter", () => {
   const FLUX = "https://api.fluxrouter.ai/composio";
   const FLUX_TOKEN = "b".repeat(64);
+
+  it("ships 0.1.52 pointed at the FluxRouter broker with the Worker cut-off set (rollout step 7)", () => {
+    // A packaged 0.1.52 with no QA override must reach FluxRouter, and the
+    // Worker broker must close 60 days after the release.
+    expect(FLUX_COMPOSIO_BROKER_URL).toBe(FLUX);
+    expect(COMPOSIO_LEGACY_BROKER_UNTIL).toBe("2026-11-10T00:00:00Z");
+    expect(fluxComposioBrokerUrl({}, { packaged: true })).toBe(FLUX);
+    expect(fluxComposioBrokerUrl({}, { packaged: false })).toBe("");
+    expect(composioLegacyBrokerUntil({}, { packaged: true })).toBe("2026-11-10T00:00:00Z");
+    expect(composioLegacyBrokerUntil({}, { packaged: false })).toBe("");
+    expect(legacyBrokerOpen(COMPOSIO_LEGACY_BROKER_UNTIL, Date.UTC(2026, 8, 12))).toBe(true);
+    expect(legacyBrokerOpen(COMPOSIO_LEGACY_BROKER_UNTIL, Date.UTC(2026, 10, 11))).toBe(false);
+  });
 
   it("only honours the release constant in a packaged build", () => {
     // Without this gate, a dev run points at production FluxRouter with the
