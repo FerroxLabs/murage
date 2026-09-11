@@ -80,8 +80,23 @@ function absolutePath(field, value) {
 const escapeSpecifiers = (s) => s.replace(/%/g, () => "%%");
 
 /**
- * One word of `ExecStart=`. Quoted when it needs to be; `%` and `$` doubled,
- * because ExecStart= expands both.
+ * The executable of `ExecStart=`. systemd expands `%` specifiers in it but
+ * not `$` variables (a doubled `$$` stays doubled in the path it executes),
+ * and refuses an executable name containing an apostrophe outright:
+ * "Executable name contains special characters". Both observed against
+ * systemd 252 with `systemd-analyze verify`.
+ * @param {string} field @param {unknown} value @returns {string}
+ */
+export function execStartExecutable(field, value) {
+  const s = absolutePath(field, value);
+  if (s.includes("'")) throw new UnitRefused(field, "systemd refuses an executable path containing an apostrophe");
+  const escaped = escapeSpecifiers(s);
+  return PLAIN.test(s) ? escaped : `"${escaped}"`;
+}
+
+/**
+ * An argument of `ExecStart=` (every word after the executable). Quoted when
+ * it needs to be; `%` and `$` doubled, because systemd expands both there.
  * @param {string} field @param {unknown} value @returns {string}
  */
 export function execStartWord(field, value) {
@@ -164,7 +179,7 @@ Type=simple
 # non-root account, and it prints which one it chose.
 User=${account.user}
 Group=${account.group}
-ExecStart=${execStartWord("the node runtime path", execPath)} ${execStartWord("the installer path", cliPath)} start
+ExecStart=${execStartExecutable("the node runtime path", execPath)} ${execStartWord("the installer path", cliPath)} start
 Restart=always
 RestartSec=3
 ${environmentLine("HOME", home)}
