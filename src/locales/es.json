@@ -4,6 +4,7 @@
   "claudeAccounts.saved": "Configuración de la cuenta guardada.",
   "claudeAccounts.refreshError": "Se guardó, pero no se pudo actualizar la lista de cuentas. Usa Actualizar cuentas para comprobar su estado actual.",
   "claudeAccounts.changeError": "No se pudo cambiar la cuenta.",
+  "claudeAccounts.listUnreadable": "No se pudo leer la lista de cuentas de Claude. Usa Actualizar cuentas para volver a intentarlo.",
   "claudeAccounts.copied": "Se copió el comando de inicio de sesión de {name}.",
   "claudeAccounts.copyError": "No se pudo copiar. Selecciona y copia el comando de arriba.",
   "claudeAccounts.refresh": "Actualizar cuentas",
