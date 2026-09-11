@@ -7,6 +7,7 @@ import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { stageInstallationState } from "./installation-state-snapshot.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
+import { initializeMessageTables } from "./message-tables.ts";
 
 const roots: string[] = [];
 function fixture() {
@@ -68,9 +69,8 @@ it("combines WAL-backed receipts and app files in the same owned stage", async (
   const f = fixture();
   const db = new DatabaseSync(join(f.data, "messages.db"));
   try {
-    db.exec(`PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
-      CREATE TABLE messages(thread_id TEXT,id TEXT,at INTEGER,role TEXT,kind TEXT,text TEXT,json TEXT,PRIMARY KEY(thread_id,id));
-      CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT);`);
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
+    initializeMessageTables(db);
     db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread", "receipt", 1, "bot", "goal.run", null, JSON.stringify({ id: "receipt", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed" } }));
     db.exec("INSERT INTO thread_state VALUES('thread','receipt')");
     const stage = await stageInstallationState(f.data, f.parent);
