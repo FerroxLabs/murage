@@ -20,7 +20,7 @@ import {
 } from "./workspace-files.ts";
 import {
   VOLUME_CLOCK_RETRY_MS, WORKSPACE_REVISION_CONTENT_MAX_BYTES, WORKSPACE_REVISION_SETTLE_MS, __resetWorkspaceRevisionCacheForTests, __setVolumeClockForTests,
-  canRememberDigest, probeVolumeClock, sha256Hex, workspaceRevisionOf,
+  canRememberDigest, probeVolumeClock, sha256Hex, workspaceRevisionOf, workspaceStatFingerprint,
 } from "./workspace-revision.ts";
 import type { WorkspaceScopeRef } from "../shared/workspace-files.ts";
 
@@ -404,6 +404,52 @@ describe("the volume clock probe", () => {
     expect(list()).toEqual(list());
     expect(opens(b)).toBe(1);
     expect(probes).toHaveLength(1);
+  });
+
+  it("never lends the root's verdict to a volume mounted inside it: a file on another device is hashed on every observation", () => {
+    // A listing descends into mount points. The root (APFS, ext4) passes the
+    // probe, but a file on an image or share mounted below it reports that
+    // volume's device number, which nobody probed; there ctime may mirror
+    // mtime, and a rewrite that restores mtime keeps every field.
+    const f = fixture();
+    const own = settledPlain(f, "own.md");
+    const first = workspaceRevisionOf(f.taskRoot, "own.md", lstatSync(own));
+    expect(probes).toHaveLength(1);
+    expect(workspaceRevisionOf(f.taskRoot, "own.md", lstatSync(own))).toEqual(first);
+    expect(opened.filter(item => item === own)).toHaveLength(1);
+
+    const nested = settledPlain(f, "mnt/foreign.md");
+    const foreignDev = lstatSync(f.taskRoot).dev + 6, foreignIno = lstatSync(nested).ino;
+    volume.shape = stat => { if (stat.ino === foreignIno) { stat.dev = foreignDev; stat.ctimeMs = stat.mtimeMs; } };
+    expect(lstatSync(nested).dev).toBe(foreignDev);
+    const opens = () => opened.filter(item => item === nested).length;
+    const observed = workspaceRevisionOf(f.taskRoot, "mnt/foreign.md", lstatSync(nested));
+    expect(observed.ok && observed.sha256).toBe(sha256Hex(Buffer.from("plain mnt/foreign.md")));
+    expect(workspaceRevisionOf(f.taskRoot, "mnt/foreign.md", lstatSync(nested))).toEqual(observed);
+    expect(opens()).toBe(2);
+    // The root's pass did not carry over, and no probe file was written for
+    // the foreign device, in the root or under mnt/.
+    expect(probes).toHaveLength(1);
+    expect(leftovers(f.taskRoot)).toEqual([]);
+    expect(leftovers(join(f.taskRoot, "mnt"))).toEqual([]);
+    // An equal-length in-place rewrite that puts mtime back keeps the
+    // fingerprint; the bytes are read again and the new digest is issued.
+    const before = lstatSync(nested);
+    writeFileSync(nested, "PLAIN MNT/FOREIGN.MD");
+    const after = lstatSync(nested);
+    expect(workspaceStatFingerprint(after)).toBe(workspaceStatFingerprint(before));
+    const rewritten = workspaceRevisionOf(f.taskRoot, "mnt/foreign.md", after);
+    expect(rewritten.ok && rewritten.sha256).toBe(sha256Hex(Buffer.from("PLAIN MNT/FOREIGN.MD")));
+    expect(rewritten).not.toEqual(observed);
+    expect(opens()).toBe(3);
+    // Discovery under mnt/ pays the same: every page reads the file again.
+    const list = () => listWorkspaceDirectory(f.deps, { scope: f.scope, directory: "mnt" }).entries.map(entry => entry.revision);
+    expect(list()).toEqual(list());
+    expect(opens()).toBe(5);
+    expect(probes).toHaveLength(1);
+    // The root's own files still ride on its verdict.
+    expect(workspaceRevisionOf(f.taskRoot, "own.md", lstatSync(own))).toEqual(first);
+    expect(opened.filter(item => item === own)).toHaveLength(1);
   });
 
   it("fails a mount that mirrors mtime into ctime, and such a volume keeps hashing on every observation", () => {
