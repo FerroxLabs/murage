@@ -24,8 +24,8 @@
 //                      inherited-api-key — what `auth status` reports
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
 const scriptedReplies = (() => {
@@ -236,7 +236,29 @@ const playTurn = (prompt: JsonValue) => {
     return;
   }
 
-  if (mode === "hang" || promptText(prompt).includes("__fixture_hold_authority__")) {
+  // Shell-output fixture: writes a real file inside the turn's working folder
+  // the way a Bash/Write tool would, without ever calling register_artifact.
+  // Runs before the hang branch so held turns write too.
+  const writeOutput = /__fixture_write_output__:([A-Za-z0-9_./-]{1,200})/.exec(promptText(prompt));
+  // Create-only: a prompt that repeats earlier conversation text must not
+  // rewrite a report a previous turn already produced.
+  if (writeOutput && !writeOutput[1]!.split("/").some((part) => part === "" || part === "." || part === "..")) {
+    const target = join(process.cwd(), ...writeOutput[1]!.split("/"));
+    mkdirSync(dirname(target), { recursive: true });
+    if (!existsSync(target)) writeFileSync(target, `<!doctype html><h1>Fixture report</h1><p>${writeOutput[1]}</p>\n`, { flag: "wx" });
+  }
+  if (promptText(prompt).includes("__fixture_fail_turn__")) {
+    out({ type: "assistant", message: { content: [{ type: "text", text: "fixture turn failed after writing" }] } });
+    out({ type: "result", is_error: true, stop_reason: "error", total_cost_usd: 0 });
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
+
+  // `__fixture_finish_turn__` completes normally even when the suite runs
+  // the fake in hang mode, so a test can observe a real terminal turn.
+  const finishNow = promptText(prompt).includes("__fixture_finish_turn__");
+  if ((mode === "hang" && !finishNow) || promptText(prompt).includes("__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
     const gateDir = process.env.FAKE_CLAUDE_FINISH_GATE_DIR;

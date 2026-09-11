@@ -317,7 +317,7 @@ import {
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import { ImageGenerationService, type ImageConnection } from "./image-generation.ts";
-import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
+import { ImageOperations, imageReferences } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { createRoutineWatchFileAdapter } from "./routine-watch-file.ts";
@@ -361,7 +361,7 @@ import { shouldMountLocalComputer } from "./local-routing.ts";
 // 0.1.52 K0 delegation seams (docs/plans/0152-CONTRACTS.md).
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute, resolveImageReferenceRoute } from "./media-assets.ts";
-import { createOutputPublisher } from "./output-publication.ts";
+import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { IMAGE_REFERENCE_ROUTE, MEDIA_ROUTE_PREFIX } from "../shared/media-assets.ts";
 import { WORKSPACE_FILES_ROUTE_PREFIX } from "../shared/workspace-files.ts";
@@ -2481,7 +2481,11 @@ bus.subscribe((event: RuntimeEvent) => {
       } else if (event.itemType === "assistant_image") {
         try {
           const decoded = decodeGeneratedImage(event.data);
-          const saved = saveImage(decoded.bytes, decoded.mime);
+          // R3-T4: receipt the provider bytes first, then attach and save to Files.
+          const producerBotId = bot?.id ?? speaker?.botId;
+          const saved = producerBotId
+            ? publishAssistantImage({ db: database(), dataDir: DATA_DIR, store }, { botId: producerBotId, threadId: event.threadId, runId: event.turnId ?? "", bytes: decoded.bytes, mime: decoded.mime })
+            : saveImage(decoded.bytes, decoded.mime);
           const key = generatedImageTurnKey(event.threadId, event.turnId);
           const current = generatedImagesByTurn.get(key) ?? [];
           current.push({ kind: "image", path: saved.path, mime: saved.mime });
@@ -6606,6 +6610,13 @@ function artifactScopes(): ArtifactScope[] {
         if (workspaceRoot) scopes.push({ botId: bot.id, botName: bot.name, threadId: task.threadId, workspaceRoot });
       }
     }
+    // R3-T4: each conversation's managed generated-image root authorizes its
+    // saved image rows only; it is never a registration or browsing root.
+    const imageThreads = new Set<string>([
+      ...(bot.tasks ?? [{ threadId: bot.threadId }]).map(task => task.threadId),
+      ...store.groups.filter(group => group.memberIds.includes(bot.id)).flatMap(group => (group.tasks ?? [{ threadId: group.threadId }]).map(task => task.threadId)),
+    ]);
+    for (const threadId of imageThreads) scopes.push({ botId: bot.id, botName: bot.name, threadId, workspaceRoot: managedImageOutputPath(DATA_DIR, bot.id, threadId), managedOutput: true });
     const retained = database().prepare("SELECT DISTINCT source_root FROM artifacts WHERE bot_id=?").all(bot.id);
     for (const row of retained) scopes.push({ botId: bot.id, botName: bot.name, workspaceRoot: String(row.source_root), threadAvailable: false });
   }
@@ -7533,9 +7544,10 @@ const server = createServer(async (req, res) => {
       if (path === "/api/internal/register-artifact" && method === "POST") {
         const body = z.object({ relativePath: z.string().min(1).max(4096), name: z.string().min(1).max(200).optional() }).strict().parse(await readBody(req));
         requireActiveInternal();
-        const scope = artifactScopes().find(scope => scope.botId === internalClaim.botId && scope.threadId === internalClaim.threadId);
+        const scope = artifactScopes().find(scope => scope.botId === internalClaim.botId && scope.threadId === internalClaim.threadId && scope.managedOutput !== true);
         if (!scope) return json(res, 404, { error: "This task has no file workspace." });
-        const artifact = registerArtifact(database(), join(DATA_DIR, "artifact-files"), { ...body, botId: internalClaim.botId, threadId: internalClaim.threadId }, { owner: true, scopes: [scope] });
+        // Run provenance comes from the live capability, never from the body.
+        const artifact = registerArtifact(database(), join(DATA_DIR, "artifact-files"), { ...body, botId: internalClaim.botId, threadId: internalClaim.threadId }, { owner: true, scopes: [{ ...scope, runId: internalClaim.generation }] });
         if (!store.messagesFor(internalClaim.threadId).some(message => message.artifactIds?.includes(artifact.id))) {
           store.appendMessage(internalClaim.threadId, { role: "bot", kind: "text", text: `Saved file: ${artifact.name}`, artifactIds: [artifact.id] });
         }
@@ -7562,8 +7574,8 @@ const server = createServer(async (req, res) => {
           const refs = imageReferences(store, actor.threadId, body.referenceIds);
           const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined, prompt: body.prompt,
             operation: body.operation ?? (refs.length ? "edit" : "generate"), quality: body.quality, size: body.size };
-          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, reserve =>
-            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish: async (image, meta) => publishImage(store, actor, image, meta) }, refs));
+          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, (reserve, publish) =>
+            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish }, refs));
           active(); return json(res, 200, result);
         } finally { clearInterval(revoked); res.off("close", disconnected); }
       }
@@ -12696,6 +12708,10 @@ calendarCalls.start();
 
 try { cleanupStaleAttachmentPartials(); }
 catch { console.warn("Attachment cleanup could not finish. The next upload will retry initialization."); }
+// R3-T4 / C2: finish local publication of already received images from their
+// receipts. Known pending receipts only; no provider request, no folder scan.
+try { imageOperations.resumePendingPublications(); outputPublisher.resumePending(); }
+catch { console.warn("Pending image publication could not finish. It will retry at the next startup."); }
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
   // Warm the skill index while nobody is waiting.
