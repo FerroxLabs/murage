@@ -13,6 +13,7 @@ import { routineEventForRun, type RoutineEvent } from "../shared/routine-event.t
 import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, RoutineWatchRun, RoutineWatchSource } from "../shared/routine-watch.ts";
 import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
+import { turnStopped, turnSucceeded } from "./turn-outcome.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -1344,8 +1345,13 @@ export class RoutineManager {
     } else if (event.type === "turn.completed") {
       run.cost = event.cost;
       run.denials = event.denials;
-      if (!event.ok) {
-        this.failRun(run, event.stopReason ?? run.error ?? "The bot did not complete this run");
+      // A stopped turn settles ok:true "cancelled"; it is not a completed run
+      // (STOP1). The user's own cancel sets the run cancelled before its turn
+      // stops, so this is a host stop (watchdog, connection change).
+      if (!turnSucceeded(event)) {
+        this.failRun(run, turnStopped(event)
+          ? "The run was stopped before it finished"
+          : event.stopReason ?? run.error ?? "The bot did not complete this run");
         queueMicrotask(() => void this.tick());
         return cloneRun(run);
       }

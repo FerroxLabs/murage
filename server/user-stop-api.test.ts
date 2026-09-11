@@ -2,8 +2,11 @@
 // real server over HTTP with the isolated fake Claude CLI (claudeAgent driver)
 // and checks the durable state the chat and room views render from: no
 // "error:" activity (the red "This request hit a problem" card with Retry),
-// the thread is idle again, and memory records the turn as cancelled.
-import { existsSync, readFileSync, rmSync } from "node:fs";
+// the thread is idle again, and memory records the turn as cancelled. A Stop
+// is also never success anywhere a finished turn is acted on: no outputs/
+// file is published (U-02), queued handoffs are dropped, and ask_bot and
+// delegation receipts do not report the stopped turn as a reply or "done".
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -36,6 +39,35 @@ const turnOutcomes = (threadId: string): string[] => {
     db.close();
   }
 };
+const shellOutputReceipts = (threadId: string): Array<{ stage: string; path_token: string; artifact_id: string | null }> => {
+  const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+  try {
+    return db
+      .prepare("SELECT stage, path_token, artifact_id FROM output_publications WHERE producer='shell-output' AND thread_id=? ORDER BY rowid")
+      .all(threadId) as Array<{ stage: string; path_token: string; artifact_id: string | null }>;
+  } finally {
+    db.close();
+  }
+};
+const delegationReceipt = (taskId: string): { status: string; result?: string } | undefined => {
+  const file = join(fixture.info.dataDir, "delegation-receipts.json");
+  if (!existsSync(file)) return undefined;
+  return (JSON.parse(readFileSync(file, "utf8")) as Array<{ id: string; status: string; result?: string }>).find((receipt) => receipt.id === taskId);
+};
+const isBusy = async (botId: string) =>
+  (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === botId).busy === true;
+/** Start a held turn on `bot` and return the bearer its mounted agents
+ * server carries, plus the fake CLI's pid (its finish-gate name). */
+const holdTurnWithAuthority = async (bot: any, text: string) => {
+  rmSync(fixture.fixtureDumpPath, { force: true });
+  expect((await api("POST", `/api/bots/${bot.id}/messages`, { text, threadId: bot.threadId })).status).toBe(202);
+  await promptReachedEngine(text);
+  const dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"));
+  const token = dump.mcpConfig?.mcpServers?.agents?.env?.MURAGE_COMMS_TOKEN as string;
+  expect(token).toMatch(/^[a-f0-9]{48}$/);
+  return { pid: dump.pid as number, internal: { authorization: `Bearer ${token}`, "content-type": "application/json" } };
+};
+
 /** The fake writes its dump when it reads the user message: the prompt has
  * reached the engine, so Stop exercises the provider's close path. */
 const promptReachedEngine = async (text: string) => {
@@ -63,7 +95,8 @@ afterAll(async () => {
 
 it("Stop on a direct Claude turn leaves the normal stopped state, not an error card", async () => {
   const bot = await createBot("Stop direct fixture");
-  const text = "__fixture_hold_authority__ direct stop request";
+  // The held turn first writes outputs/partial.html in its managed workspace.
+  const text = "__fixture_hold_authority__ __fixture_write_output__:outputs/partial.html direct stop request";
   rmSync(fixture.fixtureDumpPath, { force: true });
   expect((await api("POST", `/api/bots/${bot.id}/messages`, { text, threadId: bot.threadId })).status).toBe(202);
   await promptReachedEngine(text);
@@ -76,6 +109,82 @@ it("Stop on a direct Claude turn leaves the normal stopped state, not an error c
   await expect.poll(() => turnOutcomes(bot.threadId).at(-1), { timeout: 10_000 }).toBe("cancelled");
   expect(turnOutcomes(bot.threadId)).not.toContain("failed");
   expect(await errorActivities(bot.threadId)).toEqual([]);
+
+  // U-02: the stopped turn's file keeps a verified receipt and nothing else.
+  // The receipt is written in the same synchronous sweep that would post the
+  // card, so once it is visible the publication decision has been made.
+  expect(existsSync(join(fixture.info.dataDir, "workspaces", bot.id, "threads", bot.threadId, "outputs", "partial.html"))).toBe(true);
+  await expect.poll(() => shellOutputReceipts(bot.threadId).length, { timeout: 10_000 }).toBe(1);
+  expect(shellOutputReceipts(bot.threadId)).toEqual([{ stage: "retained", path_token: "outputs/partial.html", artifact_id: null }]);
+  const published = (await messages(bot.threadId)).filter((m) => (m.artifactIds?.length ?? 0) > 0 || /Saved file/.test(String(m.text ?? "")));
+  expect(published).toEqual([]);
+}, 60_000);
+
+it("Stop on a source turn drops the delegation it queued instead of running it", async () => {
+  const source = await createBot("Stop drop source");
+  const target = await createBot("Stop drop target");
+  const turn = await holdTurnWithAuthority(source, "__fixture_hold_authority__ drop source request");
+  const queued = await fetch(`${fixture.info.url}/api/internal/delegate-bot`, {
+    method: "POST", headers: turn.internal,
+    body: JSON.stringify({ fromBotId: source.id, fromThreadId: source.threadId, toBotId: target.id, message: "__fixture_finish_turn__ must never run", depth: 0 }),
+  });
+  expect(queued.status).toBe(200);
+  const { taskId } = await queued.json() as { taskId: string };
+
+  expect((await api("POST", `/api/bots/${source.id}/interrupt`, { threadId: source.threadId })).status).toBe(200);
+  await expect.poll(() => isBusy(source.id), { timeout: 10_000 }).toBe(false);
+  await expect.poll(() => delegationReceipt(taskId)?.status, { timeout: 10_000 }).toBe("dropped");
+  expect(await isBusy(target.id)).toBe(false);
+  expect((await messages(target.threadId)).filter((m) => /must never run/.test(String(m.text ?? "")))).toEqual([]);
+}, 60_000);
+
+it("ask_bot to a peer whose turn is stopped reports the stop, not a reply", async () => {
+  const source = await createBot("Stop ask source");
+  const target = await createBot("Stop ask target");
+  const turn = await holdTurnWithAuthority(source, "__fixture_hold_authority__ ask source request");
+  rmSync(fixture.fixtureDumpPath, { force: true });
+  const targetText = "__fixture_hold_authority__ ask target request";
+  const asked = fetch(`${fixture.info.url}/api/internal/ask-bot`, {
+    method: "POST", headers: turn.internal,
+    body: JSON.stringify({ fromBotId: source.id, fromThreadId: source.threadId, toBotId: target.id, message: targetText, depth: 0 }),
+  });
+  await promptReachedEngine(targetText);
+  expect(await isBusy(target.id)).toBe(true);
+
+  expect((await api("POST", `/api/bots/${target.id}/interrupt`, { threadId: target.threadId })).status).toBe(200);
+  const response = await asked;
+  expect(response.status).toBe(200);
+  const body = await response.json() as { text: string };
+  expect(body.text).toBe("(the bot's turn was stopped before it finished)");
+  await api("POST", `/api/bots/${source.id}/interrupt`, { threadId: source.threadId });
+}, 60_000);
+
+it("a delegated turn that is stopped leaves a stopped receipt, not done", async () => {
+  const source = await createBot("Stop delegation source");
+  const target = await createBot("Stop delegation target");
+  const turn = await holdTurnWithAuthority(source, "__fixture_hold_authority__ delegation source request");
+  const targetText = "__fixture_hold_authority__ delegated target request";
+  const queued = await fetch(`${fixture.info.url}/api/internal/delegate-bot`, {
+    method: "POST", headers: turn.internal,
+    body: JSON.stringify({ fromBotId: source.id, fromThreadId: source.threadId, toBotId: target.id, message: targetText, depth: 0 }),
+  });
+  expect(queued.status).toBe(200);
+  const { taskId } = await queued.json() as { taskId: string };
+  // The source finishes naturally: that is what drains its queued handoff.
+  rmSync(fixture.fixtureDumpPath, { force: true });
+  writeFileSync(join(fixture.fixtureFinishGateDir, String(turn.pid)), "finish");
+  await promptReachedEngine(targetText);
+  await expect.poll(() => isBusy(target.id), { timeout: 10_000 }).toBe(true);
+
+  expect((await api("POST", `/api/bots/${target.id}/interrupt`, { threadId: target.threadId })).status).toBe(200);
+  await expect.poll(() => delegationReceipt(taskId), { timeout: 10_000 }).toMatchObject({
+    status: "failed",
+    result: "Delegated turn was stopped before it finished",
+  });
+  const sourceMessages = await messages(source.threadId);
+  expect(sourceMessages.some((m) => m.kind === "activity" && m.tool?.name === `Delegation to @${target.name} was stopped before it finished`)).toBe(true);
+  expect(sourceMessages.filter((m) => /replied to the delegated task|completed without a text reply/.test(String(m.text ?? m.tool?.name ?? "")))).toEqual([]);
+  expect(await errorActivities(target.threadId)).toEqual([]);
 }, 60_000);
 
 it("Stop on a Claude turn in a room leaves the room idle with no error chip", async () => {

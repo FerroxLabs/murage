@@ -498,6 +498,13 @@ const playTurn = (prompt: JsonValue) => {
   if ((mode === "hang" && !finishNow) || promptText(prompt).includes("__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
+    if (promptText(prompt).includes("__fixture_error_result_on_stop__")) {
+      // A CLI that reports its own interruption: on SIGTERM it writes an
+      // error result for the running turn, then exits.
+      process.once("SIGTERM", () => {
+        process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, stop_reason: null, total_cost_usd: 0 }) + "\n", () => process.exit(143));
+      });
+    }
     const gateDir = process.env.FAKE_CLAUDE_FINISH_GATE_DIR;
     const gate = gateDir ? join(gateDir, String(process.pid)) : undefined;
     const timer = setInterval(() => {
