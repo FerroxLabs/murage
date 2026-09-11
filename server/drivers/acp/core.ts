@@ -677,8 +677,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const params = msg.params ?? {};
           flushAssistantText();
           const options: Array<{ optionId?: string; kind?: string }> = Array.isArray(params.options) ? params.options : [];
-          const optionFor = (want: "allow" | "reject") =>
-            options.find((o) => String(o.kind ?? "").startsWith(want) && typeof o.optionId === "string")?.optionId ?? null;
+          // ONE-TIME first, then any other option of that polarity. Murage's
+          // card answers one request: "Yes" is allow-once, and any "always"
+          // memory lives in Murage's own grants, which re-answer the NEXT
+          // request. Taking the first `allow*` option instead would hand the
+          // engine a standing grant Murage never sees again — Fuigo lists its
+          // `allow_always` "allow all edits during this session" row BEFORE
+          // `allow_once` on every edit prompt (fuigo-workspace prompter.rs,
+          // read off the 1.0.12 wire), so that ordering is real, not
+          // hypothetical. The fallback keeps agents that offer only
+          // `allow_always` / `reject_always` answerable rather than cancelled.
+          const optionFor = (want: "allow" | "reject") => {
+            const usable = options.filter((o) => typeof o.optionId === "string" && String(o.kind ?? "").startsWith(want));
+            return (usable.find((o) => o.kind === `${want}_once`) ?? usable[0])?.optionId ?? null;
+          };
           const cancelled = { outcome: { outcome: "cancelled" } };
           const missing = (want: string) =>
             emit({

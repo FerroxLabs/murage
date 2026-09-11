@@ -72,12 +72,30 @@ It passes only when the model is told
 and then acts on it. Needs `claude` on `PATH` and the login that binary already
 has; it starts no Murage server and never touches `~/.murage`.
 
-Live proofs still open for the ASK3 engines: a real Fuigo turn that calls its
-ask tool (a paid model call — only with a FluxRouter key Sean provides), and a
-real Telegram bot tapping the buttons and replying with text. Both are gated
-on Sean's resources; the fakes above pin the exact wire shapes taken from the
-engines' own sources (openai/codex `v2/item.rs`, Fuigo `ask_user_question/
-types.rs`, ACP `schema/v1/schema.json`, pi `docs/rpc.md`).
+The live round trip against the BUNDLED Fuigo engine, through the real
+server (a paid model call through FluxRouter — the caller reads the key into
+the environment; the script never reads a credential file and redacts the key
+from everything it writes):
+
+```sh
+node scripts/prepare-fuigo.mjs --current
+FLUX_API_KEY="$(cat /path/to/flux.key)" node scripts/verify-question-fuigo.mjs --allow-provider --output /tmp/fuigo-question-proof
+```
+
+It passes only when the pinned engine identifies as `FUIGO_VERSION`, a real
+tool-using turn writes a canary file behind a permission card that the script
+allows once (the wire must show the engine's `allow_once` option selected,
+never its "allow all edits this session" row), the model's
+`_fuigo/ask_user_question` becomes a question card, the answers go back as
+`{outcome:"accepted", answers, annotations}`, and the model's final line
+repeats the picks. `receipt.json`, the redacted `wire.ndjson` and the
+transcript `messages.db` land in `--output`. Proven on Fuigo 1.0.12 (LFU2).
+
+Live proof still open for ASK3: a real Telegram bot tapping the buttons and
+replying with text. It is gated on Sean's resources; the fakes above pin the
+exact wire shapes taken from the engines' own sources (openai/codex
+`v2/item.rs`, Fuigo `ask_user_question/types.rs`, ACP `schema/v1/schema.json`,
+pi `docs/rpc.md`).
 
 ## Gotchas
 
