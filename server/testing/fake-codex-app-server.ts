@@ -5,7 +5,8 @@
 // real app-server, it never exits on its own — the driver kills it.
 //
 //   FAKE_CODEX_MODE   happy (default) | approval | resume | stream | windows-command |
-//                     mcp-elicitation | image | logged-in-stdout | logged-out | unauthorized
+//                     mcp-elicitation | form-elicitation | user-input | image |
+//                     logged-in-stdout | logged-out | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
@@ -257,6 +258,51 @@ process.stdin.on("data", (chunk) => {
                 properties: { environment: { type: "string", enum: ["staging", "production"] } },
                 required: ["environment"],
               },
+            },
+          });
+        } else if (mode === "user-input") {
+          // EXPERIMENTAL item/tool/requestUserInput exactly as codex-rs
+          // v2/item.rs shapes it: several questions, each with its own id,
+          // header and options; one secret, one free-text-only, one that
+          // also takes the owner's own words.
+          out({
+            jsonrpc: "2.0",
+            id: 101,
+            method: "item/tool/requestUserInput",
+            params: {
+              threadId: "codex-thread-1",
+              turnId: "turn-1",
+              itemId: "call-rui-1",
+              isBlocking: true,
+              questions: [
+                {
+                  id: "db",
+                  header: "Database",
+                  question: "Which database should the service use?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [
+                    { label: "Postgres", description: "Relational, durable" },
+                    { label: "Redis", description: "In-memory, fast" },
+                  ],
+                },
+                {
+                  id: "token",
+                  header: "Token",
+                  question: "Paste the deploy token",
+                  isOther: false,
+                  isSecret: true,
+                  options: null,
+                },
+                {
+                  id: "region",
+                  header: "Region",
+                  question: "Which region?",
+                  isOther: true,
+                  isSecret: false,
+                  options: [{ label: "eu-west", description: "Ireland" }],
+                },
+              ],
             },
           });
         } else if (mode === "approval" || mode === "windows-command") {

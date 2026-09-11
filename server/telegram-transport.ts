@@ -22,6 +22,13 @@ type Json = Record<string, unknown>;
 const object = (value: unknown): value is Json => value !== null && typeof value === "object" && !Array.isArray(value);
 const integer = (value: unknown, minimum = 0): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
 const chatId = (value: unknown): value is string => typeof value === "string" && /^-?[1-9]\d{0,15}$/.test(value) && Number.isSafeInteger(Number(value));
+/** One inline button: Telegram caps callback_data at 64 bytes and labels are kept to 64 characters. */
+export type TelegramButton = { text: string; data: string };
+const button = (value: unknown): value is TelegramButton => object(value) && typeof value.text === "string" && value.text.length >= 1 && value.text.length <= 64
+  && typeof value.data === "string" && value.data.length >= 1 && Buffer.byteLength(value.data) <= 64;
+/** A question keyboard: up to 12 rows of up to 3 buttons (10 options plus action rows). */
+const keyboard = (value: unknown): value is TelegramButton[][] => Array.isArray(value) && value.length >= 1 && value.length <= 12
+  && value.every(row => Array.isArray(row) && row.length >= 1 && row.length <= 3 && row.every(button));
 const MAX_BODY = 2 * 1024 * 1024;
 function guarded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -70,14 +77,16 @@ export class TelegramTransport {
     if (!Array.isArray(result) || result.length > limit || result.some(update => !object(update) || !integer(update.update_id))) throw new TelegramTransportError("invalid-response");
     return result.map(update => ({ update_id: update.update_id, ...(Object.hasOwn(update, "message") ? { message: update.message } : {}), ...(Object.hasOwn(update, "callback_query") ? { callback_query: update.callback_query } : {}) }));
   }
-  async sendMessage(input: { chatId: string; text: string; parseMode?: "HTML"; buttons?: Array<{ text: string; data: string }>; topicId?: number; replyToMessageId?: number; signal?: AbortSignal }): Promise<{ chatId: string; messageId: number }> {
+  async sendMessage(input: { chatId: string; text: string; parseMode?: "HTML"; buttons?: TelegramButton[]; keyboard?: TelegramButton[][]; topicId?: number; replyToMessageId?: number; signal?: AbortSignal }): Promise<{ chatId: string; messageId: number }> {
     if (!chatId(input.chatId) || typeof input.text !== "string" || input.text.length < 1 || input.text.length > (input.parseMode === "HTML" ? 32768 : 4096)
       || (input.parseMode !== undefined && input.parseMode !== "HTML")
-      || (input.buttons !== undefined && (!Array.isArray(input.buttons) || input.buttons.length > 2 || input.buttons.some(button => typeof button.text !== "string" || !button.text || button.text.length > 64 || typeof button.data !== "string" || !button.data || Buffer.byteLength(button.data) > 64)))
+      || (input.buttons !== undefined && (!Array.isArray(input.buttons) || input.buttons.length > 2 || !input.buttons.every(button)))
+      || (input.keyboard !== undefined && (input.buttons !== undefined || !keyboard(input.keyboard)))
       || (input.topicId !== undefined && !integer(input.topicId, 1)) || (input.replyToMessageId !== undefined && !integer(input.replyToMessageId, 1))) throw new TelegramTransportError("invalid-request");
+    const rows = input.keyboard ?? (input.buttons ? [input.buttons] : undefined);
     const result = await this.request("sendMessage", { chat_id: input.chatId, text: input.text,
       ...(input.parseMode ? { parse_mode: input.parseMode } : {}),
-      ...(input.buttons ? { reply_markup: { inline_keyboard: [input.buttons.map(button => ({ text: button.text, callback_data: button.data }))] } } : {}),
+      ...(rows ? { reply_markup: { inline_keyboard: rows.map(row => row.map(button => ({ text: button.text, callback_data: button.data }))) } } : {}),
       ...(input.topicId === undefined ? {} : { message_thread_id: input.topicId }),
       ...(input.replyToMessageId === undefined ? {} : { reply_parameters: { message_id: input.replyToMessageId } }),
     }, true, input.signal);
@@ -88,6 +97,15 @@ export class TelegramTransport {
     if (!input.id || input.id.length > 200 || !input.text || input.text.length > 200) throw new TelegramTransportError("invalid-request");
     const result = await this.request("answerCallbackQuery", { callback_query_id: input.id, text: input.text }, false, input.signal);
     if (result !== true) throw new TelegramTransportError("invalid-response");
+  }
+  /** Rewrite a question message in place (a multi-select toggle, a captured
+   * note) and keep — or replace — its keyboard. Same editMessageText call as
+   * settleApprovalMessage, which clears the keyboard instead. */
+  async editQuestionMessage(input: { chatId: string; messageId: number; text: string; keyboard: TelegramButton[][]; signal?: AbortSignal }): Promise<void> {
+    if (!chatId(input.chatId) || !integer(input.messageId, 1) || !input.text || input.text.length > 4096 || !keyboard(input.keyboard)) throw new TelegramTransportError("invalid-request");
+    const result = await this.request("editMessageText", { chat_id: input.chatId, message_id: input.messageId,
+      text: input.text, reply_markup: { inline_keyboard: input.keyboard.map(row => row.map(button => ({ text: button.text, callback_data: button.data }))) } }, false, input.signal);
+    if (!object(result) || result.message_id !== input.messageId || !object(result.chat) || String(result.chat.id) !== input.chatId) throw new TelegramTransportError("invalid-response");
   }
   async settleApprovalMessage(input: { chatId: string; messageId: number; text: string; signal?: AbortSignal }): Promise<void> {
     if (!chatId(input.chatId) || !integer(input.messageId, 1) || !input.text || input.text.length > 4096) throw new TelegramTransportError("invalid-request");

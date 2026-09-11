@@ -37,6 +37,16 @@ import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import {
+  codexNoAnswers,
+  fromCodex,
+  fromElicitationForm,
+  toCodexAnswers,
+  toElicitationContent,
+  type QuestionAnswer,
+  type QuestionSpec,
+} from "../question-normalize.ts";
+import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -61,11 +71,19 @@ function decodeConfig(raw: unknown): CodexConfig {
   };
 }
 
-const QUESTION_TIMEOUT_NOTE = "No answer was given — use your best judgment.";
 const DENY_TIMEOUT_NOTE =
   "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
 type StdioMcpServer = { command: string; args: string[]; env: Record<string, string> };
+
+/** Settles one server→client ask. A question's `answer` carries the owner's
+ * validated picks (0.1.52 ASK3); `deny` on a question is an explicit skip. */
+type AskFinish = (
+  behavior: "allow" | "deny" | "answer",
+  message?: string,
+  source?: "user" | "timeout" | "system",
+  answers?: QuestionAnswer[],
+) => void;
 
 function mountMcpServer(
   appServerArgs: string[],
@@ -148,7 +166,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     interface Turn {
       stop: () => Promise<boolean>;
       turnId: string;
-      asks: Map<string, (behavior: "allow" | "deny" | "answer", message?: string, source?: "user" | "timeout" | "system") => void>;
+      asks: Map<string, AskFinish>;
     }
     const active = new Map<string, Turn>();
 
@@ -272,7 +290,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         usage: undefined as { input: number; output: number; cachedInput?: number } | undefined,
       };
 
-      const asks = new Map<string, (behavior: "allow" | "deny" | "answer", message?: string, source?: "user" | "timeout" | "system") => void>();
+      const asks = new Map<string, AskFinish>();
       let nextId = 1;
       const rpcPending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
@@ -358,15 +376,16 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const isMcpElicitation =
           method === "mcpServer/elicitation/request" &&
           params?._meta?.codex_approval_kind === "mcp_tool_call";
-        const isQuestion = method === "item/tool/requestUserInput";
+        const isUserInput = method === "item/tool/requestUserInput";
         // Any other MCP elicitation is a form asking the OWNER for input, not
-        // a tool approval. It used to fall through as "shell" — auto-accepted
-        // in fullAuto and by the harness's auto mode, with a {decision} reply
-        // that is not even the elicitation result shape. It is named as a
-        // question tool so no mode answers it; the full form (fields, values)
-        // arrives with the question card.
+        // a tool approval: the MCP server's message and schema become a
+        // question card (0.1.52 ASK3), answered with the MCP result shape
+        // `{action:"accept", content}` / `decline` / `cancel`. It used to
+        // fall through as "shell" — auto-accepted in fullAuto and by the
+        // harness's auto mode, with a {decision} reply that is not even the
+        // elicitation result shape.
         const isFormElicitation = method === "mcpServer/elicitation/request" && !isMcpElicitation;
-        const isElicitation = isMcpElicitation || isFormElicitation;
+        const isQuestion = isUserInput || isFormElicitation;
         const mcpTool = isMcpElicitation
           ? String(params.message ?? "").match(/tool \"([^\"]+)\"/)?.[1]
           : undefined;
@@ -377,10 +396,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ? "elicitation"
             : method === "item/fileChange/requestApproval" || method === "applyPatchApproval"
             ? "edit"
-            : isQuestion
-              ? "ask_user"
+            : isUserInput
+              ? "request_user_input"
               : "shell";
-        if (config.fullAuto && !isQuestion && !isFormElicitation) {
+        if (config.fullAuto && !isQuestion) {
           return send({
             jsonrpc: "2.0",
             id: msg.id,
@@ -389,45 +408,79 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               : { decision: legacy ? "approved" : "accept" },
           });
         }
+        // Engine-controlled input becomes a card only once it is bounded and
+        // well formed. A question the owner cannot be shown is answered at
+        // once with the engine's own honest no-answer, and the owner sees why.
+        let questions: QuestionSpec[] | undefined;
+        if (isQuestion) {
+          const normalized = isUserInput
+            ? fromCodex(params)
+            : params?.mode === "url"
+              ? { ok: false as const, error: "Codex forwarded a URL elicitation, which Murage does not open on the owner's behalf" }
+              : fromElicitationForm(params.message, params.requestedSchema);
+          if (!normalized.ok) {
+            emit({
+              ...base(threadId, turnId),
+              type: "runtime.error",
+              message: `codex asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
+            });
+            return send({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: isUserInput ? { answers: {} } : { action: "cancel" },
+            });
+          }
+          questions = normalized.questions;
+        }
         const requestId = newId();
-        const summary =
-          isElicitation && typeof params.message === "string"
+        const summary = questions
+          ? questions[0]!.question
+          : isMcpElicitation && typeof params.message === "string"
             ? params.message
             : typeof params.command === "string"
-            ? params.command
-            : Array.isArray(params.questions)
-              ? params.questions.map((q: any) => q.question ?? q.header).filter(Boolean).join(" · ")
+              ? params.command
               : typeof params.reason === "string"
                 ? params.reason
                 : tool;
-        const choices = isQuestion
-          ? (params.questions?.[0]?.options ?? []).map((o: any) => o.label).slice(0, 5)
-          : undefined;
-        const finish = (behavior: "allow" | "deny" | "answer", message?: string, source: "user" | "timeout" | "system" = "user") => {
+        // the first question's labels keep voice and older clients working
+        const choices = questions ? questions[0]!.options.map((option) => option.label) : undefined;
+        const finish: AskFinish = (behavior, _message, source = "user", answers) => {
           if (!asks.delete(requestId)) return;
           clearTimeout(timer);
-          if (isQuestion) {
-            const answers: Record<string, { answers: string[] }> = {};
-            for (const q of Array.isArray(params.questions) ? params.questions : []) {
-              answers[q.id] = { answers: [message || QUESTION_TIMEOUT_NOTE] };
-            }
-            send({ jsonrpc: "2.0", id: msg.id, result: { answers } });
-          } else {
+          if (questions) {
+            // Only the owner's validated answers reach Codex. A skip, the
+            // timeout or the turn ending is the honest no-answer — empty
+            // answer arrays, or an elicitation decline/cancel — never a
+            // sentence presented as the owner's.
+            const answered = behavior === "answer" && answers?.length ? answers : null;
             send({
               jsonrpc: "2.0",
               id: msg.id,
-              result: isElicitation
-                ? behavior === "allow"
-                  ? { action: "accept", content: {} }
-                  : { action: "decline" }
-                : { decision: behavior === "allow" ? (legacy ? "approved" : "accept") : legacy ? "denied" : "decline" },
+              result: isUserInput
+                ? { answers: answered ? toCodexAnswers(questions, answered) : codexNoAnswers(questions) }
+                : answered
+                  ? { action: "accept", content: toElicitationContent(params.requestedSchema, questions, answered) }
+                  : { action: source === "user" ? "decline" : "cancel" },
             });
+            emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: answered ? "answer" : "deny", source });
+            return;
           }
+          send({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: isMcpElicitation
+              ? behavior === "allow"
+                ? { action: "accept", content: {} }
+                : { action: "decline" }
+              : { decision: behavior === "allow" ? (legacy ? "approved" : "accept") : legacy ? "denied" : "decline" },
+          });
           emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
         };
+        // A question waits for the owner up to 30 minutes (the shared
+        // question timeout); a permission keeps its 15-minute deny.
         const timer = setTimeout(
-          () => (isQuestion ? finish("answer", QUESTION_TIMEOUT_NOTE, "timeout") : finish("deny", DENY_TIMEOUT_NOTE, "timeout")),
-          15 * 60_000,
+          () => (questions ? finish("deny", undefined, "timeout") : finish("deny", DENY_TIMEOUT_NOTE, "timeout")),
+          questions ? QUESTION_TIMEOUT_MS : 15 * 60_000,
         );
         timer.unref?.();
         asks.set(requestId, finish);
@@ -435,10 +488,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           ...base(threadId, turnId),
           type: "request.opened",
           requestId,
-          requestType: isQuestion ? "question" : "permission",
+          requestType: questions ? "question" : "permission",
           tool,
           summary,
           choices,
+          ...(questions ? { questions } : {}),
           approvalScope: controlsHost ? "local-computer" : undefined,
         });
       };
@@ -794,7 +848,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const turn = active.get(threadId);
         const finish = turn?.asks.get(requestId);
         if (!finish) return "unavailable"; // settled, timed out, or turn gone
-        finish(decision.behavior, decision.message, "user");
+        finish(decision.behavior, decision.message, "user", decision.answers);
         return decision.behavior === "allow" ? "allowed-once" : decision.behavior === "answer" ? "answered" : "rejected";
       },
       hasSession: (threadId) => active.has(threadId),

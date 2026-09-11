@@ -15,6 +15,16 @@
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
+import {
+  fromElicitationForm,
+  fromElicitationUrl,
+  fromFuigo,
+  toElicitationContent,
+  toFuigoAnswers,
+  type QuestionAnswer,
+  type QuestionSpec,
+} from "../../question-normalize.ts";
+import { QUESTION_TIMEOUT_MS } from "../../../shared/questions.ts";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
 
@@ -234,6 +244,25 @@ const envOr = (key: string, fallback: number): number => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
+
+/** Settles one server→client ask. A permission takes allow/deny/cancel; a
+ * question (Fuigo's ask_user_question, an ACP elicitation) takes `answer`
+ * with the owner's validated picks, or a deny that is an explicit skip
+ * (0.1.52 ASK3). */
+type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", answers?: QuestionAnswer[]) => void;
+
+/** Fuigo's ACP extension request for its AskUserQuestion tool. The ACP wire
+ * prefixes extension methods with `_`; the leader gateway may nest the real
+ * params as `{method, params}`, which fromFuigo tolerates. */
+const FUIGO_ASK_METHOD = "_fuigo/ask_user_question";
+/** Fuigo forwards an MCP server's elicitation as its own extension request
+ * (`fuigo-tools/src/mcp_elicitation/types.rs`): the ACP form/url fields plus
+ * `serverName`, answered `{outcome: "accept", content}` / `decline` /
+ * `cancel`. */
+const FUIGO_ELICIT_METHOD = "_fuigo/mcp/elicit";
+/** ACP v1 names it `elicitation/create`; the Rust crate that some agents
+ * embed still spells it `session/elicitation`. Both are the same request. */
+const ELICITATION_METHODS = new Set(["elicitation/create", "session/elicitation"]);
 const SESSION_CONFIG_TIMEOUT = envOr("MURAGE_ACP_SESSION_CONFIG_MS", 60_000); // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_NEW_MS", 90_000);
 const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // history replay on a long thread is slow
@@ -323,7 +352,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         stop: (reason: LifecycleStopReason) => void;
         interrupt: () => void;
         turnId: string;
-        asks: Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>;
+        asks: Map<string, AcpAskFinish>;
       }
       const active = new Map<string, Turn>();
       // Settlement removes a turn from `active` before its child has exited.
@@ -480,7 +509,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         child.once("close", () => providerBinding?.cleanup());
         const teardown = teardowns.track(threadId, turnId, child);
         const state = { settled: false, promptSent: false, cancelRequested: false, text: "" };
-        const asks = new Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>();
+        const asks = new Map<string, AcpAskFinish>();
         let nextId = 1;
         let sessionId: string | null = null;
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
@@ -558,8 +587,86 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           stop(cause); // the agent process does not exit on its own
         };
 
+        // A question for the owner (Fuigo's `_fuigo/ask_user_question`, an ACP
+        // `elicitation/create` form or URL) → canonical request.opened with
+        // `questions`. Never auto-answered in any mode; a skip, the 30-minute
+        // timeout or the turn ending sends the engine its own honest
+        // no-answer (Fuigo `cancelled`, elicitation `decline`/`cancel`).
+        const handleQuestionRequest = (msg: any, kind: "fuigo" | "elicitation" | "fuigo-elicit") => {
+          const params = msg.params ?? {};
+          const urlMode = kind !== "fuigo" && params.mode === "url";
+          const normalized =
+            kind === "fuigo"
+              ? fromFuigo(params)
+              : urlMode
+                ? fromElicitationUrl(params.message, params.url)
+                : fromElicitationForm(params.message, params.requestedSchema);
+          // the three reply vocabularies: Fuigo's ask tool, ACP elicitation, Fuigo's MCP bridge
+          const reply = (action: "accept" | "decline" | "cancel", content?: unknown) =>
+            kind === "fuigo"
+              ? action === "accept" ? content : { outcome: "cancelled" }
+              : kind === "fuigo-elicit"
+                ? { outcome: action, ...(content !== undefined ? { content } : {}) }
+                : { action, ...(content !== undefined ? { content } : {}) };
+          const cancelled = reply("cancel");
+          if (!normalized.ok) {
+            emit({
+              ...base(threadId, turnId),
+              type: "runtime.error",
+              message: `${DRIVER_KIND} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
+            });
+            return send({ jsonrpc: "2.0", id: msg.id, result: cancelled });
+          }
+          flushAssistantText();
+          const questions: QuestionSpec[] = normalized.questions;
+          const requestId = newId();
+          const finish: AcpAskFinish = (behavior, source = "user", answers) => {
+            if (!asks.delete(requestId)) return;
+            clearTimeout(timer);
+            const answered = behavior === "answer" && answers?.length ? answers : null;
+            let result: unknown;
+            if (answered) {
+              result =
+                kind === "fuigo"
+                  ? reply("accept", toFuigoAnswers(questions, answered))
+                  : urlMode
+                    ? reply("accept")
+                    : reply("accept", toElicitationContent(params.requestedSchema, questions, answered));
+            } else if (kind !== "fuigo" && source === "user") {
+              result = reply("decline");
+            } else {
+              result = cancelled;
+            }
+            send({ jsonrpc: "2.0", id: msg.id, result });
+            emit({
+              ...base(threadId, turnId),
+              type: "request.resolved",
+              requestId,
+              behavior: answered ? "answer" : "deny",
+              source,
+            });
+          };
+          const timer = setTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
+          timer.unref?.();
+          asks.set(requestId, finish);
+          emit({
+            ...base(threadId, turnId),
+            type: "request.opened",
+            requestId,
+            requestType: "question",
+            tool: kind === "fuigo" ? "ask_user_question" : "elicitation",
+            summary: questions[0]!.question.slice(0, 300),
+            // the first question's labels keep voice and older clients working
+            choices: questions[0]!.options.map((option) => option.label),
+            questions,
+          });
+        };
+
         // server→client permission request → canonical request.opened
         const handleServerRequest = (msg: any) => {
+          if (msg.method === FUIGO_ASK_METHOD) return handleQuestionRequest(msg, "fuigo");
+          if (msg.method === FUIGO_ELICIT_METHOD) return handleQuestionRequest(msg, "fuigo-elicit");
+          if (ELICITATION_METHODS.has(msg.method)) return handleQuestionRequest(msg, "elicitation");
           if (msg.method !== "session/request_permission") {
             // never leave an unknown server request hanging — the agent blocks
             return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
@@ -598,7 +705,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const tool = questionTool ?? (kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool");
           const summary = String(toolCall.rawInput?.command ?? toolCall.title ?? tool).slice(0, 200);
           const requestId = newId();
-          const finish = (behavior: string, source: "user" | "timeout" | "system" = "user") => {
+          const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.delete(requestId)) return;
             clearTimeout(timer);
             const want = behavior === "allow" ? "allow" : "reject";
@@ -807,7 +914,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           try {
             const init = await request(
               "initialize",
-              { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } },
+              {
+                protocolVersion: 1,
+                // form and URL elicitation are advertised because both become
+                // question cards (ASK3); a URL is shown, never fetched
+                clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, elicitation: { form: {}, url: {} } },
+              },
               INIT_TIMEOUT,
             );
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
@@ -1026,6 +1138,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const turn = active.get(threadId);
             const finish = turn?.asks.get(requestId);
             if (!finish) return "unavailable"; // settled, timed out, or turn gone
+            if (decision.behavior === "answer") {
+              // only a question ask carries the owner's picks to the engine
+              if (!decision.answers?.length) return "unavailable";
+              finish("answer", "user", decision.answers);
+              return "answered";
+            }
             finish(decision.behavior === "allow" ? "allow" : "deny", "user");
             return decision.behavior === "allow" ? "allowed-once" : "rejected";
           },
