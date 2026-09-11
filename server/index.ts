@@ -158,6 +158,7 @@ import {
   builtInBrowserEnabled,
   browserProfileReplacementConflict,
   browserProfilePartitionTarget,
+  stripWorkspaceCredentialEnv,
   syncCredentialEnv,
   withInstanceCli,
   withInstanceEnabled,
@@ -6684,23 +6685,17 @@ async function testCliBinary(
   });
 }
 
+const CLI_PROBE_VENDOR_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"] as const;
 /** A pre-save probe only needs PATH. Never hand credentials inherited by the
- * desktop/server process to an arbitrary wrapper selected through Settings. */
+ * desktop/server process to an arbitrary wrapper selected through Settings.
+ * Every workspace credential (config.ts WORKSPACE_CREDENTIAL_ENV, which the
+ * connected-apps broker tokens belong to) is stripped from one list so a new
+ * secret cannot drift past this probe; the vendor keys are the extras a
+ * wrapper could otherwise inherit from the user's shell. */
 function cliProbeEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
-  for (const key of [
-    "XAI_API_KEY",
-    "BOX_TOKEN",
-    "OPENCODE_API_KEY",
-    "COMPOSIO_API_KEY",
-    "MURAGE_COMPOSIO_BROKER_TOKEN",
-    "MURAGE_TTS_KEY",
-    "MURAGE_OPENAI_IMAGE_KEY",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-  ]) {
-    delete env[key];
-  }
+  stripWorkspaceCredentialEnv(env);
+  for (const key of CLI_PROBE_VENDOR_KEYS) delete env[key];
   return env;
 }
 

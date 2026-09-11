@@ -1001,6 +1001,31 @@ describe("workspace credential env strip", () => {
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_COMPOSIO_BROKER_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_FLUX_COMPOSIO_BROKER_TOKEN");
   });
+
+  it("is what the Settings CLI probe strips, so a new secret cannot drift past it", () => {
+    // server/index.ts boots a server on import, so its `<cli> --version`
+    // probe is checked by source shape. The probe used to carry a hand list
+    // that named the legacy broker token and missed the Flux one; it must
+    // strip the shared list instead of a copy of it.
+    const src = readFileSync(join(import.meta.dirname, "index.ts"), "utf8");
+    const start = src.indexOf("function cliProbeEnvironment(");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\n}\n", start));
+    expect(body).toContain("stripWorkspaceCredentialEnv(env)");
+    expect(body).not.toMatch(/"MURAGE_COMPOSIO_BROKER_TOKEN"/);
+    expect(body).not.toMatch(/"COMPOSIO_API_KEY"/);
+    expect(src).toMatch(/import \{[^}]*\bstripWorkspaceCredentialEnv\b[^}]*\} from "\.\/config\.ts"/s);
+  });
+
+  it("is mirrored exactly by the bug-report redaction list", () => {
+    // electron/diagnostics.mjs cannot import server/config.ts, so it carries a
+    // hand copy; electron/diagnostics.test.mjs alarms on drift and this pins
+    // the same parity from the server side.
+    const src = readFileSync(join(import.meta.dirname, "..", "electron", "diagnostics.mjs"), "utf8");
+    const block = src.slice(src.indexOf("export const CREDENTIAL_ENV_NAMES"), src.indexOf("];", src.indexOf("export const CREDENTIAL_ENV_NAMES")));
+    const names = [...block.matchAll(/"([A-Z0-9_]+)"/g)].map((m) => m[1]);
+    expect(names).toEqual([...WORKSPACE_CREDENTIAL_ENV]);
+  });
 });
 
 describe("routing env strip", () => {

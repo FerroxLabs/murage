@@ -7,7 +7,9 @@
 // ago. Picking the wrong one does not fail loudly — it returns an empty,
 // perfectly healthy-looking list of connections. `activeBroker` is the single
 // place that choice is made, so it is the single place worth testing hard.
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -24,7 +26,8 @@ import {
   resetManagedBrokerState,
   setBrokerEventSink,
 } from "./composio.ts";
-import type { AppConfig } from "./config.ts";
+import { DATA_DIR, type AppConfig } from "./config.ts";
+import { DEV_FLUX_TOKEN_FILE, DEV_FLUX_TOKEN_LABEL, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
 
 const LEGACY_TOKEN = "a".repeat(64);
 const FLUX_TOKEN = "b".repeat(64);
@@ -32,7 +35,11 @@ const FLUX_KEY = "sk-flux-never-a-broker-credential";
 
 let broker: Server;
 let base = "";
-const requests: Array<{ path: string; authorization: string | undefined }> = [];
+const requests: Array<{ path: string; method: string; authorization: string | undefined; body?: unknown }> = [];
+let mintAnswer: { status: number; body: unknown } = { status: 200, body: {} };
+let mintDelayMs = 0;
+let minted = 0;
+const MINTED_TOKEN = () => "c".repeat(63) + String(minted % 10);
 let health: { status: number; body: unknown } = { status: 200, body: { service: "flux-composio", ready: true, claims: true } };
 let healthProbes = 0;
 let healthDelayMs = 0;
@@ -41,7 +48,23 @@ let dataAnswer: { status: number; body: unknown } = { status: 200, body: { confi
 beforeAll(async () => {
   broker = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://stub");
-    requests.push({ path: url.pathname, authorization: req.headers.authorization });
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks).toString("utf8");
+    requests.push({ path: url.pathname, method: req.method ?? "", authorization: req.headers.authorization, body: raw ? JSON.parse(raw) : undefined });
+    if (url.pathname.endsWith("/v1/tokens") && req.method === "POST") {
+      if (mintDelayMs) await new Promise((resolve) => setTimeout(resolve, mintDelayMs));
+      minted += 1;
+      const body = mintAnswer.status === 200
+        ? { token: MINTED_TOKEN(), expiresAt: new Date(Date.now() + 30 * 24 * 3600_000).toISOString(), accountKind: "personal", ...(mintAnswer.body as object) }
+        : mintAnswer.body;
+      res.writeHead(mintAnswer.status, { "content-type": "application/json" });
+      return res.end(JSON.stringify(body));
+    }
+    if (url.pathname.endsWith("/v1/tokens/current") && req.method === "DELETE") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ revoked: true }));
+    }
     if (url.pathname.endsWith("/health")) {
       healthProbes += 1;
       if (healthDelayMs) await new Promise((resolve) => setTimeout(resolve, healthDelayMs));
@@ -62,6 +85,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   requests.length = 0;
+  mintAnswer = { status: 200, body: {} };
+  mintDelayMs = 0;
   healthProbes = 0;
   healthDelayMs = 0;
   health = { status: 200, body: { service: "flux-composio", ready: true, claims: true } };
@@ -345,5 +370,171 @@ describe("what the panel is told", () => {
   it("says nothing about a move for a workspace running its own key", () => {
     shell({ flux: "url-only", claim: { state: "offered" } });
     expect(connectorMigration(cfg({ composio: { apiKey: "ak_live" } }))).toMatchObject({ state: "none" });
+  });
+});
+
+// The dev harness (`pnpm dev:server`) has no desktop parent to mint its
+// FluxRouter token, so it mints for itself from the Flux key in config.json.
+// Same helper, same rules, same account for the same key: this is the
+// "two identities" hazard's dev half.
+describe("the dev harness mints its own FluxRouter token", () => {
+  const CONFIG_PATH = join(DATA_DIR, "config.json");
+  const TOKEN_PATH = join(DATA_DIR, DEV_FLUX_TOKEN_FILE);
+  const ENV = ["MURAGE_FLUX_COMPOSIO_BROKER_URL", "MURAGE_FLUX_COMPOSIO_BROKER_TOKEN", "MURAGE_DESKTOP_PARENT", "FLUX_API_KEY"] as const;
+  const saved: Partial<Record<(typeof ENV)[number], string | undefined>> = {};
+
+  function storeFluxKey(key: string | null) {
+    if (key === null) rmSync(CONFIG_PATH, { force: true });
+    else writeFileSync(CONFIG_PATH, JSON.stringify({ flux: { apiKey: key } }));
+  }
+  const mints = () => requests.filter((request) => request.path === "/composio/v1/tokens" && request.method === "POST");
+  const revocations = () => requests.filter((request) => request.path === "/composio/v1/tokens/current" && request.method === "DELETE");
+
+  beforeEach(() => {
+    for (const name of ENV) {
+      saved[name] = process.env[name];
+      delete process.env[name];
+    }
+    process.env.MURAGE_FLUX_COMPOSIO_BROKER_URL = `${base}/composio`;
+    mkdirSync(DATA_DIR, { recursive: true });
+    rmSync(TOKEN_PATH, { force: true });
+    storeFluxKey(FLUX_KEY);
+    minted = 0;
+    resetManagedBrokerState();
+  });
+
+  afterEach(() => {
+    for (const name of ENV) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+    rmSync(TOKEN_PATH, { force: true });
+    rmSync(CONFIG_PATH, { force: true });
+    resetManagedBrokerState();
+  });
+
+  it("mints from the stored Flux key, keeps the token owner-only on disk, and uses it for data calls", async () => {
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(1);
+    expect(mints()[0].authorization).toBe(`Bearer ${FLUX_KEY}`);
+    expect(mints()[0].body).toEqual({ label: DEV_FLUX_TOKEN_LABEL });
+    expect(connectionBroker(cfg())).toBe("flux");
+    expect(connectorPanelFields(cfg(), true)).toMatchObject({ broker: "flux", fluxBrokerEnabled: true, migration: { accountKind: "personal" } });
+
+    await connectedServices(cfg());
+    const call = requests.find((request) => request.path.endsWith("/v1/connectors/connected"));
+    expect(call?.authorization).toBe(`Bearer ${MINTED_TOKEN()}`);
+    expect(JSON.stringify(requests.filter((request) => !request.path.endsWith("/v1/tokens")))).not.toContain(FLUX_KEY);
+
+    if (process.platform !== "win32") expect(statSync(TOKEN_PATH).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(TOKEN_PATH, "utf8"))).toMatchObject({ fluxComposioBrokerToken: MINTED_TOKEN(), fluxComposioAccountKind: "personal" });
+    // The key is what the panel must never see; the token file does not carry it either.
+    expect(readFileSync(TOKEN_PATH, "utf8")).not.toContain(FLUX_KEY);
+  });
+
+  it("re-uses the stored token after a restart instead of minting again", async () => {
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(1);
+    // A restart forgets memory, not the file.
+    resetDevFluxTokenState();
+    invalidateBrokerReadiness();
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(1);
+    expect(connectionBroker(cfg())).toBe("flux");
+  });
+
+  it("lets an env-pinned token win, and never mints inside the packaged app", async () => {
+    process.env.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN = FLUX_TOKEN;
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(0);
+    expect(connectionBroker(cfg())).toBe("flux");
+    await connectedServices(cfg());
+    expect(requests.find((request) => request.path.endsWith("/v1/connectors/connected"))?.authorization).toBe(`Bearer ${FLUX_TOKEN}`);
+
+    delete process.env.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN;
+    resetManagedBrokerState();
+    process.env.MURAGE_DESKTOP_PARENT = "1";
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(0);
+    expect(connectionBroker(cfg())).toBeNull();
+    expect(existsSync(TOKEN_PATH)).toBe(false);
+
+    // The same once the desktop shell has spoken, whatever the env says.
+    delete process.env.MURAGE_DESKTOP_PARENT;
+    resetManagedBrokerState();
+    shell({ flux: "url-only", legacy: false });
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(0);
+  });
+
+  it("has nothing to mint from without a stored key, and drops the token when the key goes", async () => {
+    storeFluxKey(null);
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(0);
+    expect(connectionBroker(cfg())).toBeNull();
+    expect(connectorPanelFields(cfg(), false)).toMatchObject({ broker: null, fluxBrokerEnabled: true, fluxConfigured: false });
+
+    storeFluxKey(FLUX_KEY);
+    await primeBrokerReadiness();
+    expect(connectionBroker(cfg())).toBe("flux");
+    const token = MINTED_TOKEN();
+
+    storeFluxKey(null);
+    await primeBrokerReadiness();
+    expect(connectionBroker(cfg())).toBeNull();
+    expect(revocations()).toHaveLength(1);
+    expect(revocations()[0].authorization).toBe(`Bearer ${token}`);
+    expect(existsSync(TOKEN_PATH)).toBe(false);
+  });
+
+  it("re-mints under a changed key and revokes the token the old key minted", async () => {
+    await primeBrokerReadiness();
+    const first = MINTED_TOKEN();
+    storeFluxKey("sk-flux-another-account");
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(2);
+    expect(mints()[1].authorization).toBe("Bearer sk-flux-another-account");
+    expect(revocations().map((request) => request.authorization)).toEqual([`Bearer ${first}`]);
+    await connectedServices(cfg());
+    expect(requests.find((request) => request.path.endsWith("/v1/connectors/connected"))?.authorization).toBe(`Bearer ${MINTED_TOKEN()}`);
+  });
+
+  it("shows the panel why FluxRouter declined, and does not re-present a declined key on every route", async () => {
+    mintAnswer = { status: 402, body: { error: "no credit", code: "flux_key_budget_exhausted" } };
+    await primeBrokerReadiness();
+    await primeBrokerReadiness();
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(1);
+    expect(connectionBroker(cfg())).toBeNull();
+    const fields = connectorPanelFields(cfg(), true);
+    expect(fields.migration.tokenError).toBe("flux_key_budget_exhausted");
+    expect(JSON.stringify(fields)).not.toContain(FLUX_KEY);
+  });
+
+  it("re-mints once FluxRouter says the token it holds was revoked", async () => {
+    await primeBrokerReadiness();
+    const first = MINTED_TOKEN();
+    dataAnswer = { status: 401, body: { error: "gone", code: "broker_token_revoked" } };
+    await connectedServices(cfg()).catch(() => undefined);
+    expect(connectionBroker(cfg())).toBeNull();
+    dataAnswer = { status: 200, body: { configured: true, services: {} } };
+    await primeBrokerReadiness();
+    expect(mints()).toHaveLength(2);
+    expect(MINTED_TOKEN()).not.toBe(first);
+    expect(connectionBroker(cfg())).toBe("flux");
+    await connectedServices(cfg());
+    expect(requests.filter((request) => request.path.endsWith("/v1/connectors/connected")).at(-1)?.authorization).toBe(`Bearer ${MINTED_TOKEN()}`);
+  });
+
+  it("never makes a turn wait on a mint another request already started", async () => {
+    mintDelayMs = 150;
+    const started = Date.now();
+    const priming = primeBrokerReadiness();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await primeBrokerReadiness({ turn: true });
+    expect(Date.now() - started).toBeLessThan(100);
+    await priming;
+    expect(mints()).toHaveLength(1);
+    expect(connectionBroker(cfg())).toBe("flux");
   });
 });

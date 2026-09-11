@@ -525,6 +525,18 @@ function composioLegacyUntilValue() {
   return composioLegacyBrokerUntil(process.env, { packaged: app.isPackaged });
 }
 
+/** Whether THIS process mints the FluxRouter broker token and runs the legacy
+ * claim. Packaged only, like Worker registration: the token is minted from
+ * the encrypted Flux key and delivered to the server child over its private
+ * port, and a dev shell has neither — its Flux key lives in the harness's
+ * config.json and the harness is a separate `pnpm dev:server` process this
+ * shell never forks (`syncManagedComposioCredentials` has no `serverProc`).
+ * The dev harness mints for itself instead: server/flux-composio-dev-token.ts,
+ * from the same stored key, so dev and packaged land on the same account. */
+function fluxComposioLifecycleEnabled() {
+  return app.isPackaged && Boolean(fluxComposioBrokerUrlValue()) && !credentialStoreUnavailable;
+}
+
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/Murage on macOS,
 // Console.app-visible; %APPDATA%\Murage\logs on Windows), which is also
@@ -1230,7 +1242,7 @@ async function startServerOn(port) {
       // blocked Flux key). Re-mint now rather than at the next timer tick, so
       // connected apps come back within one request instead of ten minutes.
       if (message?.type === "murage:flux-composio-token-rejected") {
-        if (fluxComposioBrokerUrlValue() && !credentialStoreUnavailable) void runComposioLifecycle({ force: true }).catch(() => {});
+        if (fluxComposioLifecycleEnabled()) void runComposioLifecycle({ force: true }).catch(() => {});
         return;
       }
     } catch (error) {
@@ -1382,7 +1394,7 @@ async function runComposioLifecycle({ claim = false, force = false } = {}) {
   }
   const run = (async () => {
     const fluxBrokerUrl = fluxComposioBrokerUrlValue();
-    if (!fluxBrokerUrl || credentialStoreUnavailable || !secureCredentialState) {
+    if (!fluxComposioLifecycleEnabled() || !secureCredentialState) {
       return publicComposioLegacyClaim(secureCredentials);
     }
     const snapshot = { ...secureCredentials };
@@ -1421,7 +1433,7 @@ async function runComposioLifecycle({ claim = false, force = false } = {}) {
 /** The retry clock. Pending claims and confirmations used to wait for the next
  * boot; now they retry while the app is open, backing off after a 429. */
 function startComposioLifecycleTimer() {
-  if (composioLifecycleTimer || !fluxComposioBrokerUrlValue()) return;
+  if (composioLifecycleTimer || !fluxComposioLifecycleEnabled()) return;
   composioLifecycleNextAt = Date.now() + COMPOSIO_LIFECYCLE_INTERVAL_MS;
   composioLifecycleTimer = setInterval(() => {
     if (desktopShutdownStarted || Date.now() < composioLifecycleNextAt) return;
@@ -2772,7 +2784,7 @@ ipcMain.handle("flux-connection:mutate", async (_event, input) => {
     // key that just arrived (or just left) changes it. Removing the key clears
     // and revokes the token; the claim state is left alone, because the user's
     // connections did not move.
-    if (fluxComposioBrokerUrlValue()) {
+    if (fluxComposioLifecycleEnabled()) {
       void runComposioLifecycle().catch(() => {});
       startComposioLifecycleTimer();
     }
@@ -2786,6 +2798,9 @@ ipcMain.handle("flux-connection:mutate", async (_event, input) => {
 ipcMain.handle("composio:claim-legacy", async () => {
   if (credentialStoreUnavailable) throw new Error("The operating-system credential store is unavailable");
   if (!fluxComposioBrokerUrlValue()) throw new Error("FluxRouter connected apps are not available in this build");
+  // A dev shell holds no Worker token to move (they live in the packaged
+  // app's encrypted store); the migration can only be exercised packaged.
+  if (!app.isPackaged) throw new Error("Moving connected apps runs from the installed Murage app, not a development launch");
   return runComposioLifecycle({ claim: true });
 });
 
@@ -3071,7 +3086,7 @@ const desktopStartup = app.whenReady().then(async () => {
   // FluxRouter connected apps: mint the broker token, then PREPARE the legacy
   // claim (health + /v1/me). Boot never asks the Worker to sign a claim for a
   // shared account — that waits for the user's button in Connected apps.
-  if (fluxComposioBrokerUrlValue() && !credentialStoreUnavailable) {
+  if (fluxComposioLifecycleEnabled()) {
     void runComposioLifecycle().catch(() => {});
     startComposioLifecycleTimer();
   }
