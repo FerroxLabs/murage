@@ -439,6 +439,19 @@ describe("a live browser stream", () => {
     expect(tracker.ids()).toEqual([]);
   });
 
+  it("ends the stream rather than forward a structured event it could not scrub", async () => {
+    const deviceId = pair();
+    const stream = await liveStream(signInBrowser(deviceId).value);
+    const depth = 200_000;
+    const tooDeep = `${"[".repeat(depth)}${JSON.stringify({ resumeCursors: { g: "cursor-value" } })}${"]".repeat(depth)}`;
+
+    for (const res of upstreams) res.write(`data: ${tooDeep}\n\n`);
+    await stream.closed;
+    expect(stream.text()).not.toContain("cursor-value");
+    expect(stream.text()).not.toContain("resumeCursors");
+    expect(tracker.ids()).toEqual([]);
+  });
+
   it("still ends every browser's stream when the whole device is revoked", async () => {
     const deviceId = pair();
     const first = await liveStream(signInBrowser(deviceId).value);
