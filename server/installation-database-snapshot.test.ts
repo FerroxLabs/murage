@@ -6,20 +6,22 @@ import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
+import { initializeMessageTables } from "./message-tables.ts";
 import { snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
-function fixture() {
+/** An installation database with the transcript tables the harness itself
+ * creates (server/message-tables.ts), or the DDL an older release wrote. */
+function fixture(transcriptDdl?: string) {
   const scratch = mkdtempSync(join(tmpdir(), "murage-db-snapshot-"));
   roots.push(scratch);
   const data = join(scratch, "installation");
   mkdirSync(data);
   const db = new DatabaseSync(join(data, "messages.db"));
   databases.push(db);
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
-    CREATE TABLE messages(thread_id TEXT,id TEXT,at INTEGER,role TEXT,kind TEXT,text TEXT,json TEXT,PRIMARY KEY(thread_id,id));
-    CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT);`);
+  db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
+  if (transcriptDdl) db.exec(transcriptDdl); else initializeMessageTables(db);
   db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "bot", "goal.run", null, JSON.stringify({ id: "m", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Receipt canary" } }));
   db.exec("INSERT INTO thread_state VALUES ('t','m')");
   return { scratch, data, db, target: join(scratch, "snapshot.db") };
@@ -80,6 +82,61 @@ it.each([
   f.db.exec(sql);
   await expect(snapshotInstallationDatabase(f.data, f.target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
   expect(existsSync(f.target)).toBe(false);
+});
+
+// An allowlisted index NAME is not an allowlisted index. Activation opens the
+// restored file with the app's own CREATE INDEX IF NOT EXISTS, which keeps
+// whatever definition already sits under that name, so a partial, expression,
+// unique or re-targeted index would survive restore and change what the
+// harness's queries and writes do. Every index and table definition must be
+// the one the harness's initializers create (RED2B verifier follow-up).
+it.each([
+  ["a partial index under an allowed name", "DROP INDEX messages_thread; CREATE INDEX messages_thread ON messages(thread_id) WHERE kind='text'"],
+  ["an expression index under an allowed name", "DROP INDEX messages_thread; CREATE INDEX messages_thread ON messages(lower(thread_id))"],
+  ["an extra column in an allowed index", "DROP INDEX messages_thread; CREATE INDEX messages_thread ON messages(thread_id,at)"],
+  ["a unique index under an allowed name", "DROP INDEX messages_thread; CREATE UNIQUE INDEX messages_thread ON messages(thread_id)"],
+  ["a collation change in an allowed index", "DROP INDEX messages_thread; CREATE INDEX messages_thread ON messages(thread_id COLLATE NOCASE)"],
+  ["an allowed index name moved to another known table", "DROP INDEX messages_thread; CREATE INDEX messages_thread ON thread_state(thread_id)"],
+  ["a partial saved-file index", "DROP INDEX artifacts_kind_date; CREATE INDEX artifacts_kind_date ON artifacts(kind,created_at DESC) WHERE kind='image'"],
+  ["a saved-file index with a changed sort order", "DROP INDEX artifacts_kind_date; CREATE INDEX artifacts_kind_date ON artifacts(kind,created_at)"],
+  ["an expression inbox index", "DROP INDEX messages_inbox_kind_thread_at; CREATE INDEX messages_inbox_kind_thread_at ON messages(kind,thread_id,abs(at))"],
+  ["a generated column PRAGMA table_info does not list", "ALTER TABLE inbox_item_state ADD COLUMN shadow TEXT GENERATED ALWAYS AS (source_key) VIRTUAL"],
+  ["a CHECK constraint on a known table", "DROP TABLE thread_state; CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT CHECK(length(active_leaf_id)<8)); INSERT INTO thread_state VALUES('t','m')"],
+  ["a replacing conflict clause on a known table", "DROP TABLE thread_state; CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY ON CONFLICT REPLACE,active_leaf_id TEXT); INSERT INTO thread_state VALUES('t','m')"],
+])("refuses %s and leaves no snapshot behind", async (_name, sql) => {
+  const f = fixture();
+  initializeInbox(f.db); initializeArtifacts(f.db);
+  f.db.exec(sql);
+  await expect(snapshotInstallationDatabase(f.data, f.target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
+  expect(existsSync(f.target)).toBe(false);
+  expect(readdirSync(f.scratch).filter(name => name.startsWith(".murage-database-snapshot-"))).toEqual([]);
+});
+
+it.each([
+  // server/store.ts wrote this multi-line DDL from #192 until 0.1.47 moved it
+  // to server/database.ts; installations created then still carry the text.
+  ["the pre-0.1.47 transcript DDL", `
+    CREATE TABLE IF NOT EXISTS messages (
+      thread_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      at INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      text TEXT,
+      json TEXT NOT NULL,
+      PRIMARY KEY (thread_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
+    CREATE TABLE IF NOT EXISTS thread_state (
+      thread_id TEXT PRIMARY KEY,
+      active_leaf_id TEXT
+    );`],
+  // server/memory/restore.ts writes the compact form into a restore target.
+  ["the memory restore target DDL", "CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id)); CREATE INDEX messages_thread ON messages(thread_id); CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT);"],
+])("accepts %s, which differs from today's only in whitespace", async (_name, ddl) => {
+  const f = fixture(ddl);
+  initializeInbox(f.db); initializeArtifacts(f.db);
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 1, threads: 1 });
 });
 
 it("copies committed WAL data, branch head and terminal receipt without the runtime Store", async () => {

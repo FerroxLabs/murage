@@ -9,7 +9,9 @@
 // held save leaving the newer text unsaved, an external change reloading a
 // clean preview and raising a conflict for a dirty editor, the dirty-close
 // question, the compact overlay's Back to chat keeping a draft, the drag
-// handle, and the protected HTML preview letting nothing out.
+// handle, the protected HTML preview letting nothing out, and (STOPRESTORE2)
+// a Save pressed right after Stop waiting for the stopped turn's lease with
+// the named refusal when the engine outlives its close budget.
 //
 // Nothing here touches a real app, data directory, engine or network.
 import { test, expect, type Page } from "@playwright/test";
@@ -22,7 +24,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { initializeArtifacts } from "../../server/artifacts.ts";
-import { ProjectFolderLeases } from "../../server/project-folder-leases.ts";
+import { ProjectTurnLeases } from "../../server/project-turn-leases.ts";
 import { sendDelegated } from "../../server/route-delegation.ts";
 import { workspaceFilesRoute, type WorkspaceFilesDeps } from "../../server/workspace-files.ts";
 import { WORKSPACE_FILES_ROUTE_PREFIX, WORKSPACE_FILES_ROUTES } from "../../shared/workspace-files.ts";
@@ -32,6 +34,16 @@ let leakedRequests = 0;
 /** While set, write answers are held until `/__control/release`. */
 let holdWrites = false;
 const heldWrites: Array<() => void> = [];
+/** The real writer registry a bot turn holds its working folder in
+ * (STOPRESTORE2). `/__control/turn/<start|stop|close>` does what dispatch,
+ * Stop and the engine's terminal event do to it; `/__control/close-budget`
+ * sets the engine close budget the save's wait is bounded by. */
+const turns = new ProjectTurnLeases();
+let closeBudgetMs = 5_000;
+/** One generation per started turn: a completed turn id is a tombstone in
+ * the registry, so ids are never reused. */
+let turnSerial = 0;
+const TURN = { threadId: "task", generation: "", turnId: "" };
 const proof = "workspace-pane-fixture-proof";
 const scope = { botId: "research", threadId: "task" };
 const REPORT = "# Weekly report\n\nThree updates this week.\n";
@@ -52,7 +64,7 @@ test.beforeAll(async () => {
     dataDir, database: () => db,
     store: { bots: [{ id: "research", name: "Research bot", threadId: "task", resumeCursors: {}, tasks: [{ threadId: "task", title: "Weekly report", cwd: workspace, resumeCursors: {} }] }], groups: [] } as never,
     artifactScopes: () => [{ botId: "research", botName: "Research bot", threadId: "task", workspaceRoot: workspace }],
-    projectFolders: new ProjectFolderLeases(),
+    projectFolders: turns.folders, projectTurns: turns, stoppedTurnCloseMs: () => closeBudgetMs,
   };
   const repo = fileURLToPath(new URL("../../", import.meta.url));
   server = await createServer({
@@ -87,6 +99,14 @@ createRoot(document.getElementById('root')).render(React.createElement(Harness))
           if (url.pathname === "/__pane") { res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__pane.js"></script>'); return; }
           if (url.pathname === "/__control/hold") { holdWrites = true; res.end("held"); return; }
           if (url.pathname === "/__control/release") { holdWrites = false; for (const release of heldWrites.splice(0)) release(); res.end("released"); return; }
+          if (url.pathname === "/__control/turn/start") {
+            turnSerial++; TURN.generation = `turn-${turnSerial}`; TURN.turnId = `provider-turn-${turnSerial}`;
+            turns.acquire(TURN.threadId, TURN.generation, workspace); turns.markDispatched(TURN.generation); turns.bind(TURN.threadId, TURN.generation, TURN.turnId);
+            res.end("started"); return;
+          }
+          if (url.pathname === "/__control/turn/stop") { turns.markStopRequested(TURN.generation); res.end("stop requested"); return; }
+          if (url.pathname === "/__control/turn/close") { turns.complete(TURN.threadId, TURN.turnId); res.end("closed"); return; }
+          if (url.pathname === "/__control/close-budget") { closeBudgetMs = Number(url.searchParams.get("ms")) || 5_000; res.end(String(closeBudgetMs)); return; }
           if (url.pathname === "/api/desktop-secret") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ secret: proof })); return; }
           if (url.pathname !== WORKSPACE_FILES_ROUTE_PREFIX && !url.pathname.startsWith(`${WORKSPACE_FILES_ROUTE_PREFIX}/`)) return next();
           const desktop = req.headers["x-murage-surface"] === "desktop" && req.headers["x-murage-surface-secret"] === proof;
@@ -114,6 +134,7 @@ test.beforeEach(() => {
   writeFileSync(file("report.md"), REPORT);
   writeFileSync(file("notes.txt"), NOTES);
   holdWrites = false; for (const release of heldWrites.splice(0)) release();
+  turns.disposed(turns.generations()); closeBudgetMs = 5_000;
 });
 
 async function open(page: Page, { width = 1440, skin = "light" } = {}) {
@@ -241,6 +262,50 @@ test("an external change reloads a clean preview and raises a conflict for a dir
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByTestId("markdown-file-status")).toHaveText("File saved");
   expect(disk("report.md")).toBe("# Weekly report\n\nMine.\n");
+});
+
+test("a Save right after Stop waits for the stopped turn to close, and names the refusal when it does not (STOPRESTORE2)", async ({ page, request }) => {
+  await open(page);
+  await editInSource(page);
+  await sourceBox(page).fill("# Weekly report\n\nEdited while the bot worked.\n");
+  // A live turn holds the workspace: Save is refused at once, nothing written.
+  await request.get(`${origin}/__control/turn/start`);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByTestId("markdown-save-error")).toHaveText("File not saved: a bot is writing to this workspace. Your changes are still here; try again when it finishes.");
+  await expect(page.getByTestId("markdown-file-status")).toHaveText("File not saved");
+  expect(disk("report.md")).toBe(REPORT);
+
+  // Stop: the bot reads idle but the engine has not closed, so the lease is
+  // still held. Save now waits instead of refusing; the engine's close
+  // (turn.completed) releases the lease and the save lands.
+  await request.get(`${origin}/__control/turn/stop`);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByTestId("markdown-file-status")).toHaveText("Saving file…");
+  await expect(page.getByTestId("markdown-save-error")).toHaveCount(0);
+  expect(disk("report.md")).toBe(REPORT);
+  await request.get(`${origin}/__control/turn/close`);
+  await expect(page.getByTestId("markdown-file-status")).toHaveText("File saved");
+  await expect(tabs(page).first()).not.toHaveAttribute("data-dirty", "true");
+  expect(disk("report.md")).toBe("# Weekly report\n\nEdited while the bot worked.\n");
+
+  // A stopped turn whose engine outlives its close budget: the pane shows
+  // the named, retryable refusal — not a generic failure — and keeps the text.
+  await request.get(`${origin}/__control/close-budget?ms=300`);
+  await request.get(`${origin}/__control/turn/start`);
+  await request.get(`${origin}/__control/turn/stop`);
+  await sourceBox(page).fill("# Weekly report\n\nEdited after a slow Stop.\n");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByTestId("markdown-save-error")).toHaveText("File not saved: a stopped bot turn is still closing in this workspace. Your changes are still here; wait a moment and save again.");
+  await expect(page.getByTestId("markdown-file-status")).toHaveText("File not saved");
+  await expect(sourceBox(page)).toHaveValue("# Weekly report\n\nEdited after a slow Stop.\n");
+  expect(disk("report.md")).toBe("# Weekly report\n\nEdited while the bot worked.\n");
+  await page.screenshot({ path: test.info().outputPath("save-stopped-turn-closing.png") });
+  // Saving again once the engine closed writes.
+  await request.get(`${origin}/__control/turn/close`);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByTestId("markdown-file-status")).toHaveText("File saved");
+  await expect(page.getByTestId("markdown-save-error")).toHaveCount(0);
+  expect(disk("report.md")).toBe("# Weekly report\n\nEdited after a slow Stop.\n");
 });
 
 test("closing a dirty tab asks first; the answer is honoured either way", async ({ page }) => {

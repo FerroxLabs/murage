@@ -104,3 +104,68 @@ it("bounds completion tombstones and supports turns that have no folder lease", 
   expect(leases.bind("thread", "recent", "terminal-" + (PROJECT_TURN_TOMBSTONE_LIMIT - 1))).toBe(false);
   expect(leases.generations()).toEqual(["late-old"]);
 });
+
+// ── restore admission across the Stop → close window (STOPRESTORE1) ────────
+it("restore admission waits for a stopped writer's release and then holds the folder", async () => {
+  const { cwd, leases, owners } = fixture();
+  leases.acquire("thread", "generation", cwd);
+  leases.markDispatched("generation");
+  expect(leases.bind("thread", "generation", "turn")).toBe(true);
+  expect(leases.markStopRequested("generation")).toBe(true);
+  let settled: unknown;
+  const admission = leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 }).then(value => { settled = value; return value; });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(settled, "the restore must not be admitted while the stopped turn still holds the folder").toBeUndefined();
+  expect(owners()).toEqual(["generation"]);
+  leases.complete("thread", "turn");
+  await expect(admission).resolves.toMatchObject({ ok: true, lease: { ownerId: "restore:1", mode: "restore" } });
+  expect(owners()).toEqual(["restore:1"]);
+});
+
+it("restore admission refuses a live writer at once and never waits on it", async () => {
+  const { cwd, leases, owners } = fixture();
+  leases.acquire("thread", "generation", cwd);
+  leases.markDispatched("generation");
+  const started = Date.now();
+  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "conflict" });
+  expect(Date.now() - started).toBeLessThan(1_000);
+  expect(owners()).toEqual(["generation"]);
+});
+
+it("restore admission refuses when one holder is stopped but another is live, or when a restore already holds the folder", async () => {
+  const { cwd, leases } = fixture();
+  leases.acquire("thread", "stopped", cwd);
+  leases.markDispatched("stopped");
+  leases.markStopRequested("stopped");
+  leases.acquire("other-thread", "live", cwd);
+  leases.markDispatched("live");
+  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "conflict" });
+  const alone = fixture();
+  alone.leases.folders.acquireRestore("restore:first", alone.cwd);
+  await expect(alone.leases.acquireRestoreWhenStopped("restore:second", alone.cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "conflict" });
+  // An unusable path is a refusal with the registry's own code, never a wait.
+  await expect(alone.leases.acquireRestoreWhenStopped("restore:third", "/definitely/not/a/folder", { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "invalid-path" });
+  // Re-using a held owner id for another folder is `owner-in-use`, not a busy folder.
+  await expect(alone.leases.acquireRestoreWhenStopped("restore:first", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "owner-in-use" });
+});
+
+it("restore admission reports a stopped writer that does not release within the bound as still closing", async () => {
+  const { cwd, leases, owners } = fixture();
+  leases.acquire("thread", "generation", cwd);
+  leases.markDispatched("generation");
+  leases.markStopRequested("generation");
+  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 50 })).resolves.toEqual({ ok: false, reason: "still-closing" });
+  // Nothing was taken and the stopped turn still owns the folder; a later
+  // release lets a retry through.
+  expect(owners()).toEqual(["generation"]);
+  leases.disposed(["generation"]);
+  await expect(leases.acquireRestoreWhenStopped("restore:2", cwd, { timeoutMs: 50 })).resolves.toMatchObject({ ok: true });
+});
+
+it("marking a stop on an unknown or already released generation is a no-op", () => {
+  const { cwd, leases } = fixture();
+  expect(leases.markStopRequested("nobody")).toBe(false);
+  leases.acquire("thread", "generation", cwd);
+  leases.abandon("generation");
+  expect(leases.markStopRequested("generation")).toBe(false);
+});

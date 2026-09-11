@@ -257,6 +257,28 @@ describe("editing and saving", () => {
     expect(html).not.toContain("File saved");
   });
 
+  it("shows the stopped-turn-closing refusal by name and keeps the text (STOPRESTORE2)", async () => {
+    // The user pressed Stop and saved at once; the engine did not close
+    // within its budget. The pane must say so and say to retry, not fail
+    // generically.
+    const { session, controller, scheduler, backend } = setup(readCorpus("rich-basic.md"), {
+      save: async () => { throw new WorkspaceFileRequestError("workspace_stopped_turn_closing", "A stopped bot turn is still closing and holds this workspace, so the file was not saved over."); },
+    });
+    const { editor } = attachHeadlessEditor(controller);
+    typeAtEndOfFirstBlock(editor, "!");
+    scheduler.flush();
+    await settle();
+    expect(await controller.save()).toEqual({ status: "failed", code: "workspace_stopped_turn_closing" });
+    await settle();
+    expect(session.getState()).toMatchObject({ status: "error", lastSave: null, baseRevision: rev("r0"), error: { code: "workspace_stopped_turn_closing", retryable: true } });
+    expect(session.getState().draft).toContain("# Quarterly report!");
+    expect(backend.records()).toHaveLength(1);
+    const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
+    expect(html).toContain("File not saved: a stopped bot turn is still closing in this workspace. Your changes are still here; wait a moment and save again.");
+    expect(html).not.toContain("File not saved. Your changes are still here.");
+    expect(html).not.toContain("File saved");
+  });
+
   it("discards back to the disk text without emitting an edit and clears the draft", async () => {
     const read = readCorpus("rich-basic.md");
     const { session, controller, scheduler, backend } = setup(read);
