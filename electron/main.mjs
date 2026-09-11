@@ -2391,10 +2391,19 @@ ipcMain.handle("speech:start", (event, options) => {
     win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
     return;
   }
-  startSpeech(win, options);
+  return startSpeech(win, options);
 });
+// B5: Stop resolves only after the helper's exit is observed. A failed stop
+// marker, or a helper past the owned-work deadline, rejects to the renderer
+// and the session stays owned so the next Stop, Start or Quit retries it.
+function reportNativeHelperStop(kind, operation) {
+  return operation.catch((error) => {
+    slog(`${kind} stop incomplete (${error?.code ?? "STOP_FAILED"}); helper ownership retained`);
+    throw error;
+  });
+}
 ipcMain.handle("speech:stop", () => {
-  if (nativeActions.appleSpeech) stopSpeech();
+  if (nativeActions.appleSpeech) return reportNativeHelperStop("dictation", stopSpeech());
 });
 ipcMain.handle("speech:finish", () => {
   if (nativeActions.appleSpeech) finishSpeech();
@@ -2406,7 +2415,7 @@ ipcMain.handle("skill-recorder:start", (event) => {
   if (!win) throw new Error("The recorder window is unavailable");
   return startRecorder(win);
 });
-ipcMain.handle("skill-recorder:stop", () => stopRecorder());
+ipcMain.handle("skill-recorder:stop", () => reportNativeHelperStop("recorder", stopRecorder()));
 // B1: the recording lands under the installation this process owns (the
 // selected one after a separate restore), never the env/default original.
 ipcMain.handle("skill-recorder:save", createSkillRecordingSaveHandler({
@@ -2845,14 +2854,23 @@ function cleanupDesktopForExit() {
   if (desktopCleanup) return desktopCleanup;
   // Release the sleep blocker synchronously; child shutdown is awaited below.
   syncCompanionKeepAwake(false, false);
-  // a live dictation session runs its own helper child that holds the mic —
-  // stop it here so quitting never orphans a recording process
-  if (nativeActions.appleSpeech) stopSpeech();
-  stopRecorder();
+  // A live dictation or recorder session runs its own helper app that holds
+  // the mic or a global event tap. Signal both now so they exit in parallel
+  // with the harness. The first stage below keeps cleanup, and installation
+  // ownership, pending until each helper's exit is observed (B5). A failed
+  // stop marker or the owned-work deadline rejects that stage and is reported;
+  // the next Quit signals the still-owned helper again.
+  const nativeHelpersStopped = Promise.all([
+    nativeActions.appleSpeech ? stopSpeech() : undefined,
+    stopRecorder(),
+  ]);
+  nativeHelpersStopped.catch(() => {});
   try {
     browserSurface?.closeAll();
   } catch {}
   desktopCleanup = (async () => {
+    desktopCleanupStage = "native speech and recorder helpers";
+    await awaitOwnedWork(nativeHelpersStopped, "Native speech or recorder helpers have not exited");
     // Children are registered before their first await, including failed
     // port attempts that never became serverProc. Stop those first so boot
     // identity polling can settle, then drain any in-flight parent writers.
