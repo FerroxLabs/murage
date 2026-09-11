@@ -63,6 +63,7 @@ import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
+import { ScreenFrameMedia } from "./ImageMedia";
 import { ArtifactCards } from "./ArtifactCards";
 import { openFiles } from "./Files";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -810,13 +811,16 @@ function ActivityChip({ message }: { message: Message }) {
   );
 }
 
+// The exact frame already in the transcript, enlargeable through the shared
+// image lightbox (F5-T2). Enlarging never requests a new capture, and a frame
+// the store has stripped (png undefined) unmounts along with any open dialog.
 function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
   return (
     <div className="flex justify-start">
-      <img
-        src={`data:${mime ?? "image/png"};base64,${png}`}
-        alt="Bot's screen"
-        className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40"
+      <ScreenFrameMedia
+        png={png}
+        mime={mime}
+        className="block w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40"
       />
     </div>
   );
