@@ -797,6 +797,18 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ decision: "approved" });
   });
 
+  it("a user Stop settles the turn as cancelled with no runtime error (STOP1)", async () => {
+    await create({ mode: "approval" }); // approval mode parks the turn open
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-user-stop", text: "go" });
+    await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.interruptTurn("t-codex-user-stop");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    // the same terminal state the ACP and Pi drivers report for a Stop
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  });
+
   it("rejects a second turn while one is in flight", async () => {
     await create({ mode: "approval" }); // approval mode parks the turn open
     await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
@@ -901,6 +913,11 @@ describe("CodexDriver turns (fake app-server)", () => {
     await expect(
       recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-codex-continue"),
     ).resolves.toMatchObject({ ok: true });
+    // a Stop during the backoff is a user cancellation, not a failure (STOP1)
+    await expect(
+      recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-codex-stop"),
+    ).resolves.toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error" && e.threadId === "t-codex-stop")).toEqual([]);
     await Promise.allSettled([first, second]);
   }, 20_000);
 

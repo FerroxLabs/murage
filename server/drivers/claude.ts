@@ -736,6 +736,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       boundary: AttemptBoundary;
       /** this turn's own user-message write; null until it is attempted */
       submission: Promise<boolean> | null;
+      /** Set when Murage stopped this turn (interruptTurn, resetSession,
+       * stopAll). Its process exit is then a cancellation, not a crash. */
+      stopRequested?: boolean;
     }
     interface Session {
       child: ReturnType<typeof spawnCli>;
@@ -1009,7 +1012,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           submission: null,
         };
         live.turn = liveTurn;
-        active.set(threadId, { stop: () => killCliTree(live.child), turnId, broker: live.broker });
+        active.set(threadId, {
+          stop: () => {
+            liveTurn.stopRequested = true;
+            killCliTree(live.child);
+          },
+          turnId,
+          broker: live.broker,
+        });
         emit({ ...base(threadId, turnId), type: "turn.started" });
         liveTurn.submission = writeUser(live, threadId, turn.text, liveTurn.boundary);
         const written = await liveTurn.submission;
@@ -1350,7 +1360,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // process that exited between turns (idle close, contract change)
       // is just a session ending
       const onChildClose = (code: number | null) => {
-        if (session.turn && !session.turn.settled) {
+        if (session.turn && !session.turn.settled && session.turn.stopRequested) {
+          // The process ended because Murage stopped the turn. That is the
+          // user's Stop (or a reset/shutdown the caller reports itself), not
+          // an engine failure: settle as cancelled like the ACP and Pi
+          // drivers, with no runtime error card and no Retry. A stopped turn
+          // is never replayed (U-17).
+          retryState.delete(threadId);
+          settle(true, "cancelled");
+        } else if (session.turn && !session.turn.settled) {
           const closingTurn = session.turn;
           const message = `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`;
           const verdict = classifyError({ exitCode: code, stderr: message });
@@ -1401,15 +1419,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               const wait = interruptibleDelay(delayMs * retryScale, retryAbort.signal);
               await wait.promise;
               // an interrupt during the backoff landed here via stop(); the
-              // turn settles as interrupted and no zombie relaunch happens
+              // turn settles as cancelled and no zombie relaunch happens
               if (retry.cancelled) {
                 active.delete(threadId);
                 retryState.delete(threadId);
                 emit({
                   ...base(threadId, turnId),
                   type: "turn.completed",
-                  ok: false,
-                  stopReason: "interrupted",
+                  ok: true,
+                  stopReason: "cancelled",
                   cost: null,
                 });
                 return;
@@ -1475,6 +1493,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
 
       const stop = () => {
+        launchTurn.stopRequested = true;
         retry.cancelled = true;
         retryAbort.abort();
         killCliTree(child);

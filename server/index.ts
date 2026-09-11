@@ -3039,8 +3039,12 @@ bus.subscribe((event: RuntimeEvent) => {
           });
         }
       }
-      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, event.ok ? "completed" : event.stopReason === "cancelled" ? "cancelled" : "failed");
-      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, event.ok ? "completed" : "failed");
+      // A stopped turn settles ok:true with stopReason "cancelled" (ACP, Pi,
+      // Claude, Codex). It is still not a completed turn: memory must drop
+      // its unfinished assistant intentions (STOP1).
+      const terminalOutcome = event.stopReason === "cancelled" ? "cancelled" : event.ok ? "completed" : "failed";
+      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, terminalOutcome);
+      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, terminalOutcome);
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
       const reply = lastReply.get(event.threadId) ?? "";
