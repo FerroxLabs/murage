@@ -571,3 +571,75 @@ describe("bounded request bodies", () => {
     })))).status).toBe(400);
   });
 });
+
+describe("write-safe account inventory for new links", () => {
+  const installation = { id: "install-1", composio_user_id: "murage_stable", session_id: "trs_multi", disabled_at: null };
+
+  function linkHarness(inventory: () => Response) {
+    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+    const { env, ctx } = testEnv(fetchCalls);
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      fetchCalls.push({ url, init });
+      if (url.endsWith("/tool_router/session/trs_multi/link") && init?.method === "POST") {
+        return Response.json({ redirect_url: "https://connect.composio.dev/link/gmail" }, { status: 201 });
+      }
+      if (url.includes("/tool_router/session/trs_multi")) return Response.json(session("trs_multi", "murage_stable"));
+      if (url.includes("/connected_accounts?")) return inventory();
+      return Response.json({ error: "not found" }, { status: 404 });
+    });
+    const links = () => fetchCalls.filter((call) => call.url.endsWith("/link") && call.init?.method === "POST");
+    const link = (alias?: string) => authorize("gmail", alias, installation, env as never, ctx as never);
+    return { link, links };
+  }
+
+  const accountsPage = (...items: Array<Record<string, unknown>>) => () => Response.json({ items });
+
+  it.each([
+    ["403 denied list scope", () => Response.json({ error: "connected-account read not granted" }, { status: 403 })],
+    ["503 outage", () => Response.json({ error: "temporarily unavailable" }, { status: 503 })],
+    ["unreadable page", () => Response.json({ unexpected: true })],
+  ])("refuses to create a link when the inventory fails (%s)", async (_label, inventory) => {
+    const harness = linkHarness(inventory);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (const alias of [undefined, "second"]) {
+      const response = await harness.link(alias);
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "Connected accounts could not be checked right now, so no new link was created. Try again in a moment.",
+        code: "account_inventory_unavailable",
+      });
+    }
+    expect(harness.links()).toHaveLength(0);
+    expect(logged.mock.calls.flat().join(" ")).not.toContain("ak_test");
+    logged.mockRestore();
+  });
+
+  it("keeps first, additional, pending, duplicate and capped link rules when the inventory succeeds", async () => {
+    let inventory = accountsPage();
+    const harness = linkHarness(() => inventory());
+
+    const first = await harness.link();
+    expect(first.status).toBe(200);
+    expect(JSON.parse(String(harness.links()[0]?.init?.body))).toEqual({ toolkit: "gmail" });
+
+    inventory = accountsPage({ id: "ca_work", alias: "work", toolkit: { slug: "gmail" }, status: "ACTIVE" });
+    expect((await harness.link()).status).toBe(400);
+    expect((await harness.link("Work")).status).toBe(409);
+    const additional = await harness.link("second");
+    expect(additional.status).toBe(200);
+    expect(JSON.parse(String(harness.links().at(-1)?.init?.body))).toEqual({ toolkit: "gmail", alias: "second" });
+
+    inventory = accountsPage({ id: "ca_pending", toolkit: { slug: "gmail" }, status: "INITIATED" });
+    expect((await harness.link()).status).toBe(400);
+
+    inventory = accountsPage(...Array.from({ length: 5 }, (_, index) => ({
+      id: `ca_${index}`,
+      alias: `account ${index}`,
+      toolkit: { slug: "gmail" },
+      status: "ACTIVE",
+    })));
+    expect((await harness.link("sixth")).status).toBe(409);
+    expect(harness.links()).toHaveLength(2);
+  });
+});
