@@ -317,6 +317,17 @@ the logged-out daemon, and the rerun that fixes the tag is refused with
 | `2` | the request was wrong or incomplete — a bad flag, a missing unattended input, an env file that could not be carried over. **Nothing was changed** |
 | `3` | setup finished, but the box is **not** on the tailnet. It is reachable only through an SSH tunnel |
 
+## After a reboot
+
+The unit orders `After=tailscaled.service`, which is the daemon's *start*, not
+its readiness: on a real box `murage start` came up 15 ms behind tailscaled,
+read no serve config, and the door answered 403 through the tailnet proxy until
+the service was restarted. So when `murage.env` carries `MURAGE_TRUSTED_PROXY=1`
+(setup verified a proxy), `start` polls the daemon for the proxy in front of
+the door for up to 90 s (`MURAGE_PROXY_WAIT_SECONDS`; `0` disables) before it
+starts the sidecar, and says so in the log. A box where no proxy was ever
+verified is not made to wait.
+
 ## Environment
 
 | Variable | Meaning |
@@ -336,6 +347,7 @@ the logged-out daemon, and the rerun that fixes the tag is refused with
 | `MURAGE_NON_INTERACTIVE`, `MURAGE_TAILSCALE_AUTHKEY_FILE`, `MURAGE_PROVIDER_KEY_FILE`, `MURAGE_PROVIDER`, `MURAGE_SERVICE_USER`, `MURAGE_TAILNET_TAG`, `MURAGE_TAILNET_HOSTNAME`, `MURAGE_TAILNET_HTTPS`, `MURAGE_INSTALL_TAILSCALE`, `MURAGE_TAILSCALE_REENROLL`, `MURAGE_STAGE_SYSTEMD`, `MURAGE_SKIP_PROVIDER_KEY`, `MURAGE_WANT_TAILSCALE` | [unattended setup](#unattended-setup-provisioning) |
 | `MURAGE_TAILSCALE_BIN` | explicit path to the `tailscale` CLI (non-standard installs, tests) |
 | `MURAGE_TRUSTED_PROXY` | set to `1` by setup only when the tailnet proxy was actually configured |
+| `MURAGE_PROXY_WAIT_SECONDS` | how long `start` waits for tailscaled to report that proxy after a boot (default `90`; `0` disables) |
 
 `ALLOW_REMOTE` is deliberately **not** a variable here. `HOST=0.0.0.0` is
 refused by name.
