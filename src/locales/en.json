@@ -4,6 +4,7 @@
   "claudeAccounts.saved": "Account settings saved.",
   "claudeAccounts.refreshError": "Saved, but the account list could not refresh. Use Refresh accounts to check its current state.",
   "claudeAccounts.changeError": "Account change failed.",
+  "claudeAccounts.listUnreadable": "Could not read the Claude account list. Use Refresh accounts to try again.",
   "claudeAccounts.copied": "Copied sign-in command for {name}.",
   "claudeAccounts.copyError": "Could not copy. Select and copy the command above.",
   "claudeAccounts.refresh": "Refresh accounts",
