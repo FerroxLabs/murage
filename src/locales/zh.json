@@ -3,6 +3,7 @@
   "claudeAccounts.removed": "已从 Murage 移除。登录状态和凭据文件已保留。",
   "claudeAccounts.saved": "账户设置已保存。",
   "claudeAccounts.refreshError": "已保存，但无法刷新账户列表。请使用“刷新账户”检查当前状态。",
+  "claudeAccounts.fleetRefreshError": "已保存，但无法刷新引擎列表。请切换到其他窗口再切回，以重新探测引擎。",
   "claudeAccounts.changeError": "账户更改失败。",
   "claudeAccounts.listUnreadable": "无法读取 Claude 账户列表。请使用“刷新账户”重试。",
   "claudeAccounts.copied": "已复制 {name} 的登录命令。",

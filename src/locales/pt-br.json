@@ -3,6 +3,7 @@
   "claudeAccounts.removed": "Removida do Murage. O login e os arquivos de credenciais foram mantidos.",
   "claudeAccounts.saved": "Configurações da conta salvas.",
   "claudeAccounts.refreshError": "Salvo, mas não foi possível atualizar a lista de contas. Use Atualizar contas para verificar o estado atual.",
+  "claudeAccounts.fleetRefreshError": "Salvo, mas não foi possível atualizar a lista de mecanismos. Alterne para outra janela e volte para sondar os mecanismos novamente.",
   "claudeAccounts.changeError": "Falha ao alterar a conta.",
   "claudeAccounts.listUnreadable": "Não foi possível ler a lista de contas Claude. Use Atualizar contas para tentar novamente.",
   "claudeAccounts.copied": "Comando de login de {name} copiado.",

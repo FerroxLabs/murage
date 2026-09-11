@@ -3,6 +3,7 @@
   "claudeAccounts.removed": "Murageから削除しました。ログイン状態と認証情報ファイルは保持されています。",
   "claudeAccounts.saved": "アカウント設定を保存しました。",
   "claudeAccounts.refreshError": "保存しましたが、アカウント一覧を更新できませんでした。「アカウントを更新」で現在の状態を確認してください。",
+  "claudeAccounts.fleetRefreshError": "保存しましたが、エンジン一覧を更新できませんでした。別のウィンドウに切り替えて戻ると、エンジンを再度検出します。",
   "claudeAccounts.changeError": "アカウントの変更に失敗しました。",
   "claudeAccounts.listUnreadable": "Claudeアカウント一覧を読み込めませんでした。「アカウントを更新」でもう一度お試しください。",
   "claudeAccounts.copied": "{name}のサインインコマンドをコピーしました。",
