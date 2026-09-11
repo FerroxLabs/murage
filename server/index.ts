@@ -365,6 +365,9 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute, resolveImageReferenceRoute } from "./media-assets.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
+import { localModelsRoute } from "./local-models.ts";
+import { configureLocalServerStore } from "./local-servers.ts";
+import { LOCAL_MODELS_ROUTE_PREFIX } from "../shared/local-models.ts";
 import { IMAGE_REFERENCE_ROUTE, MEDIA_ROUTE_PREFIX } from "../shared/media-assets.ts";
 import { WORKSPACE_FILES_ROUTE_PREFIX } from "../shared/workspace-files.ts";
 import {
@@ -416,6 +419,9 @@ process.once("exit", () => {
 });
 ensureDirs();
 assertRestoreReviewed(DATA_DIR);
+// User-added local model servers live under the data dir (LM1); until this
+// runs the store is inert, so no engine writer can see a user address.
+configureLocalServerStore(DATA_DIR);
 const cfg = loadConfig();
 const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), resolveAlias: id => {
   const alias = cfg.flux?.connectionAliases?.find(row => row.id === id);
@@ -7468,9 +7474,10 @@ const server = createServer(async (req, res) => {
       return json(res, result.status, result.body);
     }
     // K0: these prefixes belong to their feature modules; desktop gating stays here and in desktop-policy.ts.
-    const featurePrefix = [WORKSPACE_FILES_ROUTE_PREFIX, MEDIA_ROUTE_PREFIX].find(prefix => path === prefix || path.startsWith(`${prefix}/`));
+    const featurePrefix = [WORKSPACE_FILES_ROUTE_PREFIX, MEDIA_ROUTE_PREFIX, LOCAL_MODELS_ROUTE_PREFIX].find(prefix => path === prefix || path.startsWith(`${prefix}/`));
     if (featurePrefix) {
       const delegated = { method, path, url, headers: req.headers, desktop: requestSurface(req.headers, url.searchParams) === "desktop", readBody: (maxBytes?: number) => readBody(req, maxBytes) };
+      if (featurePrefix === LOCAL_MODELS_ROUTE_PREFIX) return sendDelegated(res, method, await localModelsRoute(delegated));
       return sendDelegated(res, method, await (featurePrefix === MEDIA_ROUTE_PREFIX ? mediaAssetsRoute : workspaceFilesRoute)(delegated, featureRouteDeps));
     }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {

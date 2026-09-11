@@ -36,8 +36,10 @@ import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 import { resetPathCacheForTests } from "../../env-path.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { FuigoAgentDriver, parseFuigoModels, STATIC_FUIGO_MODELS } from "./fuigo.ts";
+import { FuigoAgentDriver, fuigoLocalSlug, parseFuigoModels, STATIC_FUIGO_MODELS } from "./fuigo.ts";
 import { acpVersionFailureDetail } from "./core.ts";
+import { configureLocalServerStore, writeLocalServers } from "../../local-servers.ts";
+import { localHost } from "../local-inject.ts";
 
 /** Shape only, never a live credential. */
 const FLUX_KEY = "sk-flux-Ffffffffffffffffffffffffffffffffffffffffff";
@@ -541,5 +543,78 @@ describe("fuigo binary resolution — the bundled engine", () => {
     resetPathCacheForTests();
     await runTurn({ model: "flux-auto" });
     expect(dump("agent").env.PATH.split(delimiter)).not.toContain(bundleDir);
+  });
+});
+
+// 0.1.52 spec E1: a local pick becomes a Murage-owned `[model.*]` entry in the
+// config.toml under Fuigo's home, and `-m` names that entry. Flux and cloud
+// picks are untouched; the server key travels in the env, never in the file.
+describe("fuigo local models (spec E1)", () => {
+  const SERVER = {
+    id: "srv_0123456789ab",
+    name: "SeanBeast",
+    kind: "llamacpp" as const,
+    apiBase: "http://127.0.0.1:18080/v1",
+    apiKey: "sk-beast-local",
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const PICK = `${SERVER.id}::Qwen3.8-27B`;
+  const KEY_ENV = "MURAGE_LOCAL_SRV_0123456789AB_API_KEY";
+
+  beforeEach(() => {
+    configureLocalServerStore(join(root, "data"));
+    writeLocalServers([SERVER]);
+  });
+  afterEach(() => configureLocalServerStore(null));
+
+  it("writes a [model.*] entry and passes -m <entry> between `agent` and `stdio`", async () => {
+    await runTurn({ model: PICK });
+    const { argv, env } = dump("agent");
+    const slug = fuigoLocalSlug(localHost(SERVER.id)!, "Qwen3.8-27B");
+    const m = argv.indexOf("-m");
+    expect(argv[m + 1]).toBe(slug);
+    expect(argv.indexOf("agent")).toBeLessThan(m);
+    expect(m).toBeLessThan(argv.indexOf("stdio"));
+    expect(env[KEY_ENV]).toBe(SERVER.apiKey);
+    const toml = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
+    expect(toml).toContain(`[model."${slug}"]`);
+    expect(toml).toContain('model = "Qwen3.8-27B"');
+    expect(toml).toContain(`base_url = "${SERVER.apiBase}"`);
+    expect(toml).toContain(`env_key = "${KEY_ENV}"`);
+    expect(toml).toContain('api_backend = "chat_completions"');
+    expect(toml).not.toContain(SERVER.apiKey);
+  });
+
+  it("keeps the user's own config and does not duplicate or rewrite an identical entry", async () => {
+    mkdirSync(join(home, ".fuigo"), { recursive: true });
+    const own = '[cli]\nuse_leader = true\n\n[model.my-cloud]\nmodel = "gpt-5"\n';
+    writeFileSync(join(home, ".fuigo", "config.toml"), own);
+    await runTurn({ model: PICK });
+    await instance?.dispose();
+    instance = undefined;
+    recorder?.stop();
+    const first = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
+    await runTurn({ model: PICK });
+    const second = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
+    expect(second).toBe(first);
+    expect(second.startsWith(own)).toBe(true);
+    expect(second.match(/\[model\."murage-local-/g)).toHaveLength(1);
+  });
+
+  it("runs a local pick with no Flux key and no fuigo login", async () => {
+    delete process.env.FLUX_API_KEY;
+    const events = await runTurn({ model: PICK });
+    expect(events.events.some((event) => event.type === "runtime.error")).toBe(false);
+    expect(events.events.find((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(dump("agent").argv).toContain(fuigoLocalSlug(localHost(SERVER.id)!, "Qwen3.8-27B"));
+  });
+
+  it("leaves Flux and cloud picks exactly as they were", async () => {
+    await runTurn({ model: "claude-opus-5" });
+    const { argv, env } = dump("agent");
+    expect(argv[argv.indexOf("-m") + 1]).toBe("claude-opus-5");
+    expect(env[KEY_ENV]).toBeUndefined();
+    expect(existsSync(join(home, ".fuigo", "config.toml"))).toBe(false);
   });
 });

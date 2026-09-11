@@ -53,6 +53,40 @@ describe("OpenAICompatDriver", () => {
     await inst.dispose();
   });
 
+  // 0.1.52 spec E4: a keyless server on this machine no longer needs a fake
+  // key. Only loopback qualifies; a LAN or hosted endpoint still needs one.
+  it("accepts a keyless loopback endpoint and presents only a placeholder to it", async () => {
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") });
+        return new Response(JSON.stringify({ data: [{ id: "qwen3:8b" }] }), { status: 200 });
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "local-1",
+      displayName: "Local",
+      enabled: true,
+      config: { url: "http://127.0.0.1:11434/v1", apiKeyEnv: "OPENAI_COMPAT_API_KEY" },
+      environment: {},
+    });
+    expect((await inst.snapshot()).state).not.toBe("unavailable");
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThan(0));
+    expect(seen[0]).toEqual({ url: "http://127.0.0.1:11434/v1/models", auth: "Bearer local" });
+    await inst.dispose();
+
+    const lan = await OpenAICompatDriver.create({
+      instanceId: "lan-1",
+      displayName: "LAN",
+      enabled: true,
+      config: { url: "http://192.168.1.20:8000/v1", apiKeyEnv: "OPENAI_COMPAT_API_KEY" },
+      environment: {},
+    });
+    expect((await lan.snapshot()).state).toBe("unavailable");
+    await lan.dispose();
+  });
+
   it("exposes a refreshed model catalog", async () => {
     vi.stubGlobal(
       "fetch",

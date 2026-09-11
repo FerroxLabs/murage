@@ -19,7 +19,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
+import { isPlainObject, readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 // FACTORY_HOME_OVERRIDE replaces the HOME the CLI resolves, NOT the data root:
@@ -116,6 +117,24 @@ export function ensureDroidInjectModel(
   settings.customModels = custom;
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
   return id;
+}
+
+/** Spec A3: drop the BYOK rows Murage wrote for a removed local server. */
+export function removeDroidLocalHost(
+  host: LocalHost,
+  env: Record<string, string | undefined> = process.env,
+): "removed" | "absent" {
+  const path = join(factoryHome(env), ".factory", "settings.json");
+  const existing = readNativeJsonConfig(path, env.HOME || env.USERPROFILE || homedir());
+  if (!existing) return "absent";
+  const rows = existing.value.customModels;
+  if (!Array.isArray(rows)) return "absent";
+  const kept = rows.filter(
+    (row) => !(isPlainObject(row) && row.baseUrl === host.baseUrl && row.provider === "generic-chat-completion-api"),
+  );
+  if (kept.length === rows.length) return "absent";
+  writeFileSync(path, `${JSON.stringify({ ...existing.value, customModels: kept }, null, 2)}\n`);
+  return "removed";
 }
 
 /** ACP `session/new` throws "Authentication required" unless a Factory

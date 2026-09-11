@@ -26,7 +26,7 @@ import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../confi
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
-import { injectedApiModel, mergeLocalInject } from "./local-inject.ts";
+import { decodeInjectId } from "./local-inject.ts";
 import { displayConfigPath, NativeConfigRefusal, parseNativeJsonConfig } from "./native-config-file.ts";
 
 import type { ChildProcess } from "node:child_process";
@@ -426,7 +426,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     let models = STATIC_ANTIGRAVITY_MODELS;
     const refreshModels = async () => {
       try {
-        const resolved = await mergeLocalInject(readAntigravityModelCatalog(catalogEnv), catalogEnv);
+        // No local server rows (0.1.52 spec E3): agy takes only `--model <id>`
+        // and has no base-URL or key input, so a local pick never reached the
+        // local host. Hidden rather than listed and failing later.
+        const resolved = readAntigravityModelCatalog(catalogEnv);
         if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
@@ -497,6 +500,19 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           : `\`${config.cli}\` CLI not found`;
         emit({ ...base(threadId, turnId), type: "runtime.error", message: reason });
         emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "unsupported_cli", cost: null });
+        return { turnId };
+      }
+
+      // A saved local pick from before 0.1.52 (`host::model`) would run agy's
+      // own cloud model under a local model's name. Refuse it plainly instead.
+      if (decodeInjectId(turn.model)) {
+        pending.delete(threadId);
+        emit({
+          ...base(threadId, turnId),
+          type: "runtime.error",
+          message: "Antigravity can't run local models. Pick this model for a bot on Fuigo, Pi, OpenCode, Qwen or Hermes instead.",
+        });
+        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "unsupported_model", cost: null });
         return { turnId };
       }
 
@@ -591,7 +607,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         config.fullAuto ? "--dangerously-skip-permissions" : "--mode",
       ];
       if (!config.fullAuto) args.push("accept-edits");
-      if (turn.model) args.push("--model", injectedApiModel(turn.model) ?? turn.model);
+      if (turn.model) args.push("--model", turn.model);
       if (resumeCursor) args.push("--conversation", resumeCursor);
 
       // spawnCli resolves npm .cmd shims / shebang scripts on Windows and

@@ -378,7 +378,8 @@ export async function readCodexModelCatalog(
   // Flux rows are gated per engine and are emitted `flux::flux-auto` style —
   // a bare `flux-auto` would decode straight back to OFFICIAL_CODEX_PROVIDER
   // above and be posted to api.openai.com.
-  if (!mainText) return mergeFluxCatalog(await mergeLocalInject(official, env, fetchImpl), CODEX_DRIVER_KIND);
+  // Local rows only after a Local models test proved /v1/responses (spec E3).
+  if (!mainText) return mergeFluxCatalog(await mergeLocalInject(official, env, fetchImpl, { driver: "codex" }), CODEX_DRIVER_KIND);
 
   const main = parseCodexToml(mainText);
   const known = new Map(main.providers.map((provider) => [provider.id, provider]));
@@ -452,6 +453,7 @@ export async function readCodexModelCatalog(
       },
       env,
       fetchImpl,
+      { driver: "codex" },
     ),
     CODEX_DRIVER_KIND,
   );
