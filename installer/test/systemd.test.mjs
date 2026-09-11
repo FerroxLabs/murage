@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
@@ -34,8 +35,11 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { writeExclusiveFile } from "../lib/private-files.mjs";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 import {
   ServiceAccountRefused,
   accountCanReach,
@@ -102,7 +106,30 @@ test("the unit runs as the named non-root account, with its HOME and a private u
   assert.match(text, /^Group=deploy$/m);
   assert.match(text, /^Environment=HOME=\/home\/deploy$/m);
   assert.match(text, /^UMask=0077$/m);
-  assert.match(text, /^ReadWritePaths=\/home\/deploy\/\.murage-server$/m);
+  assert.match(text, /^ReadWritePaths=\/home\/deploy\/\.murage-server \/home\/deploy$/m);
+});
+
+test("the unit grants the data dir's PARENT too, where the server keeps its installation lease", () => {
+  // Live on Ubuntu 24.04 (0.1.52 Linux proof): a unit that granted only the
+  // data dir under ProtectHome=read-only died at every start with
+  // `DataDirLeaseError ... code: 'LEASE_IO'` from publishRecord, and systemd
+  // restarted it forever. The lease is a sibling of the data dir by design
+  // (`electron/data-dir-lease.mjs`, dataDirLeasePaths), so the unit has to
+  // grant the parent. Read the server's own rule when the checkout is here,
+  // so a move of the anchor fails this test rather than a box.
+  const text = unitText(unitOpts({ dataDir: "/srv/murage/data" }));
+  const rw = unitWords(lineOf(text, "ReadWritePaths=").slice("ReadWritePaths=".length));
+  assert.deepEqual(rw, ["/srv/murage/data", "/srv/murage"]);
+  assert.match(text, /^ProtectHome=read-only$/m, "the parent grant is what makes the home-based default work under this");
+
+  const leaseModule = join(REPO_ROOT, "electron", "data-dir-lease.mjs");
+  if (existsSync(leaseModule)) {
+    const src = readFileSync(leaseModule, "utf8");
+    assert.match(src, /join\(dirname\(canonical\),\s*`\.murage-data-owner-/, "the server no longer anchors the lease beside the data dir; revisit ReadWritePaths=");
+  }
+
+  // Directly under / the parent grant would be the whole filesystem.
+  assert.throws(() => unitText(unitOpts({ dataDir: "/data" })), (e) => e instanceof UnitRefused && /one level deeper/.test(e.message));
 });
 
 test("a unit with no account is refused, because systemd would run it as root", () => {
@@ -159,8 +186,8 @@ test("spaces, apostrophes, percent and dollar signs reach systemd as the same pa
   ]);
 
   const rw = lineOf(text, "ReadWritePaths=");
-  assert.equal(rw, `ReadWritePaths="/home/deploy/data dir %%h $USER"`);
-  assert.deepEqual(unitWords(rw.slice("ReadWritePaths=".length)), [opts.dataDir]);
+  assert.equal(rw, `ReadWritePaths="/home/deploy/data dir %%h $USER" /home/deploy`);
+  assert.deepEqual(unitWords(rw.slice("ReadWritePaths=".length)), [opts.dataDir, "/home/deploy"]);
 });
 
 test("backslashes, double quotes and control characters are refused rather than encoded", () => {

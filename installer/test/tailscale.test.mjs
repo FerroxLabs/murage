@@ -45,6 +45,24 @@ test("buildUpArgs advertises the tag and defaults the widening flags OFF", () =>
   assert.ok(args.some((a) => a.startsWith("--timeout=")), "must not block forever waiting for Running");
 });
 
+test("buildUpArgs resets the daemon's stale prefs, so a rerun can repair a failed enrolment", () => {
+  // Seen on a real Ubuntu 24.04 box (0.1.52 Linux proof): `tailscale up
+  // --advertise-tags=tag:murage` refused by the control plane ("requested tags
+  // [tag:murage] are invalid or not permitted") still left advertise-tags in
+  // tailscaled's prefs. The rerun with `--tailnet-tag none` then failed with
+  // "changing settings via 'tailscale up' requires mentioning all non-default
+  // flags", and no number of reruns could get the box on the tailnet. The
+  // installer names every setting it wants, so nothing the daemon remembers
+  // is wanted: `--reset` must be there, on every enrolment, tags or not.
+  for (const tags of [["tag:murage"], []]) {
+    const args = buildUpArgs({ keyFile: "/k", tags, hostname: "box" });
+    assert.equal(args[0], "up");
+    assert.ok(args.includes("--reset"), `no --reset with tags=${JSON.stringify(tags)}: ${args.join(" ")}`);
+    assert.ok(args.indexOf("--reset") < args.indexOf("--auth-key=file:/k"), "the reset is stated before the key");
+  }
+  assert.ok(!buildUpArgs({ keyFile: "/k" }).some((a) => a.startsWith("--advertise-tags")), "no tags means none advertised (reset clears the old ones)");
+});
+
 test("the auth key file is 0600 in a 0700 directory, and is shredded after", () => {
   const dir = join(mkdtempSync(join(tmpdir(), "murage-key-test-")), "nested");
   const path = writeAuthKeyFile(SECRET, dir);
@@ -242,7 +260,7 @@ test("verifyEnrolment succeeds once the daemon settles", async () => {
 });
 
 test("enroll reports failure when `up` fails, and never reaches the share step", async () => {
-  const { run, calls } = fakeRunner([["up --auth-key", { status: 1, stderr: "invalid key" }]]);
+  const { run, calls } = fakeRunner([["up --reset --auth-key", { status: 1, stderr: "invalid key" }]]);
   const r = await enroll({ authKey: SECRET, port: 8799, tags: ["tag:murage"], run, bin: "tailscale", wait: async () => {} });
   assert.equal(r.ok, false);
   assert.equal(r.stage, "up");
@@ -252,7 +270,7 @@ test("enroll reports failure when `up` fails, and never reaches the share step",
 
 test("enroll refuses to report success when verification fails", async () => {
   const { run, calls } = fakeRunner([
-    ["up --auth-key", { status: 0 }],
+    ["up --reset --auth-key", { status: 0 }],
     ["tailscale status --json", { stdout: JSON.stringify({ BackendState: "NeedsLogin" }) }],
   ]);
   const r = await enroll({ authKey: SECRET, port: 8799, run, bin: "tailscale", attempts: 1, wait: async () => {} });
@@ -264,7 +282,7 @@ test("enroll refuses to report success when verification fails", async () => {
 test("enroll ABORTS when the daemon reports a public share, rather than saying secured", async () => {
   const key = ["Allow", "Fun", "nel"].join("");
   const { run } = fakeRunner([
-    ["up --auth-key", { status: 0 }],
+    ["up --reset --auth-key", { status: 0 }],
     ["tailscale status --json", { stdout: JSON.stringify(RUNNING) }],
     ["serve --bg", { status: 0 }],
     [
@@ -285,7 +303,7 @@ test("enroll ABORTS when the daemon reports a public share, rather than saying s
 
 test("enroll succeeds end to end, and the key never appears in any command line", async () => {
   const { run, calls } = fakeRunner([
-    ["up --auth-key", { status: 0 }],
+    ["up --reset --auth-key", { status: 0 }],
     ["tailscale status --json", { stdout: JSON.stringify(RUNNING) }],
     ["serve --bg", { status: 0 }],
     [
