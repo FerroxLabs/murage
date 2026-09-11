@@ -159,8 +159,12 @@ close a set of audited gaps, and all seven language packs are complete.
   policy. An existing install's Composio identity is adopted, not copied,
   through a three-leg claim (sign, redeem, confirm) so a stranded migration
   loses nothing; a personal account auto-claims, a shared team account moves
-  only on an explicit button. Ships with the claim mode closed and no release
-  config set.
+  only on an explicit button. FluxRouter claims are on for this release: the
+  Worker has issued them since rollout step 5 and FluxRouter has redeemed them
+  since step 6 (2026-09-11), and the committed Worker config ships
+  `CLAIM_MODE` open with new-install registration closed (step 8, the day
+  this release publishes). The release freeze sets the desktop's FluxRouter
+  broker URL and legacy cut-off date.
 - **Unattended `murage` for provisioning.** `--non-interactive` / `--yes` /
   `MURAGE_NON_INTERACTIVE` never prompts; anything missing is listed all at
   once and the run exits 2 having changed nothing. Secrets come from a file,
@@ -544,7 +548,7 @@ of "what you can do today" and do not promise gates that are still open):
 | "Fuigo built in. Multi-vendor by design." (line 142), new paragraph after the multi-vendor paragraph | "**Local models are a setting.** Settings → Models shows the local servers Murage looked for, lets you add your own llama.cpp, Ollama, LM Studio, vLLM or SGLang server, and tests whether a model can call tools before any bot can pick it. Fuigo, Pi, OpenCode, Qwen Code, Hermes, Droid and Kimi use a tested model directly; compatible chat-only endpoints stay chat-only. [Local models](docs/custom-engines.md)." (`889a29b9`, `0578bcbb`, `9aef8e1d`) |
 | "Stay in the conversation from Telegram" (line 126), Telegram table row | Extend: "Continue the Chief’s conversation, answer supported one-time approval requests, and **answer a bot's questions with buttons** from a paired private chat." (`05c76009`) |
 | "Start with one useful task" (line 156), step 4 | Append one sentence: "When a bot needs a decision from you, it asks with a question card you can answer from the keyboard or from Telegram." (`69d83539`, `28398199`) |
-| "Connect the tools your team uses" (line 148) | Add only if Sean turns the FluxRouter claim mode on for this release: "Connected apps can run through your FluxRouter account." Otherwise leave the paragraph as it is; the code ships with `CLAIM_MODE` closed (`31e98d45`). |
+| "Connect the tools your team uses" (line 148) | Add: "Connected apps can run through your FluxRouter account." FluxRouter claims are turned on for this release: the live Worker runs `CLAIM_MODE` open (rollout step 5) and FluxRouter claims are on (step 6, 2026-09-11), and the committed `cloudflare/composio-broker/wrangler.jsonc` now ships `CLAIM_MODE` open and `REGISTRATION_MODE` closed (lane FLUXCFG; the code is `31e98d45`). |
 | "Before you choose a setup" table (line 164) | Add rows: **Markdown editor** — "Rich editing opens only for files the bundled parser reproduces byte for byte; other files open in Source mode. Files up to 2 MiB." (`52a07f44`, `bf04dcaa`) · **Media playback** — "Audio and video play from a conversation's own workspace files (WAV, MP3, Ogg, M4A, MP4, WebM by container; codec support follows the platform). No transcoding, no autoplay." (`32d456e3`, U-28) · **Image editing** — "OpenAI, xAI (`grok-imagine-image-2.0`) and OpenRouter (`openai/gpt-image-2`, pinned endpoint) accept reference images; Flux generates only. Live edit checks per provider remain a release gate." (`458e67ae`, F1-T5 open) · **Local models** — "Tool calling depends on the server and model; Murage's test says which engines a model is usable with." (`889a29b9`) |
 | "Background work" row (line 171) | Keep "not an always-on hosted service" until the Linux installer proof (`lane/0152-LINUXFIX`) merges and the F2 gates close; the unattended installer (`9ef277a9`) does not change the boundary for desktop users. |
 
