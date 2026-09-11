@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync,readFileSync,readdirSync,rmSync,writeFileSync } from "node:fs";
+import { mkdtempSync,readFileSync,readdirSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyLoginProfileArguments,createBackgroundLogin,desktopExecArgument } from "./background-login.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 test("Windows uses a named profile entry and confirms the exact executable arguments",async()=>{
   let current=false;const writes=[],reads=[];
@@ -24,7 +25,7 @@ test("Linux writes and removes only its scratch profile entry and safely quotes 
     assert.match(content,/Exec="\/opt\/Murage AppImage"/);assert.ok(content.includes(desktopExecArgument(join(root,"profile $name"))));assert.equal(provider.read().openAtLogin,true);
     await provider.write(false);assert.deepEqual(readdirSync(root),[]);
     await provider.write(true);writeFileSync(file,"[Desktop Entry]\nName=Other application\n");await assert.rejects(provider.write(false),/different sign-in entry/);assert.match(readFileSync(file,"utf8"),/Other application/);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
 test("sign-in profile arguments are explicit and cannot replace an existing override",()=>{
   const env={MURAGE_DATA_DIR:"/chosen"};applyLoginProfileArguments(["--murage-login","--murage-data-dir","/scheduled","--murage-user-data","/user"],env);

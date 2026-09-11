@@ -13,10 +13,11 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const PYTHON = "# naïve café ✓ 日本語 👩‍💻\n\n\tprint(\"hi\")\n\n";
 const CRLF = "line1\r\nline2\r\n\r\nünïcode ✓\r\n";
@@ -67,7 +68,7 @@ createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main
   if (!address || typeof address === "string") throw new Error("No fixture port");
   origin = `http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 
 async function open(page: Page, skin = "dark") {
   // record every object URL the page makes and revokes

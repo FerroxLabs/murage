@@ -3,12 +3,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { executableTarget } from "./prepare-cloudflared.mjs";
 import { bundleInventory, releaseBytes } from "./prepare-browser.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 export const WINDOWS_VENDOR_VERSION = "0.36.0-omb.1";
 export const WINDOWS_VENDOR_TARGET = "x86_64-pc-windows-gnu";
@@ -117,7 +118,7 @@ export async function buildWindowsBrowserVendor(output) {
     writeFileSync(join(output, "provenance.json"), `${JSON.stringify(provenance, null, 2)}\n`);
     console.log(JSON.stringify(provenance, null, 2));
     return provenance;
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  } finally { safeWipeSync(scratch); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

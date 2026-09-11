@@ -25,7 +25,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,7 @@ import {
   resolveUnattendedPlan,
   splitUnattendedArgs,
 } from "../lib/unattended.mjs";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "murage.mjs");
 const scratchDirs = [];
@@ -52,7 +53,7 @@ const scratch = () => {
   return dir;
 };
 after(() => {
-  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratchDirs) safeWipeSync(dir);
 });
 
 /** Never a real key. Asserted absent from argv logs and from every byte of output. */

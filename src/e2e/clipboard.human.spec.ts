@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { freePortBlock } from "../../server/testing/ports";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 // Renderer-only fixture: real StoreProvider/Composer, synthetic paste events,
 // and in-memory upload responses. No system clipboard, harness, or provider.
@@ -112,7 +113,7 @@ test.beforeEach(() => {
   pendingUploads.length = 0;
 });
 test.afterEach(() => { for (const finish of pendingUploads.splice(0)) finish(); });
-test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
 async function openComposer(page: Page) {
   await page.goto(`${origin}/__clipboard`);

@@ -1,10 +1,11 @@
 // Explicit private preview artifact; never uses the installed user's profile.
 import { _electron as electron } from "@playwright/test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir, homedir, userInfo } from "node:os";
 import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const executablePath = resolve(process.argv[2] ?? "");
 if (!/\/release-(?:mvp|private)-/.test(executablePath) || !executablePath.endsWith("/Murage.app/Contents/MacOS/Murage")) throw new Error("Explicit private preview executable required");
 const scratch = mkdtempSync(join(tmpdir(), "murage-native-mvp-"));
@@ -51,5 +52,5 @@ try {
   } finally { clearTimeout(timer); }
 } finally {
   for (const pid of [...ownedPids].reverse()) { try { process.kill(pid, "SIGKILL"); } catch {} }
-  rmSync(scratch, { recursive: true, force: true });
+  safeWipeSync(scratch);
 }

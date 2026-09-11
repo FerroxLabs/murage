@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -26,6 +26,7 @@ import {
   DigestHold,
   verifyRelease,
 } from "./release-digests.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const VERSION = "1.2.3";
@@ -49,7 +50,7 @@ async function withStagedAssets(test) {
   try {
     return await test(dir);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    safeWipeSync(dir);
   }
 }
 
@@ -271,7 +272,7 @@ process.stdout.write("HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\
       const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
       return { calls, proof, publish };
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      safeWipeSync(dir);
     }
   }
 

@@ -24,10 +24,11 @@
 // for approval, which needs a real provider and a real turn. It is left
 // alone, and the run says so rather than quietly writing a worse version.
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "companion", "test", "fixtures");
@@ -267,7 +268,7 @@ async function main() {
 
 const cleanup = () => {
   for (const { child } of children) child.kill("SIGKILL");
-  if (home) rmSync(home, { recursive: true, force: true });
+  if (home) safeWipeSync(home);
 };
 
 main().then(

@@ -4,7 +4,7 @@
 // work. CUA_DRIVER_PATH is the CI/release override; otherwise an exact-version
 // installed binary or the checksummed official release asset is used.
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, stat, chmod, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat, chmod, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 import { resolveCuaMacArches } from "./cua-mac-arches.mjs";
+import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
 if (process.platform !== "darwin") throw new Error("prepare-cua is macOS-only");
 
@@ -49,7 +50,7 @@ async function officialBinary() {
   const cachedBinary = join(cache, "cua-driver");
   if ((await binaryVersion(cachedBinary)) === expectedVersion) return cachedBinary;
 
-  await rm(cache, { recursive: true, force: true });
+  await safeWipe(cache, { within: root });
   await mkdir(cache, { recursive: true });
   const url = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${release.version}/${release.file}`;
   console.log(`Downloading CUA Driver ${release.version} from the official release…`);
@@ -120,7 +121,7 @@ for (const arch of MAC_ARCHES) {
 
 for (const arch of MAC_ARCHES) {
   const archStage = join(stage, arch);
-  await rm(archStage, { recursive: true, force: true });
+  await safeWipe(archStage, { within: root });
   await mkdir(archStage, { recursive: true });
   await copyFile(binary, join(archStage, "cua-driver"));
   await chmod(join(archStage, "cua-driver"), 0o755);

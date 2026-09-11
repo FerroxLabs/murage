@@ -28,7 +28,6 @@ import {
   mkdtempSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -43,6 +42,7 @@ import { brotliDecompressSync } from "node:zlib";
 // drifted.
 import { executableTarget, verifySha256 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 export const FUIGO_VERSION = "1.0.13";
 export const FUIGO_REGISTRY = "https://registry.npmjs.org";
@@ -394,11 +394,11 @@ async function stageTarget(root, target) {
       `${JSON.stringify(expectedManifest(target), null, 2)}\n`,
       { mode: 0o600 },
     );
-    rmSync(finalDirectory, { recursive: true, force: true });
+    safeWipeSync(finalDirectory, { within: root });
     renameSync(staging, finalDirectory);
     console.log(`staged fuigo ${FUIGO_VERSION} for ${target}`);
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    safeWipeSync(scratch);
   }
 }
 

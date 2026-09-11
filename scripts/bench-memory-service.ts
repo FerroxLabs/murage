@@ -1,9 +1,10 @@
-import { mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync } from "node:fs";
+import { mkdtempSync,mkdirSync,readFileSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join,resolve,dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { validateCorpus } from "../server/memory/testing/contracts.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const args=process.argv.slice(2);
 function arg(key:string,fallback:string){const i=args.indexOf(key);return i<0?fallback:args[i+1];}
@@ -81,6 +82,6 @@ async function main(){
       limitations:["Retrieval service boundary measured; final adapter preparation belongs to P07/P10","No answer-generation or external model calls","Worker RSS separately qualified; load/drain acceptance remains P10"]};
     mkdirSync(dirname(out),{recursive:true});writeFileSync(out,JSON.stringify(result,null,2)+"\n");console.log(JSON.stringify(result));
     if(failures.length||result.latencyMs.p95>(lexicalOnly?50:200)||result.latencyMs.p99>(lexicalOnly?100:400)||result.mainEventLoopP99Ms>20||result.mainRssIncreaseBytes>128*1024**2||workerPeakRssBytes>1024**3)process.exitCode=1;
-  }finally{monitor.disable();await controller.stop();closeDatabase();rmSync(root,{recursive:true,force:true});}
+  }finally{monitor.disable();await controller.stop();closeDatabase();safeWipeSync(root);}
 }
 main().catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});

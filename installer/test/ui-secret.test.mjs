@@ -20,11 +20,12 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const UI = pathToFileURL(resolve(dirname(fileURLToPath(import.meta.url)), "..", "lib", "ui.mjs")).href;
 
@@ -125,7 +126,7 @@ print(json.dumps({
 
 const scratchDirs = [];
 after(() => {
-  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratchDirs) safeWipeSync(dir);
 });
 
 /**

@@ -19,21 +19,16 @@ import { createServer, preview, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { openSidebar } from "./fixtures.ts";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../../shared/memory.ts";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { laneDataDir } from "./lane-data-dir";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const DATA_DIR = (() => {
-  const raw = process.env.MURAGE_E2E_DATA_DIR;
-  if (!raw) throw new Error("MURAGE_E2E_DATA_DIR is required — this proof never uses ~/.murage");
-  const dir = resolve(raw);
-  if (dir === resolve(join(homedir(), ".murage"))) throw new Error(`refusing the real data dir ${dir}`);
-  return dir;
-})();
+const DATA_DIR = laneDataDir("this proof never uses ~/.murage");
 const HARNESS_PORT = Number(process.env.MURAGE_E2E_PORT || 9980);
 const UI_PORT = Number(process.env.MURAGE_E2E_UI_PORT || 9982);
 const VERIFY_BUILT_UI = process.env.MURAGE_VERIFY_BUILT_UI === "1";
@@ -53,7 +48,7 @@ let harness: ChildProcess | undefined, logPath: string, vite: ViteDevServer, ori
 const fixtureHome = () => join(DATA_DIR, "fixture-home");
 
 async function startHarness() {
-  rmSync(DATA_DIR, { recursive: true, force: true });
+  safeWipeSync(DATA_DIR);
   mkdirSync(DATA_DIR, { recursive: true });
   mkdirSync(EVIDENCE, { recursive: true });
   const home = fixtureHome(); mkdirSync(home, { recursive: true });

@@ -27,7 +27,6 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -38,6 +37,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { writeExclusiveFile } from "../lib/private-files.mjs";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 import {
@@ -66,7 +66,7 @@ const scratch = () => {
   return dir;
 };
 after(() => {
-  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratchDirs) safeWipeSync(dir);
 });
 
 const DEPLOY = { user: "deploy", uid: 1001, gid: 1001, group: "deploy", home: "/home/deploy" };

@@ -43,9 +43,10 @@
 //   node scripts/import-wayland-assistants.mjs [--out <dir>] [--source <dir>]
 //                                              [--skills-dir <dir>]
 //                                              [--force] [--dry-run]
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_SOURCE = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams";
@@ -301,7 +302,7 @@ function prepareOutDir(directory, force, dryRun) {
     throw new Error(`${directory} is not empty and was not written by this script — pass --force to replace it`);
   }
   if (!dryRun) {
-    rmSync(directory, { recursive: true, force: true });
+    safeWipeSync(directory, { within: repoRoot });
     mkdirSync(directory, { recursive: true });
   }
 }

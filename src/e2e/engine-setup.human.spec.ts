@@ -2,9 +2,10 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let server: ViteDevServer;
 let origin: string;
@@ -52,7 +53,7 @@ test.beforeAll(async () => {
   if(!address || typeof address==='string')throw new Error('No fixture port');
   origin=`http://127.0.0.1:${address.port}`;
 });
-test.afterAll(async()=>{await server?.close();rmSync(cache,{recursive:true,force:true});});
+test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/claude-accounts', route => route.fulfill({ json: { accounts: [] } }));
 });

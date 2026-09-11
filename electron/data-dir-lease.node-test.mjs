@@ -9,6 +9,7 @@ import { dirname, join, parse, relative } from "node:path";
 import { inspect } from "node:util";
 import test from "node:test";
 import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const MODULE = new URL("./data-dir-lease.mjs", import.meta.url).href;
 const PRIVATE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
@@ -169,12 +170,12 @@ const errorCode = (code) => (error) => error.name === "DataDirLeaseError" && err
 
 test.afterEach(async () => {
   for (const item of [...workers]) await stop(item);
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) safeWipeSync(root);
 });
 
 test("stable sibling anchors do not create the installation or migrate legacy data", () => {
   const f = fixture();
-  rmSync(f.dataDir, { recursive: true });
+  safeWipeSync(f.dataDir);
   const nested = join(f.root, "missing-parent", "new-data");
   const before = dataDirLeasePaths(nested);
   const lease = acquireDataDirLease(nested);

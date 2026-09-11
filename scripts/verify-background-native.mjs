@@ -1,11 +1,12 @@
 import { createRequire } from "node:module";
-import { mkdtempSync,mkdirSync,rmSync,readFileSync } from "node:fs";
+import { mkdtempSync,mkdirSync,readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join,resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { startStartupUiFixture } from "./testing/startup-ui-fixture.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 if(process.platform!=="darwin")throw Error("This native confirmation is scoped to macOS; other platforms remain unverified.");
 const require=createRequire(import.meta.url),scratch=mkdtempSync(join(tmpdir(),"murage-background-native-"));
@@ -21,4 +22,4 @@ try{
   if(code!==0)throw Error(`Owned Electron fixture exited ${code}`);
   if(JSON.parse(readFileSync(env.MURAGE_BACKGROUND_OUTPUT,"utf8")).runId!==runId)throw Error("Native fixture did not produce a fresh completion receipt.");
   console.log(`Native background evidence: ${join(output,"native.json")}`);
-}finally{await fixture?.close();rmSync(scratch,{recursive:true,force:true});}
+}finally{await fixture?.close();safeWipeSync(scratch);}

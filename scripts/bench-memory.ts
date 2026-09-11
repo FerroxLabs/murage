@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { validateCorpus, requireMeasuredHit } from "../server/memory/testing/contracts.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const argv = process.argv.slice(2);
 function arg(name: string, fallback: string) { const i = argv.indexOf(name); return i < 0 ? fallback : argv[i + 1]; }
@@ -60,7 +61,7 @@ async function main() {
     const out = resolve(arg("--out", ".planning/memory-evidence/bench.json"));
     mkdirSync(dirname(out), {recursive: true}); writeFileSync(out, JSON.stringify(result, null, 2) + "\n");
     console.log(JSON.stringify(result));
-  } finally { mdb.closeMessageDb(); rmSync(dir, {recursive: true, force: true}); }
+  } finally { mdb.closeMessageDb(); safeWipeSync(dir); }
 }
 if(arg("--backend","memory")==="baseline") {
   main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });

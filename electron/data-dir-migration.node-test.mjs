@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { acquireDataDirLease } from "./data-dir-lease.mjs";
 import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "murage-migration-proof-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(root));
   const legacyDataDir = join(root, "legacy");
   const dataDir = join(root, "current");
   mkdirSync(legacyDataDir);

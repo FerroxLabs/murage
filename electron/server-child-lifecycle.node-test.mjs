@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { acquireDataDirLease } from "./data-dir-lease.mjs";
 import { createServerChildLifecycle } from "./server-child-lifecycle.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 test("synchronous exit is observed before kill returns; repeated stop is harmless",async()=>{
   const child=new EventEmitter();let kills=0;
@@ -40,7 +41,7 @@ test("real delegated writer holds primary lease until exact child exits",{timeou
       }
     }
     try{lease.release();}catch{}
-    rmSync(root,{recursive:true,force:true});
+    safeWipeSync(root);
   });
   const module=new URL("./data-dir-lease.mjs",import.meta.url).href;
   const child=spawn(process.execPath,["--input-type=module","-e",`

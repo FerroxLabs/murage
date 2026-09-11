@@ -8,6 +8,15 @@ import { join } from "node:path";
 import { afterAll, afterEach } from "vitest";
 
 import { removeTempDir } from "./cleanup.ts";
+import { installSafeWipeGuard } from "./safe-wipe.mjs";
+
+// Belt and braces for the faked home below: every recursive rm/rmSync/rmdir
+// in this worker refuses the account's real ~/.murage (found through the
+// account database, not $HOME), any home directory, the checkout, and any
+// directory another process holds a Murage installation lease on. A test
+// that computes the wrong path gets SafeWipeRefused, not a wiped profile.
+// Explicit fixture teardown goes through safeWipeSync / removeTempDir.
+installSafeWipeGuard();
 
 const home = mkdtempSync(join(tmpdir(), "murage-test-home-"));
 process.env.HOME = home;

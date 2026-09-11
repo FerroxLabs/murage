@@ -2,10 +2,11 @@ import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NotificationPreferences } from "../../shared/notification-preferences";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 // The default quiet-hours zone comes from the browser, not the CI host clock.
 test.use({ timezoneId: "Asia/Bangkok" });
 let server: ViteDevServer, origin: string, cache: string;
@@ -35,7 +36,7 @@ test.beforeAll(async () => {
   const address = server.httpServer!.address(); if (!address || typeof address === "string") throw new Error("Missing fixture port");
   origin = "http://127.0.0.1:" + address.port;
 });
-test.afterAll(async () => { await server?.close(); rmSync(cache, { recursive: true, force: true }); });
+test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 const base: NotificationPreferences = { attention: true, completion: true, failures: true, previewContent: true };
 for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("translated quiet-hour validation and save: " + locale, async ({ page }, info) => {
   await notificationAPI(page);

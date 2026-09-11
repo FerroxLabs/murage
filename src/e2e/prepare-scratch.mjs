@@ -7,9 +7,10 @@
 // never reached and the surviving dir is left alone; global-setup.ts resets
 // the workspace over HTTP in that case instead of yanking files out from
 // under a live process.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const dataDir = process.env.MURAGE_DATA_DIR;
 if (!dataDir) {
@@ -20,7 +21,7 @@ if (resolved === resolve(join(homedir(), ".murage"))) {
   throw new Error(`refusing to wipe the real data dir: ${resolved}`);
 }
 
-rmSync(resolved, { recursive: true, force: true });
+safeWipeSync(resolved);
 mkdirSync(resolved, { recursive: true });
 
 // One engine, and it is a fixture. Without an available instance the app

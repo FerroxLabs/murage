@@ -11,6 +11,7 @@ import path from "node:path";
 import test from "node:test";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -45,7 +46,7 @@ test("every electron main-process module references only defined identifiers", (
     assert.equal(report.number_of_files, files.length);
     assert.equal(result.status, 0, result.stderr);
   } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    safeWipeSync(scratch);
   }
 });
 
@@ -176,6 +177,6 @@ test("main.mjs evaluates to app.whenReady and registers native file IPC handlers
     }
     assert.equal(report.handle.length, handlers.size, "no IPC channel may be registered twice");
   } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    safeWipeSync(scratch);
   }
 });

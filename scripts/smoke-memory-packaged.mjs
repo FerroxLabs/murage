@@ -6,10 +6,11 @@
 import assert from "node:assert/strict";
 import { fork, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const self = fileURLToPath(import.meta.url);
 const args = process.argv.slice(2);
@@ -224,7 +225,7 @@ async function main() {
     if (child && child.exitCode === null && child.signalCode === null) {
       await new Promise(done => { child.once("exit", done); child.kill("SIGKILL"); });
     }
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    safeWipeSync(root, { maxRetries: 5, retryDelay: 200 });
   }
 }
 main().catch(error => { console.error(error?.stack ?? String(error)); process.exitCode = 1; });

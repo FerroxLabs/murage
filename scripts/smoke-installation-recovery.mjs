@@ -1,11 +1,12 @@
 // Exercise the actual bundled offline CLI with no node_modules in reach.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = mkdtempSync(join(tmpdir(), "murage-packaged-recovery-"));
@@ -56,4 +57,4 @@ try {
   assert.equal(rolledBack.status, "rolled-back");
   assert.equal(readFileSync(join(data, "config.json"), "utf8"), original);
   console.log("packaged offline backup, inspect, plan, inactive restore and rollback passed with no node_modules in reach ✓");
-} finally { rmSync(scratch, { recursive: true, force: true }); }
+} finally { safeWipeSync(scratch); }
