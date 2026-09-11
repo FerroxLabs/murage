@@ -207,8 +207,8 @@ and 0.1.51 did not update it.
 | Line | Current | Proposed |
 |---|---|---|
 | 23 | `**[Murage 0.1.47 — stable release](.../releases/tag/v0.1.47)** · [Release notes](.../releases/latest)` | `**[Latest release](https://github.com/FerroxLabs/murage-releases/releases/latest)** · [Release notes](https://github.com/FerroxLabs/murage-releases/releases/latest)` (per `docs/releasing.md`; no version in the heading) |
-| 34 | `**Fuigo 1.0.7 is bundled. ...` | `**Fuigo 1.0.10 is bundled. ...` (`scripts/prepare-fuigo.mjs` pins `FUIGO_VERSION = "1.0.10"`) |
-| 144 | `**Fuigo 1.0.7 is Murage’s bundled agent harness**, ...` | `**Fuigo 1.0.10 is Murage’s bundled agent harness**, ...` |
+| 34 | `**Fuigo 1.0.7 is bundled. ...` | `**Fuigo 1.0.11 is bundled. ...` (`scripts/prepare-fuigo.mjs` pins `FUIGO_VERSION = "1.0.11"` once LFU merges; it is `"1.0.10"` until then, so re-read the pin at freeze) |
+| 144 | `**Fuigo 1.0.7 is Murage’s bundled agent harness**, ...` | `**Fuigo 1.0.11 is Murage’s bundled agent harness**, ...` (same pin check as line 34) |
 | 107 | `**In 0.1.47, managed memory starts off.**` | `**Managed memory starts off.**` (still true; drop the version so the sentence does not age) |
 | 170 | `Keyword retrieval and owner controls; no local semantic runtime in 0.1.47.` | `Keyword retrieval and owner controls; no local semantic runtime in this release.` (the row is already the Intel Mac row; drop the version so it does not age) |
 | 17 | `2,237 skills` | Already matches: `skills-library/` holds 2,237 skill directories (one `SKILL.md` each) plus the `.wayland-import.json` metadata file, which is not a skill. Keep `2,237` unless a merged lane adds or removes a skill directory; re-count with `find skills-library -name SKILL.md | wc -l` at freeze. |
@@ -227,7 +227,8 @@ transcoding and no autoplay (F5, U-28).
 - Installer table identical to 4a (Apple Silicon DMG, Intel DMG, Windows
   setup, Ubuntu .deb and AppImage) with the stable download names the
   Release workflow asserts.
-- Bundled engine line: Fuigo 1.0.10; no Node.js, npm, pnpm or separate Fuigo
+- Bundled engine line: Fuigo 1.0.11 (the pin LFU sets; re-read
+  `FUIGO_VERSION` at freeze); no Node.js, npm, pnpm or separate Fuigo
   install required for desktop installers.
 - Known platform limits copied verbatim from the 4a table after the 0.1.52
   re-verification.
