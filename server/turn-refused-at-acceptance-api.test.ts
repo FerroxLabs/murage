@@ -27,6 +27,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: await response.json() as any };
 };
 const botState = async (id: string) => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === id);
+const groupState = async (id: string) => (await api("GET", "/api/bots?messages=0")).body.groups.find((group: any) => group.id === id);
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body.messages as any[];
 const dumpRows = (): any[] => { const file = join(fixture.info.dataDir, "pi-dump.jsonl"); return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : []; };
 
@@ -162,6 +163,91 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       expect(current.tasks.find((candidate: any) => candidate.threadId === task.body.task.threadId)).toMatchObject({ title: "Created mid-dispatch", busy: false });
     } finally { db.close(); }
   }, 90000);
+
+  // RED2H (RED2G verifier): the same window in a room. A member bot's room
+  // turn is claimed for the room thread; a task created for that member while
+  // its room-turn handshake is held moves the memory policy revision and
+  // revokes the disclosure the room turn prepared. p02 holds — the refused
+  // provider turn is stopped — but the room turn must not be lost either:
+  // runGroupMemberTurn re-prepares the member's memory context under the new
+  // revision and dispatches the member turn once more, with no error chip and
+  // exactly one member reply.
+  it("runs a room member turn whose task was created inside the dispatch window, on fresh memory context", async () => {
+    const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "piGate").models.options;
+    const bot = async (name: string) => {
+      const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "piGate", model: models[0].id } });
+      expect(created.status).toBe(201);
+      const bot = created.body.bot as { id: string; threadId: string };
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
+      return bot;
+    };
+    const member = await bot("Room member A"), other = await bot("Room member B");
+    const createdRoom = await api("POST", "/api/groups", { name: "Mid-dispatch task room", memberIds: [member.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } } });
+    expect(createdRoom.status).toBe(201);
+    const room = createdRoom.body.group as { id: string; threadId: string };
+    expect(room.threadId).not.toBe(member.threadId);
+    const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+    try {
+      const policyRevision = () => Number((db.prepare("SELECT policy_revision FROM memory_meta WHERE id=1").get() as { policy_revision: number }).policy_revision);
+      const disclosures = () => db.prepare("SELECT state,policy_revision FROM memory_disclosures WHERE thread_id=? ORDER BY created_at").all(room.threadId) as Array<{ state: string; policy_revision: number }>;
+      const replies = async () => (await messages(room.threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text);
+      const idle = async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; };
+
+      // The member turn is held at the provider handshake: dispatched, not accepted.
+      rmSync(gate, { force: true }); rmSync(`${gate}.waiting`, { force: true });
+      expect((await replies()).length).toBe(0);
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "room turn held in its dispatch window" })).status).toBe(202);
+      await expect.poll(() => existsSync(`${gate}.waiting`), { timeout: 15000 }).toBe(true);
+      expect((await groupState(room.id)).busyBotId).toBe(member.id);
+      expect((await botState(member.id)).busy).toBe(true);
+      const revisionAtDispatch = policyRevision();
+      expect(disclosures()).toEqual([{ state: "prepared", policy_revision: revisionAtDispatch }]);
+
+      // A task created for the speaking member inside that window moves the
+      // policy revision and revokes the room turn's prepared disclosure.
+      const task = await api("POST", `/api/bots/${member.id}/tasks`, { title: "Created mid room dispatch" });
+      expect(task.status).toBe(201);
+      expect(task.body.task).toMatchObject({ title: "Created mid room dispatch", busy: false });
+      expect(task.body.task.threadId).not.toBe(room.threadId);
+      expect(policyRevision()).toBeGreaterThan(revisionAtDispatch);
+      expect(disclosures()).toEqual([{ state: "revoked", policy_revision: revisionAtDispatch }]);
+      writeFileSync(gate, "");
+
+      // Acceptance refuses the held member turn (p02: the provider turn on
+      // the revoked context is stopped); the member turn is dispatched again
+      // under the moved authority and runs to its reply. Without the fix the
+      // room settles with "error: MEMORY_CONTEXT_REVOKED" and no reply.
+      await expect.poll(idle, { timeout: 20000 }).toBe(true);
+      await expect.poll(async () => (await botState(member.id)).busy, { timeout: 15000 }).toBe(false);
+      const chips = (thread: any[]) => thread.filter(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:")).map(message => message.tool.name);
+      expect(chips(await messages(room.threadId))).toEqual([]);
+      await expect.poll(async () => (await replies()).length, { timeout: 15000 }).toBe(1);
+      expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`[memory] context revoked during dispatch on thread ${room.threadId}; re-preparing once (room member Room member A)`);
+      const thread = await messages(room.threadId);
+      expect(thread.filter(message => message.role === "user" && message.kind === "text").map(message => message.text)).toEqual(["room turn held in its dispatch window"]);
+      const reply = (await replies())[0];
+      expect(reply.text).toBe("Hello from pi");
+      expect(reply.from.botId).toBe(member.id);
+      expect(chips(thread)).toEqual([]);
+      expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);
+      // The reply ran on a disclosure prepared and delivered under the new
+      // revision; the one prepared before the task existed stayed revoked.
+      expect(disclosures()).toEqual([
+        { state: "revoked", policy_revision: revisionAtDispatch },
+        { state: "delivered", policy_revision: policyRevision() },
+      ]);
+      // and the delivered receipt carries this exact reply as its output.
+      const receipt = db.prepare("SELECT state,output_message_ids FROM memory_disclosures WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").get(room.threadId) as { state: string; output_message_ids: string };
+      expect(JSON.parse(receipt.output_message_ids)).toContain(reply.id);
+      // The member's task is admitted and untouched by the room turn; the
+      // room is free for the next message and it still runs to a reply.
+      expect((await botState(member.id)).tasks.find((candidate: any) => candidate.threadId === task.body.task.threadId)).toMatchObject({ title: "Created mid room dispatch", busy: false });
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "runs after the re-dispatched room turn" })).status).toBe(202);
+      await expect.poll(idle, { timeout: 20000 }).toBe(true);
+      await expect.poll(async () => (await replies()).length, { timeout: 15000 }).toBe(2);
+      expect((await replies())[1].from.botId).toBe(member.id);
+    } finally { db.close(); }
+  }, 120000);
 
   // Q1-T5 §4.1 through the real server: the memory worker finishes capturing
   // the turn's own prompt inside the dispatch window, which rolls the
