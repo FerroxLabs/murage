@@ -49,10 +49,22 @@ Assembly and publication are serialized per version. After the builds finish,
 the upload helper binds the candidate to one numeric release ID and checks that
 it is still a draft immediately before and after every upload. Uploads never
 delete or overwrite an existing asset. An existing asset is reused only when
-its uploaded state, size, and SHA-256 digest match the staged bytes. A different
-or unverified asset stops the run; use a new version, or explicitly repair the
-draft while its workflow is stopped and then rerun. Signed rebuilds may produce
-different bytes, so a rebuild is not guaranteed to reuse an existing draft.
+its uploaded state and size match the staged bytes and its SHA-256 digest, once
+GitHub reports it, matches too. A different asset stops the run; use a new
+version, or explicitly repair the draft while its workflow is stopped and then
+rerun. Signed rebuilds may produce different bytes, so a rebuild is not
+guaranteed to reuse an existing draft.
+
+Publication waits for GitHub's own digest of every asset. GitHub computes
+digests asynchronously, so the proof step polls for up to a minute. A wrong
+name, an unfinished upload or a mismatched digest fails at once. If any digest
+is still missing after the wait, the release is **held**: the proof step fails,
+Publish does not run, and the draft is left untouched. To resume without
+rebuilding, re-run the failed assemble job (the build artifacts are reused and
+retained uploads are kept), or verify the retained draft directly with
+`node scripts/release-digests.mjs verify <version> <release-id> <assets-dir>`.
+`scripts/release-guard.mjs publish` repeats the check right before it flips the
+draft. Publishing from the GitHub UI skips this check, so verify first.
 
 These checks are not an atomic GitHub transaction. Someone publishing through
 the UI or another API client between a draft check and its upload can still

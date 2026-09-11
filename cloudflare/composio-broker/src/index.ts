@@ -85,6 +85,10 @@ const upstreamErrorSchema = z.object({
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const MAX_MCP_BODY = 2 * 1024 * 1024;
+const MAX_ALIAS_BODY = 2 * 1024;
+// A client that stalls mid-upload must not hold the request open indefinitely.
+const MCP_BODY_READ_DEADLINE_MS = 30_000;
+const ALIAS_BODY_READ_DEADLINE_MS = 10_000;
 const MULTI_ACCOUNT_CONFIG = {
   enable: true,
   max_accounts_per_toolkit: 5,
@@ -249,10 +253,75 @@ async function authenticate(request: Request, env: Env) {
   return row && row.disabled_at === null ? row : null;
 }
 
+const UNKNOWN_REGISTRATION_ACTOR = "ip:unknown";
+
+function parseIPv4(value: string): number[] | null {
+  const match = value.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return null;
+  const octets = match.slice(1).map(Number);
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+
+/** Eight 16-bit groups, or null for anything that is not an IPv6 literal. */
+function parseIPv6(value: string): number[] | null {
+  let address = value.toLowerCase();
+  const zone = address.indexOf("%");
+  if (zone !== -1) address = address.slice(0, zone);
+  if (!address.includes(":") || !/^[0-9a-f:.]+$/.test(address)) return null;
+  if (address.includes(".")) {
+    const lastColon = address.lastIndexOf(":");
+    const v4 = parseIPv4(address.slice(lastColon + 1));
+    if (!v4) return null;
+    address = `${address.slice(0, lastColon + 1)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+  const halves = address.split("::");
+  if (halves.length > 2) return null;
+  const split = (part: string) => (part === "" ? [] : part.split(":"));
+  const head = split(halves[0]);
+  const tail = halves.length === 2 ? split(halves[1]) : [];
+  if ([...head, ...tail].some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  let groups: string[];
+  if (halves.length === 2) {
+    const missing = 8 - head.length - tail.length;
+    if (missing < 1) return null;
+    groups = [...head, ...Array.from({ length: missing }, () => "0"), ...tail];
+  } else {
+    if (head.length !== 8) return null;
+    groups = head;
+  }
+  return groups.map((group) => Number.parseInt(group, 16));
+}
+
+/** Registration actor identity used by the registration limiter.
+ *
+ * This is the single seam that decides "who is registering". Today it is the
+ * client address Cloudflare observed (`cf-connecting-ip`, which a client
+ * cannot set through Cloudflare's edge): an IPv4 address exactly, an IPv6
+ * address by its /64 (one subscriber allocation hands out a whole /64), and an
+ * IPv4-mapped IPv6 address as its IPv4 address. Client-controlled headers such
+ * as User-Agent never contribute, so rotating them cannot mint fresh limiter
+ * buckets. A missing or unparsable address shares one fail-closed bucket.
+ *
+ * A later authenticated identity layer (for example a FluxRouter-gated broker)
+ * replaces this function; nothing else derives registration identity.
+ */
+function registrationActorKey(request: Request): string {
+  const address = request.headers.get("cf-connecting-ip")?.trim() ?? "";
+  if (!address || address.length > 64) return UNKNOWN_REGISTRATION_ACTOR;
+  const v4 = parseIPv4(address);
+  if (v4) return `ip4:${v4.join(".")}`;
+  const v6 = parseIPv6(address);
+  if (!v6) return UNKNOWN_REGISTRATION_ACTOR;
+  if (v6.slice(0, 5).every((group) => group === 0) && v6[5] === 0xffff) {
+    return `ip4:${[v6[6] >> 8, v6[6] & 0xff, v6[7] >> 8, v6[7] & 0xff].join(".")}`;
+  }
+  return `ip6:${v6.slice(0, 4).map((group) => group.toString(16).padStart(4, "0")).join(":")}::/64`;
+}
+
 async function register(request: Request, env: Env) {
   if (env.REGISTRATION_MODE !== "open") return json({ error: "registration is temporarily closed" }, 503);
-  const fingerprint = `${request.headers.get("cf-connecting-ip") ?? "unknown"}|${request.headers.get("user-agent") ?? "unknown"}`;
-  if (!(await env.REGISTRATION_LIMITER.limit({ key: await sha256(fingerprint.slice(0, 512)) })).success) {
+  const actor = registrationActorKey(request);
+  if (!(await env.REGISTRATION_LIMITER.limit({ key: await sha256(actor) })).success) {
     return json({ error: "too many registration attempts" }, 429);
   }
   const installationId = crypto.randomUUID();
@@ -319,11 +388,88 @@ async function chargeCall(installation: InstallationRow, env: Env): Promise<{ ov
   }
 }
 
+interface BodyBounds {
+  maxBytes: number;
+  deadlineMs: number;
+  tooLargeMessage: string;
+}
+
+function bodyRejection(status: number, error: string) {
+  return new Response(JSON.stringify({ error }), { status, headers: JSON_HEADERS });
+}
+
+/** Read a request body without ever holding more than `maxBytes`.
+ *
+ * Content-Length is advisory. A chunked or dishonest upload is counted as it
+ * streams and the read is cancelled as soon as it passes the cap, so the
+ * oversized tail is never pulled or buffered. A malformed declared length is
+ * refused, an honest over-cap declaration is refused before any byte is read,
+ * and a stalled upload fails at `deadlineMs`. Rejections are thrown as JSON
+ * Responses (400, 408, 413) before any billing or upstream work starts.
+ */
+async function readBoundedBody(
+  request: Pick<Request, "body" | "headers">,
+  { maxBytes, deadlineMs, tooLargeMessage }: BodyBounds,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const declaredHeader = request.headers.get("content-length");
+  if (declaredHeader !== null) {
+    const declared = declaredHeader.trim();
+    if (!/^\d+$/.test(declared)) throw bodyRejection(400, "invalid content-length");
+    if (Number(declared) > maxBytes) throw bodyRejection(413, tooLargeMessage);
+  }
+  if (!request.body) return new Uint8Array(0);
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(bodyRejection(408, "request body was not received in time")), deadlineMs);
+  });
+  // The race below observes the rejection; this only stops a late timer from
+  // surfacing as unhandled while a cancel is still settling.
+  deadline.catch(() => undefined);
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      if (done) break;
+      length += value.byteLength;
+      if (length > maxBytes) throw bodyRejection(413, tooLargeMessage);
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    try {
+      reader.releaseLock();
+    } catch {
+      // A cancelled read can still be settling; the stream is already closed.
+    }
+  }
+
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 async function proxyMcp(request: Request, installation: InstallationRow, env: Env, ctx: ExecutionContext) {
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_MCP_BODY) return json({ error: "MCP request is too large" }, 413);
-  const body = await request.arrayBuffer();
-  if (body.byteLength > MAX_MCP_BODY) return json({ error: "MCP request is too large" }, 413);
+  let body: Uint8Array<ArrayBuffer>;
+  try {
+    body = await readBoundedBody(request, {
+      maxBytes: MAX_MCP_BODY,
+      deadlineMs: MCP_BODY_READ_DEADLINE_MS,
+      tooLargeMessage: "MCP request is too large",
+    });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    throw error;
+  }
   const charge = await chargeCall(installation, env);
   if (charge.over) {
     return json({
@@ -540,9 +686,24 @@ async function authorize(
   ctx: ExecutionContext,
 ) {
   const session = await ensureSession(installation, env, ctx);
-  // Listing can be denied to the broker's key scope; authorize must still
-  // work, with the alias guardrails degrading to first-account behavior.
-  const accounts = await listConnectedAccounts(env, installation.composio_user_id, [slug]).catch(() => []);
+  // Read-only status views may degrade when the inventory is unavailable, but
+  // this is a write. An outage or a denied list scope is not proof that no
+  // account exists, and linking without the inventory would skip the alias,
+  // duplicate and per-toolkit account-count protections. Refuse instead.
+  let accounts: ConnectedAccountResponse[];
+  try {
+    accounts = await listConnectedAccounts(env, installation.composio_user_id, [slug]);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: "connected-account inventory unavailable; link refused",
+      id: installation.id,
+      error: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+    }));
+    return json({
+      error: "Connected accounts could not be checked right now, so no new link was created. Try again in a moment.",
+      code: "account_inventory_unavailable",
+    }, 503);
+  }
   const serviceAccounts = accounts.filter((account) => account.toolkit?.slug?.toLowerCase() === slug);
   const usableAccounts = serviceAccounts.filter((account) => /^(active|initiated|initializing|pending)$/i.test(account.status ?? ""));
   if (usableAccounts.length >= MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit) {
@@ -610,21 +771,20 @@ async function disconnectAccount(
 
 async function requestAlias(request: Request) {
   if (!request.body) return undefined;
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > 2048) throw new Response(JSON.stringify({ error: "request body is too large" }), { status: 413, headers: JSON_HEADERS });
+  const bytes = await readBoundedBody(request, {
+    maxBytes: MAX_ALIAS_BODY,
+    deadlineMs: ALIAS_BODY_READ_DEADLINE_MS,
+    tooLargeMessage: "request body is too large",
+  });
   let body: z.infer<typeof aliasRequestSchema>;
   try {
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).byteLength > 2048) {
-      throw new Response(JSON.stringify({ error: "request body is too large" }), { status: 413, headers: JSON_HEADERS });
-    }
+    const raw = new TextDecoder().decode(bytes);
     // Some Fetch implementations expose a zero-length POST as a non-null
     // ReadableStream. First-account authorization intentionally has no alias,
     // so accept that wire representation exactly like a missing body.
     if (!raw.trim()) return undefined;
     body = aliasRequestSchema.parse(JSON.parse(raw));
-  } catch (error) {
-    if (error instanceof Response) throw error;
+  } catch {
     throw new Response(JSON.stringify({ error: "invalid JSON body" }), { status: 400, headers: JSON_HEADERS });
   }
   try {
@@ -678,6 +838,10 @@ export {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  proxyMcp,
+  readBoundedBody,
+  register,
+  registrationActorKey,
   requestAlias,
   sha256,
 };

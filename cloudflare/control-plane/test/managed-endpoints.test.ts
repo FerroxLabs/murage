@@ -585,6 +585,173 @@ describe("managed companion endpoints", () => {
     expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
   });
 
+  describe("connector-token issuance is fenced by the authorizing credential", () => {
+    async function endpointState(installationId: string) {
+      return env.DB.prepare(
+        `SELECT status, lease_owner, tunnel_id, dns_record_id, last_error_code
+           FROM installation_endpoints WHERE installation_id = ?`,
+      ).bind(installationId).first<{
+        dns_record_id: string | null;
+        last_error_code: string | null;
+        lease_owner: string | null;
+        status: string;
+        tunnel_id: string | null;
+      }>();
+    }
+
+    function tokenCalls(cloudflare: FakeCloudflare) {
+      return cloudflare.calls.filter((entry) => (
+        entry.method === "GET" && new URL(entry.url).pathname.endsWith("/token")
+      ));
+    }
+
+    it("withholds the token when the installation is revoked while provisioning is in flight", async () => {
+      const cloudflare = new FakeCloudflare();
+      const gate = cloudflare.pauseNext("get_token");
+      const worker = createWorker(cloudflare.fetch);
+      const owner = await signIn(worker, "managed-inflight-revoke@example.com");
+      const installation = await createInstallation(worker, owner.token, "managed-inflight-revoke");
+      const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const inFlight = call(worker, "/v1/installations/self/endpoint", {
+        method: "POST",
+        token: installation.credential,
+      });
+      await gate.entered;
+      const revoked = await call(worker, `/v1/installations/${installation.installation.id}`, {
+        method: "DELETE",
+        token: owner.token,
+      });
+      expect(revoked.status).toBe(204);
+      // Revocation cleanup could not claim the lease held by the in-flight request.
+      expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
+
+      gate.release();
+      const response = await inFlight;
+      const text = await response.text();
+      expect(response.status).toBe(401);
+      expect(JSON.parse(text)).toEqual({ error: "unauthorized" });
+      expect(text).not.toContain(CONNECTOR_TOKEN);
+      expect(logged.mock.calls.flat().join(" ")).not.toContain(CONNECTOR_TOKEN);
+
+      // The exact provider resources stay recorded (not deleted in-request) so
+      // the identity-checked sweep can remove them.
+      const tunnel = [...cloudflare.tunnels.values()][0];
+      const record = [...cloudflare.dns.values()][0];
+      if (!tunnel || !record) throw new Error("fake resources missing");
+      expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
+      expect(await endpointState(installation.installation.id)).toEqual({
+        dns_record_id: record.id,
+        last_error_code: "installation_credential_inactive",
+        lease_owner: null,
+        status: "error",
+        tunnel_id: tunnel.id,
+      });
+
+      await runScheduledCleanup(worker);
+      expect(await endpointState(installation.installation.id)).toMatchObject({
+        dns_record_id: null,
+        status: "deleted",
+        tunnel_id: null,
+      });
+      expect(cloudflare.tunnels.size).toBe(0);
+      expect(cloudflare.dns.size).toBe(0);
+      logged.mockRestore();
+    });
+
+    it("withholds the token after an in-flight rotation and lets the new credential adopt the same resources", async () => {
+      const cloudflare = new FakeCloudflare();
+      const gate = cloudflare.pauseNext("get_token");
+      const worker = createWorker(cloudflare.fetch);
+      const owner = await signIn(worker, "managed-inflight-rotate@example.com");
+      const installation = await createInstallation(worker, owner.token, "managed-inflight-rotate");
+      const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const inFlight = call(worker, "/v1/installations/self/endpoint", {
+        method: "POST",
+        token: installation.credential,
+      });
+      await gate.entered;
+      const rotated = await call(
+        worker,
+        `/v1/installations/${installation.installation.id}/credentials/rotate`,
+        { method: "POST", token: owner.token },
+      );
+      expect(rotated.status).toBe(201);
+      const { credential: rotatedCredential } = await rotated.json<{ credential: string }>();
+
+      gate.release();
+      const response = await inFlight;
+      const text = await response.text();
+      expect(response.status).toBe(401);
+      expect(text).not.toContain(CONNECTOR_TOKEN);
+      const retained = await endpointState(installation.installation.id);
+      expect(retained).toMatchObject({
+        dns_record_id: expect.any(String),
+        last_error_code: "installation_credential_inactive",
+        lease_owner: null,
+        status: "error",
+        tunnel_id: expect.any(String),
+      });
+      expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
+
+      const adopted = await call(worker, "/v1/installations/self/endpoint", {
+        method: "POST",
+        token: rotatedCredential,
+      });
+      expect(adopted.status).toBe(200);
+      expect((await adopted.json<{ connectorToken: string }>()).connectorToken).toBe(CONNECTOR_TOKEN);
+      expect(cloudflare.tunnels.size).toBe(1);
+      expect(cloudflare.dns.size).toBe(1);
+      expect(cloudflare.calls.filter((entry) => (
+        entry.method === "POST" && new URL(entry.url).pathname.endsWith("/cfd_tunnel")
+      ))).toHaveLength(1);
+
+      // Documents current behavior (design gap, not a fix): rotating the
+      // installation credential does not rotate the Cloudflare tunnel. The new
+      // credential re-reads the connector token of the same tunnel, so a
+      // connector token issued before rotation keeps working until the tunnel
+      // itself is deleted or its token is rotated at Cloudflare.
+      const tokenTunnelIds = tokenCalls(cloudflare).map((entry) => new URL(entry.url).pathname.split("/").at(-2));
+      expect(tokenTunnelIds).toEqual([retained?.tunnel_id, retained?.tunnel_id]);
+      logged.mockRestore();
+    });
+
+    it("withholds the token when the credential expires while provisioning is in flight", async () => {
+      const cloudflare = new FakeCloudflare();
+      const gate = cloudflare.pauseNext("get_token");
+      const worker = createWorker(cloudflare.fetch);
+      const owner = await signIn(worker, "managed-inflight-expiry@example.com");
+      const installation = await createInstallation(worker, owner.token, "managed-inflight-expiry");
+      const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const inFlight = call(worker, "/v1/installations/self/endpoint", {
+        method: "POST",
+        token: installation.credential,
+      });
+      await gate.entered;
+      await env.DB.prepare(
+        "UPDATE installation_credentials SET expires_at = ? WHERE installation_id = ?",
+      ).bind(Date.now() - 1, installation.installation.id).run();
+
+      gate.release();
+      const response = await inFlight;
+      expect(response.status).toBe(401);
+      expect(await response.text()).not.toContain(CONNECTOR_TOKEN);
+      expect(await endpointState(installation.installation.id)).toMatchObject({
+        dns_record_id: expect.any(String),
+        last_error_code: "installation_credential_inactive",
+        lease_owner: null,
+        status: "error",
+        tunnel_id: expect.any(String),
+      });
+      expect(cloudflare.tunnels.size).toBe(1);
+      expect(cloudflare.dns.size).toBe(1);
+      expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
+      logged.mockRestore();
+    });
+  });
+
   it("retains and adopts a DNS create that committed before its response failed", async () => {
     const cloudflare = new FakeCloudflare();
     cloudflare.failuresAfterApply.add("create_dns");

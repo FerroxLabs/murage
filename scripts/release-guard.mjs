@@ -121,6 +121,77 @@ export function assertDraft(version, id, run = execute) {
   return release;
 }
 
+const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const digestPending = (asset) => asset?.digest === null || asset?.digest === undefined || asset?.digest === "";
+
+/** sha256 digests of the staged release assets, in GitHub's `sha256:<hex>` form. */
+export function stagedDigests(directory) {
+  const names = readdirSync(directory).sort();
+  if (!names.length) throw new Error("no release assets staged");
+  return new Map(names.map(name => {
+    const file = join(directory, name);
+    if (!statSync(file).isFile()) throw new Error("release assets must be regular files");
+    return [name, `sha256:${createHash("sha256").update(readFileSync(file)).digest("hex")}`];
+  }));
+}
+
+/** Compare one draft metadata view with the staged digests. `unreported` lists
+ * assets GitHub has not yet computed a digest for (it does so asynchronously);
+ * every other list is a failure that waiting cannot repair. */
+export function compareDraftAssets(expected, assets) {
+  if (!(expected instanceof Map) || expected.size === 0) throw new Error("no staged release assets to compare");
+  if (!Array.isArray(assets)) throw new Error("draft metadata has no asset list");
+  const names = assets.map(asset => String(asset?.name));
+  return {
+    missing: [...expected.keys()].filter(name => !names.includes(name)),
+    unexpected: names.filter(name => !expected.has(name)),
+    duplicated: [...new Set(names.filter((name, index) => names.indexOf(name) !== index))],
+    notUploaded: assets.filter(asset => asset?.state !== "uploaded").map(asset => String(asset?.name)),
+    unreported: assets.filter(digestPending).map(asset => String(asset?.name)),
+    mismatched: assets.filter(asset => !digestPending(asset) && (typeof asset.digest !== "string" ||
+      !SHA256_DIGEST.test(asset.digest) || expected.get(String(asset.name)) !== asset.digest)).map(asset => String(asset?.name)),
+  };
+}
+
+/** The non-waitable failures of a comparison, or null. */
+export function draftAssetFailure(report) {
+  const parts = [
+    ["missing", report.missing], ["unexpected", report.unexpected], ["duplicated", report.duplicated],
+    ["not finished uploading", report.notUploaded], ["digest mismatch", report.mismatched],
+  ].filter(([, names]) => names.length).map(([label, names]) => `${label}: ${names.join(", ")}`);
+  return parts.length ? parts.join("; ") : null;
+}
+
+/** Publication gate: every staged asset is on the draft, uploaded, and carries
+ * a GitHub digest equal to the staged bytes. A missing digest holds. */
+export function assertCompleteDraftDigests(expected, assets) {
+  const report = compareDraftAssets(expected, assets);
+  const failure = draftAssetFailure(report);
+  if (failure) throw new Error(`draft assets do not match the staged bytes (${failure}); refusing to publish`);
+  if (report.unreported.length) {
+    throw new Error(`GitHub has not reported a digest for ${report.unreported.length} asset(s): ${report.unreported.join(", ")}; holding publication`);
+  }
+}
+
+/** Flip a verified draft live. With the staged assets directory the digests are
+ * compared to those bytes; without it every asset must at least carry a
+ * well-formed GitHub digest. Either way a missing digest holds publication. */
+export function publishDraft(version, id, assetsDir, run = execute) {
+  const draft = assertDraft(version, id, run);
+  if (assetsDir) assertCompleteDraftDigests(stagedDigests(assetsDir), draft.assets);
+  else {
+    const incomplete = draft.assets.filter(asset => asset?.state !== "uploaded" ||
+      typeof asset?.digest !== "string" || !SHA256_DIGEST.test(asset.digest)).map(asset => String(asset?.name));
+    if (!draft.assets.length || incomplete.length) {
+      throw new Error(`draft assets lack a verified upload digest (${incomplete.join(", ") || "no assets"}); holding publication`);
+    }
+  }
+  checked("gh", ["api", "--method", "PATCH", `repos/${RELEASE_REPO}/releases/${id}`,
+    "--field", "draft=false", "--raw-field", "make_latest=true"], run);
+  const release = releaseRecord(apiGet(`repos/${RELEASE_REPO}/releases/${id}`, { run }), version, id);
+  if (release.draft) throw new Error("publication was not confirmed");
+}
+
 export function uploadDraft(version, directory, notesFile, run = execute) {
   parseVersion(version);
   const files = readdirSync(directory).sort().map(name => {
@@ -144,9 +215,13 @@ export function uploadDraft(version, directory, notesFile, run = execute) {
     const draft = assertDraft(version, id, run);
     const existing = draft.assets.filter(asset => asset.name === file.name);
     if (existing.length) {
-      if (existing.length !== 1 || existing[0].state !== "uploaded" ||
-          existing[0].size !== file.size || existing[0].digest !== file.digest) {
-        throw new Error(`existing asset ${file.name} differs or lacks a verified digest; use a new version or explicitly repair the stopped draft`);
+      // A retained upload whose digest GitHub has not computed yet is neither
+      // replaced nor trusted here: resuming the job keeps it, and the bounded
+      // digest verification that follows holds publication until its digest
+      // matches. A digest that is reported must already match.
+      if (existing.length !== 1 || existing[0].state !== "uploaded" || existing[0].size !== file.size ||
+          (!digestPending(existing[0]) && existing[0].digest !== file.digest)) {
+        throw new Error(`existing asset ${file.name} differs from the staged bytes; use a new version or explicitly repair the stopped draft`);
       }
       continue;
     }
@@ -201,13 +276,8 @@ function main([command, ...args]) {
   } else if (command === "branch") output(inspectReleaseBranch(args[0], process.env.GITHUB_REPOSITORY));
   else if (command === "upload") console.log(uploadDraft(...args));
   else if (command === "publish") {
-    const [version, rawId] = args;
-    const id = Number(rawId);
-    assertDraft(version, id);
-    checked("gh", ["api", "--method", "PATCH", `repos/${RELEASE_REPO}/releases/${id}`,
-      "--field", "draft=false", "--raw-field", "make_latest=true"], execute);
-    const release = releaseRecord(apiGet(`repos/${RELEASE_REPO}/releases/${id}`), version, id);
-    if (release.draft) throw new Error("publication was not confirmed");
+    const [version, rawId, assetsDir] = args;
+    publishDraft(version, Number(rawId), assetsDir);
   } else throw new Error("unknown release guard command");
 }
 
