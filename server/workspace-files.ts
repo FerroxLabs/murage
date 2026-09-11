@@ -33,7 +33,7 @@ import {
 import type { Artifact } from "../shared/artifacts.ts";
 import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { ProjectFolderLeaseError, type ProjectFolderLeases } from "./project-folder-leases.ts";
-import type { ProjectTurnLeases } from "./project-turn-leases.ts";
+import { describeThrow, type ProjectTurnLeases } from "./project-turn-leases.ts";
 import type { Store } from "./store.ts";
 import { SURFACE_QUERY, SURFACE_SECRET_QUERY } from "./sse-visibility.ts";
 import {
@@ -47,6 +47,8 @@ import {
 } from "../shared/workspace-files.ts";
 import { hiddenRoute, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 import { sha256Hex, workspaceRevisionOf } from "./workspace-revision.ts";
+
+const warn = (message: string) => console.warn(`[workspace-files] ${message}`);
 
 /** Server facts a lane may need. Adding a field is a one-line change to the
  * deps object in server/index.ts; routing itself never changes. */
@@ -782,6 +784,9 @@ async function holdWorkspace(deps: WorkspaceFilesDeps, leaseOwner: string, root:
   try { deps.projectFolders.acquireRestore(leaseOwner, root); }
   catch (error) {
     if (error instanceof ProjectFolderLeaseError && (error.code === "conflict" || error.code === "owner-in-use")) fail("bot-writing", BOT_WRITING);
+    // FOLLOW4: the fold is not silent (the turn-aware path logs the same
+    // event inside acquireRestoreWhenStopped). No path: the route logs its own.
+    if (!(error instanceof ProjectFolderLeaseError)) warn(`folder registry threw something other than its own refusal during a save hold; answering root-changed: ${describeThrow(error)}`);
     fail("root-changed", ROOT_CHANGED);
   }
 }

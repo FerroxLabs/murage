@@ -1,6 +1,13 @@
 import { ProjectFolderLeaseError, ProjectFolderLeases, type ProjectFolderLease } from "./project-folder-leases.ts";
 
 export const PROJECT_TURN_TOMBSTONE_LIMIT = 4096;
+const warn = (message: string) => console.warn(`[project-turn-leases] ${message}`);
+/** `name: message` of a throw, without its stack or any path it might carry
+ * beyond what the thrower put in the message. */
+export const describeThrow = (error: unknown): string => {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return typeof error === "string" ? error : Object.prototype.toString.call(error);
+};
 interface TurnLease {
   threadId: string;
   dispatched: boolean;
@@ -112,15 +119,23 @@ export class ProjectTurnLeases {
    * pre-empted. */
   async acquireRestoreWhenStopped(ownerId: string, cwd: string, options: { timeoutMs: number }): Promise<RestoreAdmission> {
     const deadline = Date.now() + Math.max(0, options.timeoutMs);
+    // FOLLOW4: a throw that is not the registry's own refusal is folded into
+    // an unusable-path answer by every caller; it is logged here, once, so a
+    // registry change that breaks the "only throws its own refusals"
+    // invariant is visible. No path: the caller's route logs what it logs.
+    const unexpected = (stage: string, error: unknown): RestoreAdmission => {
+      warn(`folder registry threw something other than its own refusal during ${stage}; answering as an unusable path: ${describeThrow(error)}`);
+      return { ok: false, reason: "error", error };
+    };
     for (;;) {
       try { return { ok: true, lease: this.folders.acquireRestore(ownerId, cwd) }; }
       catch (error) {
-        if (!(error instanceof ProjectFolderLeaseError)) return { ok: false, reason: "error", error };
+        if (!(error instanceof ProjectFolderLeaseError)) return unexpected("restore admission", error);
         if (error.code !== "conflict") return { ok: false, reason: "conflict", code: error.code };
       }
       let blockers: ProjectFolderLease[];
       try { blockers = this.folders.conflicts(cwd, "restore"); }
-      catch (error) { return error instanceof ProjectFolderLeaseError ? { ok: false, reason: "conflict", code: error.code } : { ok: false, reason: "error", error }; }
+      catch (error) { return error instanceof ProjectFolderLeaseError ? { ok: false, reason: "conflict", code: error.code } : unexpected("conflict listing", error); }
       // Released between the refusal and this check: acquire on the next pass.
       if (blockers.length === 0) continue;
       if (!blockers.every(lease => lease.mode === "writer" && this.owners.get(lease.ownerId)?.stopRequested === true)) {
