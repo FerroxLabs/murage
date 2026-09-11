@@ -339,7 +339,14 @@ const Transcript = memo(function Transcript({
                           className={m.text ? "justify-start" : "mb-0 justify-start"}
                         />
                       ) : null}
-                      {m.text ? <ChatMarkdown text={m.text} /> : null}
+                      {m.text ? (
+                        // F5-T3: a member's file link is offered to the media
+                        // resolver under that member's own room-task scope,
+                        // so a take it rendered into the room's workspace gets
+                        // a player. A message with no named sender keeps the
+                        // plain Save a copy link.
+                        <ChatMarkdown text={m.text} scope={m.from?.botId ? { botId: m.from.botId, threadId: group.threadId } : undefined} />
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -1361,7 +1368,9 @@ export function GroupView({ group }: { group: Group }) {
                       className={popping.text ? "justify-start" : "mb-0 justify-start"}
                     />
                   ) : null}
-                  {popping.text ? <ChatMarkdown text={popping.text} /> : null}
+                  {popping.text ? (
+                    <ChatMarkdown text={popping.text} scope={popping.botId ? { botId: popping.botId, threadId: group.threadId } : undefined} />
+                  ) : null}
                 </div>
               ) : null}
             </TurnPresence>

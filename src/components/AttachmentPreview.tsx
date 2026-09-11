@@ -10,6 +10,8 @@ import { attachmentBasename, attachmentImageUrl, type TranscriptFileAttachment }
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { attachmentImageItem, ImageGallery, ImageLightbox, type ImageMediaItem } from "./ImageMedia";
+import { LocalMedia } from "./MediaPlayer";
+import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 
 export interface PreviewImage {
   src: string;
@@ -48,21 +50,39 @@ export function AttachedImageGallery({ paths, className }: { paths: string[]; cl
   );
 }
 
+function FileChip({ file }: { file: TranscriptFileAttachment }) {
+  return (
+    <span
+      title={file.name}
+      className="flex max-w-[260px] items-center gap-1.5 rounded-lg border border-hairline/40 bg-inset/70 px-2.5 py-1.5 text-[12px] text-ink-secondary"
+    >
+      <FileText size={13} className="shrink-0" aria-hidden="true" />
+      <span className="truncate text-ink">{file.name}</span>
+    </span>
+  );
+}
+
 /** A transcript file is a local prompt reference, not a public download.
- * Show what was sent without turning an untrusted stored path into a link. */
-export function AttachedFileChips({ files, className }: { files: TranscriptFileAttachment[]; className?: string }) {
+ * Show what was sent without turning an untrusted stored path into a link.
+ *
+ * F5-T3: an attached file whose name is one of the player containers is
+ * offered to the media resolver with this conversation's scope. If the
+ * harness proves it is a playable file of this conversation's own workspace,
+ * the chip becomes a player; in every other case — no scope, a path from
+ * somewhere else, a type this build cannot stream — the inert chip above is
+ * exactly what stays. */
+export function AttachedFileChips({ files, className, scope }: {
+  files: TranscriptFileAttachment[];
+  className?: string;
+  /** The conversation these files were attached to. Without it nothing is
+   * resolved: an attachment has no meaning apart from its conversation. */
+  scope?: WorkspaceScopeRef;
+}) {
   if (files.length === 0) return null;
   return (
     <div className={cn("mb-2 flex max-w-full flex-wrap justify-end gap-1.5", className)}>
       {files.map((file, index) => (
-        <span
-          key={`${file.path}:${index}`}
-          title={file.name}
-          className="flex max-w-[260px] items-center gap-1.5 rounded-lg border border-hairline/40 bg-inset/70 px-2.5 py-1.5 text-[12px] text-ink-secondary"
-        >
-          <FileText size={13} className="shrink-0" aria-hidden="true" />
-          <span className="truncate text-ink">{file.name}</span>
-        </span>
+        <LocalMedia key={`${file.path}:${index}`} scope={scope} path={file.path} fallback={<FileChip file={file} />} />
       ))}
     </div>
   );
