@@ -1560,6 +1560,75 @@ describe("harness HTTP API", () => {
     }
   }, 40000);
 
+  it("routes approved xAI and OpenRouter reference edits to their own origins with exact source bytes and a pinned endpoint", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Image provider fixture" })).body.bot;
+    const receipt = join(home, "image-fixture-calls.json"); rmSync(receipt, { force: true });
+    const lastCall = () => JSON.parse(readFileSync(receipt, "utf8"));
+    const sha256 = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
+    const proxies: ReturnType<typeof spawn>[] = [];
+    const imageCall = (env: Record<string,string>, args: Record<string,unknown>) => {
+      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
+      proxies.push(proxy);
+      let stdout="", stderr="";
+      const result = new Promise<any>((resolve,reject)=>{
+        const timer=setTimeout(()=>{proxy.kill();reject(new Error("Image MCP timed out: "+stderr));},15000);
+        proxy.stderr.on("data",chunk=>{stderr+=chunk;});
+        proxy.stdout.on("data",chunk=>{stdout+=chunk;for(const line of stdout.split("\n")){try{const value=JSON.parse(line);if(value.id===42){clearTimeout(timer);proxy.stdin.end();resolve(value.result);return;}}catch{}}});
+        proxy.on("error",reject);
+      });
+      proxy.stdin.write(JSON.stringify({jsonrpc:"2.0",id:42,method:"tools/call",params:{name:"generate_image",arguments:args}})+"\n");
+      return result;
+    };
+    const approved = async (pending: Promise<any>) => {
+      let card:any;
+      await expect.poll(async()=>{const state=(await api("GET","/api/bots?messages=100")).body.bots.find((b:any)=>b.id===bot.id);card=state.messages.find((m:any)=>m.card?.tool==="generate_image"&&!m.card.answered);return Boolean(card);}).toBe(true);
+      expect((await api("POST",`/api/bots/${bot.id}/respond`,{requestId:card.card.requestId,behavior:"allow"})).status).toBe(200);
+      const result=await pending;expect(result.isError).not.toBe(true);
+      return { card, payload: JSON.parse(result.content[0].text) };
+    };
+    try {
+      expect((await desktopApi("PATCH","/api/config?secretStorage=external",{xai:{key:"xai-fixture-image-key"},openaiCompat:{key:"sk-or-fixture-image-key",url:"https://openrouter.ai/api/v1"}})).status).toBe(200);
+      const xaiSettings = await desktopApi("POST","/api/images/settings",{enabled:true,connectionId:"xai",model:"grok-imagine-image-2.0"});
+      expect(xaiSettings.status).toBe(200);
+      expect(xaiSettings.body.catalog.models).toEqual([expect.objectContaining({id:"grok-imagine-image-2.0",generate:true,edit:true,maxReferences:4,editQualities:[]})]);
+
+      let turn = await startInternalFixtureTurn(bot.id);
+      const source = await approved(imageCall(turn.env,{request_id:"xai-source",prompt:"Synthetic source",connection_id:"xai",model:"grok-imagine-image-2.0"}));
+      // The fixture counter is shared by the whole server process, so count from this test's first POST.
+      const firstCall = lastCall().calls as number;
+      expect(lastCall()).toMatchObject({provider:"xai",url:"https://api.x.ai/v1/images/generations",references:0,quality:"low",responseFormat:"b64_json"});
+      await api("POST",`/api/bots/${bot.id}/interrupt`);
+
+      // xAI: JSON edit with the `image` field carrying the exact attachment bytes, no quality.
+      turn = await startInternalFixtureTurn(bot.id);
+      const xaiEdit = await approved(imageCall(turn.env,{request_id:"xai-edit",prompt:"Edit the synthetic source",operation:"edit",connection_id:"xai",model:"grok-imagine-image-2.0",reference_ids:[source.payload.artifact.referenceId]}));
+      expect(xaiEdit.card.card.title).toBe("Approve image edit");
+      expect(lastCall()).toEqual({calls:firstCall+1,url:"https://api.x.ai/v1/images/edits",provider:"xai",model:"grok-imagine-image-2.0",n:1,references:1,referenceHashes:[sha256(source.payload.artifact.path)],
+        quality:null,responseFormat:"b64_json",providerRouting:null,singleImageField:true,multiImageField:false,redirect:"error"});
+      expect(xaiEdit.payload.metadata).toMatchObject({provider:"xai",operation:"edit",referenceCount:1});
+      await api("POST",`/api/bots/${bot.id}/interrupt`);
+
+      // OpenRouter: editing is offered only after the pinned endpoint check.
+      const openRouterSettings = await desktopApi("POST","/api/images/settings",{enabled:true,connectionId:"openrouter",model:"openai/gpt-image-2"});
+      expect(openRouterSettings.status).toBe(200);
+      expect(openRouterSettings.body.catalog.models).toEqual([expect.objectContaining({id:"openai/gpt-image-2",generate:true,edit:true,maxReferences:4})]);
+      turn = await startInternalFixtureTurn(bot.id);
+      const openRouterArgs = {request_id:"openrouter-edit",prompt:"Combine the synthetic sources",operation:"edit",connection_id:"openrouter",model:"openai/gpt-image-2",reference_ids:[source.payload.artifact.referenceId,xaiEdit.payload.artifact.referenceId]};
+      const openRouterEdit = await approved(imageCall(turn.env,openRouterArgs));
+      expect(lastCall()).toEqual({calls:firstCall+2,url:"https://openrouter.ai/api/v1/images",provider:"openrouter",model:"openai/gpt-image-2",n:1,references:2,
+        referenceHashes:[sha256(source.payload.artifact.path),sha256(xaiEdit.payload.artifact.path)],quality:null,responseFormat:null,
+        providerRouting:{only:["openai"],allow_fallbacks:false},singleImageField:false,multiImageField:false,redirect:"error"});
+      expect(openRouterEdit.payload.metadata).toMatchObject({provider:"openrouter",operation:"edit",referenceCount:2,endpointTag:"openai",upstreamProvider:"openai"});
+      // The endpoint identity is kept in the stored operation result: a duplicate returns it without a second POST.
+      const repeated = JSON.parse((await imageCall(turn.env,openRouterArgs)).content[0].text);
+      expect(repeated.artifact.id).toBe(openRouterEdit.payload.artifact.id);expect(repeated.metadata.endpointTag).toBe("openai");expect(lastCall().calls).toBe(firstCall+2);
+      expect(JSON.stringify([source,xaiEdit,openRouterEdit,repeated])).not.toMatch(/fixture-image-key/);
+    } finally {
+      await api("POST",`/api/bots/${bot.id}/interrupt`);for(const proxy of proxies)if(proxy.exitCode===null)await waitForExit(proxy,{signal:"SIGTERM"});
+      await desktopApi("PATCH","/api/config",{imageGen:{enabled:false},xai:{key:""},openaiCompat:{key:"",url:""}});await desktopApi("DELETE",`/api/bots/${bot.id}`);
+    }
+  }, 40000);
+
   it("routes scoped native search without exposing credentials or allowing retired turns", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const requestFile = join(home, "search-fixture-calls.json");
