@@ -163,6 +163,53 @@ describe("Antigravity turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
+  it("settles a user Stop as cancelled with no runtime error, never exit_before_result (STOP1)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-stop-"));
+    const readyFile = join(home, "ready");
+    instance = await AntigravityDriver.create({
+      instanceId: "agy-stop",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_DELAY_MS: "10000", FAKE_AGY_READY_FILE: readyFile },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-stop", text: "hold" });
+      await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
+      await instance.adapter.interruptTurn("t-stop");
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ type: "turn.completed", turnId, ok: true, stopReason: "cancelled" });
+      expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+      expect(instance.adapter.hasSession("t-stop")).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("a child that dies before result without a Stop still settles exit_before_result with an error", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-crash-"));
+    instance = await AntigravityDriver.create({
+      instanceId: "agy-crash",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_CRASH_BEFORE_RESULT: "1" },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ type: "turn.completed", ok: false, stopReason: "exit_before_result" });
+      const errors = recorder.events.filter((e) => e.type === "runtime.error").map((e) => (e as any).message as string);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/^agy exited 3 before result/);
+      expect(errors[0]).toContain("simulated crash");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   it("sends a Windows-sized room prompt over stdin instead of argv", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-long-prompt-"));
     const dump = join(scratch, "dump.json");
