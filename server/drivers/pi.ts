@@ -362,6 +362,8 @@ interface PiEvent {
   command?: string;
   success?: boolean;
   data?: unknown;
+  /** pi's reason on a `success:false` response. */
+  error?: unknown;
   // message_update
   assistantMessageEvent?: { type?: string; delta?: string };
   // tool_execution_*
@@ -465,11 +467,28 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
       let settled = false;
 
+      // An explicit pick must land on exactly that provider/model. A bare id
+      // carries no provider, so set_model cannot pin it, and prompting anyway
+      // would run pi's configured default — possibly a hosted, billed provider
+      // in place of a local or private pick. Fail before anything is spawned.
+      const requestedModel = typeof turn.model === "string" && turn.model ? turn.model : null;
+      const chosen = requestedModel ? splitPiModel(requestedModel) : null;
+      if (requestedModel && !chosen) {
+        emit({ ...base(threadId, turnId), type: "turn.started" });
+        emit({
+          ...base(threadId, turnId),
+          type: "runtime.error",
+          message: `pi could not select model "${requestedModel.slice(0, 200)}": pi needs a provider/model id. Choose a model from pi's list.`,
+        });
+        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "failed" });
+        return { turnId };
+      }
+
       // Write ~/.pi/agent/models.json before creating any credential-bearing
       // MCP temp files. If model setup fails, there is nothing sensitive to
       // clean up yet.
-      if (typeof turn.model === "string" && turn.model) {
-        ensurePiInjectModel(turn.model, { ...process.env, ...input.environment });
+      if (requestedModel) {
+        ensurePiInjectModel(requestedModel, { ...process.env, ...input.environment });
       }
 
       // integrations → stdio MCP servers for the pi-mcp-extension. The config
@@ -539,6 +558,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           timer.unref?.();
           responseWaiters.set(command, { resolve, reject, timer });
         });
+      /** The bounded reason a one-shot RPC failed, for a user-facing error. */
+      const rpcFailure = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 500);
       child.stdin.on("error", () => rejectWaiters(new Error("pi stdin closed")));
       const send = (obj: Record<string, unknown>) => {
         appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj });
@@ -608,7 +629,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               responseWaiters.delete(evt.command);
               clearTimeout(waiter.timer);
               if (evt.success) waiter.resolve(evt.data);
-              else waiter.reject(new Error(`pi ${evt.command} failed`));
+              else {
+                const reason = typeof evt.error === "string" && evt.error.trim() ? evt.error.trim() : "no reason given";
+                waiter.reject(new Error(`pi ${evt.command} failed: ${reason}`));
+              }
             }
             return;
           }
@@ -724,6 +748,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
+      /** Fail the turn before the prompt is dispatched: surface why, settle
+       * ok:false and stop the child (settle kills it). A no-op once the turn
+       * has already settled — e.g. the child exited, or the user cancelled. */
+      const failBeforePrompt = (message: string) => {
+        if (settled) return;
+        emit({ ...base(threadId, turnId), type: "runtime.error", message });
+        settle(false, "failed");
+      };
+
       // handshake: resume the remembered session or start a fresh one. The
       // harness persists session.started.sessionId as the resumeCursor and
       // hands it back next turn, so that id IS the resume handle — pi's
@@ -742,21 +775,32 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           sessionId: sessionFile ?? hs?.sessionId ?? null,
           model: turn.model ?? null,
         });
-      } catch {
-        // without a session we can still try a bare prompt; pi --no-session
-        // accepts a prompt without an explicit session.
+      } catch (err) {
+        // A failed handshake is not a fresh start. Prompting anyway would run
+        // this turn without the thread's conversation (a resumed thread would
+        // silently lose its history), or talk to a child that is already gone.
+        failBeforePrompt(
+          sessionPath
+            ? `pi could not resume this thread's session: ${rpcFailure(err)}`
+            : `pi could not start a session: ${rpcFailure(err)}`,
+        );
+        return { turnId };
       }
+      if (settled) return { turnId };
 
       // pin the chosen model (composite id or host::model inject → provider + modelId)
-      const chosen = typeof turn.model === "string" ? splitPiModel(turn.model) : null;
-      if (chosen) {
+      if (chosen && requestedModel) {
         try {
           const modelPromise = awaitResponse("set_model");
           send({ type: "set_model", provider: chosen.provider, modelId: chosen.modelId });
           await modelPromise;
-        } catch {
-          /* keep going on the default model */
+        } catch (err) {
+          // Never fall back to pi's default model: that can move a local or
+          // private pick onto a hosted or paid provider the user did not choose.
+          failBeforePrompt(`pi could not select model "${requestedModel.slice(0, 200)}": ${rpcFailure(err)}`);
+          return { turnId };
         }
+        if (settled) return { turnId };
       }
 
       // pin reasoning effort after the model (the supported level set is
@@ -770,6 +814,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           /* keep going on the engine default */
         }
       }
+      // cancelled or exited while pinning: nothing left to prompt
+      if (settled) return { turnId };
 
       const message = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
       try {

@@ -5,14 +5,14 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly; spawnCli
 // resolves it to `node <script>`, so these run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ensureDirs } from "../config.ts";
-import type { ProviderInstance } from "../contracts.ts";
+import { ensureDirs, NATIVE_DIR } from "../config.ts";
+import { newId, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { encodeInjectId, localHost } from "./local-inject.ts";
 import {
@@ -286,6 +286,140 @@ describe("PiDriver turns (fake CLI)", () => {
       message: "Invalid schema for function 'computer_browser_prepare'",
     });
     expect(instance.adapter.hasSession("t-turn-error")).toBe(false);
+  });
+
+  /** Every RPC command the driver wrote to this thread's pi child, in order,
+   * read back from the driver's own native trace (not the child's side). */
+  const outboundCommands = (threadId: string) => {
+    const file = join(NATIVE_DIR, `${threadId}.ndjson`);
+    if (!existsSync(file)) return [];
+    return readFileSync(file, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { dir?: string; source?: string; msg?: { type?: string } })
+      .filter((row) => row.dir === "out" && row.source === "pi.rpc")
+      .map((row) => row.msg?.type);
+  };
+  const dumpRows = (dump: string) =>
+    existsSync(dump)
+      ? readFileSync(dump, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as { setModel?: { provider: string; modelId: string }; prompt?: boolean })
+      : [];
+  const turnEventTypes = (turnId: string) => recorder.events.filter((e) => e.turnId === turnId).map((e) => e.type);
+
+  it("fails before the prompt when pi rejects the selected model", async () => {
+    const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-model-reject-")), "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump, FAKE_PI_SET_MODEL: "reject" });
+    const threadId = `t-model-reject-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "openai/gpt-4o" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(turnEventTypes(turnId)).toEqual(["turn.started", "session.started", "runtime.error", "turn.completed"]);
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message: 'pi could not select model "openai/gpt-4o": pi set_model failed: Model not found: openai/gpt-4o',
+    });
+    expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
+    expect(dumpRows(dump).filter((row) => row.setModel)).toEqual([{ setModel: { provider: "openai", modelId: "gpt-4o" } }]);
+    expect(dumpRows(dump).filter((row) => row.prompt)).toEqual([]);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
+  it("fails before the prompt when set_model never answers", async () => {
+    await create(undefined, { FAKE_PI_SET_MODEL: "silent" });
+    const threadId = `t-model-timeout-${newId()}`;
+    // Only the driver's RPC timers are faked; child-process I/O stays real.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const sent = instance.adapter.sendTurn({ threadId, text: "hi", model: "ollama-cloud/glm-5.2" });
+      // session.started is emitted in the same synchronous continuation that
+      // arms the set_model response timer and writes set_model.
+      await recorder.until((e) => e.type === "session.started" && e.threadId === threadId);
+      expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
+      await vi.advanceTimersByTimeAsync(20_000);
+      const { turnId } = await sent;
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+      expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+      expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+        message: 'pi could not select model "ollama-cloud/glm-5.2": pi set_model timed out',
+      });
+      expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
+      expect(instance.adapter.hasSession(threadId)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails before model selection or the prompt when a new session cannot start", async () => {
+    await create(undefined, { FAKE_PI_SESSION: "reject" });
+    const threadId = `t-session-reject-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "openai/gpt-4o" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(turnEventTypes(turnId)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message: "pi could not start a session: pi new_session failed: Could not create session directory",
+    });
+    expect(outboundCommands(threadId)).toEqual(["new_session"]);
+  });
+
+  it("fails instead of silently dropping history when a saved session cannot be resumed", async () => {
+    await create(undefined, { FAKE_PI_SESSION: "reject" });
+    const threadId = `t-resume-reject-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId,
+      text: "hi",
+      resumeCursor: "/fake/missing-session.json",
+    });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message:
+        "pi could not resume this thread's session: pi switch_session failed: Session file not found: /fake/missing-session.json",
+    });
+    expect(outboundCommands(threadId)).toEqual(["switch_session"]);
+  });
+
+  it("fails a bare model id before spawning instead of running pi's default", async () => {
+    const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-bare-model-")), "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump });
+    const rowsAfterCatalogProbe = dumpRows(dump).length;
+    const threadId = `t-bare-model-${newId()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "gpt-4o" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(turnEventTypes(turnId)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
+    expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
+      message: expect.stringContaining('pi could not select model "gpt-4o": pi needs a provider/model id'),
+    });
+    expect(outboundCommands(threadId)).toEqual([]);
+    // no pi child was spawned for the turn, so nothing new reached the fake
+    expect(dumpRows(dump)).toHaveLength(rowsAfterCatalogProbe);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
+  it("pins a selected model once before one prompt, and leaves an unselected turn on pi's default", async () => {
+    const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-model-ok-")), "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump });
+    const picked = `t-model-picked-${newId()}`;
+    const first = await instance.adapter.sendTurn({ threadId: picked, text: "hi", model: "openai/gpt-4o" });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId)).toMatchObject({ ok: true });
+    expect(outboundCommands(picked)).toEqual(["new_session", "set_model", "prompt"]);
+
+    const plain = `t-model-default-${newId()}`;
+    const second = await instance.adapter.sendTurn({ threadId: plain, text: "hi" });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId)).toMatchObject({ ok: true });
+    expect(outboundCommands(plain)).toEqual(["new_session", "prompt"]);
+
+    expect(dumpRows(dump).filter((row) => row.setModel)).toEqual([{ setModel: { provider: "openai", modelId: "gpt-4o" } }]);
+    expect(dumpRows(dump).filter((row) => row.prompt)).toHaveLength(2);
   });
 
   it("advertises images and every harness effort level", async () => {
