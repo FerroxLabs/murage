@@ -520,7 +520,9 @@ describe("recovered drafts and closing (fix round 1)", () => {
   async function slowRecoverySetup() {
     const read = readCorpus("rich-basic.md");
     const memory = createMemoryDraftBackend();
-    await createMarkdownDraftStore(memory).preserve({ scope: read.scope, relativePath: read.relativePath }, { baseRevision: rev("r0"), content: "CRASHED WORK\n", draftRevision: 9 });
+    await createMarkdownDraftStore(memory).preserve({ scope: read.scope, relativePath: read.relativePath }, // Revision 1: a clear bounded by this session's own revisions would
+    // reach it, so only the held-draft rule keeps it alive.
+    { baseRevision: rev("r0"), content: "CRASHED WORK\n", draftRevision: 1 });
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const drafts = createMarkdownDraftStore({
@@ -542,7 +544,7 @@ describe("recovered drafts and closing (fix round 1)", () => {
 
   it("holds a crash draft found after typing started and never writes over it", async () => {
     const { session, controller, memory, editor, scheduler } = await slowRecoverySetup();
-    expect(memory.records()).toMatchObject([{ content: "CRASHED WORK\n", draftRevision: 9 }]);
+    expect(memory.records()).toMatchObject([{ content: "CRASHED WORK\n", draftRevision: 1 }]);
     expect(controller.getSnapshot().view.heldDraftAt).toEqual(expect.any(Number));
     const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
     expect(html).toContain('data-testid="markdown-held-draft"');
