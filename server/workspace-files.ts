@@ -12,7 +12,8 @@
 //    has not run yet and would get its managed task workspace: it lists as
 //    empty and nothing is created, pinned or read.
 // 3. Legacy tasks pinned to `cwd: null`, cloud runs, HOME, an ancestor of
-//    HOME and the filesystem root answer a state and are never read.
+//    HOME, the filesystem root and Murage's data folder (outside the desks
+//    under `workspaces/`) answer a state and are never read.
 // 4. Paths use the artifact store's rules (server/artifacts.ts). Hidden and
 //    private setup/memory names are not listed. Links are listed as `link`
 //    and never followed; ancestors are re-checked after every directory read.
@@ -157,9 +158,17 @@ export function resolveWorkspaceRoot(deps: WorkspaceFilesDeps, scope: WorkspaceS
     if (error instanceof ArtifactError && error.status === 403) return answer("no-dedicated-workspace");
     return answer("unavailable", murageOwned ? botName : cleanLabel(basename(candidate)) || botName, managed);
   }
+  const within = (inner: string, outer: string) => inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
   let home: string | undefined;
   try { home = realpathSync.native(homedir()); } catch { home = undefined; }
-  if (home !== undefined && (home === root || home.startsWith(root.endsWith(sep) ? root : root + sep))) return answer("no-dedicated-workspace");
+  if (home !== undefined && within(home, root)) return answer("no-dedicated-workspace");
+  // Murage's own data folder (database, config, saved copies, other state)
+  // is never listed, whatever folder a bot or room was pointed at. Only the
+  // desks under `workspaces/` inside it are workspaces.
+  const dataRoot = identityOf(deps.dataDir);
+  if (dataRoot !== undefined && (within(dataRoot, root) || (within(root, dataRoot) && !root.startsWith(join(dataRoot, "workspaces") + sep)))) {
+    return answer("no-dedicated-workspace");
+  }
   let rootStat: Stats;
   try { rootStat = lstatSync(root); } catch { return answer("unavailable", botName, managed); }
   const label = murageOwned ? botName : cleanLabel(basename(root)) || botName;
