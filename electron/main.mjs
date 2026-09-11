@@ -1,4 +1,4 @@
-import { mutateProviderCredentials } from "./provider-connection-control.mjs";
+import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { execFile, spawn } from "node:child_process";
@@ -2468,19 +2468,49 @@ const CREDENTIAL_PATCH = {
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
 };
 
+// Private harness routes gated by the per-launch commit token that only this
+// process holds, in addition to the desktop surface proof.
+async function modelProviderCommitRequest(route, { method = "POST", body, failure }) {
+  if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
+  const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, {
+    method,
+    headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.error || failure);
+  return result;
+}
+const postModelProviderCommit = (route, body) => modelProviderCommitRequest(route, { body, failure: "Could not save model connection." });
+
+// B4 (U-14): when a replace acknowledgement is lost and its compensation cannot
+// be confirmed, provider writes stay fenced here and new dispatch stays fenced
+// in the harness until a revision readback, at the next write or when a
+// harness starts, confirms the live bank. In memory only; revisions, no keys.
+const providerBankReconciliation = createProviderBankReconciliation({
+  readRevision: async () => {
+    const result = await modelProviderCommitRequest("/api/provider-connections/revision", { method: "GET", failure: "Could not read model connections." });
+    if (typeof result?.revision !== "string") throw new Error("Could not read model connections.");
+    return result.revision;
+  },
+  publish: (held) => {
+    if (!serverProc) return;
+    try {
+      serverProc.postMessage({ type: "murage:provider-bank-fence", held });
+    } catch (error) {
+      slog(`model connection fence sync failed: ${error?.message ?? error}`);
+    }
+  },
+});
+
 ipcMain.handle("flux-connection:mutate", async (_event, input) => {
   if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Try again shortly.");
   if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("The operating-system credential store is unavailable");
   return mutateFluxCredentials(input, {
-    packaged: app.isPackaged, updateDocument: updateSecureCredentialDocument,
-    post: async (route, body) => {
-      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, {
-        method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` }, body: JSON.stringify(body),
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || "Could not save Flux connection.");
-      return result;
-    },
+    packaged: app.isPackaged,
+    // Flux also writes the provider bank, so it settles the same fence first.
+    updateDocument: fenceProviderDocumentUpdate(updateSecureCredentialDocument, { reconciliation: providerBankReconciliation, post: postModelProviderCommit }),
+    post: (route, body) => modelProviderCommitRequest(route, { body, failure: "Could not save Flux connection." }),
   });
 });
 
@@ -2489,14 +2519,7 @@ ipcMain.handle("model-provider:mutate", async (_event, input) => {
   if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("The operating-system credential store is unavailable");
   return mutateProviderCredentials(input, {
     packaged: app.isPackaged, updateDocument: updateSecureCredentialDocument, createId: randomUUID,
-    post: async (route, body) => {
-      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, {
-        method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${modelProviderCommitToken}` }, body: JSON.stringify(body),
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || "Could not save model connection.");
-      return result;
-    },
+    post: postModelProviderCommit, reconciliation: providerBankReconciliation,
   });
 });
 
@@ -2678,6 +2701,13 @@ const desktopStartup = app.whenReady().then(async () => {
     });
     assertDesktopStartupActive();
     serverReady = await startServerPackaged();
+    // U-14 startup readback: a harness spawned from the encrypted document
+    // releases any fence left by a previous child once its revision matches.
+    if (serverReady && providerBankReconciliation.uncertain) {
+      void providerBankReconciliation
+        .settle({ diskBank: secureCredentials.modelProviderConnections ?? "[]", post: postModelProviderCommit })
+        .catch(() => slog("model connections remain fenced: startup readback did not confirm the saved bank"));
+    }
   }
   assertDesktopStartupActive();
   // The companion the user left on comes back without anyone finding the
