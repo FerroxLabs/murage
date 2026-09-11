@@ -468,20 +468,54 @@ describe("Antigravity Murage MCP config", () => {
     }
   });
 
-  it("starts fresh from malformed JSON instead of failing the turn", () => {
+  // 0.1.52 A8 reverses the old "starts fresh from malformed JSON instead of
+  // failing the turn": rebuilding would replace the user's file for the whole
+  // turn, and for good if Murage stopped before restoring it.
+  const configDisplay = join("~", ".gemini", "config", "mcp_config.json");
+
+  it("refuses to mount into malformed JSON and leaves its bytes unchanged", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpbad-"));
     try {
       mkdirSync(join(home, ".gemini", "config"), { recursive: true });
       writeFileSync(configPath(home), "{{{ not json");
-      ensureAntigravityMcpServers(
-        {
-          [ANTIGRAVITY_COMPUTER_MCP_KEY]: boxEntry(),
-          [ANTIGRAVITY_AGENTS_MCP_KEY]: agentsEntry(),
-        },
-        { HOME: home },
+      expect(() =>
+        ensureAntigravityMcpServers(
+          {
+            [ANTIGRAVITY_COMPUTER_MCP_KEY]: boxEntry(),
+            [ANTIGRAVITY_AGENTS_MCP_KEY]: agentsEntry(),
+          },
+          { HOME: home },
+        ),
+      ).toThrow(`${configDisplay} is not valid JSON, so Murage left it unchanged. Fix or move the file, then try again.`);
+      expect(readFileSync(configPath(home), "utf8")).toBe("{{{ not json");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a non-object mcpServers instead of rebuilding the file without the user's keys", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpshape-"));
+    try {
+      mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+      const original = JSON.stringify({ mcpServers: ["hand-written"], futureTopLevelKey: { keep: true } });
+      writeFileSync(configPath(home), original);
+      expect(() => ensureAntigravityMcpServers({ [ANTIGRAVITY_AGENTS_MCP_KEY]: agentsEntry() }, { HOME: home })).toThrow(
+        `${configDisplay} has an unexpected "mcpServers" entry, so Murage left it unchanged.`,
       );
-      expect(readConfig(home).mcpServers[ANTIGRAVITY_COMPUTER_MCP_KEY]).toEqual(boxEntry());
-      expect(readConfig(home).mcpServers[ANTIGRAVITY_AGENTS_MCP_KEY]).toEqual(agentsEntry());
+      expect(readFileSync(configPath(home), "utf8")).toBe(original);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves an unparseable file byte-identical on a turn with nothing to mount", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpbad-idle-"));
+    try {
+      mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+      writeFileSync(configPath(home), "{{{ not json");
+      const restore = ensureAntigravityMcpServers({}, { HOME: home });
+      restore();
+      expect(readFileSync(configPath(home), "utf8")).toBe("{{{ not json");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -647,6 +681,43 @@ describe("Antigravity Murage MCP config", () => {
       expect(atSpawn?.mcpServers?.[ANTIGRAVITY_COMPUTER_MCP_KEY]).toBeUndefined();
       expect(atSpawn?.mcpServers?.[ANTIGRAVITY_AGENTS_MCP_KEY]).toBeUndefined();
       expect(JSON.stringify(atSpawn)).not.toContain("must-not-leak");
+    } finally {
+      recorder.stop();
+      await instance.dispose();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a tool-mounting turn before spawning when mcp_config.json cannot be parsed, leaving it byte-identical", async () => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcprefuse-"));
+    const dump = join(home, "mcp-at-spawn.json");
+    const original = '{ "mcpServers": { "sqlite-helper": { "command": "sqlite-mcp-server" } }, oops }';
+    mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+    writeFileSync(configPath(home), original);
+    const instance = await AntigravityDriver.create({
+      instanceId: "agy-mcp-refuse",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_MCP_DUMP: dump },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "t-mcp-refuse",
+        text: "click things",
+        integrations: { ...boxIntegrations, ...agentsIntegrations("refused-secret") },
+      });
+      const done = await recorder.until((event) => event.type === "turn.completed");
+      expect(done).toMatchObject({ ok: false, stopReason: "mcp_config_error" });
+      expect(recorder.events.find((event) => event.type === "runtime.error")).toMatchObject({
+        message: `${join("~", ".gemini", "config", "mcp_config.json")} is not valid JSON, so Murage left it unchanged. Fix or move the file, then try again.`,
+      });
+      // the fake writes this dump only when a turn child starts
+      expect(existsSync(dump)).toBe(false);
+      expect(readFileSync(configPath(home), "utf8")).toBe(original);
     } finally {
       recorder.stop();
       await instance.dispose();

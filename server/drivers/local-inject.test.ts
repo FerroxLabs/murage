@@ -887,17 +887,68 @@ describe("ensureOpenCodeInjectModel", () => {
     expect(config.provider.omlx.options.baseURL).toBe("http://127.0.0.1:8080/v1");
   });
 
-  it("injects into a default object when opencode.json is malformed", () => {
-    const home = mkdtempSync(join(tmpdir(), "murage-opencode-bad-json-"));
+  // 0.1.52 A8 reverses the old "injects into a default object when
+  // opencode.json is malformed" behaviour: an existing file Murage cannot
+  // parse is refused and keeps its bytes instead of being replaced.
+  const openCodeHome = (prefix: string) => {
+    const home = mkdtempSync(join(tmpdir(), prefix));
     scratchDirs.push(home);
     const dir = join(home, ".config", "opencode");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "opencode.json"), "{not-json");
+    return { home, path: join(dir, "opencode.json") };
+  };
+  const openCodeDisplay = join("~", ".config", "opencode", "opencode.json");
+
+  it("refuses a malformed opencode.json and leaves its bytes unchanged", () => {
+    const { home, path } = openCodeHome("murage-opencode-bad-json-");
+    writeFileSync(path, "{not-json");
+    expect(() => ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow(
+      `${openCodeDisplay} is not valid JSON, so Murage left it unchanged. Fix or move the file, then try again.`,
+    );
+    expect(readFileSync(path, "utf8")).toBe("{not-json");
+  });
+
+  it("refuses a commented opencode.json OpenCode itself accepts instead of stripping its comments", () => {
+    const { home, path } = openCodeHome("murage-opencode-jsonc-");
+    const commented = '{\n  // my providers\n  "$schema": "https://opencode.ai/config.json",\n  "theme": "dark",\n}\n';
+    writeFileSync(path, commented);
+    expect(() => ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow(
+      `${openCodeDisplay} has comments or trailing commas Murage can't keep, so it was left unchanged.`,
+    );
+    expect(readFileSync(path, "utf8")).toBe(commented);
+  });
+
+  it("refuses an unreadable opencode.json instead of treating it as missing", () => {
+    const { home, path } = openCodeHome("murage-opencode-unreadable-");
+    mkdirSync(path);
+    expect(() => ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow(`(EISDIR)`);
+    expect(statSync(path).isDirectory()).toBe(true);
+  });
+
+  it("refuses a non-object provider entry instead of replacing it", () => {
+    const { home, path } = openCodeHome("murage-opencode-bad-provider-");
+    const original = JSON.stringify({ provider: ["hand-written"] });
+    writeFileSync(path, original);
+    expect(() => ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow(
+      'refusing to write: opencode.json "provider" is not an object',
+    );
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  it("keeps unknown top-level keys and creates an absent file", () => {
+    const { home, path } = openCodeHome("murage-opencode-unknown-keys-");
+    writeFileSync(path, JSON.stringify({ theme: "dark", futureKey: { keep: true } }, null, 2));
     expect(ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toBe("omlx/GLM-5.2-fp8");
-    const config = JSON.parse(readFileSync(join(dir, "opencode.json"), "utf8")) as {
+    const kept = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(kept).toMatchObject({ theme: "dark", futureKey: { keep: true } });
+
+    const fresh = mkdtempSync(join(tmpdir(), "murage-opencode-absent-"));
+    scratchDirs.push(fresh);
+    expect(ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: fresh })).toBe("omlx/GLM-5.2-fp8");
+    const created = JSON.parse(readFileSync(join(fresh, ".config", "opencode", "opencode.json"), "utf8")) as {
       provider: { omlx: { models: Record<string, unknown> } };
     };
-    expect(config.provider.omlx.models["GLM-5.2-fp8"]).toBeTruthy();
+    expect(created.provider.omlx.models["GLM-5.2-fp8"]).toBeTruthy();
   });
 });
 
@@ -973,16 +1024,68 @@ describe("ensureQwenInjectModel", () => {
     }
   });
 
-  it("injects into a default object when settings.json is malformed", () => {
-    const home = mkdtempSync(join(tmpdir(), "murage-qwen-bad-json-"));
+  // 0.1.52 A8 reverses the old "injects into a default object when
+  // settings.json is malformed" behaviour: the file keeps its bytes.
+  const qwenHome = (prefix: string, contents: string) => {
+    const home = mkdtempSync(join(tmpdir(), prefix));
     scratchDirs.push(home);
     mkdirSync(join(home, ".qwen"), { recursive: true });
-    writeFileSync(join(home, ".qwen", "settings.json"), "{not-json");
+    const path = join(home, ".qwen", "settings.json");
+    writeFileSync(path, contents);
+    return { home, path };
+  };
+  const qwenDisplay = join("~", ".qwen", "settings.json");
+
+  it("refuses a malformed settings.json and leaves its bytes unchanged", () => {
+    const { home, path } = qwenHome("murage-qwen-bad-json-", "{not-json");
+    expect(() => ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow(
+      `${qwenDisplay} is not valid JSON, so Murage left it unchanged. Fix or move the file, then try again.`,
+    );
+    expect(readFileSync(path, "utf8")).toBe("{not-json");
+  });
+
+  it("refuses a commented settings.json Qwen Code itself accepts instead of stripping its comments", () => {
+    const commented = '{\n  // Qwen Code strips comments when it loads this file\n  "security": { "auth": { "selectedType": "qwen-oauth" } }\n}\n';
+    const { home, path } = qwenHome("murage-qwen-jsonc-", commented);
+    expect(() => ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow(
+      `${qwenDisplay} has comments or trailing commas Murage can't keep, so it was left unchanged.`,
+    );
+    expect(readFileSync(path, "utf8")).toBe(commented);
+  });
+
+  it("refuses a settings.json that is not an object or has an unexpected provider shape", () => {
+    const array = qwenHome("murage-qwen-array-", "[]");
+    expect(() => ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: array.home })).toThrow(
+      `${qwenDisplay} is not a JSON object, so Murage left it unchanged.`,
+    );
+    expect(readFileSync(array.path, "utf8")).toBe("[]");
+
+    const shaped = JSON.stringify({ modelProviders: { openai: { id: "hand-written" } } });
+    const wrong = qwenHome("murage-qwen-shape-", shaped);
+    expect(() => ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: wrong.home })).toThrow(
+      `${qwenDisplay} has an unexpected "modelProviders.openai" entry, so Murage left it unchanged.`,
+    );
+    expect(readFileSync(wrong.path, "utf8")).toBe(shaped);
+  });
+
+  it("refuses an unreadable settings.json instead of treating it as missing", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-qwen-unreadable-"));
+    scratchDirs.push(home);
+    mkdirSync(join(home, ".qwen", "settings.json"), { recursive: true });
+    expect(() => ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow("(EISDIR)");
+    expect(statSync(join(home, ".qwen", "settings.json")).isDirectory()).toBe(true);
+  });
+
+  it("keeps unknown keys and the user's own env entries through a successful inject", () => {
+    const { home, path } = qwenHome(
+      "murage-qwen-unknown-keys-",
+      JSON.stringify({ security: { auth: { selectedType: "qwen-oauth" } }, env: { MINE: "1" } }),
+    );
     expect(ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toBe("GLM-5.2-fp8");
-    const settings = JSON.parse(readFileSync(join(home, ".qwen", "settings.json"), "utf8")) as {
-      modelProviders: { openai: Array<{ id: string }> };
-    };
-    expect(settings.modelProviders.openai.map((row) => row.id)).toEqual(["GLM-5.2-fp8"]);
+    const settings = JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
+    expect(settings.security).toEqual({ auth: { selectedType: "qwen-oauth" } });
+    expect(settings.env).toEqual({ MINE: "1", MURAGE_QWEN_OMLX_API_KEY: "omlx" });
+    expect(settings.modelProviders.openai.map((row: { id: string }) => row.id)).toEqual(["GLM-5.2-fp8"]);
   });
 });
 

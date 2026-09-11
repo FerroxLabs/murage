@@ -1,11 +1,12 @@
 // The maintained OpenCode CLI through its ACP stdio interface. OpenCode is
 // the harness; Zen, Go, OpenRouter, and user-configured/local providers are
 // models discovered from that harness rather than separate Murage drivers.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
@@ -206,12 +207,14 @@ const stripForeignProviderKeys = (env: Record<string, string | undefined>) => {
  * opencode.json", so the two writers cannot drift apart on npm package,
  * camelCase `baseURL`, or what counts as safe to overwrite.
  *
- * This path stays deliberately LENIENT where the connector is strict: a
- * malformed user config falls back to a fresh object rather than failing the
- * turn (existing behaviour, pinned by local-inject.test.ts:890), and an apiKey
- * already in the file is never replaced. The connector cannot afford either —
- * it is writing on a user's explicit instruction and must refuse rather than
- * guess.
+ * This path refuses rather than guesses, like the connector: an existing
+ * opencode.json that cannot be read, is not a plain JSON object (OpenCode
+ * also accepts JSONC comments and trailing commas, which a rewrite would
+ * delete), or holds a non-object where the provider goes throws before
+ * anything is written. The file keeps its bytes and the turn fails with
+ * repair guidance before the CLI is spawned (0.1.52 A8; this reverses the
+ * earlier lenient fresh-object fallback). An apiKey already in the file is
+ * still never replaced — the user's own key wins.
  */
 export function ensureOpenCodeInjectModel(
   modelId: string,
@@ -223,30 +226,22 @@ export function ensureOpenCodeInjectModel(
   if (!host) return modelId;
 
   const native = `${inject.host}/${inject.model}`;
-  const dir = opencodeConfigDir(env);
-  mkdirSync(dir, { recursive: true });
   const path = opencodeConfigPath(env);
-  let source: string | null = null;
-  let config: Record<string, unknown> = { $schema: "https://opencode.ai/config.json" };
-  if (existsSync(path)) {
-    try {
-      const text = readFileSync(path, "utf8");
-      const parsed = JSON.parse(text) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        config = parsed as Record<string, unknown>;
-        source = text;
-      }
-    } catch {
-      // Malformed user config — inject into a fresh object rather than fail the turn.
-    }
-  }
-  upsertOpenCodeProvider(config, inject.host, {
-    name: host.label,
-    baseUrl: host.baseUrl,
-    apiKey: hostApiKey(host, env),
-    models: { [inject.model]: { name: `${inject.model} (${host.label})` } },
-  });
-  writeFileAtomic(path, renderOpenCodeConfig(config, source));
+  const existing = readNativeJsonConfig(path, env.HOME || env.USERPROFILE || homedir());
+  const config: Record<string, unknown> = existing?.value ?? { $schema: "https://opencode.ai/config.json" };
+  upsertOpenCodeProvider(
+    config,
+    inject.host,
+    {
+      name: host.label,
+      baseUrl: host.baseUrl,
+      apiKey: hostApiKey(host, env),
+      models: { [inject.model]: { name: `${inject.model} (${host.label})` } },
+    },
+    { strict: true },
+  );
+  mkdirSync(opencodeConfigDir(env), { recursive: true });
+  writeFileAtomic(path, renderOpenCodeConfig(config, existing?.text ?? null));
   return native;
 }
 
