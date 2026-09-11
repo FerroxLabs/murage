@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 const isPlainRecord = (value) => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   try {
@@ -44,6 +46,11 @@ const copy = (credentials) => {
 export function createSecureCredentialState(initialCredentials, persist, { writable = true } = {}) {
   let current = copy(initialCredentials);
   let transition = Promise.resolve();
+  // Whether credentials.bin is known to hold exactly `current`. A rejected
+  // native write, or a failed restoration after a second-phase failure, leaves
+  // the file unknown; an unchanged optional write is then not a provable no-op
+  // and must persist until a later write succeeds.
+  let durable = true;
 
   // A launch that could not READ the store starts from {}. Deriving a new
   // document from {} and writing it would not add a secret — it would replace
@@ -69,21 +76,45 @@ export function createSecureCredentialState(initialCredentials, persist, { writa
       return copy(current);
     },
 
-    update(derive, afterPersist) {
+    update(derive, afterPersist, { skipUnchanged = false } = {}) {
       return serialize(async () => {
         assertWritable();
         const previous = copy(current);
         const next = copy(await derive(copy(previous)));
+        // Opt-in for optional writers only (R2-T5): a validated draft that is
+        // structurally identical to the committed document needs no native
+        // encryption, provided the file is known to hold that document. Any
+        // second phase keeps the full path.
+        if (skipUnchanged && afterPersist === undefined && durable && isDeepStrictEqual(next, previous)) {
+          return copy(current);
+        }
+        durable = false;
         await persist(copy(next));
         try {
           const result = await afterPersist?.(copy(next));
           current = next;
+          durable = true;
           return result ?? copy(next);
         } catch (error) {
           // Keep both the in-memory view and the encrypted file consistent
-          // with the failed operation the caller observed.
-          await persist(copy(previous));
+          // with the failed operation the caller observed. A disposition the
+          // second phase could not confirm (for example an uncertain provider
+          // bank) is fenced by that caller, not by rewriting this document.
+          try {
+            await persist(copy(previous));
+          } catch (restoreError) {
+            // The view stays on `previous`, but the file may still hold the
+            // rejected draft. Say so rather than claiming the rollback.
+            throw Object.assign(
+              new Error(
+                "Credentials could not be restored after a failed save; the encrypted store may still hold the rejected change until the next successful save",
+                { cause: error },
+              ),
+              { code: "CREDENTIAL_RESTORE_FAILED", restoreError },
+            );
+          }
           current = previous;
+          durable = true;
           throw error;
         }
       });

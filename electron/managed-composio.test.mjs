@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  deriveManagedComposioCredentials,
   ensureManagedComposioCredentials,
+  MANAGED_COMPOSIO_UPDATE_OPTIONS,
   managedComposioAccess,
   managedComposioChildEnvironment,
   normalizeManagedComposioBrokerUrl,
@@ -139,5 +141,31 @@ describe("managed Composio desktop registration", () => {
       composioInstallationId: "installation-test",
     });
     expect(saveCredentials).not.toHaveBeenCalled();
+  });
+
+  it("keeps a definitive 401 invalidation in the derived document when the replacement is aborted", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn((url, init) => {
+      if (url.endsWith("/v1/me")) return Promise.resolve({ ok: false, status: 401 });
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+        controller.abort();
+      });
+    });
+
+    const derived = await deriveManagedComposioCredentials({
+      brokerUrl: "https://broker.example",
+      fetchImpl,
+      timeoutSignal: () => controller.signal,
+    })({ other: "kept", composioBrokerToken: TOKEN, composioInstallationId: "installation-revoked" });
+
+    // Abort is not an unchanged signal: the revoked identity is gone.
+    expect(derived).toEqual({ other: "kept" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("declares the startup writer optional so an unchanged derivation may skip its native write", () => {
+    expect(MANAGED_COMPOSIO_UPDATE_OPTIONS).toEqual({ skipUnchanged: true });
+    expect(Object.isFrozen(MANAGED_COMPOSIO_UPDATE_OPTIONS)).toBe(true);
   });
 });

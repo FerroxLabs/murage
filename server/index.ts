@@ -3,6 +3,7 @@ import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
 import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
 import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
+import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProviderCommitAuthorized, providerBankDispatchFenced } from "./provider-bank-fence.ts";
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
@@ -506,6 +507,11 @@ utilityParentPort?.on("message", (event) => {
   const message = event?.data;
   try {
     if (browserCleanup.receive(message)) return;
+    if (applyProviderBankFenceMessage(message)) {
+      // Admission closed while the desktop reconciled; drain once it reopens.
+      if (!providerBankDispatchFenced()) scheduleCoordinationDrain();
+      return;
+    }
     if (!applyDesktopBrowserConnectionMessage(message)) composio.applyManagedBrokerMessage(message);
   } catch (error) {
     console.error(`[desktop-sync] rejected private parent message: ${error instanceof Error ? error.message : String(error)}`);
@@ -539,7 +545,7 @@ const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-r
 const internalCapabilities = new InternalCapabilities();
 const coordinationSlots = new Map<string, () => void>();
 function coordinationHasCapacity(): boolean {
-  return !providerConfigBusy && providerFleetReady && coordinationSlots.size < MAX_CONCURRENT_HANDOFFS;
+  return !providerConfigBusy && !providerBankDispatchFenced() && providerFleetReady && coordinationSlots.size < MAX_CONCURRENT_HANDOFFS;
 }
 let coordinationDrainScheduled = false;
 function scheduleCoordinationDrain(): void {
@@ -1277,14 +1283,14 @@ function memoryIntegration(botId: string, threadId: string, generation: string) 
 }
 let memoryMigrationCursor: string | undefined;
 const memoryWorker = new MemoryWorkerController({onCompletedSource:async(jobId,signal)=>{
-  if(providerConfigBusy)return;
+  if(providerConfigBusy||providerBankDispatchFenced())return;
   const selected=memoryExtractorInstanceId();
   if(!selected)return;
   const extractor=resolveMemoryExtractor(selected,registry.instances());
   fluxMediaRequests++;
   try{return await consolidateMemorySource(jobId,extractor,signal);}finally{fluxMediaRequests--;}
 },onIdleConsolidation:async(signal)=>{
-  if(providerConfigBusy)return;
+  if(providerConfigBusy||providerBankDispatchFenced())return;
   const migrated = migrateDetectedMemoryNotebooks({ bots: store.bots, groups: store.groups }, memoryMigrationCursor);
   memoryMigrationCursor = migrated.nextCursor;
   syncTrackedMemoryImports({bots:store.bots,groups:store.groups});
@@ -3169,7 +3175,7 @@ function retryDelegationsWaitingOn(botId: string): void {
     if (store.bot(botId)?.busy) return;
     const threadId = store.bot(botId)?.threadId;
     if (threadId) coordinationSlots.get(threadId)?.();
-    if (providerConfigBusy || !providerFleetReady) return;
+    if (providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady) return;
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
@@ -3426,6 +3432,7 @@ async function startTurn(
   const bot=store.projectBotForTask(botId,threadId);
   if(!bot)throw Object.assign(new Error("no such task"),{status:404});
   if (providerConfigBusy||!providerFleetReady) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
+  if (providerBankDispatchFenced()) throw Object.assign(new Error(PROVIDER_BANK_FENCE_ERROR), { status: 409 });
   if (checkpointRestoreLeases.has(botId)) {
     throw Object.assign(new Error("this bot's project files are being restored — wait for the restore to finish"), {
       status: 409,
@@ -5614,6 +5621,7 @@ function startGroupTurn(
   options: StartGroupTurnOptions = {},
 ) {
   if (providerConfigBusy) throw Object.assign(new Error("Engine setup is finishing. Try again shortly."), { status: 409 });
+  if (providerBankDispatchFenced()) throw Object.assign(new Error(PROVIDER_BANK_FENCE_ERROR), { status: 409 });
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
   if (roomSetupPending(group)) {
@@ -6657,7 +6665,7 @@ function readFluxConnectionState(): FluxCredentialState {
 }
 const fluxConnectionTransaction = new FluxConnectionTransaction({
   read: readFluxConnectionState,
-  assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error("Finish running work before changing Flux credentials."), { status: 409 }); },
+  assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error("Finish running work before changing Flux credentials."), { status: 409 }); },
   fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (!held) scheduleCoordinationDrain(); },
   apply: async (state, external, restore) => {
     const previous = cfg.modelProviders?.bank;
@@ -11812,6 +11820,13 @@ const server = createServer(async (req, res) => {
     // ── provider instances (model picker) ──
     if (path === "/api/provider-connections" && method === "GET") {
       return json(res, 200, { connections: providerConnections.list(), storage: utilityParentPort ? "encrypted" : "local-config" });
+    }
+    // B4 (U-14) trusted readback for the desktop reconciliation fence: the same
+    // revision the compare-and-swap replace checks. Commit token only; no keys.
+    if (path === "/api/provider-connections/revision" && method === "GET") {
+      if (!modelProviderCommitAuthorized(req.headers.authorization, process.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN ?? "")) return json(res, 404, { error: "no such route" });
+      if (providerConnectionsBusy) return json(res, 409, { error: "Model connections are already being changed. Try again." });
+      return json(res, 200, { revision: providerBankRevision(cfg.modelProviders?.bank ?? "[]") });
     }
     const providerCatalogRoute = /^\/api\/provider-connections\/([A-Za-z0-9_-]+)\/(catalog|refresh)$/.exec(path);
     if (providerCatalogRoute && (method === "GET" && providerCatalogRoute[2] === "catalog" || method === "POST" && providerCatalogRoute[2] === "refresh")) {

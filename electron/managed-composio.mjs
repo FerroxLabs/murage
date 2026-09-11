@@ -33,6 +33,22 @@ export function managedComposioChildEnvironment(brokerUrl, credentials, environm
   return next;
 }
 
+/** Update options for the optional startup writer. An unchanged derivation (a
+ * pending registration aborted, a transient outage) skips the native write; a
+ * definitive 401 invalidation or a completed registration changes the document
+ * and persists, even if the request that followed was aborted. */
+export const MANAGED_COMPOSIO_UPDATE_OPTIONS = Object.freeze({ skipUnchanged: true });
+
+/** The optional startup derivation, run under the shared credential queue. The
+ * queue performs the one atomic encrypted write after the complete document is
+ * derived, so the helper's own save hook is a no-op here. */
+export function deriveManagedComposioCredentials(options) {
+  return async (credentials) => {
+    await ensureManagedComposioCredentials({ ...options, credentials, saveCredentials: async () => {} });
+    return credentials;
+  };
+}
+
 export async function ensureManagedComposioCredentials({
   brokerUrl,
   credentials,
