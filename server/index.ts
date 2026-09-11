@@ -158,6 +158,7 @@ import {
   builtInBrowserEnabled,
   browserProfileReplacementConflict,
   browserProfilePartitionTarget,
+  stripWorkspaceCredentialEnv,
   syncCredentialEnv,
   withInstanceCli,
   withInstanceEnabled,
@@ -505,6 +506,10 @@ type DesktopPrivateMessage = BrowserCleanupWireRequest | {
 } | {
   type: "murage:desktop-secret";
   secret: string;
+} | {
+  // FluxRouter revoked the connected-apps broker token; main re-mints it from
+  // the stored Flux key. Carries no credential.
+  type: "murage:flux-composio-token-rejected";
 };
 function postDesktopPrivateMessage(message: DesktopPrivateMessage): boolean {
   if (!utilityParentPort) return false;
@@ -516,6 +521,7 @@ function postDesktopPrivateMessage(message: DesktopPrivateMessage): boolean {
     return false;
   }
 }
+composio.setBrokerEventSink((event) => { postDesktopPrivateMessage(event); });
 const browserCleanup = new BrowserCleanupCoordinator({
   file: join(DATA_DIR, "browser-cleanups.json"),
   send: postDesktopPrivateMessage,
@@ -6679,23 +6685,17 @@ async function testCliBinary(
   });
 }
 
+const CLI_PROBE_VENDOR_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"] as const;
 /** A pre-save probe only needs PATH. Never hand credentials inherited by the
- * desktop/server process to an arbitrary wrapper selected through Settings. */
+ * desktop/server process to an arbitrary wrapper selected through Settings.
+ * Every workspace credential (config.ts WORKSPACE_CREDENTIAL_ENV, which the
+ * connected-apps broker tokens belong to) is stripped from one list so a new
+ * secret cannot drift past this probe; the vendor keys are the extras a
+ * wrapper could otherwise inherit from the user's shell. */
 function cliProbeEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
-  for (const key of [
-    "XAI_API_KEY",
-    "BOX_TOKEN",
-    "OPENCODE_API_KEY",
-    "COMPOSIO_API_KEY",
-    "MURAGE_COMPOSIO_BROKER_TOKEN",
-    "MURAGE_TTS_KEY",
-    "MURAGE_OPENAI_IMAGE_KEY",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-  ]) {
-    delete env[key];
-  }
+  stripWorkspaceCredentialEnv(env);
+  for (const key of CLI_PROBE_VENDOR_KEYS) delete env[key];
   return env;
 }
 
@@ -6744,6 +6744,7 @@ function configStatus() {
     composio: {
       configured: composio.configured(cfg),
       mode: composio.connectionMode(cfg),
+      ...composio.connectorPanelFields(cfg, fluxConfigured()),
     },
     box: { configured: Boolean(cfg.box?.token) },
     vps: { configured: Boolean(vpsSshAlias(cfg)), sshAlias: vpsSshAlias(cfg) ?? "" },
@@ -12712,11 +12713,22 @@ const server = createServer(async (req, res) => {
     }
 
     // ── connectors (Composio) ──
+    // Every connector route primes the FluxRouter broker's readiness first:
+    // `activeBroker` is synchronous and reads that cache.
     if (method === "GET" && path === "/api/connectors/catalog") {
+      await composio.primeBrokerReadiness();
+      await composio.refreshFluxAccountStatus(cfg);
       const { cards, source } = await composio.listToolkits(cfg);
-      return json(res, 200, { configured: composio.configured(cfg), mode: composio.connectionMode(cfg), source, cards });
+      return json(res, 200, {
+        configured: composio.configured(cfg),
+        mode: composio.connectionMode(cfg),
+        source,
+        cards,
+        ...composio.connectorPanelFields(cfg, fluxConfigured()),
+      });
     }
     if (method === "GET" && path === "/api/connectors/connected") {
+      await composio.primeBrokerReadiness();
       const availability = composio.connectorAvailability(cfg);
       if (availability !== "configured") {
         // `credentialStore` is what stops the panel treating this empty list
@@ -12726,11 +12738,18 @@ const server = createServer(async (req, res) => {
           configured: false,
           credentialStore: availability === "unreadable" ? "unavailable" : "ok",
           services: {},
+          ...composio.connectorPanelFields(cfg, fluxConfigured()),
         });
       }
-      return json(res, 200, { configured: true, credentialStore: "ok", services: await composio.connectedServices(cfg) });
+      return json(res, 200, {
+        configured: true,
+        credentialStore: "ok",
+        services: await composio.connectedServices(cfg),
+        ...composio.connectorPanelFields(cfg, fluxConfigured()),
+      });
     }
     if (method === "GET" && path === "/api/connectors") {
+      await composio.primeBrokerReadiness();
       const services = (url.searchParams.get("services") ?? "").split(",").filter(Boolean);
       const availability = composio.connectorAvailability(cfg);
       if (availability !== "configured") {
@@ -12738,20 +12757,28 @@ const server = createServer(async (req, res) => {
           configured: false,
           credentialStore: availability === "unreadable" ? "unavailable" : "ok",
           services: {},
+          ...composio.connectorPanelFields(cfg, fluxConfigured()),
         });
       }
       const status = await composio.connectionStatus(cfg, services.length ? services : composio.CURATED_SLUGS);
-      return json(res, 200, { configured: true, services: status });
+      return json(res, 200, { configured: true, services: status, ...composio.connectorPanelFields(cfg, fluxConfigured()) });
     }
     m = path.match(/^\/api\/connectors\/([\w-]+)\/authorize$/);
     if (m && method === "POST") {
       const body = await readBody(req);
+      await composio.primeBrokerReadiness();
       return json(res, 200, await composio.authorizeService(cfg, m[1], body.alias));
     }
     m = path.match(/^\/api\/connectors\/([\w-]+)\/accounts\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/);
-    if (m && method === "DELETE") return json(res, 200, await composio.removeAccount(cfg, m[1], m[2]));
+    if (m && method === "DELETE") {
+      await composio.primeBrokerReadiness();
+      return json(res, 200, await composio.removeAccount(cfg, m[1], m[2]));
+    }
     m = path.match(/^\/api\/connectors\/([\w-]+)$/);
-    if (m && method === "DELETE") return json(res, 200, await composio.removeService(cfg, m[1]));
+    if (m && method === "DELETE") {
+      await composio.primeBrokerReadiness();
+      return json(res, 200, await composio.removeService(cfg, m[1]));
+    }
 
     // Inline credential cards never receive the credential value. Electron
     // saves it through the OS-backed store first; this route only verifies

@@ -622,6 +622,11 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "SENDLANE_API_KEY",
   "SENDLANE_HASH_KEY",
   "MURAGE_COMPOSIO_BROKER_TOKEN",
+  // The FluxRouter connected-apps broker token. Engines DO receive the Flux
+  // API key (it routes their models), so the connected-apps credential is a
+  // separate token that stays in the harness; per-bot app policy is enforced
+  // only there.
+  "MURAGE_FLUX_COMPOSIO_BROKER_TOKEN",
   // Harness-private filesystem hints are not credentials themselves, but
   // exposing them to a shell-capable agent points straight at app-owned
   // state. The built-in browser master is delivered privately in memory.

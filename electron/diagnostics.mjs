@@ -35,6 +35,7 @@ export const CREDENTIAL_ENV_NAMES = [
   "SENDLANE_API_KEY",
   "SENDLANE_HASH_KEY",
   "MURAGE_COMPOSIO_BROKER_TOKEN",
+  "MURAGE_FLUX_COMPOSIO_BROKER_TOKEN",
   // Browser capability files and app-owned state paths are private even
   // though they are not traditional API credentials.
   "MURAGE_BROWSER_CONNECTION",
