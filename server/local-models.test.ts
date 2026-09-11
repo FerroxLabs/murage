@@ -410,8 +410,37 @@ describe("detection labels and loaded context (spec A2, T2)", () => {
       ":8080/v1/models": { data: [{ id: "gemma-4-31b" }] },
     }));
     expect(rows).toEqual([
-      expect.objectContaining({ id: "llamacpp::gemma-4-31b", label: "gemma-4-31b (llama.cpp)", loaded: true, contextWindow: 32_768 }),
+      expect.objectContaining({ id: "llamacpp::gemma-4-31b", label: "gemma-4-31b · llama.cpp", loaded: true, contextWindow: 32_768 }),
     ]);
+  });
+
+  it("addresses a Windows llama-server that names its model by path", async () => {
+    // SeanBeast, llama.cpp b1-192067b: every id the server reports is the
+    // model file it was handed. The old code dropped all of them, so the card
+    // said "running" and the picker had nothing to offer.
+    const rows = await probeLocalInjects(env(), stub({
+      ":8080/props": { default_generation_settings: { n_ctx: 65_536 }, model_path: "D:\\Qwen\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf", total_slots: 1 },
+      ":8080/v1/models": { data: [{ id: "D:\\Qwen\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf" }] },
+    }));
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: "llamacpp::Qwen3.8-27B-UD-Q4_K_M",
+        label: "Qwen3.8-27B-UD-Q4_K_M · llama.cpp",
+        server: "llama.cpp",
+        loaded: true,
+        contextWindow: 65_536,
+      }),
+    ]);
+    // and the picker id survives the round trip that gates every engine write
+    expect(decodeInjectId(rows[0]!.id)).toEqual({ host: "llamacpp", model: "Qwen3.8-27B-UD-Q4_K_M" });
+  });
+
+  it("leaves llama.cpp router mode alone, where the model field really selects", async () => {
+    const rows = await probeLocalInjects(env(), stub({
+      ":8080/props": { default_generation_settings: { n_ctx: 65_536 }, model_path: "D:\\Qwen\\models\\first.gguf", total_slots: 1 },
+      ":8080/v1/models": { data: [{ id: "first-model" }, { id: "second-model" }] },
+    }));
+    expect(rows.map((row) => row.model).sort()).toEqual(["first-model", "second-model"]);
   });
 
   it("still labels a real oMLX on :8080 as oMLX", async () => {
@@ -428,8 +457,8 @@ describe("detection labels and loaded context (spec A2, T2)", () => {
       ":30000/v1/models": { data: [{ id: "glm-4.7", owned_by: "sglang", max_model_len: 131_072 }] },
     }));
     expect(rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "vllm::Qwen/Qwen3-Coder-30B", label: "Qwen/Qwen3-Coder-30B (vLLM)", contextWindow: 32_000, loaded: true }),
-      expect.objectContaining({ id: "sglang::glm-4.7", label: "glm-4.7 (SGLang)", contextWindow: 131_072 }),
+      expect.objectContaining({ id: "vllm::Qwen/Qwen3-Coder-30B", label: "Qwen/Qwen3-Coder-30B · vLLM", contextWindow: 32_000, loaded: true }),
+      expect.objectContaining({ id: "sglang::glm-4.7", label: "glm-4.7 · SGLang", contextWindow: 131_072 }),
     ]));
   });
 
