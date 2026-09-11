@@ -56,6 +56,8 @@ import { readIntakeCard } from "@/lib/onboarding-intake";
 import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
+import { StoppedRow } from "./StoppedRow";
+import { hostStoppedReason } from "../../shared/host-stop";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
@@ -986,8 +988,12 @@ const MessagesList = memo(function MessagesList({
             }
             case "activity": {
               // a failed turn is an error, not a tool run — render it as one.
+              // a host-stopped turn is neither: a neutral stopped row that says
+              // why, visible whether or not Tool calls is on (STOP2).
               // bot⇄bot comm chips stay because they link to another conversation.
               // plain tool runs stay out unless Settings → Tool calls is on.
+              const stoppedReason = hostStoppedReason(m.tool?.name);
+              if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
               if (m.tool?.name.startsWith("error:")) {
                 return (
                   <ErrorRow

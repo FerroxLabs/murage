@@ -380,6 +380,7 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { hostStoppedActivityName } from "../shared/host-stop.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";
@@ -477,7 +478,10 @@ function selectedProviderRoute(selection: ModelSelection, driverKind: string): P
   validateProviderTurnRoute(driverKind, route); return route;
 }
 /** A turn the host stops on its own (not the user's Stop) settles as cancelled
- * with no error card, so the conversation says why it ended (STOP1). */
+ * with no error card, so the conversation says why it ended (STOP1). The
+ * "stopped:" name prefix (shared/host-stop.ts) is what the transcripts key
+ * on: a neutral stopped row that stays visible in a 1:1 thread even with
+ * Settings → Tool calls off, never the red error card (STOP2). */
 function noteHostStoppedTurn(threadId: string, botId: string, reason: string): void {
   const bot = store.bot(botId);
   try {
@@ -487,7 +491,7 @@ function noteHostStoppedTurn(threadId: string, botId: string, reason: string): v
       ...(bot && store.groupByThread(threadId) ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}),
       // ok:false: a settled, not-successful chip. No "error:" prefix, so no
       // error card and no Retry.
-      tool: { name: `Stopped — ${reason}`, ok: false },
+      tool: { name: hostStoppedActivityName(reason), ok: false },
     });
   } catch { /* the thread may already be gone */ }
 }

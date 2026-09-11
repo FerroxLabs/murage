@@ -341,6 +341,17 @@ const stopFixtureTurn = async (botId: string, turn: { dump: { pid: number } }, t
   }, { timeout: 10_000, message: `stopped fixture engine pid ${turn.dump.pid} is still running` }).toBe(true);
 };
 
+/** The memory settlement of every turn on a thread, oldest first. */
+const turnMemoryOutcomes = (threadId: string): string[] => {
+  const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+  try {
+    return db.prepare("SELECT outcome FROM memory_sources WHERE thread_id=? AND kind='turn' ORDER BY rowid").all(threadId)
+      .map((row) => String((row as { outcome: unknown }).outcome));
+  } finally {
+    db.close();
+  }
+};
+
 const storedMessageCount = (threadId: string): number => {
   const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
   try {
@@ -8529,10 +8540,13 @@ describe("internal capability authority", () => {
       // Idle is not teardown for the Claude driver: interrupt releases the
       // run as soon as the kill is requested (A2 kept Claude's retained
       // sessions on that contract) and the child closes afterwards. Since
-      // STOP1 a user Stop settles as cancelled with no "claude exited" chip,
-      // so the fixture's end of teardown is the stopped engine process being
-      // gone (stopFixtureTurn); measure only after it.
+      // STOP1 a user Stop settles as cancelled — turn.completed ok:true
+      // "cancelled", no "claude exited … before result" chip — so the
+      // fixture's end of teardown is the stopped engine process being gone
+      // (stopFixtureTurn) and its terminal fold having recorded the memory
+      // outcome "cancelled" (STOP2); measure only after both.
       await stopFixtureTurn(bot.id, turn);
+      await expect.poll(() => turnMemoryOutcomes(bot.threadId).at(-1), { timeout: 5_000 }).toBe("cancelled");
       const before = storedMessageCount(bot.threadId);
       const response = await held.finish();
       expect(response.status).toBe(401);
