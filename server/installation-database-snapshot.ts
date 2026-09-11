@@ -32,6 +32,28 @@ function count(db: DatabaseSync, sql: string): number {
   return row.count;
 }
 
+/** Every non-memory table the harness creates in messages.db, with the exact
+ * column shape it creates. server/database.ts owns messages/thread_state,
+ * server/inbox.ts the inbox state, server/artifacts.ts the saved-file tables
+ * (0.1.52 K0 froze that schema). Anything else in an archive is refused. */
+const APP_TABLES: Record<string, { required: boolean; columns: string[]; optional: string[]; indexes: string[] }> = {
+  messages: { required: true, columns: ["thread_id:TEXT:1", "id:TEXT:2", "at:INTEGER:0", "role:TEXT:0", "kind:TEXT:0", "text:TEXT:0", "json:TEXT:0"], optional: [], indexes: ["messages_thread", "messages_inbox_kind_thread_at"] },
+  thread_state: { required: true, columns: ["thread_id:TEXT:1", "active_leaf_id:TEXT:0"], optional: [], indexes: [] },
+  inbox_item_state: { required: false, columns: ["source_key:TEXT:1", "read_version:TEXT:0", "read_at:INTEGER:0", "snoozed_until:INTEGER:0"], optional: [], indexes: [] },
+  artifacts: {
+    required: false,
+    columns: ["id:TEXT:1", "name:TEXT:0", "kind:TEXT:0", "mime:TEXT:0", "bytes:INTEGER:0", "sha256:TEXT:0", "extension:TEXT:0", "created_at:INTEGER:0", "bot_id:TEXT:0", "thread_id:TEXT:0", "run_id:TEXT:0", "source_root:TEXT:0", "relative_path:TEXT:0", "source_fingerprint:TEXT:0"],
+    optional: ["producer:TEXT:0", "publication_id:TEXT:0"],
+    indexes: ["artifacts_scope_date", "artifacts_kind_date"],
+  },
+  output_publications: {
+    required: false,
+    columns: ["id:TEXT:1", "producer:TEXT:0", "bot_id:TEXT:0", "thread_id:TEXT:0", "run_id:TEXT:0", "path_token:TEXT:0", "sha256:TEXT:0", "mime:TEXT:0", "bytes:INTEGER:0", "stage:TEXT:0", "artifact_id:TEXT:0", "attachment_id:TEXT:0", "message_id:TEXT:0", "error_category:TEXT:0", "created_at:INTEGER:0", "updated_at:INTEGER:0"],
+    optional: [],
+    indexes: ["output_publications_scope", "output_publications_stage"],
+  },
+};
+
 export function inspectInstallationDatabase(db: DatabaseSync) {
   const fail = (code: string): never => { throw new InstallationSnapshotError(code); };
   // A private archive is still untrusted input. Reject executable schema and
@@ -42,13 +64,21 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
   const schema = db.prepare("SELECT type,name,tbl_name FROM sqlite_schema").all();
   for (const item of schema) {
     if (memoryObjects.has(String(item.name))) continue;
-    if (item.type === "table" && ["messages", "thread_state"].includes(String(item.name))) continue;
-    if (item.type === "index" && ["messages", "thread_state"].includes(String(item.tbl_name)) && (String(item.name).startsWith("sqlite_autoindex_") || item.name === "messages_thread")) continue;
+    const table = String(item.tbl_name), name = String(item.name);
+    if (item.type === "table" && name in APP_TABLES && name === table) continue;
+    if (item.type === "index" && table in APP_TABLES && (name.startsWith("sqlite_autoindex_") || APP_TABLES[table].indexes.includes(name))) continue;
     fail("DATABASE_SCHEMA_UNSUPPORTED");
   }
-  for (const [table, columns] of Object.entries({ messages: ["thread_id:TEXT:1", "id:TEXT:2", "at:INTEGER:0", "role:TEXT:0", "kind:TEXT:0", "text:TEXT:0", "json:TEXT:0"], thread_state: ["thread_id:TEXT:1", "active_leaf_id:TEXT:0"] })) {
+  for (const [table, { columns, optional }] of Object.entries(APP_TABLES)) {
+    if (!schema.some(item => item.type === "table" && item.name === table)) {
+      if (APP_TABLES[table].required) fail("DATABASE_SCHEMA_UNSUPPORTED");
+      continue;
+    }
     const actual = db.prepare(`PRAGMA table_info(${table})`).all().map(column => `${column.name}:${String(column.type).toUpperCase()}:${column.pk}`);
-    if (JSON.stringify(actual) !== JSON.stringify(columns)) fail("DATABASE_SCHEMA_UNSUPPORTED");
+    // Nullable columns added by a later in-place migration may be absent from
+    // an older archive; every column present must still match, in order.
+    const extra = actual.slice(columns.length);
+    if (JSON.stringify(actual.slice(0, columns.length)) !== JSON.stringify(columns) || JSON.stringify(extra) !== JSON.stringify(optional.slice(0, extra.length))) fail("DATABASE_SCHEMA_UNSUPPORTED");
   }
   const integrity = db.prepare("PRAGMA integrity_check").all();
   if (integrity.length !== 1 || Object.values(integrity[0])[0] !== "ok") throw new InstallationSnapshotError("DATABASE_INTEGRITY_FAILED");
