@@ -200,8 +200,17 @@ try {
   assert.deepEqual(importCounts(), counts);
   assert.deepEqual(imported(aText), originalA); assert.deepEqual(imported(bText), originalB);
   assert.deepEqual(notebooks.map(path => hash(readFileSync(path))), originalHashes);
+  // The restarted server forks a fresh memory worker; until it reports ready
+  // (and any index reset it applies on initialise has been re-indexed) recall
+  // degrades to optional-evidence-unavailable and the turn runs on pins and
+  // checkpoint alone. That is the product's contract for a turn in the first
+  // moments after start, not what this proof measures: wait on the real
+  // status route's runtime readiness, then on the projection receipts again.
+  report.secondMemoryStatus = await until("memory worker ready after restart", async () => {
+    const status = await api("GET", "/api/memory/status");
+    return status.runtime?.ready === true && status.runtime.indexing !== true ? status : undefined;
+  });
   await indexed([originalA, originalB]);
-  report.secondMemoryStatus = await api("GET", "/api/memory/status");
   step = "codex-runtime-turns";
   await turn("codex", a, "Recall the Amaranth itinerary decision after restart.", [originalA], ["BASIL_PRIVATE_CANARY"]);
   await turn("codex", b, "Recall the Basil itinerary decision after restart.", [originalB], ["AMARANTH_PRIVATE_CANARY"]);

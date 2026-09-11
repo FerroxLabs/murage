@@ -1,0 +1,17 @@
+{
+  "kind": "claude",
+  "targetId": "961313e9-67b1-4d12-842a-0c957373d139",
+  "threadId": "b019a434-d19c-4bce-b6a9-1f68cb66932d",
+  "room": true,
+  "pid": 11269,
+  "prompt": "User: What were the Amaranth and Basil itinerary decisions?\n\n(Reply to the conversation above as Amaranth memory fixture.)",
+  "memory": [],
+  "receipt": {
+    "bundle_id": "5f1c6b08-ae65-4547-b756-2b0b5ad908ab",
+    "driver_instance": "verification",
+    "native_session": "7325d5f8-2048-4a6e-8bdf-99936dfcb5b1",
+    "record_versions": "[]",
+    "source_versions": "[]",
+    "state": "delivered"
+  }
+}
