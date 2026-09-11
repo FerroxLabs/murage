@@ -349,21 +349,24 @@ export async function safeWipe(target, options = {}) {
 /** Mirror of node:fs's own URL test (internal/url isURL, used by
  * toPathIfFileURL and by fileURLToPath itself):
  *   Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined)
- * fs never checks `instanceof URL` and never checks the *type* of href or
- * protocol, only their truthiness; fileURLToPath then reads hostname and
- * pathname and ignores href entirely. So a cross-realm URL, a hand-rolled
- * { href, protocol, hostname, pathname }, and an object whose href is a
- * number, boolean, object or Buffer all reach the real delete, and the
- * test here must be exactly as loose as fs's (a stricter `typeof href ===
- * "string"` let the odd-href shapes fall through to "[object Object]" and
- * past the guard, fix round 1). The only thing this adds is the object
- * check, which fs applies before it gets here (a string or Buffer is never
- * passed to isURL).
+ * fs never checks `instanceof URL`, never checks the *type* of the target
+ * (getValidatedPath hands the raw argument to toPathIfFileURL with no type
+ * gate: a string or Buffer simply has no `href`), and never checks the type
+ * of href or protocol, only their truthiness; fileURLToPath then reads
+ * hostname and pathname and ignores href entirely. So a cross-realm URL, a
+ * hand-rolled { href, protocol, hostname, pathname }, an object whose href
+ * is a number, boolean, object or Buffer, and a *function* carrying those
+ * properties all reach the real delete, and the test here must be exactly
+ * as loose as fs's: a stricter `typeof href === "string"` let the odd-href
+ * shapes fall through to "[object Object]" and past the guard (fix round
+ * 1), and a stricter `typeof target === "object"` let a function shape
+ * fall through to "function decoy() {}" and past the guard (LOCALE1
+ * verifier). This is therefore fs's predicate verbatim, with no gate of
+ * its own in front of it.
  * @param {unknown} target
  * @returns {target is { href: unknown; protocol: unknown }} */
-const isUrlLike = (target) => Boolean(target) && typeof target === "object"
-  && Boolean(target.href) && Boolean(target.protocol)
-  && target.auth === undefined && target.path === undefined;
+const isUrlLike = (target) => Boolean(target?.href && target.protocol
+  && target.auth === undefined && target.path === undefined);
 
 /**
  * The path a node:fs delete names, as a string, from any of the spellings

@@ -287,6 +287,19 @@ describe("installSafeWipeGuard", () => {
       expect(wipeTargetPath(oddHref)).toBe(probe);
       expect(() => assertNotProtected(wipeTargetPath(oddHref), opts)).toThrow(/lies inside the Murage data directory/);
     }
+    // fs applies no type gate at all: getValidatedPath hands the raw
+    // argument to toPathIfFileURL, whose isURL is only `self?.href &&
+    // self.protocol && auth === undefined && path === undefined`. A function
+    // carrying those properties is therefore a URL to fs, and raw rmSync
+    // deletes its pathname, while a guard that also required `typeof target
+    // === "object"` judged String(fn) ("function decoy() {}"), a nonexistent
+    // path under cwd, and let it through (LOCALE1 verifier, shape probe).
+    const fn = Object.assign(function decoy() {}, { href: real.href, protocol: "file:", hostname: "", pathname: real.pathname });
+    expect(typeof fn).toBe("function");
+    expect(wipeTargetPath(fn)).toBe(probe);
+    expect(() => assertNotProtected(wipeTargetPath(fn), opts)).toThrow(/lies inside the Murage data directory/);
+    const oddHrefFn = Object.assign(function decoy() {}, { href: 1, protocol: "file:", hostname: "", pathname: real.pathname });
+    expect(wipeTargetPath(oddHrefFn)).toBe(probe);
     // Shapes node:fs does not treat as URLs keep the string fallback: a
     // legacy url.parse object (`auth` or `path` defined), a falsy href or
     // protocol, and a non-file scheme (fs itself then throws
@@ -327,10 +340,25 @@ describe("installSafeWipeGuard", () => {
       await expect(fs.promises.rm(duckLike({ href }), { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
       expect(existsSync(marker)).toBe(true);
     }
+    // ...nor can the shape be a function: fs's isURL has no type gate, so a
+    // function with href/protocol/pathname reaches the real delete just like
+    // an object does, and a guard that only knew `typeof === "object"`
+    // judged String(fn) and let it delete the leased fixture.
+    const fnLike = (fields: Partial<URL>) => Object.assign(function decoy() {}, { href: heldUrl.href, protocol: "file:", hostname: "", pathname: heldUrl.pathname, ...fields }) as unknown as URL;
+    expect(() => fs.rmSync(fnLike({}), { recursive: true, force: true })).toThrow(SafeWipeRefused);
+    expect(() => fs.rmSync(fnLike({ href: freeUrl.href }), { recursive: true, force: true })).toThrow(SafeWipeRefused);
+    await expect(fs.promises.rm(fnLike({}), { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
+    await expect(new Promise((resolve, reject) => fs.rm(fnLike({}), { recursive: true, force: true }, (e) => e ? reject(e) : resolve(null)))).rejects.toBeInstanceOf(SafeWipeRefused);
+    expect(existsSync(marker)).toBe(true);
     // ...and a leased href over a free pathname is the ordinary temp delete
     // fs would perform: judged by the pathname, admitted, and only `free` goes.
     fs.rmSync(duckLike({ pathname: freeUrl.pathname }), { recursive: true, force: true });
     expect(existsSync(free)).toBe(false);
+    expect(existsSync(marker)).toBe(true);
+    // The same for the function shape (fs deletes `fnFree`, and nothing else).
+    const fnFree = join(scratch, "held-duck", "fn-free"); mkdirSync(fnFree, { recursive: true });
+    fs.rmSync(fnLike({ pathname: pathToFileURL(fnFree).pathname }), { recursive: true, force: true });
+    expect(existsSync(fnFree)).toBe(false);
     expect(existsSync(marker)).toBe(true);
     rmSync(lease);
     fs.rmSync(duck, { recursive: true, force: true });
