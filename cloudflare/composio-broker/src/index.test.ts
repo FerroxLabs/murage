@@ -10,6 +10,8 @@ import {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  register,
+  registrationActorKey,
   requestAlias,
   sha256,
 } from "./index";
@@ -303,5 +305,95 @@ describe("connected-apps broker boundaries", () => {
   it("validates aliases at the broker boundary", () => {
     expect(normalizeAccountAlias("  work gmail  ")).toBe("work gmail");
     expect(() => normalizeAccountAlias("bad\nalias")).toThrow(/printable/i);
+  });
+});
+
+describe("registration throttling identity", () => {
+  function registrationRequest(ip: string | null, userAgent: string) {
+    const headers = new Headers({ "user-agent": userAgent });
+    if (ip !== null) headers.set("cf-connecting-ip", ip);
+    return new Request("https://broker.test/v1/installations", { method: "POST", headers });
+  }
+
+  function registrationEnv(limit: number) {
+    const buckets = new Map<string, number>();
+    const inserts: unknown[][] = [];
+    const env = {
+      REGISTRATION_MODE: "open",
+      REGISTRATION_LIMITER: {
+        async limit({ key }: { key: string }) {
+          const used = (buckets.get(key) ?? 0) + 1;
+          buckets.set(key, used);
+          return { success: used <= limit };
+        },
+      },
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind(...values: unknown[]) {
+              return {
+                run: async () => {
+                  if (sql.startsWith("INSERT INTO installations")) inserts.push(values);
+                },
+              };
+            },
+          };
+        },
+      },
+    };
+    return { buckets, env, inserts };
+  }
+
+  it("ignores User-Agent and bounds one source address across many User-Agents", async () => {
+    const { buckets, env, inserts } = registrationEnv(30);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const statuses: number[] = [];
+    for (let index = 0; index < 40; index += 1) {
+      const response = await register(registrationRequest("203.0.113.7", `agent-${index}`), env as never);
+      statuses.push(response.status);
+    }
+    expect(statuses.filter((status) => status === 201)).toHaveLength(30);
+    expect(statuses.slice(30).every((status) => status === 429)).toBe(true);
+    expect(inserts).toHaveLength(30);
+    expect(buckets.size).toBe(1);
+
+    // An independent legitimate actor keeps its own bucket.
+    const other = await register(registrationRequest("198.51.100.23", "agent-0"), env as never);
+    expect(other.status).toBe(201);
+    expect(buckets.size).toBe(2);
+    vi.restoreAllMocks();
+  });
+
+  it("keys IPv4 exactly, IPv6 by /64 and IPv4-mapped IPv6 as IPv4", () => {
+    const key = (ip: string | null, userAgent = "ua") => registrationActorKey(registrationRequest(ip, userAgent));
+    expect(key("203.0.113.7", "curl/8")).toBe(key("203.0.113.7", "Mozilla/5.0"));
+    expect(key("203.0.113.7")).toBe("ip4:203.0.113.7");
+    expect(key("203.0.113.8")).not.toBe(key("203.0.113.7"));
+    expect(key("::ffff:203.0.113.7")).toBe("ip4:203.0.113.7");
+    expect(key("::FFFF:cb00:7107")).toBe("ip4:203.0.113.7");
+
+    const sameSubnet = [
+      "2001:db8:1234:5678::1",
+      "2001:0db8:1234:5678:aaaa:bbbb:cccc:dddd",
+      "2001:DB8:1234:5678:0:0:0:ffff",
+      "2001:db8:1234:5678::1%eth0",
+    ].map((ip) => key(ip));
+    expect(new Set(sameSubnet)).toEqual(new Set(["ip6:2001:0db8:1234:5678::/64"]));
+    expect(key("2001:db8:1234:5679::1")).not.toBe(sameSubnet[0]);
+    expect(key("::1")).toBe("ip6:0000:0000:0000:0000::/64");
+
+    // Missing or malformed edge identity shares one fail-closed bucket rather
+    // than falling back to a client-chosen header.
+    for (const invalid of [null, "", "unknown", "300.1.1.1", "2001:db8::1::2", "1:2:3:4:5:6:7:8:9", "x".repeat(80)]) {
+      expect(key(invalid, `agent-${String(invalid)}`)).toBe("ip:unknown");
+    }
+  });
+
+  it("keeps the registration kill switch ahead of the limiter", async () => {
+    const { buckets, env, inserts } = registrationEnv(30);
+    const closed = await register(registrationRequest("203.0.113.7", "ua"), { ...env, REGISTRATION_MODE: "closed" } as never);
+    expect(closed.status).toBe(503);
+    expect(buckets.size).toBe(0);
+    expect(inserts).toHaveLength(0);
   });
 });
