@@ -648,22 +648,110 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept", content: {} });
   });
 
-  it("never auto-answers a form elicitation, even in fullAuto, and declines with the MCP result shape (ASK1)", async () => {
+  it("shows a form elicitation as a question, never auto-answers it in fullAuto, and accepts typed content (ASK1, ASK3)", async () => {
     await create({ mode: "form-elicitation", fullAuto: true });
     const dump = join(scratch, "form-elicitation.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
     await instance.adapter.sendTurn({ threadId: "t-form-elicitation", text: "deploy it" });
     const opened = await recorder.until((e) => e.type === "request.opened");
+    // ASK1 carded this as a permission named "elicitation"; ASK3 makes it the
+    // question it is, with the MCP server's field as the card's question.
     expect(opened).toMatchObject({
-      requestType: "permission",
+      requestType: "question",
       tool: "elicitation",
       summary: "Which environment should I deploy to?",
+      choices: ["staging", "production"],
+      questions: [{ id: "environment", question: "Which environment should I deploy to?", options: [{ label: "staging" }, { label: "production" }], multiSelect: false, allowOther: false }],
     });
 
-    await instance.adapter.respondToRequest("t-form-elicitation", opened.requestId!, { behavior: "deny" });
+    await expect(
+      instance.adapter.respondToRequest("t-form-elicitation", opened.requestId!, {
+        behavior: "answer",
+        message: "production",
+        answers: [{ id: "environment", selected: ["production"] }],
+      }),
+    ).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "answer", source: "user" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept", content: { environment: "production" } });
+  });
+
+  it("declines a skipped form elicitation with the MCP result shape, not an invented answer (ASK3)", async () => {
+    await create({ mode: "form-elicitation" });
+    const dump = join(scratch, "form-elicitation-skip.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-form-skip", text: "deploy it" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await expect(instance.adapter.respondToRequest("t-form-skip", opened.requestId!, { behavior: "deny" })).resolves.toBe("rejected");
     await recorder.until((e) => e.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "decline" });
+  });
+
+  it("maps item/tool/requestUserInput to a question with every question's own options and answers per id (ASK3)", async () => {
+    await create({ mode: "user-input", fullAuto: true });
+    const dump = join(scratch, "user-input.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-user-input", text: "set it up" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    // fullAuto never answers a question; the card carries all three questions
+    expect(opened).toMatchObject({
+      requestType: "question",
+      tool: "request_user_input",
+      summary: "Which database should the service use?",
+      choices: ["Postgres", "Redis"],
+      questions: [
+        { id: "db", header: "Database", options: [{ label: "Postgres", description: "Relational, durable" }, { label: "Redis", description: "In-memory, fast" }], allowOther: false },
+        { id: "token", header: "Token", options: [], allowOther: true, secret: true },
+        { id: "region", header: "Region", options: [{ label: "eu-west", description: "Ireland" }], allowOther: true },
+      ],
+    });
+
+    await expect(
+      instance.adapter.respondToRequest("t-user-input", opened.requestId!, {
+        behavior: "answer",
+        message: "Redis / tok / eu-west",
+        answers: [
+          { id: "db", selected: ["Redis"] },
+          { id: "token", selected: [], other: "tok_secret_1" },
+          { id: "region", selected: ["eu-west"] },
+        ],
+      }),
+    ).resolves.toBe("answered");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "answer", source: "user" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({
+      answers: { db: { answers: ["Redis"] }, token: { answers: ["tok_secret_1"] }, region: { answers: ["eu-west"] } },
+    });
+  });
+
+  it("answers a skipped requestUserInput with empty answers, never a sentence in the owner's name (ASK3)", async () => {
+    await create({ mode: "user-input" });
+    const dump = join(scratch, "user-input-skip.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-user-input-skip", text: "set it up" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    await expect(instance.adapter.respondToRequest("t-user-input-skip", opened.requestId!, { behavior: "deny" })).resolves.toBe("rejected");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const decision = JSON.parse(readFileSync(dump, "utf8")).decision;
+    expect(decision).toEqual({ answers: { db: { answers: [] }, token: { answers: [] }, region: { answers: [] } } });
+    expect(JSON.stringify(decision)).not.toMatch(/nobody|judgment|Murage/);
+  });
+
+  it("gives Codex the same honest no-answer when the turn ends with a question still open (ASK3)", async () => {
+    await create({ mode: "user-input" });
+    const dump = join(scratch, "user-input-ended.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-user-input-end", text: "set it up" });
+    await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.interruptTurn("t-user-input-end");
+    expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
+    await recorder.until((e) => e.type === "turn.completed");
   });
 
   it("stamps approvalScope on cards only when the turn controls this Mac", async () => {
