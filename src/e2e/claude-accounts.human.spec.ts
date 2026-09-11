@@ -305,3 +305,61 @@ test("the accounts section stays usable while the engine list re-probes", async 
   expect(((await api("/api/instances")).instances as Array<{ instanceId: string }>).some(entry => entry.instanceId === created.instanceId)).toBe(false);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+// The store's refreshInstances used to swallow its own failure, so the
+// section's "could not refresh" message for the engine list was unreachable
+// from the Engines settings: a change whose fleet probe failed left the page
+// silent with an engine list that did not show it (CLAC3 verifier, FOLLOW4).
+// The probe is failed by the browser here; the harness itself is healthy, so
+// the change is saved and the section's own list is drawn regardless.
+test("reports an engine list that could not refresh, without greying the section", async ({ page }, info) => {
+  let failFleet = false, failed = 0;
+  await page.route(url => url.pathname === "/api/instances", async route => {
+    if (route.request().method() === "GET" && failFleet) { failed++; await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Engine probe failed" }) }); return; }
+    await route.continue();
+  });
+  await expectNoNamedAccounts();
+  await page.goto(origin + "/__accounts?component=engines&skin=" + (info.project.name === "narrow" ? "dark" : "light"));
+  const section = page.getByRole("region", { name: "Claude accounts" });
+  await expect(section.getByText("Verification fixture", { exact: true })).toBeVisible();
+  const others = page.getByText(/^Other accounts and installations/);
+  const add = section.getByRole("button", { name: "Add Claude account", exact: true });
+
+  await add.click();
+  await section.getByLabel("Account name", { exact: true }).fill("Work");
+  failFleet = true;
+  await section.getByRole("button", { name: "Create account", exact: true }).click();
+  // Saved and drawn: the row and the notice are there; the alert says what
+  // did not refresh and the buttons are not greyed.
+  await expect(section.getByText("Work", { exact: true })).toBeVisible();
+  await expect(section.getByRole("status")).toContainText("Sign in explicitly");
+  await expect(section.getByRole("alert")).toHaveText("Saved, but the engine list could not refresh. Switch to another window and back to probe the engines again.");
+  expect(failed).toBe(1);
+  await expect(add).toBeEnabled();
+  await expect(section.getByRole("button", { name: "Edit Work account", exact: true })).toBeEnabled();
+  await expect(section.getByRole("button", { name: "Remove Work account", exact: true })).toBeEnabled();
+  // The engine list did not refresh: no second Claude row yet.
+  await expect(others).toHaveCount(0);
+  const created = ((await api("/api/claude-accounts")).accounts as ClaudeAccount[]).find(account => account.displayName === "Work")!;
+  expect(created).toBeTruthy();
+  await page.screenshot({ path: info.outputPath("accounts-fleet-failed-" + info.project.name + ".png"), fullPage: true });
+
+  // The next change clears the alert as it starts, and its own probe, now
+  // answering, brings the engine list up to date.
+  failFleet = false;
+  await section.getByRole("button", { name: "Edit Work account", exact: true }).click();
+  await section.getByLabel("Account name", { exact: true }).fill("Work renamed");
+  await section.getByRole("button", { name: "Save account", exact: true }).click();
+  await expect(section.getByRole("status")).toContainText("Account settings saved.");
+  await expect(section.getByRole("alert")).toHaveCount(0);
+  await expect(others).toHaveText(/Other accounts and installations · 1/);
+  await others.click();
+  await expect(page.locator('span[title="Work renamed"]')).toBeVisible();
+  expect(failed).toBe(1);
+
+  await section.getByRole("button", { name: "Remove Work renamed account", exact: true }).click();
+  await section.getByRole("button", { name: "Confirm removal of Work renamed", exact: true }).click();
+  await expect(section.locator(`[data-claude-account="${created.instanceId}"]`)).toHaveCount(0);
+  await expect(others).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

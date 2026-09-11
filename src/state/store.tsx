@@ -2585,13 +2585,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Re-probe the engines on demand. A CLI installed while the app is running
   // is invisible until something asks again — the setup screens expose this
   // as "Check again" so the user isn't told to restart when a refresh will do.
+  // Rejects when the probe fails (offline, server down): the existing list
+  // stays, and a caller that just saved something can say the list may not
+  // show it yet (EnginesSettings' Enable, ClaudeAccountsSettings' changes);
+  // it used to swallow the failure, which left those messages unreachable
+  // (FOLLOW4). Callers with nothing to tell the user catch it themselves.
   const refreshInstances = useCallback(async () => {
-    try {
-      const { instances } = await api("/api/instances");
-      rawDispatch({ type: "instances", instances });
-    } catch {
-      /* offline or server down — the existing list stays */
-    }
+    const { instances } = await api("/api/instances");
+    rawDispatch({ type: "instances", instances });
   }, []);
 
   // Installing a CLI or signing one in happens in a terminal, outside this
@@ -2604,7 +2605,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const now = Date.now();
       if (now - lastFocusProbe.current < 3000) return;
       lastFocusProbe.current = now;
-      void refreshInstances();
+      // Offline or server down: the existing list stays, nothing to say.
+      void refreshInstances().catch(() => {});
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
