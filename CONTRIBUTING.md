@@ -93,6 +93,13 @@ The suite is colocated (`server/**/*.test.ts`) and runs with `pnpm test`. Three 
   rather than mocking `child_process`.
 - **API smoke** — [`index.test.ts`](server/index.test.ts) boots the real server against a throwaway
   home directory and exercises the HTTP surface.
+- **Human specs** — `pnpm test:human` runs the Playwright specs in `src/e2e/*.human.spec.ts`
+  (root [`playwright.config.ts`](playwright.config.ts)) against a scratch harness on its own ports
+  (see [`src/e2e/rig.ts`](src/e2e/rig.ts)). It refuses to load without `MURAGE_E2E_DATA_DIR`: the
+  harness data and every screenshot, trace and report land there, so browser evidence never lands
+  inside the checkout. Point it at a directory outside the repository, for example
+  `MURAGE_E2E_DATA_DIR=/tmp/murage-e2e pnpm test:human`. The per-spec configs
+  (`src/e2e/*.config.ts`) read the same variable.
 
 House rules for tests:
 
