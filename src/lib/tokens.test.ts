@@ -20,13 +20,22 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 // [data-skin="auto"] block, and a parser that reads comments would find one.
 const css = readFileSync(join(root, "src/styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
+/** Vitest files and the Playwright specs under `src/e2e/`. Both are excluded
+ *  from every sweep below for the same reason: the rules are about SHIPPED
+ *  UI, and a spec that paints a fixture canvas, asserts `toHaveCSS(
+ *  'border-radius')` or names a fixture model id is asserting against the
+ *  app, not styling it. Neither kind is reachable from `src/main.tsx`. */
+function isTestFile(entry: string): boolean {
+  return /\.(test|spec)\.tsx?$/.test(entry);
+}
+
 function sourceFiles(): string[] {
   const out: string[] = [];
   (function walk(dir: string) {
     for (const entry of readdirSync(dir)) {
       const path = join(dir, entry);
       if (statSync(path).isDirectory()) walk(path);
-      else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(path);
+      else if (/\.tsx?$/.test(entry) && !isTestFile(entry)) out.push(path);
     }
   })(join(root, "src"));
   return out;
@@ -162,7 +171,13 @@ describe("token drift", () => {
     // suffix is not a colour, so it can never name a token.
     const NOT_A_TOKEN = new Set([
       // border sides and widths: border-b, border-l-2, border-r-0, border-x…
-      "b", "b-0", "b-2", "l", "l-2", "r", "r-0", "t", "t-0", "t-2", "x", "y",
+      // Tailwind ships every side × {0,2,4,8}; the whole set is listed so a
+      // new `max-md:border-l-0` is not read as a token named `l-0`.
+      "b", "l", "r", "t", "x", "y",
+      "b-0", "l-0", "r-0", "t-0", "x-0", "y-0",
+      "b-2", "l-2", "r-2", "t-2", "x-2", "y-2",
+      "b-4", "l-4", "r-4", "t-4", "x-4", "y-4",
+      "b-8", "l-8", "r-8", "t-8", "x-8", "y-8",
       // border styles and border-collapse
       "dashed", "dotted", "solid", "collapse", "separate", "none",
       // CSS-wide colour keywords Tailwind ships as utilities
@@ -182,6 +197,16 @@ describe("token drift", () => {
       // CSS box-sizing: border-box is not a border colour utility.
       "box",
     ]);
+    // Strings the utility regex reads as `text-…` that are DATA, not class
+    // names: the local-model probe outcome ids from `shared/local-models.ts`
+    // (`text-instead-of-tool`, `text-instead-of-tools`) that the Local models
+    // view switches on. They never reach a className, and renaming a shared
+    // probe contract to dodge a heuristic would be the wrong trade. Each entry
+    // must still exist in the contract, so this list cannot rot.
+    const localModels = readFileSync(join(root, "shared/local-models.ts"), "utf8");
+    const PROBE_OUTCOME_IDS = ["instead-of-tool", "instead-of-tools"];
+    for (const id of PROBE_OUTCOME_IDS) expect(localModels, id).toContain(`"text-${id}"`);
+    const NOT_A_CLASS = new Set(PROBE_OUTCOME_IDS);
     // Tailwind's built-in palette. TeamLibraryPanel paints four categorical bot
     // glyphs from it on purpose — they are identity colours like the mascot's,
     // not theme surfaces, and Tailwind does generate them.
@@ -202,7 +227,7 @@ describe("token drift", () => {
       const source = readFileSync(file, "utf8");
       for (const [, name] of source.matchAll(utility)) {
         if (colorTokens.has(`--color-${name}`)) continue;
-        if (NOT_A_TOKEN.has(name) || TAILWIND_PALETTE.test(name)) continue;
+        if (NOT_A_TOKEN.has(name) || NOT_A_CLASS.has(name) || TAILWIND_PALETTE.test(name)) continue;
         bad.push(`${relative(root, file)}: -${name}`);
       }
       // Arbitrary values and inline styles reach for the property directly.
@@ -248,8 +273,10 @@ describe("token drift", () => {
         // `pwa-install.test.ts` has to name #f7f7f7 and #0a0a0a because those
         // are the exact theme-colour values index.html must carry — putting
         // it on the allowlist instead would say it was a styling exception,
-        // which is the wrong reason for the right outcome.
-        else if (/\.(tsx?|css)$/.test(entry) && !/\.test\.tsx?$/.test(entry)) files.push(path);
+        // which is the wrong reason for the right outcome. The Playwright
+        // specs fill fixture canvases and iframe bodies with literal colours
+        // for the same reason.
+        else if (/\.(tsx?|css)$/.test(entry) && !isTestFile(entry)) files.push(path);
       }
     })(join(root, "src"));
 

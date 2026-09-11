@@ -46,6 +46,7 @@ import { normalizeState } from "@/lib/mascot";
 import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { autoNeedsLocalComputerWarning } from "@/lib/local-computer";
 import { ReplyQuote } from "./ReplyQuote";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
@@ -463,7 +464,10 @@ export function Composer({
     // has to be acknowledged first. The flag the dialog sends is stripped by
     // the reducer rather than stored, so — exactly like the settings panel —
     // the warning is shown on every switch-on, not just the first.
-    if (auto && !autoBot.autoApprove && autoBot.computer === "local") {
+    // In a plain browser (the dev rig, the browser door) the host is not
+    // announced; the harness is on the same machine, so the UA stands in.
+    const platform = capabilities.host.platform === "other" && /Mac/.test(navigator.userAgent) ? "darwin" : capabilities.host.platform;
+    if (auto && autoNeedsLocalComputerWarning({ platform, computer: autoBot.computer, autoApprove: autoBot.autoApprove })) {
       setAutoWarn(true);
       return;
     }

@@ -3,6 +3,7 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createBackgroundLifecycle } from "./background-lifecycle.mjs";
 
 const { updater, handlers } = vi.hoisted(() => ({
   updater: { on: vi.fn(), checkForUpdates: vi.fn(), downloadUpdate: vi.fn() },
@@ -73,21 +74,43 @@ it("the actual main createWindow and activate wiring retargets the process updat
   const ready = nodes.find((node) => ts.isCallExpression(node) && node.expression.getText(file) === "app.whenReady().then");
   const activate = nodes.find((node) => ts.isCallExpression(node) && node.expression.getText(file) === "app.on"
     && node.arguments[0]?.text === "activate" && node.pos >= ready.pos && node.end <= ready.end);
+  // Since the startup background controls (5b140c4f) the first window is
+  // created from an if/else — the tray lifecycle reopens an existing window,
+  // otherwise createWindow runs — and "activate" no longer calls createWindow
+  // itself: it asks the lifecycle to open, whose `openWindow` callback is the
+  // one that creates a window when none is alive. Both shapes are admitted
+  // here, and nothing else is: a call to createWindow tucked inside any other
+  // statement is still a lost wiring, and fails this execution.
+  const calls = (statement, names) => ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
+    && names.includes(statement.expression.expression.getText(file));
   const startup = ready.arguments[0].body.statements.filter((statement) => {
     if (ts.isVariableStatement(statement)) return statement.declarationList.declarations.some((declaration) =>
       declaration.initializer && ts.isCallExpression(declaration.initializer) && declaration.initializer.expression.getText(file) === "createWindow");
-    return ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
-      && ["createWindow", "startUpdater"].includes(statement.expression.expression.getText(file));
+    if (ts.isIfStatement(statement)) return [statement.thenStatement, statement.elseStatement].some((branch) => branch && calls(branch, ["createWindow"]));
+    return calls(statement, ["createWindow", "startUpdater"]);
   });
+  expect(startup.map((node) => node.getText(file).split("(")[0])).toEqual(["if", "startUpdater"]);
+  // The real `openWindow` callback main.mjs hands the lifecycle, so "activate"
+  // reaches the real createWindow through the real background-lifecycle
+  // module rather than a stand-in that agrees with it by construction.
+  const lifecycleFactory = nodes.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "initializeBackgroundLifecycle");
+  const openWindow = nodes.find((node) => ts.isPropertyAssignment(node) && node.name.getText(file) === "openWindow"
+    && node.pos >= lifecycleFactory.pos && node.end <= lifecycleFactory.end);
   const liveWindows = [];
   class Window {
     constructor() {
       liveWindows.push(this);
       this.webContents = { send: vi.fn(), on: vi.fn(), once: vi.fn(), setWindowOpenHandler: vi.fn() };
       this.once = vi.fn((event, listener) => { if (event === "closed") this.onClosed = listener; });
+      this.on = vi.fn();
       this.loadURL = vi.fn();
+      this.destroyed = false;
+      this.isDestroyed = () => this.destroyed;
+      this.isMinimized = () => false;
+      this.isVisible = () => !this.destroyed;
+      this.restore = vi.fn(); this.show = vi.fn(); this.focus = vi.fn();
     }
-    close() { liveWindows.splice(liveWindows.indexOf(this), 1); this.onClosed?.(); }
+    close() { this.destroyed = true; liveWindows.splice(liveWindows.indexOf(this), 1); this.onClosed?.(); }
     static getAllWindows() { return liveWindows; }
   }
   // Bind only the updater imports present in real main.mjs: omitting the
@@ -104,8 +127,18 @@ it("the actual main createWindow and activate wiring retargets the process updat
     process: { platform: "darwin", env: {} }, path, __dirname: "/unused-fixture",
     startBrowserSurface: vi.fn(), installWindowStatePersistence: vi.fn(), applyUnreadBadge: vi.fn(),
     app: { isPackaged: true }, serverReady: true, SERVER_PORT: 18888, desktopShutdownStarted: false, desktopRecoveryMode: false,
+    backgroundLifecycle: null, loginLaunch: false, background: null,
+    shell: { openExternal: vi.fn(), openPath: vi.fn() }, LOG_DIR: "/unused-log-dir", pathToFileURL: (value) => new URL(`file://${value}`),
+    createMainWindowOpenHandler: () => vi.fn(), createMainNavigationGuard: () => ({ willNavigate: vi.fn(), willRedirect: vi.fn() }),
+    trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(),
+    console: { warn: vi.fn(), error: vi.fn(), log: vi.fn() },
   });
   vm.runInContext(windowFactory.getText(file), context);
+  context.backgroundLifecycle = createBackgroundLifecycle({
+    platform: "darwin", loadPreferences: () => ({}), window: () => context.mainWindow, isQuitting: () => context.desktopShutdownStarted,
+    login: { read: () => ({ supported: false, openAtLogin: false }) }, openWindow: vm.runInContext(`(${openWindow.initializer.getText(file)})`, context),
+  });
+  context.background = { lifecycle: context.backgroundLifecycle };
   vm.runInContext(startup.map((node) => node.getText(file)).join("\n"), context);
   expect(liveWindows).toHaveLength(1);
   expect(updater.on.mock.calls.length).toBeGreaterThan(0);
