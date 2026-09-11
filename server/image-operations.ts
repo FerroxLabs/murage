@@ -10,17 +10,20 @@ import type { DecodedGeneratedImage } from "./generated-image.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import type { LocalOutputReceipt } from "../shared/output-publication.ts";
 import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOutput, type ImageOutputCompletion } from "./output-publication.ts";
+import { conversationImageAttachments } from "./image-reference-resolver.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
 interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean) => void; active: () => void }
 const error = (status: number, message: string) => Object.assign(new Error(message), { status });
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 function inside(root: string, file: string) { const tail = relative(root, file); return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail); }
-/** No caller path is accepted. References must already belong to this exact conversation. */
+/** No caller path is accepted. References must already belong to this exact
+ * conversation: an uploaded or generated image it shows, or one prepared by
+ * resolve_image_reference (F5-T4), which stores its pinned bytes the same way. */
 export function imageReferences(store: Store, threadId: string, names: unknown): ImageReference[] {
   if (names === undefined) return [];
   if (!Array.isArray(names) || names.length > 4 || names.some(name => typeof name !== "string" || !/^[\w-]+\.(png|jpg|jpeg|webp)$/i.test(name))) throw error(400, "Choose up to four image attachments from this conversation.");
-  const allowed = new Set(store.messagesFor(threadId).flatMap(message => message.attachments ?? []).filter(item => item.kind === "image").map(item => item.path));
+  const allowed = new Set(conversationImageAttachments(store, threadId, ATTACHMENTS_DIR).values());
   let total = 0;
   return names.map(name => {
     const file = join(ATTACHMENTS_DIR, name), root = realpathSync(ATTACHMENTS_DIR);
@@ -198,7 +201,9 @@ export class ImageOperations {
     const prompt = request && typeof request === "object" && "prompt" in request ? String(request.prompt) : "";
     const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", card: {
       title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",
-      subtitle: `One image · ${details.connectionId} · ${details.model}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}. Provider charges apply; exact cost is not available.`,
+      // F1-T4: the owner approves the exact upstream that will bill them. An
+      // OpenRouter edit names its pinned endpoint; nothing else is routed.
+      subtitle: `One image${details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : ""} · ${details.connectionId} · ${details.model}${details.endpointTag ? ` (pinned to ${details.endpointTag}, no fallback)` : ""}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}. Provider charges apply; exact cost is not available.`,
       held: prompt, options: ["Allow", "Deny"], requestId, tool: "generate_image",
     } });
     this.waiting(actor.threadId, true, requestId, card.id);

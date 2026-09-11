@@ -18,6 +18,7 @@ import {
   type ComposerSendSnapshot,
   type FailedComposerSend,
 } from "@/lib/drafts";
+import { registerComposerReferenceTarget } from "@/lib/image-reference";
 import { BotAvatar } from "./Avatar";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { QueuedComposerMessages } from "./ComposerQueuedMessages";
@@ -231,6 +232,13 @@ export function Composer({
   const [text, setText, attachments, setAttachments] = useComposerDraft(
     draftId,
     !group && bot ? `bot:${bot.id}` : undefined,
+  );
+  // F5-T4: while this conversation's composer is open, "Use as reference"
+  // on one of its images adds the image to this draft (never another's).
+  const referenceBotId = group ? undefined : bot?.id;
+  useEffect(
+    () => (threadId ? registerComposerReferenceTarget({ threadId, draftId, ...(referenceBotId ? { botId: referenceBotId } : {}) }) : undefined),
+    [threadId, draftId, referenceBotId],
   );
   const failedSends = useFailedComposerSends(draftId);
   // Goal mode is opt-in and one-shot so the next ordinary channel message

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Artifact } from "../../shared/artifacts";
 import type { FileRevision, WorkspaceEntry } from "../../shared/workspace-files";
 import {
-  NO_SAVED_FILTERS, activeSavedFilters, canSaveEntry, entryNotice, formatFileSize, rootStateNotice, saveWorkspaceVersion, workspaceCrumbs, workspaceUrl,
+  NO_SAVED_FILTERS, activeSavedFilters, canSaveEntry, entryNotice, formatFileSize, rootStateNotice, saveWorkspaceVersion, workspaceCrumbs, workspaceNativeAction, workspaceUrl,
 } from "./files-view";
 
 const scope = { botId: "bot-1", threadId: "thread-1" };
@@ -52,6 +52,51 @@ describe("what each entry allows", () => {
     expect(rootStateNotice("no-dedicated-workspace")).toBe("filesWorkspace.state.legacy");
     expect(rootStateNotice("remote")).toBe("filesWorkspace.state.remote");
     expect(rootStateNotice("unavailable")).toBe("filesWorkspace.state.unavailable");
+  });
+});
+
+describe("native open/reveal (F4-T5)", () => {
+  it("is absent without the desktop bridge, so a browser shows no native buttons", () => {
+    vi.stubGlobal("window", undefined);
+    try { expect(workspaceNativeAction()).toBeUndefined(); } finally { vi.unstubAllGlobals(); }
+    vi.stubGlobal("window", { muragebox: { revealWorkspace: async () => {} } });
+    try { expect(workspaceNativeAction()).toBeUndefined(); } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("hands the bridge the conversation and the relative path only, never a path on disk", async () => {
+    const workspaceFileAction = vi.fn(async () => {});
+    vi.stubGlobal("window", { muragebox: { workspaceFileAction } });
+    try {
+      const act = workspaceNativeAction();
+      expect(act).toBeTypeOf("function");
+      await act!({ ...scope, extra: "ignored" } as never, file, "open");
+      await act!(scope, file, "reveal");
+      expect(workspaceFileAction.mock.calls).toEqual([
+        [{ botId: "bot-1", threadId: "thread-1" }, "reports/report.html", "open"],
+        [{ botId: "bot-1", threadId: "thread-1" }, "reports/report.html", "reveal"],
+      ]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("refuses links, missing and special entries before the bridge is asked", async () => {
+    const workspaceFileAction = vi.fn(async () => {});
+    vi.stubGlobal("window", { muragebox: { workspaceFileAction } });
+    try {
+      const act = workspaceNativeAction()!;
+      for (const entry of [
+        { ...file, kind: "link" as const, state: "unsupported" as const, revision: undefined },
+        { ...file, state: "missing" as const, revision: undefined },
+        { name: "reports", relativePath: "reports", kind: "directory" as const, state: "local" as const },
+      ]) await expect(act(scope, entry, "open")).rejects.toThrow("This entry is not a file Murage can open.");
+      expect(workspaceFileAction).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("surfaces the main process refusal as is", async () => {
+    vi.stubGlobal("window", { muragebox: { workspaceFileAction: async () => { throw new Error("Murage does not open this kind of file directly. Reveal it and open it yourself."); } } });
+    try {
+      await expect(workspaceNativeAction()!(scope, file, "open")).rejects.toThrow("Murage does not open this kind of file directly. Reveal it and open it yourself.");
+    } finally { vi.unstubAllGlobals(); }
   });
 });
 

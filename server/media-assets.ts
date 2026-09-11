@@ -1,5 +1,6 @@
 // Scoped media assets and authorized byte serving (F5-T1, media design M1).
-// resolve-image-reference stays a K0 skeleton until F5-T4 fills it.
+// Image references (IMG-SEED, F5-T4) live in image-reference-resolver.ts and
+// reuse the pinned workspace lookup exported below.
 // Contract: shared/media-assets.ts and docs/plans/0152-CONTRACTS.md.
 //
 // Authority, in order:
@@ -37,7 +38,7 @@ import {
   type MediaAsset, type MediaAssetAvailability, type MediaAssetKind, type MediaCapabilityClaims, type MediaResolveResponse,
 } from "../shared/media-assets.ts";
 import { isFileRevision, isWorkspaceRelativePath, isWorkspaceScopeRef, type WorkspaceScopeRef } from "../shared/workspace-files.ts";
-import { hiddenRoute, notImplemented, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
+import { hiddenRoute, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 
 export interface MediaAssetsDeps {
   dataDir: string;
@@ -257,7 +258,9 @@ export function verifyMediaCapability(token: unknown, assetId: string, now = Dat
 type NormalizedRef =
   | { source: "attachment"; threadId: string; attachmentId: string }
   | { source: "artifact"; artifactId: string }
-  | { source: "workspace"; scope: WorkspaceScopeRef; relativePath: string; revision: string };
+  /** `revision` absent pins whatever is there now (image references only;
+   * the media routes always carry the revision discovery issued). */
+  | { source: "workspace"; scope: WorkspaceScopeRef; relativePath: string; revision?: string };
 
 class MediaError extends Error {
   readonly status: number;
@@ -305,9 +308,10 @@ function parseRef(body: unknown): NormalizedRef {
 }
 
 type Unready = Exclude<MediaAssetAvailability, "ready" | "loading">;
-type Outcome =
+export type MediaFileOutcome =
   | { state: "ready"; path: string; stat: Stats; revision?: string; observed: Array<[string, Stats]> }
   | { state: Unready; revision?: string };
+type Outcome = MediaFileOutcome;
 interface Located { name: string; scope: MediaAsset["scope"]; outcome: Outcome }
 
 /** One ordinary, unlinked file directly inside `directory`. */
@@ -385,6 +389,11 @@ function locateWorkspace(ref: Extract<NormalizedRef, { source: "workspace" }>, d
   const roots = new Set<string>();
   for (const scope of deps.artifactScopes()) {
     if (scope.botId !== ref.scope.botId || scope.threadId !== ref.scope.threadId || scope.threadAvailable === false) continue;
+    // R3-T4 adds each conversation's managed generated-images root as a
+    // scope that authorizes saved image rows only. It is never a browsing
+    // root (register-artifact skips it too); counting it made every thread
+    // look ambiguous, so workspace media never resolved.
+    if (scope.managedOutput === true) continue;
     roots.add(resolve(scope.workspaceRoot));
   }
   if (roots.size !== 1) fail(404, "unavailable", UNAVAILABLE);
@@ -419,10 +428,23 @@ function locateWorkspace(ref: Extract<NormalizedRef, { source: "workspace" }>, d
     }
     if (!stat.isFile() || stat.nlink !== 1) return { ...located, outcome: { state: "unsupported" } };
     const revision = mediaWorkspaceRevision(root, ref.relativePath, stat);
-    if (revision !== ref.revision) return { ...located, outcome: { state: "changed" } };
+    if (ref.revision !== undefined && revision !== ref.revision) return { ...located, outcome: { state: "changed" } };
     return { ...located, outcome: { state: "ready", path, stat, revision, observed } };
   }
   return { ...located, outcome: { state: "missing" } };
+}
+
+/** The same scoped, link-refusing workspace lookup the media routes use, for
+ * image references (F5-T4). The root comes from the conversation's own
+ * authorized scopes; a throw means the conversation has no single workspace. */
+export function locateWorkspaceMedia(scope: WorkspaceScopeRef, relativePath: string, revision: string | undefined, deps: MediaAssetsDeps): { name: string; outcome: MediaFileOutcome } {
+  try {
+    const located = locateWorkspace({ source: "workspace", scope, relativePath, ...(revision === undefined ? {} : { revision }) }, deps);
+    return { name: located.name, outcome: located.outcome };
+  } catch (error) {
+    if (error instanceof MediaError) return { name: cleanName(basename(relativePath)), outcome: { state: "denied" } };
+    throw error;
+  }
 }
 
 function locate(ref: NormalizedRef, deps: MediaAssetsDeps, verify: boolean): Located {
@@ -443,6 +465,21 @@ async function openPinned(path: string, expected: string, observed: Array<[strin
   } catch { /* closed below */ }
   await handle.close().catch(() => undefined);
   return undefined;
+}
+
+/** Read a whole located file through a pinned handle: undefined if it is not
+ * exactly the observed file, is larger than `maxBytes`, or changed while it
+ * was read. Never follows a link. */
+export async function readPinnedMediaFile(outcome: Extract<MediaFileOutcome, { state: "ready" }>, maxBytes: number): Promise<Buffer | undefined> {
+  if (outcome.stat.size > maxBytes) return undefined;
+  const expected = fingerprint(outcome.stat), handle = await openPinned(outcome.path, expected, outcome.observed);
+  if (!handle) return undefined;
+  try {
+    const bytes = await readAt(handle, outcome.stat.size, 0);
+    const after = await handle.stat();
+    if (bytes.length !== outcome.stat.size || fingerprint(after) !== expected || fingerprint(lstatSync(outcome.path)) !== expected) return undefined;
+    return bytes;
+  } finally { await handle.close().catch(() => undefined); }
 }
 
 async function readAt(handle: FileHandle, length: number, position: number): Promise<Buffer> {
@@ -656,6 +693,11 @@ export async function mediaAssetsRoute(request: DelegatedRequest, deps: MediaAss
     return serveBytes(request, deps, assetId, now);
   }
   if (!request.desktop) return hiddenRoute();
+  if (path === MEDIA_ROUTES.reference) {
+    // Loaded on use: the resolver imports this module's pinned lookup.
+    const { mediaReferenceRoute } = await import("./image-reference-resolver.ts");
+    return mediaReferenceRoute(request, deps);
+  }
   if (path !== MEDIA_ROUTES.resolve) return hiddenRoute();
   if (request.method !== "POST") return { status: 405, headers: { ...RESOLVE_HEADERS, allow: "POST" }, body: { error: "Resolve media with POST.", code: "method-not-allowed" } };
   try {
@@ -669,14 +711,4 @@ export async function mediaAssetsRoute(request: DelegatedRequest, deps: MediaAss
     if (error instanceof MediaError) return { status: error.status, headers: { ...RESOLVE_HEADERS }, body: { error: error.message, code: error.code } };
     throw error;
   }
-}
-
-/** Identity taken from the verified internal capability, never the body. */
-export interface ImageReferenceClaim { botId: string; threadId: string; generation: string }
-
-/** POST /api/internal/resolve-image-reference, reached only after
- * server/index.ts verified an active agents capability for this turn. */
-export async function resolveImageReferenceRoute(request: DelegatedRequest, _claim: ImageReferenceClaim, _deps: MediaAssetsDeps): Promise<DelegatedResult> {
-  if (request.method !== "POST") return { status: 405, body: { error: "resolve-image-reference requires POST" } };
-  return notImplemented("Image references from files are not available in this build.");
 }

@@ -264,6 +264,16 @@ type SkillRecordingPayload = {
       saveFile?(filePath: string): Promise<string | null>;
       artifactAction?(id: string, action: "open" | "reveal"): Promise<void>;
       revealWorkspace?(botId: string, threadId: string): Promise<void>;
+      /** Open or reveal one live workspace file (F4-T5). The renderer names
+       * the conversation and a validated relative path; the main process
+       * resolves, authorizes and revalidates the real path. Rejects with the
+       * user-facing refusal; `open` resolves without acting when the owner
+       * cancels the browser warning. */
+      workspaceFileAction?(
+        scope: { botId: string; threadId: string },
+        relativePath: string,
+        action: "open" | "reveal",
+      ): Promise<void>;
       /** Save a provider credential through Electron's OS-backed store. */
       mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
       mutateFluxConnection?(input: import("../../shared/flux-connection").FluxConnectionMutation): Promise<import("../../shared/flux-connection").FluxConnectionStatus>;
