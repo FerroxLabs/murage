@@ -32,7 +32,7 @@ import { hostStoppedReason } from "../shared/host-stop.ts";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>;
-let sessionGate: string, terminalGate: string, redispatchHold: string, dumpPath: string;
+let sessionGate: string, terminalGate: string, redispatchHold: string, dumpPath: string, agentsEnvPath: string;
 const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json() as any };
@@ -43,14 +43,14 @@ const messages = async (threadId: string) => (await api("GET", `/api/threads/${t
 const replies = async (threadId: string) => (await messages(threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text);
 const chips = (thread: any[]) => thread.filter(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:")).map(message => message.tool.name);
 const stoppedNotices = (thread: any[]) => thread.filter(message => message.kind === "activity" && hostStoppedReason(message.tool?.name));
-const dispatches = (): Array<{ turnId: string; threadId: string }> => existsSync(dumpPath) ? readFileSync(dumpPath, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+const dispatches = (): Array<{ turnId: string; threadId: string; skillAuthoring: boolean }> => existsSync(dumpPath) ? readFileSync(dumpPath, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 const disclosures = (threadId: string) => {
   const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
   try { return db.prepare("SELECT state FROM memory_disclosures WHERE thread_id=? ORDER BY created_at").all(threadId).map(row => (row as { state: string }).state); }
   finally { db.close(); }
 };
 const serverLog = () => readFileSync(fixture.info.logPath, "utf8");
-const resetGates = () => { for (const path of [sessionGate, `${sessionGate}.waiting`, terminalGate, `${terminalGate}.emitted`, redispatchHold, `${redispatchHold}.waiting`, `${redispatchHold}.armed`, dumpPath]) rmSync(path, { force: true }); };
+const resetGates = () => { for (const path of [sessionGate, `${sessionGate}.waiting`, terminalGate, `${terminalGate}.emitted`, redispatchHold, `${redispatchHold}.waiting`, `${redispatchHold}.armed`, dumpPath, agentsEnvPath]) rmSync(path, { force: true }); };
 const createBot = async (name: string) => {
   const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "late").models.options;
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "late", model: models[0].id } });
@@ -66,7 +66,7 @@ const createBot = async (name: string) => {
 const refuseThenLandLateTerminal = async (threadId: string, revoke: () => Promise<void>, revokedLine: string) => {
   await expect.poll(() => existsSync(`${sessionGate}.waiting`), { timeout: 15000 }).toBe(true);
   const refusedTurnId = readFileSync(`${sessionGate}.waiting`, "utf8");
-  expect(dispatches().map(row => row.turnId)).toEqual([refusedTurnId]);
+  expect(dispatches()).toEqual([{ turnId: refusedTurnId, threadId, skillAuthoring: true }]);
   // Inside the handshake window the roster changes: the memory policy
   // revision moves and the prepared disclosure is no longer current.
   await revoke();
@@ -96,8 +96,9 @@ const expectStaleFoldAndTwoDispatches = (threadId: string, refusedTurnId: string
   expect(serverLog()).toContain(`[turns] turn.completed for provider turn ${refusedTurnId} on thread ${threadId} is not bound to the current internal turn owner`);
   const rows = dispatches();
   expect(rows).toHaveLength(2);
-  expect(rows[0]).toEqual({ turnId: refusedTurnId, threadId });
-  expect(rows[1]).toEqual({ turnId: expect.any(String), threadId });
+  expect(rows[0]).toEqual({ turnId: refusedTurnId, threadId, skillAuthoring: true });
+  // the re-dispatch took the claim its refused attempt handed back
+  expect(rows[1]).toEqual({ turnId: expect.any(String), threadId, skillAuthoring: true });
   expect(rows[1].turnId).not.toBe(refusedTurnId);
   expect(disclosures(threadId)).toEqual(["revoked", "delivered"]);
 };
@@ -123,14 +124,18 @@ posixOnly("a refused child's late terminal event does not stop the re-dispatch",
         await new Promise(resolve=>{const poll=setInterval(()=>{if(!fs.existsSync(hold))return;clearInterval(poll);resolve();},20);});
       };
       const file=path.join(dataDir,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
+      // The skill recorder is on, so a hop-0 member turn takes the round's
+      // skill-authoring claim (the fixture driver declares agentsMcp).
+      cfg.features={...(cfg.features??{}),skillRecorder:true};
       cfg.instances.late={driver:'fakeLateTerminal',displayName:'Late-terminal fixture',
-        environment:{FAKE_LATE_SESSION_GATE:path.join(dataDir,'late-session-gate'),FAKE_LATE_TERMINAL_GATE:path.join(dataDir,'late-terminal-gate'),FAKE_LATE_DUMP:path.join(dataDir,'late-dump.jsonl')}};
+        environment:{FAKE_LATE_SESSION_GATE:path.join(dataDir,'late-session-gate'),FAKE_LATE_TERMINAL_GATE:path.join(dataDir,'late-terminal-gate'),FAKE_LATE_DUMP:path.join(dataDir,'late-dump.jsonl'),FAKE_LATE_AGENTS_ENV:path.join(dataDir,'late-agents-env.json')}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });
     sessionGate = join(fixture.info.dataDir, "late-session-gate");
     terminalGate = join(fixture.info.dataDir, "late-terminal-gate");
     redispatchHold = join(fixture.info.dataDir, "redispatch-hold");
     dumpPath = join(fixture.info.dataDir, "late-dump.jsonl");
+    agentsEnvPath = join(fixture.info.dataDir, "late-agents-env.json");
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
     expect((await api("GET", "/api/memory/status")).body.mode).toBe("active");
@@ -254,8 +259,86 @@ posixOnly("a refused child's late terminal event does not stop the re-dispatch",
     await expect.poll(async () => (await replies(room.threadId)).length, { timeout: 15000 }).toBe(1);
     expect((await replies(room.threadId))[0].from.botId).toBe(member.id);
     expect((await replies(room.threadId))[0].text).toBe("Hello from late");
-    expect(dispatches()).toEqual([{ turnId: expect.any(String), threadId: room.threadId }]);
+    expect(dispatches()).toEqual([{ turnId: expect.any(String), threadId: room.threadId, skillAuthoring: true }]);
     expect(chips(await messages(room.threadId))).toEqual([]);
     expect(stoppedNotices(await messages(room.threadId))).toHaveLength(1);
+  }, 120000);
+
+  // RED2K (RED2J verifier): the exit right after waitForClear — Stop landed,
+  // or the claim is no longer this attempt's — released the room and the bot
+  // through an inline copy of the release, which left the round's
+  // skill-authoring claim taken and did not drain the queues: a continuation
+  // queued for the member while it was held in the room (here a credential
+  // card on its own thread answered in that window, parked because the bot
+  // was busy) stayed parked, with no turn.completed ever coming to retry
+  // it. Every unstarted exit now goes through releaseUnstartedRoomTurn. Held
+  // by the same fixture hold on waitForClear; Stop lands while held.
+  it("room member path: Stop inside the claim window drains a continuation queued for the member and hands back the skill-authoring claim", async () => {
+    const member = await createBot("Stopped in window member"), other = await createBot("Stopped in window other");
+    const createdRoom = await api("POST", "/api/groups", { name: "Stopped in window room", memberIds: [member.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } } });
+    expect(createdRoom.status).toBe(201);
+    const room = createdRoom.body.group as { id: string; threadId: string };
+    const idle = async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; };
+    resetGates();
+    const directRepliesBefore = (await replies(member.threadId)).length;
+    // A credential request card on the member's own thread, raised by the
+    // member's turn there (the agents comms token of that turn, while the
+    // session gate holds it before acceptance), then the turn completes.
+    expect((await api("POST", `/api/bots/${member.id}/messages`, { threadId: member.threadId, text: "a turn that asks for a credential" })).status).toBe(202);
+    await expect.poll(() => existsSync(`${sessionGate}.waiting`), { timeout: 15000 }).toBe(true);
+    const agentsEnv = JSON.parse(readFileSync(agentsEnvPath, "utf8")) as Record<string, string>;
+    expect(agentsEnv.MURAGE_THREAD_ID).toBe(member.threadId);
+    const card = await fetch(`${fixture.info.url}/api/internal/request-credential`, { method: "POST", headers: { authorization: `Bearer ${agentsEnv.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ fromBotId: member.id, fromThreadId: member.threadId, credentialId: "openaiImageApiKey", reason: "queued continuation under test" }) });
+    expect(card.status).toBe(201);
+    const { messageId } = await card.json() as { messageId: string };
+    writeFileSync(sessionGate, "");
+    await expect.poll(async () => (await botState(member.id)).busy, { timeout: 15000 }).toBe(false);
+    await expect.poll(async () => (await replies(member.threadId)).length, { timeout: 15000 }).toBe(directRepliesBefore + 1);
+    expect(dispatches()).toEqual([{ turnId: expect.any(String), threadId: member.threadId, skillAuthoring: true }]);
+    // The member turn of exactly this room thread is held after the room claim.
+    writeFileSync(`${redispatchHold}.armed`, room.threadId);
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "room turn stopped while its claim was being set up" })).status).toBe(202);
+    await expect.poll(() => existsSync(`${redispatchHold}.waiting`), { timeout: 15000 }).toBe(true);
+    expect(readFileSync(`${redispatchHold}.waiting`, "utf8")).toBe(room.threadId);
+    expect((await groupState(room.id)).busyBotId).toBe(member.id);
+    expect((await botState(member.id)).busy).toBe(true);
+    // Answered while the member is busy in the room: the continuation of
+    // its own thread is queued for when the member settles.
+    const dismissed = await api("POST", `/api/bots/${member.id}/secret-cards/${messageId}/dismiss`, { threadId: member.threadId });
+    expect(dismissed.status).toBe(200);
+    expect(dismissed.body).toEqual({ dismissed: true, resumed: true });
+    expect((await messages(member.threadId)).find(message => message.id === messageId)?.secret).toMatchObject({ dismissed: true, resumed: true });
+    expect(dispatches()).toHaveLength(1);
+    // Stop the member while its room turn is held before dispatch.
+    expect((await api("POST", `/api/bots/${member.id}/interrupt`, {})).status).toBe(200);
+    writeFileSync(redispatchHold, "");
+
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    // The queued continuation is not left behind: with no provider turn
+    // there is no turn.completed to retry it, so the unstarted exit drains
+    // it — it runs on the member's thread to a reply. Without the one
+    // release path it stays queued here until some unrelated turn settles.
+    await expect.poll(async () => (await replies(member.threadId)).length, { timeout: 15000 }).toBe(directRepliesBefore + 2);
+    await expect.poll(async () => (await botState(member.id)).busy, { timeout: 15000 }).toBe(false);
+    expect((await replies(member.threadId)).at(-1)?.text).toBe("Hello from late");
+    expect(chips(await messages(member.threadId))).toEqual([]);
+    // The stopped room turn itself never dispatched and posted nothing.
+    expect(dispatches()).toEqual([
+      { turnId: expect.any(String), threadId: member.threadId, skillAuthoring: true },
+      { turnId: expect.any(String), threadId: member.threadId, skillAuthoring: true },
+    ]);
+    expect(chips(await messages(room.threadId))).toEqual([]);
+    expect((await replies(room.threadId)).length).toBe(0);
+    // and the round's skill-authoring claim was handed back: the next room
+    // turn on that member runs with the skill-authoring tools.
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "/learn runs after the stopped room turn" })).status).toBe(202);
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => (await replies(room.threadId)).length, { timeout: 15000 }).toBe(1);
+    expect((await replies(room.threadId))[0].from.botId).toBe(member.id);
+    expect(dispatches()).toHaveLength(3);
+    expect(dispatches()[2]).toEqual({ turnId: expect.any(String), threadId: room.threadId, skillAuthoring: true });
+    expect(chips(await messages(room.threadId))).toEqual([]);
+    expect(chips(await messages(member.threadId))).toEqual([]);
   }, 120000);
 });
