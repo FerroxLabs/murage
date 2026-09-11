@@ -4,6 +4,7 @@
   "claudeAccounts.saved": "Kontoeinstellungen gespeichert.",
   "claudeAccounts.refreshError": "Gespeichert, aber die Kontoliste konnte nicht aktualisiert werden. Prüfe den aktuellen Stand mit „Konten aktualisieren“.",
   "claudeAccounts.changeError": "Die Kontoänderung ist fehlgeschlagen.",
+  "claudeAccounts.listUnreadable": "Die Claude-Kontoliste konnte nicht gelesen werden. Versuche es mit „Konten aktualisieren“ erneut.",
   "claudeAccounts.copied": "Anmeldebefehl für {name} kopiert.",
   "claudeAccounts.copyError": "Kopieren fehlgeschlagen. Markiere und kopiere den Befehl oben.",
   "claudeAccounts.refresh": "Konten aktualisieren",
