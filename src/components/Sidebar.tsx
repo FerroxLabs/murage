@@ -91,6 +91,7 @@ import {
   type SectionDropPlace,
 } from "@/lib/sidebar-layout";
 import { sidebarSectionAttention } from "@/lib/sidebar-attention";
+import { botListItemPointerIntent, inlineArchiveAvailable, insideRenameField } from "@/lib/sidebar-selection";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
@@ -973,6 +974,7 @@ function BotListItem({
 }) {
   const { state, dispatch } = useStore();
   const [renaming, setRenaming] = useState(false);
+  const pressSelected = useRef(false);
   const selected = state.activeView === "chat" && state.selectedId === bot.id;
   const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const iconOnly = density === "icons";
@@ -1101,13 +1103,31 @@ function BotListItem({
 
   // Keep the same tree while editing so RenameTitle is not remounted and
   // reset. Omit the row's button role while its accessible input is present.
+  // The rename field owns its own clicks; the avatar, body and right edge
+  // still open the bot while the name is being edited.
+  const showInlineArchive = inlineArchiveAvailable({ role: botRole(bot), archiveDisabled, renaming, iconOnly });
   return (
     <div className="group relative" title={iconOnly ? bot.name : undefined}>
       <div
         role={renaming ? undefined : "button"}
         tabIndex={renaming ? undefined : 0}
-        aria-label={iconOnly ? bot.name : undefined}
-        onClick={() => { if (!renaming) { dispatch({ type: "select", id: bot.id }); onNavigate(); } }}
+        aria-label={!renaming && iconOnly ? bot.name : undefined}
+        data-sidebar-bot-row={bot.id}
+        onMouseDown={(event) => {
+          pressSelected.current = false;
+          if (botListItemPointerIntent(event.type, insideRenameField(event.target), renaming, event.button) !== "select") return;
+          pressSelected.current = true;
+          dispatch({ type: "select", id: bot.id });
+          onNavigate();
+        }}
+        onClick={(event) => {
+          // The press already selected during rename. Skip only that same
+          // pointer click (detail > 0); assistive-technology clicks always select.
+          if (pressSelected.current && event.detail > 0) { pressSelected.current = false; return; }
+          if (botListItemPointerIntent(event.type, insideRenameField(event.target)) !== "select") return;
+          dispatch({ type: "select", id: bot.id });
+          onNavigate();
+        }}
         onKeyDown={(event) => {
           if (renaming) return;
           if (event.key === "Enter" || event.key === " ") {
@@ -1143,21 +1163,16 @@ function BotListItem({
       >
         <MoreHorizontal size={16} />
       </button>}
-      {!iconOnly && <button
+      {/* Disabled buttons still own their pixels in Chromium, even at zero
+          opacity. An unavailable Archive (Chief of Staff, team lead, last
+          active bot, or a row being renamed) is omitted so the whole row
+          stays selectable; the More-actions menu still explains why. */}
+      {showInlineArchive && <button
         type="button"
-        disabled={archiveDisabled}
         onClick={() => onArchive(bot)}
         aria-label={`Archive ${bot.name}`}
-        title={
-          botRole(bot) === "chief"
-            ? "Choose another Chief of Staff first"
-            : botRole(bot) === "leader"
-              ? `Choose another lead for ${bot.section?.trim() || "this team"} first`
-              : archiveDisabled
-                ? "Keep at least one active bot"
-                : `Archive ${bot.name}`
-        }
-        className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100 disabled:[@media(hover:none)]:opacity-0"
+        title={`Archive ${bot.name}`}
+        className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100"
       >
         <Archive size={14} />
       </button>}

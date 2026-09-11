@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 import { McpServersPanel } from "./McpServersPanel";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { t } from "@/lib/i18n";
 
 interface ToolkitCard {
   slug: string;
@@ -90,6 +91,16 @@ export function requiresAccountAlias(message: string) {
 }
 
 export type ConnectorInventoryPhase = "loading" | "ready" | "error";
+
+/** What the primary connector button does. A pending authorization continues
+ * with its retained URL or only re-checks status; every other click, for the
+ * first account as well as another one, opens the label form before any
+ * authorization request is sent. Adapted from OpenMausBot PR #758 (merge
+ * 86b19df10a0aaebdc66f9da41c46f42d26dd3843, Apache-2.0). */
+export function connectorPrimaryAction(state: { pending?: boolean; pendingUrl?: string }): "continue" | "check-status" | "label-account" {
+  if (state.pending) return state.pendingUrl ? "continue" : "check-status";
+  return "label-account";
+}
 
 export function connectorActionLabel(
   phase: ConnectorInventoryPhase,
@@ -463,6 +474,13 @@ export function PluginsPanel() {
     }
   };
 
+  /** Close the label form without authorizing and return focus to its button. */
+  const cancelAlias = (slug: string) => {
+    dialogRef.current?.querySelector<HTMLButtonElement>(`[data-connector-action="${CSS.escape(slug)}"]`)?.focus();
+    setAliasSlug((current) => (current === slug ? null : current));
+    setAliasDraft("");
+  };
+
   const disconnectAccount = (slug: string, accountId: string) => {
     if (desktop !== true) return;
     setBusySlug(slug);
@@ -695,22 +713,27 @@ export function PluginsPanel() {
                     </div>
                     <button
                       type="button"
+                      data-connector-action={card.slug}
                       disabled={desktop !== true || !configured || inventoryPhase !== "ready" || busy || included}
                       title={desktop !== true ? "Manage connections in the desktop app" : undefined}
                       onClick={() => {
-                        if (pending) {
-                          setAliasSlug(null);
-                          setError(null);
-                          if (pendingUrls[card.slug]) {
-                            void openConnectUrl(pendingUrls[card.slug]).catch((e) => setError(e.message));
-                          } else {
-                            void refreshStatus([card.slug]);
-                            startPolling(card.slug);
-                          }
-                        } else if (accounts.length) {
+                        const action = connectorPrimaryAction({ pending, pendingUrl: pendingUrls[card.slug] });
+                        if (action === "label-account") {
+                          // Every new account, the first one included, is
+                          // labelled before OAuth starts; nothing is
+                          // authorized until the label is confirmed.
                           setAliasSlug((current) => current === card.slug ? null : card.slug);
                           setAliasDraft("");
-                        } else void connect(card.slug);
+                          return;
+                        }
+                        setAliasSlug(null);
+                        setError(null);
+                        if (action === "continue") {
+                          void openConnectUrl(pendingUrls[card.slug]).catch((e) => setError(e.message));
+                        } else {
+                          void refreshStatus([card.slug]);
+                          startPolling(card.slug);
+                        }
                       }}
                       className="flex min-w-[88px] items-center justify-center gap-1.5 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
                     >
@@ -762,7 +785,7 @@ export function PluginsPanel() {
                   )}
                   {desktop === true && addingAccount && (
                     <form
-                      className="ml-14 mt-3 flex items-center gap-2"
+                      className="ml-14 mt-3"
                       onSubmit={(event) => {
                         event.preventDefault();
                         const alias = aliasDraft.trim();
@@ -773,22 +796,45 @@ export function PluginsPanel() {
                         void connect(card.slug, alias);
                       }}
                     >
-                      <input
-                        autoFocus
-                        value={aliasDraft}
-                        maxLength={64}
-                        onChange={(event) => setAliasDraft(event.target.value)}
-                        placeholder="Account label (work, personal…)"
-                        aria-label={`Label for another ${card.label} account`}
-                        className="min-w-0 flex-1 rounded-lg bg-raised px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                      <button
-                        type="submit"
-                        disabled={busy || !aliasDraft.trim()}
-                        className="rounded-lg bg-accent px-3 py-2 text-[12px] font-medium text-white disabled:opacity-40"
-                      >
-                        Continue
-                      </button>
+                      <p id={`connector-alias-hint-${card.slug}`} className="mb-2 text-[11.5px] leading-snug text-ink-secondary">
+                        {accounts.length > 0 ? t("connectedApps.alias.anotherHint") : t("connectedApps.alias.firstHint")}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          autoFocus
+                          value={aliasDraft}
+                          maxLength={64}
+                          onChange={(event) => setAliasDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            // Cancel only the label form; the dialog stays open.
+                            if (event.key !== "Escape") return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            cancelAlias(card.slug);
+                          }}
+                          placeholder="Account label (work, personal…)"
+                          aria-label={accounts.length > 0
+                            ? t("connectedApps.alias.anotherLabel", { service: card.label })
+                            : t("connectedApps.alias.firstLabel", { service: card.label })}
+                          aria-describedby={`connector-alias-hint-${card.slug}`}
+                          className="min-w-0 flex-1 basis-40 rounded-lg bg-raised px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        <button
+                          type="submit"
+                          disabled={busy || !aliasDraft.trim()}
+                          className="rounded-lg bg-accent px-3 py-2 text-[12px] font-medium text-white disabled:opacity-40"
+                        >
+                          Continue
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => cancelAlias(card.slug)}
+                          className="rounded-lg px-3 py-2 text-[12px] text-ink-secondary transition-colors hover:bg-raised hover:text-ink disabled:opacity-40"
+                        >
+                          {t("connectedApps.alias.cancel")}
+                        </button>
+                      </div>
                     </form>
                   )}
                 </div>
