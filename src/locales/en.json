@@ -324,5 +324,18 @@
   "imageReference.addedLabel": "{name} was added to your next message as a reference image",
   "imageReference.addedStatus": "Attached to your next message.",
   "imageReference.openConversation": "Open the conversation this image belongs to, then try again.",
-  "imageReference.failed": "The image could not be added as a reference."
+  "imageReference.failed": "The image could not be added as a reference.",
+  "imageSettings.model.disabled": "This model cannot generate images here.",
+  "imageSettings.model.createsAndEdits": "Creates and edits images.",
+  "imageSettings.model.createsOnly": "Creates images only.",
+  "imageSettings.model.editUnavailable": "Editing is unavailable with this model.",
+  "imageSettings.model.referenceLimit": "Up to {count} reference images per edit.",
+  "imageSettings.model.referenceLimitOne": "One reference image per edit.",
+  "imageSettings.model.referenceLimitUnknown": "The reference-image limit is checked when an edit runs.",
+  "imageSettings.model.editNoQuality": "Edits do not use the quality setting.",
+  "imageSettings.model.editQualities": "Edits accept these quality settings: {qualities}.",
+  "imageSettings.option.edits": "edits",
+  "imageSettings.option.createsOnly": "creates only",
+  "imageSettings.option.unavailable": "unavailable",
+  "imageSettings.option.default": "default"
 }
