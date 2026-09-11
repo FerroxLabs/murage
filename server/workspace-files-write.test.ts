@@ -2,7 +2,7 @@
 // hold and save-version. Every assertion observes the bytes on disk, not only
 // the answer.
 import { createHash } from "node:crypto";
-import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -392,6 +392,66 @@ describe("save version", () => {
     for (const bad of [{}, { scope: f.scope, relativePath: "a.md" }, { scope: f.scope, relativePath: "a.md", revision, name: "" }, { scope: f.scope, relativePath: "a.md", revision, name: "x".repeat(201) },
       { scope: f.scope, relativePath: "a.md", revision, path: "/etc/hosts" }]) expect(codeOf(() => saveWorkspaceVersion(f.deps, bad)), JSON.stringify(bad)).toBe("invalid-request");
     expect(f.artifactCount()).toBe(0);
+  });
+});
+
+// Hetzner int-head (Linux, 48 workers): an equal-length rewrite made inside
+// one timestamp tick kept size, inode, mtime and ctime, so a revision built
+// from metadata alone stayed valid and Save version copied bytes nobody chose.
+// Each case rewrites the same number of bytes and puts the modification time
+// back, the way a quick tool edit looks on a coarse-timestamp filesystem.
+// server/workspace-revision.test.ts proves the same with every timestamp held.
+describe("an equal-length rewrite with the modification time put back", () => {
+  const rewriteKeepingTime = (path: string, content: string) => {
+    const before = lstatSync(path);
+    writeFileSync(path, content);
+    utimesSync(path, before.atime, before.mtime);
+    const after = lstatSync(path);
+    expect([after.ino, after.size]).toEqual([before.ino, before.size]);
+    expect(Math.abs(after.mtimeMs - before.mtimeMs)).toBeLessThan(1);
+  };
+
+  it("refuses Save version for the old revision and saves nothing", () => {
+    const f = fixture();
+    const path = f.put("a.md", "one");
+    const revision = f.read("a.md").revision;
+    rewriteKeepingTime(path, "two");
+    const error = refusal(() => saveWorkspaceVersion(f.deps, { scope: f.scope, relativePath: "a.md", revision }));
+    expect(error.code).toBe("revision-conflict");
+    expect(error.currentRevision).toBe(f.read("a.md").revision);
+    expect(error.currentRevision).not.toBe(revision);
+    expect(f.artifactCount()).toBe(0);
+    // The new state saves as exactly its own bytes.
+    const { artifact } = saveWorkspaceVersion(f.deps, { scope: f.scope, relativePath: "a.md", revision: error.currentRevision! });
+    expect(readArtifact(f.db, f.storage, artifact.id, f.access).bytes.toString("utf8")).toBe("two");
+  });
+
+  it("refuses a Markdown save based on the old revision and leaves the rewrite on disk", () => {
+    const f = fixture();
+    const path = f.put("a.md", "# one\n");
+    const opened = f.read("a.md");
+    rewriteKeepingTime(path, "# two\n");
+    const error = refusal(() => f.save("a.md", "# mine\n", opened.revision));
+    expect(error.code).toBe("revision-conflict");
+    expect(error.currentRevision).toBe(f.read("a.md").revision);
+    expect(readFileSync(path, "utf8")).toBe("# two\n");
+    expect(f.leftovers()).toEqual([]);
+    expect(f.artifactCount()).toBe(0);
+    // Saving the old text back over it is not "unchanged" either.
+    expect(codeOf(() => f.save("a.md", "# one\n", opened.revision))).toBe("revision-conflict");
+    expect(readFileSync(path, "utf8")).toBe("# two\n");
+  });
+
+  it("gives the rewritten file a new listing revision that matches its read", () => {
+    const f = fixture();
+    const path = f.put("notes/a.md", "alpha");
+    const listed = () => listWorkspaceDirectory(f.deps, { scope: f.scope, directory: "notes" }).entries.find(entry => entry.name === "a.md")!.revision;
+    const before = listed();
+    expect(before).toBe(f.read("notes/a.md").revision);
+    rewriteKeepingTime(path, "omega");
+    const after = listed();
+    expect(after).not.toBe(before);
+    expect(f.read("notes/a.md")).toMatchObject({ revision: after, content: "omega" });
   });
 });
 
