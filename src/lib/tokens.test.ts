@@ -254,6 +254,8 @@ describe("token drift", () => {
       "src/components/ProviderIcons.tsx": "vendor brand marks (Anthropic, OpenAI, …)",
       "src/components/HermesMark.tsx": "vendor brand mark",
       "src/components/CursorMark.tsx": "vendor brand mark",
+      "src/components/ConnectedAppsLock.tsx":
+        "vendor brand hues for the static showcase tiles (Gmail, Slack, …) — brand marks, theme-invariant by design",
       "src/components/Sidebar.tsx":
         "macOS traffic-light decoration — it mimics the OS, so it cannot follow the theme",
       "src/components/PhoneSetupFlow.tsx":
