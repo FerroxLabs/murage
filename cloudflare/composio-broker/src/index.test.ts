@@ -10,6 +10,8 @@ import {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  proxyMcp,
+  readBoundedBody,
   register,
   registrationActorKey,
   requestAlias,
@@ -395,5 +397,177 @@ describe("registration throttling identity", () => {
     expect(closed.status).toBe(503);
     expect(buckets.size).toBe(0);
     expect(inserts).toHaveLength(0);
+  });
+});
+
+describe("bounded request bodies", () => {
+  const KiB = 1024;
+  const MiB = 1024 * KiB;
+  const mcpBounds = { maxBytes: 2 * MiB, deadlineMs: 1_000, tooLargeMessage: "MCP request is too large" };
+
+  /** highWaterMark 0: the source is pulled only when the reader asks, so
+   *  `pulls` is exactly the number of chunks the broker consumed. */
+  function countingStream(chunkBytes: number, chunkCount: number) {
+    const state = { pulls: 0, cancelled: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (state.pulls >= chunkCount) {
+          controller.close();
+          return;
+        }
+        state.pulls += 1;
+        controller.enqueue(new Uint8Array(chunkBytes));
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    }, { highWaterMark: 0 });
+    return { state, stream };
+  }
+
+  function bodyRequest(stream: ReadableStream<Uint8Array> | null, contentLength?: string) {
+    const headers = new Headers();
+    if (contentLength !== undefined) headers.set("content-length", contentLength);
+    return { body: stream, headers } as unknown as Request;
+  }
+
+  async function rejectionOf(promise: Promise<unknown>) {
+    const error = await promise.then(() => null, (reason: unknown) => reason);
+    expect(error).toBeInstanceOf(Response);
+    return error as Response;
+  }
+
+  it("stops an undeclared MCP body at 2 MiB and cancels before the oversized tail", async () => {
+    const { state, stream } = countingStream(512 * KiB, 16);
+    const response = await rejectionOf(readBoundedBody(bodyRequest(stream), mcpBounds));
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "MCP request is too large" });
+    // 5 x 512 KiB is the first read past the cap; the remaining 11 chunks are never pulled.
+    expect(state.pulls).toBe(5);
+    expect(state.cancelled).toBe(true);
+  });
+
+  it("accepts a body of exactly the cap and an empty body", async () => {
+    const exact = countingStream(512 * KiB, 4);
+    await expect(readBoundedBody(bodyRequest(exact.stream), mcpBounds)).resolves.toHaveLength(2 * MiB);
+    expect(exact.state.cancelled).toBe(false);
+    await expect(readBoundedBody(bodyRequest(null), mcpBounds)).resolves.toHaveLength(0);
+    await expect(readBoundedBody(bodyRequest(countingStream(1, 0).stream, "0"), mcpBounds)).resolves.toHaveLength(0);
+  });
+
+  it("refuses an over-cap or malformed declared length before reading any bytes", async () => {
+    const declared = countingStream(512 * KiB, 16);
+    const tooLarge = await rejectionOf(readBoundedBody(bodyRequest(declared.stream, String(2 * MiB + 1)), mcpBounds));
+    expect(tooLarge.status).toBe(413);
+    expect(declared.state.pulls).toBe(0);
+    expect((await rejectionOf(readBoundedBody(bodyRequest(null, "9".repeat(40)), mcpBounds))).status).toBe(413);
+
+    for (const malformed of ["abc", "-1", "1e3", "12, 12", ""]) {
+      const stream = countingStream(KiB, 1);
+      const response = await rejectionOf(readBoundedBody(bodyRequest(stream.stream, malformed), mcpBounds));
+      expect(response.status, malformed).toBe(400);
+      expect(stream.state.pulls, malformed).toBe(0);
+    }
+  });
+
+  it("counts actual bytes when the declared length understates the body", async () => {
+    const { state, stream } = countingStream(KiB, 8);
+    const response = await rejectionOf(readBoundedBody(bodyRequest(stream, "10"), {
+      maxBytes: 2 * KiB,
+      deadlineMs: 1_000,
+      tooLargeMessage: "request body is too large",
+    }));
+    expect(response.status).toBe(413);
+    expect(state.pulls).toBe(3);
+    expect(state.cancelled).toBe(true);
+  });
+
+  it("fails a stalled upload at its read deadline and cancels it", async () => {
+    let cancelled = false;
+    const stalled = new ReadableStream<Uint8Array>({
+      pull: () => new Promise<void>(() => undefined),
+      cancel() {
+        cancelled = true;
+      },
+    }, { highWaterMark: 0 });
+    const response = await rejectionOf(readBoundedBody(bodyRequest(stalled), { ...mcpBounds, deadlineMs: 20 }));
+    expect(response.status).toBe(408);
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects an oversized chunked MCP request with 413 before charging or calling upstream", async () => {
+    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+    const { env, ctx } = testEnv(fetchCalls);
+    const prepared: string[] = [];
+    const spiedEnv = {
+      ...env,
+      DB: {
+        prepare(sql: string) {
+          prepared.push(sql);
+          return env.DB.prepare(sql);
+        },
+      },
+    };
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      fetchCalls.push({ url: String(input), init });
+      return Response.json({});
+    });
+    const { state, stream } = countingStream(512 * KiB, 16);
+    const request = new Request("https://broker.test/v1/mcp", {
+      method: "POST",
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    const installation = { id: "install-1", composio_user_id: "murage_stable", session_id: "trs_multi", disabled_at: null };
+
+    const response = await proxyMcp(request, installation, spiedEnv as never, ctx as never);
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({ error: "MCP request is too large" });
+    expect(state.pulls).toBeLessThan(16);
+    expect(state.cancelled).toBe(true);
+    expect(fetchCalls).toHaveLength(0);
+    expect(prepared).toHaveLength(0);
+  });
+
+  it("forwards a small MCP request's exact bytes upstream", async () => {
+    const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+    const { env, ctx } = testEnv(fetchCalls);
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      fetchCalls.push({ url, init });
+      if (url.includes("/tool_router/session/trs_multi")) return Response.json(session("trs_multi", "murage_stable"));
+      return Response.json({ jsonrpc: "2.0", id: 1, result: {} });
+    });
+    const payload = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const request = new Request("https://broker.test/v1/mcp", { method: "POST", body: payload });
+    const installation = { id: "install-1", composio_user_id: "murage_stable", session_id: "trs_multi", disabled_at: null };
+
+    const response = await proxyMcp(request, installation, { ...env, DAILY_CALL_CEILING: "off" } as never, ctx as never);
+    expect(response.status).toBe(200);
+    const upstream = fetchCalls.find((call) => call.url === "https://mcp.composio.dev/trs_multi");
+    expect(new TextDecoder().decode(upstream?.init?.body as Uint8Array)).toBe(payload);
+  });
+
+  it("keeps alias bodies within 2 KiB while valid aliases still parse", async () => {
+    // A real chunked Request, so a whole-body read would pull every chunk.
+    const { state, stream } = countingStream(KiB, 8);
+    const oversized = await rejectionOf(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
+      method: "POST",
+      body: stream,
+      duplex: "half",
+    } as RequestInit)));
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toEqual({ error: "request body is too large" });
+    expect(state.pulls).toBeLessThan(8);
+    expect(state.cancelled).toBe(true);
+
+    await expect(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
+      method: "POST",
+      body: JSON.stringify({ alias: "  work  " }),
+    }))).resolves.toBe("work");
+    expect((await rejectionOf(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
+      method: "POST",
+      body: "{not json",
+    })))).status).toBe(400);
   });
 });

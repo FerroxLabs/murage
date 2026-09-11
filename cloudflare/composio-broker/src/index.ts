@@ -85,6 +85,10 @@ const upstreamErrorSchema = z.object({
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const MAX_MCP_BODY = 2 * 1024 * 1024;
+const MAX_ALIAS_BODY = 2 * 1024;
+// A client that stalls mid-upload must not hold the request open indefinitely.
+const MCP_BODY_READ_DEADLINE_MS = 30_000;
+const ALIAS_BODY_READ_DEADLINE_MS = 10_000;
 const MULTI_ACCOUNT_CONFIG = {
   enable: true,
   max_accounts_per_toolkit: 5,
@@ -384,11 +388,88 @@ async function chargeCall(installation: InstallationRow, env: Env): Promise<{ ov
   }
 }
 
+interface BodyBounds {
+  maxBytes: number;
+  deadlineMs: number;
+  tooLargeMessage: string;
+}
+
+function bodyRejection(status: number, error: string) {
+  return new Response(JSON.stringify({ error }), { status, headers: JSON_HEADERS });
+}
+
+/** Read a request body without ever holding more than `maxBytes`.
+ *
+ * Content-Length is advisory. A chunked or dishonest upload is counted as it
+ * streams and the read is cancelled as soon as it passes the cap, so the
+ * oversized tail is never pulled or buffered. A malformed declared length is
+ * refused, an honest over-cap declaration is refused before any byte is read,
+ * and a stalled upload fails at `deadlineMs`. Rejections are thrown as JSON
+ * Responses (400, 408, 413) before any billing or upstream work starts.
+ */
+async function readBoundedBody(
+  request: Pick<Request, "body" | "headers">,
+  { maxBytes, deadlineMs, tooLargeMessage }: BodyBounds,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const declaredHeader = request.headers.get("content-length");
+  if (declaredHeader !== null) {
+    const declared = declaredHeader.trim();
+    if (!/^\d+$/.test(declared)) throw bodyRejection(400, "invalid content-length");
+    if (Number(declared) > maxBytes) throw bodyRejection(413, tooLargeMessage);
+  }
+  if (!request.body) return new Uint8Array(0);
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(bodyRejection(408, "request body was not received in time")), deadlineMs);
+  });
+  // The race below observes the rejection; this only stops a late timer from
+  // surfacing as unhandled while a cancel is still settling.
+  deadline.catch(() => undefined);
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      if (done) break;
+      length += value.byteLength;
+      if (length > maxBytes) throw bodyRejection(413, tooLargeMessage);
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    try {
+      reader.releaseLock();
+    } catch {
+      // A cancelled read can still be settling; the stream is already closed.
+    }
+  }
+
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 async function proxyMcp(request: Request, installation: InstallationRow, env: Env, ctx: ExecutionContext) {
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_MCP_BODY) return json({ error: "MCP request is too large" }, 413);
-  const body = await request.arrayBuffer();
-  if (body.byteLength > MAX_MCP_BODY) return json({ error: "MCP request is too large" }, 413);
+  let body: Uint8Array<ArrayBuffer>;
+  try {
+    body = await readBoundedBody(request, {
+      maxBytes: MAX_MCP_BODY,
+      deadlineMs: MCP_BODY_READ_DEADLINE_MS,
+      tooLargeMessage: "MCP request is too large",
+    });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    throw error;
+  }
   const charge = await chargeCall(installation, env);
   if (charge.over) {
     return json({
@@ -675,21 +756,20 @@ async function disconnectAccount(
 
 async function requestAlias(request: Request) {
   if (!request.body) return undefined;
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > 2048) throw new Response(JSON.stringify({ error: "request body is too large" }), { status: 413, headers: JSON_HEADERS });
+  const bytes = await readBoundedBody(request, {
+    maxBytes: MAX_ALIAS_BODY,
+    deadlineMs: ALIAS_BODY_READ_DEADLINE_MS,
+    tooLargeMessage: "request body is too large",
+  });
   let body: z.infer<typeof aliasRequestSchema>;
   try {
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).byteLength > 2048) {
-      throw new Response(JSON.stringify({ error: "request body is too large" }), { status: 413, headers: JSON_HEADERS });
-    }
+    const raw = new TextDecoder().decode(bytes);
     // Some Fetch implementations expose a zero-length POST as a non-null
     // ReadableStream. First-account authorization intentionally has no alias,
     // so accept that wire representation exactly like a missing body.
     if (!raw.trim()) return undefined;
     body = aliasRequestSchema.parse(JSON.parse(raw));
-  } catch (error) {
-    if (error instanceof Response) throw error;
+  } catch {
     throw new Response(JSON.stringify({ error: "invalid JSON body" }), { status: 400, headers: JSON_HEADERS });
   }
   try {
@@ -743,6 +823,8 @@ export {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  proxyMcp,
+  readBoundedBody,
   register,
   registrationActorKey,
   requestAlias,
