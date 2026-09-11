@@ -19,6 +19,26 @@ describe("bounded Telegram transport", () => {
     await transport.answerCallbackQuery({ id: "callback", text: "Allowed once." });
     expect(JSON.parse(fetcher.mock.calls[1][1]!.body as string)).toEqual({ callback_query_id: "callback", text: "Allowed once." });
   });
+  it("sends a multi-row question keyboard and edits a question in place keeping its keyboard (ASK3)", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok({ message_id: 7, chat: { id: 7 } })).mockResolvedValueOnce(ok({ message_id: 7, chat: { id: 7 } }));
+    const transport = new TelegramTransport({ token, fetch: fetcher });
+    const keyboard = [[{ text: "Summary", data: "n:q0:o0" }], [{ text: "Detailed", data: "n:q0:o1" }], [{ text: "Reply with text", data: "n:q0:w" }, { text: "Skip question", data: "n:q0:x" }]];
+    await transport.sendMessage({ chatId: "7", text: "Which format?", keyboard });
+    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({ chat_id: "7", text: "Which format?", reply_markup: { inline_keyboard: [
+      [{ text: "Summary", callback_data: "n:q0:o0" }], [{ text: "Detailed", callback_data: "n:q0:o1" }],
+      [{ text: "Reply with text", callback_data: "n:q0:w" }, { text: "Skip question", callback_data: "n:q0:x" }],
+    ] } });
+    await transport.editQuestionMessage({ chatId: "7", messageId: 7, text: "Which format?\nYour words: brief", keyboard: keyboard.slice(0, 1) });
+    expect(JSON.parse(fetcher.mock.calls[1][1]!.body as string)).toEqual({ chat_id: "7", message_id: 7, text: "Which format?\nYour words: brief", reply_markup: { inline_keyboard: [[{ text: "Summary", callback_data: "n:q0:o0" }]] } });
+    // bounds: no empty rows, at most 3 per row and 12 rows, 64-byte data, and never both button shapes at once
+    await expect(transport.sendMessage({ chatId: "7", text: "x", keyboard: [] })).rejects.toMatchObject({ code: "invalid-request" });
+    await expect(transport.sendMessage({ chatId: "7", text: "x", keyboard: [[{ text: "a", data: "1" }, { text: "b", data: "2" }, { text: "c", data: "3" }, { text: "d", data: "4" }]] })).rejects.toMatchObject({ code: "invalid-request" });
+    await expect(transport.sendMessage({ chatId: "7", text: "x", keyboard: Array.from({ length: 13 }, () => [{ text: "a", data: "1" }]) })).rejects.toMatchObject({ code: "invalid-request" });
+    await expect(transport.sendMessage({ chatId: "7", text: "x", keyboard: [[{ text: "a", data: "x".repeat(65) }]] })).rejects.toMatchObject({ code: "invalid-request" });
+    await expect(transport.sendMessage({ chatId: "7", text: "x", keyboard: [[{ text: "a", data: "1" }]], buttons: [{ text: "b", data: "2" }] })).rejects.toMatchObject({ code: "invalid-request" });
+    await expect(transport.editQuestionMessage({ chatId: "7", messageId: 7, text: "x", keyboard: [] })).rejects.toMatchObject({ code: "invalid-request" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it("uses fixed HTTPS methods and preserves explicit offsets and ignored update IDs", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(ok({ id: 123456, is_bot: true, username: "FixtureBot" }))
       .mockResolvedValueOnce(ok([{ update_id: 10, message: { text: "fixture" } }, { update_id: 11, edited_message: {} }]))

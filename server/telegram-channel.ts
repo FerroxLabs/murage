@@ -13,7 +13,7 @@ const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Num
 const schema = z.object({ version: z.literal(1), botIdentityId: identity, targetBotId: z.string().min(1).max(180).optional(), enabled: z.boolean(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), binding: z.object({ senderId: identity, chatId: identity }).strict().nullable(), pairing: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite() }).strict().nullable(), records: z.array(recordSchema).max(200) }).strict();
 type State = z.infer<typeof schema>;
 interface Options {
-  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage">>; botIdentityId: string; targetBotId: string;
+  file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage" | "editQuestionMessage">>; botIdentityId: string; targetBotId: string;
   approvals?: TelegramApprovalActions;
   enqueue: (input: { deliveryId: string; prompt: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
@@ -39,6 +39,7 @@ export class TelegramChannel {
       sendMessage: input => options.transport.sendMessage(input),
       answerCallbackQuery: input => options.transport.answerCallbackQuery!(input),
       ...(options.transport.settleApprovalMessage ? { settleApprovalMessage: input => options.transport.settleApprovalMessage!(input) } : {}),
+      ...(options.transport.editQuestionMessage ? { editQuestionMessage: input => options.transport.editQuestionMessage!(input) } : {}),
     }, options.now);
     this.state = { version: 1, botIdentityId: options.botIdentityId, targetBotId: options.targetBotId, enabled: false, offset: 0, binding: null, pairing: null, records: [] };
     try {
@@ -131,6 +132,13 @@ export class TelegramChannel {
         continue;
       }
       if (message && this.state.binding?.senderId === message.senderId && this.state.binding.chatId === message.chatId && !this.state.records.some(record => record.updateId === update.updateId)) {
+        // The owner tapped "Reply with text" on a question: this message is
+        // that answer (0.1.52 ASK3), never a new prompt for the bot.
+        if (this.approvals && await this.approvals.captureText(message, this.state.binding, active, signal)) {
+          if (!active()) return;
+          this.mutate(state => { state.offset = update.updateId + 1; });
+          continue;
+        }
         const records = this.state.records.filter(record => !["sent", "cancelled"].includes(record.state));
         if (records.length >= 200) { this.error = "pending-limit"; return; }
         const approval = /^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(message.text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(message.text.trim());

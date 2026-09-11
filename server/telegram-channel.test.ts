@@ -77,3 +77,27 @@ it("refuses corruption and different bot identity preserving bytes", () => {
   expect(() => new TelegramChannel(f.options)).toThrow("original data was preserved");
   expect(readFileSync(f.options.file, "utf8")).toBe("corrupt-private-token");
 });
+
+it("a text reply the approvals manager captures as a question answer is never enqueued as a prompt (ASK3)", async () => {
+  const f = fixture(), channel = new TelegramChannel({ ...f.options, transport: { ...f.transport, answerCallbackQuery: vi.fn(async () => {}) },
+    approvals: {
+      pending: () => [{ id: "card", fingerprint: "fp", summary: "Ember has a question", questions: [{ id: "q1", question: "Which name?", options: [], multiSelect: false, allowOther: true }] }],
+      resolve: vi.fn(async () => true),
+      answer: vi.fn(async () => ({ ok: true as const })),
+    } });
+  const challenge = channel.beginPairing();
+  f.updates([message(1, `/pair ${challenge.code}`)]); await channel.pollOnce();
+  expect(channel.status().paired).toBe(true);
+  // the question is published with a keyboard; the owner taps "Reply with text"
+  expect(f.transport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ keyboard: expect.any(Array) }));
+  const calls = f.transport.sendMessage.mock.calls as unknown as Array<[{ keyboard?: Array<Array<{ text: string; data: string }>> }]>;
+  const write = calls.find(call => call[0].keyboard)![0].keyboard!.flat().find(item => item.text === "Reply with text")!;
+  f.updates([{ update_id: 2, callback_query: { id: "cb", from: { id: 7, is_bot: false }, message: { message_id: 1, chat: { id: 7, type: "private" } }, data: write.data } }]);
+  await channel.pollOnce();
+  f.updates([message(3, "Call it Aurora")]); await channel.pollOnce();
+  expect(f.enqueue).not.toHaveBeenCalled();
+  expect(channel.status().pending).toBe(0);
+  // and an ordinary message afterwards is a prompt again
+  f.updates([message(4, "now do the work")]); await channel.pollOnce();
+  expect(f.enqueue).toHaveBeenCalledExactlyOnceWith({ deliveryId: "telegram:123:4", prompt: expect.stringContaining("now do the work") });
+});
