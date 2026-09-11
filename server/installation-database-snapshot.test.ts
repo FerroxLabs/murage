@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
+import { initializeArtifacts } from "./artifacts.ts";
+import { initializeInbox } from "./inbox.ts";
 import { snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 
 const roots: string[] = [];
@@ -45,6 +47,39 @@ it("preserves valid forks whose parent was inserted after an existing child", as
   f.db.prepare("UPDATE messages SET json=json_set(json,'$.parentId','later')").run();
   f.db.prepare("INSERT INTO messages VALUES (?,?,?,?,?,?,?)").run("t", "later", 2, "bot", "text", "parent", JSON.stringify({ id: "later", at: 2, role: "bot", kind: "text", text: "parent", parentId: null }));
   expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 2 });
+});
+
+it("accepts the inbox and saved-file tables the harness creates, and an older archive without the migrated columns", async () => {
+  // A real installation carries every table server/database.ts initializes;
+  // the inspector refusing them would refuse every backup made since 0.1.48.
+  const f = fixture();
+  initializeInbox(f.db); initializeArtifacts(f.db);
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 1, threads: 1 });
+  const older = fixture();
+  initializeInbox(older.db); initializeArtifacts(older.db);
+  older.db.exec("ALTER TABLE artifacts DROP COLUMN publication_id; ALTER TABLE artifacts DROP COLUMN producer");
+  expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
+});
+
+it.each([
+  ["an unknown table", "CREATE TABLE plugins(id TEXT PRIMARY KEY)"],
+  ["an unknown index on a known table", "CREATE INDEX hostile ON artifacts(name)"],
+  ["a known table with a foreign column", "ALTER TABLE inbox_item_state ADD COLUMN extra TEXT"],
+  ["a migrated column out of order", "ALTER TABLE artifacts DROP COLUMN producer"],
+  // Names every plain object inherits must not pass as allowlisted tables.
+  ["a table named constructor", `CREATE TABLE "constructor"(payload TEXT)`],
+  ["a table named __proto__", `CREATE TABLE "__proto__"(payload TEXT)`],
+  ["a table named toString", `CREATE TABLE "toString"(payload TEXT)`],
+  ["a table named hasOwnProperty", `CREATE TABLE "hasOwnProperty"(payload TEXT)`],
+  ["a table named valueOf", `CREATE TABLE "valueOf"(payload TEXT)`],
+  ["an autoindex on a table named constructor", `CREATE TABLE "constructor"(id TEXT PRIMARY KEY)`],
+  ["a named index on a table named constructor", `CREATE TABLE "constructor"(payload TEXT); CREATE INDEX messages_thread_ctor ON "constructor"(payload)`],
+])("still refuses %s", async (_name, sql) => {
+  const f = fixture();
+  initializeInbox(f.db); initializeArtifacts(f.db);
+  f.db.exec(sql);
+  await expect(snapshotInstallationDatabase(f.data, f.target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
+  expect(existsSync(f.target)).toBe(false);
 });
 
 it("copies committed WAL data, branch head and terminal receipt without the runtime Store", async () => {

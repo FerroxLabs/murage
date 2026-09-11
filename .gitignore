@@ -39,3 +39,5 @@ playwright-report
 blob-report
 playwright/.cache
 companion/.ijfw/
+# Pinned local memory model prepared for P06 (CI: qualify-memory-runtime.ts --prepare-model); ~129 MB, never committed.
+.planning/memory-evidence/

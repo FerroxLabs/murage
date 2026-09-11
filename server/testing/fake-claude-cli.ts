@@ -29,6 +29,10 @@
 //   FAKE_CLAUDE_REPLY_STATE Optional counter file shared by fresh CLI
 //                      processes so scripted replies keep their order.
 //   FAKE_CLAUDE_REPLY_GATE Optional file whose creation releases slow replies.
+//   FAKE_CLAUDE_REPLY_GATE_STEERS With the gate: also wait until this many
+//                      mid-turn steers have been read, so a gate opened right
+//                      after a steer was acknowledged cannot be seen first
+//                      (timers run before pipe reads in the event loop).
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
 //
@@ -573,9 +577,10 @@ const playTurn = (prompt: JsonValue) => {
       finish();
     };
     const gate = process.env.FAKE_CLAUDE_REPLY_GATE;
+    const gateSteers = Number(process.env.FAKE_CLAUDE_REPLY_GATE_STEERS ?? 0) || 0;
     if (gate) {
       const timer = setInterval(() => {
-        if (!existsSync(gate)) return;
+        if (!existsSync(gate) || steered.length < gateSteers) return;
         clearInterval(timer);
         finishSlow();
       }, 10);

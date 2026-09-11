@@ -1,4 +1,4 @@
-import { mkdirSync,rmSync,writeFileSync,readFileSync } from "node:fs";
+import { existsSync,mkdirSync,rmSync,writeFileSync,readFileSync } from "node:fs";
 import { join,resolve } from "node:path";
 import { beforeEach,expect,it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -16,6 +16,15 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
+/** The pinned real model (shared/memory-model-manifest.json) is a prepared
+ * fixture, not a checked-in file: CI runs the prepare step before the suite
+ * (.github/workflows/ci.yml). A missing model is a missing prerequisite and
+ * must fail by name, not as an ENOENT or a 10 s "unavailable" timeout. */
+function pinnedModelDirectory(){
+  const directory=resolve(".planning/memory-evidence/model");
+  if(!existsSync(join(directory,"onnx/model_quantized.onnx")))throw new Error(`MEMORY_MODEL_FIXTURE_MISSING: prepare it first with "node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination ${directory}"`);
+  return directory;
+}
 it("retrieves lexical candidates with exact allowed IDs and versions without embeddings",()=>{
   const index=new MemoryIndex(join(DATA_DIR,"index.db"));
   try{
@@ -55,13 +64,13 @@ it("bounds query cache storage and evicts old entries",()=>{
 });
 it("refuses altered model metadata without falling back to a download",async()=>{
   const manifest=JSON.parse(readFileSync(resolve("shared/memory-model-manifest.json"),"utf8"));manifest.files[0].sha256="0".repeat(64);
-  const embedding=new MemoryEmbeddings(resolve(".planning/memory-evidence/model"),manifest);
+  const embedding=new MemoryEmbeddings(pinnedModelDirectory(),manifest);
   await expect(embedding.embed(["query"])).rejects.toThrow("MEMORY_MODEL_UNVERIFIED");
 });
 it("uses the real local model through the worker and invalidates results after forgetting",async()=>{
   const roster={bots:[{id:"bot",threadId:"thread"}],groups:[]};reconcileMemoryRoster(roster);setMemoryMode("capture");
   appendMessage("thread",{id:"source",at:1,role:"user",kind:"text",text:"Database backups are made every night."});
-  const controller=new MemoryWorkerController({modelDirectory:resolve(".planning/memory-evidence/model")});controller.start();
+  const controller=new MemoryWorkerController({modelDirectory:pinnedModelDirectory()});controller.start();
   try{
     const deadline=Date.now()+10000;
     while(Date.now()<deadline&&!database().prepare("SELECT 1 FROM memory_projection_receipts WHERE embedding_status='indexed'").get())await new Promise(r=>setTimeout(r,50));
