@@ -61,6 +61,7 @@ import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { ScreenFrameMedia } from "./ImageMedia";
 import { ArtifactCards } from "./ArtifactCards";
+import { WorkspacePane } from "./WorkspacePane";
 import { RenameTitle } from "./RenameTitle";
 
 import { SpeakButton } from "./SpeakButton";
@@ -1336,8 +1337,19 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     });
   };
 
+  // The workspace pane (F4-T3) sits beside the chat column on a wide screen
+  // and covers it below `md`. When a document is expanded the chat column
+  // stays mounted but takes no width, so its scroll position, the composer
+  // draft and any in-flight turn survive the round trip.
+  const workspaceExpanded = state.workspacePane.open && state.workspacePane.expanded;
   return (
-    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="relative flex h-full min-w-0 flex-1 flex-row bg-app">
+    <div
+      data-testid="chat-column"
+      className="relative flex h-full min-w-0 flex-1 flex-col md:data-collapsed:invisible md:data-collapsed:w-0 md:data-collapsed:min-w-0 md:data-collapsed:flex-none md:data-collapsed:overflow-hidden"
+      data-collapsed={workspaceExpanded ? "true" : undefined}
+      aria-hidden={workspaceExpanded || undefined}
+    >
       {/* Call mode covers the thread while the bot is on the line */}
       <CallOverlay bot={bot} />
       {/* Header — a priority layout that measures its own container (U0-T1).
@@ -1543,7 +1555,8 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       />
       </div>
       </div>
-
+    </div>
+      <WorkspacePane bot={bot} />
     </main>
   );
 }
