@@ -169,8 +169,12 @@ export function doorPort(env = process.env) {
  * all proves something is listening and terminating requests there; a refused
  * connection or a timeout proves it is not.
  *
- * @param {{ port?: number, timeoutMs?: number, fetchImpl?: typeof fetch }} [opts]
- * @returns {Promise<{ answered: boolean, port: number, url: string, status?: number, reason?: string }>}
+ * Listening is not the same as being this deployment's door. That second
+ * question is `probeDoor` in `lib/door-identity.mjs`, which sends its
+ * challenge in `headers` and reads the answer from the returned `headers`.
+ *
+ * @param {{ port?: number, timeoutMs?: number, fetchImpl?: typeof fetch, headers?: Record<string, string> }} [opts]
+ * @returns {Promise<{ answered: boolean, port: number, url: string, status?: number, headers?: Headers | null, reason?: string }>}
  */
 export async function doorAnswers(opts = {}) {
   const port = Number(opts.port ?? doorPort());
@@ -187,9 +191,16 @@ export async function doorAnswers(opts = {}) {
     const res = await doFetch(url, {
       method: "GET",
       redirect: "manual",
+      ...(opts.headers ? { headers: opts.headers } : {}),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    return { answered: true, port, url, status: res?.status };
+    // Only the status and headers matter; release the body and its socket.
+    try {
+      await res?.body?.cancel?.();
+    } catch {
+      // nothing to release
+    }
+    return { answered: true, port, url, status: res?.status, headers: res?.headers ?? null };
   } catch (e) {
     return { answered: false, port, url, reason: e instanceof Error ? e.message : String(e) };
   }

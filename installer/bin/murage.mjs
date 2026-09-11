@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 
 import { BindRefused, resolveBindFromEnv } from "../lib/bind.mjs";
 import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupProbe, waitForDoor } from "../lib/companion.mjs";
+import { createDoorNonce, deploymentOwner, doorVersion, probeDoor, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { envFilePermissions, inspectEnvFile, readEnvFile, retainRecoveryCopy, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
 import {
@@ -143,20 +144,88 @@ function aptInstall(packages, label) {
   return (r.status ?? 1) === 0;
 }
 
-/** Node major version this server bundle needs. */
-const MIN_NODE_MAJOR = 20;
-const RECOMMENDED_NODE_MAJOR = 24;
+/**
+ * The oldest Node this installer runs the server on, whatever a manifest says:
+ * the server imports `node:sqlite`, and the shipped package requires 24. This
+ * used to be 20, with a warning that 20–23 "should run"; they cannot.
+ */
+export const RUNTIME_FLOOR = Object.freeze([24, 0, 0]);
+
+/** `>=X[.Y[.Z]]` or `^X[.Y[.Z]]`, the only engine spellings trusted here. */
+function parseNodeFloor(range) {
+  const m = /^\s*(?:>=|\^)\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?\s*$/.exec(String(range));
+  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null;
+}
+
+function compareVersions(a, b) {
+  for (let i = 0; i < 3; i += 1) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * The Node requirement of the server this installer would run: read from the
+ * distributed manifest (the payload's first, then the package's, then a
+ * checkout's), and never below RUNTIME_FLOOR. Never inferred from source text.
+ * @returns {{ min: readonly number[], range: string, source: string }}
+ */
+export function runtimeRequirement(installerRoot = INSTALLER_ROOT, repoRoot = REPO_ROOT, read = readFileSync) {
+  const floor = { min: RUNTIME_FLOOR, range: `>=${RUNTIME_FLOOR.join(".")}`, source: "this installer (the server needs node:sqlite)" };
+  for (const path of [join(installerRoot, "payload", "package.json"), join(installerRoot, "package.json"), join(repoRoot, "package.json")]) {
+    let range;
+    try {
+      range = JSON.parse(String(read(path, "utf8")))?.engines?.node;
+    } catch {
+      continue;
+    }
+    if (typeof range !== "string") continue;
+    const min = parseNodeFloor(range);
+    if (!min || compareVersions(min, RUNTIME_FLOOR) < 0) return floor;
+    return { min, range: range.trim(), source: path };
+  }
+  return floor;
+}
+
+/**
+ * Can this runtime run that server? Checked by `setup` and by `start` before
+ * either does anything else.
+ * @param {string} nodeVersion e.g. `process.versions.node`
+ * @param {ReturnType<typeof runtimeRequirement>} requirement
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function runtimePreflight(nodeVersion, requirement) {
+  const have = String(nodeVersion).replace(/^v/, "").split(".").slice(0, 3).map((part) => Number.parseInt(part, 10));
+  if (have.length === 0 || have.some((n) => !Number.isInteger(n))) {
+    return { ok: false, reason: `could not read the node version (${nodeVersion}); ${requirement.source} requires node ${requirement.range}.` };
+  }
+  if (compareVersions(have, requirement.min) >= 0) return { ok: true };
+  return { ok: false, reason: `node ${nodeVersion} cannot run this Murage server: ${requirement.source} requires node ${requirement.range}.` };
+}
+
+/** This installer's version, recorded with the door identity. */
+export function installerVersion(installerRoot = INSTALLER_ROOT, repoRoot = REPO_ROOT, read = readFileSync) {
+  for (const path of [join(installerRoot, "package.json"), join(repoRoot, "package.json")]) {
+    try {
+      const version = JSON.parse(String(read(path, "utf8")))?.version;
+      if (typeof version === "string" && version.trim()) return version.trim();
+    } catch {
+      // the next candidate
+    }
+  }
+  return "unknown";
+}
+
+/** Sent with the door identity, so a door started by another installer version is not adopted. */
+const INSTALLER_VERSION = doorVersion(installerVersion());
 
 function checkNode() {
-  const major = Number(process.versions.node.split(".")[0]);
-  if (major < MIN_NODE_MAJOR) {
-    fail(`node ${process.versions.node} is too old; Murage's server needs node ${MIN_NODE_MAJOR}+.`);
-    return false;
-  }
-  if (major < RECOMMENDED_NODE_MAJOR) {
-    warn(`node ${process.versions.node}; the app targets node ${RECOMMENDED_NODE_MAJOR}+. It should run, but that is the tested version.`);
-  }
-  return true;
+  const verdict = runtimePreflight(process.versions.node, runtimeRequirement());
+  if (verdict.ok) return true;
+  fail(verdict.reason);
+  console.log(c.dim("  Install node 24 or newer and re-run with it. Nothing has been changed."));
+  return false;
 }
 
 // ── tailscale enrolment ───────────────────────────────────────────────────
@@ -279,10 +348,31 @@ async function enrolTailnet(ctx, port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
  */
 async function bringDoorUp(ctx, port, harnessPort) {
   const noop = async () => {};
-  const already = await ts.doorAnswers({ port });
+  // Answering is not enough. The listener has to prove it is the door the
+  // last `murage start` here started (lib/door-identity.mjs); anything else is
+  // neither adopted nor fronted, and it is never stopped.
+  const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
+  const recorded = readDoorNonce(ctx.dataDir, { owner: ctx.account?.uid ?? euid });
+  const already = await probeDoor({
+    port,
+    nonce: recorded.nonce,
+    nonceError: recorded.error ?? undefined,
+    version: INSTALLER_VERSION,
+  });
   if (already.answered) {
-    ok(`the browser door is already answering on ${c.dim(`127.0.0.1:${port}`)}`);
-    return { up: true, started: false, stop: noop };
+    if (already.identity === "match" && already.ready) {
+      ok(`the browser door is already answering on ${c.dim(`127.0.0.1:${port}`)}, and proved it is this deployment's door (installer ${already.doorVersion})`);
+      return { up: true, started: false, stop: noop };
+    }
+    if (already.identity === "match") {
+      warn(`this deployment's browser door answers on ${c.dim(`127.0.0.1:${port}`)} but is not ready (${already.reason}); not configuring a tailnet proxy in front of it.`);
+    } else {
+      fail(`something is already listening on ${c.dim(`127.0.0.1:${port}`)}, and it is not this deployment's browser door: ${already.reason}.`);
+      console.log(c.dim("  Not configuring a tailnet proxy in front of it, and not stopping it: it is not setup's to stop."));
+      console.log(c.dim("  If it is an older `murage start`, restart that with this installer. Otherwise free the port, or"));
+      console.log(c.dim("  set MURAGE_BROWSER_PORT to one nothing else uses, and re-run setup."));
+    }
+    return { up: false, started: false, stop: noop };
   }
 
   const resolved = resolveCompanionEntry(INSTALLER_ROOT, REPO_ROOT);
@@ -299,6 +389,10 @@ async function bringDoorUp(ctx, port, harnessPort) {
   console.log(c.dim(`\n  Starting the companion sidecar to bring the browser door up…`));
   console.log(c.dim(`  ${resolved.entry} (${resolved.kind})`));
   announceDeviceDoorClosed();
+  // This sidecar's own identity. Not recorded: it lives only as long as setup.
+  // Waiting for its proof, not for any answer, is what tells it apart from
+  // something else that took the port in the meantime.
+  const ownNonce = createDoorNonce();
   const startup = new AbortController();
   let sidecar;
   let waiting = Promise.resolve();
@@ -334,7 +428,14 @@ async function bringDoorUp(ctx, port, harnessPort) {
     sidecar = spawnCompanion({
       resolved,
       env: {
-        ...companionEnv({ base: process.env, harnessPort, doorPort: port, dataDir: ctx.dataDir }),
+        ...companionEnv({
+          base: process.env,
+          harnessPort,
+          doorPort: port,
+          dataDir: ctx.dataDir,
+          doorNonce: ownNonce,
+          doorVersion: INSTALLER_VERSION,
+        }),
         // Root acting for the service account: the sidecar runs as that
         // account, so what it writes under the data dir is that account's.
         ...(ctx.spawnAs ? { HOME: ctx.account.home, USER: ctx.account.user, LOGNAME: ctx.account.user } : {}),
@@ -355,9 +456,21 @@ async function bringDoorUp(ctx, port, harnessPort) {
     waiting = waitForDoor({
       signal: startup.signal,
       alive: sidecar.alive,
-      probe: () => ts.doorAnswers({ port, fetchImpl: (url, options) => fetch(url, {
-        ...options, signal: AbortSignal.any([options.signal, startup.signal]),
-      }) }),
+      probe: async () => {
+        const proof = await probeDoor({
+          port,
+          nonce: ownNonce,
+          version: INSTALLER_VERSION,
+          fetchImpl: (url, options) => fetch(url, { ...options, signal: AbortSignal.any([options.signal, startup.signal]) }),
+        });
+        if (proof.identity === "match" && proof.ready) return { answered: true };
+        if (proof.identity === "mismatch") {
+          // Not a startup delay: whatever answered is not the sidecar setup
+          // started (or is a companion too old to answer the challenge).
+          return { answered: false, refused: true, reason: `127.0.0.1:${port} answered, but not as the sidecar setup started: ${proof.reason}` };
+        }
+        return { answered: false, reason: proof.reason };
+      },
     });
     waited = await waiting;
   } catch (error) {
@@ -365,13 +478,13 @@ async function bringDoorUp(ctx, port, harnessPort) {
     throw error;
   }
   if (!waited.up) {
-    warn(`the browser door is not running: ${c.dim(already.url)} did not answer — ${waited.reason}`);
+    warn(`the browser door is not running: ${c.dim(already.url)} — ${waited.reason}`);
     console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
     console.log(c.dim("  listening on, and the tailnet URL would answer 502."));
     await stop();
     return { up: false, started: true, stop: noop };
   }
-  ok(`the browser door answered on ${c.dim(`127.0.0.1:${port}`)}`);
+  ok(`the browser door answered on ${c.dim(`127.0.0.1:${port}`)} and proved it is the sidecar setup started`);
   return { up: true, started: true, stop };
 }
 
@@ -806,6 +919,9 @@ async function start() {
     fail("Server payload not found. Run `murage setup`, or set MURAGE_SERVER_ENTRY.");
     process.exit(1);
   }
+  // Before anything is spawned or written: a runtime that cannot run the
+  // server is a restart loop under systemd, not a start.
+  if (!checkNode()) process.exit(1);
   const env = { ...process.env, ...readEnvFile(ENV_FILE) };
   const plan = planStart(env, {
     entry: found.entry,
@@ -825,6 +941,17 @@ async function start() {
   // including when the operator launched it from a development shell.
   env.MURAGE_NO_DEV_DESKTOP_SECRET = "1";
   env.MURAGE_COMPANION_TOKEN = randomBytes(32).toString("hex");
+  // This start's door identity (lib/door-identity.mjs): recorded 0600 for
+  // `setup` and `status`, handed to the sidecar only. An inherited one belongs
+  // to some other start, and the harness has no use for it.
+  delete env.MURAGE_DOOR_NONCE;
+  delete env.MURAGE_DOOR_VERSION;
+  const doorNonce = createDoorNonce();
+  try {
+    writeDoorNonce(env.MURAGE_DATA_DIR, doorNonce);
+  } catch (error) {
+    warn(`could not record the door identity in ${env.MURAGE_DATA_DIR} (${error.message}); \`murage setup\` and \`murage status\` will not recognise this door.`);
+  }
 
   console.log(c.dim(`  binding ${plan.address}:${plan.port} (${plan.mode})`));
   const args = found.entry.endsWith(".ts") ? ["--experimental-strip-types", found.entry] : [found.entry];
@@ -860,6 +987,8 @@ async function start() {
     harness.child.once("exit", (code) => { void shutdown(code ?? 1); });
     starting = startSidecar(env, plan.port, {
       signal: startup.signal,
+      doorNonce,
+      doorVersion: INSTALLER_VERSION,
       onStarted: child => { sidecar = child; },
       onError: error => {
         if (!stopping) fail(`the companion sidecar could not start: ${error.message}`);
@@ -921,6 +1050,8 @@ export async function startSidecar(env, harnessPort, deps = {}) {
       doorPort: door,
       dataDir: env.MURAGE_DATA_DIR || DATA_DIR,
       publicOrigin: origin,
+      doorNonce: deps.doorNonce ?? null,
+      doorVersion: deps.doorVersion ?? INSTALLER_VERSION,
     }),
     stdio: "inherit",
   });
@@ -974,7 +1105,7 @@ async function status() {
   if (addrs.length) ok(`this host holds tailnet addresses: ${c.dim(addrs.join(", "))}`);
   else warn("this host holds no tailnet address (network-trust probe)");
 
-  await reportDoor();
+  await reportDoor(env.MURAGE_DATA_DIR || DATA_DIR);
 
   if (!ts.isInstalled()) {
     fail("tailscale is not installed — there is no secure path into this box");
@@ -1014,15 +1145,25 @@ async function status() {
  * Both questions, not one. "Not running" is a `murage start` away; "not
  * installed" is a build step away, and a status that conflated them sent
  * people to restart a process that does not exist here.
+ *
+ * And a third: whatever answers has to prove it is the door the last
+ * `murage start` here started (lib/door-identity.mjs). An unrelated server on
+ * the port is reported as exactly that, not as a healthy door.
+ * @param {string} dataDir
  */
-async function reportDoor() {
+async function reportDoor(dataDir) {
   const resolved = resolveCompanionEntry(INSTALLER_ROOT, REPO_ROOT);
   if (resolved) ok(`companion sidecar present: ${c.dim(resolved.entry)} (${resolved.kind})`);
   else fail("the companion sidecar is NOT in this install — nothing can serve the browser door");
 
-  const door = await ts.doorAnswers({ port: DOOR_PORT });
-  if (door.answered) ok(`browser door answering on ${c.dim(`127.0.0.1:${DOOR_PORT}`)} (HTTP ${door.status})`);
-  else fail(`browser door NOT answering on ${c.dim(`127.0.0.1:${DOOR_PORT}`)} — ${door.reason}`);
+  const recorded = readDoorNonce(dataDir, { owner: deploymentOwner(dataDir) });
+  const door = await probeDoor({ port: DOOR_PORT, nonce: recorded.nonce, nonceError: recorded.error ?? undefined, version: INSTALLER_VERSION });
+  const where = c.dim(`127.0.0.1:${DOOR_PORT}`);
+  if (!door.answered) fail(`browser door NOT answering on ${where} — ${door.reason}`);
+  else if (door.identity === "match" && door.ready) {
+    ok(`browser door answering on ${where} (HTTP ${door.status}), and proved it is this deployment's door (installer ${door.doorVersion})`);
+  } else if (door.identity === "match") fail(`this deployment's browser door answers on ${where} but is not ready (${door.reason})`);
+  else fail(`something answers on ${where} (HTTP ${door.status}), but it is NOT this deployment's browser door: ${door.reason}`);
 }
 
 function resetpass() {

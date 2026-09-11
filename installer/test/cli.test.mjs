@@ -5,18 +5,30 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { SETUP_NOT_SECURED, planStart, resolveServerEntry, serverSupportsBindAddress, serverSupportsResetPass } from "../bin/murage.mjs";
+import {
+  RUNTIME_FLOOR,
+  SETUP_NOT_SECURED,
+  installerVersion,
+  planStart,
+  resolveServerEntry,
+  runtimePreflight,
+  runtimeRequirement,
+  serverSupportsBindAddress,
+  serverSupportsResetPass,
+} from "../bin/murage.mjs";
 import { envFilePermissions, readEnvFile } from "../lib/env-file.mjs";
 import { UNIT_PATH, stageUnit, unitText } from "../lib/systemd.mjs";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "murage.mjs");
-const scratch = () => mkdtempSync(join(tmpdir(), "murage-cli-test-"));
+// Real paths: a CLI copy under macOS's /var -> /private/var symlink would not
+// recognise itself as the entry point, and would exit 0 having run nothing.
+const scratch = () => realpathSync(mkdtempSync(join(tmpdir(), "murage-cli-test-")));
 
 // A server build that hardcodes 127.0.0.1, which is what Murage 0.1.44 does.
 const LOOPBACK_ONLY_SERVER = `server.listen(PORT, "127.0.0.1", () => {});`;
@@ -317,6 +329,90 @@ test("setup refuses to rewrite an env file it cannot carry over, and changes not
   assert.ok(!/KEEPME|PASTEDONITSOWNLINE/.test(out), out);
   assert.equal(readFileSync(envPath, "utf8"), text);
   assert.equal(existsSync(log), false, "refused before tailscale was touched");
+});
+
+// ── I6: the runtime is checked against the payload before anything happens ──
+
+test("the runtime floor is node 24: 20, 22 and 23 are refused, not warned about", () => {
+  const requirement = runtimeRequirement("/no/installer", "/no/repo", () => {
+    throw new Error("ENOENT");
+  });
+  assert.deepEqual([...requirement.min], [24, 0, 0]);
+  assert.deepEqual([...RUNTIME_FLOOR], [24, 0, 0]);
+  for (const version of ["20.19.0", "22.12.0", "23.11.1", "v22.5.0"]) {
+    const verdict = runtimePreflight(version, requirement);
+    assert.equal(verdict.ok, false, version);
+    assert.match(verdict.reason, /requires node >=24\.0\.0/);
+  }
+  for (const version of ["24.0.0", "24.20.0", "v25.1.0"]) assert.deepEqual(runtimePreflight(version, requirement), { ok: true }, version);
+  assert.equal(runtimePreflight("banana", requirement).ok, false);
+});
+
+test("the requirement comes from the distributed manifest, payload first, and never drops below the floor", () => {
+  const files = {
+    "/inst/payload/package.json": JSON.stringify({ engines: { node: ">=24.3" } }),
+    "/inst/package.json": JSON.stringify({ engines: { node: ">=20" } }),
+    "/repo/package.json": JSON.stringify({ engines: { node: ">=26" } }),
+  };
+  const read = (p) => {
+    if (!(p in files)) throw new Error("ENOENT");
+    return files[p];
+  };
+  assert.deepEqual(runtimeRequirement("/inst", "/repo", read), { min: [24, 3, 0], range: ">=24.3", source: "/inst/payload/package.json" });
+  delete files["/inst/payload/package.json"];
+  assert.deepEqual([...runtimeRequirement("/inst", "/repo", read).min], [24, 0, 0], "a manifest asking for less than the server needs does not loosen the floor");
+  delete files["/inst/package.json"];
+  assert.deepEqual(runtimeRequirement("/inst", "/repo", read), { min: [26, 0, 0], range: ">=26", source: "/repo/package.json" });
+  files["/repo/package.json"] = JSON.stringify({ engines: { node: "24 || 26" } });
+  assert.deepEqual([...runtimeRequirement("/inst", "/repo", read).min], [24, 0, 0], "a range this installer cannot read falls back to the floor");
+  assert.equal(installerVersion("/inst", "/repo", read), "unknown");
+
+  const checkout = resolve(dirname(CLI), "..", "..");
+  const manifest = JSON.parse(readFileSync(join(checkout, "package.json"), "utf8"));
+  assert.equal(runtimeRequirement(resolve(dirname(CLI), ".."), checkout).range, manifest.engines.node, "this checkout's manifest is the one read");
+  assert.equal(installerVersion(resolve(dirname(CLI), ".."), checkout), manifest.version);
+});
+
+test("setup and start refuse an incompatible runtime before doing anything (I6)", () => {
+  // A copy of the CLI whose distributed manifest asks for a node nobody has,
+  // run on the real runtime executing this test.
+  const root = scratch();
+  mkdirSync(join(root, "installer", "bin"), { recursive: true });
+  cpSync(join(dirname(dirname(CLI)), "lib"), join(root, "installer", "lib"), { recursive: true });
+  cpSync(CLI, join(root, "installer", "bin", "murage.mjs"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "murage", version: "0.0.0-test", engines: { node: ">=99" } }));
+  const cli = join(root, "installer", "bin", "murage.mjs");
+  const log = join(root, "argv.log");
+  const stub = join(root, "tailscale-stub");
+  writeFileSync(stub, `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\necho '{}'\n`, { mode: 0o755 });
+  const harnessRan = join(root, "harness-ran");
+  const entry = join(root, "server.mjs");
+  writeFileSync(entry, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(harnessRan)}, "ran");`);
+  const env = {
+    ...process.env,
+    MURAGE_SERVER_ENTRY: entry,
+    MURAGE_DATA_DIR: join(root, "data"),
+    MURAGE_ENV_FILE: join(root, "data", "murage.env"),
+    MURAGE_TAILSCALE_BIN: stub,
+    MURAGE_COMPANION_ENTRY: join(root, "no-companion.mjs"),
+    NO_COLOR: "1",
+  };
+  for (const command of ["setup", "start"]) {
+    let status = 0;
+    let out = "";
+    try {
+      out = execFileSync(process.execPath, [cli, command], { encoding: "utf8", timeout: 20_000, stdio: ["ignore", "pipe", "pipe"], env });
+    } catch (e) {
+      status = e.status ?? 0;
+      out = (e.stdout ?? "") + (e.stderr ?? "");
+    }
+    assert.equal(status, 1, `${command}: ${out}`);
+    assert.match(out, new RegExp(`node ${process.versions.node.replaceAll(".", "\\.")} cannot run this Murage server: .*package\\.json requires node >=99`), out);
+    assert.match(out, /Nothing has been changed/);
+  }
+  assert.equal(existsSync(join(root, "data")), false, "no data dir, env file or door identity was created");
+  assert.equal(existsSync(log), false, "tailscale was never called");
+  assert.equal(existsSync(harnessRan), false, "the harness was never started");
 });
 
 test("MURAGE_TAILSCALE_BIN points at a specific CLI, and a missing one is not found", async () => {

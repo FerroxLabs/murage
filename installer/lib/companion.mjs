@@ -120,6 +120,10 @@ export function resolveCompanionEntry(installerRoot, repoRoot, exists = existsSy
  *   actually answers on, when one was VERIFIED to be configured. It decides
  *   the session cookie (`__Host-` + `Secure` on https) and the QR the door
  *   prints, so it is passed only when the proxy is known to be there.
+ * @param {string | null} [opts.doorNonce] the nonce this start recorded (or
+ *   setup's own, for its temporary sidecar); see `lib/door-identity.mjs`.
+ *   An inherited one is always dropped: it would belong to another start.
+ * @param {string} [opts.doorVersion] the installer version that started it
  * @returns {Record<string, string>}
  */
 export function companionEnv(opts) {
@@ -127,6 +131,8 @@ export function companionEnv(opts) {
   // Electron-owned, and meaningless — worse, misleading — without Electron.
   delete base.MURAGE_COMPANION_INTERNAL_ORIGIN;
   delete base.MURAGE_COMPANION_HOSTED_URL;
+  delete base.MURAGE_DOOR_NONCE;
+  delete base.MURAGE_DOOR_VERSION;
 
   const origin = typeof opts.publicOrigin === "string" ? opts.publicOrigin.trim() : "";
   /** @type {Record<string, string>} */
@@ -141,6 +147,11 @@ export function companionEnv(opts) {
   out.MURAGE_COMPANION_BIND = "off";
   out.MURAGE_BROWSER_SCHEME = origin.startsWith("https://") ? "https" : "http";
   out.MURAGE_BROWSER_PUBLIC_ORIGIN = origin;
+  // The door's identity (lib/door-identity.mjs), for this sidecar only.
+  if (typeof opts.doorNonce === "string" && /^[a-f0-9]{64}$/.test(opts.doorNonce)) {
+    out.MURAGE_DOOR_NONCE = opts.doorNonce;
+    out.MURAGE_DOOR_VERSION = String(opts.doorVersion ?? "unknown");
+  }
   // `companion/src/state.ts` defaults this to `~/.murage-companion`. The
   // staged systemd unit sets `ProtectHome=read-only`, so a sidecar left on
   // the default would fail its first write under the unit and nowhere else —
@@ -154,7 +165,9 @@ export function companionEnv(opts) {
 /**
  * Wait for the browser door to answer, or give up and say so. Never throws.
  * @param {object} opts
- * @param {() => Promise<{ answered: boolean, reason?: string }>} opts.probe
+ * @param {() => Promise<{ answered: boolean, refused?: boolean, reason?: string }>} opts.probe
+ *   `refused` means an answer that settles it: something replied, and it is
+ *   not the door being waited for. Waiting longer cannot change that.
  * @param {() => boolean} [opts.alive] false once the child has exited
  * @param {number} [opts.attempts]
  * @param {number} [opts.sleepMs]
@@ -173,6 +186,7 @@ export async function waitForDoor(opts) {
     const r = await opts.probe();
     if (opts.signal?.aborted) return { up: false, reason: "door startup cancelled" };
     if (r.answered) return { up: true };
+    if (r.refused) return { up: false, reason: r.reason ?? reason };
     reason = r.reason ?? reason;
     if (i < attempts - 1) await wait(sleepMs);
   }
