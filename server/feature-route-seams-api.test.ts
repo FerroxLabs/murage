@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
@@ -27,10 +28,11 @@ afterAll(async () => { await fixture?.close(); });
 
 it("delegates workspace-file and media prefixes to their modules for the desktop only", async () => {
   // F5-T1 filled media: the bare prefix is not a route and an empty resolve
-  // body is refused. Workspace files stay the K0 skeleton until R3-T1/F4-T1.
+  // body is refused. R3-T1 filled workspace discovery: an unknown scope is
+  // refused and the bare prefix is not a route. F4-T1 still owns write.
   const cases: Array<[string, string, unknown, number, string]> = [
-    ["GET", "/api/workspace-files", undefined, 501, "not-implemented"],
-    ["GET", "/api/workspace-files/list?botId=b&threadId=t", undefined, 501, "not-implemented"],
+    ["GET", "/api/workspace-files", undefined, 404, "not-found"],
+    ["GET", "/api/workspace-files/list?botId=b&threadId=t", undefined, 404, "scope-unavailable"],
     ["POST", "/api/workspace-files/write", {}, 501, "not-implemented"],
     ["GET", "/api/media", undefined, 404, "no-such-route"],
     ["POST", "/api/media/resolve", {}, 400, "invalid-request"],
@@ -52,6 +54,38 @@ it("delegates workspace-file and media prefixes to their modules for the desktop
   // A look-alike path is not captured by the prefix.
   expect((await call("GET", "/api/workspace-filesx", desktop)).status).not.toBe(501);
 });
+
+it("discovers a nested file in a conversation's managed workspace without registering it (R3-T1)", async () => {
+  const created = await call("POST", "/api/bots", desktop, { name: "Discovery fixture", modelSelection: { instanceId: "verification", model } });
+  expect(created.status).toBe(201);
+  const bot = created.body.bot, scope = `botId=${bot.id}&threadId=${bot.threadId}`;
+  const before = await call("GET", `/api/workspace-files/root?${scope}`, desktop);
+  expect(before.status).toBe(200);
+  expect(before.body).toMatchObject({ state: "ready", managed: true });
+  expect((await call("POST", `/api/bots/${bot.id}/messages`, desktop, { threadId: bot.threadId, text: "discovery fixture turn" })).status).toBe(202);
+  await expect.poll(async () => {
+    const state = (await call("GET", "/api/bots?messages=0", desktop)).body.bots.find((item: any) => item.id === bot.id);
+    return state?.tasks?.find((task: any) => task.threadId === bot.threadId)?.busy;
+  }, { timeout: 15000 }).toBe(false);
+  const root = await call("GET", `/api/workspace-files/root?${scope}`, desktop);
+  const taskWorkspace = realpathSync.native(join(fixture.info.dataDir, "workspaces", bot.id, "threads", bot.threadId));
+  expect(root.body).toEqual({ scope: { botId: bot.id, threadId: bot.threadId }, state: "ready", label: "Discovery fixture", displayPath: taskWorkspace, managed: true });
+  // What a shell tool would leave behind: a nested report and no register call.
+  mkdirSync(join(taskWorkspace, "reports", "weekly"), { recursive: true });
+  writeFileSync(join(taskWorkspace, "reports", "weekly", "result.html"), "<h1>Weekly</h1>");
+  const listed = await call("GET", `/api/workspace-files/list?${scope}`, desktop);
+  expect(listed.status).toBe(200);
+  expect(listed.body.entries).toContainEqual(expect.objectContaining({ name: "reports", relativePath: "reports", kind: "directory", state: "local" }));
+  const found = await call("GET", `/api/workspace-files/search?${scope}&query=RESULT`, desktop);
+  expect(found.status).toBe(200);
+  expect(found.body).toMatchObject({ incomplete: false, entries: [{ name: "result.html", relativePath: "reports/weekly/result.html", kind: "file", state: "local", bytes: 15 }] });
+  expect(found.body.entries[0].revision).toMatch(/^r1\./);
+  expect(found.body.entries[0]).not.toHaveProperty("producer");
+  expect((await call("GET", `/api/artifacts?botId=${bot.id}`, desktop)).body.total).toBe(0);
+  for (const headers of [{}, { ...desktop, "x-murage-companion": "1" }]) {
+    expect((await call("GET", `/api/workspace-files/search?${scope}&query=result`, headers)).status).toBe(404);
+  }
+}, 30000);
 
 it("serves resolve-image-reference only to the active turn's agents capability", async () => {
   const unauthenticated = await call("POST", "/api/internal/resolve-image-reference", {}, { source: { kind: "attachment", attachmentId: "x.png" } });

@@ -1,10 +1,13 @@
-import { closeSync, existsSync, ftruncateSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { closeSync, existsSync, ftruncateSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
-import { artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess } from "./artifacts.ts";
+import {
+  artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
+  artifactRelativePathParts, artifactSourceFingerprint, authorizedArtifactRoot, isPrivateWorkspaceName, safeArtifactDirectory, verifiedArtifactSource,
+} from "./artifacts.ts";
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
@@ -126,6 +129,28 @@ it("keeps preview responses inert and downloads byte-exact with attachment heade
   writeFileSync(join(f.workspace, "report.pdf"), "fake PDF bytes");
   const pdf = registerArtifact(f.db, f.storage, { ...f.input, relativePath: "report.pdf" }, f.access);
   expect(previewArtifact(f.db, f.storage, pdf.id, f.access).mode).toBe("download");
+});
+
+it("exports the registration path rules unchanged for workspace discovery (R3-T1)", () => {
+  const f = fixture();
+  expect(artifactRelativePathParts("reports/weekly/result.html")).toEqual(["reports", "weekly", "result.html"]);
+  for (const path of ["../x", "/etc/passwd", "a//b", ".env", "a/./b", "a\\b", "C:x"]) expect(() => artifactRelativePathParts(path), path).toThrow("relative file path");
+  for (const path of ["memory/x.md", "notes/MEMORY.md", "Skills/tool.md", "CLAUDE.md", "a/credentials"]) expect(() => artifactRelativePathParts(path), path).toThrow("Private setup");
+  expect(isPrivateWorkspaceName("CLAUDE.md", true)).toBe(true);
+  expect(isPrivateWorkspaceName("CLAUDE.md", false)).toBe(false);
+  expect(isPrivateWorkspaceName("Credentials", false)).toBe(true);
+  expect(isPrivateWorkspaceName("reports", true)).toBe(false);
+  const root = authorizedArtifactRoot(f.workspace);
+  expect(root).toBe(realpathSync.native(f.workspace));
+  expect(() => authorizedArtifactRoot(homedir())).toThrow("dedicated workspace");
+  expect(() => authorizedArtifactRoot("relative/workspace")).toThrow("authorized workspace");
+  expect(safeArtifactDirectory(root).isDirectory()).toBe(true);
+  const source = verifiedArtifactSource(root, "report.html");
+  expect(source.stat.size).toBe(Buffer.byteLength(f.content));
+  const stat = lstatSync(join(root, "report.html"));
+  expect(artifactSourceFingerprint(stat)).toBe(JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]));
+  symlinkSync(join(root, "report.html"), join(root, "alias.html"));
+  expect(() => verifiedArtifactSource(root, "alias.html")).toThrow("Linked files");
 });
 
 it("describes registry metadata without reading the saved payload and preserves scope denial", () => {

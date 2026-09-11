@@ -40,11 +40,16 @@ export function artifactWorkspaceIdentity(path: string): string {
   }
   fail(403, "An authorized workspace is required.");
 }
+/** Private setup and memory names. `last` marks the final path segment,
+ * where the setup file names apply as well as the private folder names. */
+export function isPrivateWorkspaceName(name: string, last: boolean): boolean {
+  return /^(memory|skills|credentials)$/i.test(name) || (last && /^(MEMORY|SOUL|AGENTS|CLAUDE)\.md$/i.test(name));
+}
 function relativePath(path: string) {
   if (typeof path !== "string" || path.length > 2048 || /[\\\u0000-\u001f:]/.test(path) || isAbsolute(path)) fail(400, "Use a relative file path inside this task's workspace.");
   const parts = path.split("/");
   if (parts.some(part => !part || part === "." || part === ".." || part.startsWith(".") || part.length > 255)) fail(400, "Use a relative file path inside this task's workspace.");
-  if (parts.some(part => /^(memory|skills|credentials)$/i.test(part)) || /^(MEMORY|SOUL|AGENTS|CLAUDE)\.md$/i.test(parts.at(-1)!)) fail(403, "Private setup and memory files are not deliverables.");
+  if (parts.some((part, index) => isPrivateWorkspaceName(part, index === parts.length - 1))) fail(403, "Private setup and memory files are not deliverables.");
   return parts;
 }
 function sourceFile(root: string, relative: string) {
@@ -59,6 +64,15 @@ function sourceFile(root: string, relative: string) {
   }
   return { path, stat: observed.at(-1)![1], observed };
 }
+// 0.1.52 R3-T1: workspace discovery (server/workspace-files.ts) reuses these
+// exact rules instead of a second copy. Behaviour is unchanged.
+export {
+  rootPath as authorizedArtifactRoot,
+  relativePath as artifactRelativePathParts,
+  directory as safeArtifactDirectory,
+  sourceFile as verifiedArtifactSource,
+  fingerprint as artifactSourceFingerprint,
+};
 function readVerified(path: string, limit: number, expected?: Stats) {
   const before = expected ?? lstatSync(path);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) fail(409, "Only ordinary files are supported.");
