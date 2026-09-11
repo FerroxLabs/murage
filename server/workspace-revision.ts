@@ -25,6 +25,27 @@
 // no caller can set) moves past the remembered one on every filesystem whose
 // granularity is finer than the window. A file that is still settling is
 // hashed again on every observation. This is Git's "racy clean" rule.
+//
+// The rule stands on ctime being the kernel's own record of the last change.
+// Where the stamps cannot promise that, the digest is not remembered and the
+// file is hashed on every observation (canRememberDigest):
+// - ctime equal to mtime, to the full precision the stat reports. A plain
+//   write sets both from one clock reading, and a mount that has no change
+//   time of its own (FUSE, SMB, FAT) mirrors mtime into ctime; the two look
+//   the same. On the first, a rewrite that puts mtime back still moves ctime;
+//   on the second it moves nothing, and the remembered digest would name
+//   bytes that are gone. A rename, chmod or an editor save (staged file,
+//   renamed into place) gives ctime its own value again.
+// - both stamps on a whole second. A coarse mount whose server clock lags
+//   the local one makes a fresh write look settled at once, and the next
+//   rewrite inside that second keeps every field.
+// - a stamp ahead of the local clock: the settle window means nothing then.
+//
+// Cost, measured on the 0.1.52 build Mac (Apple silicon, APFS, load average
+// above 20): one 200-entry page of 2 MiB files hashes in 0.26-0.39 s from a
+// cold disk, 0.19-0.28 s page-cached, and answers in 2-6 ms once remembered.
+// A file a plain write left with ctime equal to mtime pays the hashing cost
+// on every page. No further bound is applied at that cost.
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readSync, type Stats } from "node:fs";
 import { join } from "node:path";
@@ -57,6 +78,20 @@ function remember(key: string, digest: string): void {
   digests.set(key, digest);
 }
 
+/** Whether a digest read of `stat` that began at `startedAt` (local clock,
+ * ms) may be reused for the same fingerprint later: the state is settled and
+ * ctime is a change time of its own (the file header says why each stamp
+ * shape is refused). Exported for the tests only. */
+export function canRememberDigest(stat: Pick<Stats, "mtimeMs" | "ctimeMs">, startedAt: number): boolean {
+  const { mtimeMs, ctimeMs } = stat;
+  if (!Number.isFinite(mtimeMs) || !Number.isFinite(ctimeMs)) return false;
+  if (ctimeMs === mtimeMs) return false;
+  if (mtimeMs % 1000 === 0 && ctimeMs % 1000 === 0) return false;
+  const newest = Math.max(mtimeMs, ctimeMs);
+  if (newest > startedAt) return false;
+  return newest <= startedAt - WORKSPACE_REVISION_SETTLE_MS;
+}
+
 /** SHA-256 of exactly the file state `stat` observed at `path`, read through
  * a descriptor that must still be that state before and after the read. */
 function digestOf(path: string, stat: Stats): string | "changed" | "unreadable" {
@@ -82,8 +117,7 @@ function digestOf(path: string, stat: Stats): string | "changed" | "unreadable" 
     }
     if (readSync(fd, Buffer.alloc(1), 0, 1, null) !== 0 || workspaceStatFingerprint(fstatSync(fd)) !== expected) return "changed";
     const digest = sha256Hex(bytes);
-    const newest = Math.max(stat.mtimeMs, stat.ctimeMs);
-    if (Number.isFinite(newest) && newest <= startedAt - WORKSPACE_REVISION_SETTLE_MS) remember(key, digest);
+    if (canRememberDigest(stat, startedAt)) remember(key, digest);
     return digest;
   } catch { return "unreadable"; }
   finally { closeSync(fd); }
