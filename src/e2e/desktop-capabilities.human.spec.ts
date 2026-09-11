@@ -99,7 +99,7 @@ test.beforeAll(async () => {
       },
     }],
   });
-  await server.listen(await freePortBlock([0]));
+  await server.listen(Number(process.env.MURAGE_E2E_UI_PORT) || await freePortBlock([0]));
   const address = server.httpServer!.address();
   if (!address || typeof address === "string") throw new Error("fixture has no TCP address");
   origin = `http://127.0.0.1:${address.port}`;
@@ -107,10 +107,15 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => { await server?.close(); if (cache) rmSync(cache, { recursive: true, force: true }); });
 
-async function mount(page: Page, component: string, desktop = false) {
+async function mount(page: Page, component: string, desktop = false, { claudeAccounts = { accounts: [] } as unknown } = {}) {
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/desktop-secret") return route.fulfill({ json: { secret: "fixture-proof" } });
+    // Engines settings list Claude accounts (538629bc). The server answers
+    // { accounts } on the desktop and 404 elsewhere (server/index.ts).
+    if (path === "/api/claude-accounts") return desktop
+      ? route.fulfill({ json: claudeAccounts })
+      : route.fulfill({ status: 404, json: { error: "no such route" } });
     if (path === "/api/config") return route.fulfill({ json: { surface: desktop ? "desktop" : "remote", profile: { name: "Fixture name", email: "fixture@example.com" } } });
     if (path === "/api/connectors/catalog") return route.fulfill({ json: { cards: [], configured: false, mode: "unavailable" } });
     if (path === "/api/connectors/connected") return route.fulfill({ json: { services: {} } });
@@ -126,6 +131,7 @@ async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
     unreadable: false,
     statusReads: 0,
     authorizations: 0,
+    aliases: [] as unknown[],
     url: "https://oauth.example.invalid/fixture-existing-account",
   };
   await page.addInitScript(() => {
@@ -145,6 +151,8 @@ async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
     } });
     if (url.pathname === "/api/connectors/gmail/authorize") {
       fixture.authorizations++;
+      const body = route.request().postData();
+      fixture.aliases.push(body ? JSON.parse(body).alias : undefined);
       return route.fulfill({ json: { url: fixture.url } });
     }
     if (url.pathname === "/api/connectors" || url.pathname === "/api/connectors/connected") {
@@ -235,13 +243,26 @@ test("pending OAuth without a cached URL checks and polls without authorizing an
 
 test("pending OAuth Continue reopens the cached URL without creating another account", async ({ page }, testInfo) => {
   const fixture = await mountPendingOAuth(page, { connected: false, pending: false, accounts: [] });
+  // a73d3346 (F3-T4, OpenMausBot #758): Connect labels the first account
+  // before any authorization starts; the form's Continue is what authorizes.
   await page.getByRole("button", { name: "Connect", exact: true }).click();
+  const label = page.getByRole("textbox", { name: "Label for the new Gmail account", exact: true });
+  await expect(label).toBeFocused();
+  expect(fixture.authorizations).toBe(0);
+  await label.fill("work");
+  await page.screenshot({ path: testInfo.outputPath("pending-oauth-label.png") });
+  await page.locator("form").getByRole("button", { name: "Continue", exact: true }).click();
+  await expect.poll(() => page.evaluate("window.pendingOAuthOpened")).toEqual([fixture.url]);
+  await expect(label).toHaveCount(0);
   const resume = page.getByRole("button", { name: "Continue", exact: true });
   await expect(resume).toBeEnabled();
+  await expect(page.getByText("Finish setup in your browser", { exact: true })).toBeVisible();
   await resume.click();
   await resume.click();
   await expect.poll(() => page.evaluate("window.pendingOAuthOpened")).toEqual([fixture.url, fixture.url, fixture.url]);
   expect(fixture.authorizations).toBe(1);
+  expect(fixture.aliases).toEqual(["work"]);
+  await expect(page.getByRole("textbox", { name: "Label for the new Gmail account" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Label for another Gmail account" })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("pending-oauth-continue.png") });
 });
@@ -293,7 +314,7 @@ test("remote approvals retain once and deny without persistent grants", async ({
   await expect(page.getByRole("button", { name: "Always allow", exact: true })).toHaveCount(0);
 });
 
-test("engine enablement requires confirmation, stays pending, then reflects verified status", async ({ page }) => {
+test("engine enablement requires confirmation, stays pending, then reflects verified status", async ({ page }, testInfo) => {
   await mount(page, "engines-api", true);
   let writes = 0;
   let release!: () => void;
@@ -313,14 +334,16 @@ test("engine enablement requires confirmation, stays pending, then reflects veri
   await page.getByRole("button", { name: "Confirm enable", exact: true }).click();
   await expect.poll(() => writes).toBe(1);
   await expect(page.getByRole("button", { name: "Saving...", exact: true })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("engine-enable-pending.png") });
   release();
   await expect(page.getByRole("status")).toHaveText("Engine enabled.");
   await expect(page.getByRole("button", { name: "Disable", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Set CLI…", exact: true })).toHaveCount(0);
   expect(writes).toBe(1);
+  await page.screenshot({ path: testInfo.outputPath("engine-enabled.png") });
 });
 
-test("engine enablement failure stays actionable without claiming success", async ({ page }) => {
+test("engine enablement failure stays actionable without claiming success", async ({ page }, testInfo) => {
   await mount(page, "engines", true);
   await page.route("**/api/instances/engine-fixture", route => route.fulfill({ status: 409, json: { error: "Provider settings are busy. Try again." } }));
   await page.getByRole("button", { name: "Enable", exact: true }).click();
@@ -328,6 +351,18 @@ test("engine enablement failure stays actionable without claiming success", asyn
   await expect(page.getByRole("alert")).toHaveText("Provider settings are busy. Try again.");
   await expect(page.getByRole("button", { name: "Confirm enable", exact: true })).toBeEnabled();
   await expect(page.getByRole("status")).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("engine-enable-failed.png") });
+});
+
+test("engine settings stay usable when the Claude account list cannot be read", async ({ page }, testInfo) => {
+  // Before RED2F this body blanked the whole page: ClaudeAccountsSettings threw
+  // on an undefined list and the Enable button detached under the click.
+  await mount(page, "engines", true, { claudeAccounts: { error: "Unexpected success body" } });
+  await expect(page.getByRole("alert")).toHaveText("Could not read the Claude account list. Use Refresh accounts to try again.");
+  await expect(page.getByRole("button", { name: "Refresh accounts", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Enable", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Confirm enable", exact: true })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath("engine-accounts-unreadable.png") });
 });
 
 test("remote Plugins omits the unavailable MCP tab", async ({ page }) => {

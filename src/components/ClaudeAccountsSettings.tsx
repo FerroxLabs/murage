@@ -12,6 +12,18 @@ export interface ClaudeAccount {
   signInShell: "sh" | "powershell";
   snapshot?: { state: "available" | "unavailable"; authenticated?: boolean; reason?: string };
 }
+/** GET /api/claude-accounts answers { accounts: [...] } on the desktop. Any
+ * other body (an older server, a proxy page, an error sent with 200) becomes a
+ * readable error for the section's alert. It must never reach render: an
+ * undefined list threw in `accounts.find`, React unmounted the whole Engines
+ * settings tree, and an Enable click landed on a button already gone (RED2F). */
+export function claudeAccountsFrom(payload: unknown): ClaudeAccount[] {
+  const accounts = payload && typeof payload === "object" ? (payload as { accounts?: unknown }).accounts : undefined;
+  const readable = Array.isArray(accounts) && accounts.every(account => Boolean(account) && typeof account === "object"
+    && typeof (account as ClaudeAccount).instanceId === "string" && typeof (account as ClaudeAccount).displayName === "string");
+  if (!readable) throw new Error(t("claudeAccounts.listUnreadable"));
+  return accounts as ClaudeAccount[];
+}
 const button = "rounded-lg border border-hairline/40 px-3 py-2 text-xs text-ink hover:bg-raised/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
 const input = "mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
 
@@ -23,8 +35,7 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
   const [displayName, setDisplayName] = useState(""), [configDir, setConfigDir] = useState("");
   const gate = useRef(false);
   const load = async () => {
-    const result = await api("/api/claude-accounts") as { accounts: ClaudeAccount[] };
-    setAccounts(result.accounts); setLoaded(true);
+    setAccounts(claudeAccountsFrom(await api("/api/claude-accounts"))); setLoaded(true);
   };
   useEffect(() => { void load().catch(cause => setError(cause.message)); }, []);
   const change = async (method: string, id?: string, body?: unknown) => {
