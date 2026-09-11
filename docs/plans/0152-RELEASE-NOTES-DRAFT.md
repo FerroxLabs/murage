@@ -5,13 +5,14 @@ announcement and not a qualified installer. Regenerate the "What ships" section
 after every further lane merge (see "How to refresh this draft" at the end).
 
 - Shipped baseline: 0.1.51 at `acaee1dbfb5551ae41d5f0d24c6bf3a314e5a282`.
-- Integration head this draft was written from: `37c2822d` on
-  `release/v0.1.52` (168 commits since the baseline, 120 non-merge —
-  `git rev-list --count --no-merges acaee1db..37c2822d`; an earlier
-  revision of this draft said 110), plus this lane's locale regeneration
-  on top. The branch has moved since (`cae69216` at the RED2C edit: 185
-  commits, 134 non-merge); sections 1 and 3 still describe `37c2822d`
-  until the refresh in section 5 is re-run.
+- Integration head this draft was refreshed from at the release freeze:
+  `7bc90549` on `release/v0.1.52` (the FluxRouter switch, rollout step 7;
+  289 non-merge commits since the baseline —
+  `git rev-list --count --no-merges acaee1db..7bc90549`). The frozen
+  release commit is the docs commit that lands this refresh on top of it
+  (recorded in the freeze evidence as `frozen-sha.txt`); it changes no
+  code. Earlier revisions of this draft described `37c2822d` (120
+  non-merge) and `cae69216` (134).
 - Version: `package.json` is `0.1.52` (the only surface
   `scripts/release-guard.mjs version` reads; it prints `0.1.52`). The
   companion, docs and control-plane manifests carry their own independent
@@ -21,8 +22,13 @@ after every further lane merge (see "How to refresh this draft" at the end).
   sign Windows recovery helper" is the parent of the `acaee1db` baseline
   (`git merge-base --is-ancestor 15c3cbd6 acaee1db` is true). It must not
   appear in the 0.1.52 notes.
-- Every lane branch except `lane/0152-LINUXFIX` is an ancestor of
-  `release/v0.1.52` (checked with `git branch --merged release/v0.1.52`).
+- Every late lane is merged (INLINE1, LINUXFIX, LFU2, RED2A–RED2L,
+  IMGSET1, STOP1, STOP2, CTA1, QCARD1, CLAC1–3, HZ1, HZ2, FLUXCFG,
+  MEMJSON1, MEMJSON2, COMPOSER4MB, FOLLOW1–7, AUTOOP1, AUTOOP2,
+  STOPRESTORE1, STOPRESTORE2, SAFEWIPE1, FUIGO13, FUIGOTRUST1–4, LOCALE1,
+  FINAL1); E2ELINUX1 shipped no commits (the Linux Playwright stage runs
+  from the existing tree). The release freeze then set the FluxRouter
+  broker constants (`7bc90549`).
 
 Framing rule for the published notes: every entry says what the user gets
 (added, enhanced, hardened, tightened). No entry is called a bug fix. Every
@@ -43,10 +49,13 @@ list separately.
 
 This release gives every bot a workspace you can see and edit beside the
 chat, lets a bot ask you a real question and get a real answer, brings local
-models into the product as a first-class setup, and adds inline images, audio
-and video that never leave your machine unverified. Underneath it, the engine
-runtime, the desktop process, the companion and the hosted broker each
-close a set of audited gaps, and all seven language packs are complete.
+models into the product as a first-class setup, moves connected apps onto
+your FluxRouter account, and adds inline images, audio and video that never
+leave your machine unverified — including saved-file cards that show the
+file right in the chat. Underneath it, the engine runtime, the desktop
+process, the companion, the installer and the hosted broker each close a
+set of audited gaps, Stop means stop on every engine, and all seven
+language packs are complete.
 
 **Added**
 
@@ -90,6 +99,18 @@ close a set of audited gaps, and all seven language packs are complete.
   the receipts retained and registers nothing. Generated images are receipted
   before they are attached, so an interrupted publication resumes on restart
   from the retained bytes with zero provider calls and no duplicate message.
+- **Saved-file cards show the file itself.** Every "Saved file" card in the
+  chat previews inline instead of sending you to Files: images render in
+  place and open the lightbox; audio and video embed the same player card
+  (no autoplay, one at a time); Markdown, text and code show a bounded
+  slice (2 KB, Show more up to 256 KB) rendered like the transcript; HTML
+  renders in the same protected sandboxed frame Files uses; PDF and
+  binaries keep their buttons. Open here still opens the working file in
+  the workspace pane. Source and configuration files a bot writes (`.py`,
+  `.ts`, `.sh`, `.yaml`, `.toml`, `.sql`, `.go`, `.rs` and the rest) are
+  now saved as text so they preview too; `.svg`, `.env`, `.pem`, `.key`,
+  archives and binaries stay download-only. The card never builds a raw
+  bytes URL and refuses any resolver answer without a capability.
 - **A question card, end to end.** When Claude Code, Codex, Fuigo, an ACP
   agent or Pi asks you a question (AskUserQuestion, requestUserInput,
   ask_user_question, elicitation, select/input/editor), Murage now shows a
@@ -101,7 +122,11 @@ close a set of audited gaps, and all seven language packs are complete.
   The engine waits 30 minutes; after that the card stays as Expired with
   "Send as a message" so a late answer still reaches the bot. Cards persist
   across restarts. A URL elicitation is shown as a link you open; Murage
-  never fetches it for you.
+  never fetches it for you. The card reads like the other transcript
+  cards: each question is a recessed sub-card, options are separate pills
+  with an accent edge when picked, the key map lives in the Send button's
+  tooltip, and an answered, sent or skipped card keeps its picks and
+  settles into an "Answered · time" footer.
 - **Questions on Telegram.** The same card reaches the paired Telegram owner
   as its own message per question: numbered options with one inline button
   each, multi-select toggles with Submit, "Reply with text" for a free-text
@@ -163,8 +188,26 @@ close a set of audited gaps, and all seven language packs are complete.
   Worker has issued them since rollout step 5 and FluxRouter has redeemed them
   since step 6 (2026-09-11), and the committed Worker config ships
   `CLAIM_MODE` open with new-install registration closed (step 8, the day
-  this release publishes). The release freeze sets the desktop's FluxRouter
-  broker URL and legacy cut-off date.
+  this release publishes). This build is pointed at the FluxRouter broker
+  (`https://api.fluxrouter.ai/composio`) and the Murage-hosted Worker
+  broker is used for existing connections only until
+  2026-11-10T00:00:00Z (rollout step 7); after that date a connection
+  that was never claimed onto a FluxRouter account is no longer served.
+- **The Connected apps panel earns its key first.** Until a FluxRouter key
+  or your own Composio key exists, the panel is a dimmed, inert showcase of
+  24 well-known apps under one headline and one action ("Add FluxRouter
+  key", straight into the Flux key field; "Have your own Composio key? Add
+  it under Advanced." as the secondary path). While locked it makes no
+  connector request at all; the moment a key is saved the panel opens, no
+  reopen needed.
+- **Operators the Chief creates inherit its Auto, narrowly.** A bot the
+  Chief creates with `create_bot` starts in Auto only when you already put
+  the Chief in Auto in that conversation and the turn is not unattended;
+  otherwise it starts in Ask. The inherited Auto is strictly narrower:
+  computer off, no peer comms, no Composio, an empty always-allow list, and
+  every existing Auto guard (destructive actions card, questions are never
+  auto-answered, credentials land as a secret card). The Chief is told
+  which operators will ask.
 - **Unattended `murage` for provisioning.** `--non-interactive` / `--yes` /
   `MURAGE_NON_INTERACTIVE` never prompts; anything missing is listed all at
   once and the run exits 2 having changed nothing. Secrets come from a file,
@@ -202,6 +245,72 @@ close a set of audited gaps, and all seven language packs are complete.
   thread holds the same folder, computer or browser profile shows a
   "Waiting on another thread" card with wait/stop/retry guidance instead of
   the provider-settings card.
+- **Stop means stop, on every engine.** Pressing Stop on a running Claude,
+  Codex, Antigravity, OpenAI-compatible, Grok, MiniMax or box turn now
+  settles as a quiet stopped state — the same one ACP and Pi already used —
+  never the red "This request hit a problem" card with Retry, and the
+  memory record says cancelled, so a stopped turn's unfinished intentions
+  stay out of consolidation. A stopped turn is never counted as finished
+  work: it publishes no `outputs/` file, its queued handoffs are dropped,
+  `ask_bot` reports the stop instead of a reply, a routine run the host
+  stopped fails rather than completes, and a stopped room member is
+  treated as a provider failure. When the host stops a turn itself (model
+  connection changed or turned off, computer switched off for the bot) a
+  neutral "Stopped — reason" row is shown even with Tool calls off, in the
+  transcript, the sidebar preview and the task timeline. Stop then Restore,
+  and Stop then Save in the workspace editor, wait for the stopped turn's
+  folder lease (bounded by the engine's close budget) instead of refusing
+  with "another turn is using this folder".
+- **Messages have one honest size limit.** A message is bounded at 1 MB of
+  text on both sides. An over-limit message is refused inline, before any
+  request and before the draft is cleared, with its size and the limit
+  stated in human units; the text and attachments stay put, and a 413 the
+  harness answers lands in the same place instead of a passing toast.
+  Previously a 4 MB paste sent nothing and said nothing.
+- **Auto on a fresh Mac bot asks the warning it should.** Turning Auto on
+  from the composer chip or the profile switch for a bot that never chose
+  a computer (which resolves to this Mac) now opens the "Allow Auto mode on
+  this computer?" warning instead of a red "requires confirming the
+  warning first" banner with no warning to confirm. Both the thread route
+  and the profile route apply the same rule, decided on the harness's
+  platform rather than the browser's user agent. The acknowledgement is
+  still never persisted.
+- **Images send while the engine list is still loading.** A "Use as
+  reference" chip or a pasted image right after opening the app is no
+  longer refused as "the selected responder does not support image
+  attachments" because the engine list had not answered yet; an empty list
+  means "not asked yet", and an engine that truly lacks image support is
+  still refused once the list is loaded.
+- **Claude accounts respond at once.** Adding, renaming or removing a
+  Claude account draws from the server's receipt before the engine
+  re-probe, the list is fetched without snapshotting every engine, a slow
+  list answer can no longer redraw over a newer change, and the section
+  stays usable during the Engines fleet refresh (a failed refresh reports
+  itself without greying the buttons). The model picker keeps its catalog
+  when only the engine fleet probe fails and shows that as a secondary
+  line.
+- **Remembered notes reach the engine as words.** Memory context is
+  delivered as attributed lines inside a `<remembered-context>` frame with
+  a preamble that says these are notes, not the request and not a reply
+  template — record ids, scope ids and evidence byte ranges stay
+  Murage-side, in the disclosure receipts and the memory tools. Each line
+  opens with an opaque turn-local handle (`m1`, `m2`, …) that `memory_get`
+  and `memory_propose_correction` accept; a handle resolves only through
+  the receipt of the dispatch it was minted for. A turn's own messages are
+  kept out of its recall, a whole serialized room round is kept out of a
+  member's recall, and a provenance-only reply is never presented as the
+  answer. Recall quality before and after is recorded in
+  `docs/plans/0152-MEMJSON2-RECALL.md`.
+- **A workspace revision names the bytes.** A file's revision now carries
+  the SHA-256 of its content (for every file the editor can read or write),
+  so an equal-length rewrite inside one filesystem timestamp tick — routine
+  on ext4, HFS+ and network shares — can never pass as the old revision:
+  Save version never copies bytes you did not choose, a Markdown save
+  based on a stale revision cannot replace someone else's edit, and a kept
+  or saved version whose bytes are not the verified revision is refused.
+  Digests are remembered only on volumes that pass a per-device clock
+  probe, so listing stays fast without trusting a mirror or whole-second
+  mount.
 - **First Composio account gets a label.** Connect now opens the label form
   for the first account too, with Cancel and Escape, so an account is never
   created under a generated id.
@@ -275,7 +384,16 @@ close a set of audited gaps, and all seven language packs are complete.
   own answer, or the card, decides; a card the engine raised on its own
   under a turn that then failed says the turn failed, not "stopped"; and
   the picker note reads the Fuigo install of the bot it belongs to when
-  several Fuigo instances run with different homes.
+  several Fuigo instances run with different homes. Last (FUIGOTRUST4): a
+  `fuigo -w` managed worktree is keyed on its recorded source repository
+  exactly as Fuigo's own `workspace_key` does (read-only, never creating
+  the registry), so a bot working in one no longer sees a trust card the
+  engine would not raise; the default Fuigo home is canonicalized the way
+  upstream does; and a room's folder-trust note describes its Fuigo
+  members — once when their verdicts agree, per member when they differ —
+  and names a refused turn or an engine that gates no folder before any
+  trust verdict. The mirror's known limits are recorded in
+  `third_party/fuigo/README.md`.
 - **Images can be saved without touching the source.** Choosing the source
   file itself (or a hard/symlink alias) as the Save destination is a no-op
   rather than a truncation; every other destination is written to an
@@ -285,6 +403,17 @@ close a set of audited gaps, and all seven language packs are complete.
   atomically with a `.previous` copy; secrets are read with no terminal echo
   and no readline history; `setup` and `start` refuse a Node below the
   payload's floor (24) before any side effect.
+- **Installer, proven on Linux.** Five changes from a live Ubuntu 24.04
+  proof under real systemd and Tailscale: `tailscale up` carries `--reset`
+  so a rerun can repair a failed enrolment instead of being refused for
+  "non-default flags"; the unit grants the data directory's parent, where
+  the server keeps its installation lease, so the service no longer dies at
+  every start under `ProtectHome`; `murage status --service-user <account>`
+  looks where a root setup put the deployment instead of root's own home;
+  `start` waits (up to 90 s) for tailscaled to report the verified proxy
+  after a boot, so the first requests through the tailnet are not 403; and
+  an unattended run refused for a missing input creates no data directory.
+  The README's exit-code table now says a failed Tailscale install exits 3.
 - **Companion registry that cannot lose a fleet.** An unreadable
   `devices.json` marks the registry unavailable (pairing answers 503, the
   bytes stay untouched) instead of being treated as an empty first run; a
@@ -394,13 +523,52 @@ close a set of audited gaps, and all seven language packs are complete.
   every handler registered exactly once.
 - **Concurrency proof runs the real scenario on every platform** (macOS host
   control, Linux supervised driver, Windows refusal before the engine starts).
+- **One gate in front of every recursive delete in the test tree.** After a
+  2026-09-11 incident in which a test run on a shared build machine wiped
+  a developer's live `~/.murage`, every recursive delete a test or script
+  performs goes through `safe-wipe` (Node and a shell twin): a target may
+  be deleted only under the OS temp dir, a scratch or evidence path, or
+  strictly inside a caller-named build root, and never when it is, contains
+  or lies inside `~/.murage`, the companion dir, a non-scratch data dir, any
+  home, the cwd or a filesystem root, or beside a live installation lease.
+  The guard is installed into `node:fs` for every vitest and `node --test`
+  process; a tree-wide test proves every recursive delete is routed or
+  allowlisted with a reason; human specs require `MURAGE_E2E_DATA_DIR` and
+  keep their evidence out of the checkout.
+- **Rooms and memory never lose a turn.** A member turn whose memory
+  context is revoked mid-dispatch (a task created for the member while its
+  room handshake was held) is re-dispatched once instead of refused; every
+  exit between the room claim and an accepted provider turn releases the
+  room, the bot, the browser capability and the round's skill claim through
+  one path and drains the queues, with a stopped notice, so a room can no
+  longer sit silently stuck; a stale exit never idles a room another owner
+  took; a delegation retry that lands while provider admission is closed
+  is kept; delegations and coordination slots are settled for runs retired
+  by a provider reload; and a memory job whose publication is refused as
+  stale is requeued at once, with the stale-lease requeue bounded at five.
+- **Release-branch suites repaired, not skipped.** The failures the CI
+  rehearsal and the candidate verifier found on the release branch
+  (updater lifecycle wiring, delegation finalize on provider reload, the
+  unattended webhook question, onboarding/dialog/menu pins, the token
+  sweep, the settings role reader, and the p01/p05 memory snapshots
+  refused by the 0.1.52 saved-file and inbox tables) were fixed at the
+  source or their expectations re-aligned to recorded decisions, and the
+  order-dependent and load-bound fixtures (steering, delayed-body,
+  claude-accounts, stop-state, question-skipped, checkpoint restore) wait
+  on the event they need instead of a wall-clock window. `p06` names a
+  missing pinned-model fixture instead of failing obscurely.
 - **Joined proofs.** Real-harness Playwright specs for the workspace editor
   (shell-written report → card → Open here → edit/save → competing bot write
   → restart), media publication (one generation, one asset, one saved
   result, recovery with zero provider calls), media players, the question
   card against the real Claude CLI, the responsive header, local models in
-  the real renderer, sidebar hit areas, connected-apps alias, and code-block
-  Save.
+  the real renderer, sidebar hit areas, connected-apps alias, code-block
+  Save, saved-file cards (390 and 1200 px, both skins), the stop state,
+  Auto consent, Claude accounts under a held fleet probe, image-settings
+  capability truth on keyless and keyed installs, the message size bound,
+  and a real-app proof that Fuigo on Flux Auto sees remembered words rather
+  than provenance JSON. A joined 0.1.52 scenario driver
+  (`docs/plans/0152-CANDIDATE.md`) records the integration candidate.
 - **NOTICE lists every adapted upstream change** (#987, #986, #1023, #762,
   #767, #758, #979 adapted; #988 and #920 behaviour taken, written
   independently) with the exact upstream commits, per Apache-2.0 section 4.
@@ -417,13 +585,17 @@ close a set of audited gaps, and all seven language packs are complete.
   in `docs/plans/0152-CONTRACTS.md` for the memory owner, not fixed.
 - Not covered by the close-confirmed stop contract: Antigravity and
   BoxAgent (documented in `server/contracts.ts`).
-- The five Linux-proof installer commits on `lane/0152-LINUXFIX` are not in
-  this candidate (section 3).
+- Downgrading to 0.1.51 after running 0.1.52 is not supported: 0.1.52 adds
+  two columns to the saved-files table and 0.1.51 inserts positionally.
+  The updater never downgrades; this only affects a manual reinstall.
+- Checkpoint Restore is API/agent-only in 0.1.52 (recorded in
+  `docs/plans/0152-CONTRACTS.md`).
 - Native gates still open: real macOS helper exit and released mic/event
   tap (R2-T4), Finder open/reveal (F4-T5), a real CGNAT host with no
-  Tailscale CLI (S1-T7), real systemd/Tailscale on Linux (F2), one live
-  image edit per provider (F1-T5), packaged inference smoke (Q1-T3), signing
-  and publication (Q1-T6).
+  Tailscale CLI (S1-T7), one live image edit per provider (F1-T5), packaged
+  inference smoke (Q1-T3). The Linux installer proof under real
+  systemd/Tailscale (F2) closed with LINUXFIX; signing, notarization and the
+  draft assembly were proven by the CI rehearsal on this branch.
 
 ---
 
@@ -547,15 +719,38 @@ baseline belongs here. Lane labels are the task ids in the commit subjects.
 | F5-T5 (M5) | `6290cdb6` | quality | joined media publication proof |
 | F4-T3 | `504e2095` | added | workspace pane with preview tabs and editing |
 | F4-T7 + fixes | `a3edecf4`, `02abb31f`, `054c7073` | quality / enhanced | joined workspace-editor proof; lease marked dispatched only before sendTurn; conflict clears stale refusal |
+| LINUXFIX (Linux proof) | `4a1fb1d1`, `ea140175`, `62856577`, `0f947dc5`, `ab35e217`, `bbc1d3a3` | enhanced | installer proven on Linux: `--reset`, unit grants lease parent, `status --service-user`, `start` waits for tailscaled, no data dir on refused run; exit-code doc |
+| Q1-T5 candidate | `aa27b5a3`, `b64b8e51`, `727db85f`, `8150dfc2`, `f44afad8`, `eea82657` | quality / hardened | writer lease bound before acceptance; deferred delegation retry; joined scenario driver; candidate record |
+| INLINE1 + RED2C follow-up | `21711048`, `a126a9ea`, `c25ced9f` | added | saved-file cards preview inline; source/config files saved as text; published-output text mime |
+| RED2A | `6aedebf3`, `4fcd1574`, `66e6c859`, `20a85a93` | quality | settings role via botRole(); onboarding/dialog/menu pins; token sweep; updater lifecycle wiring |
+| RED2B (Q1) | `0e8a0e09`, `69460277`, `df5f2a5b`, `9b3a2d3a`, `94f0e64c`, `49eeaf9c`, `e88150a3`, `000787a7`, `ab80ca56`, `ea4d3bbb` | quality / hardened | inbox + saved-file tables in snapshots; p06 fixture named; delegations settled on provider reload; fixtures wait on events; archive table names refused |
+| RED2C | `e9654d05`, `a234a9e3`, `ab141e93`, `1475e8bd`, `aaf8c19f` | hardened / docs | own superseded checkpoint is stale not revoked; real-server proof; README heading; MEMORY_CONTEXT_REVOKED disposition |
+| RED2D, RED2E | `88bc28b0`, `82b93153`, `8643d683` | quality | question-skipped row waits; room checkpoint pinned as member's own |
+| RED2F | `b5e28ce8`, `5d2e678f` | enhanced | Engines settings survive an unreadable Claude account list; 22-key account set translated |
+| RED2G | `bfc6c8cb`, `2f7158a7`, `e98b88ab`, `cd108aec` | hardened | restore DDL compared to app initializers; delegation retry kept under closed admission; user turn re-dispatched once on revoked memory context |
+| RED2H, RED2I, RED2J, RED2K, RED2L | `98207d3b`, `cf0a61b7`, `669897a6`, `1b65f22c`, `850a632c`, `c3802360`, `713c9cc0`, `cdd359a1` | hardened | rooms never silently stuck; member turn re-dispatched; stale-lease requeue bounded; deferral clears requeue count |
+| STOP1 + STOP2 | `f8bd7f7a`, `2619da32`, `98f7de24`, `7916d384`, `3d95914e`, `a5d2ccef`, `21d2d6da`, `56c6331f`, `78a2ee83`, `96fc7ee1`, `32b22ad9`, `12d33377`, `6d12ffbf` | enhanced | user Stop settles cancelled on every engine; stopped is never success; host-stop reason shown |
+| STOPRESTORE1, STOPRESTORE2 | `c458ef59`, `6f8f0037`, `f8ed308e`, `0748e6a3`, `800b8b94` | enhanced | Stop then Restore / Save waits for the stopped turn's lease; Restore is API-only note |
+| CTA1 + fix | `ccb92c83`, `8b1b0b34`, `6c07822e` | added | Connected apps panel locked until a FluxRouter or Composio key exists |
+| QCARD1 | `4073aa77` | enhanced | question card styled like the other transcript cards |
+| IMGSET1 | `66971889` | quality | image-settings capability truth pinned on keyless and keyed installs |
+| USER-SMOKE | `66cd450e`, `76c5f630` | enhanced | Auto warning on a fresh Mac bot; images while the engine list loads |
+| CLAC1, CLAC2, CLAC3 | `ce825cf0`, `d9e743e0`, `e527dc5c`, `9c0ec983`, `1d7f504c`, `e2c1b193`, `7ac51e49`, `e7a34612`, `c7b491cb`, `947f432e`, `c80d3d99` | enhanced | Claude accounts draw from receipts, list without full probe, stay usable during fleet refresh; evidence under MURAGE_E2E_DATA_DIR |
+| HZ1, HZ2 | `3a672979`, `4081cdbc`, `38036d7f`, `02243995`, `c57b9e95`, `ddb0fcba` | hardened | revision names the bytes; kept/saved version must be the verified revision; restore test waits on terminal event |
+| FLUXCFG + follow-ups | `c6526839`, `0091d46c`, `89c01c11`, `a671dfbb` | hardened | committed Worker vars match the live rollout + step 8; broker typecheck in CI |
+| MEMJSON1, MEMJSON2 | `8c1bc898`, `9c4d52d2`, `e7d34074`, `90e53435`, `8f82e5bc`, `343ebd70`, `aca656c1`, `12034860`, `3f3ce1ad` | enhanced | remembered words not provenance JSON; turn-local handles; own chunk and room round out of recall; recall quality recorded |
+| COMPOSER4MB | `531c789b`, `67cdf733` | enhanced | 1 MB message bound refused inline with size and limit |
+| AUTOOP1, AUTOOP2 | `d9e0f4f2`, `5399f7f7`, `217c2048`, `491d3a5b` | added / hardened | operators inherit the Chief's Auto narrowly; profile-level Auto on a default-computer bot needs the local acknowledgement |
+| FOLLOW1–FOLLOW7 | `8281e8a3`, `bdb1ee6e`, `64885f72`, `fe383d7e`, `508efac0`, `a13cf16c`, `31779a32`, `22b72fc7`, `5c8a0afb`, `08f8abd1`, `fde35090`, `c3c0b189`, `4bddffee`, `6c1e9ca8`, `8703188d`, `03f8c162`, `3f719ea2`, `4c641b43`, `f20d81c5`, `1f9f5c08`, `07f25811` | enhanced / quality | digests remembered behind a per-device clock probe; picker keeps catalog on fleet-probe failure; local-Auto decided on harness platform; fleet refresh reports failure; safe-wipe URL/Buffer targets |
+| SAFEWIPE1 | `30bd05f0`, `65a981aa`, `76c87b55`, `02f8a01d`, `1f25b282`, `a53b893f`, `d4f61a32`, `6e770451` | quality | safe-wipe gate on every recursive delete; data-safety audit |
+| LFU2, FUIGO13 | `e860c7bd`, `63563d30`, `b65dec4d`, `80f9d5ac` | enhanced | Fuigo 1.0.12 then 1.0.13 verified pins; card "Yes" answers with the engine's one-time option; live ask_user_question proof |
+| FUIGOTRUST1–4 | `1ce787de`, `70fa0467`, `553ce001`, `4474c568`, `22de1c3a`, `04c83072`, `3d11ca73`, `3b12f4aa`, `c77af468`, `f6198f90`, `5398c239`, `add8a29f`, `8d0b0f54`, `9ea5cb5e`, `c3a1017f`, `6166f136`, `09512819` | added / enhanced | folder trust decided before the spawn; picker/upgrade/upstream trust; worktree and managed-worktree keys; room note per member |
+| LOCALE1, FINAL1 | `548a76e0`, `1143ebad`, `ad46b392` | quality | 38 late strings in all seven packs; resumed-turn trust path pinned; safe-wipe URL predicate verbatim |
+| Release freeze (rollout step 7) | `7bc90549` | added | `FLUX_COMPOSIO_BROKER_URL` and `COMPOSIO_LEGACY_BROKER_UNTIL` set for the packaged build; guard test pins them |
 
-Not merged when this draft was written (report their absence; do not describe
-their scope as shipped): **`lane/0152-LINUXFIX`** — five installer commits
-from the Linux proof (`4a1fb1d1` `tailscale up --reset` for rerun repair,
-`ea140175` unit grants the data dir's parent, `62856577` `status
---service-user`, `0f947dc5` `start` waits for tailscaled after a boot,
-`ab35e217` refused unattended run creates no data directory). When it merges,
-add one "Installer, proven on Linux" entry under Enhanced from those commit
-bodies and a row above.
+Nothing planned for 0.1.52 is unmerged at the freeze. `lane/0152-LINUXFIX`
+landed (row above; "Installer, proven on Linux" under Enhanced) and
+E2ELINUX1 produced no commits.
 
 ---
 
@@ -633,5 +828,5 @@ of "what you can do today" and do not promise gates that are still open):
    nothing.
 3. Re-run `node scripts/release-guard.mjs version` (must print `0.1.52`) and
    `pnpm exec vitest run scripts/release-guard.test.mjs scripts/release-workflows.test.mjs`.
-4. Move `lane/0152-LINUXFIX` from "not merged" to the table when it lands;
-   do not describe scope from the plan as shipped.
+4. Do not describe scope from the plan as shipped; every entry must name a
+   merged commit in the section 3 table.
