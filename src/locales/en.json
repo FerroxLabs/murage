@@ -523,5 +523,14 @@
   "chatHeader.botFolderAt": "This bot's folder: {path}",
   "chatHeader.noDedicatedWorkspace": "No dedicated workspace folder; files saved for this bot are listed instead.",
   "chatHeader.usageMenu": "Usage: {usage}",
-  "chatHeader.usageDetail": "Opens the agent profile, where the Usage card has the full breakdown."
+  "chatHeader.usageDetail": "Opens the agent profile, where the Usage card has the full breakdown.",
+  "artifactCard.loading": "Loading preview…",
+  "artifactCard.showMore": "Show more",
+  "artifactCard.showLess": "Show less",
+  "artifactCard.truncated": "Showing the first {shown} KB of {total} KB. Open here or Download for the rest.",
+  "artifactCard.previewFailed": "The preview could not be shown here. Preview opens it in Files.",
+  "artifactCard.htmlFrame": "Preview {name}",
+  "artifactCard.htmlNote": "Protected preview: scripts, external resources and app access are blocked.",
+  "artifactCard.larger": "Larger",
+  "artifactCard.smaller": "Smaller"
 }

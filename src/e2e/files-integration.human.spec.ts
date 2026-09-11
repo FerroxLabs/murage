@@ -80,10 +80,16 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
   await page.goto(origin);
   const sidebar = await openSidebar(page); await sidebar.getByRole("button", { name: /^Files proof bot/ }).first().click();
   const card = page.locator(`[data-artifact-id="${artifact.id}"]`); await expect(card).toHaveCount(1); await expect(card).toBeVisible();
-  await card.getByRole("button", { name: "Preview", exact: true }).click();
+  // INLINE1: the report is rendered inside the chat card itself, in the same
+  // protected frame Files uses; the card offers no Preview that leaves the chat.
+  await expect(card.frameLocator('iframe[title="Preview Registered task report"]').getByText("FILES_INTEGRATED_RESULT: three verified findings.", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
+  await page.locator('[data-header-labelled="folder"]').click();
   const dialog = page.getByRole("dialog", { name: "Files", exact: true });
   await expect(dialog).toBeVisible();
-  await expect(page.frameLocator('iframe[title="Preview Registered task report"]').getByText("FILES_INTEGRATED_RESULT: three verified findings.", { exact: true })).toBeVisible();
+  // The Files section's own preview is unchanged.
+  await dialog.locator(`[data-artifact-id="${artifact.id}"]`).getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(dialog.frameLocator('iframe[title="Preview Registered task report"]').getByText("FILES_INTEGRATED_RESULT: three verified findings.", { exact: true })).toBeVisible();
   // R3-T2: the same report is reachable a second way — as the live workspace
   // file it still is, through the real server's own workspace resolver, and
   // labelled so it can never be mistaken for the saved copy beside it.
@@ -102,7 +108,7 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
   await menu.getByRole("menuitem", { name: "Inbox", exact: true }).click();
   await page.getByRole("button", { name: "Results", exact: true }).click();
   await page.getByRole("button", { name: "Open file", exact: true }).click();
-  await expect(page.frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Files", exact: true }).frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
 });
 
 test("saved copy survives a real fixture restart and task deletion; narrow Files remains scoped", async ({ page }, testInfo) => {
@@ -125,7 +131,7 @@ test("saved copy survives a real fixture restart and task deletion; narrow Files
   const dialog = page.getByRole("dialog", { name: "Files", exact: true }); await expect(dialog).toBeVisible();
   await expect(dialog.getByText("The source conversation is no longer available. The file remains saved.", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Preview", exact: true }).click();
-  await expect(page.frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Files", exact: true }).frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Open in app", exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("files-focused-narrow-dark.png"), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

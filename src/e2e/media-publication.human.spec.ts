@@ -565,7 +565,9 @@ test("a WAV a bot turn leaves in outputs/ is one saved version and one host card
   await selectBot(page, echoBot);
   // The echo reply may carry the link more than once (a fresh CLI process
   // gets the replayed prompt); each mention is a player over the same asset.
-  const players = page.getByTestId("media-player-audio");
+  // INLINE1: the saved-file card below carries its own player over the saved
+  // copy (a different asset, checked further down); these are the link players.
+  const players = page.locator('[data-testid="media-player-audio"]:not([data-artifact-id] *)');
   await expect(players.first()).toBeVisible();
   const player = players.first();
   await expect(player).toHaveAccessibleName("Audio player for narration.wav");
@@ -588,6 +590,16 @@ test("a WAV a bot turn leaves in outputs/ is one saved version and one host card
   await expect(card).toHaveCount(1);
   await expect(card).toContainText("narration.wav");
   await expect(card).toContainText("Saved copy");
+  // INLINE1: the card plays the saved copy in place through its own capability
+  // URL — the same bytes, silent until asked — and offers no Preview.
+  const cardPlayer = card.getByTestId("media-player-audio");
+  await expect(cardPlayer).toBeVisible();
+  const cardSrc = (await cardPlayer.getAttribute("src"))!;
+  expect(cardSrc).toMatch(/^\/api\/media\/bytes\/ma1_[A-Za-z0-9_-]{32}\?cap=mc1\./);
+  expect(cardSrc).not.toBe(src);
+  expect(await cardPlayer.evaluate((element: HTMLMediaElement) => element.paused && !element.autoplay)).toBe(true);
+  expect(sha256(await bytesOf(cardSrc, false))).toBe(NARRATION_SHA);
+  await expect(card.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
   expect(await downloadedSha(page, () => card.getByRole("button", { name: "Download", exact: true }).click())).toBe(NARRATION_SHA);
   await page.screenshot({ path: testInfo.outputPath("player-and-saved-copy.png"), fullPage: true });
   // The other bot sees neither the player nor the saved copy.
