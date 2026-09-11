@@ -48,6 +48,7 @@ import {
   MARKDOWN_DRAFT_MAX_BYTES,
   MARKDOWN_DRAFT_MAX_COUNT,
   type MarkdownDraftErrorCode,
+  type MarkdownDraftRecord,
   type MarkdownDraftStore,
 } from "@/lib/markdown-drafts";
 import {
@@ -61,8 +62,17 @@ import {
 } from "@/lib/markdown-fidelity";
 
 export const MARKDOWN_DRAFT_DELAY_MS = 800;
+/** Source-mode typing re-checks rich eligibility after this pause. */
+export const MARKDOWN_ANALYZE_DELAY_MS = 400;
 
 export type DraftStatus = "idle" | "pending" | "preserved" | "failed";
+
+/** Reading the disk version a conflict needs before either choice applies. */
+export type ConflictReadState =
+  | { status: "reading" }
+  | { status: "failed"; code: DocumentErrorCode }
+  /** No disk reader was supplied: the choice can never be applied here. */
+  | { status: "unavailable" };
 
 export interface MarkdownEditorView {
   /** Why rich mode is unavailable for the current text; empty when it is. */
@@ -72,8 +82,12 @@ export interface MarkdownEditorView {
   draftError: MarkdownDraftErrorCode | null;
   /** A preserved draft was restored into this session. */
   recoveredDraftAt: number | null;
+  /** A draft from an earlier session was found after typing had started. It
+   * is kept (never overwritten) until the user picks which text to keep. */
+  heldDraftAt: number | null;
   /** The last save attempt was refused before any request left. */
   saveRefused: SaveRefusal | null;
+  conflictRead: ConflictReadState | null;
 }
 
 export interface MarkdownEditorSnapshot {
@@ -96,6 +110,10 @@ export interface MarkdownEditorControllerOptions {
   schedule?: ScheduleTimer;
   /** `auto` opens rich only when the fidelity gate allows it. */
   initialMode?: "auto" | "source";
+  /** Subscribe to the session now (default). `false` defers it to
+   * `connect()` or the first `subscribe`, so an instance React creates and
+   * discards (StrictMode double-invokes state initializers) never listens. */
+  connect?: boolean;
 }
 
 const defaultSchedule: ScheduleTimer = (callback, delayMs) => {
@@ -120,15 +138,25 @@ export class MarkdownEditorController {
   private readonly options: MarkdownEditorControllerOptions;
   private readonly session: DocumentSessionStore;
   private readonly listeners = new Set<() => void>();
-  private readonly unsubscribeSession: () => void;
+  private unsubscribeSession: (() => void) | null = null;
   private view: MarkdownEditorView = {
     richBlockedBy: [],
     unsupportedSyntax: [],
     draftStatus: "idle",
     draftError: null,
     recoveredDraftAt: null,
+    heldDraftAt: null,
     saveRefused: null,
+    conflictRead: null,
   };
+  /** The draft text `view.richBlockedBy` describes. */
+  private analyzedDraft: string | null = null;
+  private cancelAnalyzeTimer: (() => void) | null = null;
+  /** The one lookup of a stored draft for this document, once started. */
+  private restoreCheck: Promise<boolean> | null = null;
+  private restoreSettled = false;
+  /** A stored draft that could not be restored because typing had started. */
+  private heldDraft: MarkdownDraftRecord | null = null;
   private snapshot: MarkdownEditorSnapshot;
   private editor: Editor | null = null;
   private detachEditorListener: (() => void) | null = null;
@@ -153,12 +181,20 @@ export class MarkdownEditorController {
     if ((options.initialMode ?? "auto") === "auto") this.setMode("rich");
     else this.analyze(this.session.getState().draft);
     this.snapshot = { session: this.session.getState(), view: this.view };
-    this.unsubscribeSession = this.session.subscribe(() => this.onSessionChange());
+    if (options.connect !== false) this.connect();
   }
 
   // ---- subscription -------------------------------------------------------
 
+  /** Start following the session. Idempotent; never after `dispose()`. */
+  connect(): void {
+    if (this.disposed || this.unsubscribeSession) return;
+    this.unsubscribeSession = this.session.subscribe(() => this.onSessionChange());
+    this.emit();
+  }
+
   subscribe = (listener: () => void): (() => void) => {
+    this.connect();
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
@@ -184,8 +220,23 @@ export class MarkdownEditorController {
   private onSessionChange(): void {
     // `syncEditor` may itself switch to Source mode, so read state after it.
     this.syncEditor();
-    this.scheduleDraft(this.session.getState());
+    const state = this.session.getState();
+    this.scheduleDraft(state);
+    if (state.mode === "source" && state.draft !== this.analyzedDraft) this.scheduleAnalysis();
+    if (!state.conflict && this.view.conflictRead) this.setView({ conflictRead: null });
     this.emit();
+  }
+
+  /** Source edits can make a file rich-editable (or stop it being so); the
+   * Rich button follows once typing pauses, not on every keystroke. */
+  private scheduleAnalysis(): void {
+    if (this.disposed) return;
+    this.cancelAnalyzeTimer?.();
+    this.cancelAnalyzeTimer = (this.options.schedule ?? defaultSchedule)(() => {
+      this.cancelAnalyzeTimer = null;
+      const state = this.session.getState();
+      if (!this.disposed && state.mode === "source") this.analyze(state.draft);
+    }, MARKDOWN_ANALYZE_DELAY_MS);
   }
 
   // ---- rich editor --------------------------------------------------------
@@ -251,6 +302,9 @@ export class MarkdownEditorController {
   }
 
   private analyze(text: string): MarkdownFidelityReport {
+    this.cancelAnalyzeTimer?.();
+    this.cancelAnalyzeTimer = null;
+    this.analyzedDraft = text;
     const report = analyzeMarkdownFidelity(text);
     this.setView({ richBlockedBy: report.reasons, unsupportedSyntax: report.unsupportedTokenClasses });
     return report;
@@ -304,7 +358,13 @@ export class MarkdownEditorController {
     const acknowledged = acknowledgeSave(this.session.getState(), receipt);
     this.session.update(() => acknowledged.state);
     if (acknowledged.outcome !== "saved") return { status: "ignored" };
-    return { status: "saved", stillDirty: hasUnsavedChanges(this.session.getState()) };
+    const settled = this.session.getState();
+    // Closed while the request was in flight: the session listener is gone,
+    // so clear the now-saved draft here or it would outlive its save.
+    if (this.disposed && !hasUnsavedChanges(settled) && this.draftMayExist && !this.heldDraft) {
+      void this.clearDraft(settled.draftRevision);
+    }
+    return { status: "saved", stillDirty: hasUnsavedChanges(settled) };
   }
 
   /** A newer disk state was observed (watch event followed by a read). */
@@ -334,8 +394,14 @@ export class MarkdownEditorController {
     return discarded.ok;
   }
 
-  /** Offer a preserved draft for this document, if one exists. */
-  async restoreDraft(): Promise<boolean> {
+  /** Offer a preserved draft for this document, if one exists. Looks once;
+   * later calls return the same answer. */
+  restoreDraft(): Promise<boolean> {
+    this.restoreCheck ??= this.checkForStoredDraft().finally(() => { this.restoreSettled = true; });
+    return this.restoreCheck;
+  }
+
+  private async checkForStoredDraft(): Promise<boolean> {
     const drafts = this.options.drafts;
     if (!drafts || this.disposed) return false;
     const loaded = await drafts.load(this.session.getState().identity);
@@ -347,12 +413,25 @@ export class MarkdownEditorController {
     const record = loaded.record;
     if (!record) return false;
     this.draftMayExist = true;
+    const state = this.session.getState();
+    if (hasUnsavedChanges(state) && record.content !== state.draft && record.content !== state.savedContent) {
+      // Typing started before the stored draft was read. Restoring it would
+      // replace that typing and preserving the typing would replace it: hold
+      // it, never write over it, and let the user choose.
+      this.heldDraft = record;
+      this.setView({ heldDraftAt: record.updatedAt });
+      return false;
+    }
+    return this.applyStoredDraft(record, false);
+  }
+
+  private applyStoredDraft(record: MarkdownDraftRecord, replaceUnsaved: boolean): boolean {
     const result = restoreDraft(this.session.getState(), {
       baseRevision: record.baseRevision as FileRevision,
       content: record.content,
       draftRevision: record.draftRevision,
       ...(record.mode ? { mode: record.mode } : {}),
-    });
+    }, { replaceUnsaved });
     if (!result.restored) {
       // A stored draft equal to the file holds nothing to recover.
       if (!hasUnsavedChanges(this.session.getState())) void this.clearDraft();
@@ -360,9 +439,27 @@ export class MarkdownEditorController {
     }
     // The restored text is what the store already holds.
     this.attemptedDraftRevision = result.state.draftRevision;
-    this.view = { ...this.view, recoveredDraftAt: record.updatedAt, draftStatus: "preserved", draftError: null };
+    this.heldDraft = null;
+    this.view = { ...this.view, recoveredDraftAt: record.updatedAt, heldDraftAt: null, draftStatus: "preserved", draftError: null };
     this.session.update(() => result.state);
     this.emit();
+    return true;
+  }
+
+  /** Replace the current unsaved text with the held earlier draft. */
+  restoreHeldDraft(): boolean {
+    const record = this.heldDraft;
+    if (!record || this.disposed) return false;
+    return this.applyStoredDraft(record, true);
+  }
+
+  /** Keep the current text; the held earlier draft is replaced by it. */
+  keepCurrentOverHeldDraft(): boolean {
+    if (!this.heldDraft || this.disposed) return false;
+    this.heldDraft = null;
+    this.attemptedDraftRevision = null;
+    this.setView({ heldDraftAt: null });
+    this.scheduleDraft(this.session.getState());
     return true;
   }
 
@@ -373,8 +470,11 @@ export class MarkdownEditorController {
     const flush = this.cancelDraftTimer ? this.preserveDraft() : Promise.resolve();
     this.cancelDraftTimer?.();
     this.cancelDraftTimer = null;
+    this.cancelAnalyzeTimer?.();
+    this.cancelAnalyzeTimer = null;
     this.detachRichEditor();
-    this.unsubscribeSession();
+    this.unsubscribeSession?.();
+    this.unsubscribeSession = null;
     this.session.update(closeDocument);
     this.listeners.clear();
     await flush;
@@ -388,8 +488,9 @@ export class MarkdownEditorController {
       this.cancelDraftTimer?.();
       this.cancelDraftTimer = null;
       this.scheduledDraftRevision = null;
-      // Whatever was preserved or requested for this document is obsolete.
-      if (this.draftMayExist) void this.clearDraft(state.draftRevision);
+      // Whatever was preserved or requested for this document is obsolete,
+      // except a held earlier draft, which only the user may give up.
+      if (this.draftMayExist && !this.heldDraft) void this.clearDraft(state.draftRevision);
       else if (this.view.draftStatus === "pending") this.setView({ draftStatus: "idle" });
       return;
     }
@@ -407,8 +508,15 @@ export class MarkdownEditorController {
 
   private async preserveDraft(): Promise<void> {
     const drafts = this.options.drafts;
+    if (!drafts) return;
+    // Never write before the stored-draft lookup has decided: the write
+    // would replace a crash-recovered draft nobody has seen yet. Once it has
+    // settled, the preserve is requested synchronously so it stays ordered
+    // before any clear that follows it.
+    if (this.restoreCheck && !this.restoreSettled) await this.restoreCheck;
+    if (this.heldDraft) return;
     const state = this.session.getState();
-    if (!drafts || !hasUnsavedChanges(state)) return;
+    if (!hasUnsavedChanges(state)) return;
     this.attemptedDraftRevision = state.draftRevision;
     this.draftMayExist = true;
     const result = await drafts.preserve(state.identity, {
@@ -442,17 +550,38 @@ export class MarkdownEditorController {
     else if (!hasUnsavedChanges(this.session.getState())) this.setView({ draftStatus: "idle", draftError: null, recoveredDraftAt: null });
   }
 
+  /** Read the disk version again after a failed read. True once the
+   * conflict can be resolved (or no longer exists). */
+  async retryConflictRead(): Promise<boolean> {
+    const conflict = this.session.getState().conflict;
+    if (!conflict) return true;
+    if (conflict.disk) return true;
+    await this.loadDiskForConflict();
+    const after = this.session.getState().conflict;
+    return !after || after.disk !== null;
+  }
+
   private async loadDiskForConflict(): Promise<void> {
+    if (this.disposed) return;
     const readDisk = this.options.readDisk;
-    if (!readDisk || this.disposed) return;
-    try {
-      const read = await readDisk();
-      if (this.disposed) return;
-      this.observeDisk({ revision: read.revision, content: read.content, bom: read.bom, newline: read.newline });
-    } catch {
-      // The conflict stays visible with `disk: null`; the choice waits for a
-      // successful read rather than guessing the disk text.
+    if (!readDisk) {
+      this.setView({ conflictRead: { status: "unavailable" } });
+      return;
     }
+    this.setView({ conflictRead: { status: "reading" } });
+    let read: WorkspaceReadResult;
+    try {
+      read = await readDisk();
+    } catch (error) {
+      if (this.disposed) return;
+      // The disk text is never guessed: the conflict stays, both choices wait
+      // for a successful read, and the view says why and offers a retry.
+      this.setView({ conflictRead: { status: "failed", code: saveFailureFrom(error).code } });
+      return;
+    }
+    if (this.disposed) return;
+    this.setView({ conflictRead: null });
+    this.observeDisk({ revision: read.revision, content: read.content, bom: read.bom, newline: read.newline });
   }
 }
 
@@ -460,11 +589,14 @@ export class MarkdownEditorController {
  * Disposal is deferred one task so a StrictMode unmount/remount of the same
  * component does not close the document it is about to show again. */
 export function useMarkdownEditorController(options: MarkdownEditorControllerOptions): MarkdownEditorController {
-  const [controller] = useState(() => new MarkdownEditorController(options));
+  // Not connected yet: StrictMode may call this initializer twice and discard
+  // one instance, which must never subscribe to the shared session store.
+  const [controller] = useState(() => new MarkdownEditorController({ ...options, connect: false }));
   const cancelDispose = useRef<(() => void) | null>(null);
   useEffect(() => {
     cancelDispose.current?.();
     cancelDispose.current = null;
+    controller.connect();
     void controller.restoreDraft();
     return () => {
       const handle = setTimeout(() => { void controller.dispose(); }, 0);
@@ -517,6 +649,12 @@ export function saveErrorMessage(code: DocumentErrorCode, message?: string): str
     case "quota-exceeded": return t("markdownEditor.saveError.diskFull");
     default: return message ? t("markdownEditor.saveError.withDetail", { detail: message }) : t("markdownEditor.saveError.generic");
   }
+}
+
+export function conflictReadMessage(read: ConflictReadState): string {
+  if (read.status === "unavailable") return t("markdownEditor.conflict.readUnavailable");
+  if (read.status === "failed" && read.code === "network") return t("markdownEditor.conflict.readFailedNetwork");
+  return t("markdownEditor.conflict.readFailed");
 }
 
 /** File state only. "Draft preserved" is a separate line, never this one. */
@@ -594,6 +732,12 @@ export function MarkdownEditor({ controller, title }: { controller: MarkdownEdit
   const conflict = session.conflict;
   const documentKey = `${session.identity.scope.botId}/${session.identity.scope.threadId}/${session.identity.relativePath}`;
   const actionsDisabled = !unsaved || busy || readOnly || conflict !== null;
+  const conflictRead = view.conflictRead;
+  // Without the disk text neither choice can apply. While reading, or when no
+  // reader exists at all, the buttons say so by being disabled; after a failed
+  // read they stay enabled because pressing one reads again.
+  const choiceBlocked = conflict !== null && conflict.disk === null
+    && (conflictRead?.status === "reading" || conflictRead?.status === "unavailable");
 
   return (
     <section className="flex min-w-0 flex-col gap-3" aria-label={title ?? session.identity.relativePath}>
@@ -637,6 +781,21 @@ export function MarkdownEditor({ controller, title }: { controller: MarkdownEdit
         <p className="text-[12px] text-ink-secondary" data-testid="markdown-rich-off">{richOff}</p>
       ) : null}
 
+      {view.heldDraftAt !== null ? (
+        <div role="alert" data-testid="markdown-held-draft" className="flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px] text-ink">
+          <p className="font-medium">{t("markdownEditor.heldDraft.title")}</p>
+          <p className="text-ink-secondary">{t("markdownEditor.heldDraft.body")}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={button} disabled={busy || readOnly || conflict !== null} onClick={() => controller.restoreHeldDraft()}>
+              {t("markdownEditor.heldDraft.restore")}
+            </button>
+            <button type="button" className={button} disabled={readOnly} onClick={() => controller.keepCurrentOverHeldDraft()}>
+              {t("markdownEditor.heldDraft.keepCurrent")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {view.draftError ? (
         <p role="alert" className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger" data-testid="markdown-draft-error">
           {draftErrorMessage(view.draftError)}
@@ -654,10 +813,10 @@ export function MarkdownEditor({ controller, title }: { controller: MarkdownEdit
           <p className="font-medium">{conflict.source === "draft-restore" ? t("markdownEditor.conflict.draftTitle") : t("markdownEditor.conflict.title")}</p>
           <p className="text-ink-secondary">{t("markdownEditor.conflict.body")}</p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={button} onClick={() => { void controller.resolveConflict("reload"); }}>
+            <button type="button" className={button} disabled={choiceBlocked} onClick={() => { void controller.resolveConflict("reload"); }}>
               {t("markdownEditor.conflict.useDisk")}
             </button>
-            <button type="button" className={button} onClick={() => { void controller.resolveConflict("keep-mine"); }}>
+            <button type="button" className={button} disabled={choiceBlocked} onClick={() => { void controller.resolveConflict("keep-mine"); }}>
               {t("markdownEditor.conflict.keepMine")}
             </button>
             {conflict.disk ? (
@@ -666,6 +825,19 @@ export function MarkdownEditor({ controller, title }: { controller: MarkdownEdit
               </button>
             ) : null}
           </div>
+          {conflict.disk === null && conflictRead?.status === "reading" ? (
+            <p role="status" className="text-ink-secondary" data-testid="markdown-conflict-reading">{t("markdownEditor.conflict.reading")}</p>
+          ) : null}
+          {conflict.disk === null && (conflictRead?.status === "failed" || conflictRead?.status === "unavailable") ? (
+            <div role="alert" data-testid="markdown-conflict-read-error" className="flex flex-wrap items-center gap-2 text-danger">
+              <p>{conflictReadMessage(conflictRead)}</p>
+              {conflictRead.status === "failed" ? (
+                <button type="button" className={button} onClick={() => { void controller.retryConflictRead(); }}>
+                  {t("markdownEditor.conflict.retryRead")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {comparing && conflict.disk ? (
             <div className="grid min-w-0 gap-2 md:grid-cols-2">
               <figure className="min-w-0">

@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Editor } from "@tiptap/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileRevision, SaveReceipt, WorkspaceReadResult, WorkspaceWriteRequest } from "../../shared/workspace-files";
-import { WorkspaceFileRequestError, createDocumentSessionStore, documentKey, openDocumentSession } from "@/lib/document-session";
+import { WorkspaceFileRequestError, createDocumentSessionStore, documentKey, editDocument, openDocumentSession } from "@/lib/document-session";
 import { createMarkdownDraftStore, createMemoryDraftBackend, type MarkdownDraftStore } from "@/lib/markdown-drafts";
 import { createMarkdownExtensions } from "@/lib/markdown-fidelity";
 import {
@@ -85,7 +85,7 @@ afterEach(async () => {
   for (const editor of editors.splice(0)) editor.destroy();
 });
 
-function setup(read: WorkspaceReadResult, options: { drafts?: MarkdownDraftStore | null; save?: (request: WorkspaceWriteRequest) => Promise<SaveReceipt>; readDisk?: () => Promise<WorkspaceReadResult>; initialMode?: "auto" | "source" } = {}) {
+function setup(read: WorkspaceReadResult, options: { drafts?: MarkdownDraftStore | null; save?: (request: WorkspaceWriteRequest) => Promise<SaveReceipt>; readDisk?: () => Promise<WorkspaceReadResult>; initialMode?: "auto" | "source"; connect?: boolean } = {}) {
   const session = createDocumentSessionStore(openDocumentSession(read));
   const backend = createMemoryDraftBackend();
   const drafts = options.drafts === undefined ? createMarkdownDraftStore(backend) : options.drafts;
@@ -104,6 +104,7 @@ function setup(read: WorkspaceReadResult, options: { drafts?: MarkdownDraftStore
     schedule: scheduler.schedule,
     createRequestId: () => `req-${++ids}`,
     ...(options.initialMode ? { initialMode: options.initialMode } : {}),
+    ...(options.connect !== undefined ? { connect: options.connect } : {}),
   });
   controllers.push(controller);
   return { session, backend, drafts, scheduler, writes, save, controller };
@@ -456,6 +457,175 @@ describe("draft and conflict races", () => {
     // The unknown-outcome write had landed: the disk already holds the draft.
     expect(session.getState()).toMatchObject({ status: "clean", baseRevision: rev("r3"), conflict: null });
     expect(await controller.resolveConflict("keep-mine")).toBe(true);
+  });
+});
+
+describe("failures stay visible (fix round 1)", () => {
+  const rejectSave = async (): Promise<SaveReceipt> => { throw new WorkspaceFileRequestError("revision-conflict", "changed", rev("r7")); };
+
+  it("says why a conflict cannot be resolved when the disk read fails, and reads again on request", async () => {
+    const read = readCorpus("rich-basic.md");
+    let failRead = true;
+    const { session, controller } = setup(read, {
+      save: rejectSave,
+      readDisk: async () => {
+        if (failRead) throw new TypeError("Failed to fetch");
+        return { ...read, revision: rev("r7"), content: "# Changed by a bot\n" };
+      },
+    });
+    const { editor } = attachHeadlessEditor(controller);
+    typeAtEndOfFirstBlock(editor, " mine");
+    expect(await controller.save()).toEqual({ status: "conflict" });
+    await settle();
+    expect(session.getState().conflict).toMatchObject({ source: "save-rejected", disk: null });
+    expect(controller.getSnapshot().view.conflictRead).toEqual({ status: "failed", code: "network" });
+    // Pressing a choice reads again; it fails again, and says so.
+    expect(await controller.resolveConflict("reload")).toBe(false);
+    expect(controller.getSnapshot().view.conflictRead).toEqual({ status: "failed", code: "network" });
+    expect(session.getState().draft).toContain("Quarterly report mine");
+    const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
+    expect(html).toContain('<div role="alert" data-testid="markdown-conflict-read-error"');
+    expect(html).toContain("Could not read the version on disk: Murage could not be reached. Your text is kept.");
+    expect(html).toContain(">Read the disk version again</button>");
+    expect(html).not.toMatch(/disabled=""[^>]*>Use the disk version</);
+
+    failRead = false;
+    expect(await controller.retryConflictRead()).toBe(true);
+    expect(controller.getSnapshot().view.conflictRead).toBeNull();
+    expect(session.getState().conflict).toMatchObject({ currentRevision: rev("r7"), disk: { content: "# Changed by a bot\n" } });
+    expect(renderToStaticMarkup(createElement(MarkdownEditor, { controller }))).not.toContain("markdown-conflict-read-error");
+    expect(await controller.resolveConflict("reload")).toBe(true);
+    expect(session.getState()).toMatchObject({ status: "clean", draft: "# Changed by a bot\n", baseRevision: rev("r7") });
+  });
+
+  it("says a conflict cannot be resolved here when no disk reader is supplied", async () => {
+    const { session, controller } = setup(readCorpus("rich-basic.md"), { save: rejectSave });
+    controller.setMode("source");
+    controller.editSource("changed\n");
+    expect(await controller.save()).toEqual({ status: "conflict" });
+    await settle();
+    expect(controller.getSnapshot().view.conflictRead).toEqual({ status: "unavailable" });
+    expect(await controller.resolveConflict("keep-mine")).toBe(false);
+    expect(session.getState()).toMatchObject({ status: "conflict", draft: "changed\n" });
+    const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
+    expect(html).toContain("The version on disk cannot be read here, so neither choice can be applied yet. Your text is kept.");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Use the disk version<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Keep my version<\/button>/);
+    expect(html).not.toContain("Read the disk version again");
+  });
+});
+
+describe("recovered drafts and closing (fix round 1)", () => {
+  /** A stored crash draft whose lookup is held until `release()`. */
+  async function slowRecoverySetup() {
+    const read = readCorpus("rich-basic.md");
+    const memory = createMemoryDraftBackend();
+    await createMarkdownDraftStore(memory).preserve({ scope: read.scope, relativePath: read.relativePath }, { baseRevision: rev("r0"), content: "CRASHED WORK\n", draftRevision: 9 });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const drafts = createMarkdownDraftStore({
+      async transact(plan, options) {
+        if (!options.write) await gate;
+        return memory.transact(plan, options);
+      },
+    });
+    const context = setup(read, { drafts });
+    const restoring = context.controller.restoreDraft();
+    const { editor } = attachHeadlessEditor(context.controller);
+    typeAtEndOfFirstBlock(editor, " new typing");
+    context.scheduler.flush();
+    release();
+    expect(await restoring).toBe(false);
+    await settle();
+    return { ...context, memory, editor };
+  }
+
+  it("holds a crash draft found after typing started and never writes over it", async () => {
+    const { session, controller, memory, editor, scheduler } = await slowRecoverySetup();
+    expect(memory.records()).toMatchObject([{ content: "CRASHED WORK\n", draftRevision: 9 }]);
+    expect(controller.getSnapshot().view.heldDraftAt).toEqual(expect.any(Number));
+    const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
+    expect(html).toContain('data-testid="markdown-held-draft"');
+    expect(html).toContain("An unsaved draft from an earlier session was found");
+    // More typing, going clean again, or closing never replaces or clears it.
+    typeAtEndOfFirstBlock(editor, "!");
+    scheduler.flush();
+    await settle();
+    expect(controller.discard()).toBe(true);
+    await settle();
+    expect(memory.records()).toMatchObject([{ content: "CRASHED WORK\n" }]);
+    typeAtEndOfFirstBlock(editor, " again");
+    // Using it replaces the new typing only because the user chose it.
+    expect(controller.restoreHeldDraft()).toBe(true);
+    expect(session.getState()).toMatchObject({ status: "dirty", draft: "CRASHED WORK\n" });
+    expect(controller.getSnapshot().view).toMatchObject({ heldDraftAt: null, recoveredDraftAt: expect.any(Number), draftStatus: "preserved" });
+    expect(editor.getMarkdown()).toBe("CRASHED WORK");
+    await controller.dispose();
+    expect(memory.records()).toMatchObject([{ content: "CRASHED WORK\n" }]);
+  });
+
+  it("replaces a held crash draft with the current typing only when the user keeps it", async () => {
+    const { controller, memory, scheduler } = await slowRecoverySetup();
+    expect(memory.records()).toMatchObject([{ content: "CRASHED WORK\n" }]);
+    expect(controller.keepCurrentOverHeldDraft()).toBe(true);
+    scheduler.flush();
+    await settle();
+    expect(memory.records()).toHaveLength(1);
+    expect(memory.records()[0]!.content).toContain("# Quarterly report new typing\n");
+    expect(controller.getSnapshot().view).toMatchObject({ heldDraftAt: null, draftStatus: "preserved" });
+  });
+
+  it("clears the draft of a save that was still in flight when the document closed", async () => {
+    for (const preservedBeforeSave of [true, false]) {
+      let answer!: (receipt: SaveReceipt) => void;
+      const { controller, scheduler, backend, writes } = setup(readCorpus("rich-basic.md"), {
+        save: () => new Promise(resolve => { answer = resolve; }),
+      });
+      const { editor } = attachHeadlessEditor(controller);
+      typeAtEndOfFirstBlock(editor, " closing");
+      if (preservedBeforeSave) {
+        scheduler.flush();
+        await settle();
+        expect(backend.records()).toHaveLength(1);
+      }
+      const saving = controller.save();
+      // Closing flushes a still-pending draft before the receipt arrives.
+      await controller.dispose();
+      expect(backend.records()).toHaveLength(1);
+      answer(receiptFor(writes[0]!, rev("w1")));
+      expect(await saving).toEqual({ status: "saved", stillDirty: false });
+      await settle();
+      expect(backend.records()).toEqual([]);
+    }
+  });
+
+  it("does not follow the session until connected, so a discarded StrictMode instance never schedules drafts", async () => {
+    const { session, controller, scheduler, backend } = setup(readCorpus("rich-basic.md"), { connect: false, initialMode: "source" });
+    session.update(state => editDocument(state, "typed through another instance\n"));
+    expect(scheduler.pending()).toBe(0);
+    expect(controller.getSnapshot().session.draft).not.toBe("typed through another instance\n");
+    const unsubscribe = controller.subscribe(() => {});
+    expect(controller.getSnapshot().session.draft).toBe("typed through another instance\n");
+    controller.connect();
+    controller.editSource("typed after connecting\n");
+    expect(scheduler.pending()).toBeGreaterThan(0);
+    scheduler.flush();
+    await settle();
+    expect(backend.records()).toMatchObject([{ content: "typed after connecting\n" }]);
+    unsubscribe();
+  });
+
+  it("re-checks rich eligibility once Source typing pauses", () => {
+    const { controller, scheduler } = setup(readCorpus("source-table.md"));
+    expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
+    controller.editSource("# No table now\n\nPlain text.\n");
+    expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
+    scheduler.flush();
+    expect(controller.getSnapshot().view).toMatchObject({ richBlockedBy: [], unsupportedSyntax: [] });
+    expect(renderToStaticMarkup(createElement(MarkdownEditor, { controller }))).not.toMatch(/disabled=""[^>]*>Rich<\/button>/);
+    controller.editSource("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+    scheduler.flush();
+    expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
   });
 });
 
