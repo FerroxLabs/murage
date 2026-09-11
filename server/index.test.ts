@@ -4057,6 +4057,18 @@ describe("harness HTTP API", () => {
       await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       )?.busy).toBe(true);
+      // busy is set at dispatch, before the provider accepts the turn. A new
+      // task changes the bot's thread set, which the memory roster policy
+      // treats as a revocation (p02: "existing-task" still revokes), so a
+      // task created inside that window refuses the sibling turn at
+      // acceptance and it settles. The task record's lastInstanceId is
+      // written only after acceptance: wait for it before admitting the task.
+      await expect.poll(() => {
+        try {
+          const bots = JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")) as Array<{ id: string; tasks?: Array<{ threadId: string; lastInstanceId?: string }> }>;
+          return bots.find((candidate) => candidate.id === bot.id)?.tasks?.find((task) => task.threadId === before.threadId)?.lastInstanceId;
+        } catch { return undefined; }
+      }, { timeout: 5_000 }).toBe("claude");
       const admitted = await held.finish();
       expect(admitted.status).toBe(201);
       expect(admitted.body.task).toMatchObject({ title: "Delayed task", busy: false });
