@@ -17,7 +17,7 @@
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
-import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -27,6 +27,7 @@ import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { injectedApiModel, mergeLocalInject } from "./local-inject.ts";
+import { displayConfigPath, NativeConfigRefusal, parseNativeJsonConfig } from "./native-config-file.ts";
 
 import type { ChildProcess } from "node:child_process";
 import type {
@@ -145,9 +146,10 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
 // global `~/.gemini/config/mcp_config.json` and per-plugin files — and whose
 // `agy mcp list` ignores `.gemini/{settings,mcp_config}.json` in the cwd.
 // So Murage tools are mounted by upserting two reserved keys into the global file
-// right before each spawn: every other byte of the user's config is
-// preserved, and a malformed file starts from a fresh object instead of
-// failing the turn (the ensureOpenCodeInjectModel discipline).
+// right before each spawn: every other key of the user's config is
+// preserved, and a file that cannot be read or parsed is refused — the turn
+// fails with repair guidance and the file keeps its bytes — rather than being
+// rebuilt from a fresh object (the ensureOpenCodeInjectModel discipline, 0.1.52 A8).
 export const ANTIGRAVITY_COMPUTER_MCP_KEY = "murage-computer";
 export const ANTIGRAVITY_AGENTS_MCP_KEY = "murage-agents";
 
@@ -191,9 +193,10 @@ async function acquireAntigravityMcpLease(): Promise<() => void> {
   };
 }
 
-// Lenient by design: keep every unknown key the user put in the file. A
-// present-but-wrong mcpServers (e.g. an array) fails the parse and is
-// rebuilt fresh — that file was already unusable to agy itself.
+// Keep every unknown key the user put in the file. A present-but-wrong
+// mcpServers (e.g. an array) is refused like a malformed file: rebuilding it
+// would drop the user's other keys for the whole turn, and for good if Murage
+// stopped before restoring them.
 const mcpConfigFileSchema = z.looseObject({
   mcpServers: z.looseObject({}).optional(),
 });
@@ -253,14 +256,34 @@ function ensureAntigravityOwnedMcpServers(
 ): () => void {
   const home = env.HOME || env.USERPROFILE || homedir();
   const path = join(home, ".gemini", "config", "mcp_config.json");
-  const existed = existsSync(path);
-  const original = existed ? readFileSync(path, "utf8") : null;
-  let config: z.infer<typeof mcpConfigFileSchema> = {};
+  const displayPath = displayConfigPath(path, home);
+  let original: string | null = null;
   try {
-    const parsed = mcpConfigFileSchema.safeParse(JSON.parse(original ?? ""));
-    if (parsed.success) config = parsed.data;
-  } catch {
-    // Missing or malformed user config — rebuild only what the mount needs.
+    original = readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw new NativeConfigRefusal(displayPath, "unreadable", code);
+  }
+  const existed = original !== null;
+  let config: z.infer<typeof mcpConfigFileSchema> = {};
+  let refusal: NativeConfigRefusal | null = null;
+  if (original !== null) {
+    try {
+      const parsed = mcpConfigFileSchema.safeParse(parseNativeJsonConfig(original, displayPath));
+      if (parsed.success) config = parsed.data;
+      else refusal = new NativeConfigRefusal(displayPath, "unexpected-shape", "mcpServers");
+    } catch (error) {
+      if (!(error instanceof NativeConfigRefusal)) throw error;
+      refusal = error;
+    }
+  }
+  if (refusal) {
+    // Bytes we cannot interpret are never rewritten. A turn that needs Murage
+    // tools fails with the guidance; a turn with nothing to mount leaves the
+    // file byte-identical (any stale reserved entry inside it cannot be
+    // located safely, so it is not touched either).
+    if (ownedKeys.some((key) => desired[key])) throw refusal;
+    return () => {};
   }
   const servers = { ...config.mcpServers };
   // Nothing to remove and nothing to add: leave the user's file untouched
@@ -547,9 +570,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         emit({
           ...base(threadId, turnId),
           type: "runtime.error",
-          message: `could not update Antigravity's MCP config (${join(".gemini", "config", "mcp_config.json")}): ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          message:
+            error instanceof NativeConfigRefusal
+              ? error.message
+              : `could not update Antigravity's MCP config (${join(".gemini", "config", "mcp_config.json")}): ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
         });
         settle(false, "mcp_config_error");
         return { turnId };
