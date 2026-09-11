@@ -340,6 +340,38 @@ export function attachmentImageUrl(path: string): string | null {
   return `/api/attachments/${encodeURIComponent(name)}`;
 }
 
+/** U-28's initial player container set. This table is a *hint* and nothing
+ * more: it decides only whether a path is worth asking the media resolver
+ * about (F5-T1). The server names the real type from the file's bytes and
+ * the browser decides whether it can actually decode them, so a renamed
+ * executable or a container whose codec this platform lacks still ends up as
+ * a truthful "cannot be played here" rather than a player. */
+const MEDIA_EXTENSION_HINTS: Readonly<Record<string, MediaHint>> = {
+  wav: { kind: "audio", mime: "audio/wav" },
+  mp3: { kind: "audio", mime: "audio/mpeg" },
+  ogg: { kind: "audio", mime: "audio/ogg" },
+  oga: { kind: "audio", mime: "audio/ogg" },
+  m4a: { kind: "audio", mime: "audio/mp4" },
+  mp4: { kind: "video", mime: "video/mp4" },
+  webm: { kind: "video", mime: "video/webm" },
+};
+
+export interface MediaHint {
+  kind: "audio" | "video";
+  /** The container's usual mime. Never sent anywhere as a claim about bytes. */
+  mime: string;
+}
+
+/** The playable-media hint for a transcript path or file link, or null when
+ * the name is not one of the containers 0.1.52 offers a player for. A leading
+ * dot is a hidden file, not an extension. */
+export function mediaHintForPath(path: string): MediaHint | null {
+  const name = attachmentBasename(path);
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return null;
+  return MEDIA_EXTENSION_HINTS[name.slice(dot + 1).toLowerCase()] ?? null;
+}
+
 /** One intake path for files arriving by drop OR by the composer's attach
  * button, so a picked file and a dropped one can never behave differently.
  * The image uploader is injected: the caller owns the network, this owns
