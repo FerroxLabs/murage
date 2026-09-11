@@ -566,6 +566,9 @@
   "folderTrust.statusUndecided": "Ainda não decidido — o primeiro turno aqui fará a pergunta",
   "folderTrust.statusUpstream": "Confiável pela sua própria instalação do Fuigo (fuigo --trust) — seus arquivos são aplicados independentemente do que o Murage lembra",
   "folderTrust.statusNothing": "Ainda não há nada para confiar aqui",
+  "folderTrust.statusRefused": "Os turnos deste bot não iniciariam: {reason}",
+  "folderTrust.statusNotGated": "Não restringido pelo mecanismo deste bot — os arquivos da pasta se aplicam como sempre",
+  "folderTrust.perMember": "Por membro — o mecanismo de cada membro decide por conta própria:",
   "folderTrust.forget": "Esquecer",
   "folderTrust.forgetError": "Não foi possível esquecer a decisão de confiança desta pasta."
 }
