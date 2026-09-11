@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ArtifactScope } from "../../server/artifacts.ts";
 import { __resetMediaAssetsForTests, mediaAssetsRoute, type MediaAssetsDeps } from "../../server/media-assets.ts";
+import { managedImageOutputPath } from "../../server/output-publication.ts";
 import type { DelegatedRequest, DelegatedResult } from "../../server/route-delegation.ts";
 import { workspaceFilesRoute, type WorkspaceFilesDeps } from "../../server/workspace-files.ts";
 import { MEDIA_ROUTES } from "../../shared/media-assets.ts";
@@ -44,8 +45,16 @@ type FakeTask = { threadId: string; cwd?: string | null; resumeCursors: Record<s
 type FakeBot = { id: string; name: string; threadId: string; cwd?: string; resumeCursors: Record<string, unknown>; tasks?: FakeTask[] };
 type FakeGroup = { id: string; threadId: string; memberIds: string[]; cwd?: string; pinnedCwd?: string | null; tasks?: Array<{ threadId: string; pinnedCwd?: string | null }> };
 
-/** Same rules as artifactScopes() in server/index.ts. */
-function scopesFor(dataDir: string, bots: FakeBot[], groups: FakeGroup[]): ArtifactScope[] {
+/** Same rules as artifactScopes() in server/index.ts, scope for scope: the
+ * task and room working folders, then (R3-T4) one `managedOutput` scope per
+ * conversation for the managed generated-images root, then (retained
+ * artifacts) one thread-less `threadAvailable: false` scope per distinct
+ * `artifacts.source_root` row. The two extra kinds are what a copy of only
+ * the first two loops missed in fix round 1: the managed root made every
+ * thread look like it had two roots, so resolve answered 404 for every
+ * workspace audio and video file in the real app. `retainedRoots` stands in
+ * for the database rows the real function reads. */
+function scopesFor(dataDir: string, bots: FakeBot[], groups: FakeGroup[], retainedRoots: string[] = []): ArtifactScope[] {
   const scopes: ArtifactScope[] = [];
   for (const bot of bots) {
     for (const task of bot.tasks ?? [{ threadId: bot.threadId, cwd: undefined }]) {
@@ -55,9 +64,16 @@ function scopesFor(dataDir: string, bots: FakeBot[], groups: FakeGroup[]): Artif
     for (const group of groups.filter(group => group.memberIds.includes(bot.id))) {
       for (const task of group.tasks ?? [{ threadId: group.threadId, pinnedCwd: group.pinnedCwd }]) {
         const pinned = task.pinnedCwd === undefined ? group.cwd : task.pinnedCwd;
-        scopes.push({ botId: bot.id, botName: bot.name, threadId: task.threadId, workspaceRoot: pinned ?? join(dataDir, "workspaces", bot.id) });
+        const workspaceRoot = pinned ?? join(dataDir, "workspaces", bot.id);
+        if (workspaceRoot) scopes.push({ botId: bot.id, botName: bot.name, threadId: task.threadId, workspaceRoot });
       }
     }
+    const imageThreads = new Set<string>([
+      ...(bot.tasks ?? [{ threadId: bot.threadId }]).map(task => task.threadId),
+      ...groups.filter(group => group.memberIds.includes(bot.id)).flatMap(group => (group.tasks ?? [{ threadId: group.threadId }]).map(task => task.threadId)),
+    ]);
+    for (const threadId of imageThreads) scopes.push({ botId: bot.id, botName: bot.name, threadId, workspaceRoot: managedImageOutputPath(dataDir, bot.id, threadId), managedOutput: true });
+    for (const root of retainedRoots) scopes.push({ botId: bot.id, botName: bot.name, workspaceRoot: root, threadAvailable: false });
   }
   return scopes;
 }
@@ -76,7 +92,10 @@ function fixture() {
   const bots = [bot];
   const groups: FakeGroup[] = [{ id: "room", threadId: "room-1", memberIds: ["research"], tasks: [{ threadId: "room-1", pinnedCwd: roomRoot }] }];
   const store = { bots, groups } as never;
-  const artifactScopes = () => scopesFor(dataDir, bots, groups);
+  // A task deleted earlier whose registered artifacts Files still keeps: the
+  // real function emits its source_root as a thread-less retained scope.
+  const retainedRoots = [join(dataDir, "workspaces", "research", "threads", "task-gone")];
+  const artifactScopes = () => scopesFor(dataDir, bots, groups, retainedRoots);
   const database = () => { throw new Error("the player chain must not touch the database"); };
   const deps: WorkspaceFilesDeps & MediaAssetsDeps = { dataDir, database, store, artifactScopes };
   const write = (root: string, relative: string, content: Buffer | string) => {
@@ -97,13 +116,32 @@ function fixture() {
     return result.body;
   };
   const scope = { botId: "research", threadId: "task-7" };
-  return { base, dataDir, taskRoot, roomRoot, deps, write, call, api, calls, scope };
+  return { base, dataDir, taskRoot, roomRoot, retainedRoots, deps, write, call, api, calls, scope };
 }
 
 async function drain(result: DelegatedResult): Promise<Buffer> {
   if (result.stream) return Buffer.concat(await result.stream.toArray() as Buffer[]);
   return Buffer.from(result.bytes ?? new Uint8Array(0));
 }
+
+describe("the scopes the fixture offers", () => {
+  it("are the ones server/index.ts artifactScopes() emits for this bot: task, room, one managed root per thread, retained rows", () => {
+    const f = fixture();
+    const managed = (threadId: string) => join(f.dataDir, "workspaces", "research", "generated-images", threadId);
+    expect(f.deps.artifactScopes()).toEqual([
+      { botId: "research", botName: "Research bot", threadId: "task-7", workspaceRoot: f.taskRoot },
+      { botId: "research", botName: "Research bot", threadId: "room-1", workspaceRoot: f.roomRoot },
+      { botId: "research", botName: "Research bot", threadId: "task-7", workspaceRoot: managed("task-7"), managedOutput: true },
+      { botId: "research", botName: "Research bot", threadId: "room-1", workspaceRoot: managed("room-1"), managedOutput: true },
+      { botId: "research", botName: "Research bot", workspaceRoot: f.retainedRoots[0], threadAvailable: false },
+    ]);
+    // Every thread therefore carries two scopes; the chain must read the
+    // working folder, and only it, as that conversation's root.
+    const perThread = new Map<string, number>();
+    for (const scope of f.deps.artifactScopes()) if (scope.threadId) perThread.set(scope.threadId, (perThread.get(scope.threadId) ?? 0) + 1);
+    expect([...perThread.values()]).toEqual([2, 2]);
+  });
+});
 
 describe("a transcript path through discovery, resolve and the byte route", () => {
   it("becomes a player for this conversation's own WAV, and the player's bytes are the file's", async () => {
@@ -164,6 +202,22 @@ describe("a transcript path through discovery, resolve and the byte route", () =
     f.calls.length = 0;
     const private_ = f.write(f.taskRoot, "memory/note.wav", wav(1));
     expect(await resolveLocalMedia({ scope: f.scope, absolutePath: private_ }, f.api)).toEqual({ state: "unavailable" });
+  });
+
+  it("never reads the managed generated-images root or a retained root as this conversation's workspace", async () => {
+    const f = fixture();
+    // A WAV under the R3-T4 managed root: that scope authorizes saved image
+    // rows only, so it is not the conversation's working folder and the
+    // transcript path stays a chip; discovery is asked and refuses.
+    const managedRoot = join(f.dataDir, "workspaces", "research", "generated-images", "task-7");
+    const managedTake = f.write(managedRoot, "take.wav", wav(1));
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: managedTake }, f.api)).toEqual({ state: "unavailable" });
+    expect(f.calls).toEqual([WORKSPACE_FILES_ROUTES.root]);
+    // A file in a deleted task's retained root: no live conversation owns it.
+    f.calls.length = 0;
+    const retainedTake = f.write(f.retainedRoots[0]!, "outputs/old.wav", wav(1));
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: retainedTake }, f.api)).toEqual({ state: "unavailable" });
+    expect(f.calls).toEqual([WORKSPACE_FILES_ROUTES.root]);
   });
 
   it("says why when the harness knows the file but will not play it", async () => {

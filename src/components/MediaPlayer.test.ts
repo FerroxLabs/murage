@@ -14,6 +14,7 @@ import {
   formatMediaBytes,
   formatMediaDuration,
   LocalMedia,
+  localMediaRequestFor,
   MediaPlayerCard,
   MediaUnplayableCard,
   MEDIA_EXPIRY_MARGIN_MS,
@@ -264,19 +265,29 @@ describe("a path in a transcript", () => {
     expect(html).toBe('<span data-testid="fallback">take-2.wav</span>');
   });
 
+  // The ask/do-not-ask decision is the pure `localMediaRequestFor`; the
+  // surface's effect asks exactly when it is non-null (effects do not run
+  // under static rendering, so the rule is pinned here, not through a spy).
+  it("asks about a U-28 container in a bubble that knows its conversation, and about nothing else", () => {
+    expect(localMediaRequestFor(scope, "/desk/outputs/take-2.wav")).toEqual({ scope, absolutePath: "/desk/outputs/take-2.wav" });
+    for (const name of ["song.mp3", "clip.ogg", "voice.oga", "note.m4a", "demo.mp4", "demo.webm"]) {
+      expect(localMediaRequestFor(scope, `/desk/outputs/${name}`)).not.toBeNull();
+    }
+    // Only the conversation identity travels: extra scope fields are dropped.
+    expect(localMediaRequestFor({ ...scope, serverId: "local" } as never, "/desk/outputs/take-2.wav")).toEqual({ scope, absolutePath: "/desk/outputs/take-2.wav" });
+  });
+
   it("does not even ask about a file type it has no player for", () => {
-    let asked = false;
-    const resolve = (async () => { asked = true; return { state: "unavailable" as const }; }) as never;
-    render(createElement(LocalMedia, { scope, path: "/desk/outputs/notes.txt", fallback, resolve }));
-    render(createElement(LocalMedia, { scope, path: "/desk/outputs/clip.mov", fallback, resolve }));
-    expect(asked).toBe(false);
+    for (const name of ["notes.txt", "clip.mov", "song.flac", "film.mkv", "old.avi", "clip.m4v", "stream.m3u8", "take-2.wav.exe", "take-2"]) {
+      expect(localMediaRequestFor(scope, `/desk/outputs/${name}`)).toBeNull();
+    }
+    const html = render(createElement(LocalMedia, { scope, path: "/desk/outputs/notes.txt", fallback, resolve: never }));
+    expect(html).toBe('<span data-testid="fallback">take-2.wav</span>');
   });
 
   it("does not ask when the bubble does not know its own conversation", () => {
-    let asked = false;
-    const resolve = (async () => { asked = true; return { state: "unavailable" as const }; }) as never;
-    const html = render(createElement(LocalMedia, { scope: undefined, path: "/desk/outputs/take-2.wav", fallback, resolve }));
-    expect(asked).toBe(false);
-    expect(html).toContain("fallback");
+    expect(localMediaRequestFor(undefined, "/desk/outputs/take-2.wav")).toBeNull();
+    const html = render(createElement(LocalMedia, { scope: undefined, path: "/desk/outputs/take-2.wav", fallback, resolve: never }));
+    expect(html).toBe('<span data-testid="fallback">take-2.wav</span>');
   });
 });

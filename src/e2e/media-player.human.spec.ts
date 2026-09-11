@@ -349,6 +349,41 @@ test("a capability that expired mid-listen is renewed in place, and playback car
   }
 });
 
+test("Save a copy on a card that stopped playing renews its link the same way the player's does", async ({ page }) => {
+  // Fix round 1: the cannot-play and post-failure cards handed out the very
+  // link the harness would refuse once the capability lapsed. Here the
+  // capability lapses by the card's clock one second in, and the harness
+  // stops honouring it; the click must go to the harness for a fresh token
+  // and save through that, never through the spent one.
+  await fetch(`${origin}/__control?ttl=16000`);
+  try {
+    await open(page);
+    const broken = page.locator('[data-media-player-state="unplayable"]').filter({ hasText: "broken.wav" });
+    await expect(broken).toHaveCount(1);
+    const link = broken.getByRole("link", { name: /Save a copy/ });
+    // Earlier tests may already have revoked once: read the generation the
+    // card holds now rather than assume it.
+    await expect(link).toHaveAttribute("href", /cap=mc1\.gen\d+/);
+    const spent = capGeneration(new URL(String(await link.getAttribute("href")), origin).searchParams.get("cap"));
+    // Past the card's expiry margin; then every token issued so far is refused.
+    await page.waitForTimeout(1_500);
+    await fetch(`${origin}/__control?revoke=1`);
+    const asked = resolved.filter(item => item === "outputs/broken.wav").length;
+    const id = assetFor("broken.wav").id;
+    const download = page.waitForEvent("download");
+    await link.click();
+    const saved = await download;
+    expect(capGeneration(new URL(saved.url()).searchParams.get("cap"))).toBe(spent + 1);
+    expect(saved.suggestedFilename()).toBe("broken.wav");
+    expect(resolved.filter(item => item === "outputs/broken.wav").length).toBe(asked + 1);
+    // The spent token was never followed: no 403 for this file.
+    expect(requests.filter(item => item.path.includes(id) && item.status === 403)).toEqual([]);
+    await expect(link).toHaveAttribute("href", new RegExp(`cap=mc1\\.gen${spent + 1}`));
+  } finally {
+    await fetch(`${origin}/__control?ttl=600000`);
+  }
+});
+
 test("a file that will not decode is reported once, not asked about again and again", async ({ page }) => {
   await open(page);
   // broken.wav's bytes fail in the decoder; its capability is live and the
