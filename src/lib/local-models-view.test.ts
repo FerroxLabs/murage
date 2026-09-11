@@ -102,6 +102,16 @@ describe("a server card states what it found, in that order", () => {
   it("names the engines that can use the model, and says so plainly when none can", () => {
     expect(enginesLine(model({ engines: ["fuigoAgent", "piAgent", "codex"] }))).toBe("Usable by Fuigo, pi, Codex");
     expect(enginesLine(model({ engines: [] }))).toContain("run the test first");
+    expect(enginesLine(model({ engines: ["fuigoAgent"], test: test("tools-partial") }))).toBe("Usable by Fuigo");
+  });
+
+  it("promises no engine for a model whose test said it cannot run agents", () => {
+    // The server still lists chat engines for such a model (they run their own
+    // loop), so without this the card would say "can't use tools" and
+    // "Usable by Fuigo, pi, …" three lines apart.
+    for (const outcome of ["text-instead-of-tools", "server-rejects-tools", "context-too-small", "model-not-found", "unreachable"] as const) {
+      expect(enginesLine(model({ engines: ["fuigoAgent", "piAgent"], test: test(outcome) })), outcome).toBe("");
+    }
   });
 
   it("rounds a duration and names the surfaces in the terms engines are chosen by", () => {

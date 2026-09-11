@@ -11,14 +11,23 @@ export interface PickerModel { key: string; selection: PickerSelection; label: s
   /** Local models only (spec V3): outcome of the last tool test. `failed` is
    *  marked; absent means this model was never tested. */
   localTools?: "pass" | "partial" | "failed" }
-/** The one name this feature has, everywhere (spec UX rule). */
+/** The one name this feature has, everywhere (spec UX rule). Only a row that
+ *  names its server belongs here: a custom row an engine carries for a cloud
+ *  provider (Pi's groq rows, openai-compat's OpenRouter defaults) is not a
+ *  local model, and listing it under this name would both mislabel it and
+ *  hide the rail's "no local server" state behind it. */
 export const LOCAL_MODELS_GROUP = "Local models";
+/** Custom rows that are not local: an engine's own extra entries. */
+export const CUSTOM_MODELS_GROUP = "Custom models";
 /** The Local rail's single row when this computer has no local server at all
  *  — a state the user can act on instead of an absence they must notice. */
 export const NO_LOCAL_SERVER_ROW = "No local server detected — add one in Settings → Models";
 export const pickerKey = (s: PickerSelection): string => JSON.stringify([s.instanceId, s.connectionId ?? null, s.model]);
 export function priceBand(price: ProviderModel["pricing"]): string { const n=price?.outputPerMillion; return typeof n==="number"&&Number.isFinite(n)&&n>=0?n<5?"$":n<25?"$$":"$$$":"Price unavailable"; }
-export function contextLabel(value: unknown): string { return typeof value==="number"&&Number.isFinite(value)&&value>0?`${Math.round(value/1000)}K context`:""; }
+/** "64K context" for a 65536-token window and "200K context" for 200000: a
+ *  power-of-two window is what a local server reports (`-c 65536`), and it
+ *  must read the same here as on the Local models card that showed it. */
+export function contextLabel(value: unknown): string { if(typeof value!=="number"||!Number.isFinite(value)||value<=0)return "";const unit=value%1024===0?1024:1000;return `${Math.round(value/unit)}K context`; }
 export function pickerModels(instance: PickerEngine, connections: readonly PublicProviderConnection[]): PickerModel[] {
   const rows: PickerModel[]=[];
   if(instance.enabled===false)return rows;
@@ -29,7 +38,7 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
       if(instance.snapshot.authenticated===false&&!option.custom)continue;
       const selection={instanceId:instance.instanceId,model:option.id};
       const metadata=option as typeof option&{contextWindow?:number};
-      rows.push({key:pickerKey(selection),selection,label:option.label,group:option.custom?LOCAL_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{})});
+      rows.push({key:pickerKey(selection),selection,label:option.label,group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{})});
     }
   }
   if(installed||["grok","openai-compat"].includes(instance.driverKind))for(const connection of connections){
@@ -52,6 +61,24 @@ export function localPickerRows(rows: readonly PickerModel[]): PickerModel[] {
 export function localRowLabel(row: PickerModel): string {
   if (!row.localServer) return row.label;
   return row.label.includes(row.localServer) ? row.label : `${row.label} · ${row.localServer}`;
+}
+/** The second line of a local row. The first line already names the server,
+ *  so this one says what the tool test found — the thing that decides whether
+ *  the pick will work for an agent. A failed test is left to the warning. */
+export function localRowNote(row: PickerModel): string {
+  if (!row.localServer) return "";
+  if (row.localTools === "pass") return "Tools work";
+  if (row.localTools === "partial") return "Tools work, with gaps";
+  if (row.localTools === "failed") return "";
+  return "Not tested yet";
+}
+/** What the bot's model chip says when the chosen model is in no catalog any
+ *  more. A local pick keeps its `host::model` id after its server is removed
+ *  or stops answering; the raw id is not a name anyone chose, so the chip
+ *  says the model and the fact instead, until another model is picked. */
+export function unavailableSelectionLabel(model: string): string {
+  const local = /^[^:\s]+::(.+)$/.exec(model);
+  return local ? `${local[1]} · local server unavailable` : model;
 }
 /** The picker's warning marker, in plain words. Empty when there is nothing to
  *  warn about — an untested model is not accused of anything. */
