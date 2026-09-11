@@ -227,6 +227,7 @@ import {
   queuedSteeredMessage,
   queueSteeredMessage,
 } from "./steer-queue.ts";
+import { releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
 import {
   cancelChannelMessage,
   drainChannelMessages,
@@ -3554,6 +3555,30 @@ bus.subscribe((event: RuntimeEvent) => {
   drainQueuedSends();
 });
 
+/** How a room member turn that never started gives the room and the bot
+ * back (server/room-turn-release.ts): the same steps everywhere, bound to
+ * the store, the speaker records, the browser capabilities and the queues. */
+const unstartedRoomTurnReleaseDeps = {
+  roomBusyBotId: (groupId: string) => store.group(groupId)?.busyBotId,
+  botBusy: (botId: string) => store.bot(botId)?.busy === true,
+  clearRoomClaim: (groupId: string, threadId: string) => {
+    groupSpeakers.delete(threadId);
+    store.patchGroup(groupId, { busyBotId: null, unread: true });
+  },
+  idleBot: (botId: string) => {
+    store.setActivity(botId, "idle");
+    retryDelegationsWaitingOn(botId);
+  },
+  releaseBrowser: (threadId: string, ownerId: string) => releaseBrowserCapabilityForThread(threadId, ownerId),
+  // No turn.completed follows a room turn that never started. Anything
+  // queued while this bot briefly owned the room must be retried now.
+  drainQueues: () => {
+    drainQueuedSends();
+    drainConnectorResumes();
+    drainSecretResumes();
+  },
+};
+
 function drainQueuedSends() {
   drainSteeredMessages(store, (botId, threadId, prompt, userMessage, excludeIds) =>
     // A plain attended turn — no automationSource, no unattended, no comms
@@ -5324,27 +5349,22 @@ async function runGroupMemberTurn(
   // The room claim above is this attempt's. Every exit before a provider
   // turn is accepted releases it through this one path — the same steps a
   // rejected dispatch takes (the dispatch catch below finishes as
-  // "dispatch_failed" and lands here): the speaker and busyBotId cleared,
-  // the bot idle, delegations waiting on it retried, the browser capability
-  // released and the queues drained. An exit that skipped any of this left
-  // the room silently busy — working, no chip, no reply (RED2J).
-  const releaseUnstartedRoomTurn = async () => {
-    if (skillAuthoring) skillAuthoringClaim.claimed = false;
-    if (store.group(group.id)?.busyBotId === bot.id) {
-      groupSpeakers.delete(threadId);
-      store.patchGroup(group.id, { busyBotId: null, unread: true });
-    }
-    if (store.bot(bot.id)?.busy) {
-      store.setActivity(bot.id, "idle");
-      retryDelegationsWaitingOn(bot.id);
-    }
-    await releaseBrowserCapabilityForThread(threadId);
-    // No turn.completed follows a room turn that never started. Anything
-    // queued while this bot briefly owned the room must be retried now.
-    drainQueuedSends();
-    drainConnectorResumes();
-    drainSecretResumes();
-  };
+  // "dispatch_failed" and lands here): the skill-authoring claim handed
+  // back, the speaker and busyBotId cleared, the bot idle, delegations
+  // waiting on it retried, this attempt's browser capability released and
+  // the queues drained. An exit that skipped any of this left the room
+  // silently busy — working, no chip, no reply (RED2J) — or, after Stop,
+  // held /learn and a queued send nobody would retry (RED2K). The room and
+  // the bot are touched only while this attempt still owns the room
+  // (server/room-turn-release.ts).
+  const releaseUnstartedRoomTurn = () => releaseUnstartedRoomTurnThrough(unstartedRoomTurnReleaseDeps, {
+    groupId: group.id,
+    threadId,
+    botId: bot.id,
+    ownerId: internalGeneration,
+    skillAuthoring,
+    skillAuthoringClaim,
+  });
 
   const roster = group.memberIds
     .map((id) => store.bot(id))
@@ -5434,20 +5454,15 @@ async function runGroupMemberTurn(
   // Do not launch a replacement into that ambiguous window; once the old id
   // is known it is retired and this bounded gate clears immediately.
   await pendingCancelledProviderHandshakes.waitForClear(threadId);
+  // Stop landed, or the claim is no longer this attempt's. The same release
+  // as every other unstarted exit: an inline copy here used to leave the
+  // skill-authoring claim taken and the queues undrained (RED2K).
   if (
     isCancelled?.() ||
     store.group(group.id)?.busyBotId !== bot.id ||
     store.bot(bot.id)?.busy !== true
   ) {
-    await releaseBrowserCapabilityForThread(threadId);
-    if (store.group(group.id)?.busyBotId === bot.id) {
-      groupSpeakers.delete(threadId);
-      store.patchGroup(group.id, { busyBotId: null, unread: true });
-    }
-    if (store.bot(bot.id)?.busy) {
-      store.setActivity(bot.id, "idle");
-      retryDelegationsWaitingOn(bot.id);
-    }
+    await releaseUnstartedRoomTurn();
     return false;
   }
   let replyText = "";
