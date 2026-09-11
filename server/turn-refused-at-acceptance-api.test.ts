@@ -64,9 +64,17 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     expect((await api("POST", "/api/bots", { name: "Roster change during dispatch", modelSelection: { instanceId: "piGate", model: models[0].id } })).status).toBe(201);
     writeFileSync(gate, "");
 
-    // Acceptance refuses the turn; the stopped provider turn settles the bot.
-    await expect.poll(async () => (await messages(bot.threadId)).some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED")), { timeout: 15000 }).toBe(true);
+    // Acceptance refuses the turn and the provider turn is stopped. Since
+    // RED2G-3 the harness then re-prepares the context under the moved
+    // authority and dispatches the same user message once more, so the person
+    // sees a reply, not "error: MEMORY_CONTEXT_REVOKED"; the refused attempt
+    // still happened (the server log names it) and its lease must still go.
+    const replies = async () => (await messages(bot.threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text).length;
+    const repliesBefore = await replies();
+    await expect.poll(() => readFileSync(fixture.info.logPath, "utf8").includes(`[memory] context revoked during dispatch on thread ${bot.threadId}`), { timeout: 15000 }).toBe(true);
     await expect.poll(async () => (await botState(bot.id)).busy, { timeout: 15000 }).toBe(false);
+    await expect.poll(async () => await replies(), { timeout: 15000 }).toBe(repliesBefore + 1);
+    expect((await messages(bot.threadId)).some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);
     // The handshake was answered, so the provider had accepted before the refusal.
     expect(dumpRows().some(row => row.setModel !== undefined || row.prompt !== undefined || row.thinkingLevel !== undefined)).toBe(true);
 
@@ -87,13 +95,73 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     const reread = await api("GET", `/api/workspace-files/read?botId=${bot.id}&threadId=${bot.threadId}&path=owner-note.md`);
     expect(reread.body.content).toBe("# Owner note\n\nEdited after the refused turn.\n");
     // and the folder is truly free: a later turn on the same thread runs to a reply.
-    const replies = async () => (await messages(bot.threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text).length;
-    const repliesBefore = await replies();
+    const repliesAfterRefusal = await replies();
     rmSync(`${gate}.waiting`, { force: true });
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "runs after the refused turn" })).status).toBe(202);
     await expect.poll(async () => (await botState(bot.id)).busy, { timeout: 15000 }).toBe(false);
-    expect(await replies()).toBe(repliesBefore + 1);
+    expect(await replies()).toBe(repliesAfterRefusal + 1);
   }, 60000);
+
+  // RED2G-3 (RED2B verifier): creating a task for a bot while a sibling turn
+  // sits in its dispatch window changes the bot's thread set, which the roster
+  // policy treats as a revocation (p02 "existing-task" still revokes), so the
+  // sibling turn is refused at acceptance. p02 holds — the refused provider
+  // turn is stopped — but the person's message must not be lost: the harness
+  // re-prepares the memory context under the new policy revision and
+  // dispatches the same user message once.
+  it("runs a user turn whose sibling task was created inside the dispatch window, on fresh memory context", async () => {
+    const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "piGate").models.options;
+    const created = await api("POST", "/api/bots", { name: "Sibling task fixture", modelSelection: { instanceId: "piGate", model: models[0].id } });
+    expect(created.status).toBe(201);
+    const bot = created.body.bot as { id: string; threadId: string };
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
+    const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+    try {
+      const policyRevision = () => Number((db.prepare("SELECT policy_revision FROM memory_meta WHERE id=1").get() as { policy_revision: number }).policy_revision);
+      const disclosures = () => db.prepare("SELECT state,policy_revision FROM memory_disclosures WHERE thread_id=? ORDER BY created_at").all(bot.threadId) as Array<{ state: string; policy_revision: number }>;
+      const replies = async () => (await messages(bot.threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text);
+
+      // The turn is held at the provider handshake: dispatched, not accepted.
+      rmSync(gate, { force: true }); rmSync(`${gate}.waiting`, { force: true });
+      // (a new bot greets its thread with one bot text before any turn)
+      const repliesBefore = (await replies()).length;
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "sibling turn held in its dispatch window" })).status).toBe(202);
+      await expect.poll(() => existsSync(`${gate}.waiting`), { timeout: 15000 }).toBe(true);
+      expect((await botState(bot.id)).busy).toBe(true);
+      const revisionAtDispatch = policyRevision();
+      expect(disclosures()).toEqual([{ state: "prepared", policy_revision: revisionAtDispatch }]);
+
+      // A task created for the same bot inside that window moves the policy
+      // revision and revokes the prepared disclosure.
+      const task = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Created mid-dispatch" });
+      expect(task.status).toBe(201);
+      expect(task.body.task).toMatchObject({ title: "Created mid-dispatch", busy: false });
+      expect(task.body.task.threadId).not.toBe(bot.threadId);
+      expect(policyRevision()).toBeGreaterThan(revisionAtDispatch);
+      expect(disclosures()).toEqual([{ state: "revoked", policy_revision: revisionAtDispatch }]);
+      writeFileSync(gate, "");
+
+      // Acceptance refuses the held turn; the same user message is dispatched
+      // again under the moved authority and runs to its reply.
+      await expect.poll(() => readFileSync(fixture.info.logPath, "utf8").includes(`[memory] context revoked during dispatch on thread ${bot.threadId}`), { timeout: 15000 }).toBe(true);
+      await expect.poll(async () => (await botState(bot.id)).busy, { timeout: 20000 }).toBe(false);
+      await expect.poll(async () => (await replies()).length, { timeout: 15000 }).toBe(repliesBefore + 1);
+      const thread = await messages(bot.threadId);
+      expect(thread.filter(message => message.role === "user" && message.kind === "text").map(message => message.text)).toEqual(["sibling turn held in its dispatch window"]);
+      expect((await replies()).at(-1)?.text).toBe("Hello from pi");
+      expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:"))).toBe(false);
+      expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);
+      // The reply ran on a disclosure prepared and delivered under the new
+      // revision; the one prepared before the task existed stayed revoked.
+      expect(disclosures()).toEqual([
+        { state: "revoked", policy_revision: revisionAtDispatch },
+        { state: "delivered", policy_revision: policyRevision() },
+      ]);
+      // The sibling task is admitted and untouched by the turn.
+      const current = await botState(bot.id);
+      expect(current.tasks.find((candidate: any) => candidate.threadId === task.body.task.threadId)).toMatchObject({ title: "Created mid-dispatch", busy: false });
+    } finally { db.close(); }
+  }, 90000);
 
   // Q1-T5 §4.1 through the real server: the memory worker finishes capturing
   // the turn's own prompt inside the dispatch window, which rolls the
