@@ -1306,9 +1306,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // are billed (at the cache rate) and they fill the window — but
             // they are reported separately too, so the UI can show how much
             // of the figure was context re-read rather than new text.
+            // An error result for a turn Murage asked to stop (a CLI that
+            // reports its own interruption before exiting) is the Stop, not
+            // an engine failure: same cancelled state as the close path.
+            const stoppedResult = o.is_error === true && session.turn?.stopRequested === true && !session.turn.authFailed;
+            if (stoppedResult) retryState.delete(threadId);
             settle(
-              o.is_error !== true && !session.turn?.authFailed,
-              session.turn?.authFailed ? "auth_required" : o.stop_reason ?? o.terminal_reason ?? null,
+              stoppedResult || (o.is_error !== true && !session.turn?.authFailed),
+              stoppedResult ? "cancelled" : session.turn?.authFailed ? "auth_required" : o.stop_reason ?? o.terminal_reason ?? null,
               o.total_cost_usd ?? null,
               o.usage
                 ? {

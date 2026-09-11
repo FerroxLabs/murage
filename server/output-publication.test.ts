@@ -36,7 +36,7 @@ function fixture() {
   const publisher = createOutputPublisher({ dataDir: DATA_DIR, database, store, artifactScopes: scopes });
   const runId = randomUUID();
   const dispatch = (managed = true, run = runId) => publisher.beforeDispatch({ botId: bot.id, threadId: bot.threadId, runId: run, workspaceRoot: realpathSync(workspace), managed });
-  const complete = (ok = true) => publisher.publishTerminalOutputs({ type: "turn.completed", ok, threadId: bot.threadId, eventId: randomUUID() } as never);
+  const complete = (ok = true, stopReason?: string) => publisher.publishTerminalOutputs({ type: "turn.completed", ok, ...(stopReason ? { stopReason } : {}), threadId: bot.threadId, eventId: randomUUID() } as never);
   const write = (relativePath: string, content: string | Buffer) => { const path = join(workspace, ...relativePath.split("/")); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); return path; };
   const cards = () => store.messagesFor(bot.threadId).filter(message => message.artifactIds?.length);
   const hostMessages = () => store.messagesFor(bot.threadId).filter(message => message.role === "bot" && message.kind === "text" && /Saved|could not be saved/.test(message.text ?? ""));
@@ -156,6 +156,21 @@ it("keeps verified receipts for a failed or cancelled turn but registers and ann
   expect(listArtifacts(database(), storage(), {}, f.access).total).toBe(0);
   const receipts = f.receipts();
   expect(receipts).toEqual([expect.objectContaining({ stage: "retained", sha256: sha("<p>draft</p>"), bytes: 12, pathToken: "outputs/draft.html" })]);
+  expect(receipts[0]!.artifactId).toBeUndefined();
+  expect(receipts[0]!.messageId).toBeUndefined();
+});
+
+it("treats a stopped turn (ok:true, stopReason cancelled) like a cancelled one: receipts retained, nothing registered or announced (STOP1, U-02)", async () => {
+  const f = fixture();
+  f.dispatch();
+  f.write("outputs/partial.html", "<p>half-written</p>");
+  // Every engine settles a user Stop as ok:true "cancelled", not ok:false.
+  await f.complete(true, "cancelled");
+  expect(f.hostMessages()).toEqual([]);
+  expect(f.cards()).toEqual([]);
+  expect(listArtifacts(database(), storage(), {}, f.access).total).toBe(0);
+  const receipts = f.receipts();
+  expect(receipts).toEqual([expect.objectContaining({ stage: "retained", sha256: sha("<p>half-written</p>"), pathToken: "outputs/partial.html" })]);
   expect(receipts[0]!.artifactId).toBeUndefined();
   expect(receipts[0]!.messageId).toBeUndefined();
 });

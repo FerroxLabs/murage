@@ -914,6 +914,21 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
   });
 
+  it("an error result the CLI writes for a stopped turn settles as cancelled, not failed (STOP1)", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId: "t-stop-result",
+      text: "__fixture_hold_authority__ __fixture_error_result_on_stop__ keep working",
+    });
+    await recorder.until((e) => e.type === "session.started");
+
+    await instance.adapter.interruptTurn("t-stop-result");
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  });
+
   it("a message sent mid-turn is steered into the running turn", async () => {
     await create("slow");
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-steer", text: "first" });
