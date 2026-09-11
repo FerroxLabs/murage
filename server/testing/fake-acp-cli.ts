@@ -11,6 +11,7 @@
 //   FAKE_ACP_MODE   happy (default) | image | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
 //                   | question-tool (AskUserQuestion routed through request_permission)
 //                   | fuigo-question (Fuigo's `_fuigo/ask_user_question` ext request)
+//                   | fuigo-elicit (Fuigo's `_fuigo/mcp/elicit` bridge of an MCP form elicitation)
 //                   | elicitation-form | elicitation-url | elicitation-legacy
 //                     (ACP `elicitation/create` form / url, and the older
 //                     `session/elicitation` spelling); the client's reply is
@@ -775,6 +776,26 @@ function handle(msg: any) {
               { question: "Which database?", options: [{ label: "Redis", description: "In-memory", preview: "<div/>" }, { label: "Postgres", description: "Relational" }] },
               { question: "Which frameworks?", options: [{ label: "React", description: "" }, { label: "Vue", description: "" }], multiSelect: true },
             ],
+          },
+        });
+        return;
+      }
+      if (mode === "fuigo-elicit") {
+        // Fuigo's bridge of an MCP server's elicitation (McpElicitExtRequest):
+        // ACP form fields plus serverName; the reply is tagged `outcome`.
+        pendingPermissionId = 9005;
+        onPermissionAnswered = complete;
+        out({
+          jsonrpc: "2.0",
+          id: pendingPermissionId,
+          method: "_fuigo/mcp/elicit",
+          params: {
+            sessionId: "fake-session",
+            toolCallId: "mcp-elicit-1",
+            serverName: "deployer",
+            message: "Which environment?",
+            mode: "form",
+            requestedSchema: { type: "object", properties: { environment: { type: "string", enum: ["staging", "production"] } }, required: ["environment"] },
           },
         });
         return;
