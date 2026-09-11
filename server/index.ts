@@ -10527,7 +10527,8 @@ const server = createServer(async (req, res) => {
       if (!store.bot(m[1]) || (requestSurface(req.headers, url.searchParams) !== "desktop" && !visibleToCompanion(store, { scope: "bot", botId: m[1] }))) {
         return json(res, 404, { error: "no such bot" });
       }
-      const {threadId:requestedThread,...readBodyFields}=body??{};
+      if(body===null||typeof body!=="object"||Array.isArray(body))return json(res,400,{error:"read state accepts only an optional unread boolean"});
+      const {threadId:requestedThread,...readBodyFields}=body;
       const parsed = readStateRequestSchema.safeParse(readBodyFields);
       if (!parsed.success) return json(res, 400, { error: "read state accepts only an optional unread boolean" });
       const selected=requestedDirectBot(m[1],requestedThread);
@@ -10906,7 +10907,6 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      if(directRuns.forBot(bot.id).length)return json(res,409,{error:"Stop this bot's threads before deleting it"});
       const activeRoutine = routines!.activeRunForBot(bot.id);
       if (activeRoutine) {
         return json(res, 409, {
@@ -10919,6 +10919,9 @@ const server = createServer(async (req, res) => {
           error: `stop this bot's work in channel ${activeGroup.group.name} before deleting the bot`,
         });
       }
+      // A routine run or channel turn also holds a direct thread run; the
+      // specific guidance above names the control that actually stops it.
+      if(directRuns.forBot(bot.id).length)return json(res,409,{error:"Stop this bot's threads before deleting it"});
       if (localVmMode(cfg) === "per-bot") {
         const target = perBotLocalVmTarget(bot.id);
         if (localVmActiveThreads.has(target.key) || localVmLifecycleBusy.has(target.key)) {
@@ -11717,7 +11720,11 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const body = rawBody ?? {};
-      if(body.threadId!==undefined||!activeGroupTurnForBot(bot.id)){
+      // An explicit target is a direct thread unless it names the channel
+      // thread this bot is currently working in; that stop must reach the
+      // channel turn below instead of failing as an unknown direct thread.
+      const busyChannel=activeGroupTurnForBot(bot.id);
+      if(!busyChannel||(body.threadId!==undefined&&body.threadId!==busyChannel.threadId)){
         const selected=requestedDirectBot(bot.id,body.threadId),threadId=selected.threadId;
         const routine=routines!.activeBotRunForBot(bot.id);
         if(routine?.threadId===threadId){cancelDirectTurnDispatch(bot.id,threadId);await routines!.cancelRun(routine.id);return json(res,200,{ok:true});}
