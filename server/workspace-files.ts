@@ -1,5 +1,5 @@
-// Workspace discovery (R3-T1), bounded read and revision-conditioned write
-// (F4-T1, still 501 here).
+// Workspace discovery (R3-T1), bounded read, revision-conditioned Markdown
+// write and explicit save-version (F4-T1).
 // Contract: shared/workspace-files.ts and docs/plans/0152-CONTRACTS.md.
 //
 // Authority, in order, on every request:
@@ -18,24 +18,30 @@
 //    private setup/memory names are not listed. Links are listed as `link`
 //    and never followed; ancestors are re-checked after every directory read.
 // Discovery is not authorship: entries carry no producer, run or author.
-import { createHash } from "node:crypto";
-import { lstatSync, opendirSync, readFileSync, realpathSync, type Stats } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync, constants, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, opendirSync, readFileSync, readSync, realpathSync,
+  renameSync, unlinkSync, writeSync, type Stats,
+} from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename, extname, join, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   ArtifactError, artifactRelativePathParts, artifactSourceFingerprint, artifactWorkspaceIdentity, authorizedArtifactRoot, isPrivateWorkspaceName,
-  type ArtifactScope,
+  registerArtifact, type ArtifactScope,
 } from "./artifacts.ts";
+import type { Artifact } from "../shared/artifacts.ts";
+import { ProjectFolderLeaseError, type ProjectFolderLeases } from "./project-folder-leases.ts";
 import type { Store } from "./store.ts";
 import { SURFACE_QUERY, SURFACE_SECRET_QUERY } from "./sse-visibility.ts";
 import {
   WORKSPACE_CURSOR_MAX_LENGTH, WORKSPACE_FILE_ERROR_STATUS, WORKSPACE_FILES_ROUTE_PREFIX, WORKSPACE_FILES_ROUTES, WORKSPACE_LIST_PAGE_SIZE,
-  WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES, WORKSPACE_SEARCH_QUERY_MAX_LENGTH,
-  isWorkspaceRelativePath, isWorkspaceScopeRef,
-  type FileRevision, type WorkspaceEntry, type WorkspaceFileErrorBody, type WorkspaceFileErrorCode, type WorkspaceListRequest,
-  type WorkspaceListResponse, type WorkspaceRootInfo, type WorkspaceRootState, type WorkspaceScopeRef, type WorkspaceSearchRequest,
-  type WorkspaceSearchResponse,
+  WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES, WORKSPACE_SEARCH_QUERY_MAX_LENGTH, WORKSPACE_TEXT_MAX_BYTES,
+  isFileRevision, isWorkspaceRelativePath, isWorkspaceScopeRef,
+  type FileRevision, type SaveReceipt, type WorkspaceEntry, type WorkspaceFileErrorBody, type WorkspaceFileErrorCode, type WorkspaceListRequest,
+  type WorkspaceListResponse, type WorkspaceNewline, type WorkspaceReadRequest, type WorkspaceReadResult, type WorkspaceRootInfo,
+  type WorkspaceRootState, type WorkspaceSaveVersionRequest, type WorkspaceSaveVersionResponse, type WorkspaceScopeRef,
+  type WorkspaceSearchRequest, type WorkspaceSearchResponse, type WorkspaceWriteRequest,
 } from "../shared/workspace-files.ts";
 import { hiddenRoute, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 
@@ -47,6 +53,12 @@ export interface WorkspaceFilesDeps {
   store: Store;
   /** Same scope resolver Files and register_artifact already use. */
   artifactScopes: () => ArtifactScope[];
+  /** F4-T1: the in-process writer registry every local bot turn holds on its
+   * working folder for the whole turn (`projectTurnLeases.folders` in
+   * server/index.ts). A save takes a short exclusive lease on the workspace
+   * for its commit window. Without it an overwrite cannot prove that no bot
+   * is writing, so it is refused (Save a copy still works). */
+  projectFolders?: Pick<ProjectFolderLeases, "acquireRestore" | "release">;
 }
 
 /** Names read from one directory per request, hidden and private included.
@@ -415,6 +427,392 @@ export function searchWorkspace(deps: WorkspaceFilesDeps, request: WorkspaceSear
   return { scope, root: resolved.info, query: trimmed, entries, ...(cursor ? { cursor } : {}), incomplete, scanned };
 }
 
+// ---------------------------------------------------------------------------
+// F4-T1: bounded read, revision-conditioned Markdown write, save-version.
+//
+// The on-disk bytes are canonical. A read reports what it saw (BOM, newline
+// style, strict UTF-8) and the revision of exactly that file state. A write
+// happens only when the owner explicitly saves (never on a timer), only for a
+// Markdown file, and only if the file is still at the revision the draft was
+// based on; otherwise it answers `revision-conflict` with the revision now on
+// disk and leaves the file alone. `baseRevision: null` is an exclusive create
+// (Save a copy) and never replaces an existing file.
+//
+// Competing writers, honestly:
+// - Murage's own bot turns hold a writer lease on their working folder for
+//   the whole turn. An overwrite takes a short exclusive lease on the
+//   workspace for its commit window, so while any bot turn is using an
+//   overlapping folder the save answers `bot-writing` (held, nothing written)
+//   and a bot turn cannot start inside the commit window.
+// - Other programs do not take Murage leases. The file's identity is checked
+//   again immediately before the atomic rename, which narrows but cannot close
+//   that race: there is no universal compare-and-swap on ordinary files.
+// - The prior revision is kept as a saved version in Files before it is
+//   replaced, so an overwrite is always recoverable. If it cannot be kept,
+//   nothing is overwritten.
+// ---------------------------------------------------------------------------
+
+/** Markdown is the only format the workspace editor writes in 0.1.52. */
+export const WORKSPACE_EDITABLE_EXTENSIONS: readonly string[] = [".md", ".markdown"];
+/** JSON escaping can grow text up to six times (a control character becomes
+ * a six-character \u escape), plus the envelope. */
+export const WORKSPACE_WRITE_BODY_MAX_BYTES = 6 * WORKSPACE_TEXT_MAX_BYTES + 64 * 1024;
+const SAVE_VERSION_BODY_MAX_BYTES = 64 * 1024;
+/** Hidden, so discovery never lists a half-written save. */
+export const WORKSPACE_SAVE_TEMP_PREFIX = ".murage-save-";
+const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+const NOT_FOUND = "That file was not found in this workspace.";
+const MOVED = "The file was moved or deleted since it was opened. Save a copy to keep your changes.";
+const CHANGED = "The file changed since it was opened. Your changes were not saved over it; compare, reload or save a copy.";
+const CHANGED_DURING_READ = "The file changed while it was being read. Open it again.";
+const BOT_WRITING = "A bot is working in this workspace right now, so the file was not saved over. Your changes are kept; save again when it finishes, or save a copy.";
+const CANNOT_CONFIRM = "Murage cannot confirm that no bot is writing in this workspace, so the file was not saved over. Save a copy instead.";
+const NOT_SAVED = "The file could not be saved. The original was preserved.";
+
+function conflict(current: FileRevision | undefined, message = CHANGED): never {
+  throw new WorkspaceFileError("revision-conflict", message, current);
+}
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+function fileParts(relativePath: unknown): string[] {
+  if (!isWorkspaceRelativePath(relativePath)) fail("invalid-path", "Use a file path inside this workspace.");
+  try { return artifactRelativePathParts(relativePath); }
+  catch (error) {
+    if (error instanceof ArtifactError && error.status === 403) fail("private-file", "Private setup and memory files are not opened here.");
+    fail("invalid-path", "Use a file path inside this workspace.");
+  }
+}
+
+/** A ready, existing local root. A managed workspace dispatch has not created
+ * yet has no files, and nothing here creates it. */
+function readyRoot(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef): { root: string; rootStat: Stats; label: string } {
+  const resolved = resolveWorkspaceRoot(deps, scope);
+  requireReady(resolved);
+  if (resolved.pending || !resolved.root || !resolved.rootStat) fail("not-found", NOT_FOUND);
+  return { root: resolved.root, rootStat: resolved.rootStat, label: resolved.info.label };
+}
+
+/** Changes need the root to be one Files already authorizes for this exact
+ * conversation, not only the root dispatch is predicted to create. */
+function requireAuthorizedRoot(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef, root: string): void {
+  const identity = identityOf(root);
+  const authorized = identity !== undefined && deps.artifactScopes().some(item => item.botId === scope.botId && item.threadId === scope.threadId
+    && item.threadAvailable !== false && identityOf(item.workspaceRoot) === identity);
+  if (!authorized) fail("scope-unavailable", UNAVAILABLE);
+}
+
+interface ObservedFile { directories: Array<{ path: string; stat: Stats }>; path: string; stat?: Stats }
+
+/** lstat the root, every folder and the file itself; no link is followed. */
+function observeFile(root: string, rootStat: Stats, parts: string[]): ObservedFile {
+  const directories: Array<{ path: string; stat: Stats }> = [];
+  let path = root;
+  try {
+    const now = lstatSync(root);
+    if (!now.isDirectory() || now.isSymbolicLink() || !sameNode(now, rootStat)) fail("root-changed", ROOT_CHANGED);
+    directories.push({ path, stat: now });
+    for (const part of parts.slice(0, -1)) {
+      path = join(path, part);
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) fail("linked-file", "Files inside linked folders are not opened.");
+      if (!stat.isDirectory()) fail("not-found", NOT_FOUND);
+      directories.push({ path, stat });
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceFileError) throw error;
+    if (errno(error) === "ENOENT" || errno(error) === "ENOTDIR") fail(directories.length ? "not-found" : "root-changed", directories.length ? NOT_FOUND : ROOT_CHANGED);
+    if (errno(error) === "EACCES" || errno(error) === "EPERM") fail("not-found", "That file could not be read.");
+    fail("root-changed", ROOT_CHANGED);
+  }
+  const file = join(path, parts.at(-1)!);
+  return { directories, path: file, stat: lstatOptional(file) };
+}
+function lstatOptional(path: string): Stats | undefined {
+  try { return lstatSync(path); }
+  catch (error) {
+    if (errno(error) === "ENOENT") return undefined;
+    if (errno(error) === "EACCES" || errno(error) === "EPERM") fail("not-found", "That file could not be read.");
+    fail("root-changed", ROOT_CHANGED);
+  }
+}
+function requireRegularFile(stat: Stats): void {
+  if (stat.isSymbolicLink()) fail("linked-file", "Linked files are not opened.");
+  if (!stat.isFile()) fail("not-regular-file", "Only ordinary files can be opened here.");
+  if (stat.nlink !== 1) fail("not-regular-file", "Hard-linked files cannot be opened or saved here.");
+}
+const sameState = (a: Stats, b: Stats) => artifactSourceFingerprint(a) === artifactSourceFingerprint(b);
+
+/** Bytes of exactly the observed file state, or a refusal. */
+function readStable(path: string, expected: Stats): Buffer {
+  if (expected.size > WORKSPACE_TEXT_MAX_BYTES) fail("too-large", "This file is too large to open as text here. Download it or open it in another app.");
+  let fd: number;
+  try { fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)); }
+  catch (error) {
+    if (errno(error) === "ELOOP") fail("linked-file", "Linked files are not opened.");
+    if (errno(error) === "ENOENT") fail("not-found", NOT_FOUND);
+    fail("not-found", "That file could not be read.");
+  }
+  try {
+    if (!sameState(fstatSync(fd), expected)) conflict(undefined, CHANGED_DURING_READ);
+    const bytes = Buffer.alloc(expected.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(fd, bytes, offset, bytes.length - offset, null);
+      if (!count) conflict(undefined, CHANGED_DURING_READ);
+      offset += count;
+    }
+    if (readSync(fd, Buffer.alloc(1), 0, 1, null) !== 0 || !sameState(fstatSync(fd), expected) || !sameState(lstatSync(path), expected)) conflict(undefined, CHANGED_DURING_READ);
+    return bytes;
+  } finally { closeSync(fd); }
+}
+
+/** Strict UTF-8. One leading BOM is reported and removed; anything after it,
+ * including a second BOM, stays in the content exactly. */
+export function decodeWorkspaceText(bytes: Uint8Array): { bom: boolean; content: string } {
+  const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  try { return { bom, content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bom ? bytes.subarray(3) : bytes) }; }
+  catch { fail("unsupported-encoding", "This file is not UTF-8 text. Download it or open it in another app."); }
+}
+
+/** A lone CR counts as mixed: the contract has no old-Mac style. */
+export function workspaceNewlineStyle(text: string): WorkspaceNewline {
+  let crlf = 0, other = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 13) { if (text.charCodeAt(index + 1) === 10) { crlf++; index++; } else other++; }
+    else if (code === 10) other++;
+  }
+  if (!crlf && !other) return "none";
+  if (crlf && other) return "mixed";
+  if (crlf) return "crlf";
+  return text.includes("\r") ? "mixed" : "lf";
+}
+
+/** Bounded current-file read (2 MiB, strict UTF-8, no link followed). Any
+ * text file can be read for preview; only Markdown can be written back. */
+export function readWorkspaceFile(deps: WorkspaceFilesDeps, request: WorkspaceReadRequest): WorkspaceReadResult {
+  const { scope, relativePath } = request;
+  if (!isWorkspaceScopeRef(scope)) fail("invalid-request", "Choose a bot and conversation.");
+  const parts = fileParts(relativePath);
+  const { root, rootStat } = readyRoot(deps, scope);
+  const observed = observeFile(root, rootStat, parts);
+  if (!observed.stat) fail("not-found", NOT_FOUND);
+  requireRegularFile(observed.stat);
+  const bytes = readStable(observed.path, observed.stat);
+  assertUnchanged(observed.directories);
+  const { bom, content } = decodeWorkspaceText(bytes);
+  return {
+    scope, relativePath, revision: workspaceFileRevision(root, relativePath, observed.stat), encoding: "utf-8", bom,
+    newline: workspaceNewlineStyle(content), bytes: bytes.length, modifiedAt: Math.trunc(observed.stat.mtimeMs), content,
+  };
+}
+
+/** Exact shape check for a write body; the path is checked separately. */
+export function parseWorkspaceWriteRequest(body: unknown): WorkspaceWriteRequest {
+  const invalid = (): never => fail("invalid-request", "Invalid save request.");
+  if (!isRecord(body)) invalid();
+  const value = body as Record<string, unknown>;
+  const allowed = new Set(["scope", "relativePath", "baseRevision", "requestId", "content", "bom", "draftRevision"]);
+  if (Object.keys(value).some(key => !allowed.has(key))) invalid();
+  const { scope, relativePath, baseRevision, requestId, content, bom, draftRevision } = value;
+  if (!isWorkspaceScopeRef(scope) || typeof relativePath !== "string" || typeof requestId !== "string" || !REQUEST_ID.test(requestId)
+    || typeof content !== "string" || typeof bom !== "boolean" || (baseRevision !== null && !isFileRevision(baseRevision))
+    || (draftRevision !== undefined && (!Number.isSafeInteger(draftRevision) || (draftRevision as number) < 0))) invalid();
+  // A lone surrogate would silently become U+FFFD on disk.
+  if (/\p{Cs}/u.test(content as string)) fail("invalid-request", "The text contains characters that cannot be saved as UTF-8.");
+  return {
+    scope: { botId: (scope as WorkspaceScopeRef).botId, threadId: (scope as WorkspaceScopeRef).threadId }, relativePath: relativePath as string,
+    baseRevision: baseRevision as FileRevision | null, requestId: requestId as string, content: content as string, bom: bom as boolean,
+    ...(draftRevision !== undefined ? { draftRevision: draftRevision as number } : {}),
+  };
+}
+
+function registerWorkspaceFile(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef, root: string, relativePath: string, name?: string): Artifact {
+  const botName = deps.store.bots.find(bot => bot.id === scope.botId)?.name ?? "";
+  // The exact root this request resolved and authorized, never the first
+  // scope that happens to share the bot and conversation.
+  return registerArtifact(deps.database(), join(deps.dataDir, "artifact-files"), { botId: scope.botId, threadId: scope.threadId, relativePath, ...(name !== undefined ? { name } : {}) },
+    { owner: true, scopes: [{ botId: scope.botId, botName, threadId: scope.threadId, workspaceRoot: root }] });
+}
+
+function currentRevision(root: string, relativePath: string, path: string): FileRevision | undefined {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 ? workspaceFileRevision(root, relativePath, stat) : undefined;
+  } catch { return undefined; }
+}
+
+/** Keep the revision about to be replaced as a saved version in Files. */
+function keepPreviousRevision(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef, root: string, relativePath: string, path: string, previous: FileRevision): string {
+  try { return registerWorkspaceFile(deps, scope, root, relativePath).id; }
+  catch (error) {
+    if (error instanceof ArtifactError && error.status === 507) fail("quota-exceeded", "The Files library is full, so the previous version could not be kept. Nothing was overwritten; free space in Files or save a copy.");
+    // registerArtifact answers 409 both for a file that changed while it was
+    // copied and for unsafe Files storage: only the first is a conflict.
+    const now = currentRevision(root, relativePath, path);
+    if (now !== previous) conflict(now);
+    fail("write-failed", "The previous version could not be kept, so nothing was overwritten.");
+  }
+}
+
+/** Private temp file beside the target, fully written and flushed. */
+function stageBytes(path: string, bytes: Buffer, mode: number): Stats {
+  const fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o600);
+  try {
+    let offset = 0;
+    while (offset < bytes.length) offset += writeSync(fd, bytes, offset, bytes.length - offset);
+    fchmodSync(fd, mode);
+    fsyncSync(fd);
+    return fstatSync(fd);
+  } finally { closeSync(fd); }
+}
+/** Make the rename durable where the platform allows a directory fsync. */
+function syncDirectory(path: string): void {
+  let fd: number | undefined;
+  try { fd = openSync(path, constants.O_RDONLY); fsyncSync(fd); } catch { /* Windows cannot fsync a directory. */ }
+  finally { if (fd !== undefined) try { closeSync(fd); } catch { /* already closed */ } }
+}
+
+export interface WorkspaceWriteHooks {
+  /** Test seam: runs after the new bytes are staged and the prior revision is
+   * kept, immediately before the final identity recheck and commit. */
+  beforeCommit?: () => void;
+}
+
+/** Revision-conditioned atomic Markdown write. Never silent: a changed,
+ * moved, replaced or bot-busy file is refused and left exactly as it is. */
+export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: WorkspaceWriteRequest | unknown, hooks: WorkspaceWriteHooks = {}): SaveReceipt {
+  const request = parseWorkspaceWriteRequest(body);
+  const { scope, relativePath } = request;
+  const parts = fileParts(relativePath);
+  if (!WORKSPACE_EDITABLE_EXTENSIONS.includes(extname(parts.at(-1)!).toLowerCase())) fail("invalid-request", "Only Markdown files can be edited here.");
+  const content = Buffer.from(request.content, "utf8");
+  const bytes = request.bom ? Buffer.concat([UTF8_BOM, content]) : content;
+  if (bytes.length > WORKSPACE_TEXT_MAX_BYTES) fail("too-large", "This document is larger than 2 MiB and cannot be saved here.");
+  const { root, rootStat } = readyRoot(deps, scope);
+  requireAuthorizedRoot(deps, scope, root);
+  const create = request.baseRevision === null;
+  const leaseOwner = `workspace-save:${randomUUID()}`;
+  let held = false, temp: string | undefined, committed = false;
+  if (!create) {
+    if (!deps.projectFolders) fail("bot-writing", CANNOT_CONFIRM);
+    try { deps.projectFolders.acquireRestore(leaseOwner, root); held = true; }
+    catch (error) {
+      if (error instanceof ProjectFolderLeaseError && (error.code === "conflict" || error.code === "owner-in-use")) fail("bot-writing", BOT_WRITING);
+      fail("root-changed", ROOT_CHANGED);
+    }
+  }
+  try {
+    const observed = observeFile(root, rootStat, parts);
+    let previousRevision: FileRevision | null = null;
+    if (create) {
+      if (observed.stat) fail("already-exists", "A file with that name already exists. Choose another name.");
+    } else {
+      if (!observed.stat) fail("not-found", MOVED);
+      requireRegularFile(observed.stat);
+      previousRevision = workspaceFileRevision(root, relativePath, observed.stat);
+      if (previousRevision !== request.baseRevision) conflict(previousRevision);
+      // Saving exactly what is on disk changes nothing: no rewrite, no new
+      // revision, no saved version.
+      if (observed.stat.size === bytes.length && observed.stat.size <= WORKSPACE_TEXT_MAX_BYTES && readStable(observed.path, observed.stat).equals(bytes)) {
+        assertUnchanged(observed.directories);
+        return receipt(request, previousRevision, previousRevision, bytes.length);
+      }
+    }
+    const directory = observed.directories.at(-1)!.path;
+    temp = join(directory, `${WORKSPACE_SAVE_TEMP_PREFIX}${randomUUID()}.tmp`);
+    const staged = stageBytes(temp, bytes, create ? 0o600 : observed.stat!.mode & 0o777);
+    const artifactId = create ? undefined : keepPreviousRevision(deps, scope, root, relativePath, observed.path, previousRevision!);
+    hooks.beforeCommit?.();
+    // Final identity recheck immediately before the atomic replacement.
+    assertUnchanged(observed.directories);
+    const now = lstatOptional(observed.path);
+    if (create) {
+      if (now) fail("already-exists", "A file with that name already exists. Choose another name.");
+      try { linkSync(temp, observed.path); }
+      catch (error) { if (errno(error) === "EEXIST") fail("already-exists", "A file with that name already exists. Choose another name."); throw error; }
+      committed = true;
+      unlinkSync(temp); temp = undefined;
+    } else {
+      if (!now) fail("not-found", MOVED);
+      requireRegularFile(now);
+      const onDisk = workspaceFileRevision(root, relativePath, now);
+      if (onDisk !== previousRevision) conflict(onDisk);
+      renameSync(temp, observed.path);
+      committed = true; temp = undefined;
+    }
+    syncDirectory(directory);
+    // Report the committed revision. If something replaced the file in the
+    // instant after the commit, say so instead of claiming that state.
+    const after = lstatOptional(observed.path);
+    if (!after || !sameNode(after, staged)) conflict(after ? currentRevision(root, relativePath, observed.path) : undefined,
+      "Your changes were saved, but the file changed again right away. Open it again to see the current version.");
+    return receipt(request, previousRevision, workspaceFileRevision(root, relativePath, after), bytes.length, artifactId);
+  } catch (error) {
+    if (error instanceof WorkspaceFileError) throw error;
+    if (committed) throw new WorkspaceFileError("revision-conflict", "Your changes were saved, but the file could not be checked afterwards. Open it again.");
+    throw new WorkspaceFileError("write-failed", NOT_SAVED);
+  } finally {
+    if (temp !== undefined) try { unlinkSync(temp); } catch { /* already gone */ }
+    if (held) deps.projectFolders!.release(leaseOwner);
+  }
+}
+
+function receipt(request: WorkspaceWriteRequest, previousRevision: FileRevision | null, revision: FileRevision, bytes: number, artifactId?: string): SaveReceipt {
+  return {
+    requestId: request.requestId, scope: request.scope, relativePath: request.relativePath, previousRevision, revision, bytes, savedAt: Date.now(),
+    ...(request.draftRevision !== undefined ? { draftRevision: request.draftRevision } : {}), ...(artifactId ? { artifactId } : {}),
+  };
+}
+
+export function parseWorkspaceSaveVersionRequest(body: unknown): WorkspaceSaveVersionRequest {
+  const invalid = (): never => fail("invalid-request", "Invalid save-version request.");
+  if (!isRecord(body)) invalid();
+  const value = body as Record<string, unknown>;
+  if (Object.keys(value).some(key => !["scope", "relativePath", "revision", "name"].includes(key))) invalid();
+  const { scope, relativePath, revision, name } = value;
+  if (!isWorkspaceScopeRef(scope) || typeof relativePath !== "string" || !isFileRevision(revision)
+    || (name !== undefined && (typeof name !== "string" || !name.trim() || name.length > 200))) invalid();
+  return {
+    scope: { botId: (scope as WorkspaceScopeRef).botId, threadId: (scope as WorkspaceScopeRef).threadId }, relativePath: relativePath as string,
+    revision: revision as FileRevision, ...(name !== undefined ? { name: name as string } : {}),
+  };
+}
+
+/** Explicit Save version: copy the exact revision the owner chose into Files
+ * (register_artifact's verified path). Refused if the file changed. The
+ * saved version carries no invented producer or run. */
+export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSaveVersionRequest | unknown): WorkspaceSaveVersionResponse {
+  const request = parseWorkspaceSaveVersionRequest(body);
+  const { scope, relativePath } = request;
+  const parts = fileParts(relativePath);
+  const { root, rootStat } = readyRoot(deps, scope);
+  requireAuthorizedRoot(deps, scope, root);
+  const observed = observeFile(root, rootStat, parts);
+  if (!observed.stat) fail("not-found", NOT_FOUND);
+  requireRegularFile(observed.stat);
+  if (workspaceFileRevision(root, relativePath, observed.stat) !== request.revision) conflict(workspaceFileRevision(root, relativePath, observed.stat));
+  let artifact: Artifact;
+  try { artifact = registerWorkspaceFile(deps, scope, root, relativePath, request.name?.trim()); }
+  catch (error) {
+    if (!(error instanceof ArtifactError)) throw error;
+    if (error.status === 413) fail("too-large", error.message);
+    if (error.status === 507) fail("quota-exceeded", error.message);
+    if (error.status === 403) fail("private-file", error.message);
+    const now = currentRevision(root, relativePath, observed.path);
+    if (now !== request.revision) conflict(now);
+    fail("write-failed", error.message);
+  }
+  // Unchanged before and after the verified copy means the copy is exactly
+  // the chosen revision (any content change moves ctime, so a revision never
+  // comes back).
+  assertUnchanged(observed.directories);
+  const after = currentRevision(root, relativePath, observed.path);
+  if (after !== request.revision) conflict(after);
+  return { artifact };
+}
+
 const SURFACE_PARAMS = [SURFACE_QUERY, SURFACE_SECRET_QUERY];
 function queryParams(url: URL, extra: readonly string[]): { scope: WorkspaceScopeRef; values: Record<string, string> } {
   const allowed = new Set(["botId", "threadId", ...SURFACE_PARAMS, ...extra]), values: Record<string, string> = {};
@@ -452,9 +850,22 @@ export async function workspaceFilesRoute(request: DelegatedRequest, deps: Works
       const { scope, values } = queryParams(url, ["query", "cursor"]);
       return { status: 200, headers: NO_STORE, body: searchWorkspace(deps, { scope, query: values.query ?? "", ...(values.cursor !== undefined ? { cursor: values.cursor } : {}) }) };
     }
-    // F4-T1 fills bounded read, revision-conditioned write and save-version.
-    if (path === WORKSPACE_FILES_ROUTES.read || path === WORKSPACE_FILES_ROUTES.write || path === WORKSPACE_FILES_ROUTES.saveVersion) {
-      return errorResult("not-implemented", "Workspace file editing is not available in this build.");
+    if (path === WORKSPACE_FILES_ROUTES.read) {
+      if (request.method !== "GET") fail("invalid-request", "Reading a workspace file uses GET.");
+      const { scope, values } = queryParams(url, ["path"]);
+      return { status: 200, headers: NO_STORE, body: readWorkspaceFile(deps, { scope, relativePath: values.path ?? "" }) };
+    }
+    if (path === WORKSPACE_FILES_ROUTES.write || path === WORKSPACE_FILES_ROUTES.saveVersion) {
+      if (request.method !== "POST") fail("invalid-request", "Saving uses POST.");
+      const write = path === WORKSPACE_FILES_ROUTES.write;
+      let body: unknown;
+      try { body = await request.readBody(write ? WORKSPACE_WRITE_BODY_MAX_BYTES : SAVE_VERSION_BODY_MAX_BYTES); }
+      catch (error) {
+        if ((error as { status?: unknown } | undefined)?.status === 413) fail("too-large", "This document is too large to save here.");
+        fail("invalid-request", write ? "Invalid save request." : "Invalid save-version request.");
+      }
+      if (write) return { status: 200, headers: NO_STORE, body: writeWorkspaceMarkdown(deps, body) };
+      return { status: 201, headers: NO_STORE, body: saveWorkspaceVersion(deps, body) };
     }
     return errorResult("not-found", "no such route");
   } catch (error) {

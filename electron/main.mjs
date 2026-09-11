@@ -1,6 +1,6 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
@@ -51,10 +51,12 @@ import {
   mainAppPermissionRequestAllowed,
   ownedMainSenderGate,
 } from "./app-permissions.mjs";
-import { mainRendererOrigin } from "./main-trust.mjs";
+import { isOwnedMainSender, mainRendererOrigin } from "./main-trust.mjs";
+import { createMainNavigationGuard, createOwnedMainIpc, rendererOriginArguments } from "./main-ipc-trust.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { windowChromeOptions } from "./window-chrome.mjs";
-import { defaultSaveName, withSavableFile } from "./save-file.mjs";
+import { defaultSaveName } from "./save-file.mjs";
+import { activeDesktopDataRoot, createSaveFileHandler, createSkillRecordingSaveHandler } from "./native-file-handlers.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
@@ -155,6 +157,21 @@ const browserConnectionStore = createDescriptorStore({
 });
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
+// B6 (S1-T3): every IPC registration in this file goes through the owned-main
+// sender gate. `ipcMain` here is that gate, not Electron's, so a handler added
+// later cannot forget it: another window, a subframe, a detached frame or a
+// navigated-away origin is refused before any listener runs. The recovery
+// window, which checks its own exact file sender, is the one raw registrar.
+const refusedIpcChannels = new Set();
+const ipcMain = createOwnedMainIpc({
+  ipcMain: electronIpcMain,
+  isTrusted: (event) => isOwnedMainSender(event, { window: mainWindow, origin: trustedRendererOrigin() }),
+  onRefused: (channel) => {
+    if (refusedIpcChannels.has(channel)) return;
+    refusedIpcChannels.add(channel);
+    slog(`refused ${channel} from a sender other than the main Murage window`);
+  },
+});
 let backgroundLifecycle=null;
 let unreadCount = 0;
 let unreadOverlayIcon = null;
@@ -1688,7 +1705,7 @@ ipcMain.handle("browser:forget-profile", async (event, partitionId) => {
 
 ipcMain.on("screen:preview-intent", (event) => {
   event.returnValue = displayMediaGuard.begin(event.senderFrame);
-});
+}, { refusedReturnValue: false });
 
 // Synchronous on purpose: the preload reads this once while the page is
 // still loading, so the first `fetch` and the first `EventSource` already
@@ -1697,9 +1714,11 @@ ipcMain.on("screen:preview-intent", (event) => {
 //
 // "" in development — there is no forked child to have sent one, and the dev
 // renderer asks the harness directly instead (GET /api/desktop-secret).
+// Any sender other than the owned window's top frame on the renderer origin
+// gets "" (B6), exactly what a harness-less development renderer sees.
 ipcMain.on("desktop:surface-secret", (event) => {
   event.returnValue = desktopSurfaceSecret;
-});
+}, { refusedReturnValue: "" });
 
 ipcMain.on("desktop:unread-count", (event, value) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
@@ -1721,7 +1740,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
       ? "Another process answered on Murage's ports. Close that process before retrying startup; restoring data will not resolve a port conflict."
       : "Murage could not finish startup. Keep the original installation while you inspect recovery options.";
   const recovery = openInstallationRecoveryWindow({
-    BrowserWindow, ipcMain, dialog, baseDir: __dirname,
+    BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,
     context: { reason, ownership, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     canRestoreSeparate: canRestoreSeparateInstallation,
@@ -1911,6 +1930,8 @@ function createWindow({quiet=false}={}) {
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
+      // The preload exposes the bridge only on this origin (B6).
+      additionalArguments: rendererOriginArguments(trustedRendererOrigin()),
     },
   });
   mainWindow = win;
@@ -1939,6 +1960,17 @@ function createWindow({quiet=false}={}) {
     diagnosticsLogHref: () => (app.isPackaged ? pathToFileURL(path.join(LOG_DIR, "server.log")).href : null),
     warn: (message) => console.warn(`[external-link] ${message}`),
   }));
+  // The privileged preload must never end up on another origin (B6). A link
+  // that would navigate the app away opens in the default browser when it is
+  // a credential-free web address; anything else, and every main-frame
+  // redirect off the renderer origin, is refused.
+  const navigationGuard = createMainNavigationGuard({
+    origin: trustedRendererOrigin,
+    openExternal: (url) => shell.openExternal(url),
+    warn: (message) => console.warn(`[navigation] ${message}`),
+  });
+  win.webContents.on("will-navigate", navigationGuard.willNavigate);
+  win.webContents.on("will-redirect", navigationGuard.willRedirect);
   win.webContents.on("did-finish-load", () => deliverPackageInstall(win));
 
   // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
@@ -2054,6 +2086,8 @@ function createWindow({quiet=false}={}) {
               cuaCrashReason,
               cuaRetryStatus,
               health,
+              desktopSurfaceSecretIssued: typeof window.muragebox.desktopSurfaceSecret === "string"
+                && window.muragebox.desktopSurfaceSecret.length > 0,
               location: window.location.href,
               title: document.title,
             };
@@ -2064,6 +2098,11 @@ function createWindow({quiet=false}={}) {
           throw new Error(
             `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
           );
+        }
+        // B6: the owned-main gate must still issue the secret to the real
+        // renderer's preload, or the app would look like a paired phone.
+        if (!result.desktopSurfaceSecretIssued) {
+          throw new Error("the desktop surface secret was not issued to the owned main window");
         }
         if (process.env.MURAGE_SMOKE_BUNDLED_CUA === "1") {
           const connection = await cuaReady;
@@ -2218,8 +2257,8 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // copy of the chat UI instead of the file. Ask where to put it and copy it
 // there instead: a save dialog tells the user the file landed somewhere and
 // where, which a silent copy into ~/Downloads does not. The path is
-// renderer-controlled, so it must resolve inside ~/.murage and be a
-// regular file — never a symlink escape or directory.
+// renderer-controlled, so it must resolve inside the active owned installation
+// root and be a regular file — never a symlink escape or directory.
 ipcMain.handle("desktop:reveal-workspace", async (event, botId, threadId) => {
   const parent = BrowserWindow.fromWebContents(event.sender);
   const expectedOrigin = new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;
@@ -2258,8 +2297,32 @@ ipcMain.handle("desktop:artifact-action", async (event, id, action) => {
   else { const error = await shell.openPath(savedPath); if (error) throw new Error("The operating system could not open this file. Download it instead."); }
 });
 
-ipcMain.handle("desktop:save-file", async (event, rawPath) => {
-  return withSavableFile(rawPath, { home: os.homedir() }, async ({ defaultName, copyTo }) => {
+// Native writers use the installation this process owns (B1/B3): after a
+// separate restore that is the selected installation, never the retained
+// original that MURAGE_DATA_DIR or ~/.murage still names. Recovery and closing
+// refuse. Only the owned main window's top frame may ask (K0 main-trust).
+function activeNativeDataRoot() {
+  return activeDesktopDataRoot({
+    packaged: app.isPackaged,
+    recovery: desktopRecoveryMode,
+    closing: desktopShutdownStarted,
+    owner: desktopDataOwner,
+    dataDirectory: desktopDataDir,
+    env: process.env,
+    home: os.homedir(),
+  });
+}
+const ownedMainRenderer = {
+  window: () => mainWindow,
+  origin: () => mainRendererOrigin({ packaged: app.isPackaged, serverPort: SERVER_PORT, devUrl: DEV_URL }),
+};
+
+// Same-file saves are a no-op and other destinations are staged then renamed
+// (B2, save-file.mjs), so a save can never truncate its own source.
+ipcMain.handle("desktop:save-file", createSaveFileHandler({
+  ...ownedMainRenderer,
+  activeRoot: activeNativeDataRoot,
+  chooseDestination: async ({ event, defaultName }) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const defaultPath = await defaultSaveName(app.getPath("downloads"), defaultName);
     const choice = await dialog.showSaveDialog(parent ?? undefined, {
@@ -2269,13 +2332,10 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
       buttonLabel: "Save",
       properties: ["createDirectory", "showOverwriteConfirmation"],
     });
-    // Cancelling is a decision, not a failure — the bubble stays quiet.
-    if (choice.canceled || !choice.filePath) return null;
-    await copyTo(choice.filePath);
-    shell.showItemInFolder(choice.filePath);
-    return choice.filePath;
-  });
-});
+    return choice.canceled || !choice.filePath ? null : choice.filePath;
+  },
+  reveal: (filePath) => shell.showItemInFolder(filePath),
+}));
 
 // The renderer owns the palette. Native Windows/Linux chrome is intentionally
 // outside that surface; acknowledge the renderer handshake without creating a
@@ -2386,10 +2446,19 @@ ipcMain.handle("speech:start", (event, options) => {
     win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
     return;
   }
-  startSpeech(win, options);
+  return startSpeech(win, options);
 });
+// B5: Stop resolves only after the helper's exit is observed. A failed stop
+// marker, or a helper past the owned-work deadline, rejects to the renderer
+// and the session stays owned so the next Stop, Start or Quit retries it.
+function reportNativeHelperStop(kind, operation) {
+  return operation.catch((error) => {
+    slog(`${kind} stop incomplete (${error?.code ?? "STOP_FAILED"}); helper ownership retained`);
+    throw error;
+  });
+}
 ipcMain.handle("speech:stop", () => {
-  if (nativeActions.appleSpeech) stopSpeech();
+  if (nativeActions.appleSpeech) return reportNativeHelperStop("dictation", stopSpeech());
 });
 ipcMain.handle("speech:finish", () => {
   if (nativeActions.appleSpeech) finishSpeech();
@@ -2401,8 +2470,14 @@ ipcMain.handle("skill-recorder:start", (event) => {
   if (!win) throw new Error("The recorder window is unavailable");
   return startRecorder(win);
 });
-ipcMain.handle("skill-recorder:stop", () => stopRecorder());
-ipcMain.handle("skill-recorder:save", (_event, payload) => saveSkillRecording(payload));
+ipcMain.handle("skill-recorder:stop", () => reportNativeHelperStop("recorder", stopRecorder()));
+// B1: the recording lands under the installation this process owns (the
+// selected one after a separate restore), never the env/default original.
+ipcMain.handle("skill-recorder:save", createSkillRecordingSaveHandler({
+  ...ownedMainRenderer,
+  activeRoot: activeNativeDataRoot,
+  saveRecording: saveSkillRecording,
+}));
 
 // ── companion sidecar ──────────────────────────────────────────────────
 // The renderer gets these and nothing else: it can turn the companion on and
@@ -2719,9 +2794,10 @@ const desktopStartup = app.whenReady().then(async () => {
       { useSystemPicker: false },
     );
   }
-  registerCuaIpc();
+  // The owned-main gate above, not Electron's raw ipcMain (B6).
+  registerCuaIpc(ipcMain);
   androidDevice.registerIpc(ipcMain);
-  registerUpdaterIpc();
+  registerUpdaterIpc(ipcMain);
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
@@ -2883,14 +2959,23 @@ function cleanupDesktopForExit() {
   if (desktopCleanup) return desktopCleanup;
   // Release the sleep blocker synchronously; child shutdown is awaited below.
   syncCompanionKeepAwake(false, false);
-  // a live dictation session runs its own helper child that holds the mic —
-  // stop it here so quitting never orphans a recording process
-  if (nativeActions.appleSpeech) stopSpeech();
-  stopRecorder();
+  // A live dictation or recorder session runs its own helper app that holds
+  // the mic or a global event tap. Signal both now so they exit in parallel
+  // with the harness. The first stage below keeps cleanup, and installation
+  // ownership, pending until each helper's exit is observed (B5). A failed
+  // stop marker or the owned-work deadline rejects that stage and is reported;
+  // the next Quit signals the still-owned helper again.
+  const nativeHelpersStopped = Promise.all([
+    nativeActions.appleSpeech ? stopSpeech() : undefined,
+    stopRecorder(),
+  ]);
+  nativeHelpersStopped.catch(() => {});
   try {
     browserSurface?.closeAll();
   } catch {}
   desktopCleanup = (async () => {
+    desktopCleanupStage = "native speech and recorder helpers";
+    await awaitOwnedWork(nativeHelpersStopped, "Native speech or recorder helpers have not exited");
     // Children are registered before their first await, including failed
     // port attempts that never became serverProc. Stop those first so boot
     // identity polling can settle, then drain any in-flight parent writers.

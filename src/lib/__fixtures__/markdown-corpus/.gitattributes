@@ -1,0 +1,2 @@
+# Corpus bytes (BOM, CRLF, mixed newlines) are the test input: never normalize them.
+* -text

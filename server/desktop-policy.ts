@@ -16,6 +16,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["GET", "POST"], path: /^\/api\/media(?:$|\/(?!bytes(?:\/|$)))/, purpose: "resolve scoped media and issue byte capabilities" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/inbox(?:/|$)"), purpose: "owner-only durable results and attention" },
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/provider-connections(?:\/|$)/, purpose: "model provider connection custody and catalogs" },
+  { methods: ["GET", "POST", "PATCH", "DELETE"], path: /^\/api\/local-models(?:\/|$)/, purpose: "local model server addresses, keys, detection and tool tests" },
   { methods: ["GET", "POST"], path: /^\/api\/images\/settings$/, purpose: "image provider and billing selection" },
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/memory(?:\/|$)/, purpose: "memory authority, sharing, retention and configuration" },
   { methods: ["PATCH", "PUT"], path: /^\/api\/config$/, purpose: "application, credentials, browser and computer configuration" },

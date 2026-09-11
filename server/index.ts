@@ -375,6 +375,9 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute, resolveImageReferenceRoute } from "./media-assets.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
+import { localModelsRoute } from "./local-models.ts";
+import { configureLocalServerStore } from "./local-servers.ts";
+import { LOCAL_MODELS_ROUTE_PREFIX } from "../shared/local-models.ts";
 import { IMAGE_REFERENCE_ROUTE, MEDIA_ROUTE_PREFIX } from "../shared/media-assets.ts";
 import { WORKSPACE_FILES_ROUTE_PREFIX } from "../shared/workspace-files.ts";
 import {
@@ -426,6 +429,9 @@ process.once("exit", () => {
 });
 ensureDirs();
 assertRestoreReviewed(DATA_DIR);
+// User-added local model servers live under the data dir (LM1); until this
+// runs the store is inert, so no engine writer can see a user address.
+configureLocalServerStore(DATA_DIR);
 const cfg = loadConfig();
 const providerConnections = new ProviderConnectionsService({ readBank: () => cfg.modelProviders?.bank, cacheDir: join(DATA_DIR, "provider-catalogs"), resolveAlias: id => {
   const alias = cfg.flux?.connectionAliases?.find(row => row.id === id);
@@ -1280,7 +1286,7 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
-const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes };
+const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders };
 const outputPublisher = createOutputPublisher(featureRouteDeps);
 const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
 function turnMemoryAccess(botId: string, threadId: string, generation: string): MemoryAccess {
@@ -7470,7 +7476,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(data);
 }
 
-function readBody(req: IncomingMessage): Promise<any> {
+function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
     let bytes = 0;
@@ -7484,7 +7490,7 @@ function readBody(req: IncomingMessage): Promise<any> {
     req.on("data", (c) => {
       if (done) return;
       bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
-      if (bytes > 1_000_000) {
+      if (bytes > maxBytes) {
         // Keep draining the socket, but stop retaining attacker-controlled
         // bytes. Destroying the request here prevents the caller from
         // receiving the useful 413 response.
@@ -7669,9 +7675,10 @@ const server = createServer(async (req, res) => {
       return json(res, result.status, result.body);
     }
     // K0: these prefixes belong to their feature modules; desktop gating stays here and in desktop-policy.ts.
-    const featurePrefix = [WORKSPACE_FILES_ROUTE_PREFIX, MEDIA_ROUTE_PREFIX].find(prefix => path === prefix || path.startsWith(`${prefix}/`));
+    const featurePrefix = [WORKSPACE_FILES_ROUTE_PREFIX, MEDIA_ROUTE_PREFIX, LOCAL_MODELS_ROUTE_PREFIX].find(prefix => path === prefix || path.startsWith(`${prefix}/`));
     if (featurePrefix) {
-      const delegated = { method, path, url, headers: req.headers, desktop: requestSurface(req.headers, url.searchParams) === "desktop", readBody: () => readBody(req) };
+      const delegated = { method, path, url, headers: req.headers, desktop: requestSurface(req.headers, url.searchParams) === "desktop", readBody: (maxBytes?: number) => readBody(req, maxBytes) };
+      if (featurePrefix === LOCAL_MODELS_ROUTE_PREFIX) return sendDelegated(res, method, await localModelsRoute(delegated));
       return sendDelegated(res, method, await (featurePrefix === MEDIA_ROUTE_PREFIX ? mediaAssetsRoute : workspaceFilesRoute)(delegated, featureRouteDeps));
     }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
@@ -7862,7 +7869,7 @@ const server = createServer(async (req, res) => {
         } finally { clearInterval(revoked); res.off("close", disconnected); }
       }
       if (path === IMAGE_REFERENCE_ROUTE) {
-        const delegated = { method, path, url, headers: req.headers, desktop: false, readBody: () => readBody(req) };
+        const delegated = { method, path, url, headers: req.headers, desktop: false, readBody: (maxBytes?: number) => readBody(req, maxBytes) };
         return sendDelegated(res, method, await resolveImageReferenceRoute(delegated, { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation }, featureRouteDeps));
       }
       if (path === "/api/internal/host-computer") {

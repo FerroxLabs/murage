@@ -391,7 +391,9 @@ function Call({ bot }: { bot: Bot }) {
         setNote(
           reason === "helper-build-failed"
             ? "The dictation helper couldn't be built. Install Apple's Command Line Tools and try again."
-            : "Dictation needs Microphone + Speech Recognition access in System Settings.",
+            : reason === "helper-stop-pending"
+              ? "The previous dictation session is still closing. Try again in a moment."
+              : "Dictation needs Microphone + Speech Recognition access in System Settings.",
         );
         return;
       }

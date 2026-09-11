@@ -77,9 +77,13 @@ import {
 } from "./mdns.ts";
 import { createProxyHandler } from "./proxy.ts";
 import { companionOriginSocket, listenCompanionOrigin } from "./origin.ts";
+import { answerDoorChallenge, takeDoorIdentity } from "./door-identity.ts";
 
 const companionToken = process.env.MURAGE_COMPANION_TOKEN;
 delete process.env.MURAGE_COMPANION_TOKEN;
+/** The headless installer's door nonce, taken out of the environment for the
+ * same reason as the token: no child of this process may inherit it. */
+const doorIdentity = takeDoorIdentity(process.env);
 
 /** A port from the environment, or the default. Anything that is not a whole
  * number in range is the default — a typo'd port must not become port 0. */
@@ -421,19 +425,24 @@ const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
  * anything bolted onto `proxy` above is on the device port *and* the
  * tunnel-fronted managed origin by default, which is the exact failure this
  * separation exists to prevent. */
-const browser = createServer(
-  createBrowserHandler({
-    harnessPort: HARNESS_PORT,
-    companionToken,
-    identity: browserIdentity,
-    devices,
-    connected: connectedDevices.open,
-    // The same instance the device door got. A lockout earned at either door
-    // is spent at both, which is the only reading of "locked out" that means
-    // anything when one credential opens two doors.
-    signInLimiter,
-  }),
-);
+const browserRequests = createBrowserHandler({
+  harnessPort: HARNESS_PORT,
+  companionToken,
+  identity: browserIdentity,
+  devices,
+  connected: connectedDevices.open,
+  // The same instance the device door got. A lockout earned at either door
+  // is spent at both, which is the only reading of "locked out" that means
+  // anything when one credential opens two doors.
+  signInLimiter,
+});
+/** The headless installer's "is this my door?" check (see `door-identity.ts`).
+ * Answered before the door's own routing, so it rides on whatever the request
+ * gets back. Inert unless an installer handed this process a nonce. */
+const browser = createServer((req, res) => {
+  answerDoorChallenge(req, res, doorIdentity);
+  return browserRequests(req, res);
+});
 
 // A startup invariant, not a comment. index.ts once had two listeners on one
 // handler, and that is how a device route becomes a public route without
