@@ -3,7 +3,7 @@
 // keychain hiccup look like the user had never connected anything.
 import { describe, expect, it, vi } from "vitest";
 
-import { readSecureCredentials } from "./secure-credentials.mjs";
+import { readSecureCredentials, trackedCredentialUpdate } from "./secure-credentials.mjs";
 
 const transient = () =>
   new Error("safeStorage.decryptStringAsync is temporarily unavailable. Please try again.");
@@ -70,5 +70,35 @@ describe("readSecureCredentials", () => {
     const result = await readSecureCredentials(deps({ decrypt }));
     expect(result.status).toBe("unavailable");
     expect(decrypt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("trackedCredentialUpdate", () => {
+  it("forwards the derivation, second phase and options, and stays visible to shutdown until it settles", async () => {
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const state = { update: vi.fn(() => held) };
+    const writes = new Set();
+    const derive = () => ({});
+    const afterPersist = async () => {};
+    const options = { skipUnchanged: true };
+
+    const write = trackedCredentialUpdate(state, writes, derive, afterPersist, options);
+    expect(state.update).toHaveBeenCalledWith(derive, afterPersist, options);
+    expect(writes.size).toBe(1);
+
+    release({ saved: true });
+    await expect(write).resolves.toEqual({ saved: true });
+    expect(writes.size).toBe(0);
+  });
+
+  it("releases a rejected write from tracking and rethrows it", async () => {
+    const writes = new Set();
+    const state = { update: vi.fn(async () => { throw new Error("keychain unavailable"); }) };
+    await expect(trackedCredentialUpdate(state, writes, () => ({}))).rejects.toThrow("keychain unavailable");
+    expect(state.update).toHaveBeenCalledWith(expect.any(Function), undefined, undefined);
+    expect(writes.size).toBe(0);
   });
 });
