@@ -1,4 +1,5 @@
 import { track } from "@/lib/analytics";
+import { hostStoppedLabel } from "@/lib/host-stop";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -328,7 +329,7 @@ function preview(bot: Bot): string {
   const last = visibleMessages(bot).at(-1);
   if (!last) return "";
   if (last.kind === "options" && last.card) return last.card.title;
-  if (last.kind === "activity" && last.tool) return last.tool.name;
+  if (last.kind === "activity" && last.tool) return hostStoppedLabel(last.tool.name) ?? last.tool.name;
   if (last.kind === "screen") return "Screen frame";
   return last.text ?? "";
 }
@@ -347,7 +348,7 @@ function groupPreview(group: Group, bots: Bot[]): string {
   const last = group.messages.at(-1);
   if (!last) return `${group.memberIds.length} ${group.memberIds.length === 1 ? "bot" : "bots"}`;
   const text = last.kind === "activity" && last.tool
-    ? last.tool.name
+    ? hostStoppedLabel(last.tool.name) ?? last.tool.name
     : last.kind === "goal.run" && last.goalRun
       ? sidebarGoalRunPreview(last.goalRun)
       : (last.text ?? "");
