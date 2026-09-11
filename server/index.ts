@@ -3078,6 +3078,11 @@ bus.subscribe((event: RuntimeEvent) => {
           }
           if(directRun)directRuns.release(directRun);
           if(store.taskByThread(bot.id,event.threadId)?.activity!=="dead")store.setTaskActivity(bot.id,event.threadId,"idle");
+          // A2 defers this release until the provider confirms its child
+          // closed, so the bot is still busy when turn.completed's own retry
+          // runs and that retry bails. This is the real idle release: give
+          // the handoffs that found this bot busy their retry here too.
+          retryDelegationsWaitingOn(bot.id);
           drainQueuedSends();
         };
         // A2: a terminal event is not teardown. Drivers that end a turn by
