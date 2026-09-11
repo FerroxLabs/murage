@@ -420,9 +420,21 @@ const support: AcpSupport = {
    * declared as a `visible_alias` (fuigo-pager/src/app/cli.rs:273) and an
    * alias is the part a CLI is free to rename.
    */
-  spawnArgs: (config, turn) => [
+  spawnArgs: (config, turn, ctx) => [
     "--permission-mode",
     config.fullAuto ? "bypassPermissions" : "default",
+    // Folder trust (1.0.13, FUIGOTRUST1): `--trust` is a top-level flag like
+    // --permission-mode (fuigo-pager/src/app/cli.rs `trust`, hidden alias
+    // `--trust-folder`) that grants the PROCESS CWD — the same folder the
+    // session/new below names — and persists the grant in the user's own
+    // ~/.fuigo/trusted_folders.toml, so standalone Fuigo agrees with what
+    // the person told Murage. It is passed ONLY when Murage's own record
+    // says the human trusted this folder (the card, or the folder picker);
+    // never from a config default, never in Auto mode on its own. Without
+    // it the engine keeps the folder's instructions, MCP servers, skills and
+    // hooks out, and the core's answer to its `fuigo/folder_trust/request`
+    // repeats the same decision.
+    ...(ctx?.folderTrusted ? ["--trust"] : []),
     // Murage owns persistent memory. Override ambient Fuigo config without
     // changing the user's standalone memory policy or touching their store.
     "--no-memory",
@@ -439,6 +451,11 @@ const support: AcpSupport = {
     ...(turn.effort ? ["--reasoning-effort", turn.effort] : []),
     "stdio",
   ],
+
+  /** Fuigo 1.0.13 gates repo-local sources per folder; the core decides
+   *  trust before the spawn from Murage's record or a card (see `spawnArgs`
+   *  and core.ts FUIGOTRUST1). */
+  folderTrust: true,
 
   /**
    * `transformEnv`, NOT `applyTurnEnv` — and that is the opposite of every
