@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { FileRevision, SaveReceipt, WorkspaceReadResult } from "../../shared/workspace-files";
 import {
+  SUPERSEDED_REVISIONS_KEPT,
   WorkspaceFileRequestError,
   acknowledgeSave,
   beginSave,
@@ -274,6 +275,55 @@ describe("external changes", () => {
       const acked = acknowledgeSave(during, receiptFor(during));
       expect(acked).toMatchObject({ effect: "none", state: { status: "clean", draft: "mine", savedContent: "mine", baseRevision: rev("r1"), pendingExternal: null } });
     }
+  });
+
+  // Regression (fix round 1): the same stale read arriving just after the
+  // receipt used to reload the pre-save text and move the base back to the
+  // dead revision, so the next save was rejected and "keep mine" overwrote it.
+  it("ignores the replaced revision when its stale read lands after the receipt", () => {
+    const begun = startSave(editDocument(openDocumentSession(read()), "mine"));
+    const acked = acknowledgeSave(begun.state, receiptFor(begun.state)).state;
+    const late = observeExternalChange(acked, { revision: rev("r0"), content: "# Report", bom: false });
+    expect(late.effect).toBe("none");
+    expect(late.state).toBe(acked);
+    expect(late.state).toMatchObject({ status: "clean", draft: "mine", savedContent: "mine", baseRevision: rev("r1"), lastSave: { revision: rev("r1") } });
+    // The next save stays conditioned on the revision this session wrote.
+    expect(startSave(editDocument(late.state, "mine 2"), "req-2").request.baseRevision).toBe(rev("r1"));
+    // While dirty the same stale read is not a conflict either.
+    expect(observeExternalChange(editDocument(late.state, "mine 2"), { revision: rev("r0"), content: "# Report", bom: false }).effect).toBe("none");
+    // A genuinely new revision still reloads, and "File saved" no longer
+    // describes what is on screen.
+    expect(observeExternalChange(acked, { revision: rev("r5"), content: "theirs", bom: false })).toMatchObject({ effect: "reload", state: { draft: "theirs", baseRevision: rev("r5"), lastSave: null } });
+  });
+
+  it("ignores a late read of a revision left behind by a reload or a conflict choice", () => {
+    const reloaded = observeExternalChange(openDocumentSession(read()), { revision: rev("r2"), content: "theirs", bom: false }).state;
+    expect(observeExternalChange(reloaded, { revision: rev("r0"), content: "# Report", bom: false })).toMatchObject({ effect: "none", state: { draft: "theirs", baseRevision: rev("r2") } });
+    const conflicted = observeExternalChange(editDocument(reloaded, "mine"), { revision: rev("r3"), content: "newer", bom: false }).state;
+    const kept = resolveConflict(conflicted, "keep-mine");
+    if (!kept.ok) throw new Error("keep-mine refused");
+    for (const stale of [rev("r0"), rev("r2")]) {
+      expect(observeExternalChange(kept.state, { revision: stale, content: "old", bom: false })).toMatchObject({ effect: "none", state: { status: "dirty", draft: "mine", baseRevision: rev("r3"), conflict: null } });
+    }
+  });
+
+  it("remembers a bounded number of superseded revisions", () => {
+    let state = openDocumentSession(read());
+    for (let index = 1; index <= SUPERSEDED_REVISIONS_KEPT + 5; index += 1) {
+      state = observeExternalChange(state, { revision: rev(`x${index}`), content: `v${index}`, bom: false }).state;
+    }
+    expect(state.supersededRevisions).toHaveLength(SUPERSEDED_REVISIONS_KEPT);
+    expect(state.supersededRevisions.at(-1)).toBe(rev(`x${SUPERSEDED_REVISIONS_KEPT + 4}`));
+    expect(state.supersededRevisions).not.toContain(state.baseRevision);
+  });
+
+  it("fills a rejected save's conflict from a read that shows the base revision", () => {
+    const begun = startSave(editDocument(openDocumentSession(read()), "mine"));
+    const rejected = failSave(begun.state, "req-1", { code: "revision-conflict" }).state;
+    expect(rejected.conflict).toMatchObject({ source: "save-rejected", disk: null });
+    const filled = observeExternalChange(rejected, { revision: rev("r0"), content: "# Report", bom: false });
+    expect(filled).toMatchObject({ effect: "conflict", state: { draft: "mine", conflict: { currentRevision: rev("r0"), disk: { content: "# Report" } } } });
+    expect(resolveConflict(filled.state, "keep-mine").ok).toBe(true);
   });
 
   it("settles a change deferred behind a failed save", () => {

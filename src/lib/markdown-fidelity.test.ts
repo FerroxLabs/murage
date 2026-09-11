@@ -125,6 +125,17 @@ describe("opaque parts", () => {
     expect(splitMarkdownDocument("---\ntitle: never closed\n\nprose\n")!.frontmatter).toBe("");
     expect(splitMarkdownDocument("---\n---\nbody")!.frontmatter).toBe("---\n---\n");
   });
+
+  it("treats a leading `---` block only as frontmatter when it starts with a YAML key", () => {
+    // Prose between two `---` lines is Markdown (a thematic break and a
+    // setext heading), not metadata to hide from the rich editor.
+    const prose = "---\nIntro paragraph\n\n## Section\ntext\n---\n\nmore";
+    expect(splitMarkdownDocument(prose)).toMatchObject({ frontmatter: "", body: prose });
+    expect(analyzeMarkdownFidelity(prose)).toMatchObject({ richEditable: false, reasons: ["unsupported-syntax"] });
+    expect(splitMarkdownDocument("---\n- a\n- b\n---\nbody")!.frontmatter).toBe("");
+    expect(splitMarkdownDocument("---\ntitle: Report\ntags: [a, b]\n---\n\n# Body")).toMatchObject({ frontmatter: "---\ntitle: Report\ntags: [a, b]\n---\n", leading: "\n", body: "# Body" });
+    expect(splitMarkdownDocument("---\n\"quoted key\":\n  nested: 1\n...\nbody")!.frontmatter).toBe("---\n\"quoted key\":\n  nested: 1\n...\n");
+  });
 });
 
 describe("gate limits", () => {
@@ -133,10 +144,32 @@ describe("gate limits", () => {
     const text = paragraph.repeat(Math.ceil((MARKDOWN_RICH_EDIT_MAX_BYTES + 1) / paragraph.length));
     const report = analyzeMarkdownFidelity(text);
     expect(report.bytes).toBeGreaterThan(MARKDOWN_RICH_EDIT_MAX_BYTES);
-    expect(report).toMatchObject({ richEditable: false, reasons: ["too-large"], tokenClasses: [] });
-    expect(composeMarkdownDocument(report.parts!, report.parts!.body)).toBe(text);
+    // Oversized text is not even split: the size check ends the analysis.
+    expect(report).toMatchObject({ richEditable: false, reasons: ["too-large"], tokenClasses: [], parts: null });
+    const parts = splitMarkdownDocument(text)!;
+    expect(composeMarkdownDocument(parts, parts.body)).toBe(text);
     expect(analyzeMarkdownFidelity(paragraph, { maxRichBytes: 10 }).reasons).toEqual(["too-large"]);
     expect(analyzeMarkdownFidelity(paragraph).richEditable).toBe(true);
+  });
+
+  // Regression: `/\n*$/` restarted at every newline of an internal blank-line
+  // run (quadratic), and the split ran before the size check, so a bot-written
+  // file of blank lines froze the renderer on open. At the lane's measured
+  // quadratic rate the 2 MiB case took minutes; linear code takes a few ms.
+  it("analyzes long internal blank-line runs in linear time, under and over the size cap", () => {
+    const underCap = `# Title\n${"\n".repeat(30_000)}end\n`;
+    const twoMiB = `# Title\n${"\n".repeat(2 * 1024 * 1024 - 20)}end\n`;
+    const startedAt = performance.now();
+    const split = splitMarkdownDocument(twoMiB)!;
+    const big = analyzeMarkdownFidelity(twoMiB);
+    const small = analyzeMarkdownFidelity(underCap);
+    const elapsed = performance.now() - startedAt;
+    expect(split).toMatchObject({ frontmatter: "", leading: "", trailing: "\n" });
+    expect(split.body).toBe(twoMiB.slice(0, -1));
+    expect(big).toMatchObject({ reasons: ["too-large"], parts: null, tokenClasses: [] });
+    expect(small.parts!.body).toBe(underCap.slice(0, -1));
+    expect(composeMarkdownDocument(small.parts!, small.parts!.body)).toBe(underCap);
+    expect(elapsed).toBeLessThan(2_000);
   });
 
   it("counts UTF-8 bytes, not UTF-16 code units", () => {
@@ -147,6 +180,9 @@ describe("gate limits", () => {
   it("lexes with the editor's own tokenizers", () => {
     expect(markdownTokenClasses("- [ ] a")).toEqual(["taskItem", "taskList", "text"]);
     expect(markdownTokenClasses("")).toEqual([]);
+    // Blocks nested under a task item live in `nestedTokens`; they are checked too.
+    expect(markdownTokenClasses("- [ ] task\n\n  <div>x</div>")).toContain("html");
+    expect(analyzeMarkdownFidelity("- [ ] task\n\n  <div>x</div>")).toMatchObject({ richEditable: false, reasons: ["unsupported-syntax"], unsupportedTokenClasses: ["html"] });
     expect(roundTripMarkdownBody("").doc).toEqual(EMPTY_MARKDOWN_DOC);
   });
 });

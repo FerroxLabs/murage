@@ -112,6 +112,31 @@ export interface DocumentSessionState {
   conflict: DocumentConflict | null;
   error: DocumentError | null;
   lastSave: LastSave | null;
+  /** Revisions this session has moved past (replaced by its own save, or left
+   * behind by a reload or a conflict choice), newest last. Watch reads are not
+   * ordered, so a read of one of these can arrive after the session moved on;
+   * it is old news and never reloads or conflicts. Server revisions hash the
+   * file's inode, size, mtime and ctime, so a superseded one never recurs. */
+  supersededRevisions: FileRevision[];
+}
+
+/** Enough to cover every read that can still be in flight. */
+export const SUPERSEDED_REVISIONS_KEPT = 16;
+
+function supersede(state: DocumentSessionState, nextBase: FileRevision, ...revisions: (FileRevision | null | undefined)[]): FileRevision[] {
+  const kept = state.supersededRevisions.filter(revision => revision !== nextBase);
+  for (const revision of revisions) {
+    if (!revision || revision === nextBase) continue;
+    const index = kept.indexOf(revision);
+    if (index !== -1) kept.splice(index, 1);
+    kept.push(revision);
+  }
+  return kept.length > SUPERSEDED_REVISIONS_KEPT ? kept.slice(kept.length - SUPERSEDED_REVISIONS_KEPT) : kept;
+}
+
+/** True when `revision` is one this session has already moved past. */
+export function isSupersededRevision(state: DocumentSessionState, revision: FileRevision): boolean {
+  return revision !== state.baseRevision && state.supersededRevisions.includes(revision);
 }
 
 /** What the editor surface must do after a transition. `reload` means: show
@@ -162,6 +187,7 @@ export function openDocumentSession(read: WorkspaceReadResult, options: { mode?:
     conflict: null,
     error: null,
     lastSave: null,
+    supersededRevisions: [],
   });
 }
 
@@ -230,15 +256,18 @@ export function acknowledgeSave(state: DocumentSessionState, receipt: SaveReceip
   // Watch reads are not ordered. One that saw the revision this write
   // replaced (or the write itself) is older news than the receipt; applying
   // it after the receipt would reload the pre-save text over the saved one.
+  // The replaced revisions are remembered, so the same stale read arriving
+  // after the receipt is ignored too (see `observeExternalChange`).
+  const supersededRevisions = supersede(state, receipt.revision, state.baseRevision, pending.baseRevision, receipt.previousRevision);
   const observed = state.pendingExternal;
   const external = observed
-    && observed.revision !== pending.baseRevision
-    && observed.revision !== receipt.previousRevision
     && observed.revision !== receipt.revision
+    && !supersededRevisions.includes(observed.revision)
     ? observed
     : null;
   const next = derive({
     ...state,
+    supersededRevisions,
     baseRevision: receipt.revision,
     savedContent: pending.content,
     bom: pending.bom,
@@ -304,6 +333,9 @@ export function failSave(state: DocumentSessionState, requestId: string, failure
 /** A newer disk state was observed (file watch followed by a read). */
 export function observeExternalChange(state: DocumentSessionState, disk: ObservedDiskState): Transition {
   if (state.closed) return { state, effect: "none" };
+  // A late read of a state this session already moved past (the revision its
+  // own save replaced, or one a reload left behind) is not a new change.
+  if (isSupersededRevision(state, disk.revision)) return { state, effect: "none" };
   if (state.saving) {
     // It may be this very write landing before its receipt; decide after.
     return { state: { ...state, pendingExternal: disk }, effect: "deferred" };
@@ -315,6 +347,7 @@ export function observeExternalChange(state: DocumentSessionState, disk: Observe
     return {
       state: derive({
         ...state,
+        supersededRevisions: supersede(state, disk.revision, state.baseRevision),
         baseRevision: disk.revision,
         savedContent: disk.content,
         savedDraftRevision: state.draftRevision,
@@ -330,6 +363,7 @@ export function observeExternalChange(state: DocumentSessionState, disk: Observe
     return {
       state: derive({
         ...state,
+        supersededRevisions: supersede(state, disk.revision, state.baseRevision),
         baseRevision: disk.revision,
         savedContent: disk.content,
         bom: disk.bom,
@@ -338,11 +372,16 @@ export function observeExternalChange(state: DocumentSessionState, disk: Observe
         draftRevision,
         savedDraftRevision: draftRevision,
         error: null,
+        // The editor now shows someone else's text: "File saved" would
+        // describe an older version, not what is on screen.
+        lastSave: null,
       }),
       effect: "reload",
     };
   }
-  if (disk.revision === state.baseRevision) return { state, effect: "none" };
+  // An unchanged base is not news, unless a conflict is still waiting for the
+  // disk text (a rejected save whose read shows the base): it then supplies it.
+  if (disk.revision === state.baseRevision && !(state.conflict && !state.conflict.disk)) return { state, effect: "none" };
   const source = state.conflict?.source ?? "external-change";
   return {
     state: derive({ ...state, conflict: { source, currentRevision: disk.revision, disk } }),
@@ -372,6 +411,8 @@ export function resolveConflict(state: DocumentSessionState, choice: ConflictCho
         ...state,
         conflict: null,
         error: null,
+        lastSave: null,
+        supersededRevisions: supersede(state, disk.revision, state.baseRevision),
         baseRevision: disk.revision,
         savedContent: disk.content,
         bom: disk.bom,
@@ -389,6 +430,7 @@ export function resolveConflict(state: DocumentSessionState, choice: ConflictCho
       ...state,
       conflict: null,
       error: null,
+      supersededRevisions: supersede(state, disk.revision, state.baseRevision),
       baseRevision: disk.revision,
       savedContent: disk.content,
       newline: disk.newline ?? state.newline,
@@ -416,9 +458,13 @@ export interface RecoverableDraft {
 }
 
 /** Bring back a preserved draft after a crash or restart. A draft based on
- * an older revision is restored as a conflict: both versions stay visible. */
-export function restoreDraft(state: DocumentSessionState, draft: RecoverableDraft): Transition & { restored: boolean } {
-  if (state.closed || state.saving || state.conflict || hasUnsavedChanges(state)) return { state, effect: "none", restored: false };
+ * an older revision is restored as a conflict: both versions stay visible.
+ * A document that already has unsaved text is refused unless the user chose
+ * to replace that text with the preserved draft (`replaceUnsaved`). */
+export function restoreDraft(state: DocumentSessionState, draft: RecoverableDraft, options: { replaceUnsaved?: boolean } = {}): Transition & { restored: boolean } {
+  if (state.closed || state.saving || state.conflict) return { state, effect: "none", restored: false };
+  if (hasUnsavedChanges(state) && !options.replaceUnsaved) return { state, effect: "none", restored: false };
+  if (draft.content === state.draft) return { state, effect: "none", restored: false };
   if (draft.content === state.savedContent) return { state, effect: "none", restored: false };
   const draftRevision = Math.max(state.draftRevision, draft.draftRevision) + 1;
   const base = { ...state, draft: draft.content, draftRevision, ...(draft.mode ? { mode: draft.mode } : {}) };
