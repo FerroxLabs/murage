@@ -133,8 +133,8 @@ it("recognizes only the current thread's own checkpoint as superseded",()=>{
 // own thread. Recognition is keyed by the dispatched thread, never by the
 // member: another room's checkpoint and the member's own-thread checkpoint
 // are not recognized, and owner forget/archive still revoke.
-const roomThread="1d2e3f40-6b1c-4d8e-9f0a-2b3c4d5e6f70", otherRoomThread="2e3f4051-7c2d-4e9f-a01b-3c4d5e6f7081", otherBotThread="0c5a7e0e-2f0d-4b7e-9c2a-6d4e1f3a8b90";
-const roomRoster={bots:[{id:"bot",threadId},{id:"other",threadId:otherBotThread}],groups:[{id:"room",threadId:roomThread,memberIds:["bot","other"]},{id:"other-room",threadId:otherRoomThread,memberIds:["other"]}]};
+const roomThread="1d2e3f40-6b1c-4d8e-9f0a-2b3c4d5e6f70", roomTaskThread="3f405162-8d3e-4fa0-b12c-4d5e6f708192", otherRoomThread="2e3f4051-7c2d-4e9f-a01b-3c4d5e6f7081", otherBotThread="0c5a7e0e-2f0d-4b7e-9c2a-6d4e1f3a8b90";
+const roomRoster={bots:[{id:"bot",threadId},{id:"other",threadId:otherBotThread}],groups:[{id:"room",threadId:roomThread,memberIds:["bot","other"],tasks:[{threadId:roomTaskThread}]},{id:"other-room",threadId:otherRoomThread,memberIds:["other"]}]};
 function roomFixture(botId:string,thread:string){
   const registry=new InternalCapabilities(),generation=registry.begin(botId,thread);
   const token=registry.mint({botId,threadId:thread,generation,depth:0,kind:"memory",skillAuthoring:false});
@@ -198,6 +198,15 @@ it("recognizes exactly the dispatched room's checkpoint for a member turn",()=>{
   expect(supersededThreadCheckpoint(room.id,room.version,roomFixture("other",otherRoomThread).access)).toBe(false);
   // The current version is not superseded.
   expect(supersededThreadCheckpoint(room.id,room.version+1,roomFixture("bot",roomThread).access)).toBe(false);
+  // A room task thread is its own dispatched group thread: a member turn in
+  // the task recognizes the task's checkpoint, not the room's main-thread
+  // checkpoint, and a main-thread member turn does not recognize the task's.
+  const task=roomCheckpoint(roomTaskThread,"Room task evidence.");roomCheckpoint(roomTaskThread,"Roll.");
+  expect(task.id).not.toBe(room.id);
+  expect(supersededThreadCheckpoint(task.id,task.version,roomFixture("bot",roomTaskThread).access)).toBe(true);
+  expect(supersededThreadCheckpoint(task.id,task.version,roomFixture("other",roomTaskThread).access)).toBe(true);
+  expect(supersededThreadCheckpoint(room.id,room.version,roomFixture("bot",roomTaskThread).access)).toBe(false);
+  expect(supersededThreadCheckpoint(task.id,task.version,roomFixture("bot",roomThread).access)).toBe(false);
 });
 
 it("keeps owner revocation of a disclosed room checkpoint fail-closed for the member turn",async()=>{
