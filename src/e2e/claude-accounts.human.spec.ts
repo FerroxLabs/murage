@@ -10,7 +10,7 @@ import type { ClaudeAccount } from "../components/ClaudeAccountsSettings";
 type Fixture = { info: { url: string; dataDir: string }; fixtureDumpPath: string; close(): Promise<void> };
 let fixture: Fixture, vite: ViteDevServer | undefined, origin: string, headers: Record<string, string>;
 async function request(path: string, method = "GET", body?: unknown) {
-  return fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15000) });
+  return fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15000) });
 }
 async function api(path: string, method = "GET", body?: unknown): Promise<any> {
   const response = await request(path, method, body); expect(response.ok, `${method} ${path}: ${response.status}`).toBe(true); return response.json();
