@@ -423,3 +423,23 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
     notice: pathless && failed ? `${pathless} (${failed})` : (pathless ?? failed),
   };
 }
+
+/** Whether a bot on `instanceId` may be sent image attachments.
+ *
+ *  The engine list arrives on its own request after the chat is already
+ *  usable, and with several engines installed that request takes seconds.
+ *  An empty list therefore means "not asked yet", exactly as App.tsx reads it
+ *  for the no-engines screen — never "this engine cannot take images". Before
+ *  this rule the composer refused every image sent in that window with "The
+ *  selected responder does not support image attachments", even to Claude,
+ *  and a "Use as reference" chip (an image the moment it is added) hit it on
+ *  every quick use after a reload. Once the list has loaded, an engine that
+ *  is missing from it or does not report image support is refused as before. */
+export function engineAcceptsImages(
+  instances: ReadonlyArray<{ instanceId: string; capabilities?: { images?: boolean } }>,
+  instanceId: string | undefined,
+): boolean {
+  if (!instanceId) return false;
+  if (instances.length === 0) return true;
+  return instances.find((instance) => instance.instanceId === instanceId)?.capabilities?.images === true;
+}

@@ -31,6 +31,7 @@ import {
 } from "@/lib/composer-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
+  engineAcceptsImages,
   appendPastedText,
   clipboardHasImages,
   clipboardImageFiles,
@@ -307,11 +308,10 @@ export function Composer({
   // image paste is offered only when every bot that will actually answer
   // can open one. sendGroup routes to mentions, else the room default —
   // `members.some` would let a mixed room send <attached-image> to Grok.
+  // An empty engine list is "not loaded yet", not "no image support"
+  // (engineAcceptsImages); otherwise the bot's own engine decides.
   const botSupportsImages = (candidate?: Bot) =>
-    Boolean(
-      candidate &&
-        state.instances.find((i) => i.instanceId === candidate.modelSelection.instanceId)?.capabilities?.images,
-    );
+    Boolean(candidate && engineAcceptsImages(state.instances, candidate.modelSelection.instanceId));
   const imageTargetsSupport = (message: string, mode: "chat" | "goal") => {
     if (!group) return botSupportsImages(bot);
     if (mode === "goal") {
