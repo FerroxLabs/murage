@@ -392,8 +392,11 @@ export function observeExternalChange(state: DocumentSessionState, disk: Observe
   // disk text (a rejected save whose read shows the base): it then supplies it.
   if (disk.revision === state.baseRevision && !(state.conflict && !state.conflict.disk)) return { state, effect: "none" };
   const source = state.conflict?.source ?? "external-change";
+  // The conflict is the current fact about this file. An earlier refusal
+  // ("a bot is writing", a network failure) described a save that is over;
+  // left standing beside the conflict it would say two contradictory things.
   return {
-    state: derive({ ...state, conflict: { source, currentRevision: disk.revision, disk } }),
+    state: derive({ ...state, error: null, conflict: { source, currentRevision: disk.revision, disk } }),
     effect: "conflict",
   };
 }

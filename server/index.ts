@@ -4171,10 +4171,15 @@ async function startTurn(
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
       }
       watchdog.watch(threadId, bot.id);
-      projectTurnLeases.markDispatched(dispatchClaimId);
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId, route: providerRoute });
+      // Immediately before sendTurn and after every check that can still
+      // refuse the turn: a writer lease marked dispatched is held until the
+      // provider turn completes, so a refusal here (memory revoked, provider
+      // route changed) with no provider turn to complete would hold the
+      // folder until restart — and every workspace save with it (F4-T7).
+      projectTurnLeases.markDispatched(dispatchClaimId);
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
         providerRoute,
         memoryContext:memoryReceipt?.bundle,
