@@ -794,6 +794,136 @@ describe("ACP turns (fake CLI)", () => {
     expect(processAlive(secondPid)).toBe(false);
   });
 
+  const lifecycleRows = (threadId: string) =>
+    readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { dir: string; msg: Record<string, any> })
+      .filter((row) => row.dir === "lifecycle")
+      .map((row) => row.msg);
+
+  it("lifecycle diagnostics: a completed turn traces one generation from spawn to close", async () => {
+    await create();
+    const threadId = `t-lifecycle-complete-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "LIFECYCLE_PROMPT_CANARY" });
+    await recorder.until((e) => e.type === "turn.completed");
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    const rows = lifecycleRows(threadId);
+    const events = rows.map((row) => row.event);
+    expect(events[0]).toBe("spawn_requested");
+    expect(rows.filter((row) => row.event === "rpc_requested").map((row) => row.method)).toEqual(
+      expect.arrayContaining(["initialize", "session/new", "session/prompt"]),
+    );
+    const at = (name: string) => events.indexOf(name);
+    expect(at("spawned")).toBeGreaterThan(-1);
+    expect(at("turn_settled")).toBeLessThan(at("stop_requested"));
+    expect(at("stop_requested")).toBeLessThan(at("stop_route"));
+    expect(at("stop_route")).toBeLessThan(at("closed"));
+    expect(rows[at("turn_settled")]).toMatchObject({ reason: "turn_complete", settled: true, promptSent: true, cancelRequested: false });
+    expect(rows[at("stop_requested")]).toMatchObject({ reason: "turn_complete" });
+    expect(rows[at("stop_route")]).toMatchObject({
+      route: process.platform === "win32" ? "windows_taskkill" : "posix_group_sigterm",
+      result: "requested",
+    });
+    const closed = rows[at("closed")];
+    expect(closed).toMatchObject({ settled: true, pendingMethods: [], pendingCount: 0, pid: rows[at("spawned")].pid });
+    expect(closed).toHaveProperty("code");
+    expect(closed).toHaveProperty("signal");
+    expect(typeof closed.code === "number" || typeof closed.signal === "string").toBe(true);
+    expect(new Set(rows.map((row) => row.processGeneration)).size).toBe(1);
+    expect(rows.every((row) => row.type === "engine_lifecycle" && row.schema === 1 && row.turnId === turnId && row.driver === "grokAgent")).toBe(true);
+    const sequences = rows.map((row) => row.sequence);
+    expect([...sequences].sort((a, b) => a - b)).toEqual(sequences);
+    expect(JSON.stringify(rows)).not.toContain("LIFECYCLE_PROMPT_CANARY");
+  });
+
+  it("lifecycle diagnostics: an unsolicited close is recorded before settlement with no stop request", async () => {
+    await create(GrokAgentDriver, "exit-on-prompt");
+    const threadId = `t-lifecycle-unsolicited-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const rows = lifecycleRows(threadId);
+    const events = rows.map((row) => row.event);
+    const closedAt = events.indexOf("closed");
+    expect(closedAt).toBeGreaterThan(-1);
+    expect(events.slice(0, closedAt)).not.toContain("stop_requested");
+    expect(events.indexOf("turn_settled")).toBeGreaterThan(closedAt);
+    expect(rows[closedAt]).toMatchObject({
+      code: process.platform === "win32" ? 1073807364 : 4,
+      signal: null,
+      settled: false,
+      cancelRequested: false,
+      promptSent: true,
+      pendingMethods: ["session/prompt"],
+      pendingCount: 1,
+    });
+    expect(rows.find((row) => row.event === "turn_settled")).toMatchObject({ reason: "turn_failure" });
+    // later cleanup appends; it does not rewrite the close
+    expect(rows.filter((row) => row.event === "stop_route_result").at(-1)).toMatchObject({ route: "already_exited" });
+  });
+
+  it("lifecycle diagnostics: a requested cancel is recorded before the close it preceded", async () => {
+    await create(GrokAgentDriver, "exit-on-cancel");
+    const threadId = `t-lifecycle-cancel-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
+    await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+    const rows = lifecycleRows(threadId);
+    const events = rows.map((row) => row.event);
+    const stopAt = events.indexOf("stop_requested");
+    const closedAt = events.indexOf("closed");
+    expect(stopAt).toBeGreaterThan(-1);
+    expect(stopAt).toBeLessThan(closedAt);
+    expect(rows[stopAt]).toMatchObject({ reason: "unspecified", cancelRequested: true, settled: false });
+    expect(rows[closedAt]).toMatchObject({ cancelRequested: true, settled: false, pendingMethods: ["session/prompt"], pendingCount: 1 });
+  });
+
+  it("lifecycle diagnostics: an RPC rejection is attributed to its pending method before close", async () => {
+    await create(GrokAgentDriver, "rpc-error:session/new");
+    const threadId = `t-lifecycle-rejected-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "turn.completed");
+    await instance.adapter.awaitTurnTeardown!(threadId, turnId);
+    const rows = lifecycleRows(threadId);
+    const rejectedAt = rows.findIndex((row) => row.event === "rpc_rejected");
+    expect(rows[rejectedAt]).toMatchObject({ method: "session/new", rpcCode: -32603, httpStatus: 500 });
+    expect(typeof rows[rejectedAt].rpcId).toBe("number");
+    expect(rejectedAt).toBeLessThan(rows.findIndex((row) => row.event === "closed"));
+    expect(rows.find((row) => row.event === "turn_settled")).toMatchObject({ reason: "turn_failure" });
+    expect(JSON.stringify(rows)).not.toMatch(/fake-private|fake-secret|billing\.invalid|Internal error/);
+  });
+
+  it("lifecycle diagnostics: a rejection with an unknown RPC id names no method", async () => {
+    await create(GrokAgentDriver, "unknown-rpc-error");
+    const threadId = `t-lifecycle-unknown-id-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const rejected = lifecycleRows(threadId).filter((row) => row.event === "rpc_rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({ rpcCode: -32603, httpStatus: 500 });
+    expect(rejected[0]).not.toHaveProperty("method");
+    expect(rejected[0]).not.toHaveProperty("rpcId");
+    expect(JSON.stringify(rejected)).not.toContain("fake-secret-canary");
+  });
+
+  it("lifecycle diagnostics: consecutive children on one thread keep distinct generations", async () => {
+    await create();
+    const threadId = `t-lifecycle-generations-${Date.now()}`;
+    for (const text of ["one", "two"]) {
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    }
+    const rows = lifecycleRows(threadId);
+    const generations = [...new Set(rows.map((row) => row.processGeneration))];
+    expect(generations).toHaveLength(2);
+    for (const generation of generations) {
+      const own = rows.filter((row) => row.processGeneration === generation);
+      expect(own.filter((row) => row.event === "closed")).toHaveLength(1);
+      expect(new Set(own.map((row) => row.turnId)).size).toBe(1);
+    }
+  });
+
   it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {
     await create(GrokAgentDriver, "exit-on-prompt");
     await instance.adapter.sendTurn({ threadId: "t-unsolicited-close", text: "fixture only" });
