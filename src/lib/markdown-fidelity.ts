@@ -108,7 +108,8 @@ export interface MarkdownFidelityReport {
   /** Sorted token classes found in the body (empty when not lexed). */
   tokenClasses: string[];
   unsupportedTokenClasses: string[];
-  /** `null` when the text cannot be split without changing bytes. */
+  /** `null` when the text cannot be split without changing bytes, or was not
+   * split because it is over the rich-edit size cap. */
   parts: MarkdownDocumentParts | null;
 }
 
@@ -135,24 +136,45 @@ export function detectNewline(text: string): WorkspaceNewline {
   return crlf ? "crlf" : lf ? "lf" : "none";
 }
 
-// YAML frontmatter: an opening `---` line whose next line is not blank, up to
-// the first closing `---` or `...` line. Requiring a non-blank first line
-// keeps a document that merely starts with a thematic break (`---`, blank,
-// prose, `---`) editable as prose instead of hiding it as opaque metadata.
-const FRONTMATTER = /^---[ \t]*\n(?:(?![ \t]*\n)[\s\S]*?\n)?(?:---|\.\.\.)[ \t]*(?:\n|$)/;
+// YAML frontmatter: an opening `---` line whose first content line is a YAML
+// mapping key (`title: x`), up to the first closing `---` or `...` line.
+// Anything else after a leading `---` (blank line, prose, a list) is Markdown
+// (a thematic break, maybe a setext heading) and stays visible to the gate,
+// which falls back to Source mode whenever it cannot reproduce the bytes.
+// Anchored at the start with no `m` flag, so it is tried at one position only
+// and the lazy scan is linear.
+const FRONTMATTER = /^---[ \t]*\n(?:(?=[ \t]*[^\s#:-][^\n:]*:(?:[ \t]|\n))[\s\S]*?\n)?(?:---|\.\.\.)[ \t]*(?:\n|$)/;
+
+/** Number of `\n` characters at the end of `text`. A backwards index scan,
+ * not `/\n*$/`: that regex restarts at every newline of an internal blank-line
+ * run and is quadratic in the run length. */
+function trailingNewlineCount(text: string): number {
+  let end = text.length;
+  while (end > 0 && text.charCodeAt(end - 1) === 10) end -= 1;
+  return text.length - end;
+}
+
+/** Number of `\n` characters at the start of `text`. */
+function leadingNewlineCount(text: string): number {
+  let start = 0;
+  while (start < text.length && text.charCodeAt(start) === 10) start += 1;
+  return start;
+}
 
 /** Split text (BOM already removed) into opaque parts and the editable body.
- * Returns `null` for mixed newlines, which Source mode edits verbatim. */
+ * Returns `null` for mixed newlines, which Source mode edits verbatim. Linear
+ * in the text length, so it is safe on any file the read contract returns. */
 export function splitMarkdownDocument(text: string): MarkdownDocumentParts | null {
   const newline = detectNewline(text);
   if (newline === "mixed") return null;
   const lf = newline === "crlf" ? text.replace(/\r\n/g, "\n") : text;
   const frontmatter = FRONTMATTER.exec(lf)?.[0] ?? "";
   const rest = lf.slice(frontmatter.length);
-  const leading = /^\n*/.exec(rest)?.[0] ?? "";
+  const leading = rest.slice(0, leadingNewlineCount(rest));
   const afterLeading = rest.slice(leading.length);
-  const trailing = /\n*$/.exec(afterLeading)?.[0] ?? "";
-  const body = afterLeading.slice(0, afterLeading.length - trailing.length);
+  const trailingCount = trailingNewlineCount(afterLeading);
+  const trailing = afterLeading.slice(afterLeading.length - trailingCount);
+  const body = afterLeading.slice(0, afterLeading.length - trailingCount);
   const parts: MarkdownDocumentParts = { newline, frontmatter, leading, body, trailing };
   // Defensive: the split must be lossless or the parts are unusable.
   return composeMarkdownDocument(parts, body) === text ? parts : null;
@@ -195,6 +217,8 @@ function collectTokenClasses(tokens: MarkdownToken[] | undefined, into: Set<stri
     into.add(tokenClass(token));
     collectTokenClasses(token.tokens, into);
     collectTokenClasses(token.items, into);
+    // Task items keep the blocks nested under them here, not in `tokens`.
+    collectTokenClasses(token.nestedTokens as MarkdownToken[] | undefined, into);
     for (const cell of (token.header ?? []) as MarkdownToken[]) collectTokenClasses(cell.tokens, into);
     for (const row of (token.rows ?? []) as MarkdownToken[][]) for (const cell of row) collectTokenClasses(cell.tokens, into);
   }
@@ -245,14 +269,19 @@ export function analyzeMarkdownFidelity(text: string, options: { maxRichBytes?: 
     newline,
     tokenClasses: [],
     unsupportedTokenClasses: [],
-    parts: splitMarkdownDocument(text),
+    parts: null,
   };
-  if (bytes > (options.maxRichBytes ?? MARKDOWN_RICH_EDIT_MAX_BYTES)) report.reasons.push("too-large");
+  // The size check comes first and ends the analysis: an oversized file is
+  // never split, lexed or parsed, so opening it costs only the byte count.
+  if (bytes > (options.maxRichBytes ?? MARKDOWN_RICH_EDIT_MAX_BYTES)) {
+    report.reasons.push("too-large");
+    return report;
+  }
+  report.parts = splitMarkdownDocument(text);
   if (!report.parts) {
     report.reasons.push("mixed-newlines");
     return report;
   }
-  if (report.reasons.length) return report;
   const { body } = report.parts;
   try {
     report.tokenClasses = markdownTokenClasses(body);
