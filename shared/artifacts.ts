@@ -1,7 +1,11 @@
+import type { OutputProducer } from "./output-publication.ts";
+
 export type ArtifactKind = "html" | "text" | "image" | "other";
 export interface Artifact {
   id: string; name: string; filename: string; kind: ArtifactKind; mime: string; bytes: number; sha256: string; createdAt: number;
   botId: string; botName: string; threadId: string; runId?: string; relativePath: string;
+  /** Trusted automatic producer (0.1.52). Absent for manual/tool registration and older rows. */
+  producer?: OutputProducer;
   sourceState: "current" | "changed" | "missing" | "unavailable";
   savedState: "available" | "missing" | "unavailable";
   sourceConversationAvailable: boolean;

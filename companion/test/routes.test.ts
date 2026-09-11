@@ -227,6 +227,16 @@ describe("what it may not", () => {
   // The one that matters. Upstream adds routes on its own schedule, and the
   // sidecar must not carry them to a phone because nobody wrote a rule
   // against a thing that did not exist yet.
+  // U-04: the 0.1.52 workspace-file, media and reference routes are desktop-only.
+  it("does not carry the 0.1.52 desktop file, media or reference routes", () => {
+    for (const path of ["/api/workspace-files/list", "/api/workspace-files/write", "/api/media/resolve", "/api/media/bytes/asset-1", "/api/internal/resolve-image-reference"]) {
+      for (const method of ["GET", "HEAD", "POST"]) {
+        expect(allowed(method, path), `${method} ${path}`).toBe(false);
+        expect(askBrowser(method, path), `browser ${method} ${path}`).not.toBeNull();
+      }
+    }
+  });
+
   it("denies a route it has never heard of", () => {
     for (const path of [
       "/api/whatever-ships-next",
