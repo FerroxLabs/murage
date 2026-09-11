@@ -1269,8 +1269,48 @@ async function doorFront(door, { env = process.env, signal } = {}) {
   return ts.serveOrigin(doc, door);
 }
 
-async function status() {
+/**
+ * Where `status` looks: the same place `setup` put things for the same
+ * arguments. `sudo murage setup --service-user murage` keeps everything in
+ * that account's home, so a `sudo murage status` that looked in root's home
+ * reported "no env file" and "NOT this deployment's browser door" for a
+ * deployment that was fine (seen live on Ubuntu 24.04). Read-only: nothing
+ * is created or chmodded here.
+ * @param {string[]} argv
+ * @param {string | null} serviceUserFromEnv
+ * @returns {{ dataDir: string, envFile: string }}
+ */
+function resolveStatusPaths(argv, serviceUserFromEnv = null) {
+  const parsed = parseSetupArgs(argv);
+  if (parsed.error) {
+    fail(parsed.error.replace("setup does not take", "status does not take"));
+    process.exit(EXIT.USAGE);
+  }
+  const name = parsed.serviceUser || serviceUserFromEnv;
+  if (!name) return { dataDir: DATA_DIR, envFile: ENV_FILE };
+  if (process.platform !== "linux") {
+    fail("--service-user names the account of the systemd unit, and setup stages one on Linux only.");
+    process.exit(EXIT.USAGE);
+  }
+  try {
+    const account = lookupAccount(name, { current: userInfo() });
+    const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
+    const paths = setupPaths({ env: process.env, account, euid, home: homedir() });
+    ok(`service account: ${c.b(`${account.user}:${account.group}`)} (uid ${account.uid}; ${parsed.serviceUser ? "--service-user" : "MURAGE_SERVICE_USER"}), data dir ${c.dim(paths.dataDir)}`);
+    return paths;
+  } catch (error) {
+    if (!(error instanceof ServiceAccountRefused)) throw error;
+    fail(error.message);
+    process.exit(EXIT.USAGE);
+  }
+}
+
+async function status(argv = []) {
   heading("Murage — deployment status");
+
+  // Never prompts, so the unattended switches are accepted and simply consumed.
+  const mode = unattendedMode(argv, "murage status");
+  const { dataDir, envFile: ENV_FILE } = resolveStatusPaths(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null);
 
   const perms = envFilePermissions(ENV_FILE);
   if (!perms.exists) warn(`no env file at ${ENV_FILE} — run \`murage setup\``);
@@ -1289,7 +1329,7 @@ async function status() {
   if (addrs.length) ok(`this host holds tailnet addresses: ${c.dim(addrs.join(", "))}`);
   else warn("this host holds no tailnet address (network-trust probe)");
 
-  await reportDoor(env.MURAGE_DATA_DIR || DATA_DIR);
+  await reportDoor(env.MURAGE_DATA_DIR || dataDir);
 
   if (!ts.isInstalled()) {
     fail("tailscale is not installed — there is no secure path into this box");
@@ -1399,6 +1439,7 @@ function help() {
       ${c.dim("[--service-user <account>]")}  the account the systemd unit runs as; required when run as root
   ${c.b("murage start")}       Run the server and the companion sidecar (refuses any non-loopback, non-tailnet bind)
   ${c.b("murage status")}      Verify the posture: bind policy, enrolment, no public share
+      ${c.dim("[--service-user <account>]")}  look where \`setup --service-user\` put things (when run as root)
   ${c.b("murage resetpass")}   Break-glass admin reset, if this build has one
   ${c.b("murage help")}        This message
 
@@ -1440,7 +1481,7 @@ if (isMain) {
   const cmd = (process.argv[2] || "help").toLowerCase();
   if (cmd === "setup") await setup(process.argv.slice(3));
   else if (cmd === "start") await start(process.argv.slice(3));
-  else if (cmd === "status") await status();
+  else if (cmd === "status") await status(process.argv.slice(3));
   else if (cmd === "resetpass" || cmd === "reset-password") resetpass(process.argv.slice(3));
   else if (cmd === "version" || cmd === "--version" || cmd === "-v") {
     try {
