@@ -1,10 +1,11 @@
-// Every per-spec Playwright config routes its outputDir through evidence.ts,
-// so no human spec can write screenshots, traces or reports into the checkout
-// (CLAC2 finding 4, CLAC3 sweep).
+// Every Playwright config — the per-spec ones and the root playwright.config.ts
+// — routes its outputDir through evidence.ts, so no human spec can write
+// screenshots, traces or reports into the checkout (CLAC2 finding 4, CLAC3
+// sweep, FOLLOW4 for the root config).
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { evidenceDir, evidenceRoot } from "./evidence";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,23 @@ describe("evidenceDir", () => {
     expect(evidenceDir("local-models", undefined)).toBe(join("/lane/e2e/CLAC3", "local-models-results"));
     delete process.env.MURAGE_E2E_DATA_DIR;
     expect(evidenceDir("local-models", "/proof/local-models")).toBe("/proof/local-models");
+  });
+
+  it("is the outputDir of the root playwright.config.ts, with the same refusal", async () => {
+    // The root config used to leave outputDir at Playwright's default,
+    // test-results/ inside the repository (CLAC3 verifier). It is loaded
+    // fresh each time: rig.ts and evidence.ts read the environment at import.
+    process.env.MURAGE_E2E_DATA_DIR = "/lane/e2e/FOLLOW4";
+    vi.resetModules();
+    const configured = (await import("../../playwright.config")).default;
+    expect(configured.outputDir).toBe(join("/lane/e2e/FOLLOW4", "human-results"));
+    expect(configured.testDir).toBe("./src/e2e");
+    delete process.env.MURAGE_E2E_DATA_DIR;
+    vi.resetModules();
+    await expect(import("../../playwright.config")).rejects.toThrow("MURAGE_E2E_DATA_DIR is required — human browser evidence is never written inside the repository.");
+    const source = readFileSync(join(here, "..", "..", "playwright.config.ts"), "utf8");
+    expect(source).not.toMatch(/outputDir\s*:\s*["']/);
+    expect(source).not.toMatch(/outputFile\s*:\s*["']/);
   });
 
   it("is the only outputDir every per-spec config uses", () => {
