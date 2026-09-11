@@ -1,10 +1,19 @@
 import { z } from "zod";
 
-interface InstallationRow {
+export interface InstallationRow {
   id: string;
   composio_user_id: string;
   session_id: string | null;
   disabled_at: number | null;
+  // Moving this install's connected apps to a FluxRouter account, in three
+  // legs. `claim_issued_at` records that this Worker SIGNED an assertion;
+  // `claim_confirmed_at` records that FluxRouter accepted it and the desktop
+  // said so. Only the second one starts the clock that retires the install
+  // here — an assertion that was never redeemed (FluxRouter 5xx, a paused
+  // claim route, a network failure) must leave the install working.
+  claim_issued_at: number | null;
+  claim_confirmed_at: number | null;
+  last_claim_jti: string | null;
 }
 
 interface ComposioSession {
@@ -248,7 +257,7 @@ async function authenticate(request: Request, env: Env) {
   const token = request.headers.get("authorization")?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
   if (!token) return null;
   const row = await env.DB.prepare(
-    "SELECT id, composio_user_id, session_id, disabled_at FROM installations WHERE token_hash = ?",
+    "SELECT id, composio_user_id, session_id, disabled_at, claim_issued_at, claim_confirmed_at, last_claim_jti FROM installations WHERE token_hash = ?",
   ).bind(await sha256(token)).first<InstallationRow>();
   return row && row.disabled_at === null ? row : null;
 }
@@ -334,6 +343,234 @@ async function register(request: Request, env: Env) {
   return json({ installationId, token }, 201);
 }
 
+// ── moving an install to FluxRouter ────────────────────────────────────
+// Composio cannot re-key a connection to a new user id, so a FluxRouter
+// account ADOPTS this install's `murage_<id>` user instead. This Worker signs
+// a short-lived assertion saying "install X is composio user Y"; FluxRouter
+// verifies it against a public key and binds the account; the desktop then
+// confirms back here. Only that confirmation starts the clock after which this
+// Worker stops serving the install, because legs 1 and 2 can fail in ways that
+// must leave the install exactly as it was.
+
+const CLAIM_TYP = "murage-composio-claim+jwt";
+const CLAIM_AUDIENCE = "fluxrouter-composio";
+const CLAIM_LIFETIME_SECONDS = 300;
+const DEFAULT_CLAIM_GRACE_SECONDS = 900;
+const DEFAULT_CLAIM_ISSUED_FALLBACK_SECONDS = 604_800;
+const MAX_CLAIM_BODY = 2 * 1024;
+const MAX_CONFIRM_BODY = 512;
+
+const claimRequestSchema = z.object({
+  audience: z.literal(CLAIM_AUDIENCE),
+  // sha256 of the FluxRouter BROKER token, not of the Flux API key: the Flux
+  // key must never reach this Worker in any form, not even hashed. The hash is
+  // signed into the assertion and then discarded — it is never stored, never
+  // logged, and binds the assertion to one broker token so a leaked assertion
+  // is useless to any other account.
+  brokerTokenSha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+const confirmRequestSchema = z.object({
+  jti: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+});
+
+interface ClaimEnv {
+  CLAIM_MODE?: string;
+  CLAIM_UNTIL?: string;
+  CLAIM_SIGNING_JWK?: string;
+  CLAIM_GRACE_SECONDS?: string;
+  CLAIM_ISSUED_FALLBACK_SECONDS?: string;
+  LEGACY_BROKER_UNTIL?: string;
+  MIGRATION_GATE?: string;
+}
+
+function claimEnv(env: Env): ClaimEnv {
+  return env as unknown as ClaimEnv;
+}
+
+/** A configured instant in milliseconds, or null when unset. An unparseable
+ * value is treated as unset rather than as "now": a typo must not retire every
+ * install in the fleet. */
+export function configuredInstant(value: string | undefined): number | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? at : null;
+}
+
+function configuredSeconds(value: string | undefined, fallback: number): number {
+  const parsed = Number(value?.trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function base64url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function base64urlText(value: string): string {
+  return base64url(new TextEncoder().encode(value));
+}
+
+/** The compact JWS FluxRouter verifies. Ed25519 rather than a shared secret:
+ * this Worker holds the only private key, FluxRouter holds public keys only,
+ * so a FluxRouter compromise cannot mint claims for anyone's install. */
+export async function signClaimAssertion(
+  jwkText: string,
+  payload: Record<string, string | number>,
+): Promise<string> {
+  const jwk = JSON.parse(jwkText) as JsonWebKey & { kid?: string };
+  const key = await crypto.subtle.importKey("jwk", jwk, { name: "Ed25519" }, false, ["sign"]);
+  const header = base64urlText(JSON.stringify({ alg: "EdDSA", typ: CLAIM_TYP, kid: jwk.kid }));
+  const body = base64urlText(JSON.stringify(payload));
+  const signature = await crypto.subtle.sign(
+    { name: "Ed25519" },
+    key,
+    new TextEncoder().encode(`${header}.${body}`),
+  );
+  return `${header}.${body}.${base64url(new Uint8Array(signature))}`;
+}
+
+async function readJsonBody<T extends z.ZodTypeAny>(
+  request: Request,
+  schema: T,
+  { maxBytes, tooLargeMessage }: { maxBytes: number; tooLargeMessage: string },
+): Promise<z.infer<T>> {
+  const bytes = await readBoundedBody(request, {
+    maxBytes,
+    deadlineMs: ALIAS_BODY_READ_DEADLINE_MS,
+    tooLargeMessage,
+  });
+  try {
+    return schema.parse(JSON.parse(new TextDecoder().decode(bytes))) as z.infer<T>;
+  } catch {
+    throw new Response(JSON.stringify({ error: "invalid request body" }), { status: 400, headers: JSON_HEADERS });
+  }
+}
+
+/** Leg 1 — issue. Signing does NOT retire the install: `claim_issued_at` is
+ * audit plus the 7-day backstop, and the gate keys on the confirmation. */
+async function issueClaim(request: Request, installation: InstallationRow, env: Env) {
+  const claims = claimEnv(env);
+  if (claims.CLAIM_MODE !== "open") return json({ error: "claims are temporarily closed" }, 503);
+  const until = configuredInstant(claims.CLAIM_UNTIL);
+  if (until !== null && Date.now() >= until) {
+    return json({ error: "Moving connected apps to FluxRouter has ended", code: "claims_closed" }, 410);
+  }
+  if (!(await env.SESSION_LIMITER.limit({ key: await sha256(`claim:${installation.id}`) })).success) {
+    return json({ error: "too many claim attempts" }, 429);
+  }
+  if (!claims.CLAIM_SIGNING_JWK?.trim()) {
+    console.error(JSON.stringify({ message: "claim signing key is not configured" }));
+    return json({ error: "claims are temporarily closed" }, 503);
+  }
+  let body: z.infer<typeof claimRequestSchema>;
+  try {
+    body = await readJsonBody(request, claimRequestSchema, { maxBytes: MAX_CLAIM_BODY, tooLargeMessage: "request body is too large" });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    throw error;
+  }
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const jti = crypto.randomUUID();
+  let assertion: string;
+  try {
+    assertion = await signClaimAssertion(claims.CLAIM_SIGNING_JWK, {
+      iss: "murage-composio",
+      aud: CLAIM_AUDIENCE,
+      sub: installation.id,
+      // Always the stored user id. Never anything the client sent, or a claim
+      // would be a way to point a FluxRouter account at someone else's apps.
+      cuid: installation.composio_user_id,
+      bth: body.brokerTokenSha256,
+      iat: issuedAt,
+      exp: issuedAt + CLAIM_LIFETIME_SECONDS,
+      jti,
+    });
+  } catch (error) {
+    console.error(JSON.stringify({ message: "claim signing failed", error: error instanceof Error ? error.message : "unknown" }));
+    return json({ error: "claims are temporarily closed" }, 503);
+  }
+  await env.DB.prepare(
+    `UPDATE installations
+        SET claim_issued_at = COALESCE(claim_issued_at, ?1),
+            claims_issued = claims_issued + 1,
+            last_claim_jti = ?2
+      WHERE id = ?3`,
+  ).bind(Date.now(), jti, installation.id).run();
+  // The assertion and the broker-token hash are deliberately absent from this
+  // log line: one is a bearer credential for five minutes, the other a
+  // credential derivative this Worker promised never to keep.
+  console.log(JSON.stringify({ message: "claim issued", installationId: installation.id, jti }));
+  return json({ assertion, expiresAt: (issuedAt + CLAIM_LIFETIME_SECONDS) * 1000, jti });
+}
+
+/** Leg 3 — confirm. This is the only thing that starts the grace clock, and it
+ * is always served: a confirmation arriving after the cut-off or after claims
+ * close is still the truth about where these apps now live. */
+async function confirmClaim(request: Request, installation: InstallationRow, env: Env) {
+  let body: z.infer<typeof confirmRequestSchema>;
+  try {
+    body = await readJsonBody(request, confirmRequestSchema, { maxBytes: MAX_CONFIRM_BODY, tooLargeMessage: "request body is too large" });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    throw error;
+  }
+  if (!installation.last_claim_jti || body.jti !== installation.last_claim_jti) {
+    // A newer assertion was issued since, or none ever was. The desktop
+    // answers this by running all three legs again; FluxRouter's redeem is
+    // idempotent for an account that already holds this install.
+    return json({ error: "unknown claim", code: "claim_unknown" }, 409);
+  }
+  const now = Date.now();
+  await env.DB.prepare(
+    "UPDATE installations SET claim_confirmed_at = COALESCE(claim_confirmed_at, ?1) WHERE id = ?2",
+  ).bind(now, installation.id).run();
+  const confirmedAt = installation.claim_confirmed_at ?? now;
+  const grace = configuredSeconds(claimEnv(env).CLAIM_GRACE_SECONDS, DEFAULT_CLAIM_GRACE_SECONDS);
+  console.log(JSON.stringify({ message: "claim confirmed", installationId: installation.id, jti: body.jti }));
+  return json({ confirmed: true, graceEndsAt: confirmedAt + grace * 1000 });
+}
+
+/** Whether this install may still use the Murage broker for data.
+ *
+ * Returns a 410 Response when it may not, null when it may. Never a 401:
+ * an old desktop deletes its token on 401 and would lose the identity the
+ * claim depends on.
+ */
+export function migrationGate(installation: InstallationRow, env: Env, now = Date.now()): Response | null {
+  const claims = claimEnv(env);
+  const retiredAt = configuredInstant(claims.LEGACY_BROKER_UNTIL);
+  if (retiredAt !== null && now >= retiredAt) {
+    return json({
+      error: "Murage's connected-apps service has ended. Connect FluxRouter in Settings to keep using connected apps.",
+      code: "legacy_broker_retired",
+    }, 410);
+  }
+  // The Flux-rollback switch. With the gate off, every install that still has
+  // a token is served — including claimed ones, whose desktops deliberately
+  // kept that token. Both brokers point at the same Composio user, so there is
+  // nothing to orphan either way.
+  if (claims.MIGRATION_GATE !== "on") return null;
+  const moved = json({
+    error: "This install's connected apps moved to FluxRouter. Connect FluxRouter in Settings to use them.",
+    code: "migrated_to_flux",
+  }, 410);
+  const grace = configuredSeconds(claims.CLAIM_GRACE_SECONDS, DEFAULT_CLAIM_GRACE_SECONDS);
+  if (installation.claim_confirmed_at !== null && installation.claim_confirmed_at + grace * 1000 < now) return moved;
+  // The backstop for an install that redeemed at FluxRouter but never
+  // confirmed here — a buggy or deliberately silent client that would
+  // otherwise use both brokers on one identity for free, indefinitely. Seven
+  // days is long enough that any real outage has resolved or been rolled back.
+  const fallback = configuredSeconds(claims.CLAIM_ISSUED_FALLBACK_SECONDS, DEFAULT_CLAIM_ISSUED_FALLBACK_SECONDS);
+  if (
+    installation.claim_confirmed_at === null
+    && installation.claim_issued_at !== null
+    && installation.claim_issued_at + fallback * 1000 < now
+  ) return moved;
+  return null;
+}
+
 /** Billable-call ceiling.
  *
  * A fuse, not a meter. Composio bills $4 per 1,000 tool calls against one
@@ -363,19 +600,42 @@ function dailyCallCeiling(env: Env): number {
  * install, and a D1 hiccup taking every user's tools offline is the worse
  * outcome of the two.
  */
-async function chargeCall(installation: InstallationRow, env: Env): Promise<{ over: boolean; used: number }> {
+/** How many billable Composio executions one MCP POST asks for.
+ *
+ * The fuse used to count every POST, which made `initialize` and `tools/list`
+ * — free at Composio, and the bulk of the traffic — burn the same budget as a
+ * real tool run. Only a JSON-RPC `tools/call` costs anything; a batch costs
+ * one per `tools/call` message in it. An unparseable body counts as one, which
+ * is the conservative direction for a fuse.
+ */
+export function billableCallCount(body: Uint8Array): number {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    return 1;
+  }
+  const messages = Array.isArray(parsed) ? parsed : [parsed];
+  let count = 0;
+  for (const message of messages) {
+    if (message && typeof message === "object" && (message as { method?: unknown }).method === "tools/call") count += 1;
+  }
+  return count;
+}
+
+async function chargeCall(installation: InstallationRow, env: Env, units: number): Promise<{ over: boolean; used: number }> {
   const ceiling = dailyCallCeiling(env);
-  if (ceiling === Infinity) return { over: false, used: 0 };
+  if (ceiling === Infinity || units <= 0) return { over: false, used: 0 };
   const day = Math.floor(Date.now() / 86_400_000);
   try {
     const row = await env.DB.prepare(
       `UPDATE installations
-          SET calls_today = CASE WHEN calls_day = ?1 THEN calls_today + 1 ELSE 1 END,
-              calls_total = calls_total + 1,
+          SET calls_today = CASE WHEN calls_day = ?1 THEN calls_today + ?3 ELSE ?3 END,
+              calls_total = calls_total + ?3,
               calls_day = ?1
         WHERE id = ?2
       RETURNING calls_today`,
-    ).bind(day, installation.id).first<{ calls_today: number }>();
+    ).bind(day, installation.id, units).first<{ calls_today: number }>();
     const used = row?.calls_today ?? 0;
     return { over: used > ceiling, used };
   } catch (error) {
@@ -470,7 +730,7 @@ async function proxyMcp(request: Request, installation: InstallationRow, env: En
     if (error instanceof Response) return error;
     throw error;
   }
-  const charge = await chargeCall(installation, env);
+  const charge = await chargeCall(installation, env, billableCallCount(body));
   if (charge.over) {
     return json({
       error: "This install has hit today's connected-app request limit. It resets at 00:00 UTC.",
@@ -801,7 +1061,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext) {
   if (!url.pathname.startsWith("/v1/")) return json({ error: "not found" }, 404);
   const installation = await authenticate(request, env);
   if (!installation) return json({ error: "unauthorized" }, 401);
-  if (request.method === "GET" && url.pathname === "/v1/me") return json({ installationId: installation.id });
+  // Identity and the three claim legs are answered whatever the migration
+  // gate says. `/v1/me` is how a desktop learns where it stands, and a claim
+  // or a confirmation after the cut-off is still worth recording.
+  if (request.method === "GET" && url.pathname === "/v1/me") {
+    return json({
+      installationId: installation.id,
+      claimIssued: installation.claim_issued_at !== null,
+      claimConfirmed: installation.claim_confirmed_at !== null,
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/v1/claims") return issueClaim(request, installation, env);
+  if (request.method === "POST" && url.pathname === "/v1/claims/confirm") return confirmClaim(request, installation, env);
+  // Everything below is a data call on the user's connected apps, and stops
+  // once this install has moved to FluxRouter or the service has retired.
+  const gated = migrationGate(installation, env);
+  if (gated) return gated;
   if (request.method === "POST" && url.pathname === "/v1/mcp") return proxyMcp(request, installation, env, ctx);
   if (request.method === "GET" && url.pathname === "/v1/catalog") return catalog(env, url);
   if (request.method === "GET" && url.pathname === "/v1/connectors/connected") return connectedServices(installation, env, ctx);
@@ -831,6 +1106,9 @@ export default {
 export {
   authorize,
   catalog,
+  confirmClaim,
+  issueClaim,
+  route,
   connectedServices,
   connectionStatus,
   createSession,
