@@ -15,9 +15,8 @@ after every further lane merge (see "How to refresh this draft" at the end).
   `7f8d8f29` and `0359d529`.
 - Already shipped in 0.1.51, not a 0.1.52 change: `15c3cbd6` "fix(packaging):
   sign Windows recovery helper" is the parent of the `acaee1db` baseline
-  (`git merge-base --is-ancestor 15c3cbd6 acaee1db` is true) and the 0.1.51
-  Windows evidence was taken from the signed build. It must not appear in the
-  0.1.52 notes.
+  (`git merge-base --is-ancestor 15c3cbd6 acaee1db` is true). It must not
+  appear in the 0.1.52 notes.
 
 Framing rule for the published notes: every entry says what the user gets
 (added, enhanced, hardened, tightened). No entry is called a bug fix. Every
@@ -28,9 +27,11 @@ from the plan.
 
 ## 1. Draft release body (for the murage-releases draft)
 
-Paste-ready once the candidate is frozen. Section headers follow
-`.github/release.yml` (New features / Fixes / Documentation / Other changes),
-but the wording is the enhanced/added framing Sean uses.
+Paste-ready once the candidate is frozen. The headers below (Added /
+Enhanced / Contracts defined / Quality) are the announcement framing Sean
+uses; they are not the `.github/release.yml` categories (New features / Fixes
+/ Documentation / Other changes), which GitHub applies to the auto-generated
+PR list separately.
 
 ### Murage 0.1.52
 
@@ -74,19 +75,35 @@ state.
   whitespace tolerated around `=`; multipart, malformed and unsatisfiable
   ranges answer 416; a changed file answers 409 and a removed one 410; an
   oversized body answers 413 rather than a generic 400.
-- **Turn teardown can confirm closure.** Engine drivers can now report whether
-  a stop actually closed the process (`closeConfirmed`) instead of assuming a
-  requested kill is a finished one. Resource ownership is held until that
-  confirmation arrives. Driver adoption of this contract lands with the
-  runtime lanes.
 - **Main-process trust helper.** `electron/main-trust.mjs` gives every
   privileged IPC handler one way to confirm the sender is the app's own top
   frame at the exact expected origin, failing closed. The handler sweep that
   uses it is in flight.
-- **New routes are desktop-only.** `/api/workspace-files/*`, `/api/media/*`
-  and the internal image-reference route require desktop proof; the companion
-  and remote allowlists stay default-deny for them, and companion-marked
+- **New routes carry an explicit authority each.** `/api/workspace-files/*`
+  and `/api/media/resolve` (with every other `/api/media/*` path except
+  `bytes`) require desktop proof and are listed in
+  `DESKTOP_AUTHORITY_ROUTES`. `/api/media/bytes/<id>?cap=` is deliberately
+  exempt from the desktop header, because `<img>`, `<audio>` and `<video>`
+  cannot send it; it is authorized only by the short-lived capability the
+  resolve step issued. `POST /api/internal/resolve-image-reference` is not a
+  desktop route at all: it is reachable only by a bot's active internal
+  `agents` capability, and the bot, thread and generation it acts for are
+  taken from that claim, never from the request body. The companion and
+  remote allowlists stay default-deny for all of them, and companion-marked
   requests are refused on every media route, capability or not.
+
+**Contracts defined, not yet adopted**
+
+Type-level only. Nothing in this candidate changes runtime behaviour for
+these; they are listed so the runtime lanes ship against a frozen shape.
+
+- **Close-confirmed stop contract.** `server/contracts.ts` defines
+  `ProviderStopResult` (`closeConfirmed: true`, or `false` with a `timeout` /
+  `stop-failed` reason) and an optional `awaitTurnTeardown` on engine drivers,
+  so a driver can report that a stop actually closed the process instead of
+  assuming a requested kill is a finished one. No driver reports it in this
+  candidate and no caller acts on it yet; adoption lands with the runtime
+  lanes (A2 / R1-T2).
 
 **Quality**
 
@@ -150,7 +167,7 @@ lane's own commits; nothing older than the `acaee1db` baseline belongs here):
 
 | Lane / task | Commit | User-visible? | Draft entry |
 |---|---|---|---|
-| K0 contracts (U-02, U-03, U-04, A2, B6) | `4f7e28c2` | foundation | shared contracts, schema, trust helper, desktop-only routes, close-confirmed stop |
+| K0 contracts (U-02, U-03, U-04, A2, B6) | `4f7e28c2` | foundation | shared contracts, schema, trust helper, per-route authority (desktop proof / byte capability / internal agents capability), close-confirmed stop contract (type only) |
 | F4-T0 Tiptap pins (U-05) | `58750971` | dependency | editor dependencies pinned |
 | Q1-T1 (D5) | `228d22c7` | test only | concurrency proof per platform |
 | L18 F5-T1 (M1, U-03, U-04, U-28) | `24824218` | service layer | media resolver and capability byte route |
@@ -230,7 +247,11 @@ transcoding and no autoplay (F5, U-28).
    `for c in de es fr hi ja pt-br zh; do node scripts/generate-locale.mjs $c; done`
    then review every changed string and run `pnpm i18n:check`. The script
    refuses missing keys, invented keys, changed placeholders and prose. Use
-   `--accept` only for a pack that was translated by hand.
+   `--accept` only for a pack whose translations were already reviewed and
+   committed without source hashes (hand-written or agent-drafted and
+   reviewed like code, as the 0.1.50 `claudeAccounts.*` and `source/inbox/
+   files` keys were); it records hashes for the current text and does not
+   translate anything.
 3. Re-run `node scripts/release-guard.mjs version` (must print `0.1.52`) and
    `pnpm exec vitest run scripts/release-guard.test.mjs scripts/release-workflows.test.mjs`.
 4. Move the unmerged lanes from "not merged" to the table as they land; do
