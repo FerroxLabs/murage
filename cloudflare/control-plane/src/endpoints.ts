@@ -35,6 +35,19 @@ interface ClaimedEndpoint {
   row: EndpointRow;
 }
 
+/** The exact installation credential that authorized a provisioning request.
+ *  Provider work can take many awaited calls; the final connector-token
+ *  issuance is fenced against this credential still being current. */
+interface IssuanceCredential {
+  lookupId: string;
+  secretHash: string;
+}
+
+// Revoked, rotated-away or expired credential, or a revoked installation,
+// observed at the final issuance fence. Resources stay retained for adoption
+// by the next authorized reconcile or for the revoked-installation sweep.
+const CREDENTIAL_INACTIVE = "installation_credential_inactive";
+
 const LEASE_MS = 60_000;
 const ENDPOINT_ACTION_WINDOW_MS = 60 * 60 * 1_000;
 const ENDPOINT_RECONCILE_LIMIT = 20;
@@ -260,19 +273,64 @@ function assertDNSIdentity(
   }
 }
 
-async function finishClaim(
+async function finishDeletedClaim(env: Env, claim: ClaimedEndpoint): Promise<EndpointRow> {
+  const now = Date.now();
+  const result = await env.DB.prepare(
+    `UPDATE installation_endpoints
+        SET status = 'deleted', lease_owner = NULL, lease_expires_at = NULL,
+            last_reconciled_at = ?, last_error_code = NULL, updated_at = ?
+      WHERE installation_id = ? AND generation = ? AND lease_owner = ?`,
+  ).bind(now, now, claim.row.installation_id, claim.row.generation, claim.leaseOwner).run();
+  if (result.meta.changes === 0) throw new EndpointOperationError("lease_lost");
+  const row = await endpointRow(env, claim.row.installation_id);
+  if (!row) throw new EndpointOperationError("endpoint_state_missing");
+  return row;
+}
+
+/** Publish a ready endpoint only while the lease AND the authorizing credential
+ *  are both still current. One conditional statement, so a revocation,
+ *  rotation or expiry that commits while provider calls are in flight can never
+ *  be followed by a ready row whose connector token reaches the caller. */
+async function finishReadyClaim(
   env: Env,
   claim: ClaimedEndpoint,
-  status: "deleted" | "ready",
+  credential: IssuanceCredential,
 ): Promise<EndpointRow> {
   const now = Date.now();
   const result = await env.DB.prepare(
     `UPDATE installation_endpoints
-        SET status = ?, lease_owner = NULL, lease_expires_at = NULL,
+        SET status = 'ready', lease_owner = NULL, lease_expires_at = NULL,
             last_reconciled_at = ?, last_error_code = NULL, updated_at = ?
-      WHERE installation_id = ? AND generation = ? AND lease_owner = ?`,
-  ).bind(status, now, now, claim.row.installation_id, claim.row.generation, claim.leaseOwner).run();
-  if (result.meta.changes === 0) throw new EndpointOperationError("lease_lost");
+      WHERE installation_id = ? AND generation = ? AND lease_owner = ?
+        AND EXISTS (
+          SELECT 1
+            FROM installation_credentials c
+            JOIN installations i ON i.id = c.installation_id
+           WHERE c.installation_id = ?
+             AND c.lookup_id = ?
+             AND c.secret_hash = ?
+             AND c.revoked_at IS NULL
+             AND c.expires_at > ?
+             AND i.revoked_at IS NULL
+        )`,
+  ).bind(
+    now,
+    now,
+    claim.row.installation_id,
+    claim.row.generation,
+    claim.leaseOwner,
+    claim.row.installation_id,
+    credential.lookupId,
+    credential.secretHash,
+    now,
+  ).run();
+  if (result.meta.changes === 0) {
+    const current = await endpointRow(env, claim.row.installation_id);
+    if (current?.generation === claim.row.generation && current.lease_owner === claim.leaseOwner) {
+      throw new EndpointOperationError(CREDENTIAL_INACTIVE);
+    }
+    throw new EndpointOperationError("lease_lost");
+  }
   const row = await endpointRow(env, claim.row.installation_id);
   if (!row) throw new EndpointOperationError("endpoint_state_missing");
   return row;
@@ -434,6 +492,7 @@ async function reconcileClaim(
   config: ControlPlaneConfig,
   claim: ClaimedEndpoint,
   fetcher: CloudflareFetch,
+  credential: IssuanceCredential,
 ): Promise<{ connectorToken: string; row: EndpointRow }> {
   const api = new CloudflareAPI(config.cloudflare, fetcher);
   let tunnelId = claim.row.tunnel_id;
@@ -571,10 +630,24 @@ async function reconcileClaim(
       claim,
       () => api.getConnectorToken(activeTunnelId),
     );
-    const row = await finishClaim(env, claim, "ready");
+    const row = await finishReadyClaim(env, claim, credential);
     return { connectorToken, row };
   } catch (error) {
     let operationCode = errorCode(error);
+
+    if (operationCode === CREDENTIAL_INACTIVE) {
+      // The token is withheld. Keep the exact provider identities recorded
+      // instead of deleting in this request: the next authorized reconcile
+      // adopts them by stable name, and a revoked installation's row is picked
+      // up by the identity-checked cleanup sweep.
+      try {
+        await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
+        await failClaim(env, claim, operationCode, false);
+      } catch {
+        // A successor already owns the row and its resources.
+      }
+      throw new EndpointOperationError(operationCode);
+    }
 
     try {
       const rolledBack = await rollbackCreatedResources(env, claim, api, {
@@ -672,7 +745,7 @@ async function deleteClaim(
       tunnelId = null;
       await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
     }
-    await finishClaim(env, claim, "deleted");
+    await finishDeletedClaim(env, claim);
   } catch (error) {
     const operationCode = errorCode(error);
     try {
@@ -710,9 +783,22 @@ export async function provisionManagedEndpoint(
   if (!claim) return busyResponse();
 
   try {
-    const result = await reconcileClaim(env, config, claim, fetcher);
+    const result = await reconcileClaim(env, config, claim, fetcher, {
+      lookupId: installation.lookup_id,
+      secretHash: installation.secret_hash,
+    });
     return json({ endpoint: endpointJSON(result.row), connectorToken: result.connectorToken });
   } catch (error) {
+    if (errorCode(error) === CREDENTIAL_INACTIVE) {
+      console.error(JSON.stringify({
+        message: "managed endpoint issuance withheld: credential no longer current",
+        requestId,
+        errorCode: CREDENTIAL_INACTIVE,
+      }));
+      // Same answer the request would have received had the revocation,
+      // rotation or expiry landed before authentication.
+      throw new HTTPError(401, "unauthorized");
+    }
     console.error(JSON.stringify({
       message: "managed endpoint reconcile failed",
       requestId,
