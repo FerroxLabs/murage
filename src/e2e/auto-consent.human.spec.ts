@@ -2,6 +2,14 @@
 // never chose a computer (the "Auto" destination, which is THIS Mac on macOS)
 // must open the local-computer warning and send the acknowledgement, not fire
 // a bare PATCH the harness now refuses. Real BotSettingsDialog, real harness.
+//
+// FOLLOW5: the harness decides from ITS process.platform, and this renderer
+// runs in a plain browser (no desktop shell), which used to mean the UA
+// decided — the browser's machine, not the harness's. The second test drives
+// the same dialog from a browser whose UA names the OTHER platform and proves
+// the warning follows the harness's announcement (`/api/config` `harness`),
+// on either host: a Linux tab on this Mac harness still gets the dialog; a
+// Mac tab on a Linux harness gets none and the PATCH lands.
 import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
@@ -38,6 +46,11 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 const storedBot = async () => {
   const state = await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers: owner })).json() as { bots: { id: string; autoApprove?: boolean; computer?: string }[] };
   return state.bots.find(bot => bot.id === botId)!;
+};
+const resetBot = async () => {
+  const reset = await fetch(fixture.info.url + `/api/bots/${botId}`, { method: "PATCH", headers: { ...owner, "content-type": "application/json" }, body: JSON.stringify({ autoApprove: false }) });
+  expect(reset.status).toBe(200);
+  expect((await storedBot()).autoApprove).toBe(false);
 };
 
 test("the settings Auto switch on a bot with no chosen computer asks before the harness is asked", async ({ page }) => {
@@ -84,4 +97,59 @@ test("the settings Auto switch on a bot with no chosen computer asks before the 
   expect(patches[0].status).toBe(200);
   expect(patches[0].body).toMatchObject(mountsThisComputer ? { autoApprove: true, acknowledgeLocalAuto: true } : { autoApprove: true });
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+// The UA of the OTHER platform: what a remote tab through the browser door
+// looks like when the person's laptop is not the harness's machine.
+const foreignUserAgent = mountsThisComputer
+  ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+  : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+
+test.describe("a browser whose UA names another platform (FOLLOW5)", () => {
+  test.use({ userAgent: foreignUserAgent });
+  test("the Auto switch follows the platform the harness announced, not the browser's UA", async ({ page }) => {
+    await resetBot();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
+    const patches: Array<{ status: number; body: unknown }> = [];
+    page.on("response", async response => {
+      const request = response.request();
+      if (request.method() === "PATCH" && new URL(response.url()).pathname === `/api/bots/${botId}`) patches.push({ status: response.status(), body: request.postDataJSON() });
+    });
+    await page.goto(origin + "/__auto-consent");
+    // The browser really is the other platform, and the harness really announced its own.
+    expect(await page.evaluate(() => navigator.userAgent)).toBe(foreignUserAgent);
+    expect(((await (await fetch(fixture.info.url + "/api/config", { headers: owner })).json()) as { harness?: { platform?: string } }).harness).toEqual({ platform: process.platform });
+    await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
+    await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
+    const auto = dialog.getByRole("switch", { name: "Auto mode", exact: true });
+    await expect(auto).not.toBeChecked();
+    expect((await storedBot()).computer).toBeUndefined();
+    const warning = page.getByRole("dialog", { name: "Allow Auto mode on this computer?", exact: true });
+
+    await auto.click();
+    if (mountsThisComputer) {
+      // A Linux tab on this Mac harness: the harness would refuse a blind
+      // PATCH, so the dialog must come first — the UA used to skip it and
+      // the person saw a red banner.
+      await expect(warning).toBeVisible();
+      expect(patches).toEqual([]);
+      expect((await storedBot()).autoApprove).toBe(false);
+      await warning.getByRole("button", { name: "OK", exact: true }).click();
+      await expect(warning).toHaveCount(0);
+    } else {
+      // A Mac tab on a Linux (or Windows) harness: the harness requires no
+      // acknowledgement for a default destination, so no dialog — the UA
+      // used to show one the server never asked for.
+      await expect(warning).toHaveCount(0);
+    }
+    await expect(auto).toBeChecked();
+    await expect.poll(async () => (await storedBot()).autoApprove).toBe(true);
+    expect(patches).toHaveLength(1);
+    expect(patches[0].status).toBe(200);
+    expect(patches[0].body).toMatchObject(mountsThisComputer ? { autoApprove: true, acknowledgeLocalAuto: true } : { autoApprove: true });
+    if (!mountsThisComputer) expect(patches[0].body).not.toHaveProperty("acknowledgeLocalAuto");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
 });
