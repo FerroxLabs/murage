@@ -36,6 +36,9 @@ export interface MarkdownDraftRecord {
   /** UTF-8 bytes of `content`; what the byte bound counts. */
   bytes: number;
   updatedAt: number;
+  /** The editor session that preserved it. `draftRevision` counters are per
+   * session, so they are only comparable between records of one writer. */
+  writer?: string;
 }
 
 export interface MarkdownDraftInput {
@@ -43,6 +46,35 @@ export interface MarkdownDraftInput {
   content: string;
   draftRevision: number;
   mode?: DocumentMode;
+  writer?: string;
+}
+
+/** Identifies one stored record exactly (writer, revision and write time). */
+export interface StoredDraftStamp {
+  writer?: string;
+  draftRevision: number;
+  updatedAt: number;
+}
+
+export interface ClearDraftOptions {
+  /** Keep this writer's draft when it is newer than this revision (typing
+   * that continued while a save was in flight). Omitted: clear whatever is
+   * stored. */
+  upToDraftRevision?: number;
+  /** The session asking. A bounded clear never judges another writer's
+   * record by this session's revision counter. */
+  writer?: string;
+  /** A record from an earlier session that this session found and dealt with
+   * (restored, or given up by the user). A bounded clear removes it. */
+  covers?: StoredDraftStamp | null;
+}
+
+export function draftStamp(record: MarkdownDraftRecord): StoredDraftStamp {
+  return { ...(record.writer !== undefined ? { writer: record.writer } : {}), draftRevision: record.draftRevision, updatedAt: record.updatedAt };
+}
+
+function sameStamp(record: MarkdownDraftRecord, stamp: StoredDraftStamp): boolean {
+  return record.writer === stamp.writer && record.draftRevision === stamp.draftRevision && record.updatedAt === stamp.updatedAt;
 }
 
 export type MarkdownDraftErrorCode =
@@ -101,17 +133,22 @@ export function planPreserveDraft(
   return { put: [record], result: { ok: true, record } };
 }
 
-/** Pure clear. With `upToDraftRevision`, a draft preserved after that revision
- * (typing that continued while a save was in flight) is kept. */
+/** Pure clear. Without `upToDraftRevision` the stored draft goes. With it
+ * (bounded), the stored draft goes when it is the record `covers` names, or
+ * when it is this writer's own draft at or below that revision. It is kept
+ * when it is this writer's newer typing, or when it is another writer's draft
+ * this session never saw (another window's unsaved work). */
 export function planClearDraft(
   records: readonly MarkdownDraftRecord[],
   key: string,
-  options: { upToDraftRevision?: number } = {},
+  options: ClearDraftOptions = {},
 ): DraftPlan<ClearDraftResult> {
   const existing = records.find(item => item.key === key);
   if (!existing) return { result: { ok: true, cleared: false } };
-  if (options.upToDraftRevision !== undefined && existing.draftRevision > options.upToDraftRevision) {
-    return { result: { ok: true, cleared: false } };
+  const upTo = options.upToDraftRevision;
+  if (upTo !== undefined && !(options.covers && sameStamp(existing, options.covers))) {
+    const foreign = options.writer !== undefined && existing.writer !== options.writer;
+    if (foreign || existing.draftRevision > upTo) return { result: { ok: true, cleared: false } };
   }
   return { delete: [key], result: { ok: true, cleared: true } };
 }
@@ -131,7 +168,7 @@ export function draftFailureFrom(error: unknown): MarkdownDraftFailure {
 export interface MarkdownDraftStore {
   preserve(identity: DocumentIdentity, draft: MarkdownDraftInput): Promise<PreserveDraftResult>;
   load(identity: DocumentIdentity): Promise<LoadDraftResult>;
-  clear(identity: DocumentIdentity, options?: { upToDraftRevision?: number }): Promise<ClearDraftResult>;
+  clear(identity: DocumentIdentity, options?: ClearDraftOptions): Promise<ClearDraftResult>;
   /** Every preserved draft, most recent first (for a recovery list). */
   list(): Promise<ListDraftsResult>;
 }
@@ -166,6 +203,7 @@ export function createMarkdownDraftStore(
         ...(draft.mode ? { mode: draft.mode } : {}),
         bytes: encoder.encode(draft.content).byteLength,
         updatedAt: now(),
+        ...(draft.writer !== undefined ? { writer: draft.writer } : {}),
       };
       return run(() => backend.transact(records => planPreserveDraft(records, record, limits), { write: true }));
     },

@@ -12,12 +12,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileRevision, SaveReceipt, WorkspaceReadResult, WorkspaceWriteRequest } from "../../shared/workspace-files";
 import { WorkspaceFileRequestError, createDocumentSessionStore, documentKey, editDocument, openDocumentSession } from "@/lib/document-session";
 import { createMarkdownDraftStore, createMemoryDraftBackend, type MarkdownDraftStore } from "@/lib/markdown-drafts";
-import { createMarkdownExtensions } from "@/lib/markdown-fidelity";
+import { EMPTY_MARKDOWN_DOC, createMarkdownExtensions } from "@/lib/markdown-fidelity";
 import {
   MarkdownEditor,
   MarkdownEditorController,
   draftStatusMessage,
   fileStatusMessage,
+  richEditorContent,
   type ScheduleTimer,
 } from "./MarkdownEditor";
 
@@ -517,12 +518,13 @@ describe("failures stay visible (fix round 1)", () => {
 
 describe("recovered drafts and closing (fix round 1)", () => {
   /** A stored crash draft whose lookup is held until `release()`. */
-  async function slowRecoverySetup() {
+  // Revision 1 by default: a clear bounded by this session's own revisions
+  // would reach it, so only the held-draft rule keeps it alive.
+  async function slowRecoverySetup(crashedDraftRevision = 1) {
     const read = readCorpus("rich-basic.md");
     const memory = createMemoryDraftBackend();
-    await createMarkdownDraftStore(memory).preserve({ scope: read.scope, relativePath: read.relativePath }, // Revision 1: a clear bounded by this session's own revisions would
-    // reach it, so only the held-draft rule keeps it alive.
-    { baseRevision: rev("r0"), content: "CRASHED WORK\n", draftRevision: 1 });
+    await createMarkdownDraftStore(memory).preserve({ scope: read.scope, relativePath: read.relativePath },
+      { baseRevision: rev("r0"), content: "CRASHED WORK\n", draftRevision: crashedDraftRevision, writer: "crashed-session" });
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const drafts = createMarkdownDraftStore({
@@ -577,6 +579,66 @@ describe("recovered drafts and closing (fix round 1)", () => {
     expect(controller.getSnapshot().view).toMatchObject({ heldDraftAt: null, draftStatus: "preserved" });
   });
 
+  // Regression (fix round 2): the crashed session's record has a higher
+  // revision counter (9) than this session's typing, and a bounded clear used
+  // to keep it as "newer typing". A save or discard inside the 800 ms preserve
+  // window then left the rejected text to come back on the next open.
+  it("clears a held crash draft the user gave up on the next save, discard or clean state, without waiting for a preserve", async () => {
+    for (const finish of ["save", "discard", "clean-then-keep"] as const) {
+      const { controller, memory, scheduler, drafts, session } = await slowRecoverySetup(9);
+      expect(memory.records()).toMatchObject([{ content: "CRASHED WORK\n", draftRevision: 9 }]);
+      if (finish === "clean-then-keep") {
+        expect(controller.discard()).toBe(true);
+        await settle();
+        expect(memory.records()).toHaveLength(1);
+      }
+      expect(controller.keepCurrentOverHeldDraft()).toBe(true);
+      if (finish === "save") expect(await controller.save()).toEqual({ status: "saved", stillDirty: false });
+      if (finish === "discard") expect(controller.discard()).toBe(true);
+      // No scheduler.flush(): the preserve never fired.
+      expect(scheduler.pending()).toBe(0);
+      await settle();
+      expect({ finish, records: memory.records() }).toEqual({ finish, records: [] });
+      // Reopening offers nothing: the rejected text does not come back.
+      const reopened = createDocumentSessionStore(openDocumentSession({ ...readCorpus("rich-basic.md", session.getState().baseRevision), content: session.getState().savedContent }));
+      const next = new MarkdownEditorController({ session: reopened, save: async request => receiptFor(request, rev("w9")), drafts, schedule: manualScheduler().schedule, initialMode: "source" });
+      controllers.push(next);
+      expect(await next.restoreDraft()).toBe(false);
+      expect(reopened.getState()).toMatchObject({ conflict: null, status: "clean" });
+    }
+  });
+
+  it("clears a restored crash draft with a higher revision counter once its text is saved", async () => {
+    const read = readCorpus("rich-basic.md");
+    const backend = createMemoryDraftBackend();
+    const drafts = createMarkdownDraftStore(backend);
+    await drafts.preserve({ scope: read.scope, relativePath: read.relativePath }, { baseRevision: rev("r0"), content: "CRASHED WORK\n", draftRevision: 30, writer: "crashed-session" });
+    const { controller, scheduler } = setup(read, { drafts, initialMode: "source" });
+    expect(await controller.restoreDraft()).toBe(true);
+    controller.editSource("CRASHED WORK, finished\n");
+    expect(await controller.save()).toEqual({ status: "saved", stillDirty: false });
+    // Only the Source-mode fidelity re-check is pending; no preserve runs.
+    await settle();
+    expect(backend.records()).toEqual([]);
+    scheduler.flush();
+    await settle();
+    expect(backend.records()).toEqual([]);
+  });
+
+  it("never clears another window's unsaved draft it never saw with a bounded clear", async () => {
+    const read = readCorpus("rich-basic.md");
+    const backend = createMemoryDraftBackend();
+    const drafts = createMarkdownDraftStore(backend);
+    const { controller } = setup(read, { drafts, initialMode: "source" });
+    expect(await controller.restoreDraft()).toBe(false);
+    // Another window preserves its own typing for the same file afterwards.
+    await drafts.preserve({ scope: read.scope, relativePath: read.relativePath }, { baseRevision: rev("r0"), content: "OTHER WINDOW\n", draftRevision: 1, writer: "other-window" });
+    controller.editSource("this window\n");
+    expect(await controller.save()).toEqual({ status: "saved", stillDirty: false });
+    await settle();
+    expect(backend.records()).toMatchObject([{ content: "OTHER WINDOW\n", writer: "other-window" }]);
+  });
+
   it("clears the draft of a save that was still in flight when the document closed", async () => {
     for (const preservedBeforeSave of [true, false]) {
       let answer!: (receipt: SaveReceipt) => void;
@@ -628,6 +690,56 @@ describe("recovered drafts and closing (fix round 1)", () => {
     controller.editSource("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
     scheduler.flush();
     expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
+  });
+
+  // Fix round 2 (verifier note): RichSurface calls richBody() during render.
+  // An equal reason list must not count as a change, or the store listener
+  // fires in the middle of a render.
+  it("does not notify subscribers when re-analysing unchanged text during render", () => {
+    for (const file of ["rich-basic.md", "source-table.md"]) {
+      const { controller } = setup(readCorpus(file));
+      let notified = 0;
+      const unsubscribe = controller.subscribe(() => { notified += 1; });
+      const before = controller.getSnapshot();
+      controller.richBody();
+      controller.richBody();
+      expect({ file, notified }).toEqual({ file, notified: 0 });
+      expect(controller.getSnapshot()).toBe(before);
+      unsubscribe();
+    }
+  });
+
+  // Fix round 2 (verifier note): Tiptap parses an empty string as HTML, which
+  // needs a DOM. An empty body loads the empty document instead, on open and
+  // on a reload.
+  it("opens and reloads an empty body without the HTML parser and without an edit", async () => {
+    expect(richEditorContent("")).toEqual({ content: EMPTY_MARKDOWN_DOC });
+    expect(richEditorContent("# a")).toEqual({ content: "# a", contentType: "markdown" });
+    for (const file of ["empty.md", "frontmatter-only.md"]) {
+      const { controller, session, writes, backend, scheduler } = setup(readCorpus(file));
+      expect(session.getState().mode).toBe("rich");
+      const body = controller.richBody();
+      expect(body).toBe("");
+      const editor = new Editor({ element: null, injectCSS: false, extensions: createMarkdownExtensions(), ...richEditorContent(body!) });
+      editors.push(editor);
+      let updates = 0;
+      editor.on("update", () => { updates += 1; });
+      controller.attachRichEditor(editor);
+      expect(editor.getMarkdown()).toBe("");
+      scheduler.flush();
+      await settle();
+      expect({ file, updates, writes: writes.length, drafts: backend.records().length }).toEqual({ file, updates: 0, writes: 0, drafts: 0 });
+    }
+    // A clean rich document reloaded to an empty file.
+    const { controller, session, scheduler, writes } = setup(readCorpus("rich-basic.md"));
+    const { editor, updates } = attachHeadlessEditor(controller);
+    controller.observeDisk({ revision: rev("r1"), content: "", bom: false, newline: "none" });
+    expect(session.getState()).toMatchObject({ mode: "rich", status: "clean", draft: "", baseRevision: rev("r1") });
+    expect(editor.getMarkdown()).toBe("");
+    expect(updates.count).toBe(0);
+    scheduler.flush();
+    await settle();
+    expect(writes).toEqual([]);
   });
 });
 
