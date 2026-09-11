@@ -56,7 +56,6 @@ import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-lin
 import { windowChromeOptions } from "./window-chrome.mjs";
 import { defaultSaveName } from "./save-file.mjs";
 import { activeDesktopDataRoot, createSaveFileHandler, createSkillRecordingSaveHandler } from "./native-file-handlers.mjs";
-import { mainRendererOrigin } from "./main-trust.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
