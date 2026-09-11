@@ -50,7 +50,9 @@ function capExisting(file: string): number {
   return Buffer.byteLength(encoded);
 }
 
-export function appendNative(threadId: string, entry: { dir: "in" | "out"; source: string; msg: unknown }) {
+/** `lifecycle` rows are harness-authored engine_lifecycle diagnostics
+ * (lifecycle-diagnostic.ts), kept apart from in/out protocol messages. */
+export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lifecycle"; source: string; msg: unknown }) {
   try {
     // The session-setup messages carry the credentials the agent is handed —
     // the box and comms tokens ride inside session/new's mcpServers env, and

@@ -124,31 +124,103 @@ export function describeSpawnFailure(err: NodeJS.ErrnoException, cli: string): S
   return { message: `spawn failed: ${err.message}`, setup: false };
 }
 
-/** Stop a CLI and every process it spawned (MCP proxies included). */
-export function killCliTree(child: ChildProcess): void {
-  const pid = child.pid;
-  if (!pid || child.exitCode !== null || child.signalCode !== null) return;
+/** Which termination route killCliTree chose and what it observed (R1-T8).
+ * `requested`/`fallback` mark the route choice; `succeeded`/`failed` its
+ * outcome. A succeeded taskkill or delivered SIGTERM is command success, not
+ * an observed child exit — only the child's `close` proves that. */
+export type StopRoute =
+  | "windows_taskkill"
+  | "windows_child_kill"
+  | "posix_group_sigterm"
+  | "posix_child_sigterm"
+  | "already_exited";
+export type StopRouteResult = "requested" | "succeeded" | "failed" | "fallback";
+export interface StopRouteObservation {
+  route: StopRoute;
+  result: StopRouteResult;
+  /** errno code only (e.g. ESRCH); never a message, command path or output. */
+  errno?: string;
+}
+export type StopRouteObserver = (observation: StopRouteObservation) => void;
 
-  if (process.platform === "win32") {
-    execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, (err) => {
-      if (!err) return;
+export interface KillCliTreeDeps {
+  platform: NodeJS.Platform;
+  execFile: (
+    command: string,
+    args: string[],
+    options: { windowsHide: boolean },
+    callback: (error: Error | null) => void,
+  ) => void;
+  killProcess: (pid: number, signal: NodeJS.Signals) => void;
+}
+
+const REAL_KILL_DEPS: KillCliTreeDeps = {
+  get platform() { return process.platform; },
+  execFile: (command, args, options, callback) => { execFile(command, args, options, (error) => callback(error)); },
+  killProcess: (pid, signal) => { process.kill(pid, signal); },
+};
+
+/** Stop a CLI and every process it spawned (MCP proxies included). The
+ * optional observer reports the route; it can never change or break it. */
+export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): void {
+  killCliTreeWith(child, observer, REAL_KILL_DEPS);
+}
+
+/** killCliTree with injectable OS seams, so route selection and fallback
+ * ordering are unit-testable. Mocked routes do not establish Windows runtime
+ * behavior. */
+export function killCliTreeWith(
+  child: Pick<ChildProcess, "pid" | "exitCode" | "signalCode" | "kill">,
+  observer: StopRouteObserver | undefined,
+  deps: KillCliTreeDeps,
+): void {
+  const observe = (route: StopRoute, result: StopRouteResult, error?: unknown) => {
+    if (!observer) return;
+    try {
+      const errno = (error as NodeJS.ErrnoException | undefined)?.code;
+      observer(typeof errno === "string" ? { route, result, errno } : { route, result });
+    } catch {
+      /* diagnostics never affect termination */
+    }
+  };
+  const pid = child.pid;
+  if (!pid || child.exitCode !== null || child.signalCode !== null) {
+    observe("already_exited", "succeeded");
+    return;
+  }
+
+  if (deps.platform === "win32") {
+    observe("windows_taskkill", "requested");
+    deps.execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, (err) => {
+      if (!err) {
+        observe("windows_taskkill", "succeeded");
+        return;
+      }
+      observe("windows_taskkill", "failed", err);
+      observe("windows_child_kill", "fallback");
       try {
         // taskkill is unavailable or the tree lookup failed. At least stop
         // the process we own instead of leaving the entire turn running.
-        child.kill();
-      } catch {
+        observe("windows_child_kill", child.kill() ? "succeeded" : "failed");
+      } catch (error) {
         /* already gone */
+        observe("windows_child_kill", "failed", error);
       }
     });
     return;
   }
+  observe("posix_group_sigterm", "requested");
   try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
+    deps.killProcess(-pid, "SIGTERM");
+    observe("posix_group_sigterm", "succeeded");
+  } catch (groupError) {
+    observe("posix_group_sigterm", "failed", groupError);
+    observe("posix_child_sigterm", "fallback");
     try {
-      child.kill("SIGTERM");
-    } catch {
+      observe("posix_child_sigterm", child.kill("SIGTERM") ? "succeeded" : "failed");
+    } catch (error) {
       /* already gone */
+      observe("posix_child_sigterm", "failed", error);
     }
   }
 }

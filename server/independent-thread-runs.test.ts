@@ -37,6 +37,17 @@ it("cannot reactivate a completion-before-handshake or a replaced generation", (
   expect(runs.cancel(first)).toBe(false);expect(runs.release(first)).toBe(false);
   expect(runs.current(next)).toBe(true);expect(runs.get("a")?.phase).toBe("setup");
 });
+it("keeps a stopped run stopping through its terminal event until teardown is confirmed", () => {
+  const runs = new IndependentThreadRuns<object>();
+  const a = runs.admit("bot", "a", {}, ["computer:host"]);
+  runs.dispatch(a);runs.accepted(a, "provider-a");runs.cancel(a);
+  expect(runs.settling(a)).toBe(true);
+  expect(runs.get("a")?.phase).toBe("stopping");
+  expect(runs.claim(a, ["browser:late"])).toBe(false);
+  expect(() => runs.admit("bot", "b", {}, ["computer:host"])).toThrow("Another thread");
+  expect(runs.release(a)).toBe(true);
+  expect(runs.admit("bot", "b", {}, ["computer:host"]).threadId).toBe("b");
+});
 it("requires an unambiguous explicit thread and never falls back from a wrong target", () => {
   expect(requireDirectThreadTarget(["one"], undefined)).toBe("one");
   expect(requireDirectThreadTarget(["one", "two"], "two")).toBe("two");

@@ -292,7 +292,14 @@ export interface ProviderAdapter {
    * turn has closed after its terminal event, or `closeConfirmed:false` at
    * the driver's bounded deadline. Drivers that deliberately retain a live
    * session across turns omit it. Callers keep resource ownership until a
-   * confirmed close. */
+   * confirmed close.
+   *
+   * 0.1.52 coverage (U-18): the shared ACP core (every ACP harness, Fuigo
+   * included) and Pi resolve interruptTurn only after child close, reject at
+   * the deadline, and implement this method. Codex already closes its child
+   * before emitting turn.completed and rejects an unconfirmed stop. Claude
+   * retains sessions. Antigravity and BoxAgent are NOT covered: their
+   * interruptTurn still means "requested, not observed". */
   awaitTurnTeardown?(threadId: ThreadId, turnId?: TurnId): Promise<ProviderStopResult>;
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.

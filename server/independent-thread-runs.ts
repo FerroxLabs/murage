@@ -65,7 +65,9 @@ export class IndependentThreadRuns<T> {
   settling(owner: TurnOwner): boolean {
     const run = this.runs.get(owner.threadId);
     if (!run || !this.current(owner)) return false;
-    this.runs.set(owner.threadId, Object.freeze({ ...run, phase: "settling" }));
+    // A stopped run's terminal event does not revive it: it stays "stopping"
+    // (dispatch authority retired) until its provider teardown is confirmed.
+    if (run.phase !== "stopping") this.runs.set(owner.threadId, Object.freeze({ ...run, phase: "settling" }));
     return true;
   }
 
