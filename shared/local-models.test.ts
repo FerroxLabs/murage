@@ -4,9 +4,14 @@ import {
   AGENT_MIN_CONTEXT_TOKENS,
   classifyLocalHostname,
   contextPreflight,
+  isValidLocalModelId,
   isValidLocalServerKey,
   isValidLocalServerName,
+  llamaCppModelId,
+  localEngineLabel,
   localEngineSupport,
+  LOCAL_ENGINE_LABELS,
+  LOCAL_ENGINE_SURFACE,
   localEnginesFor,
   localServerDisplayLabel,
   normalizeLocalServerAddress,
@@ -128,5 +133,49 @@ describe("engine eligibility (spec E3/E4)", () => {
     for (const driver of ["piAgent", "opencodeGo", "droidAgent", "kimiAgent", "grokAgent", "fuigoAgent"]) {
       expect(engineToolSupport(driver)).toBe("tools");
     }
+  });
+});
+
+describe("llama-server's model name (0.1.52 LM2, live finding)", () => {
+  // Observed on SeanBeast, llama.cpp b1-192067b, 2026-09-11: /v1/models and
+  // /props both name the loaded model `D:\Qwen\models\Qwen3.8-27B-UD-Q4_K_M.gguf`.
+  // Every id Murage listed was then dropped by the `host::model` grammar, so a
+  // running server showed up as "detected, no models" and could not be picked
+  // for any bot. The same build answered a request naming `totally-made-up`
+  // from the loaded model, which is why the file's own name is a safe stand-in.
+  it("recovers a usable id from a Windows path", () => {
+    expect(llamaCppModelId("D:\\Qwen\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf")).toBe("Qwen3.8-27B-UD-Q4_K_M");
+  });
+
+  it("recovers one from a POSIX path, and leaves a plain id alone", () => {
+    expect(llamaCppModelId("/srv/models/gemma-4-31b.gguf")).toBe("gemma-4-31b");
+    expect(llamaCppModelId("qwen3.8-27b")).toBe("qwen3.8-27b");
+  });
+
+  it("produces an id the picker's own grammar accepts", () => {
+    for (const raw of ["D:\\Qwen\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf", "/srv/models/gemma-4-31b.gguf", "C:\\a b\\model name.gguf"]) {
+      const id = llamaCppModelId(raw)!;
+      expect(id, raw).toBeTruthy();
+      expect(isValidLocalModelId(id), raw).toBe(true);
+    }
+  });
+
+  it("keeps the honest empty answer rather than inventing a name", () => {
+    for (const raw of ["", "   ", "/", "D:\\models\\.gguf", 7, null, undefined]) {
+      expect(llamaCppModelId(raw), String(raw)).toBeUndefined();
+    }
+  });
+});
+
+describe("engine names (spec V2)", () => {
+  it("names every engine that can use a local server the way the app names it", () => {
+    expect(Object.keys(LOCAL_ENGINE_SURFACE).every((driver) => LOCAL_ENGINE_LABELS[driver])).toBe(true);
+    expect(localEngineLabel("fuigoAgent")).toBe("Fuigo");
+    expect(localEngineLabel("piAgent")).toBe("pi");
+    expect(localEngineLabel("claudeAgent")).toBe("Claude");
+  });
+
+  it("falls back to the driver id rather than rendering nothing", () => {
+    expect(localEngineLabel("somethingNew")).toBe("somethingNew");
   });
 });

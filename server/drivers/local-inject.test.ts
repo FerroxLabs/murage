@@ -87,7 +87,8 @@ describe("resolveInjectId", () => {
           id: "unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF",
           host: "unsloth",
           model: "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
-          label: "orcarouter/Qwen3.8-27B-Uncensored-GGUF (Unsloth)",
+          label: "orcarouter/Qwen3.8-27B-Uncensored-GGUF · Unsloth",
+          server: "Unsloth",
         },
       ]),
     ).toBe("unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF");
@@ -96,8 +97,8 @@ describe("resolveInjectId", () => {
   it("prefers a loaded host when several serve the same API id", () => {
     expect(
       resolveInjectId("GLM-5.2-fp8", [
-        { id: "omlx::GLM-5.2-fp8", host: "omlx", model: "GLM-5.2-fp8", label: "GLM-5.2-fp8 (oMLX)" },
-        { id: "lmstudio::GLM-5.2-fp8", host: "lmstudio", model: "GLM-5.2-fp8", label: "GLM-5.2-fp8 (LM Studio)", loaded: true },
+        { id: "omlx::GLM-5.2-fp8", host: "omlx", model: "GLM-5.2-fp8", label: "GLM-5.2-fp8 · oMLX", server: "oMLX" },
+        { id: "lmstudio::GLM-5.2-fp8", host: "lmstudio", model: "GLM-5.2-fp8", label: "GLM-5.2-fp8 · LM Studio", server: "LM Studio", loaded: true },
       ]),
     ).toBe("lmstudio::GLM-5.2-fp8");
   });

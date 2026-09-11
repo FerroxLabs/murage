@@ -208,6 +208,30 @@ export function isValidLocalModelId(value: unknown): value is string {
  *  host id, and restricted so it is safe as a TOML key, YAML key and env name. */
 export const USER_LOCAL_SERVER_ID = /^srv_[a-z0-9]{8,24}$/;
 
+/**
+ * llama-server names the model it loaded by the path it was handed. On Windows
+ * that is `D:\Qwen\models\Qwen3.8-27B-UD-Q4_K_M.gguf`, which is not a usable
+ * model id: the backslashes fail `LOCAL_MODEL_ID`, so `host::model` never
+ * decodes and the server ends up listed with zero models — detected but
+ * unusable. (Observed live on llama.cpp b1-192067b, 2026-09-11.)
+ *
+ * A single-model llama-server ignores the `model` field of a request: the same
+ * build answered a request naming `totally-made-up` from the loaded model. The
+ * file's own name therefore addresses exactly the same model and is safe in a
+ * picker id, a TOML key and an engine argv. Returns undefined when nothing
+ * usable is left, so the caller keeps the honest "no models" state rather than
+ * inventing one.
+ */
+export function llamaCppModelId(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const base = raw.trim().split(/[\\/]/).pop() ?? "";
+  const cleaned = base
+    .replace(/\.gguf$/i, "")
+    .replace(/[^\w./:+-]+/g, "-")
+    .replace(/^[^\w]+/, "");
+  return isValidLocalModelId(cleaned) && cleaned.length > 0 ? cleaned : undefined;
+}
+
 // ── context (spec T2/T3) ──────────────────────────────────────────────────
 
 /** Below this, agent system prompts plus tool schemas do not fit. */
@@ -416,6 +440,25 @@ export const LOCAL_ENGINE_SURFACE: Record<string, LocalEngineSurface> = {
   codex: "responses",
   claudeAgent: "messages",
 };
+
+/** Each engine under the name the rest of the app already shows for it, so a
+ *  card can say "Fuigo, pi, OpenCode" without waiting for the instance list. */
+export const LOCAL_ENGINE_LABELS: Record<string, string> = {
+  fuigoAgent: "Fuigo",
+  piAgent: "pi",
+  opencodeGo: "OpenCode",
+  qwenAgent: "Qwen",
+  hermesAgent: "Hermes",
+  droidAgent: "Droid",
+  kimiAgent: "Kimi",
+  grokAgent: "Grok",
+  codex: "Codex",
+  claudeAgent: "Claude",
+};
+
+export function localEngineLabel(driver: string): string {
+  return LOCAL_ENGINE_LABELS[driver] ?? driver;
+}
 
 export type LocalEngineSupport =
   /** Runs tools on local models (with a matching surface). */
