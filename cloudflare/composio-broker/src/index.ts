@@ -249,10 +249,75 @@ async function authenticate(request: Request, env: Env) {
   return row && row.disabled_at === null ? row : null;
 }
 
+const UNKNOWN_REGISTRATION_ACTOR = "ip:unknown";
+
+function parseIPv4(value: string): number[] | null {
+  const match = value.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return null;
+  const octets = match.slice(1).map(Number);
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+
+/** Eight 16-bit groups, or null for anything that is not an IPv6 literal. */
+function parseIPv6(value: string): number[] | null {
+  let address = value.toLowerCase();
+  const zone = address.indexOf("%");
+  if (zone !== -1) address = address.slice(0, zone);
+  if (!address.includes(":") || !/^[0-9a-f:.]+$/.test(address)) return null;
+  if (address.includes(".")) {
+    const lastColon = address.lastIndexOf(":");
+    const v4 = parseIPv4(address.slice(lastColon + 1));
+    if (!v4) return null;
+    address = `${address.slice(0, lastColon + 1)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+  const halves = address.split("::");
+  if (halves.length > 2) return null;
+  const split = (part: string) => (part === "" ? [] : part.split(":"));
+  const head = split(halves[0]);
+  const tail = halves.length === 2 ? split(halves[1]) : [];
+  if ([...head, ...tail].some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  let groups: string[];
+  if (halves.length === 2) {
+    const missing = 8 - head.length - tail.length;
+    if (missing < 1) return null;
+    groups = [...head, ...Array.from({ length: missing }, () => "0"), ...tail];
+  } else {
+    if (head.length !== 8) return null;
+    groups = head;
+  }
+  return groups.map((group) => Number.parseInt(group, 16));
+}
+
+/** Registration actor identity used by the registration limiter.
+ *
+ * This is the single seam that decides "who is registering". Today it is the
+ * client address Cloudflare observed (`cf-connecting-ip`, which a client
+ * cannot set through Cloudflare's edge): an IPv4 address exactly, an IPv6
+ * address by its /64 (one subscriber allocation hands out a whole /64), and an
+ * IPv4-mapped IPv6 address as its IPv4 address. Client-controlled headers such
+ * as User-Agent never contribute, so rotating them cannot mint fresh limiter
+ * buckets. A missing or unparsable address shares one fail-closed bucket.
+ *
+ * A later authenticated identity layer (for example a FluxRouter-gated broker)
+ * replaces this function; nothing else derives registration identity.
+ */
+function registrationActorKey(request: Request): string {
+  const address = request.headers.get("cf-connecting-ip")?.trim() ?? "";
+  if (!address || address.length > 64) return UNKNOWN_REGISTRATION_ACTOR;
+  const v4 = parseIPv4(address);
+  if (v4) return `ip4:${v4.join(".")}`;
+  const v6 = parseIPv6(address);
+  if (!v6) return UNKNOWN_REGISTRATION_ACTOR;
+  if (v6.slice(0, 5).every((group) => group === 0) && v6[5] === 0xffff) {
+    return `ip4:${[v6[6] >> 8, v6[6] & 0xff, v6[7] >> 8, v6[7] & 0xff].join(".")}`;
+  }
+  return `ip6:${v6.slice(0, 4).map((group) => group.toString(16).padStart(4, "0")).join(":")}::/64`;
+}
+
 async function register(request: Request, env: Env) {
   if (env.REGISTRATION_MODE !== "open") return json({ error: "registration is temporarily closed" }, 503);
-  const fingerprint = `${request.headers.get("cf-connecting-ip") ?? "unknown"}|${request.headers.get("user-agent") ?? "unknown"}`;
-  if (!(await env.REGISTRATION_LIMITER.limit({ key: await sha256(fingerprint.slice(0, 512)) })).success) {
+  const actor = registrationActorKey(request);
+  if (!(await env.REGISTRATION_LIMITER.limit({ key: await sha256(actor) })).success) {
     return json({ error: "too many registration attempts" }, 429);
   }
   const installationId = crypto.randomUUID();
@@ -678,6 +743,8 @@ export {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  register,
+  registrationActorKey,
   requestAlias,
   sha256,
 };

@@ -22,3 +22,11 @@ server with a Composio project key remains the no-Cloudflare self-host path.
 
 Set `REGISTRATION_MODE` to `closed` to stop issuing new installation tokens
 without affecting existing users.
+
+Registration is throttled per source address as Cloudflare observed it
+(`cf-connecting-ip`): IPv4 exactly, IPv6 by its /64, IPv4-mapped IPv6 as
+IPv4. Client-controlled headers such as User-Agent do not contribute to the
+limiter key, and a missing address shares a single bucket.
+`registrationActorKey` in `src/index.ts` is the only place that derives
+registration identity, so an authenticated identity layer can replace it
+later.
