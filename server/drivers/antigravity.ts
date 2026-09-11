@@ -679,6 +679,13 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         killCliTree(child); // process groups are POSIX-only
         armTerminationEscalation();
       };
+      // Set when Murage stopped this turn (interruptTurn, stopAll). The
+      // child's exit is then the user's Stop, not a crash (STOP1).
+      let stopRequested = false;
+      const requestStop = () => {
+        stopRequested = true;
+        stop();
+      };
       armPostSettleCleanup = () => {
         if (childClosed || postSettleReaper) return;
         // A normal agy process exits immediately after `result`. Give it a
@@ -747,7 +754,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 output: payload.usage.output_tokens || 0,
               });
             }
-            if (payload.status !== "SUCCESS") {
+            // A failed result agy writes while shutting down after a
+            // requested stop is the user's Stop, not an engine failure:
+            // same cancelled state as the close path (STOP1).
+            const stoppedResult = stopRequested && payload.status !== "SUCCESS";
+            if (payload.status !== "SUCCESS" && !stoppedResult) {
               const errorMessage = typeof payload.message === "string" && payload.message 
                 ? payload.message 
                 : typeof payload.error === "string" && payload.error 
@@ -762,8 +773,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             // result.usage is the turn total (the per-step agent_response
             // figures above are its parts, not additions to it)
             settle(
-              payload.status === "SUCCESS",
-              payload.status ?? null,
+              stoppedResult || payload.status === "SUCCESS",
+              stoppedResult ? "cancelled" : payload.status ?? null,
               null,
               payload.usage
                 ? {
@@ -806,7 +817,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         clearTimeout(postSettleReaper);
         clearTimeout(terminationEscalation);
         finalizeMcp();
-        if (!settled) {
+        if (!settled && stopRequested) {
+          // The process ended because Murage stopped the turn: settle as
+          // cancelled like the ACP, Pi, Claude and Codex drivers, with no
+          // runtime error card and no Retry (STOP1).
+          settle(true, "cancelled");
+        } else if (!settled) {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
@@ -816,7 +832,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         }
       });
 
-      active.set(threadId, { stop, turnId });
+      active.set(threadId, { stop: requestStop, turnId });
       pending.delete(threadId);
 
       // 11 min — just above agy's own 10m --print-timeout, so agy normally

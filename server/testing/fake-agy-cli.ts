@@ -188,6 +188,13 @@ const toolName = mode === "ask-peer" ? "ask_bot" : "write_to_file";
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ACTIVE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
 
+// A genuine crash: the child dies mid-turn with no `result` and nobody
+// asked it to stop (STOP1 pins this as exit_before_result, unlike a Stop).
+if (process.env.FAKE_AGY_CRASH_BEFORE_RESULT === "1") {
+  process.stderr.write("fake agy: simulated crash\n");
+  process.exit(3);
+}
+
 let response = "done from fake agy";
 if (mode === "ask-peer") {
   const agents = agentsMcpEntry();
