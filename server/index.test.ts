@@ -1629,6 +1629,97 @@ describe("harness HTTP API", () => {
     }
   }, 40000);
 
+  // F5-T4 (IMG-SEED): an uploaded image, a previously generated image and an
+  // authorized workspace image reach the provider as their exact bytes through
+  // one reference flow. A failed source prepares nothing and bills nothing;
+  // the edited result lands in Files.
+  it("edits from uploaded, generated and workspace reference images with exact bytes and nothing prepared on failure", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Reference fixture" })).body.bot;
+    const receipt = join(home, "image-fixture-calls.json");
+    const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+    const proxies: ChildProcess[] = [];
+    const mcp = (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
+      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+      proxies.push(proxy);
+      let stdout = "", stderr = "";
+      const result = new Promise<any>((resolve, reject) => {
+        const timer = setTimeout(() => { proxy.kill(); reject(new Error(`${name} timed out: ${stderr}`)); }, 15_000);
+        proxy.stderr.on("data", chunk => { stderr += chunk; });
+        proxy.stdout.on("data", chunk => {
+          stdout += chunk;
+          for (const line of stdout.split("\n")) { try { const value = JSON.parse(line); if (value.id === 42) { clearTimeout(timer); proxy.stdin.end(); resolve(value.result); return; } } catch {} }
+        });
+        proxy.on("error", reject);
+      });
+      proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name, arguments: args } }) + "\n");
+      return result;
+    };
+    const messages = async () => (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id).messages as any[];
+    const pendingCard = async () => { let card: any; await expect.poll(async () => { card = (await messages()).find(m => m.card?.tool === "generate_image" && !m.card.answered); return Boolean(card); }).toBe(true); return card; };
+    const calls = () => existsSync(receipt) ? JSON.parse(readFileSync(receipt, "utf8")).calls as number : 0;
+    const fixturePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
+    try {
+      expect((await desktopApi("PATCH", "/api/config?secretStorage=external", { imageGen: { key: "fixture-image-key" } })).status).toBe(200);
+      expect((await desktopApi("POST", "/api/images/settings", { enabled: true, connectionId: "openai", model: "gpt-image-2" })).status).toBe(200);
+      // A previously generated image of this conversation.
+      let turn = await startInternalFixtureTurn(bot.id);
+      const source = mcp(turn.env, "generate_image", { request_id: "seed-source", prompt: "Synthetic source", connection_id: "openai", model: "gpt-image-2" });
+      let card = await pendingCard();
+      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      const generated = JSON.parse((await source).content[0].text).artifact;
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      // An owner-authorized workspace image in this task's own workspace, as
+      // the server itself resolves that folder.
+      const folder = await desktopApi("GET", `/api/artifacts/workspace?botId=${bot.id}&threadId=${bot.threadId}`);
+      expect(folder.status).toBe(200);
+      const workspace = folder.body.path as string;
+      const workspaceBytes = Buffer.concat([fixturePng, Buffer.from("workspace reference")]);
+      mkdirSync(join(workspace, "refs"), { recursive: true }); writeFileSync(join(workspace, "refs", "layout.png"), workspaceBytes);
+      // An image the person uploads with their message.
+      const uploadBytes = Buffer.concat([fixturePng, Buffer.from("uploaded reference")]);
+      const upload = await fetch(`${BASE}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: uploadBytes });
+      expect(upload.status).toBe(201);
+      const uploadPath = ((await upload.json()) as { path: string }).path;
+      turn = await startInternalFixtureTurn(bot.id, undefined, `Use my sketch\n\n<attached-image path="${uploadPath}" />`);
+      const uploadId = uploadPath.split(/[\\/]/).at(-1)!;
+      const before = { calls: calls(), messages: (await messages()).length };
+
+      // One missing source prepares nothing, asks for no approval and bills nothing.
+      const failed = await mcp(turn.env, "resolve_image_reference", { sources: [{ attachment_id: uploadId }, { relative_path: "refs/absent.png" }] });
+      expect(failed.isError).toBe(true); expect(failed.content[0].text).toContain("No reference image was prepared");
+      expect((await messages()).length).toBe(before.messages); expect(calls()).toBe(before.calls);
+
+      const resolved = await mcp(turn.env, "resolve_image_reference", { sources: [{ attachment_id: uploadId }, { attachment_id: generated.referenceId }, { relative_path: "refs/layout.png" }] });
+      expect(resolved.isError, resolved.content?.[0]?.text).not.toBe(true);
+      const references = JSON.parse(resolved.content[0].text).references as Array<{ id: string; sha256: string; source: string }>;
+      expect(references.map(ref => ref.sha256)).toEqual([sha256(uploadBytes), sha256(readFileSync(generated.path)), sha256(workspaceBytes)]);
+      expect(references.slice(0, 2).map(ref => ref.id)).toEqual([uploadId, generated.referenceId]);
+      const disclosure = (await messages()).at(-1);
+      expect(disclosure.text).toContain("refs/layout.png"); expect(disclosure.text).toContain("Nothing is generated or billed");
+      expect(JSON.stringify(references)).not.toContain(workspace);
+      expect(calls()).toBe(before.calls);
+
+      // The edit names its reference count before approval; the provider then
+      // receives the three original byte sequences, and the result is in Files.
+      const edit = mcp(turn.env, "generate_image", { request_id: "seed-edit", prompt: "Combine the references", operation: "edit", reference_ids: references.map(ref => ref.id) });
+      card = await pendingCard();
+      expect(card.card.title).toBe("Approve image edit"); expect(card.card.subtitle).toContain("One image from 3 reference images");
+      expect(calls()).toBe(before.calls);
+      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      const edited = await edit; expect(edited.isError).not.toBe(true);
+      const payload = JSON.parse(edited.content[0].text);
+      expect(JSON.parse(readFileSync(receipt, "utf8"))).toMatchObject({ calls: before.calls + 1, url: "https://api.openai.com/v1/images/edits", references: 3,
+        referenceHashes: [sha256(uploadBytes), sha256(readFileSync(generated.path)), sha256(workspaceBytes)] });
+      expect(payload.metadata).toMatchObject({ operation: "edit", referenceCount: 3 });
+      expect(payload.artifact.artifactId).toEqual(expect.any(String));
+      const files = await desktopApi("GET", `/api/artifacts?botId=${bot.id}&kind=image`);
+      expect(files.body.items.map((item: { id: string }) => item.id)).toContain(payload.artifact.artifactId);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`); for (const proxy of proxies) if (proxy.exitCode === null) await waitForExit(proxy, { signal: "SIGTERM" });
+      await desktopApi("PATCH", "/api/config", { imageGen: { key: "", enabled: false } }); await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 40_000);
+
   // R3-T4: an approved generated image enters Files exactly once; repeating
   // the request returns the same saved result with no provider call.
   it("saves an approved generated image to Files once and repeats the request without provider work", async () => {

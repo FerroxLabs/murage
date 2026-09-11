@@ -22,10 +22,12 @@ import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ImageOff, Maximize2, X } from "lucide-react";
 
 import { attachmentImageUrl } from "@/lib/composer-attachments";
+import { artifactReferenceSource, attachmentReferenceSource } from "@/lib/image-reference";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import type { MediaAssetSource } from "../../shared/media-assets";
+import type { ImageReferenceSource, MediaAssetSource } from "../../shared/media-assets";
 import type { Artifact } from "../../shared/artifacts";
+import { UseAsReferenceButton } from "./UseAsReferenceButton";
 
 /** Where an enlarged image came from. `MediaAssetSource` from the frozen media
  * contract, plus `inline-data`: raster bytes embedded in the message text
@@ -45,7 +47,19 @@ export interface ImageMediaItem {
   source: ImageMediaSource;
   /** Offer Download of exactly `src`, the bytes on screen. */
   download: boolean;
+  /** IMG-SEED (F5-T4): how the harness would pin *these* bytes as a reference
+   * image. Present only for a source the harness can re-read by identity (a
+   * conversation attachment, a saved Files version). Absent means the action
+   * is not offered at all: a screen frame, an external URL or bytes that exist
+   * only inside the message text are never silently promoted. */
+  reference?: ImageReferenceAction;
 }
+
+/** The frozen reference source plus, when the caller knows it, the
+ * conversation the image belongs to. Without a conversation the action goes
+ * to the composer on screen, and the harness refuses unless that conversation
+ * really holds the image. */
+export interface ImageReferenceAction { source: ImageReferenceSource; threadId?: string; botId?: string }
 
 /** Rasters only: an SVG is active content and is never shown inline. */
 const RASTER_DATA_URL = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\s]+$/i;
@@ -85,14 +99,27 @@ export function nextLightboxIndex(index: number, count: number, key: string): nu
 export function attachmentImageItem(path: string, name: string, index = 0): ImageMediaItem | null {
   const src = attachmentImageUrl(path);
   if (!src) return null;
-  return { id: `attachment:${src}#${index}`, src, name, alt: name, source: "attachment", download: true };
+  // The same path that made the URL decides the reference id, so the harness
+  // re-reads the very attachment shown here.
+  const source = attachmentReferenceSource(path);
+  return { id: `attachment:${src}#${index}`, src, name, alt: name, source: "attachment", download: true, ...(source ? { reference: { source } } : {}) };
 }
 
 /** The saved copy's pinned bytes, as the Files preview route returned them. */
-export function artifactImageItem(artifact: Pick<Artifact, "id" | "name" | "sha256">, content: string | undefined): ImageMediaItem | null {
+export function artifactImageItem(artifact: ArtifactImage, content: string | undefined): ImageMediaItem | null {
   if (!content || !isRasterDataUrl(content)) return null;
-  return { id: `artifact:${artifact.id}:${artifact.sha256}`, src: content, name: artifact.name, alt: artifact.name, source: "artifact", download: true };
+  // Pinned to this exact saved version: a later version of the same file is a
+  // different reference, and the harness refuses a digest that moved.
+  const source = artifactReferenceSource(artifact);
+  return {
+    id: `artifact:${artifact.id}:${artifact.sha256}`, src: content, name: artifact.name, alt: artifact.name, source: "artifact", download: true,
+    ...(source && artifact.threadId ? { reference: { source, threadId: artifact.threadId, ...(artifact.botId ? { botId: artifact.botId } : {}) } } : {}),
+  };
 }
+
+/** A saved file as the Files preview knows it. The reference action needs the
+ * pinned digest, its type and size, and the conversation that owns it. */
+export type ArtifactImage = Pick<Artifact, "id" | "name" | "sha256"> & Partial<Pick<Artifact, "mime" | "bytes" | "threadId" | "botId">>;
 
 /** A frame the bot's screen stream already delivered. Not saved anywhere, so
  * there is no Download: keeping a copy of a screen is a separate, explicit act. */
@@ -412,6 +439,17 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {item.reference && (
+              <UseAsReferenceButton
+                key={item.id}
+                source={item.reference.source}
+                {...(item.reference.threadId ? { threadId: item.reference.threadId } : {})}
+                {...(item.reference.botId ? { botId: item.reference.botId } : {})}
+                name={item.name}
+                className="mr-1 rounded-lg px-2.5 py-1.5 text-[12px] text-white/75 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                statusClassName="text-white/60"
+              />
+            )}
             {count > 1 && onIndexChange && (
               <>
                 <button type="button" onClick={() => go(nextLightboxIndex(position, count, "ArrowLeft"))} className={HEADER_BUTTON} aria-label={t("media.lightbox.previous")} title={t("media.lightbox.previous")}>
@@ -457,7 +495,7 @@ export function ScreenFrameMedia({ png, mime, className }: { png: string; mime?:
 }
 
 /** The Files browser's saved-copy image preview. */
-export function ArtifactImageMedia({ artifact, content }: { artifact: Pick<Artifact, "id" | "name" | "sha256">; content: string | undefined }) {
+export function ArtifactImageMedia({ artifact, content }: { artifact: ArtifactImage; content: string | undefined }) {
   const item = useMemo(() => artifactImageItem(artifact, content), [artifact, content]);
   if (!item) return <p className="mt-3 text-[13px] text-ink-secondary">{t("media.artifact.unavailable")}</p>;
   return (
