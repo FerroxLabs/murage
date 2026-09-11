@@ -6,7 +6,7 @@ const root = mkdtempSync(join(tmpdir(), "rmdir-sem-"));
 const mk = (name) => { const d = join(root, name, "native"); mkdirSync(d, { recursive: true }); writeFileSync(join(d, "t.ndjson"), "x"); writeFileSync(join(root, name, "messages.db"), "x"); return join(root, name); };
 const report = (label, dir) => console.log(label.padEnd(28), existsSync(dir) ? `SURVIVED: ${JSON.stringify(readdirSync(dir))} native=${existsSync(join(dir,"native"))}` : "fully removed");
 // 1: open fd on the native dir
-const a = mk("openfd"); const fd = openSync(join(a, "native"), "r");
+const a = mk("openfd"); openSync(join(a, "native"), "r");
 try { rmSync(a, { recursive: true, force: true, maxRetries: 0 }); } catch (e) { console.log("openfd rmSync error:", e.code); }
 report("open fd on native/", a);
 // 2: fs.watch on native dir
