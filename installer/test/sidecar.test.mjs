@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +41,7 @@ import {
   startupProbe,
   waitForDoor,
 } from "../lib/companion.mjs";
+import { DOOR_NONCE_FILE, createDoorNonce, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { readEnvFile } from "../lib/env-file.mjs";
 import { serveOrigin } from "../lib/tailscale.mjs";
 
@@ -86,11 +87,20 @@ function fakeSidecar(dir, { envDump }) {
   writeFileSync(
     path,
     [
+      'import { createHmac } from "node:crypto";',
       'import { createServer } from "node:http";',
       'import { writeFileSync } from "node:fs";',
       `writeFileSync(${JSON.stringify(envDump)}, JSON.stringify(process.env));`,
       'const port = Number(process.env.MURAGE_BROWSER_PORT);',
+      // The identity answer, the way companion/src/door-identity.ts gives it.
+      'const nonce = process.env.MURAGE_DOOR_NONCE ?? "";',
+      'const version = process.env.MURAGE_DOOR_VERSION ?? "unknown";',
       'const server = createServer((req, res) => {',
+      '  const challenge = req.headers["x-murage-door-challenge"];',
+      '  if (/^[a-f0-9]{64}$/.test(nonce) && typeof challenge === "string" && /^[a-f0-9]{64}$/.test(challenge)) {',
+      '    res.setHeader("x-murage-door-version", version);',
+      '    res.setHeader("x-murage-door-proof", createHmac("sha256", Buffer.from(nonce, "hex")).update(`murage-door-identity/1\\n${challenge}\\n${version}`).digest("hex"));',
+      '  }',
       '  if ((req.url ?? "").split("?")[0] === "/enter") { res.writeHead(200); res.end("enter"); return; }',
       '  res.writeHead(404); res.end();',
       '});',
@@ -184,6 +194,16 @@ function runCli(args, env, { killAfterMs = 0 } = {}) {
     child.on("error", error => finish(error));
     child.on("close", code => finish(null, code));
   });
+}
+
+/**
+ * Give the scratch install a manifest: `runCli` puts the installer at
+ * `<home>/installer`, so `<home>` is its package root, and the door identity
+ * carries this version. Returns it.
+ */
+function installerManifest(home, version = "0.1.52-test") {
+  writeFileSync(join(home, "package.json"), JSON.stringify({ name: "murage", version, engines: { node: ">=24" } }));
+  return version;
 }
 
 function baseEnv(home, extra = {}) {
@@ -300,6 +320,20 @@ test("the bind value the installer sets is one the sidecar actually accepts", ()
   assert.equal(value, "off", "and of the four, `off` is the one that binds no device socket at all");
 });
 
+test("the door identity goes to this sidecar only when it is one; an inherited one never travels", () => {
+  const nonce = createDoorNonce();
+  const inherited = { MURAGE_DOOR_NONCE: createDoorNonce(), MURAGE_DOOR_VERSION: "0.0.1", PATH: "/usr/bin" };
+  const handed = companionEnv({ base: inherited, harnessPort: 8799, doorPort: 8813, dataDir: "/d", doorNonce: nonce, doorVersion: "0.1.52" });
+  assert.equal(handed.MURAGE_DOOR_NONCE, nonce);
+  assert.equal(handed.MURAGE_DOOR_VERSION, "0.1.52");
+  const none = companionEnv({ base: inherited, harnessPort: 8799, doorPort: 8813, dataDir: "/d" });
+  assert.equal(none.MURAGE_DOOR_NONCE, undefined, "an inherited nonce belongs to some other start");
+  assert.equal(none.MURAGE_DOOR_VERSION, undefined);
+  const malformed = companionEnv({ base: {}, harnessPort: 8799, doorPort: 8813, dataDir: "/d", doorNonce: "x".repeat(64) });
+  assert.equal(malformed.MURAGE_DOOR_NONCE, undefined);
+  assert.equal(inherited.MURAGE_DOOR_NONCE.length, 64, "the caller's environment is not mutated");
+});
+
 test("the harness port and the door port are both stated, and they differ", () => {
   const env = companionEnv({ base: {}, harnessPort: 8799, doorPort: 8813, dataDir: "/data" });
   assert.equal(env.MURAGE_PORT, "8799");
@@ -401,6 +435,20 @@ test("waitForDoor returns as soon as the door answers", async () => {
   assert.equal(n, 3);
 });
 
+test("waitForDoor stops at an answer that settles it: something replied, and it is not this door", async () => {
+  let probes = 0;
+  const r = await waitForDoor({
+    probe: async () => {
+      probes += 1;
+      return { answered: false, refused: true, reason: "answered, but not as the sidecar setup started" };
+    },
+    attempts: 40,
+    wait: async () => {},
+  });
+  assert.deepEqual(r, { up: false, reason: "answered, but not as the sidecar setup started" });
+  assert.equal(probes, 1, "waiting longer cannot turn a wrong answer into the right door");
+});
+
 test("spawnCompanion's stop() resolves only once the process is actually gone", async () => {
   const home = scratch();
   const entry = join(home, "sleeper.js");
@@ -410,6 +458,22 @@ test("spawnCompanion's stop() resolves only once the process is actually gone", 
   await sidecar.stop();
   assert.equal(sidecar.alive(), false, "stop() must not return while the port is still held");
   await sidecar.stop(); // safe twice
+});
+
+test("spawnCompanion changes account only when told to (setup as root for the service account)", () => {
+  const seen = [];
+  const spawnImpl = (cmd, args, options) => {
+    seen.push(options);
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    return child;
+  };
+  const resolved = { entry: "/x/index.js", execArgv: [] };
+  spawnCompanion({ resolved, env: {}, stdio: "ignore", spawnImpl });
+  spawnCompanion({ resolved, env: {}, stdio: "ignore", spawnImpl, as: { uid: 998, gid: 997 } });
+  assert.equal("uid" in seen[0], false, "an ordinary start keeps the current account");
+  assert.equal("gid" in seen[0], false);
+  assert.equal(seen[1].uid, 998);
+  assert.equal(seen[1].gid, 997);
 });
 
 test("spawnCompanion contains executable spawn errors and stop still resolves", async () => {
@@ -471,6 +535,12 @@ test("`murage setup` STARTS the sidecar and only then points serve at the door",
   );
   assert.equal(child.MURAGE_PORT, "8799", "the sidecar proxies to the harness, which has not moved");
 
+  // Setup waits for its own sidecar's proof, not for any answer. That nonce
+  // dies with setup, so it is not recorded as the deployment's door.
+  assert.match(child.MURAGE_DOOR_NONCE ?? "", /^[a-f0-9]{64}$/, "the setup-time sidecar was not given an identity to prove");
+  assert.match(out, /proved it is the sidecar setup started/);
+  assert.equal(existsSync(join(home, ".murage-server", DOOR_NONCE_FILE)), false, "setup recorded its short-lived nonce as the deployment's door");
+
   // ...and serve was configured, at the door, never at the harness.
   const serveLine = readFileSync(log, "utf8").split("\n").find((l) => l.startsWith("serve --bg"));
   assert.ok(serveLine, `no proxy was configured:\n${out}`);
@@ -503,6 +573,33 @@ test("`murage setup` leaves no sidecar behind holding the door port", async () =
     probe.listen(door, "127.0.0.1", res);
   });
   await new Promise((r) => probe.close(r));
+});
+
+test("`murage setup` does not front a sidecar that answers without proving it is the one setup started (I7)", async () => {
+  const home = scratch();
+  const door = await freePort();
+  const log = join(home, "argv.log");
+  const stub = tailscaleStub(home, { logFile: log, proxyTarget: `http://127.0.0.1:${door}` });
+  // A companion too old to answer the identity challenge: it opens the door
+  // port and answers 200, and that is all.
+  const old = join(home, "old-companion.js");
+  writeFileSync(
+    old,
+    [
+      'import { createServer } from "node:http";',
+      'createServer((req, res) => { res.writeHead(200); res.end("enter"); }).listen(Number(process.env.MURAGE_BROWSER_PORT), "127.0.0.1");',
+      "setInterval(() => {}, 1 << 30);",
+    ].join("\n")
+  );
+  const env = baseEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(door), MURAGE_COMPANION_ENTRY: old });
+  const { status, out } = await runCli(["setup"], env);
+  assert.equal(status, 0, out);
+  assert.match(out, /Starting the companion sidecar/);
+  assert.match(out, /answered, but not as the sidecar setup started: it did not answer the identity challenge/);
+  assert.match(out, /Not configuring a tailnet proxy/);
+  assert.match(out, /stopped the setup-time sidecar/);
+  assert.ok(!readFileSync(log, "utf8").split("\n").some((l) => l.startsWith("serve --bg")), "fronted an unproven listener");
+  assert.equal(readEnvFile(join(home, ".murage-server", "murage.env")).MURAGE_TRUSTED_PROXY, undefined);
 });
 
 test("`murage setup` says the device door is closed, and does not send anyone to a firewall", async () => {
@@ -585,6 +682,48 @@ test("`murage start` runs the browser door alongside the harness", async () => {
   );
 });
 
+test("every `murage start` records a fresh private door identity and hands it to the sidecar, never to the harness (I7)", async () => {
+  const home = scratch();
+  const door = await freePort();
+  const version = installerManifest(home);
+  const sidecarDump = join(home, "sidecar-env.json");
+  const harnessDump = join(home, "harness-env.json");
+  const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: null });
+  const env = baseEnv(home, {
+    MURAGE_TAILSCALE_BIN: stub,
+    MURAGE_BROWSER_PORT: String(door),
+    MURAGE_COMPANION_ENTRY: fakeSidecar(home, { envDump: sidecarDump }),
+    // Inherited from the operator's shell: it belongs to some other start.
+    MURAGE_DOOR_NONCE: "a".repeat(64),
+    MURAGE_DOOR_VERSION: "0.0.1",
+  });
+  writeFileSync(
+    env.MURAGE_SERVER_ENTRY,
+    `require("node:fs").writeFileSync(${JSON.stringify(harnessDump)}, JSON.stringify(process.env)); setInterval(() => {}, 1 << 30);`
+  );
+  const dataDir = join(home, ".murage-server");
+  const nonces = [];
+  for (let run = 0; run < 2; run += 1) {
+    for (const file of [sidecarDump, harnessDump]) rmSync(file, { force: true });
+    const { out } = await runCli(["start"], env, { killAfterMs: 3_000 });
+    assert.ok(existsSync(sidecarDump) && existsSync(harnessDump), `start ${run} did not run both children:\n${out}`);
+
+    const recorded = readDoorNonce(dataDir);
+    assert.equal(recorded.error, null, recorded.error);
+    if (process.platform !== "win32") assert.equal(statSync(join(dataDir, DOOR_NONCE_FILE)).mode & 0o777, 0o600);
+
+    const sidecar = JSON.parse(readFileSync(sidecarDump, "utf8"));
+    const harness = JSON.parse(readFileSync(harnessDump, "utf8"));
+    assert.equal(sidecar.MURAGE_DOOR_NONCE, recorded.nonce, "the sidecar holds the identity this start recorded");
+    assert.equal(sidecar.MURAGE_DOOR_VERSION, version);
+    assert.equal(harness.MURAGE_DOOR_NONCE, undefined, "the harness never holds the door identity");
+    assert.equal(harness.MURAGE_DOOR_VERSION, undefined);
+    nonces.push(recorded.nonce);
+  }
+  assert.notEqual(nonces[0], nonces[1], "a restart is a new identity, and the previous one proves nothing");
+  assert.ok(!nonces.includes("a".repeat(64)), "an inherited identity was recorded");
+});
+
 test("`murage start` runs the harness anyway when the sidecar is missing, and says so", async () => {
   const home = scratch();
   const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: null });
@@ -630,14 +769,18 @@ test("`murage status` reports the door as NOT answering when nothing is there", 
 });
 
 test("`murage status` reports the door as answering when the sidecar is up", async () => {
+  // A sidecar holding the identity `murage start` recorded, as a started one does.
   const home = scratch();
   const door = await freePort();
+  const version = installerManifest(home);
+  const nonce = createDoorNonce();
+  writeDoorNonce(join(home, ".murage-server"), nonce);
   const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: `http://127.0.0.1:${door}` });
   const entry = fakeSidecar(home, { envDump: join(home, "e.json") });
   const env = baseEnv(home, { MURAGE_TAILSCALE_BIN: stub, MURAGE_BROWSER_PORT: String(door), MURAGE_COMPANION_ENTRY: entry });
   const sidecar = spawnCompanion({
     resolved: { entry, execArgv: [] },
-    env: companionEnv({ base: env, harnessPort: 8799, doorPort: door, dataDir: join(home, "d") }),
+    env: companionEnv({ base: env, harnessPort: 8799, doorPort: door, dataDir: join(home, "d"), doorNonce: nonce, doorVersion: version }),
     stdio: "ignore",
   });
   try {
@@ -655,6 +798,7 @@ test("`murage status` reports the door as answering when the sidecar is up", asy
     assert.equal(waited.up, true, waited.reason);
     const { out } = await runCli(["status"], env);
     assert.match(out, new RegExp(`browser door answering on 127\\.0\\.0\\.1:${door}`));
+    assert.match(out, /proved it is this deployment's door \(installer 0\.1\.52-test\)/);
     assert.match(out, /companion sidecar present/);
   } finally {
     await sidecar.stop();
