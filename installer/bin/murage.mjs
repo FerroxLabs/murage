@@ -631,7 +631,21 @@ function announceDeviceDoorClosed() {
  *   in its environment file instead of its command line.
  * @returns {SetupContext}
  */
-function resolveSetupContext(argv, serviceUserFromEnv = null) {
+function resolveSetupContext(argv, serviceUserFromEnv = null, { prepareNow = true } = {}) {
+  // Creating the data directory is the first thing setup CHANGES on a box. An
+  // unattended run promises "nothing has been changed" when it exits 2 for a
+  // missing input, and the preflight that decides that runs after this — so
+  // the unattended caller defers the creation (`ctx.prepare()`) until the
+  // preflight has passed. The interactive run prepares here, as before.
+  const guard = (work) => {
+    try {
+      return work();
+    } catch (error) {
+      if (!(error instanceof ServiceAccountRefused)) throw error;
+      fail(error.message);
+      process.exit(2);
+    }
+  };
   const parsed = parseSetupArgs(argv);
   if (parsed.error) {
     fail(parsed.error);
@@ -652,18 +666,14 @@ function resolveSetupContext(argv, serviceUserFromEnv = null) {
     }
     // The data directory is tightened here, once, through an fd; the env file
     // write no longer chmods whatever directory it finds (see `writeEnvFile`).
-    if (process.platform !== "win32") {
+    const prepare = () => {
+      if (process.platform === "win32") return;
       const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
       const gid = typeof process.getegid === "function" ? process.getegid() : 0;
-      try {
-        prepareDataDir(resolve(DATA_DIR), { user: userInfo().username, uid: euid ?? 0, gid }, { euid });
-      } catch (error) {
-        if (!(error instanceof ServiceAccountRefused)) throw error;
-        fail(error.message);
-        process.exit(2);
-      }
-    }
-    return { dataDir: DATA_DIR, envFile: ENV_FILE, account: null, owner: null, spawnAs: null };
+      guard(() => prepareDataDir(resolve(DATA_DIR), { user: userInfo().username, uid: euid ?? 0, gid }, { euid }));
+    };
+    if (prepareNow) prepare();
+    return { dataDir: DATA_DIR, envFile: ENV_FILE, account: null, owner: null, spawnAs: null, prepare };
   }
   const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
   try {
@@ -683,11 +693,14 @@ function resolveSetupContext(argv, serviceUserFromEnv = null) {
       );
     }
     const paths = setupPaths({ env: process.env, account, euid, home: homedir() });
-    prepareDataDir(paths.dataDir, account, { euid });
     ok(`service account: ${c.b(`${account.user}:${account.group}`)} (uid ${account.uid}; ${chosen.source}), home ${c.dim(account.home)}`);
-    ok(`data dir: ${c.dim(paths.dataDir)} (owned by ${account.user}, 0700)`);
+    const prepare = () => {
+      guard(() => prepareDataDir(paths.dataDir, account, { euid }));
+      ok(`data dir: ${c.dim(paths.dataDir)} (owned by ${account.user}, 0700)`);
+    };
+    if (prepareNow) prepare();
     const forAnother = euid === 0 && account.uid !== 0 ? { uid: account.uid, gid: account.gid } : null;
-    return { ...paths, account, owner: forAnother && { ...forAnother, groups: account.groups }, spawnAs: forAnother };
+    return { ...paths, account, owner: forAnother && { ...forAnother, groups: account.groups }, spawnAs: forAnother, prepare };
   } catch (error) {
     if (!(error instanceof ServiceAccountRefused)) throw error;
     fail(error.message);
@@ -773,7 +786,7 @@ async function setup(argv = []) {
   }
   ok(`server payload: ${c.dim(found.entry)} (${found.kind})`);
   if (!checkNode()) process.exit(1);
-  const ctx = resolveSetupContext(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null);
+  const ctx = resolveSetupContext(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null, { prepareNow: !mode.nonInteractive });
 
   // A rerun edits the existing env file rather than starting it over, so it is
   // read and validated before anything else happens. A file setup cannot
@@ -808,6 +821,8 @@ async function setup(argv = []) {
   //    facts, both known by now, and neither of them a change to this box.
   /** @type {UnattendedPlan | null} */
   const plan = mode.nonInteractive ? await unattendedPreflight(mode.options, current.bag) : null;
+  // The first change an unattended run makes: only once every input is known.
+  if (mode.nonInteractive) ctx.prepare();
 
   // 1. Tailscale FIRST. Everything after it depends on knowing whether this box
   //    has a secure path in, and there is no point wiring a provider key into a
@@ -1218,7 +1233,7 @@ export async function startSidecar(env, harnessPort, deps = {}) {
     return null;
   }
   const door = ts.doorPort(env);
-  const origin = await front(door, { env, signal: deps.signal });
+  const origin = await front(door, { env, signal: deps.signal, log });
   if (deps.signal?.aborted) return null;
   log(c.dim(`  companion sidecar ${resolved.entry} (${resolved.kind})`));
   log(c.dim(`  browser door 127.0.0.1:${door}${origin ? ` behind ${origin}` : " (no verified proxy in front)"}`));
@@ -1246,31 +1261,124 @@ export async function startSidecar(env, harnessPort, deps = {}) {
 }
 
 /**
+ * How long `start` waits for tailscaled to report the proxy setup verified.
+ *
+ * `After=tailscaled.service` orders the unit after the daemon's START, not
+ * after it has loaded its state and its serve config: at boot on Ubuntu 24.04
+ * this unit came up 15 ms after tailscaled ("Tailscale is starting. Please
+ * wait."), `serve status` showed nothing, the sidecar was started with no
+ * origin, and every request through the tailnet proxy answered 403 until
+ * somebody restarted the service. So when the env file says a proxy was
+ * verified (`MURAGE_TRUSTED_PROXY=1`), the daemon is polled until it shows
+ * the proxy or this deadline passes; a box where none was ever verified is
+ * not made to wait. `MURAGE_PROXY_WAIT_SECONDS` tunes it; `0` disables it.
+ */
+export const PROXY_WAIT_SECONDS = 90;
+
+/** @param {Record<string, string | undefined>} env @returns {number} */
+export function proxyWaitMs(env) {
+  const raw = env.MURAGE_PROXY_WAIT_SECONDS;
+  if (raw === undefined || String(raw).trim() === "") return PROXY_WAIT_SECONDS * 1000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n * 1000) : PROXY_WAIT_SECONDS * 1000;
+}
+
+/** A sleep that ends early when the signal fires. */
+function pause(ms, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
  * The origin the tailnet proxy actually answers on for this door, read back
  * from the daemon — or null.
  *
  * Read, not composed. Handing the sidecar an origin nobody verified is how a
  * door ends up issuing `Secure` cookies for an https listener that was never
  * configured, and printing a QR for an address that does not resolve.
+ *
+ * When setup verified a proxy (`MURAGE_TRUSTED_PROXY=1` in `env`), the daemon
+ * is given up to `proxyWaitMs(env)` to report it — see PROXY_WAIT_SECONDS.
  * @param {number} door
  * @returns {Promise<string | null>}
  */
-async function doorFront(door, { env = process.env, signal } = {}) {
+async function doorFront(door, { env = process.env, signal, log = console.log } = {}) {
   // Resolve without spawning a synchronous `which` after the harness starts.
   const bin = ts.tailscaleBin({ env, onPath: command =>
     String(env.PATH ?? "").split(delimiter).some(path => existsSync(join(path, command))) });
   if (!bin) return null;
-  const output = await startupProbe(bin, ["serve", "status", "--json"], { env, signal });
-  if (!output) return null;
-  let doc;
-  try { doc = JSON.parse(output); } catch { return null; }
-  const share = ts.inspectShareConfig(doc, door);
-  if (!share.configured || share.publicExposure) return null;
-  return ts.serveOrigin(doc, door);
+  const probe = async () => {
+    const output = await startupProbe(bin, ["serve", "status", "--json"], { env, signal });
+    if (!output) return null;
+    let doc;
+    try { doc = JSON.parse(output); } catch { return null; }
+    const share = ts.inspectShareConfig(doc, door);
+    if (!share.configured || share.publicExposure) return null;
+    return ts.serveOrigin(doc, door);
+  };
+  const expected = env.MURAGE_TRUSTED_PROXY === "1";
+  const deadline = Date.now() + (expected ? proxyWaitMs(env) : 0);
+  let said = false;
+  for (;;) {
+    const origin = await probe();
+    if (origin || !expected || signal?.aborted || Date.now() >= deadline) {
+      if (!origin && said) warn("tailscaled did not report the proxy in time; the door starts without a verified front. Re-run `murage setup` if it stays that way.");
+      return origin;
+    }
+    if (!said) {
+      said = true;
+      log(c.dim(`  waiting for tailscaled to report the proxy in front of the door (up to ${Math.round(proxyWaitMs(env) / 1000)}s; it is still starting)…`));
+    }
+    await pause(1000, signal);
+  }
 }
 
-async function status() {
+/**
+ * Where `status` looks: the same place `setup` put things for the same
+ * arguments. `sudo murage setup --service-user murage` keeps everything in
+ * that account's home, so a `sudo murage status` that looked in root's home
+ * reported "no env file" and "NOT this deployment's browser door" for a
+ * deployment that was fine (seen live on Ubuntu 24.04). Read-only: nothing
+ * is created or chmodded here.
+ * @param {string[]} argv
+ * @param {string | null} serviceUserFromEnv
+ * @returns {{ dataDir: string, envFile: string }}
+ */
+function resolveStatusPaths(argv, serviceUserFromEnv = null) {
+  const parsed = parseSetupArgs(argv);
+  if (parsed.error) {
+    fail(parsed.error.replace("setup does not take", "status does not take"));
+    process.exit(EXIT.USAGE);
+  }
+  const name = parsed.serviceUser || serviceUserFromEnv;
+  if (!name) return { dataDir: DATA_DIR, envFile: ENV_FILE };
+  if (process.platform !== "linux") {
+    fail("--service-user names the account of the systemd unit, and setup stages one on Linux only.");
+    process.exit(EXIT.USAGE);
+  }
+  try {
+    const account = lookupAccount(name, { current: userInfo() });
+    const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
+    const paths = setupPaths({ env: process.env, account, euid, home: homedir() });
+    ok(`service account: ${c.b(`${account.user}:${account.group}`)} (uid ${account.uid}; ${parsed.serviceUser ? "--service-user" : "MURAGE_SERVICE_USER"}), data dir ${c.dim(paths.dataDir)}`);
+    return paths;
+  } catch (error) {
+    if (!(error instanceof ServiceAccountRefused)) throw error;
+    fail(error.message);
+    process.exit(EXIT.USAGE);
+  }
+}
+
+async function status(argv = []) {
   heading("Murage — deployment status");
+
+  // Never prompts, so the unattended switches are accepted and simply consumed.
+  const mode = unattendedMode(argv, "murage status");
+  const { dataDir, envFile: ENV_FILE } = resolveStatusPaths(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null);
 
   const perms = envFilePermissions(ENV_FILE);
   if (!perms.exists) warn(`no env file at ${ENV_FILE} — run \`murage setup\``);
@@ -1289,7 +1397,7 @@ async function status() {
   if (addrs.length) ok(`this host holds tailnet addresses: ${c.dim(addrs.join(", "))}`);
   else warn("this host holds no tailnet address (network-trust probe)");
 
-  await reportDoor(env.MURAGE_DATA_DIR || DATA_DIR);
+  await reportDoor(env.MURAGE_DATA_DIR || dataDir);
 
   if (!ts.isInstalled()) {
     fail("tailscale is not installed — there is no secure path into this box");
@@ -1399,6 +1507,7 @@ function help() {
       ${c.dim("[--service-user <account>]")}  the account the systemd unit runs as; required when run as root
   ${c.b("murage start")}       Run the server and the companion sidecar (refuses any non-loopback, non-tailnet bind)
   ${c.b("murage status")}      Verify the posture: bind policy, enrolment, no public share
+      ${c.dim("[--service-user <account>]")}  look where \`setup --service-user\` put things (when run as root)
   ${c.b("murage resetpass")}   Break-glass admin reset, if this build has one
   ${c.b("murage help")}        This message
 
@@ -1440,7 +1549,7 @@ if (isMain) {
   const cmd = (process.argv[2] || "help").toLowerCase();
   if (cmd === "setup") await setup(process.argv.slice(3));
   else if (cmd === "start") await start(process.argv.slice(3));
-  else if (cmd === "status") await status();
+  else if (cmd === "status") await status(process.argv.slice(3));
   else if (cmd === "resetpass" || cmd === "reset-password") resetpass(process.argv.slice(3));
   else if (cmd === "version" || cmd === "--version" || cmd === "-v") {
     try {

@@ -6,7 +6,7 @@ Tailscale tailnet**, and never from the internet.
 ```sh
 murage setup      # join the tailnet, wire a key, start the door, front it, verify it
 murage start      # run the harness AND the companion's browser door
-murage status     # verify the posture at any time
+murage status     # verify the posture at any time (--service-user <account> when setup ran as root)
 murage resetpass  # break-glass admin reset, if this build has one
 murage help
 ```
@@ -132,6 +132,17 @@ run the whole agent stack as root, so setup never stages one.
   account, or is writable by other accounts is refused, and nothing is written.
   Under `sudo`, the refusal names `$SUDO_USER` as the value to pass. Root, or
   any account with uid 0, is refused as a service account.
+- The unit's `ReadWritePaths=` names the data directory **and its parent**:
+  the server keeps its installation lease beside the data directory, not in
+  it (`electron/data-dir-lease.mjs`), and under `ProtectHome=read-only` a
+  unit that granted only the data directory died at every start with
+  `DataDirLeaseError` (`LEASE_IO`) and restarted forever. A data directory
+  directly under `/` is refused for the same reason: the parent grant would
+  be the whole filesystem.
+- `sudo murage status --service-user murage` (or `MURAGE_SERVICE_USER`) looks
+  where that setup put things. Without it, a root `status` reads root's own
+  home and reports a fine deployment as "no env file" and "NOT this
+  deployment's browser door".
 - An existing data directory owned by a different account is refused, not
   re-owned. Setup also checks that the service account can actually reach the
   node runtime and the installer before it stages a unit that would fail at
@@ -288,14 +299,34 @@ A rerun is idempotent, and needs fewer inputs than the first run, not more:
 So the second `murage setup --non-interactive` on a provisioned box carries no
 secrets at all.
 
+Enrolment itself is repairable, too. `tailscale up` is always run with
+`--reset`, because setup states every setting it wants (`--accept-routes=false`,
+`--ssh=false`, the hostname, the tags or none) and nothing the daemon remembers
+from an earlier run is wanted. Without it, an enrolment refused by the control
+plane (an auth key that may not hold `tag:murage`, say) leaves those prefs on
+the logged-out daemon, and the rerun that fixes the tag is refused with
+"requires mentioning all non-default flags". Proven on a real box; see
+`.planning/0152-LINUX-PROOF.md`.
+
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | `0` | done, and the box is on your tailnet |
-| `1` | this environment cannot run it: no server payload, an unusable node, a failed Tailscale install |
+| `1` | this environment cannot run it: no server payload, an unusable node |
 | `2` | the request was wrong or incomplete — a bad flag, a missing unattended input, an env file that could not be carried over. **Nothing was changed** |
-| `3` | setup finished, but the box is **not** on the tailnet. It is reachable only through an SSH tunnel |
+| `3` | setup finished, but the box is **not** on the tailnet — the enrolment was refused, Tailscale could not be installed, or `--no-tailscale` was given. The env file is written and the unit staged; the box is reachable only through an SSH tunnel. Fix the cause and re-run setup, which keeps what this run wrote |
+
+## After a reboot
+
+The unit orders `After=tailscaled.service`, which is the daemon's *start*, not
+its readiness: on a real box `murage start` came up 15 ms behind tailscaled,
+read no serve config, and the door answered 403 through the tailnet proxy until
+the service was restarted. So when `murage.env` carries `MURAGE_TRUSTED_PROXY=1`
+(setup verified a proxy), `start` polls the daemon for the proxy in front of
+the door for up to 90 s (`MURAGE_PROXY_WAIT_SECONDS`; `0` disables) before it
+starts the sidecar, and says so in the log. A box where no proxy was ever
+verified is not made to wait.
 
 ## Environment
 
@@ -316,6 +347,7 @@ secrets at all.
 | `MURAGE_NON_INTERACTIVE`, `MURAGE_TAILSCALE_AUTHKEY_FILE`, `MURAGE_PROVIDER_KEY_FILE`, `MURAGE_PROVIDER`, `MURAGE_SERVICE_USER`, `MURAGE_TAILNET_TAG`, `MURAGE_TAILNET_HOSTNAME`, `MURAGE_TAILNET_HTTPS`, `MURAGE_INSTALL_TAILSCALE`, `MURAGE_TAILSCALE_REENROLL`, `MURAGE_STAGE_SYSTEMD`, `MURAGE_SKIP_PROVIDER_KEY`, `MURAGE_WANT_TAILSCALE` | [unattended setup](#unattended-setup-provisioning) |
 | `MURAGE_TAILSCALE_BIN` | explicit path to the `tailscale` CLI (non-standard installs, tests) |
 | `MURAGE_TRUSTED_PROXY` | set to `1` by setup only when the tailnet proxy was actually configured |
+| `MURAGE_PROXY_WAIT_SECONDS` | how long `start` waits for tailscaled to report that proxy after a boot (default `90`; `0` disables) |
 
 `ALLOW_REMOTE` is deliberately **not** a variable here. `HOST=0.0.0.0` is
 refused by name.
