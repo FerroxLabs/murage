@@ -10,6 +10,10 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["GET", "POST", "PATCH", "DELETE"], path: new RegExp("^/api/claude-accounts(?:/|$)"), purpose: "named native Claude account configuration" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/automation-admission$"), purpose: "pause or resume automatic work" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/artifacts(?:/|$)"), purpose: "verified private workspace deliverables" },
+  { methods: ["GET", "POST"], path: /^\/api\/workspace-files(?:\/|$)/, purpose: "workspace discovery, bounded file read and revision-conditioned write" },
+  // Byte URLs are authorized by a short-lived capability instead: media
+  // elements cannot send the desktop header (U-03).
+  { methods: ["GET", "POST"], path: /^\/api\/media(?:$|\/(?!bytes(?:\/|$)))/, purpose: "resolve scoped media and issue byte capabilities" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/inbox(?:/|$)"), purpose: "owner-only durable results and attention" },
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/provider-connections(?:\/|$)/, purpose: "model provider connection custody and catalogs" },
   { methods: ["GET", "POST"], path: /^\/api\/images\/settings$/, purpose: "image provider and billing selection" },

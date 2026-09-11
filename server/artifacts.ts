@@ -4,6 +4,7 @@ import { basename, dirname, extname, isAbsolute, join, parse, resolve } from "no
 import { homedir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview, ArtifactQuery, ArtifactRegistration } from "../shared/artifacts.ts";
+import { isOutputProducer } from "../shared/output-publication.ts";
 import { redactSecretsInText } from "./redact.ts";
 
 export const ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
@@ -98,8 +99,22 @@ export function initializeArtifacts(db: DatabaseSync) {
     UNIQUE(bot_id,thread_id,run_id,source_root,relative_path,sha256));
     CREATE INDEX IF NOT EXISTS artifacts_scope_date ON artifacts(bot_id,source_root,thread_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS artifacts_kind_date ON artifacts(kind,created_at DESC);`);
+  // 0.1.52 K0 schema, frozen: no lane edits it afterwards. Both additions are
+  // nullable/idempotent so existing installations upgrade in place and older
+  // rows keep "unknown producer" rather than an invented one.
+  const columns = new Set((db.prepare("PRAGMA table_info(artifacts)").all() as Array<{ name: string }>).map(column => column.name));
+  if (!columns.has("producer")) db.exec("ALTER TABLE artifacts ADD COLUMN producer TEXT");
+  if (!columns.has("publication_id")) db.exec("ALTER TABLE artifacts ADD COLUMN publication_id TEXT");
+  db.exec(`CREATE TABLE IF NOT EXISTS output_publications (
+    id TEXT PRIMARY KEY, producer TEXT NOT NULL, bot_id TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
+    path_token TEXT NOT NULL, sha256 TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL,
+    artifact_id TEXT, attachment_id TEXT, message_id TEXT, error_category TEXT,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    UNIQUE(producer,bot_id,thread_id,run_id,path_token,sha256));
+    CREATE INDEX IF NOT EXISTS output_publications_scope ON output_publications(bot_id,thread_id,run_id);
+    CREATE INDEX IF NOT EXISTS output_publications_stage ON output_publications(stage,updated_at);`);
 }
-interface Row { id: string; name: string; kind: ArtifactKind; mime: string; bytes: number; sha256: string; extension: string; created_at: number; bot_id: string; thread_id: string; run_id: string; source_root: string; relative_path: string; source_fingerprint: string }
+interface Row { id: string; name: string; kind: ArtifactKind; mime: string; bytes: number; sha256: string; extension: string; created_at: number; bot_id: string; thread_id: string; run_id: string; source_root: string; relative_path: string; source_fingerprint: string; producer: string | null; publication_id: string | null }
 const blobName = (row: Pick<Row, "sha256" | "extension">) => {
   if (!/^[a-f0-9]{64}$/.test(row.sha256) || !/^\.[a-z0-9]{1,12}$/.test(row.extension)) fail(409, "Saved file identity is invalid.");
   return row.sha256 + row.extension;
@@ -114,7 +129,7 @@ function publicRow(row: Row, scope: ArtifactScope, storageRoot: string): Artifac
   try { directory(storageRoot); const stat = lstatSync(join(storageRoot, blobName(row))); savedState = stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size === row.bytes ? "available" : "unavailable"; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") savedState = "missing"; }
   return { id: row.id, name: row.name, filename: row.name.toLowerCase().endsWith(row.extension) ? row.name : row.name + row.extension, kind: row.kind, mime: row.mime, bytes: row.bytes, sha256: row.sha256, createdAt: row.created_at,
-    botId: row.bot_id, botName: clean(scope.botName, 100), threadId: row.thread_id, ...(row.run_id ? { runId: row.run_id } : {}), relativePath: row.relative_path,
+    botId: row.bot_id, botName: clean(scope.botName, 100), threadId: row.thread_id, ...(row.run_id ? { runId: row.run_id } : {}), ...(isOutputProducer(row.producer) ? { producer: row.producer } : {}), relativePath: row.relative_path,
     sourceState, savedState, sourceConversationAvailable: scope.threadAvailable !== false && scope.threadId !== undefined };
 }
 
@@ -145,7 +160,7 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
       if (hash(readVerified(blob, ARTIFACT_MAX_BYTES)) !== sha256) fail(409, "The saved copy failed verification.");
     }
     const id = randomUUID(), name = clean(input.name?.trim() || basename(input.relativePath), 200), run = scope.runId ?? "";
-    db.prepare("INSERT OR IGNORE INTO artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    db.prepare("INSERT OR IGNORE INTO artifacts(id,name,kind,mime,bytes,sha256,extension,created_at,bot_id,thread_id,run_id,source_root,relative_path,source_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(id, name, fileFormat.kind, fileFormat.mime, bytes.length, sha256, fileFormat.extension, Date.now(), input.botId, input.threadId, run, root, input.relativePath, fingerprint(source.stat));
     const row = db.prepare("SELECT * FROM artifacts WHERE bot_id=? AND thread_id=? AND run_id=? AND source_root=? AND relative_path=? AND sha256=?")
       .get(input.botId, input.threadId, run, root, input.relativePath, sha256) as unknown as Row;

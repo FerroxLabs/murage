@@ -146,6 +146,18 @@ export type RuntimeEvent = RuntimeEventBase &
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
 
+/** Close-confirmed stop (0.1.52 K0 contract for A2 / R1-T2). `true` only
+ * after the provider child was observed to close; a requested kill or an
+ * acknowledged session/cancel is not closure. */
+export type ProviderStopResult =
+  | { closeConfirmed: true }
+  | { closeConfirmed: false; reason: "timeout" | "stop-failed" };
+
+/** `undefined` for legacy drivers that return void (not observed). */
+export function stopCloseConfirmed(result: void | ProviderStopResult): boolean | undefined {
+  return result && typeof result === "object" ? result.closeConfirmed === true : undefined;
+}
+
 /** What became of an answer to an ask. `allowed-once` grants only the
  * asked-about action — broadening ("always allow") stays a separate,
  * explicit step. `unavailable` is the fail-closed default: no answerer,
@@ -273,7 +285,15 @@ export interface ProviderAdapter {
     customMcp?: boolean;
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
-  interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;
+  /** Request a stop. A driver that can observe teardown resolves with a
+   * ProviderStopResult (A2); `void` is the legacy "requested, not observed". */
+  interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void | ProviderStopResult>;
+  /** Optional (A2): resolves once the provider process that served this
+   * turn has closed after its terminal event, or `closeConfirmed:false` at
+   * the driver's bounded deadline. Drivers that deliberately retain a live
+   * session across turns omit it. Callers keep resource ownership until a
+   * confirmed close. */
+  awaitTurnTeardown?(threadId: ThreadId, turnId?: TurnId): Promise<ProviderStopResult>;
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */

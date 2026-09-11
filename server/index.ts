@@ -358,6 +358,13 @@ import { TelegramService } from "./telegram-service.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
+// 0.1.52 K0 delegation seams (docs/plans/0152-CONTRACTS.md).
+import { workspaceFilesRoute } from "./workspace-files.ts";
+import { mediaAssetsRoute, resolveImageReferenceRoute } from "./media-assets.ts";
+import { createOutputPublisher } from "./output-publication.ts";
+import { sendDelegated } from "./route-delegation.ts";
+import { IMAGE_REFERENCE_ROUTE, MEDIA_ROUTE_PREFIX } from "../shared/media-assets.ts";
+import { WORKSPACE_FILES_ROUTE_PREFIX } from "../shared/workspace-files.ts";
 import {
   PendingTurnCancellations,
   RetiredTurnRegistry,
@@ -1237,6 +1244,8 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
+const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes };
+const outputPublisher = createOutputPublisher(featureRouteDeps);
 const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
 function turnMemoryAccess(botId: string, threadId: string, generation: string): MemoryAccess {
   const token = internalToken(botId,threadId,generation,"memory");
@@ -2792,6 +2801,8 @@ bus.subscribe((event: RuntimeEvent) => {
       }
       if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, event.ok ? "completed" : event.stopReason === "cancelled" ? "cancelled" : "failed");
       else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, event.ok ? "completed" : "failed");
+      // K0 output-publication hook: deliberately outside the direct-run lease release below.
+      void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
       const reply = lastReply.get(event.threadId) ?? "";
       lastReply.delete(event.threadId);
       const lastReported = turnUsage.get(event.threadId);
@@ -3591,6 +3602,8 @@ async function startTurn(
       // on nearly every ordinary chat; snapshotting it would add hidden disk
       // and process overhead without a user project to restore.
       const checkpointCwd = pinnedCwd && pinnedCwd !== privateWorkspace ? cwd : undefined;
+      // K0 output-publication hook: U-02 pre-dispatch snapshot of a managed task workspace only.
+      outputPublisher.beforeDispatch({ botId: bot.id, threadId, runId: dispatchClaimId, workspaceRoot: cwd, managed: Boolean(privateWorkspace) && pinnedCwd === privateWorkspace && opts?.runOn !== "cloud" });
       // dweb is opt-in: without an explicit daemon URL, do not advertise
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
@@ -7388,6 +7401,12 @@ const server = createServer(async (req, res) => {
       if ("bytes" in result && result.bytes) { res.writeHead(result.status); res.end(result.bytes); return; }
       return json(res, result.status, result.body);
     }
+    // K0: these prefixes belong to their feature modules; desktop gating stays here and in desktop-policy.ts.
+    const featurePrefix = [WORKSPACE_FILES_ROUTE_PREFIX, MEDIA_ROUTE_PREFIX].find(prefix => path === prefix || path.startsWith(`${prefix}/`));
+    if (featurePrefix) {
+      const delegated = { method, path, url, headers: req.headers, desktop: requestSurface(req.headers, url.searchParams) === "desktop", readBody: () => readBody(req) };
+      return sendDelegated(res, method, await (featurePrefix === MEDIA_ROUTE_PREFIX ? mediaAssetsRoute : workspaceFilesRoute)(delegated, featureRouteDeps));
+    }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
       const threads = [
         ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: bot.name, botId: bot.id }))),
@@ -7573,6 +7592,10 @@ const server = createServer(async (req, res) => {
             { error: error.message, code: error.code, retryable: error.retryable, providerStatus: error.status });
           throw error;
         } finally { clearInterval(revoked); res.off("close", disconnected); }
+      }
+      if (path === IMAGE_REFERENCE_ROUTE) {
+        const delegated = { method, path, url, headers: req.headers, desktop: false, readBody: () => readBody(req) };
+        return sendDelegated(res, method, await resolveImageReferenceRoute(delegated, { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation }, featureRouteDeps));
       }
       if (path === "/api/internal/host-computer") {
         if (method !== "POST") return json(res, 405, { error: "computer RPC requires POST" });
