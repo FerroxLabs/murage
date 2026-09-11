@@ -1270,7 +1270,7 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
-const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes };
+const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders };
 const outputPublisher = createOutputPublisher(featureRouteDeps);
 const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
 function turnMemoryAccess(botId: string, threadId: string, generation: string): MemoryAccess {
@@ -7269,7 +7269,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(data);
 }
 
-function readBody(req: IncomingMessage): Promise<any> {
+function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
     let bytes = 0;
@@ -7283,7 +7283,7 @@ function readBody(req: IncomingMessage): Promise<any> {
     req.on("data", (c) => {
       if (done) return;
       bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
-      if (bytes > 1_000_000) {
+      if (bytes > maxBytes) {
         // Keep draining the socket, but stop retaining attacker-controlled
         // bytes. Destroying the request here prevents the caller from
         // receiving the useful 413 response.
@@ -7470,7 +7470,7 @@ const server = createServer(async (req, res) => {
     // K0: these prefixes belong to their feature modules; desktop gating stays here and in desktop-policy.ts.
     const featurePrefix = [WORKSPACE_FILES_ROUTE_PREFIX, MEDIA_ROUTE_PREFIX].find(prefix => path === prefix || path.startsWith(`${prefix}/`));
     if (featurePrefix) {
-      const delegated = { method, path, url, headers: req.headers, desktop: requestSurface(req.headers, url.searchParams) === "desktop", readBody: () => readBody(req) };
+      const delegated = { method, path, url, headers: req.headers, desktop: requestSurface(req.headers, url.searchParams) === "desktop", readBody: (maxBytes?: number) => readBody(req, maxBytes) };
       return sendDelegated(res, method, await (featurePrefix === MEDIA_ROUTE_PREFIX ? mediaAssetsRoute : workspaceFilesRoute)(delegated, featureRouteDeps));
     }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
@@ -7661,7 +7661,7 @@ const server = createServer(async (req, res) => {
         } finally { clearInterval(revoked); res.off("close", disconnected); }
       }
       if (path === IMAGE_REFERENCE_ROUTE) {
-        const delegated = { method, path, url, headers: req.headers, desktop: false, readBody: () => readBody(req) };
+        const delegated = { method, path, url, headers: req.headers, desktop: false, readBody: (maxBytes?: number) => readBody(req, maxBytes) };
         return sendDelegated(res, method, await resolveImageReferenceRoute(delegated, { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation }, featureRouteDeps));
       }
       if (path === "/api/internal/host-computer") {
