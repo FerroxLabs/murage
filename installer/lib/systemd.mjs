@@ -33,6 +33,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -222,18 +223,40 @@ export function stageUnit(opts, { stagingRoot = tmpdir() } = {}) {
   const sha256 = createHash("sha256").update(text).digest("hex");
   const stagingDir = makePrivateTempDir("murage-unit-", stagingRoot);
   const stagedPath = join(stagingDir, UNIT_NAME);
-  const check = shellWord(`${sha256}  ${stagedPath}`);
   writeExclusiveFile(stagedPath, text, { mode: 0o600 });
+  // Who can open what was just staged is decided by who owns it, not by who
+  // will read the instructions: under `sudo murage setup` both are root's and
+  // 0700/0600, and the operator pastes the commands into the shell that ran
+  // sudo. Reading the owner back keeps the commands true for either case.
+  const rootOwned = lstatSync(stagingDir).uid === 0;
   return {
     stagingDir,
     stagedPath,
     sha256,
     text,
-    commands: [
-      `echo ${check} | sha256sum --check --strict - && sudo install -o root -g root -m 0644 ${shellWord(stagedPath)} ${UNIT_PATH}`,
-      `rm -r ${shellWord(stagingDir)}`,
-      "sudo systemctl daemon-reload && sudo systemctl enable --now murage",
-      "sudo journalctl -u murage -f",
-    ],
+    commands: operatorCommands({ stagingDir, stagedPath, sha256, rootOwned }),
   };
+}
+
+/**
+ * The commands printed for the operator, in order: check the staged bytes and
+ * install them, remove the staging directory, enable, follow the log.
+ *
+ * When the staging directory is root's (setup ran as root, usually through
+ * sudo), every command that opens it carries `sudo`, so it works from the
+ * unprivileged shell that ran `sudo murage setup` as well as from a root
+ * shell. The staged file is deliberately not handed to the invoking account:
+ * a file it owned could be swapped between the digest check and the install.
+ * @param {{ stagingDir: string, stagedPath: string, sha256: string, rootOwned: boolean }} staged
+ * @returns {string[]}
+ */
+export function operatorCommands({ stagingDir, stagedPath, sha256, rootOwned }) {
+  const asOwner = rootOwned ? "sudo " : "";
+  const check = shellWord(`${sha256}  ${stagedPath}`);
+  return [
+    `echo ${check} | ${asOwner}sha256sum --check --strict - && sudo install -o root -g root -m 0644 ${shellWord(stagedPath)} ${UNIT_PATH}`,
+    `${asOwner}rm -r ${shellWord(stagingDir)}`,
+    "sudo systemctl daemon-reload && sudo systemctl enable --now murage",
+    "sudo journalctl -u murage -f",
+  ];
 }
