@@ -256,6 +256,61 @@ describe("redactSecretsInText", () => {
     expect(out.note).toBe("fine");
   });
 
+  // Bare xAI, Groq and Hugging Face keys, adapted from OpenMausBot PR #987
+  // (Apache-2.0). Synthetic fixtures are assembled at runtime so no
+  // token-shaped literal sits in the source.
+  describe("bare xAI, Groq and Hugging Face keys", () => {
+    const alnum = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const xai = (suffix: number) => `${"xa" + "i-"}${(alnum + "_-").repeat(3).slice(0, suffix)}`;
+    const groq = (suffix: number) => `${"gs" + "k_"}${alnum.repeat(2).slice(0, suffix)}`;
+    const hf = (suffix: number) => `${"h" + "f_"}${alnum.repeat(2).slice(0, suffix)}`;
+
+    it("masks each key at its minimum length and when longer", () => {
+      for (const key of [xai(20), xai(64), groq(40), groq(56), hf(30), hf(40)]) {
+        const input = `The key is ${key} and nothing else.`;
+        const out = redactSecretsInText(input);
+        expect(out, key).not.toContain(key);
+        expect(out).toBe(`The key is «redacted ${key.length} chars» and nothing else.`);
+      }
+    });
+
+    it("masks several keys in one ordinary sentence", () => {
+      const [a, b, c] = [xai(24), groq(40), hf(34)];
+      const out = redactSecretsInText(`xAI ${a}, Groq ${b}; Hugging Face ${c}.`);
+      expect(out).toBe(`xAI «redacted ${a.length} chars», Groq «redacted ${b.length} chars»; Hugging Face «redacted ${c.length} chars».`);
+    });
+
+    it("leaves shorter look-alike prefixes readable", () => {
+      for (const s of [
+        `short ${xai(19)} value`,
+        `short ${groq(39)} value`,
+        `short ${hf(29)} value`,
+        "the xai-provider and gsk_setting and hf_hub_download helpers",
+        `identifier my_${hf(30)} is not a bare key`,
+      ]) {
+        expect(redactSecretsInText(s), s).toBe(s);
+      }
+    });
+
+    it("masks keys nested in structured payloads and is stable on repeat", () => {
+      const payload = {
+        params: { update: { content: { text: `use ${xai(30)} for grok` } } },
+        env: [{ name: "FEATURE", value: `${groq(44)}` }],
+        notes: [`hub token ${hf(36)}`],
+      };
+      const once = redactSecrets(payload);
+      const json = JSON.stringify(once);
+      expect(json).not.toContain(xai(30));
+      expect(json).not.toContain(groq(44));
+      expect(json).not.toContain(hf(36));
+      expect(json).toContain("for grok");
+      expect(json).toContain("FEATURE");
+      expect(redactSecrets(once)).toEqual(once);
+      const text = redactSecretsInText(`x ${xai(22)} y`);
+      expect(redactSecretsInText(text)).toBe(text);
+    });
+  });
+
   it("is idempotent for structurally identified credentials", () => {
     const input = {
       apiKey: "abcdefgh12345678",
