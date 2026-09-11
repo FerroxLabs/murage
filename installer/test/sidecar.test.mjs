@@ -119,18 +119,23 @@ function fakeSidecar(dir, { envDump }) {
  * proxy from the first call would let setup take its idempotent early exit and
  * every assertion below would pass without the door ever being started.
  */
-function tailscaleStub(dir, { logFile, proxyTarget }) {
+function tailscaleStub(dir, { logFile, proxyTarget, warmingUpCalls = 0 }) {
   const path = join(dir, "tailscale-stub");
   const web = proxyTarget
     ? `{"Web":{"box.tail0a48a4.ts.net:443":{"Handlers":{"/":{"Proxy":"${proxyTarget}"}}}}}`
     : "{}";
   const served = join(dir, "serve-configured");
+  // A daemon that is still starting answers `serve status` with an error for
+  // the first `warmingUpCalls` calls, as the real one does right after boot.
+  const counter = join(dir, "serve-status-calls");
   writeFileSync(
     path,
     [
       "#!/bin/sh",
       `echo "$@" >> ${JSON.stringify(logFile)}`,
       'if [ "$1" = "serve" ] && [ "$2" = "status" ]; then',
+      `  n=$(( $(cat ${JSON.stringify(counter)} 2>/dev/null || echo 0) + 1 )); echo $n > ${JSON.stringify(counter)}`,
+      `  if [ $n -le ${Number(warmingUpCalls)} ]; then echo 'Tailscale is starting. Please wait.' >&2; exit 1; fi`,
       `  if [ -f ${JSON.stringify(served)} ]; then echo '${web}'; else echo '{}'; fi`,
       "  exit 0",
       "fi",
@@ -680,6 +685,83 @@ test("`murage start` runs the browser door alongside the harness", async () => {
     "`murage start` must state the device door posture too — a box is restarted far more often " +
       `than it is set up, and setup's copy scrolls away years earlier. Got:\n${out}`
   );
+});
+
+test("`murage start` waits for a daemon that is still starting to report the proxy setup verified", async () => {
+  // Live on Ubuntu 24.04 (0.1.52 Linux proof): after a reboot the unit came up
+  // 15 ms behind tailscaled ("Tailscale is starting. Please wait."), read no
+  // serve config, handed the sidecar no origin, and the door answered 403
+  // through the tailnet proxy until the service was restarted by hand.
+  const home = scratch();
+  const door = await freePort();
+  const envDump = join(home, "child-env.json");
+  const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: `http://127.0.0.1:${door}`, warmingUpCalls: 2 });
+  alreadyServing(home);
+  const env = baseEnv(home, {
+    MURAGE_TAILSCALE_BIN: stub,
+    MURAGE_BROWSER_PORT: String(door),
+    MURAGE_COMPANION_ENTRY: fakeSidecar(home, { envDump }),
+  });
+  writeFileSync(env.MURAGE_SERVER_ENTRY, "setInterval(() => {}, 1 << 30);");
+  mkdirSync(join(home, ".murage-server"), { recursive: true, mode: 0o700 });
+  // What setup leaves behind when it verified a proxy: the promise `start` now keeps.
+  writeFileSync(env.MURAGE_ENV_FILE, "MURAGE_TRUSTED_PROXY=1\n", { mode: 0o600 });
+
+  const { out } = await runCli(["start"], env, { killAfterMs: 8_000 });
+  assert.match(out, /waiting for tailscaled to report the proxy/, out);
+  const child = JSON.parse(readFileSync(envDump, "utf8"));
+  assert.equal(child.MURAGE_BROWSER_PUBLIC_ORIGIN, "https://box.tail0a48a4.ts.net", `the door must get the origin once the daemon is up:\n${out}`);
+  assert.equal(child.MURAGE_BROWSER_SCHEME, "https");
+  const calls = readFileSync(join(home, "argv.log"), "utf8").split("\n").filter((l) => l.startsWith("serve status")).length;
+  assert.ok(calls >= 3, `expected the daemon to be polled past its warm-up, saw ${calls} serve status calls`);
+});
+
+test("`murage start` gives up waiting for the proxy at the deadline, and says so, rather than never starting", async () => {
+  const home = scratch();
+  const door = await freePort();
+  const envDump = join(home, "child-env.json");
+  // Never serving, but the env file promises a proxy: bounded by MURAGE_PROXY_WAIT_SECONDS.
+  const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: null });
+  const env = baseEnv(home, {
+    MURAGE_TAILSCALE_BIN: stub,
+    MURAGE_BROWSER_PORT: String(door),
+    MURAGE_COMPANION_ENTRY: fakeSidecar(home, { envDump }),
+    MURAGE_PROXY_WAIT_SECONDS: "2",
+  });
+  writeFileSync(env.MURAGE_SERVER_ENTRY, "setInterval(() => {}, 1 << 30);");
+  mkdirSync(join(home, ".murage-server"), { recursive: true, mode: 0o700 });
+  writeFileSync(env.MURAGE_ENV_FILE, "MURAGE_TRUSTED_PROXY=1\n", { mode: 0o600 });
+
+  // `start` runs until it is stopped; the kill at 6 s is what ends it. The
+  // sidecar's env dump existing at all proves the 2 s deadline passed and
+  // the door was started, not left waiting.
+  const { out } = await runCli(["start"], env, { killAfterMs: 6_000 });
+  assert.match(out, /waiting for tailscaled to report the proxy/, out);
+  assert.match(out, /did not report the proxy in time/, out);
+  assert.match(out, /no verified proxy in front/, out);
+  assert.ok(existsSync(envDump), `the sidecar was never started:\n${out}`);
+  const child = JSON.parse(readFileSync(envDump, "utf8"));
+  assert.equal(child.MURAGE_BROWSER_PUBLIC_ORIGIN ?? "", "", "no origin is invented");
+  const calls = readFileSync(join(home, "argv.log"), "utf8").split("\n").filter((l) => l.startsWith("serve status")).length;
+  assert.ok(calls >= 2 && calls <= 4, `polled about once a second for 2 s, saw ${calls}`);
+});
+
+test("a box where no proxy was ever verified is not made to wait", async () => {
+  const home = scratch();
+  const door = await freePort();
+  const envDump = join(home, "child-env.json");
+  const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: null });
+  const env = baseEnv(home, {
+    MURAGE_TAILSCALE_BIN: stub,
+    MURAGE_BROWSER_PORT: String(door),
+    MURAGE_COMPANION_ENTRY: fakeSidecar(home, { envDump }),
+  });
+  writeFileSync(env.MURAGE_SERVER_ENTRY, "setInterval(() => {}, 1 << 30);");
+  const { out } = await runCli(["start"], env, { killAfterMs: 3_000 });
+  assert.ok(!/waiting for tailscaled/.test(out), out);
+  assert.match(out, /no verified proxy in front/, out);
+  const calls = readFileSync(join(home, "argv.log"), "utf8").split("\n").filter((l) => l.startsWith("serve status")).length;
+  assert.equal(calls, 1, "one probe, no polling");
 });
 
 test("every `murage start` records a fresh private door identity and hands it to the sidecar, never to the harness (I7)", async () => {

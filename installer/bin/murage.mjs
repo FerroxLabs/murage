@@ -1218,7 +1218,7 @@ export async function startSidecar(env, harnessPort, deps = {}) {
     return null;
   }
   const door = ts.doorPort(env);
-  const origin = await front(door, { env, signal: deps.signal });
+  const origin = await front(door, { env, signal: deps.signal, log });
   if (deps.signal?.aborted) return null;
   log(c.dim(`  companion sidecar ${resolved.entry} (${resolved.kind})`));
   log(c.dim(`  browser door 127.0.0.1:${door}${origin ? ` behind ${origin}` : " (no verified proxy in front)"}`));
@@ -1246,27 +1246,80 @@ export async function startSidecar(env, harnessPort, deps = {}) {
 }
 
 /**
+ * How long `start` waits for tailscaled to report the proxy setup verified.
+ *
+ * `After=tailscaled.service` orders the unit after the daemon's START, not
+ * after it has loaded its state and its serve config: at boot on Ubuntu 24.04
+ * this unit came up 15 ms after tailscaled ("Tailscale is starting. Please
+ * wait."), `serve status` showed nothing, the sidecar was started with no
+ * origin, and every request through the tailnet proxy answered 403 until
+ * somebody restarted the service. So when the env file says a proxy was
+ * verified (`MURAGE_TRUSTED_PROXY=1`), the daemon is polled until it shows
+ * the proxy or this deadline passes; a box where none was ever verified is
+ * not made to wait. `MURAGE_PROXY_WAIT_SECONDS` tunes it; `0` disables it.
+ */
+export const PROXY_WAIT_SECONDS = 90;
+
+/** @param {Record<string, string | undefined>} env @returns {number} */
+export function proxyWaitMs(env) {
+  const raw = env.MURAGE_PROXY_WAIT_SECONDS;
+  if (raw === undefined || String(raw).trim() === "") return PROXY_WAIT_SECONDS * 1000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n * 1000) : PROXY_WAIT_SECONDS * 1000;
+}
+
+/** A sleep that ends early when the signal fires. */
+function pause(ms, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
  * The origin the tailnet proxy actually answers on for this door, read back
  * from the daemon — or null.
  *
  * Read, not composed. Handing the sidecar an origin nobody verified is how a
  * door ends up issuing `Secure` cookies for an https listener that was never
  * configured, and printing a QR for an address that does not resolve.
+ *
+ * When setup verified a proxy (`MURAGE_TRUSTED_PROXY=1` in `env`), the daemon
+ * is given up to `proxyWaitMs(env)` to report it — see PROXY_WAIT_SECONDS.
  * @param {number} door
  * @returns {Promise<string | null>}
  */
-async function doorFront(door, { env = process.env, signal } = {}) {
+async function doorFront(door, { env = process.env, signal, log = console.log } = {}) {
   // Resolve without spawning a synchronous `which` after the harness starts.
   const bin = ts.tailscaleBin({ env, onPath: command =>
     String(env.PATH ?? "").split(delimiter).some(path => existsSync(join(path, command))) });
   if (!bin) return null;
-  const output = await startupProbe(bin, ["serve", "status", "--json"], { env, signal });
-  if (!output) return null;
-  let doc;
-  try { doc = JSON.parse(output); } catch { return null; }
-  const share = ts.inspectShareConfig(doc, door);
-  if (!share.configured || share.publicExposure) return null;
-  return ts.serveOrigin(doc, door);
+  const probe = async () => {
+    const output = await startupProbe(bin, ["serve", "status", "--json"], { env, signal });
+    if (!output) return null;
+    let doc;
+    try { doc = JSON.parse(output); } catch { return null; }
+    const share = ts.inspectShareConfig(doc, door);
+    if (!share.configured || share.publicExposure) return null;
+    return ts.serveOrigin(doc, door);
+  };
+  const expected = env.MURAGE_TRUSTED_PROXY === "1";
+  const deadline = Date.now() + (expected ? proxyWaitMs(env) : 0);
+  let said = false;
+  for (;;) {
+    const origin = await probe();
+    if (origin || !expected || signal?.aborted || Date.now() >= deadline) {
+      if (!origin && said) warn("tailscaled did not report the proxy in time; the door starts without a verified front. Re-run `murage setup` if it stays that way.");
+      return origin;
+    }
+    if (!said) {
+      said = true;
+      log(c.dim(`  waiting for tailscaled to report the proxy in front of the door (up to ${Math.round(proxyWaitMs(env) / 1000)}s; it is still starting)…`));
+    }
+    await pause(1000, signal);
+  }
 }
 
 /**
