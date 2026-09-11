@@ -317,6 +317,7 @@ import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { isMemoryProvenanceEcho } from "./memory/provenance-echo.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
@@ -1130,7 +1131,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
       // newer ask_bot waiter with the old partial reply.
       if (shouldIgnoreProviderEvent(e)) return;
       if (e.threadId !== threadId) return;
-      if (e.type === "item.completed" && e.itemType === "assistant_text") {
+      if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) {
         text += (text ? "\n" : "") + e.text;
       } else if (e.type === "turn.completed") {
         if (e.ok) finish({ status: "reply", text: text || "(the bot finished without a text reply)" });
@@ -2255,6 +2256,11 @@ function requestBehavior(value: unknown): "allow" | "deny" | "answer" | null {
 // the last settled assistant text per thread, so a "finished" notification
 // can carry what the bot actually said
 const lastReply = new Map<string, string>();
+/** A reply item that only copied memory provenance JSON is held back until its
+ * turn completes; a turn with nothing else to show ends with a retryable
+ * notice instead of presenting that JSON as the answer (MEMJSON1). */
+const memoryEchoReplies = new Map<string, { turnId?: string; text: string }>();
+const MEMORY_ECHO_NOTICE = "error: The reply only repeated internal memory references instead of answering. Retry to ask again.";
 
 /** Put a notification on the wire. Clients decide what to do with it — a
  * desktop notification now, a push to a paired phone later. */
@@ -2678,6 +2684,10 @@ bus.subscribe((event: RuntimeEvent) => {
     case "item.completed":
       if (event.itemType === "assistant_text") {
         const text = event.text;
+        if (isMemoryProvenanceEcho(text)) {
+          memoryEchoReplies.set(event.threadId, { turnId: event.turnId, text });
+          break;
+        }
         pushMessage({ role: "bot", kind: "text", text, turnId: event.turnId });
         // kept so "finished" can say what it finished with, rather than
         // just that something ended
@@ -3039,8 +3049,23 @@ bus.subscribe((event: RuntimeEvent) => {
           });
         }
       }
-      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, event.ok ? "completed" : event.stopReason === "cancelled" ? "cancelled" : "failed");
-      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, event.ok ? "completed" : "failed");
+      const memoryEcho = memoryEchoReplies.get(event.threadId);
+      memoryEchoReplies.delete(event.threadId);
+      const echoOnlyReply = Boolean(memoryEcho && event.ok
+        && (!memoryEcho.turnId || !event.turnId || memoryEcho.turnId === event.turnId)
+        && !store.messagesFor(event.threadId).some((message) =>
+          message.role === "bot" && message.kind === "text" && message.turnId === completedTurnId
+          && Boolean(message.text?.trim() || message.attachments?.length)));
+      if (memoryEcho && echoOnlyReply) {
+        pushMessage({
+          role: "bot",
+          kind: "activity",
+          tool: { name: MEMORY_ECHO_NOTICE, ok: false, errorDetails: redactSecretsInText(memoryEcho.text).slice(0, 4096) },
+          turnId: completedTurnId,
+        });
+      }
+      if (completedTurnId) store.markTerminalAssistantMessage(event.threadId, completedTurnId, echoOnlyReply ? "failed" : event.ok ? "completed" : event.stopReason === "cancelled" ? "cancelled" : "failed");
+      else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, event.ok && !echoOnlyReply ? "completed" : "failed");
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
       const reply = lastReply.get(event.threadId) ?? "";
@@ -5352,7 +5377,7 @@ async function runGroupMemberTurn(
       if (shouldIgnoreProviderEvent(e)) return;
       if (e.threadId !== threadId) return;
       if (providerTurnId && e.turnId && e.turnId !== providerTurnId) return;
-      if (e.type === "item.completed" && e.itemType === "assistant_text") replyText += `\n${e.text}`;
+      if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) replyText += `\n${e.text}`;
       else if (e.type === "turn.completed") {
         if (orchestration && !e.ok) {
           orchestration.result.stopReason = e.stopReason ?? null;
