@@ -68,6 +68,20 @@ export interface OptionCardData {
   allowKey?: string;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
+  /** 0.1.52 ASK2: a provider question's structured questions, persisted
+   * with the card in messages.db so it survives a reload and a restart. */
+  questions?: import("../shared/questions.ts").QuestionSpec[];
+  /** The owner's validated answers (a secret question's answer is never
+   * kept). Present once answered, or once a late answer was sent. */
+  answers?: import("../shared/questions.ts").QuestionAnswer[];
+  /** The engine stopped waiting with no answer (timeout, turn end,
+   * restart). The card stays visible and offers "Send as a message". */
+  expired?: boolean;
+  /** An expired question's answer went to the bot as an ordinary message. */
+  sentAsMessage?: boolean;
+  /** Raised during a run nobody was watching (routine, webhook, Telegram);
+   * an expired one of these stays in the Inbox as needing the owner. */
+  unattended?: boolean;
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: RoutineRequestCardData;

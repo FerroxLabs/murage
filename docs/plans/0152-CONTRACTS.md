@@ -12,6 +12,7 @@ Written by lane K0 on `lane/0152-K0`. Every 0.1.52 lane follows these shapes. If
 | `shared/artifacts.ts` | `Artifact.producer?: OutputProducer`. The field is absent for manual or tool registration and for older rows. | R3-T2, R3-T3 |
 | `server/contracts.ts` | `ProviderStopResult` (`{closeConfirmed:true}` or `{closeConfirmed:false, reason:"timeout"\|"stop-failed"}`). `interruptTurn` now returns `Promise<void \| ProviderStopResult>`. Optional `awaitTurnTeardown?(threadId, turnId)`. `stopCloseConfirmed(result)` returns `undefined` for legacy `void`. | R1-T2 (ACP core, Pi), R1-T8 |
 | `electron/main-trust.mjs` | `isOwnedMainSender(event, {window, origin})` checks the same webContents, top frame, non-detached frame and exact origin, and fails closed. `mainRendererOrigin({packaged, serverPort, devUrl})`. | R2-T1, S1-T3, F4-T5 |
+| `shared/questions.ts` (K0 amendment, ASK2) | `QuestionOption {label, description?}`, `QuestionSpec {id, question, header?, options[], multiSelect, allowOther, secret?}`, `QuestionAnswer {id, selected[], other?}`, `QUESTION_LIMITS` (4 questions, 10 options, 2,000-char free text), `QUESTION_TIMEOUT_MS` (30 min), `isQuestionCard`, `questionsForCard`, `questionFromChoices`, `answerComplete`, `answersAsMessage` | ASK2 (Claude), later question lanes (Codex, Fuigo/ACP, Pi, Telegram) |
 
 ## Routes (all wired in `server/index.ts`; modules own the behaviour)
 
@@ -43,6 +44,17 @@ Modules return `DelegatedResult {status, headers?, body?, bytes?, stream?}`, and
 - **Close-confirmed stop (A2).** A requested kill or an acknowledged cancel is not closure. Keep resource ownership until `closeConfirmed:true`, and retain it on timeout.
 - **i18n (U-25).** Add English strings to `src/locales/en.json` only, under a key prefix for your area. Do not edit other locales or `source-hashes.json`; Q1-T4 regenerates them. An `i18n:check` failure caused only by that is expected.
 - **Dependencies.** Tiptap `@tiptap/{core,pm,react,starter-kit,markdown,extension-table,extension-task-list,extension-list}` is pinned exactly to `3.31.3` in K0 (React peer `^17 || ^18 || ^19`). No other lane changes `pnpm-lock.yaml` except Q1-T3, and Q1-T3 runs alone.
+
+## Amendment A1 — agent questions (ASK1 + ASK2, `0152-ASK-USER-RESEARCH.md` §4)
+
+Additive only; every field is optional and older consumers keep working.
+
+- **`RuntimeEvent` `request.opened`** gains `questions?: QuestionSpec[]` next to the existing `questionTool?: true` (ASK1). `summary` stays the first question's text and `choices` its option labels, so voice (`CallView`/`GroupCallView`) and older clients degrade gracefully.
+- **`ProviderAdapter.respondToRequest`** decision gains `answers?: QuestionAnswer[]`. `message` stays the same answer as plain text for drivers that read one string. A `deny` on a question is an honest "no answer" (skipped), never a refusal — the broker used to reject it, which left the engine waiting out its whole timeout.
+- **`OptionCardData`** (`server/store.ts` and the renderer's mirror in `src/state/store.tsx`) gains `questions`, `answers`, `expired`, `sentAsMessage`, `unattended`. Cards persist in `messages.db`, so a question survives a reload; a boot sweep marks anything still open as Expired.
+- **Routes.** `POST /api/bots/:id/respond` and `POST /api/threads/:id/respond` accept `answers` (validated against the persisted card) and `behavior:"skip"`, plus `{behavior:"answer", answers, sentAsMessage:true}` to record an expired question's late answer after it went out through the ordinary composer route. A question is never answered with `allow`.
+- **`DecisionKind`** gains `question-expired` and `question-skipped`. An answer itself is conversation, not authorization, and is never logged; a secret question's answer is never written to the transcript or the log.
+- **Normalizer.** `server/question-normalize.ts` owns every engine mapping (`fromClaude`, `fromMuragebox`, `toClaudeAnswers`, `toMessageText`, `validateAnswers`, `parseAnswers`, `answersFromMessage`, `recordableAnswers`, `QUESTION_NOTES`). Engine input becomes a card only once it is bounded and well formed. Later question lanes add `from*`/`to*` pairs here rather than in a driver.
 
 ## Merge-order hotspots (lane map §2)
 

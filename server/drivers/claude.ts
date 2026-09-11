@@ -37,6 +37,18 @@ import type {
 import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
 import {
+  QUESTION_NOTES,
+  answersFromMessage,
+  fromClaude,
+  fromMuragebox,
+  toClaudeAnswers,
+  toMessageText,
+  validateAnswers,
+  type QuestionAnswer,
+  type QuestionSpec,
+} from "../question-normalize.ts";
+import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
+import {
   classifyError,
   computeBackoff,
   createAttemptBoundary,
@@ -164,6 +176,9 @@ export interface ClaudeConfig {
   tools?: string[];
   /** Claude tool patterns to deny after the available set is selected. */
   disallowedTools?: string[];
+  /** How long an AskUserQuestion waits for the owner before Claude is told
+   * nobody answered (default 30 min, clamped to 1 s – 24 h). */
+  questionTimeoutMs?: number;
 }
 
 // model catalog ported from upstream packages/contracts/src/model.ts
@@ -277,21 +292,30 @@ function removePrivateTempDir(filePath: string | null | undefined): boolean {
 // neither stall silently NOR get blanket-denied — it should ask the user.
 // The broker is a net server on a per-turn socket; the proxy (spawned by
 // the claude CLI) forwards asks over it and waits. Unanswered permission
-// asks deny after timeoutMs with a keep-moving note; unanswered questions
-// answer with "use your best judgment" — guidance, never a block.
+// asks deny after timeoutMs with a keep-moving note. Unanswered questions
+// wait up to 30 minutes and then receive an honest "nobody answered" —
+// never an invented answer presented as the owner's (0.1.52 ASK2).
 interface Ask {
   id: string;
   kind: "permission" | "question";
   tool: string;
   input: Record<string, unknown>;
   at: number;
+  /** question asks: what the card shows and what answers are checked against */
+  questions?: QuestionSpec[];
 }
 type AskBehavior = "allow" | "deny" | "answer";
 type AskResolutionSource = "user" | "timeout" | "system";
 
 const DENY_TIMEOUT_NOTE =
   "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
-const QUESTION_TIMEOUT_NOTE = "Murage: nobody answered in time. Use your best judgment and continue.";
+/** The engine wait for a question, overridable per instance
+ * (`config.questionTimeoutMs`) and bounded so a typo cannot hold a turn for
+ * days or expire a card before a person could read it. */
+function questionTimeoutFor(value: unknown): number {
+  const ms = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : QUESTION_TIMEOUT_MS;
+  return Math.min(Math.max(ms, 1_000), 24 * 60 * 60_000);
+}
 const DUPLICATE_ASK_ID_NOTE = "Murage: duplicate ask id — skipping this request.";
 
 /** The system-source reply for an ask that outlives the turn — used both to
@@ -306,6 +330,7 @@ function systemEndedReply(kind: Ask["kind"]): { behavior: AskBehavior; message: 
 /** One human-readable line for an ask — what the card subtitle shows. */
 function askSummary(ask: Ask): string {
   const input = ask.input ?? {};
+  if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
   if (typeof input.question === "string") return input.question.slice(0, 300);
   if (typeof input.command === "string") return input.command.slice(0, 200);
   if (typeof input.url === "string") return input.url.slice(0, 200);
@@ -358,11 +383,22 @@ export async function createPermissionBroker(opts: {
   onResolve: (resolved: Ask & { behavior: AskBehavior; source: AskResolutionSource }) => void;
   isActive?: () => boolean;
   timeoutMs?: number;
+  /** How long a question waits for the owner (default 30 min). */
+  questionTimeoutMs?: number;
 }) {
   const timeoutMs = opts.timeoutMs ?? 15 * 60_000;
+  const questionTimeoutMs = questionTimeoutFor(opts.questionTimeoutMs);
   const pending = new Map<
     string,
-    { ask: Ask; finish: (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource) => void }
+    {
+      ask: Ask;
+      finish: (
+        behavior: AskBehavior,
+        message: string | undefined,
+        source: AskResolutionSource,
+        answers?: Record<string, string | string[]>,
+      ) => void;
+    }
   >();
   // server.close() only stops accepting NEW connections — it does not touch
   // a connection that's already open. A still-alive child's MCP proxy can
@@ -431,20 +467,41 @@ export async function createPermissionBroker(opts: {
         return;
       }
       const ask: Ask = { id: askId, kind, tool: msg.tool ?? "tool", input: msg.input ?? {}, at: Date.now() };
-      const finish = (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource) => {
+      if (kind === "question") {
+        // Engine-controlled input becomes a card only once it is bounded and
+        // well formed. A question the owner cannot be shown is answered at
+        // once with why, instead of opening a card nobody can answer.
+        const normalized = ask.tool === "AskUserQuestion" ? fromClaude(ask.input) : fromMuragebox(ask.input);
+        if (!normalized.ok) {
+          try {
+            conn.write(JSON.stringify({ t: "answer", id: askId, behavior: "deny", message: QUESTION_NOTES.unshowable(normalized.error) }) + "\n");
+          } catch {}
+          return;
+        }
+        ask.questions = normalized.questions;
+      }
+      const finish = (
+        behavior: AskBehavior,
+        message: string | undefined,
+        source: AskResolutionSource,
+        answers?: Record<string, string | string[]>,
+      ) => {
         if (!pending.delete(askId)) return;
         clearTimeout(timer);
         try {
-          conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message }) + "\n");
+          conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message, ...(answers ? { answers } : {}) }) + "\n");
         } catch {}
         opts.onResolve({ ...ask, behavior, source });
       };
+      // A question left unanswered gets an honest non-answer: Claude sees a
+      // deny whose note says nobody answered, never a guess in the owner's
+      // name. The card stays behind as Expired with "Send as a message".
       const timer = setTimeout(
         () =>
           kind === "question"
-            ? finish("answer", QUESTION_TIMEOUT_NOTE, "timeout")
+            ? finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(questionTimeoutMs / 60_000))), "timeout")
             : finish("deny", DENY_TIMEOUT_NOTE, "timeout"),
-        timeoutMs,
+        kind === "question" ? questionTimeoutMs : timeoutMs,
       );
       timer.unref?.();
       pending.set(askId, { ask, finish });
@@ -514,10 +571,32 @@ export async function createPermissionBroker(opts: {
     }
   };
   return {
-    answer(askId: string, behavior: AskBehavior, message?: string): boolean {
+    /** Settle one ask. A question takes `answer` (with the owner's picks)
+     * or `deny` — an explicit skip, delivered immediately. Before 0.1.52 a
+     * deny on a question was refused, so closing a question card left
+     * Claude waiting out the whole timeout. */
+    answer(askId: string, behavior: AskBehavior, message?: string, answers?: QuestionAnswer[]): boolean {
       const p = pending.get(askId);
       if (!p) return false;
-      if (p.ask.kind === "question" ? behavior !== "answer" : behavior === "answer") return false;
+      if (p.ask.kind === "question") {
+        if (behavior === "allow") return false;
+        if (behavior === "deny") {
+          p.finish("deny", message || QUESTION_NOTES.skipped, "user");
+          return true;
+        }
+        const questions = p.ask.questions ?? [];
+        const given = answers?.length ? answers : answersFromMessage(questions, message);
+        if (!given) return false;
+        const checked = validateAnswers(questions, given);
+        if (!checked.ok) return false;
+        if (p.ask.tool === "AskUserQuestion") {
+          p.finish("answer", undefined, "user", toClaudeAnswers(questions, checked.answers));
+        } else {
+          p.finish("answer", toMessageText(questions, checked.answers), "user");
+        }
+        return true;
+      }
+      if (behavior === "answer") return false;
       p.finish(behavior, message, "user");
       return true;
     },
@@ -568,7 +647,12 @@ function decodeConfig(raw: unknown): ClaudeConfig {
   if(o.configDir!==undefined&&typeof o.configDir!=="string")throw new Error("claude: configDir must be a string");
   const configDir=typeof o.configDir==="string"?o.configDir.trim():undefined;
   if(configDir)resolveClaudeConfigDir(configDir);
+  const questionTimeoutMs = o.questionTimeoutMs;
+  if (questionTimeoutMs !== undefined && (typeof questionTimeoutMs !== "number" || !Number.isFinite(questionTimeoutMs) || questionTimeoutMs <= 0)) {
+    throw new Error("claude: questionTimeoutMs must be a positive number of milliseconds");
+  }
   return {
+    ...(typeof questionTimeoutMs === "number" ? { questionTimeoutMs } : {}),
     cli: typeof o.cli === "string" ? o.cli : "claude",
     ...(configDir?{configDir}:{}),
     permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "acceptEdits",
@@ -986,6 +1070,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           broker = await createPermissionBroker({
             socketPaths: brokerSocketCandidates(threadId),
             isActive: () => Boolean(sessions.get(threadId)?.turn),
+            questionTimeoutMs: config.questionTimeoutMs,
             onAsk: (ask) => {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
               askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
@@ -1000,7 +1085,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                   typeof ask.tool === "string" && controlsHost && ask.tool.startsWith("mcp__computer")
                     ? "local-computer"
                     : undefined,
-                choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
+                // the first question's labels keep voice and older clients working
+                choices: ask.questions?.length
+                  ? ask.questions[0]!.options.map((option) => option.label)
+                  : Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
+                ...(ask.questions?.length ? { questions: ask.questions } : {}),
               });
             },
             onResolve: (resolved) => {
@@ -1543,7 +1632,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const broker = sessions.get(threadId)?.broker ?? active.get(threadId)?.broker;
           if (!broker) return "unavailable";
           const behavior = decision.behavior === "answer" ? "answer" : decision.behavior;
-          if (!broker.answer(requestId, behavior, decision.message)) return "unavailable";
+          if (!broker.answer(requestId, behavior, decision.message, decision.answers)) return "unavailable";
           return behavior === "allow" ? "allowed-once" : behavior === "answer" ? "answered" : "rejected";
         },
         hasSession: (threadId) => active.has(threadId),
