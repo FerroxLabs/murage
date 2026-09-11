@@ -6,8 +6,12 @@ after every further lane merge (see "How to refresh this draft" at the end).
 
 - Shipped baseline: 0.1.51 at `acaee1dbfb5551ae41d5f0d24c6bf3a314e5a282`.
 - Integration head this draft was written from: `37c2822d` on
-  `release/v0.1.52` (168 commits since the baseline, 110 non-merge), plus
-  this lane's locale regeneration on top.
+  `release/v0.1.52` (168 commits since the baseline, 120 non-merge —
+  `git rev-list --count --no-merges acaee1db..37c2822d`; an earlier
+  revision of this draft said 110), plus this lane's locale regeneration
+  on top. The branch has moved since (`cae69216` at the RED2C edit: 185
+  commits, 134 non-merge); sections 1 and 3 still describe `37c2822d`
+  until the refresh in section 5 is re-run.
 - Version: `package.json` is `0.1.52` (the only surface
   `scripts/release-guard.mjs version` reads; it prints `0.1.52`). The
   companion, docs and control-plane manifests carry their own independent
@@ -329,10 +333,11 @@ close a set of audited gaps, and all seven language packs are complete.
   against the exact English source each translates, so `pnpm i18n:check` is
   green and a future English change flags the stale translation.
 - **Baseline red suites repaired, not skipped.** `server/index.test.ts`
-  (17 failures at the 0.1.51 baseline) is 237/237: four real thread-era
-  defects fixed (delete-guard order, read-state body validation, explicit
-  channel-thread interrupt, package import rewriting persisted bots) and
-  the rest re-aligned to recorded decisions. The Electron data-owner and
+  (17 failures at the 0.1.51 baseline) is 237/237: four thread-era
+  behaviours tightened so the suite's expectations hold (delete-guard
+  order, read-state body validation, explicit channel-thread interrupt,
+  package import rewriting persisted bots) and the rest re-aligned to
+  recorded decisions. The Electron data-owner and
   memory-profile fixtures evaluate the real `main.mjs` slices again. A new
   `main-module-load` test proves the Electron main module still loads with
   every handler registered exactly once.
@@ -414,7 +419,7 @@ draft body. Rewrite from the merged list at freeze time.
 
 Merged into `release/v0.1.52` at `37c2822d`. Every row is a non-merge commit
 returned by `git log --no-merges --format='%h %s' acaee1db..release/v0.1.52`
-(110 commits) plus this lane's own; nothing older than the `acaee1db`
+(120 commits at `37c2822d`) plus this lane's own; nothing older than the `acaee1db`
 baseline belongs here. Lane labels are the task ids in the commit subjects.
 
 | Lane / task | Commit(s) | Kind | Draft entry |
@@ -485,7 +490,7 @@ baseline belongs here. Lane labels are the task ids in the commit subjects.
 | FLUXCOMPOSIO + fix | `31e98d45`, `e3868d32`, `e638cf48` | added | connected apps on FluxRouter with claim migration; verifier gaps; fixture stubs |
 | U0-T1 | `af4a48d8` | enhanced | responsive chat header |
 | ASK3 + docs | `28398199`, `21fa9cb0`, `9b6b4cf8`, `c3a47648`, `05c76009`, `eac9c390`, `9e5bdbf3` | added | Codex, Fuigo, ACP elicitation and Pi questions; Telegram questions; Fuigo MCP elicit bridge |
-| RED1 (Q1) | `9ea574d6`, `944138c3`, `2965d1a2` | quality | four thread-era defects; index.test.ts 237/237; Electron fixtures evaluate real main.mjs |
+| RED1 (Q1) | `9ea574d6`, `944138c3`, `2965d1a2` | quality | four thread-era behaviours tightened; index.test.ts 237/237; Electron fixtures evaluate real main.mjs |
 | F5-T5 (M5) | `6290cdb6` | quality | joined media publication proof |
 | F4-T3 | `504e2095` | added | workspace pane with preview tabs and editing |
 | F4-T7 + fixes | `a3edecf4`, `02abb31f`, `054c7073` | quality / enhanced | joined workspace-editor proof; lease marked dispatched only before sendTurn; conflict clears stale refusal |
@@ -557,7 +562,8 @@ of "what you can do today" and do not promise gates that are still open):
 ## 5. How to refresh this draft after further merges
 
 1. `git log --no-merges --format='%h %s' acaee1db..release/v0.1.52` (use
-   `rtk proxy git` if the wrapper truncates; the count at `37c2822d` is 110)
+   `rtk proxy git` if the wrapper truncates; the count at `37c2822d` is 120,
+   at `cae69216` 134)
    and read each new commit body; add one entry per user-visible change to
    section 1 and one row to the section 3 table.
 2. If a merged lane added English strings to `src/locales/en.json`, draft the
