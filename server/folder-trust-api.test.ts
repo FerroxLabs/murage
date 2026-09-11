@@ -16,7 +16,7 @@
 //
 // Same server-spawn pattern as engine-questions-api.test.ts.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,13 +55,60 @@ const decisions = (): any[] => {
 const readDump = () => JSON.parse(readFileSync(dump, "utf8"));
 const trustRecord = async (folder: string) => (await request("GET", `/api/folder-trust?folder=${encodeURIComponent(folder)}`)).body;
 
-async function makeBot(name: string) {
+/** The fixture server: a `fuigo login` install (auth.json) whose Fuigo is
+ * the fake ACP CLI in folder-trust mode, plus a second instance whose fake
+ * finishes the prompt while its own trust request is still open. */
+async function bootServer(homeDir: string, port: number): Promise<{ child: ChildProcess; desktop: Record<string, string> }> {
+  const url = `http://127.0.0.1:${port}`;
+  mkdirSync(join(homeDir, ".murage"), { recursive: true });
+  mkdirSync(join(homeDir, ".fuigo"), { recursive: true });
+  writeFileSync(join(homeDir, ".fuigo", "auth.json"), "{}");
+  const dumpFile = join(homeDir, "fake-acp-dump.json");
+  writeFileSync(
+    join(homeDir, ".murage", "config.json"),
+    JSON.stringify({
+      engineDiscovery: "explicit",
+      instances: {
+        fuigo: { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile }, config: { cli: FAKE_ACP, fullAuto: false } },
+        "fuigo-late": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile, FAKE_ACP_TRUST_PROMPT_FIRST: "1" }, config: { cli: FAKE_ACP, fullAuto: false } },
+      },
+    }),
+  );
+  const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    cwd: join(SERVER_DIR, ".."),
+    env: {
+      ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+      MURAGE_PORT: String(port),
+      MURAGE_WEBHOOK_PORT: String(port + 1),
+      MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  proc.stderr!.on("data", (c) => (stderr += c));
+  proc.stdout!.on("data", (c) => (stderr += c));
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    try {
+      if ((await fetch(`${url}/api/health`)).ok) break;
+    } catch {
+      /* not up yet */
+    }
+    if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  const proof = (await fetch(`${url}/api/desktop-secret`).then((r) => r.json())) as { secret: string };
+  return { child: proc, desktop: { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret } };
+}
+
+async function makeBot(name: string, instanceId = "fuigo") {
   const engines = (await request("GET", "/api/instances")).body.instances as any[];
-  const fuigo = engines.find((engine) => engine.instanceId === "fuigo");
-  expect(fuigo, `no fuigo instance among ${engines.map((e) => e.instanceId).join(",")}`).toBeTruthy();
+  const fuigo = engines.find((engine) => engine.instanceId === instanceId);
+  expect(fuigo, `no ${instanceId} instance among ${engines.map((e) => e.instanceId).join(",")}`).toBeTruthy();
   // model ids are free-form at the API boundary (a Flux tier would demand a
   // key); without a key the catalog is empty, and the fake ignores -m anyway
-  const created = await request("POST", "/api/bots", { name, modelSelection: { instanceId: "fuigo", model: "fake-acp-model" } });
+  const created = await request("POST", "/api/bots", { name, modelSelection: { instanceId, model: "fake-acp-model" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
   // auto mode ON: the trust card must still reach the human (ASK1's rule)
@@ -86,44 +133,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     chmodSync(FAKE_ACP, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-folder-trust-api-"));
     dump = join(home, "fake-acp-dump.json");
-    mkdirSync(join(home, ".murage"), { recursive: true });
-    // a `fuigo login` install: the driver's auth gate reads ~/.fuigo/auth.json
-    mkdirSync(join(home, ".fuigo"), { recursive: true });
-    writeFileSync(join(home, ".fuigo", "auth.json"), "{}");
-    writeFileSync(
-      join(home, ".murage", "config.json"),
-      JSON.stringify({
-        engineDiscovery: "explicit",
-        instances: {
-          fuigo: { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dump }, config: { cli: FAKE_ACP, fullAuto: false } },
-        },
-      }),
-    );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
-      cwd: join(SERVER_DIR, ".."),
-      env: {
-        ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
-        HOME: home,
-        USERPROFILE: home,
-        MURAGE_PORT: String(port),
-        MURAGE_WEBHOOK_PORT: String(port + 1),
-        MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stderr!.on("data", (c) => (stderr += c));
-    const deadline = Date.now() + 20_000;
-    for (;;) {
-      try {
-        if ((await fetch(`${base}/api/health`)).ok) break;
-      } catch {
-        /* not up yet */
-      }
-      if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    const proof = (await fetch(`${base}/api/desktop-secret`).then((r) => r.json())) as { secret: string };
-    desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+    ({ child, desktop: desktopHeaders } = await bootServer(home, port));
   }, 40_000);
 
   afterAll(async () => {
@@ -243,4 +253,197 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect(readDump().argv).not.toContain("--trust");
     expect((await messages(bot.threadId)).find((m) => m.card?.requestId === again.card.requestId)!.card.answered).toBe("skipped");
   });
+
+  // ── FUIGOTRUST2 follow-ups ──────────────────────────────────────────────
+
+  it("(2) a folder the user's own Fuigo install trusts never sees a card or a withheld chip — even over a Murage 'Don't trust' — and the picker says so", async () => {
+    const bot = await makeBot("Upstream bot");
+    const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, "AGENTS.md"), "# planted\ncanary-upstream-egret\n");
+    // first: Murage's own Don't trust, remembered
+    await send(bot);
+    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
+    const card = (await openTrustCard(bot.threadId))!;
+    expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
+    await settled(bot);
+    expect(await botText(bot.threadId)).not.toContain("canary-upstream-egret");
+    expect((await activities(bot.threadId)).filter((name) => name === "untrusted folder: AGENTS.md")).toHaveLength(1);
+    expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: false, record: { decision: "reject" } });
+
+    // then the person runs `fuigo --trust` in that folder: the engine's own
+    // store trusts it (its canonical key), which the engine reads before it
+    // ever asks Murage
+    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(workspace)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    try {
+      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject" } });
+      await send(bot, "again");
+      await settled(bot);
+      // no second card, the reply carries the instruction, and no chip
+      // claims the folder was untrusted: Murage did not lie about the turn
+      expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(1);
+      expect(await botText(bot.threadId)).toContain("canary-upstream-egret");
+      expect((await activities(bot.threadId)).filter((name) => name === "untrusted folder: AGENTS.md")).toHaveLength(1);
+      const wire = readDump();
+      // Murage passes no --trust of its own and rewrites nothing; the engine's store spoke
+      expect(wire.argv).not.toContain("--trust");
+      expect(wire.folderTrust, JSON.stringify(wire.argv)).toMatchObject({ trustedAtBuild: true, requested: false });
+      // and Murage's record is untouched: nothing new was recorded
+      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject", source: "card" } });
+    } finally {
+      rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
+    }
+  });
+
+  it("(3) picker trust is recorded only with desktop authority: a companion cannot grant it through the task picker, and the card then goes to the owner", async () => {
+    const bot = await makeBot("Task picker bot");
+    const project = join(home, "task-project");
+    mkdirSync(join(project, ".git"), { recursive: true });
+    writeFileSync(join(project, "AGENTS.md"), "# picked\ncanary-task-crane\n");
+    const companion = { "x-murage-companion": "1" };
+    // a paired device: the working folder is a desktop setting (404 to a companion), and nothing is recorded
+    const remote = await request("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { cwd: project }, companion);
+    expect(remote.status).toBe(404);
+    expect((await trustRecord(project)).record).toBeNull();
+    // the desktop's broad bot patch is a desktop-authority route outright
+    const remoteBot = await request("PATCH", `/api/bots/${bot.id}`, { cwd: project }, companion);
+    expect(remoteBot.status).toBeGreaterThanOrEqual(400);
+    expect((await trustRecord(project)).record).toBeNull();
+    // the owner's desktop: the task picker sets the folder AND records it
+    const desktop = await request("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { cwd: project });
+    expect(desktop.status).toBe(200);
+    expect(desktop.body.task).toMatchObject({ cwd: project });
+    expect(await trustRecord(project)).toMatchObject({ record: { decision: "trust", source: "picker" } });
+    await send(bot);
+    await settled(bot);
+    expect((await messages(bot.threadId)).some((m) => m.card?.folderTrust)).toBe(false);
+    expect(await botText(bot.threadId)).toContain("canary-task-crane");
+  });
+
+  it("(4) importing a team as a project records the chosen folder as picker-trusted", async () => {
+    const seed = await request("POST", "/api/bots", { name: "Importer", title: "Lead", description: "Plans", color: "purple" });
+    expect(seed.status).toBe(201);
+    const exported = await request("POST", "/api/teams/export", { name: "Trust Team" });
+    expect(exported.status).toBe(200);
+    const project = join(home, "imported-project");
+    mkdirSync(join(project, ".git"), { recursive: true });
+    writeFileSync(join(project, "AGENTS.md"), "# imported\n");
+    // a companion cannot import at all, so it cannot record either
+    const remote = await request("POST", `/api/teams/import?mode=project&cwd=${encodeURIComponent(project)}`, exported.body, { "x-murage-companion": "1" });
+    expect(remote.status).toBeGreaterThanOrEqual(400);
+    expect((await trustRecord(project)).record).toBeNull();
+    const created = await request("POST", `/api/teams/import?mode=project&cwd=${encodeURIComponent(project)}`, exported.body);
+    expect(created.status).toBe(201);
+    expect(created.body.group).toMatchObject({ cwd: project });
+    expect(await trustRecord(project)).toMatchObject({ record: { decision: "trust", source: "picker" } });
+  });
+
+  it("(6) when the engine asks late and the turn finishes first, the card says the turn ran untrusted and the chip names what was asked about", async () => {
+    // the server's scan names nothing (an empty private workspace), so no
+    // card before the spawn; the engine's fake still asks, and answers the
+    // prompt at once — the turn outruns the card
+    const bot = await makeBot("Late bot", "fuigo-late");
+    await send(bot);
+    await expect.poll(async () => (await messages(bot.threadId)).some((m) => m.card?.folderTrust), { timeout: 20_000 }).toBe(true);
+    await settled(bot);
+    const card = (await messages(bot.threadId)).find((m) => m.card?.folderTrust)!;
+    expect(card.card).toMatchObject({ answered: "expired", expired: true, folderTrust: { sources: ["AGENTS.md / CLAUDE.md"], late: "finished" } });
+    expect(await activities(bot.threadId)).toContain("untrusted folder: AGENTS.md / CLAUDE.md");
+    expect(await botText(bot.threadId)).toContain("agents: withheld");
+    expect(readDump().decision).toEqual({ outcome: "reject" });
+    // the turn was not stopped: no "stopped:" chip
+    expect((await activities(bot.threadId)).filter((name) => name.startsWith("stopped:"))).toEqual([]);
+  });
+});
+
+// (5) upgrade: folders bots, tasks and rooms already worked in before 0.1.52
+// were chosen by the person in Murage, so the first boot records them once.
+posixOnly("upgrade seed of pre-0.1.52 working folders", () => {
+  let seedHome: string;
+  let seedBase: string;
+  let seedChild: ChildProcess | null = null;
+  let seedDesktop: Record<string, string>;
+  let port: number;
+  const projectA = () => join(seedHome, "repo-a");
+  const projectB = () => join(seedHome, "plain-b");
+  const roomFolder = () => join(seedHome, "room-c");
+  const req = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+    const res = await fetch(`${seedBase}${path}`, { method, headers: { ...seedDesktop, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: res.status, body: await res.json() };
+  };
+  const record = async (folder: string) => (await req("GET", `/api/folder-trust?folder=${encodeURIComponent(folder)}`)).body;
+  const boot = async () => {
+    ({ child: seedChild, desktop: seedDesktop } = await bootServer(seedHome, port));
+  };
+  const stop = async () => {
+    if (seedChild) await waitForExit(seedChild, { signal: "SIGTERM" });
+    seedChild = null;
+  };
+
+  beforeAll(async () => {
+    port = await freePortBlock([0, 1]);
+    seedBase = `http://127.0.0.1:${port}`;
+    chmodSync(FAKE_ACP, 0o755);
+    seedHome = mkdtempSync(join(tmpdir(), "murage-folder-trust-seed-"));
+    mkdirSync(join(seedHome, ".murage"), { recursive: true });
+    mkdirSync(join(projectA(), ".git"), { recursive: true });
+    writeFileSync(join(projectA(), "AGENTS.md"), "# a\ncanary-seed-ibis\n");
+    mkdirSync(join(projectB(), "nested"), { recursive: true });
+    mkdirSync(roomFolder(), { recursive: true });
+    // a 0.1.51 store: a bot working in repo-a, one of its tasks pinned to a
+    // subfolder of plain-b, a room on room-c, and a task pinned to a
+    // bot-created private workspace (never seeded: the gate exists for it)
+    const managed = join(seedHome, ".murage", "workspaces", "bot-old", "threads", "thread-managed");
+    mkdirSync(managed, { recursive: true });
+    writeFileSync(join(seedHome, ".murage", "bots.json"), JSON.stringify([
+      { id: "bot-old", threadId: "thread-old", name: "Old bot", cwd: projectA(), modelSelection: { instanceId: "fuigo", model: "fake-acp-model" }, tasks: [
+        { threadId: "thread-old", cwd: join(projectB(), "nested") },
+        { threadId: "thread-managed", cwd: managed },
+      ] },
+    ]));
+    writeFileSync(join(seedHome, ".murage", "groups.json"), JSON.stringify([
+      { id: "room-old", threadId: "thread-room", name: "Old room", memberIds: ["bot-old"], cwd: roomFolder() },
+    ]));
+    await boot();
+  }, 40_000);
+
+  afterAll(async () => {
+    await stop();
+    await removeTempDir(seedHome);
+  });
+
+  it("the first boot records every pre-existing working folder once; a Forget survives a restart; the seed never re-runs", async () => {
+    expect(await record(projectA())).toMatchObject({ record: { decision: "trust", source: "upgrade" } });
+    expect(await record(join(projectB(), "nested"))).toMatchObject({ record: { decision: "trust", source: "upgrade" } });
+    expect(await record(roomFolder())).toMatchObject({ record: { decision: "trust", source: "upgrade" } });
+    // the bot-created workspace is not a human's choice
+    const managed = join(seedHome, ".murage", "workspaces", "bot-old", "threads", "thread-managed");
+    expect((await record(managed)).record).toBeNull();
+    const persisted = JSON.parse(readFileSync(join(seedHome, ".murage", "folder-trust.json"), "utf8"));
+    expect(persisted).toMatchObject({ version: 1, seededFrom: "0.1.52" });
+    expect(Object.keys(persisted.folders)).toHaveLength(3);
+    expect(stderr).toContain("[folder-trust] recorded 3 folder");
+
+    // and the seeded bot's first turn in repo-a asks nothing
+    const bots = (await req("GET", "/api/bots?messages=0")).body.bots as any[];
+    const old = bots.find((b) => b.id === "bot-old");
+    expect(old).toBeTruthy();
+    const patched = await req("PATCH", `/api/bots/bot-old`, { settingsScope: "defaults", autoApprove: true, autoReview: "off", computer: "off", browser: false, composio: false });
+    expect(patched, JSON.stringify(patched.body)).toMatchObject({ status: 200 });
+    expect((await req("POST", `/api/bots/bot-old/messages`, { threadId: "thread-old", text: "go" })).status).toBe(202);
+    await expect.poll(async () => (await req("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === "bot-old")?.busy, { timeout: 30_000 }).toBe(false);
+    const rows = (await req("GET", `/api/threads/thread-old/messages?limit=200`)).body.messages as any[];
+    expect(rows.some((m) => m.card?.folderTrust)).toBe(false);
+
+    // Forget one, restart: the seed does not put it back, the others stay
+    expect((await req("DELETE", `/api/folder-trust?folder=${encodeURIComponent(projectA())}`)).status).toBe(200);
+    await stop();
+    await boot();
+    expect((await record(projectA())).record).toBeNull();
+    expect(await record(roomFolder())).toMatchObject({ record: { decision: "trust", source: "upgrade" } });
+    expect(Object.keys(JSON.parse(readFileSync(join(seedHome, ".murage", "folder-trust.json"), "utf8")).folders)).toHaveLength(2);
+    // logged once, on the first boot only (the fixture suite's own fresh
+    // store above logged its empty seed separately)
+    expect((stderr.match(/\[folder-trust\] recorded 3 folders/g) ?? [])).toHaveLength(1);
+  }, 60_000);
 });
