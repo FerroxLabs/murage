@@ -41,6 +41,12 @@ const refuses = (target: string, reason: RegExp, env: Record<string, string | un
   expect(run.stderr).toMatch(reason);
 };
 
+// No .sh script runs on Windows, and `pnpm test` runs this file on
+// windows-latest (release.yml) with no platform gate: the live-lease case
+// relies on git-bash `kill -0 <pid>` knowing a Windows pid, which MSYS `kill`
+// without `-W` does not, so the suite is skipped there rather than reporting
+// the shell policy as broken (FOLLOW7, SAFEWIPE1 verifier).
+describe.skipIf(process.platform === "win32")("scripts/safe-wipe.sh", () => {
 beforeAll(() => {
   scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-safe-wipe-sh-")));
   expect(existsSync(FAKE_HOME)).toBe(false);
@@ -140,4 +146,5 @@ describe("scripts/safe-wipe.sh admits", () => {
     expect(run.status, run.stderr).toBe(0);
     expect(existsSync(join(home, ".murage"))).toBe(false);
   });
+});
 });
