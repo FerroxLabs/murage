@@ -1685,7 +1685,8 @@ function relayStream(
     try {
       rewritten = scrubStream(chunk);
     } catch {
-      // The buffer ceiling. Half an event cannot be forwarded safely.
+      // The buffer ceiling, or a structured event that could not be scrubbed.
+      // Half an event cannot be forwarded safely, and neither can a raw one.
       release();
       harness.destroy();
       res.end();

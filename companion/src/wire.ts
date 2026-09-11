@@ -122,7 +122,20 @@ function nextBoundary(text: string): { index: number; terminator: string } | nul
   return best;
 }
 
-/** One complete SSE event, `data:` payload scrubbed, everything else kept. */
+/** Thrown when an event parsed as JSON but could not be scrubbed. It carries
+ * no payload: the payload is exactly what must not travel any further. */
+export class SseScrubError extends Error {
+  constructor() {
+    super("an SSE event parsed as JSON but could not be scrubbed");
+  }
+}
+
+/** One complete SSE event, `data:` payload scrubbed, everything else kept.
+ *
+ * Throws `SseScrubError` rather than return anything when a payload parses and
+ * then cannot be scrubbed. Both relays already end the stream on a throw from
+ * the scrubber, which is the only safe outcome: the event is structured, so
+ * the raw line is known to be the shape that can carry withheld keys. */
 function scrubEvent(event: string): string {
   // The ending this event arrived with is the one it leaves with.
   const eol = event.includes("\r\n") ? "\r\n" : event.includes("\r") ? "\r" : "\n";
@@ -133,12 +146,23 @@ function scrubEvent(event: string): string {
       if (!line.startsWith("data:")) return line;
       const raw = line.slice(5).trimStart();
       if (!raw) return line;
+      let parsed: unknown;
       try {
-        return `data: ${JSON.stringify(scrub(JSON.parse(raw)))}`;
+        parsed = JSON.parse(raw);
       } catch {
         // not JSON: pass it through rather than dropping it. A frame this
         // code does not understand is still the harness's to send.
         return line;
+      }
+      // Parsing and scrubbing used to share the catch above, so a payload
+      // nested deeply enough to overflow the recursive scrub — which JSON.parse
+      // handles without complaint — was treated as "not JSON after all" and
+      // forwarded raw. The ordinary JSON paths in both doors already refuse
+      // that case; this is the same rule for the stream.
+      try {
+        return `data: ${JSON.stringify(scrub(parsed))}`;
+      } catch {
+        throw new SseScrubError();
       }
     })
     .join(eol);
