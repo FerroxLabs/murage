@@ -9,6 +9,7 @@ import { dataDirLeasePaths } from "./data-dir-lease.mjs";
 import { deriveManagedComposioCredentials, MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
 import { trackedCredentialUpdate } from "./secure-credentials.mjs";
+import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 
 const rawSource = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 // Test-only negative controls execute the actual main function with exactly
@@ -27,6 +28,25 @@ if (control) assert.ok(controls[control] && rawSource.includes(controls[control]
 const source = control ? rawSource.replace(...controls[control]) : rawSource;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const bootstrapDependencies = `process.env ??= {}; const path={join:(...parts)=>parts.join("/")}; const ownedDesktopDataDir=()=>"/fixture/canonical"; const migrateLegacyDataDirectory=()=>{}; const assertRestoreReviewed=()=>{}; const configureRestoredDesktopConnections=()=>{};`;
+// The actual whenReady block wires the remote-server connection registry and
+// its application menu before installation ownership (server-connection.mjs,
+// f954417a) and consults the paused-restore selection flag when deciding the
+// legacy migration (89e874eb). The registry is the real module; only Electron
+// UI objects are stubbed, and every menu call is recorded so tests can assert
+// the wiring order against the actual code.
+const bootstrapBody = () => between('app.whenReady().then(async () => {', '  // Boot migrations above').split('async () => {')[1];
+function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
+  const Menu = {
+    buildFromTemplate: template => ({ items: template.map(item => ({ ...item })) }),
+    getApplicationMenu: () => null,
+    setApplicationMenu: value => menu.push(value.items.map(item => item.label)),
+  };
+  return { createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive };
+}
+function runBootstrap(scope, prelude = "", wiring = {}) {
+  const full = { ...bootstrapWiring(wiring), ...scope };
+  return new AsyncFunction(...Object.keys(full), `${prelude}${bootstrapBody()}`)(...Object.values(full));
+}
 const between = (start, end) => {
   const first = source.indexOf(start);
   const last = source.indexOf(end, first);
@@ -40,82 +60,81 @@ const deferred = () => {
 };
 
 test("packaged bootstrap claims canonical ownership before credential reads or migrations", async () => {
-  const events = [];
-  const body = between('app.whenReady().then(async () => {', '  // Boot migrations above').split('async () => {')[1];
-  const run = new AsyncFunction("app", "process", "APP_ICON", "loadSecureCredentials", "secureComposioConfig", "secureWorkspaceConfig", "acquireDesktopDataOwner", "assertDesktopStartupActive", `${bootstrapDependencies} let secureCredentials; ${body}`);
-  await run({isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"}, {platform:"linux"}, null,
-    async()=>{events.push("read");return{};}, async()=>events.push("composio"), async()=>events.push("workspace"),
-    ()=>events.push("lease"), ()=>{});
+  const events = [], menu = [];
+  await runBootstrap({
+    app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"}, process:{platform:"linux"}, APP_ICON:null,
+    loadSecureCredentials:async()=>{events.push("read");return{};}, secureComposioConfig:async()=>events.push("composio"), secureWorkspaceConfig:async()=>events.push("workspace"),
+    acquireDesktopDataOwner:()=>{events.push("lease");assert.deepEqual(menu,[["Server"]],"server menu is installed before ownership");}, assertDesktopStartupActive:()=>{},
+  }, `${bootstrapDependencies} let secureCredentials;`, { menu });
   assert.deepEqual(events, ["lease", "read", "composio", "workspace"]);
+  assert.deepEqual(menu, [["Server"]]);
 });
 
 test("development bootstrap never claims packaged data ownership or migrates config", async () => {
   const events = [];
-  const body = between('app.whenReady().then(async () => {', '  // Boot migrations above').split('async () => {')[1];
-  const run = new AsyncFunction("app", "process", "APP_ICON", "loadSecureCredentials", "secureComposioConfig", "secureWorkspaceConfig", "acquireDesktopDataOwner", "assertDesktopStartupActive", `${bootstrapDependencies} let secureCredentials; ${body}`);
-  await run({isPackaged:false}, {platform:"linux"}, null, async()=>({}),
-    async()=>events.push("migration"), async()=>events.push("migration"), ()=>events.push("lease"), ()=>{});
+  await runBootstrap({
+    app:{isPackaged:false}, process:{platform:"linux"}, APP_ICON:null, loadSecureCredentials:async()=>({}),
+    secureComposioConfig:async()=>events.push("migration"), secureWorkspaceConfig:async()=>events.push("migration"),
+    acquireDesktopDataOwner:()=>events.push("lease"), assertDesktopStartupActive:()=>{},
+  }, `${bootstrapDependencies} let secureCredentials;`);
   assert.deepEqual(events, []);
 });
 
 test("packaged lease refusal prevents every credential read and migration", async () => {
   let accesses=0;
-  const body=between('app.whenReady().then(async () => {','  // Boot migrations above').split('async () => {')[1];
-  const run=new AsyncFunction("app","process","APP_ICON","loadSecureCredentials","secureComposioConfig","secureWorkspaceConfig","acquireDesktopDataOwner","assertDesktopStartupActive",`${bootstrapDependencies} let secureCredentials;${body}`);
-  await assert.rejects(run({isPackaged:true,setAsDefaultProtocolClient(){}},{platform:"linux"},null,
-    async()=>{accesses++;return{};},async()=>{accesses++;},async()=>{accesses++;},
-    ()=>{throw new Error("installation busy");},()=>{}),/installation busy/);
+  await assert.rejects(runBootstrap({
+    app:{isPackaged:true,setAsDefaultProtocolClient(){}}, process:{platform:"linux"}, APP_ICON:null,
+    loadSecureCredentials:async()=>{accesses++;return{};}, secureComposioConfig:async()=>{accesses++;}, secureWorkspaceConfig:async()=>{accesses++;},
+    acquireDesktopDataOwner:()=>{throw new Error("installation busy");}, assertDesktopStartupActive:()=>{},
+  }, `${bootstrapDependencies} let secureCredentials;`),/installation busy/);
   assert.equal(accesses,0);
 });
 
 test("bootstrap cannot resume migrations after shutdown during credential read",async()=>{
   const gate=deferred();let stopping=false,migrations=0;
-  const body=between('app.whenReady().then(async () => {','  // Boot migrations above').split('async () => {')[1];
-  const run=new AsyncFunction("app","process","APP_ICON","loadSecureCredentials","secureComposioConfig","secureWorkspaceConfig","acquireDesktopDataOwner","assertDesktopStartupActive",`${bootstrapDependencies} let secureCredentials;${body}`);
-  const boot=run({isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"},{platform:"linux"},null,()=>gate.promise,
-    async()=>{migrations++;},async()=>{migrations++;},()=>{},()=>{if(stopping)throw new Error("cancelled");});
+  const boot=runBootstrap({
+    app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"}, process:{platform:"linux"}, APP_ICON:null,
+    loadSecureCredentials:()=>gate.promise, secureComposioConfig:async()=>{migrations++;}, secureWorkspaceConfig:async()=>{migrations++;},
+    acquireDesktopDataOwner:()=>{}, assertDesktopStartupActive:()=>{if(stopping)throw new Error("cancelled");},
+  }, `${bootstrapDependencies} let secureCredentials;`);
   stopping=true;gate.resolve({});await assert.rejects(boot,/cancelled/);
   assert.equal(migrations,0);
 });
 
-for(const override of [undefined,"/explicit/installation"]) test(`actual packaged bootstrap migrates legacy only for original default (${override??"default"})`,async()=>{
+// A paused-restore selection (89e874eb) keeps the default home out of legacy
+// migration even when no explicit override is set.
+for(const selectionActive of [false,true]) for(const override of [undefined,"/explicit/installation"]) test(`actual packaged bootstrap migrates legacy only for original default (${override??"default"}, selection ${selectionActive?"active":"inactive"})`,async()=>{
   const events=[];
-  const body=between('app.whenReady().then(async () => {','  // Boot migrations above').split('async () => {')[1];
-  const scope={
+  await runBootstrap({
     app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"},process:{platform:"linux",env:override===undefined?{}:{MURAGE_DATA_DIR:override}},path,APP_ICON:null,
     assertDesktopStartupActive:()=>{},acquireDesktopDataOwner:()=>events.push("lease"),ownedDesktopDataDir:()=>"/canonical/owned",
     migrateLegacyDataDirectory:options=>{events.push(options);},assertRestoreReviewed:()=>{},configureRestoredDesktopConnections:()=>{},
     loadSecureCredentials:async()=>{events.push("read");return{};},secureComposioConfig:async()=>events.push("composio"),secureWorkspaceConfig:async()=>events.push("workspace"),
-  };
-  await new AsyncFunction(...Object.keys(scope),`let secureCredentials;${body}`)(...Object.values(scope));
-  assert.deepEqual(events,["lease",{dataDir:"/canonical/owned",legacyDataDir:path.join("/fixture/home", ".opengrokbot"),enabled:override===undefined},"read","composio","workspace"]);
+  },"let secureCredentials;",{selectionActive});
+  assert.deepEqual(events,["lease",{dataDir:"/canonical/owned",legacyDataDir:path.join("/fixture/home", ".opengrokbot"),enabled:override===undefined&&!selectionActive},"read","composio","workspace"]);
 });
 
 test("actual packaged migration failure never reaches credential/config reads",async()=>{
   let accessed=false;
-  const body=between('app.whenReady().then(async () => {','  // Boot migrations above').split('async () => {')[1];
-  const scope={
+  await assert.rejects(runBootstrap({
     app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"},process:{platform:"linux",env:{}},path,APP_ICON:null,
     assertDesktopStartupActive:()=>{},acquireDesktopDataOwner:()=>{},ownedDesktopDataDir:()=>"/canonical/owned",
     migrateLegacyDataDirectory:()=>{throw new Error("migration refused");},assertRestoreReviewed:()=>{},configureRestoredDesktopConnections:()=>{},
     loadSecureCredentials:async()=>{accessed=true;return{};},secureComposioConfig:async()=>{accessed=true;},secureWorkspaceConfig:async()=>{accessed=true;},
-  };
-  await assert.rejects(new AsyncFunction(...Object.keys(scope),`let secureCredentials;${body}`)(...Object.values(scope)),/migration refused/);
+  },"let secureCredentials;"),/migration refused/);
   assert.equal(accessed,false);
 });
 
 test("packaged restore review blocks credential reads before and after legacy migration",async()=>{
   for(const blockAfterMigration of [false,true]) {
     let migrated=false,reads=0;
-    const body=between('app.whenReady().then(async () => {','  // Boot migrations above').split('async () => {')[1];
-    const scope={
+    await assert.rejects(runBootstrap({
       app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"},process:{platform:"linux",env:{}},path,APP_ICON:null,
       assertDesktopStartupActive:()=>{},acquireDesktopDataOwner:()=>{},ownedDesktopDataDir:()=>"/canonical/owned",
       assertRestoreReviewed:()=>{if(!blockAfterMigration||migrated)throw new Error("review required");},
       migrateLegacyDataDirectory:()=>{migrated=true;},configureRestoredDesktopConnections:()=>{},
       loadSecureCredentials:async()=>{reads++;return{};},secureComposioConfig:async()=>{reads++;},secureWorkspaceConfig:async()=>{reads++;},
-    };
-    await assert.rejects(new AsyncFunction(...Object.keys(scope),`let secureCredentials;${body}`)(...Object.values(scope)),/review required/);
+    },"let secureCredentials;"),/review required/);
     assert.equal(reads,0);
     assert.equal(migrated,blockAfterMigration);
   }
@@ -135,7 +154,6 @@ test("both actual boot migrations read only the owner's canonical root",async()=
 });
 
 test("actual bootstrap selects fresh connection storage after ownership and before credential reads", async () => {
-  const body = between('app.whenReady().then(async () => {', '  // Boot migrations above').split('async () => {')[1];
   const configure = between("function configureRestoredDesktopConnections() {", "/** Set once per launch:");
   const events = [];
   let owned = false;
@@ -147,11 +165,10 @@ test("actual bootstrap selects fresh connection storage after ownership and befo
     configureCompanionStorage:storage=>events.push(storage), assertRestoreReviewed:()=>{}, migrateLegacyDataDirectory:()=>{},
     secureComposioConfig:async()=>{},secureWorkspaceConfig:async()=>{},events,
   };
-  const code = `let CREDENTIALS_FILE="/old/credentials.bin",restoredConnections=null,secureCredentials;
+  const prelude = `let CREDENTIALS_FILE="/old/credentials.bin",restoredConnections=null,secureCredentials;
     ${configure}
-    const loadSecureCredentials=async()=>{events.push(CREDENTIALS_FILE);return{};};
-    ${body}`;
-  await new AsyncFunction(...Object.keys(scope), code)(...Object.values(scope));
+    const loadSecureCredentials=async()=>{events.push(CREDENTIALS_FILE);return{};};`;
+  await runBootstrap(scope, prelude);
   assert.deepEqual(events, ["lease","/fixture/owned",{settingsDirectory:"/fresh/settings",stateDirectory:"/fresh/devices"},"/fresh/credentials.bin"]);
 });
 
@@ -216,9 +233,12 @@ test("actual canonical root resolver rejects empty override without acquiring or
 
 function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController()}={}) {
   const text=source.slice(source.indexOf("function cleanupDesktopForExit() {"));
-  const messages=[];let quit=0;let trigger;
+  const messages=[];let quit=0,backgroundQuits=0;let trigger;
   const scope={
     app:{on:(_event,handler)=>{trigger=handler;},quit:()=>{quit++;}},
+    // The actual before-quit handler first tells the background lifecycle
+    // (5b140c4f) that quit began so tray/close handling stops re-hiding the window.
+    backgroundLifecycle:{beginQuit:()=>{backgroundQuits++;}},
     syncCompanionKeepAwake:()=>{},nativeActions:{appleSpeech:false},stopSpeech:()=>{},stopRecorder:()=>{},browserSurface:null,
     stopDesktopCompanion:async()=>{},browserHost:null,browserLifecycleCleanups:new Map(cleanups.map((work,index)=>[index,work])),stopCua:cua,cuaReady:Promise.resolve(),
     slog:()=>{},dialog:{showErrorBox:(_title,body)=>messages.push(body)},
@@ -232,13 +252,14 @@ function shutdownFixture({stop=async()=>{},writes=[],cleanups=[],startup=Promise
     const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),companionStarts=new Set();
     ${text};return {cleanupWithoutQuit:cleanupDesktopForExit,get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
   `)(...Object.values(scope),stop,writes,release);
-  return {state,messages,quit:()=>quit,trigger:()=>trigger({preventDefault(){}})};
+  return {state,messages,quit:()=>quit,backgroundQuits:()=>backgroundQuits,trigger:()=>trigger({preventDefault(){}})};
 }
 
 test("actual before-quit waits for child exit AND pending credentials before releasing",async()=>{
   const child=deferred(),write=deferred();let released=0;
   const f=shutdownFixture({stop:()=>child.promise,writes:[write.promise],release:()=>{released++;return true;}});
-  f.trigger();await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
+  f.trigger();assert.equal(f.backgroundQuits(),1,"before-quit begins the background lifecycle quit before waiting");
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
   child.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
   write.resolve();await f.state.cleanup;
   assert.equal(released,1);assert.equal(f.quit(),1);assert.equal(f.state.owned,false);
