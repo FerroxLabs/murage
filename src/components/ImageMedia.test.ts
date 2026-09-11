@@ -99,6 +99,32 @@ describe("item builders", () => {
     expect(screenFrameItem(PNG).id).not.toBe(screenFrameItem(PNG.replace("AAAA", "BBBB")).id);
   });
 
+  // F5-T4 (IMG-SEED): which images carry a "Use as reference" source at all.
+  // Only an image the harness can re-read by identity does; a screen frame, an
+  // external URL and bytes that exist only in the message text never do.
+  it("carries a reference source only for images the harness can re-read by identity", () => {
+    expect(attachmentImageItem("/a/abc-1.png", "abc-1.png")!.reference).toEqual({ source: { kind: "attachment", attachmentId: "abc-1.png" } });
+    expect(screenFrameItem(PNG).reference).toBeUndefined();
+    // Markdown text is not authority, so neither Markdown form offers it.
+    for (const src of [PNG_URL, "/api/attachments/abc-1.png"]) {
+      const resolved = resolveMarkdownImage(src, "x");
+      expect(resolved.kind, src).toBe("inline");
+      expect(resolved.kind === "inline" && resolved.item.reference, src).toBeUndefined();
+    }
+  });
+
+  it("pins a saved image to the exact version shown and offers nothing it cannot pin", () => {
+    const saved = { id: "art-1", name: "Chart", sha256: "aa", mime: "image/png", bytes: 1024, threadId: "thread-a", botId: "bot-a" };
+    expect(artifactImageItem(saved, PNG_URL)!.reference).toEqual({
+      source: { kind: "artifact", artifactId: "art-1", sha256: "aa" }, threadId: "thread-a", botId: "bot-a",
+    });
+    // No conversation, an unusable type, or over the per-image limit: no action.
+    expect(artifactImageItem({ ...saved, threadId: undefined }, PNG_URL)!.reference).toBeUndefined();
+    expect(artifactImageItem({ ...saved, mime: "image/gif" }, PNG_URL)!.reference).toBeUndefined();
+    expect(artifactImageItem({ ...saved, bytes: 11 * 1024 * 1024 }, PNG_URL)!.reference).toBeUndefined();
+    expect(artifactImageItem({ id: "art-1", name: "Chart", sha256: "aa" }, PNG_URL)!.reference).toBeUndefined();
+  });
+
   it("labels every source for the dialog", () => {
     for (const source of ["attachment", "artifact", "screen-frame", "external-link", "inline-data"] as const) {
       expect(imageSourceLabel(source)).toMatch(/\S/);
