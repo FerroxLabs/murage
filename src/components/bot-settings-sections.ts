@@ -1,3 +1,5 @@
+import { botRole, type BotRole, type RoleBot } from "@/lib/bot-role";
+
 export const BOT_SETTINGS_SECTIONS = [
   { id: "overview", label: "Overview", keywords: "profile avatar role chief leader individual imported team setup" },
   { id: "identity", label: "Identity & instructions", keywords: "name title description personality persona job" },
@@ -17,6 +19,9 @@ export function filterBotSettingsSections(query: string) {
   return BOT_SETTINGS_SECTIONS.filter(section => words.every(word => `${section.label} ${section.keywords}`.toLowerCase().includes(word)));
 }
 export const settingsRoleLabel = (role: string) => role === "chief" ? "Chief of Staff" : role === "leader" ? "Team leader" : role === "individual" ? "Individual bot" : "Team member";
-export function activeSettingsRole(bot: { chiefOfStaff?: boolean; chiefScope?: string; individual?: boolean }) {
-  return bot.chiefOfStaff ? bot.chiefScope === "workspace" ? "chief" : "leader" : bot.individual ? "individual" : "member";
+/** The role this bot holds right now. `botRole()` is the one reader of the
+ *  three org-chart fields; an imported package's `sourceRole` is metadata
+ *  about where the bot came from and never decides leadership. */
+export function activeSettingsRole(bot: RoleBot): BotRole {
+  return botRole(bot);
 }
