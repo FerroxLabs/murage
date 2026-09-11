@@ -6,6 +6,10 @@
 // restrictions. The key is used exactly once, here, to mint a broker token the
 // harness keeps. These tests hold that line: the key goes to `/v1/tokens` and
 // nowhere else, and only the STORED key is ever spent.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -61,6 +65,13 @@ describe("minting the FluxRouter connected-apps token", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe(`${FLUX}/v1/tokens`);
     expect(calls[0].init.headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(JSON.parse(calls[0].init.body)).toEqual({ label: "murage-desktop" });
+  });
+
+  it("labels the token for whoever is minting, so a dev harness's shows as such at FluxRouter", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": minted() });
+    await ensureFluxComposioBrokerToken(base({ credentials: {}, fetchImpl: impl, label: "murage-dev-harness" }));
+    expect(JSON.parse(calls[0].init.body)).toEqual({ label: "murage-dev-harness" });
   });
 
   it("leaves a healthy token alone", async () => {
@@ -214,5 +225,35 @@ describe("the token's supporting helpers", () => {
       fetchImpl: async () => { throw new Error("offline"); },
     })).resolves.toBe(false);
     await expect(revokeFluxComposioBrokerToken({ fluxBrokerUrl: FLUX, token: "nope", fetchImpl: async () => new Response(null) })).resolves.toBe(false);
+  });
+});
+
+// main.mjs boots Electron on import, so its wiring is checked by source
+// shape (the harness-resources suite does the same).
+describe("who mints, in which build", () => {
+  const main = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "main.mjs"), "utf8");
+
+  it("mints and claims from the desktop shell only when packaged", () => {
+    // A dev shell has no encrypted Flux key and no server child to hand a
+    // token to (`syncManagedComposioCredentials` needs `serverProc`), so a
+    // mint there could only ever burn one of the account's five live tokens.
+    // The dev harness mints for itself: server/flux-composio-dev-token.ts.
+    const gate = main.slice(main.indexOf("function fluxComposioLifecycleEnabled()"), main.indexOf("\n}\n", main.indexOf("function fluxComposioLifecycleEnabled()")));
+    expect(gate).toContain("app.isPackaged");
+    expect(gate).toContain("fluxComposioBrokerUrlValue()");
+    expect(gate).toContain("!credentialStoreUnavailable");
+
+    const lifecycle = main.slice(main.indexOf("async function runComposioLifecycle("), main.indexOf("function startComposioLifecycleTimer()"));
+    expect(lifecycle).toContain("if (!fluxComposioLifecycleEnabled() || !secureCredentialState)");
+    const timer = main.slice(main.indexOf("function startComposioLifecycleTimer()"), main.indexOf("\n}\n", main.indexOf("function startComposioLifecycleTimer()")));
+    expect(timer).toContain("!fluxComposioLifecycleEnabled()");
+    // Every trigger goes through the gate: boot, the Flux key save, the
+    // revoked-token message. The consent button refuses a dev launch outright.
+    expect(main.match(/if \(fluxComposioLifecycleEnabled\(\)\) (?:void )?runComposioLifecycle\(/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(main).toContain("if (fluxComposioLifecycleEnabled()) {\n    void runComposioLifecycle().catch(() => {});\n    startComposioLifecycleTimer();");
+    expect(main).toContain("if (fluxComposioLifecycleEnabled()) {\n      void runComposioLifecycle().catch(() => {});\n      startComposioLifecycleTimer();");
+    expect(main).toContain("if (fluxComposioLifecycleEnabled()) void runComposioLifecycle({ force: true })");
+    const claim = main.slice(main.indexOf('ipcMain.handle("composio:claim-legacy"'), main.indexOf("runComposioLifecycle({ claim: true })"));
+    expect(claim).toContain("if (!app.isPackaged) throw new Error(");
   });
 });

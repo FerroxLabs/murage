@@ -72,6 +72,7 @@ export async function ensureFluxComposioBrokerToken({
   now = Date.now(),
   force = false,
   onRateLimited = () => {},
+  label = "murage-desktop",
 }) {
   const url = normalizeManagedComposioBrokerUrl(fluxBrokerUrl);
   const next = { ...credentials };
@@ -99,7 +100,7 @@ export async function ensureFluxComposioBrokerToken({
     response = await fetchImpl(`${url}/v1/tokens`, {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ label: "murage-desktop" }),
+      body: JSON.stringify({ label }),
       redirect: "error",
       signal: timeoutSignal(15_000),
     });

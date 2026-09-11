@@ -1,6 +1,7 @@
 // A project API key (ak_…) creates/reuses one Composio Session. That
 // Session owns connection state, auth links and the MCP endpoint.
 import { saveConfig, type AppConfig } from "./config.ts";
+import { devFluxTokenApplies, devFluxTokenInFlight, ensureDevFluxBrokerToken, readDevFluxTokenDocument, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
@@ -266,6 +267,8 @@ export function resetManagedBrokerState(): void {
   fluxReadiness = null;
   fluxReadinessProbe = null;
   fluxAccountStatus = null;
+  devTokenRemintDue = false;
+  resetDevFluxTokenState();
 }
 
 export function setManagedBrokerAccess(access: unknown): void {
@@ -318,14 +321,34 @@ function fluxBrokerUrl(): string {
   }
 }
 
+/** The dev harness's self-minted token (flux-composio-dev-token.ts), only
+ * where that module applies: never inside the packaged app, never over an
+ * env-pinned token. */
+function devFluxTokenEligible(url: string): boolean {
+  // A desktop message having arrived is the surest sign this harness is the
+  // packaged app's child, whatever its env says.
+  return managedFluxBrokerUrl === undefined && devFluxTokenApplies(url);
+}
+
+function devFluxToken(url: string): { token?: string; accountKind?: AccountKind; tokenError?: string } {
+  if (!devFluxTokenEligible(url)) return {};
+  const document = readDevFluxTokenDocument();
+  return {
+    token: document.fluxComposioBrokerToken,
+    accountKind: document.fluxComposioAccountKind,
+    tokenError: document.fluxComposioTokenError,
+  };
+}
+
 /** A well-formed Flux broker credential, before readiness is considered. The
  * token has the same 64-hex shape as the Worker's; the Flux API key is never
  * a broker credential (it reaches engines, this token never does). */
 function fluxBrokerCandidate(): { url: string; token: string } | null {
   if (managedFluxAccess !== undefined) return managedFluxAccess;
   const url = fluxBrokerUrl();
-  const token = process.env.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN?.trim();
-  if (!url || !token || !managedBrokerToken.test(token)) return null;
+  if (!url) return null;
+  const token = process.env.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN?.trim() || devFluxToken(url).token;
+  if (!token || !managedBrokerToken.test(token)) return null;
   return { url, token };
 }
 
@@ -349,8 +372,16 @@ function legacyClaim(): LegacyClaim {
 }
 
 function accountKind(): AccountKind | undefined {
-  const kind = managedAccountKind !== undefined ? managedAccountKind : process.env.MURAGE_FLUX_COMPOSIO_ACCOUNT_KIND;
+  const kind = managedAccountKind !== undefined
+    ? managedAccountKind
+    : process.env.MURAGE_FLUX_COMPOSIO_ACCOUNT_KIND || devFluxToken(fluxBrokerUrl()).accountKind;
   return kind === "personal" || kind === "shared" ? kind : undefined;
+}
+
+/** Why the last token mint was declined, from whichever process minted. */
+function tokenError(): string | undefined {
+  if (managedTokenError !== undefined) return managedTokenError ?? undefined;
+  return devFluxToken(fluxBrokerUrl()).tokenError;
 }
 
 // ── Flux broker readiness ──────────────────────────────────────────────
@@ -383,6 +414,7 @@ async function probeFluxReadiness(url: string): Promise<void> {
  * already running, so an offline laptop adds the probe to at most one turn
  * per negative TTL. */
 export async function primeBrokerReadiness(options: { turn?: boolean } = {}): Promise<void> {
+  await primeDevFluxToken(options);
   const candidate = fluxBrokerCandidate();
   if (!candidate) return;
   const cached = fluxReadiness;
@@ -406,6 +438,24 @@ export async function primeBrokerReadiness(options: { turn?: boolean } = {}): Pr
 /** Forget the readiness answer; the next primed request probes again. */
 export function invalidateBrokerReadiness(): void {
   fluxReadiness = null;
+}
+
+// The dev harness mints its own token (flux-composio-dev-token.ts). It is
+// primed exactly where readiness is, with the same turn rule: a turn never
+// waits on a mint another request already started. A `broker_token_revoked`
+// answer marks a forced re-mint for the next prime, the way the packaged app
+// re-mints on the `murage:flux-composio-token-rejected` message.
+let devTokenRemintDue = false;
+async function primeDevFluxToken(options: { turn?: boolean }): Promise<void> {
+  const url = fluxBrokerUrl();
+  if (!devFluxTokenEligible(url)) return;
+  if (options.turn && devFluxTokenInFlight()) return;
+  const force = devTokenRemintDue;
+  devTokenRemintDue = false;
+  const before = readDevFluxTokenDocument().fluxComposioBrokerToken;
+  const next = await ensureDevFluxBrokerToken({ fluxBrokerUrl: url, force, log: (line) => console.error(`[composio] ${line}`) });
+  // A new token is a new credential: probe readiness for it afresh.
+  if (next.fluxComposioBrokerToken !== before) fluxReadiness = null;
 }
 
 type BrokerEvent = { type: "murage:flux-composio-token-rejected" };
@@ -437,6 +487,7 @@ async function observeBrokerResponse(broker: BrokerAccess, response: Response): 
       invalidateBrokerReadiness();
     } else if (response.status === 401 && (await responseCode(response)) === "broker_token_revoked") {
       invalidateBrokerReadiness();
+      if (devFluxTokenEligible(broker.url)) devTokenRemintDue = true;
       brokerEventSink?.({ type: "murage:flux-composio-token-rejected" });
     }
     return;
@@ -517,10 +568,10 @@ const CLAIM_TO_MIGRATION: Record<LegacyClaimState, ConnectorMigrationState> = {
 export function connectorMigration(cfg: AppConfig): ConnectorMigration {
   const until = legacyUntil() || null;
   const kind = accountKind();
-  const tokenError = managedTokenError !== undefined ? managedTokenError ?? undefined : undefined;
+  const declined = tokenError();
   const base: ConnectorMigration = { state: "none", legacyUntil: until };
   if (kind) base.accountKind = kind;
-  if (tokenError) base.tokenError = tokenError;
+  if (declined) base.tokenError = declined;
   if (cfg.composio?.apiKey) return base;
   const claim = legacyClaim();
   if (claim.installationId) base.installationId = claim.installationId;

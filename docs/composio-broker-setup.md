@@ -143,6 +143,31 @@ Per-machine override, for dev:
 export MURAGE_COMPOSIO_BROKER_URL="https://…workers.dev"
 ```
 
+### 6.1 The FluxRouter broker in a dev harness
+
+The FluxRouter-hosted broker (`electron/composio-release-config.mjs`,
+`FLUX_COMPOSIO_BROKER_URL`) is honoured only in a packaged build. For QA
+point a dev run at a local Flux stack on the `flux-dev` Composio project —
+never prod — by exporting the override **for the harness server**:
+
+```bash
+export MURAGE_FLUX_COMPOSIO_BROKER_URL="http://127.0.0.1:4000/composio"
+pnpm dev:server
+```
+
+A dev harness mints its own broker token (`server/flux-composio-dev-token.ts`)
+from the Flux key in its `config.json` — the same key it routes models with,
+so it lands on the same FluxRouter account and Composio identity a packaged
+build would with that key. The token is kept owner-only in
+`<data dir>/flux-composio-broker-token.json` and re-used across restarts, so a
+developer's restarts do not burn the account's five live tokens. To pin a token
+by hand instead, also export `MURAGE_FLUX_COMPOSIO_BROKER_TOKEN`.
+
+The Electron dev shell (`pnpm dev:desktop`) never forks the harness, so it
+mints nothing; minting and the legacy-install claim run from the shell only
+when packaged. The claim (moving a Worker-registered install) therefore needs a
+packaged build launched with the env override.
+
 ---
 
 ## 7. End-to-end check
