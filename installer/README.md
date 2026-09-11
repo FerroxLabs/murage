@@ -132,6 +132,13 @@ run the whole agent stack as root, so setup never stages one.
   account, or is writable by other accounts is refused, and nothing is written.
   Under `sudo`, the refusal names `$SUDO_USER` as the value to pass. Root, or
   any account with uid 0, is refused as a service account.
+- The unit's `ReadWritePaths=` names the data directory **and its parent**:
+  the server keeps its installation lease beside the data directory, not in
+  it (`electron/data-dir-lease.mjs`), and under `ProtectHome=read-only` a
+  unit that granted only the data directory died at every start with
+  `DataDirLeaseError` (`LEASE_IO`) and restarted forever. A data directory
+  directly under `/` is refused for the same reason: the parent grant would
+  be the whole filesystem.
 - An existing data directory owned by a different account is refused, not
   re-owned. Setup also checks that the service account can actually reach the
   node runtime and the installer before it stages a unit that would fail at

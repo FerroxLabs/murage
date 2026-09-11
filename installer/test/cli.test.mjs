@@ -127,7 +127,7 @@ test("the systemd unit orders after tailscaled and does not widen the box", () =
   assert.ok(!/0\.0\.0\.0/.test(text));
   assert.ok(!/ALLOW_REMOTE/.test(text));
 
-  const noTs = unitText({ execPath: "/usr/bin/node", cliPath: "/x.mjs", dataDir: "/d", envFile: "/e", account: DEPLOY });
+  const noTs = unitText({ execPath: "/usr/bin/node", cliPath: "/x.mjs", dataDir: "/srv/d", envFile: "/e", account: DEPLOY });
   assert.ok(!/tailscaled/.test(noTs));
 });
 
@@ -137,7 +137,7 @@ test("the systemd unit orders after tailscaled and does not widen the box", () =
 test("stageUnit stages privately and hands back the commands, installing nothing", () => {
   const root = scratch();
   const r = stageUnit(
-    { execPath: "/usr/bin/node", cliPath: "/x.mjs", dataDir: "/d", envFile: "/e", tailscale: true, account: DEPLOY },
+    { execPath: "/usr/bin/node", cliPath: "/x.mjs", dataDir: "/srv/d", envFile: "/e", tailscale: true, account: DEPLOY },
     { stagingRoot: root }
   );
   assert.equal(dirname(dirname(r.stagedPath)), root);
