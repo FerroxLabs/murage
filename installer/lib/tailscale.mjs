@@ -34,9 +34,10 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+
+import { makePrivateDir, makePrivateTempDir, writeExclusiveFile } from "./private-files.mjs";
 
 /** Candidate locations for the CLI, in preference order. */
 const BIN_CANDIDATES = [
@@ -216,21 +217,24 @@ export function buildServeArgs(opts) {
 }
 
 /**
- * Write the auth key to a private file and return its path. The directory is
- * created 0700 and the file 0600, and `chmodSync` is called explicitly because
- * the `mode` option on `writeFileSync` is subject to the process umask.
+ * Write the auth key to a private file and return its path.
+ *
+ * The directory is new: randomly named, created 0700, and its owner and mode
+ * read back before the key goes in. It used to be `murage-tsauth-<pid>` under
+ * the shared temp dir, a name another local account could predict and create
+ * first. The file is created exclusively and 0600, so nothing already at that
+ * path is written through.
  * @param {string} key
- * @param {string} [dir] default: a private dir under the OS temp dir
+ * @param {string} [dir] a directory to create for it; it must not exist yet.
+ *   Default: a fresh private directory under the OS temp dir.
  * @returns {string}
  */
-export function writeAuthKeyFile(key, dir = join(tmpdir(), `murage-tsauth-${process.pid}`)) {
+export function writeAuthKeyFile(key, dir) {
   const trimmed = String(key ?? "").trim();
   if (!trimmed) throw new Error("refusing to write an empty auth key file");
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  chmodSync(dir, 0o700);
-  const path = join(dir, "authkey");
-  writeFileSync(path, trimmed, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  const owned = dir === undefined ? makePrivateTempDir("murage-tsauth-") : makePrivateDir(dir);
+  const path = join(owned, "authkey");
+  writeExclusiveFile(path, trimmed, { mode: 0o600 });
   return path;
 }
 

@@ -189,6 +189,10 @@ export async function waitForDoor(opts) {
  * @param {{ entry: string, execArgv: string[] }} opts.resolved
  * @param {Record<string, string>} opts.env
  * @param {"inherit"|"ignore"|"pipe"} [opts.stdio]
+ * @param {{ uid: number, gid: number } | null} [opts.as] run as this account.
+ *   Set only when setup runs as root on behalf of the service account, so the
+ *   files the setup-time sidecar creates in that account's data directory
+ *   belong to the account that will run it for real.
  * @param {typeof spawn} [opts.spawnImpl] test seam
  * @returns {{ child: import("node:child_process").ChildProcess, alive: () => boolean, stop: () => Promise<void> }}
  */
@@ -197,6 +201,7 @@ export function spawnCompanion(opts) {
   const child = run(process.execPath, [...opts.resolved.execArgv, opts.resolved.entry], {
     env: opts.env,
     stdio: opts.stdio ?? "inherit",
+    ...(opts.as ? { uid: opts.as.uid, gid: opts.as.gid } : {}),
   });
   return ownChild(child);
 }

@@ -23,7 +23,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,6 +31,15 @@ import { BindRefused, resolveBindFromEnv } from "../lib/bind.mjs";
 import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupProbe, waitForDoor } from "../lib/companion.mjs";
 import { envFilePermissions, readEnvFile, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
+import {
+  ServiceAccountRefused,
+  accountCanReach,
+  chooseServiceUser,
+  lookupAccount,
+  parseSetupArgs,
+  prepareDataDir,
+  setupPaths,
+} from "../lib/service-account.mjs";
 import { stageUnit } from "../lib/systemd.mjs";
 import * as ts from "../lib/tailscale.mjs";
 import { ask, askSecret, c, closeRl, confirm, fail, heading, ok, qrBlock, warn } from "../lib/ui.mjs";
@@ -179,11 +188,12 @@ async function ensureTailscaleInstalled() {
 
 /**
  * Prompt for and apply the tailnet enrolment.
+ * @param {SetupContext} ctx
  * @param {number} [port] the port the proxy will front — the BROWSER DOOR,
  *   not the harness. See `DOOR_PORT`.
  * @returns {Promise<{ ok: boolean, served?: boolean, verdict?: any, share?: any, reasons?: string[] }>}
  */
-async function enrolTailnet(port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
+async function enrolTailnet(ctx, port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
   const already = ts.verdictFromStatus(ts.status());
   if (already.ok) {
     ok(`already on the tailnet as ${c.b(already.dnsName ?? already.ips[0])}`);
@@ -198,7 +208,7 @@ async function enrolTailnet(port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
       // state a box is left in by an earlier setup that could not find a door
       // to front. Re-running setup has to be able to FIX that without demanding
       // a fresh auth key for a node that is already on the tailnet.
-      return { ...(await frontTheDoor(port, harnessPort)), verdict: already, reenrolled: false };
+      return { ...(await frontTheDoor(ctx, port, harnessPort)), verdict: already, reenrolled: false };
     }
   }
 
@@ -232,7 +242,7 @@ async function enrolTailnet(port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
   // setup finished by telling the operator to start a process it gave them no
   // way to start. Now the door is brought UP for the length of setup, proven,
   // and stopped again — `murage start` is what runs it for real.
-  const brought = await bringDoorUp(port, harnessPort);
+  const brought = await bringDoorUp(ctx, port, harnessPort);
   let https = false;
   if (brought.up) {
     https = await confirm("  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)", true);
@@ -262,11 +272,12 @@ async function enrolTailnet(port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
  *
  * Returns a `stop()` in every branch, including the ones that started nothing,
  * so the caller never has to ask whether there is something to clean up.
+ * @param {SetupContext} ctx
  * @param {number} port the door port
  * @param {number} harnessPort the harness the sidecar proxies to
  * @returns {Promise<{ up: boolean, started: boolean, stop: () => Promise<void> }>}
  */
-async function bringDoorUp(port, harnessPort) {
+async function bringDoorUp(ctx, port, harnessPort) {
   const noop = async () => {};
   const already = await ts.doorAnswers({ port });
   if (already.answered) {
@@ -322,8 +333,14 @@ async function bringDoorUp(port, harnessPort) {
   try {
     sidecar = spawnCompanion({
       resolved,
-      env: companionEnv({ base: process.env, harnessPort, doorPort: port, dataDir: DATA_DIR }),
+      env: {
+        ...companionEnv({ base: process.env, harnessPort, doorPort: port, dataDir: ctx.dataDir }),
+        // Root acting for the service account: the sidecar runs as that
+        // account, so what it writes under the data dir is that account's.
+        ...(ctx.spawnAs ? { HOME: ctx.account.home, USER: ctx.account.user, LOGNAME: ctx.account.user } : {}),
+      },
       stdio: "ignore",
+      as: ctx.spawnAs,
     });
     sidecar.child.once("error", error => {
       if (stopping) return;
@@ -362,12 +379,13 @@ async function bringDoorUp(port, harnessPort) {
  * Put the tailnet proxy in front of the door on a node that is ALREADY
  * enrolled. Everything `enroll()` does after `up`, and nothing it does before.
  *
+ * @param {SetupContext} ctx
  * @param {number} port the door port
  * @param {number} harnessPort
  * @returns {Promise<{ ok: boolean, served: boolean, reasons: string[], share?: any }>}
  */
-async function frontTheDoor(port, harnessPort) {
-  const brought = await bringDoorUp(port, harnessPort);
+async function frontTheDoor(ctx, port, harnessPort) {
+  const brought = await bringDoorUp(ctx, port, harnessPort);
   try {
     if (!brought.up) return { ok: true, served: false, reasons: [] };
     const https = await confirm(
@@ -439,7 +457,68 @@ function announceDeviceDoorClosed() {
 
 // ── commands ──────────────────────────────────────────────────────────────
 
-async function setup() {
+/**
+ * @typedef {object} SetupContext
+ * @property {string} dataDir
+ * @property {string} envFile
+ * @property {ReturnType<typeof lookupAccount> | null} account the account the
+ *   service runs as (Linux only; null elsewhere, where no unit is staged)
+ * @property {{ uid: number, gid: number } | null} owner who setup's files
+ *   belong to, when root prepares them for another account
+ * @property {{ uid: number, gid: number } | null} spawnAs the account the
+ *   setup-time sidecar runs as, when root acts for another account
+ */
+
+/**
+ * Decide, before setup touches anything, which account the service runs as
+ * and where its data lives. Exits 2 with the reason when it has to refuse.
+ * @param {string[]} argv
+ * @returns {SetupContext}
+ */
+function resolveSetupContext(argv) {
+  const parsed = parseSetupArgs(argv);
+  if (parsed.error) {
+    fail(parsed.error);
+    process.exit(2);
+  }
+  if (process.platform !== "linux") {
+    if (parsed.serviceUser) {
+      fail("--service-user names the account of the systemd unit, and setup stages one on Linux only.");
+      process.exit(2);
+    }
+    return { dataDir: DATA_DIR, envFile: ENV_FILE, account: null, owner: null, spawnAs: null };
+  }
+  const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
+  try {
+    const current = userInfo();
+    const chosen = chooseServiceUser({
+      flag: parsed.serviceUser,
+      euid,
+      sudoUser: process.env.SUDO_USER,
+      invokingUser: current.username,
+    });
+    const account = lookupAccount(chosen.name, { current });
+    if (euid !== 0 && account.uid !== euid) {
+      throw new ServiceAccountRefused(
+        "SERVICE_USER_NEEDS_ROOT",
+        `setup is running as uid ${euid}, and only root can prepare a service for ${account.user}. ` +
+          `Run setup as ${account.user}, or as root with --service-user ${account.user}.`
+      );
+    }
+    const paths = setupPaths({ env: process.env, account, euid, home: homedir() });
+    prepareDataDir(paths.dataDir, account, { euid });
+    ok(`service account: ${c.b(`${account.user}:${account.group}`)} (uid ${account.uid}; ${chosen.source}), home ${c.dim(account.home)}`);
+    ok(`data dir: ${c.dim(paths.dataDir)} (owned by ${account.user}, 0700)`);
+    const forAnother = euid === 0 && account.uid !== 0 ? { uid: account.uid, gid: account.gid } : null;
+    return { ...paths, account, owner: forAnother, spawnAs: forAnother };
+  } catch (error) {
+    if (!(error instanceof ServiceAccountRefused)) throw error;
+    fail(error.message);
+    process.exit(2);
+  }
+}
+
+async function setup(argv = []) {
   heading("Murage — headless cloud deploy (tailnet only)");
 
   const found = resolveServerEntry();
@@ -451,6 +530,7 @@ async function setup() {
   }
   ok(`server payload: ${c.dim(found.entry)} (${found.kind})`);
   if (!checkNode()) process.exit(1);
+  const ctx = resolveSetupContext(argv);
 
   const port = Number(process.env.MURAGE_PORT || DEFAULT_PORT);
 
@@ -460,7 +540,7 @@ async function setup() {
   const installed = await ensureTailscaleInstalled();
   let enrolment = { ok: false, reasons: ["tailscale not installed"] };
   // NOTE the port: the proxy fronts the browser door, not `port` (the harness).
-  if (installed) enrolment = await enrolTailnet(DOOR_PORT, port);
+  if (installed) enrolment = await enrolTailnet(ctx, DOOR_PORT, port);
 
   // 2. Provider key.
   console.log("");
@@ -499,8 +579,8 @@ async function setup() {
   // door is not up, nothing is proxying and declaring a trusted proxy would be
   // a claim about a component that is not running.
   if (enrolment.ok && enrolment.served) bag.MURAGE_TRUSTED_PROXY = "1";
-  writeEnvFile(ENV_FILE, bag);
-  ok(`wrote ${c.dim(ENV_FILE)} (mode 0600)`);
+  writeEnvFile(ctx.envFile, bag, { owner: ctx.owner });
+  ok(`wrote ${c.dim(ctx.envFile)} (mode 0600)`);
 
   // 4. Report — honestly.
   console.log("");
@@ -530,7 +610,7 @@ async function setup() {
     console.log(c.dim(`    ssh -N -L ${port}:127.0.0.1:${port} <user>@<this-box>`));
   }
 
-  await maybeSystemd(enrolment.ok);
+  await maybeSystemd(ctx, enrolment.ok);
 
   console.log(c.b("\n  Next:"));
   console.log(`    ${c.o("murage start")}     ${c.dim("# run the harness AND the browser door (foreground)")}`);
@@ -558,18 +638,44 @@ function printQr(url) {
   console.log(c.dim("  Remember: the phone must be signed into the same tailnet to open that URL."));
 }
 
-async function maybeSystemd(tailscaleConfigured) {
-  if (process.platform !== "linux") return false;
+/**
+ * Offer to stage the unit, for the account `resolveSetupContext` chose.
+ *
+ * Before staging, checks that the account can actually run the node runtime
+ * and read the installer at the paths the unit will name: a runtime under
+ * root's home is a unit that fails at every boot.
+ * @param {SetupContext} ctx
+ * @param {boolean} tailscaleConfigured
+ */
+async function maybeSystemd(ctx, tailscaleConfigured) {
+  if (process.platform !== "linux" || !ctx.account) return false;
   if (!(await confirm("\n  Stage a systemd unit so it runs 24/7 and restarts on reboot?", false))) return false;
+  const { account } = ctx;
+  const cliPath = fileURLToPath(import.meta.url);
+  for (const [path, need, what] of [
+    [process.execPath, 5, "run the node runtime"],
+    [cliPath, 4, "read the installer"],
+  ]) {
+    const reach = accountCanReach(path, account, need);
+    if (!reach.ok) {
+      fail(`${account.user} cannot ${what} at ${path} (no access at ${reach.blockedAt}), so the unit would fail at boot. Not staging it.`);
+      console.log(c.dim(`  Install node and murage somewhere ${account.user} can read, such as /usr/local or /opt, then re-run setup.`));
+      return false;
+    }
+  }
   try {
     const staged = stageUnit({
       execPath: process.execPath,
-      cliPath: fileURLToPath(import.meta.url),
-      dataDir: DATA_DIR,
-      envFile: ENV_FILE,
+      cliPath,
+      dataDir: ctx.dataDir,
+      envFile: ctx.envFile,
       tailscale: tailscaleConfigured,
+      account,
     });
-    console.log(c.dim(`\n  Unit staged at ${staged.stagedPath}. Review it, then run:`));
+    console.log(`\n  The unit runs as ${c.b(`${account.user}:${account.group}`)} (uid ${account.uid}), HOME=${account.home}, data in ${ctx.dataDir}.`);
+    console.log(c.dim(`  Staged privately at ${staged.stagedPath}`));
+    console.log(c.dim(`  sha256 ${staged.sha256}`));
+    console.log(c.dim("  Review it, then run these. The first installs it only if the staged bytes still match:"));
     for (const cmd of staged.commands) console.log(`    ${cmd}`);
     return true;
   } catch (e) {
@@ -876,6 +982,7 @@ function help() {
   ${c.o("murage")} — deploy Murage's headless server, reachable only over your tailnet
 
   ${c.b("murage setup")}       Join the tailnet, wire a provider key, front the app, verify it
+      ${c.dim("[--service-user <account>]")}  the account the systemd unit runs as; required when run as root
   ${c.b("murage start")}       Run the server and the companion sidecar (refuses any non-loopback, non-tailnet bind)
   ${c.b("murage status")}      Verify the posture: bind policy, enrolment, no public share
   ${c.b("murage resetpass")}   Break-glass admin reset, if this build has one
@@ -892,7 +999,7 @@ function help() {
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const cmd = (process.argv[2] || "help").toLowerCase();
-  if (cmd === "setup") await setup();
+  if (cmd === "setup") await setup(process.argv.slice(3));
   else if (cmd === "start") await start();
   else if (cmd === "status") await status();
   else if (cmd === "resetpass" || cmd === "reset-password") resetpass();

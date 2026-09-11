@@ -11,7 +11,7 @@
  * `MURAGE_BIND_MODE=loopback` is the only thing it says about reachability.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /** Keys whose values must never be echoed to a terminal or a log. */
@@ -79,15 +79,22 @@ export function serializeEnv(bag, header = "# Written by `murage setup`. Read by
  * `mkdirSync`/`writeFileSync` is masked by the process umask, so on a box with
  * a permissive umask the "0600" would silently come out 0644 — and this file
  * holds provider API keys.
+ *
+ * `owner` is the service account when setup runs as root on its behalf: the
+ * file, and a directory this call had to create, are handed to that account
+ * so the service can read them. Existing directories are not re-owned.
  * @param {string} path
  * @param {Record<string, string>} bag
+ * @param {{ owner?: { uid: number, gid: number } | null }} [opts]
  */
-export function writeEnvFile(path, bag) {
+export function writeEnvFile(path, bag, { owner = null } = {}) {
   const dir = dirname(path);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const created = mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (owner && created) chownSync(dir, owner.uid, owner.gid);
   chmodSync(dir, 0o700);
   writeFileSync(path, serializeEnv(bag), { mode: 0o600 });
   chmodSync(path, 0o600);
+  if (owner) chownSync(path, owner.uid, owner.gid);
 }
 
 /** @param {string} path @returns {Record<string, string>} */

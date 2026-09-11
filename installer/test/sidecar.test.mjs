@@ -412,6 +412,22 @@ test("spawnCompanion's stop() resolves only once the process is actually gone", 
   await sidecar.stop(); // safe twice
 });
 
+test("spawnCompanion changes account only when told to (setup as root for the service account)", () => {
+  const seen = [];
+  const spawnImpl = (cmd, args, options) => {
+    seen.push(options);
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    return child;
+  };
+  const resolved = { entry: "/x/index.js", execArgv: [] };
+  spawnCompanion({ resolved, env: {}, stdio: "ignore", spawnImpl });
+  spawnCompanion({ resolved, env: {}, stdio: "ignore", spawnImpl, as: { uid: 998, gid: 997 } });
+  assert.equal("uid" in seen[0], false, "an ordinary start keeps the current account");
+  assert.equal("gid" in seen[0], false);
+  assert.equal(seen[1].uid, 998);
+  assert.equal(seen[1].gid, 997);
+});
+
 test("spawnCompanion contains executable spawn errors and stop still resolves", async () => {
   const home = scratch();
   const sidecar = spawnCompanion({
