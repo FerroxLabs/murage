@@ -428,6 +428,11 @@ describe("transport errors and store", () => {
   it("maps transport errors and error bodies to failures", () => {
     expect(saveFailureFrom(new WorkspaceFileRequestError("revision-conflict", "changed", rev("r2")))).toEqual({ code: "revision-conflict", message: "changed", currentRevision: rev("r2") });
     expect(saveFailureFrom({ code: "bot-writing", error: "Bot is writing" })).toEqual({ code: "bot-writing", message: "Bot is writing" });
+    // STOPRESTORE2: the 423 a save gets when a stopped turn has not closed
+    // within its budget is a named, retryable refusal, never "unknown".
+    expect(saveFailureFrom({ code: "workspace_stopped_turn_closing", error: "still closing" })).toEqual({ code: "workspace_stopped_turn_closing", message: "still closing" });
+    const closing = failSave(startSave(editDocument(openDocumentSession(read()), "mine")).state, "req-1", { code: "workspace_stopped_turn_closing", message: "still closing" });
+    expect(closing).toMatchObject({ outcome: "failed", effect: "none", state: { status: "error", draft: "mine", error: { code: "workspace_stopped_turn_closing", message: "still closing", retryable: true } } });
     expect(saveFailureFrom({ code: "made-up" })).toEqual({ code: "unknown" });
     expect(saveFailureFrom(new TypeError("Failed to fetch"))).toEqual({ code: "network", message: "Failed to fetch" });
     expect(saveFailureFrom(new Error("boom"))).toEqual({ code: "unknown", message: "boom" });

@@ -127,7 +127,7 @@ it("restore admission refuses a live writer at once and never waits on it", asyn
   leases.acquire("thread", "generation", cwd);
   leases.markDispatched("generation");
   const started = Date.now();
-  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict" });
+  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "conflict" });
   expect(Date.now() - started).toBeLessThan(1_000);
   expect(owners()).toEqual(["generation"]);
 });
@@ -139,11 +139,14 @@ it("restore admission refuses when one holder is stopped but another is live, or
   leases.markStopRequested("stopped");
   leases.acquire("other-thread", "live", cwd);
   leases.markDispatched("live");
-  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict" });
+  await expect(leases.acquireRestoreWhenStopped("restore:1", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "conflict" });
   const alone = fixture();
   alone.leases.folders.acquireRestore("restore:first", alone.cwd);
-  await expect(alone.leases.acquireRestoreWhenStopped("restore:second", alone.cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict" });
-  await expect(alone.leases.acquireRestoreWhenStopped("restore:third", "/definitely/not/a/folder", { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict" });
+  await expect(alone.leases.acquireRestoreWhenStopped("restore:second", alone.cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "conflict" });
+  // An unusable path is a refusal with the registry's own code, never a wait.
+  await expect(alone.leases.acquireRestoreWhenStopped("restore:third", "/definitely/not/a/folder", { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "invalid-path" });
+  // Re-using a held owner id for another folder is `owner-in-use`, not a busy folder.
+  await expect(alone.leases.acquireRestoreWhenStopped("restore:first", cwd, { timeoutMs: 5_000 })).resolves.toEqual({ ok: false, reason: "conflict", code: "owner-in-use" });
 });
 
 it("restore admission reports a stopped writer that does not release within the bound as still closing", async () => {

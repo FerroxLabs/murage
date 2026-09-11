@@ -679,6 +679,7 @@ export function draftErrorMessage(code: MarkdownDraftErrorCode): string {
 export function saveErrorMessage(code: DocumentErrorCode, message?: string): string {
   switch (code) {
     case "bot-writing": return t("markdownEditor.saveError.botWriting");
+    case "workspace_stopped_turn_closing": return t("markdownEditor.saveError.stoppedTurnClosing");
     case "too-large": return t("markdownEditor.saveError.tooLarge");
     case "not-found": return t("markdownEditor.saveError.notFound");
     case "network": return t("markdownEditor.saveError.network");
