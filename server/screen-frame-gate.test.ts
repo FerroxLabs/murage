@@ -14,6 +14,58 @@ describe("screenTouchingTool", () => {
     expect(screenTouchingTool("mcp__browser__browser_navigate")).toBe(true);
   });
 
+  // #920 (adapted from OpenMausBot 368f653f): a tool can reach the poke site
+  // as `server__tool`, the server segment with no `mcp` in front. Stripping
+  // only `mcp__<server>__` left `computer__screenshot` unmatched, so a turn
+  // that really looked at its screen settled with no picture.
+  it("takes the server__tool spelling without Claude's mcp prefix", () => {
+    expect(screenTouchingTool("computer__screenshot")).toBe(true);
+    expect(screenTouchingTool("computer__click")).toBe(true);
+    expect(screenTouchingTool("computer__computer_batch")).toBe(true);
+    // the box's own Chrome tools live on the computer server
+    expect(screenTouchingTool("computer__browser_fill")).toBe(true);
+    // the browser server's names that are already on the list
+    expect(screenTouchingTool("browser__browser_navigate")).toBe(true);
+    expect(screenTouchingTool("browser__browser_screenshot")).toBe(true);
+  });
+
+  it("keeps shell, status, read, wait and takeover tools out whatever prefix they arrive with", () => {
+    for (const tool of [
+      "computer__computer_exec", "computer__computer_status", "computer__observation_metrics",
+      "browser__browser_snapshot", "browser__browser_read", "browser__browser_state",
+      "computer__wait_for", "browser__browser_wait_for",
+      "computer__computer_request_help", "browser__browser_request_takeover",
+      "agents__ask_bot", "composio__GMAIL_SEND_EMAIL",
+    ]) {
+      expect(screenTouchingTool(tool), tool).toBe(false);
+    }
+  });
+
+  // The desktop namespace follows MCP_NAME in server/mcp-registry.ts: a
+  // lowercase letter, then up to 31 lowercase letters, digits, `_` or `-`.
+  it.each(["computer", "local_vm", "computer-use", "vm2", `v${"m".repeat(31)}`])(
+    "accepts the valid %s namespace in both mounted spellings",
+    (namespace) => {
+      for (const prefix of [`mcp__${namespace}__`, `${namespace}__`]) {
+        expect(screenTouchingTool(`${prefix}screenshot`), prefix).toBe(true);
+        expect(screenTouchingTool(`${prefix}hotkey`), prefix).toBe(true);
+        for (const tool of ["computer_exec", "computer_status", "browser_snapshot", "wait_for"]) {
+          expect(screenTouchingTool(`${prefix}${tool}`), `${prefix}${tool}`).toBe(false);
+        }
+      }
+    },
+  );
+
+  it("preserves legacy MCP names without accepting invalid desktop namespaces", () => {
+    expect(screenTouchingTool("mcp__legacy.server__screenshot")).toBe(true);
+    expect(screenTouchingTool("MCP__LOCAL_VM__SCREENSHOT")).toBe(true);
+    expect(screenTouchingTool("legacy.server__screenshot")).toBe(false);
+    expect(screenTouchingTool(`${"v".repeat(33)}__screenshot`)).toBe(false);
+    expect(screenTouchingTool("2vm__screenshot")).toBe(false);
+    expect(screenTouchingTool("-vm__screenshot")).toBe(false);
+    expect(screenTouchingTool("__screenshot")).toBe(false);
+  });
+
   it("takes Codex's bare names and pi's server_tool names", () => {
     expect(screenTouchingTool("click")).toBe(true);
     expect(screenTouchingTool("hotkey")).toBe(true);

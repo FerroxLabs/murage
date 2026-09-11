@@ -60,13 +60,21 @@ const SCREEN_TOUCHING_TOOLS = new Set([
   "zoom",
 ]);
 
-/** The same tool reaches the poke site under three spellings: the Claude
- * driver's `mcp__computer__click`, Codex's bare `click`, and pi's
- * `computer_click` (server_tool, lowercased). A server prefix is stripped
+/** A tool's server namespace, stripped once. Legacy `mcp__<server>__` names
+ * stay accepted as they always were. The bare `<server>__` spelling is
+ * accepted only for a valid server name, which follows MCP_NAME in
+ * server/mcp-registry.ts: a lowercase letter, then at most 31 lowercase
+ * letters, digits, `_` or `-`. (#920, adapted from OpenMausBot 368f653f.) */
+const TOOL_NAMESPACE = /^(?:mcp__.+?|[a-z][a-z0-9_-]{0,31})__/;
+
+/** The same tool reaches the poke site under four spellings: the Claude
+ * driver's `mcp__computer__click`, the server-qualified `computer__click`
+ * with no `mcp` in front, Codex's bare `click`, and pi's `computer_click`
+ * (server_tool, lowercased). A single-underscore server prefix is stripped
  * at most once, so pi's `computer_computer_exec` lands on `computer_exec`
  * — still a shell — and never on a bare `exec`. */
 export function screenTouchingTool(toolName: string): boolean {
-  const bare = toolName.toLowerCase().replace(/^mcp__.+?__/, "");
+  const bare = toolName.toLowerCase().replace(TOOL_NAMESPACE, "");
   return SCREEN_TOUCHING_TOOLS.has(bare) || SCREEN_TOUCHING_TOOLS.has(bare.replace(/^(?:computer|browser)_/, ""));
 }
 
