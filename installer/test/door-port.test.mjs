@@ -578,3 +578,36 @@ test("`murage status` reports a listener that fails the proof as not this deploy
     await foreign.close();
   }
 });
+
+// ── (d) status looks where setup put things ───────────────────────────────
+
+test("`murage status --service-user` (or MURAGE_SERVICE_USER) reads the deployment setup made for that account", async () => {
+  // Live on Ubuntu 24.04 (0.1.52 Linux proof): after `sudo murage setup
+  // --service-user murage`, a `sudo murage status` looked in /root and said
+  // "no env file" and "NOT this deployment's browser door" about a deployment
+  // that was fine. `status` now resolves the account's paths the way `setup`
+  // does. Root-for-another-account needs root, so this runs the same-account
+  // case and pins the argument handling; `setupPaths` covers the mapping.
+  if (process.platform !== "linux") return;
+  const home = scratch();
+  const me = userInfo().username;
+  const stub = tailscaleStub(home, { logFile: join(home, "argv.log"), proxyTarget: "http://127.0.0.1:8813" });
+  const env = setupEnv(home, { MURAGE_TAILSCALE_BIN: stub });
+  mkdirSync(join(home, ".murage-server"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(home, ".murage-server", "murage.env"), "MURAGE_PORT=8799\n", { mode: 0o600 });
+
+  const flag = await runCli(["status", "--service-user", me], env);
+  assert.match(flag.out, new RegExp(`service account: ${me}:`), flag.out);
+  assert.match(flag.out, new RegExp(`env file ${home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.murage-server/murage\\.env is 0600`), flag.out);
+
+  const fromEnv = await runCli(["status", "--non-interactive"], { ...env, MURAGE_SERVICE_USER: me });
+  assert.match(fromEnv.out, new RegExp(`service account: ${me}:`), fromEnv.out);
+  assert.match(fromEnv.out, /murage\.env is 0600/, fromEnv.out);
+
+  const stray = await runCli(["status", "--bogus"], env);
+  assert.equal(stray.status, 2, stray.out);
+  assert.match(stray.out, /status does not take argument #1/, stray.out);
+
+  const unknown = await runCli(["status", "--service-user", "no-such-account-0152"], env);
+  assert.equal(unknown.status, 2, unknown.out);
+});

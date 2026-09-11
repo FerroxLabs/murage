@@ -6,7 +6,7 @@ Tailscale tailnet**, and never from the internet.
 ```sh
 murage setup      # join the tailnet, wire a key, start the door, front it, verify it
 murage start      # run the harness AND the companion's browser door
-murage status     # verify the posture at any time
+murage status     # verify the posture at any time (--service-user <account> when setup ran as root)
 murage resetpass  # break-glass admin reset, if this build has one
 murage help
 ```
@@ -139,6 +139,10 @@ run the whole agent stack as root, so setup never stages one.
   `DataDirLeaseError` (`LEASE_IO`) and restarted forever. A data directory
   directly under `/` is refused for the same reason: the parent grant would
   be the whole filesystem.
+- `sudo murage status --service-user murage` (or `MURAGE_SERVICE_USER`) looks
+  where that setup put things. Without it, a root `status` reads root's own
+  home and reports a fine deployment as "no env file" and "NOT this
+  deployment's browser door".
 - An existing data directory owned by a different account is refused, not
   re-owned. Setup also checks that the service account can actually reach the
   node runtime and the installer before it stages a unit that would fail at
