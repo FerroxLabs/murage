@@ -991,6 +991,16 @@ describe("workspace credential env strip", () => {
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_BROWSER_CONNECTION");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_USER_DATA");
   });
+
+  it("keeps both connected-apps broker tokens out of every engine", () => {
+    // Engines DO receive the Flux API key — `applyFluxSurface` hands it to the
+    // claude CLI as ANTHROPIC_API_KEY — which is exactly why connected apps
+    // are unlocked by a separate token instead. If that token travelled with
+    // the key, any shell command a model ran could reach the owner's Gmail
+    // past the per-bot policy that only the harness enforces.
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_COMPOSIO_BROKER_TOKEN");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_FLUX_COMPOSIO_BROKER_TOKEN");
+  });
 });
 
 describe("routing env strip", () => {

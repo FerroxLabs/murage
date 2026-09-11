@@ -9,7 +9,25 @@
     "COMPOSIO_API_BASE": "https://backend.composio.dev/api/v3.1",
     "COMPOSIO_TOOLKIT_BASE": "https://backend.composio.dev/api/v3",
     "REGISTRATION_MODE": "open",
-    "DAILY_CALL_CEILING": "250"
+    // Left unset on purpose for the pre-migration population: the ceiling now
+    // counts tool executions rather than every POST, and turning it on at the
+    // old value would 429 installs that were never near it. Set it to "2000"
+    // (FluxRouter parity) once those installs have moved.
+    "DAILY_CALL_CEILING": "off",
+    // Claims: "open" lets a desktop ask this Worker to sign an assertion.
+    "CLAIM_MODE": "closed",
+    // "on" retires an install once FluxRouter has confirmed it. "off" is the
+    // FluxRouter-rollback switch: every install with a token is served again,
+    // claimed or not, on the token the desktop deliberately kept.
+    "MIGRATION_GATE": "on",
+    // How long a confirmed install keeps working here after confirmation.
+    "CLAIM_GRACE_SECONDS": "900",
+    // Backstop for an install that redeemed at FluxRouter and never confirmed.
+    "CLAIM_ISSUED_FALLBACK_SECONDS": "604800",
+    // ISO-8601 instants; "" means no cut-off. LEGACY_BROKER_UNTIL must match
+    // the desktop's COMPOSIO_LEGACY_BROKER_UNTIL. Claims stay open past it.
+    "LEGACY_BROKER_UNTIL": "",
+    "CLAIM_UNTIL": ""
   },
   "secrets": { "required": ["COMPOSIO_API_KEY"] },
   "d1_databases": [

@@ -144,10 +144,54 @@ interface IntegrationContext {
   threadId: string;
 }
 
+export type BrokerKind = "flux" | "legacy";
+export interface BrokerAccess { url: string; token: string; kind: BrokerKind }
+export type LegacyClaimState = "none" | "offered" | "pending" | "claimed" | "conflict" | "abandoned";
+export interface LegacyClaim {
+  state: LegacyClaimState;
+  code?: string;
+  installationId?: string;
+  at?: string;
+  confirmPending?: boolean;
+}
+export type AccountKind = "personal" | "shared";
+export type ConnectorMigrationState =
+  | "none" | "legacy" | "offered" | "pending" | "claimed" | "claim-conflict" | "abandoned" | "moved-elsewhere";
+export interface ConnectorMigration {
+  state: ConnectorMigrationState;
+  legacyUntil: string | null;
+  code?: string;
+  accountKind?: AccountKind;
+  tokenError?: string;
+  installationId?: string;
+  at?: string;
+}
+
+// The Murage Worker broker (legacy), as the desktop shell last sent it.
 let managedBrokerAccess: { url: string; token: string } | null | undefined;
+// The FluxRouter-hosted broker: its URL (set whenever the release or a QA
+// override turns it on) and the harness-only broker token minted from the
+// stored Flux key. `undefined` = no desktop message yet, read the env.
+let managedFluxBrokerUrl: string | undefined;
+let managedFluxAccess: { url: string; token: string } | null | undefined;
+let managedLegacyClaim: LegacyClaim | undefined;
+let managedAccountKind: AccountKind | null | undefined;
+let managedTokenError: string | null | undefined;
+let managedLegacyUntil: string | undefined;
+/** The Worker answered 410 migrated_to_flux for an install this device never
+ * claimed: somebody else moved these connections. */
+let legacyMovedElsewhere = false;
 
 const managedBrokerMessageSchema = z.record(z.string(), z.unknown());
 const managedBrokerToken = /^[0-9a-f]{64}$/;
+const legacyClaimSchema = z.object({
+  state: z.enum(["none", "offered", "pending", "claimed", "conflict", "abandoned"]),
+  code: z.string().regex(/^[a-z_]{1,64}$/).optional(),
+  installationId: z.string().max(64).optional(),
+  at: z.string().max(64).optional(),
+  confirmPending: z.boolean().optional(),
+});
+const errorCodeSchema = z.string().regex(/^[a-z_]{1,64}$/);
 
 function normalizeManagedBrokerUrl(value: string): string {
   const url = new URL(value);
@@ -170,8 +214,58 @@ export function applyManagedBrokerMessage(message: unknown): boolean {
   ) {
     return false;
   }
-  setManagedBrokerAccess(parsed.data.access);
+  const data = parsed.data;
+  setManagedBrokerAccess(data.access);
+  if (Object.hasOwn(data, "fluxBrokerUrl") || Object.hasOwn(data, "fluxAccess")) {
+    setFluxBrokerAccess(data.fluxAccess ?? null, typeof data.fluxBrokerUrl === "string" ? data.fluxBrokerUrl : "");
+  }
+  if (Object.hasOwn(data, "legacyClaim")) {
+    const claim = legacyClaimSchema.safeParse(data.legacyClaim);
+    managedLegacyClaim = claim.success ? claim.data : { state: "none" };
+    if (managedLegacyClaim.state === "claimed") legacyMovedElsewhere = false;
+  }
+  if (Object.hasOwn(data, "accountKind")) {
+    managedAccountKind = data.accountKind === "personal" || data.accountKind === "shared" ? data.accountKind : null;
+  }
+  if (Object.hasOwn(data, "tokenError")) {
+    const code = errorCodeSchema.safeParse(data.tokenError);
+    managedTokenError = code.success ? code.data : null;
+  }
+  if (Object.hasOwn(data, "legacyUntil")) {
+    managedLegacyUntil = typeof data.legacyUntil === "string" ? data.legacyUntil.trim() : "";
+  }
   return true;
+}
+
+/** The Flux broker as the desktop shell sent it: its URL whenever the broker
+ * is turned on for this build, and the token once one has been minted. */
+export function setFluxBrokerAccess(access: unknown, url: string): void {
+  const normalized = url ? normalizeManagedBrokerUrl(url) : "";
+  if (access === null || access === undefined) {
+    managedFluxBrokerUrl = normalized;
+    managedFluxAccess = null;
+    return;
+  }
+  const parsed = z.object({ url: z.string().url(), token: z.string().regex(managedBrokerToken) }).strict().parse(access);
+  const accessUrl = normalizeManagedBrokerUrl(parsed.url);
+  managedFluxBrokerUrl = normalized || accessUrl;
+  managedFluxAccess = { url: accessUrl, token: parsed.token };
+}
+
+/** Forget every desktop-sent broker fact; the env becomes authoritative
+ * again. For tests and for a restored-profile relaunch. */
+export function resetManagedBrokerState(): void {
+  managedBrokerAccess = undefined;
+  managedFluxBrokerUrl = undefined;
+  managedFluxAccess = undefined;
+  managedLegacyClaim = undefined;
+  managedAccountKind = undefined;
+  managedTokenError = undefined;
+  managedLegacyUntil = undefined;
+  legacyMovedElsewhere = false;
+  fluxReadiness = null;
+  fluxReadinessProbe = null;
+  fluxAccountStatus = null;
 }
 
 export function setManagedBrokerAccess(access: unknown): void {
@@ -183,13 +277,173 @@ export function setManagedBrokerAccess(access: unknown): void {
   managedBrokerAccess = { url: normalizeManagedBrokerUrl(parsed.url), token: parsed.token };
 }
 
-function brokerAccess(): { url: string; token: string } | null {
+function workerBrokerCredential(): { url: string; token: string } | null {
   if (managedBrokerAccess !== undefined) return managedBrokerAccess;
   const url = process.env.MURAGE_COMPOSIO_BROKER_URL?.trim();
   const token = process.env.MURAGE_COMPOSIO_BROKER_TOKEN?.trim();
   if (!url || !token) return null;
   if (!managedBrokerToken.test(token)) throw new Error("The connected-apps service token is invalid");
   return { url: normalizeManagedBrokerUrl(url), token };
+}
+
+/** The Worker cut-off as configured ("" = none). */
+function legacyUntil(): string {
+  return (managedLegacyUntil ?? process.env.MURAGE_COMPOSIO_LEGACY_BROKER_UNTIL ?? "").trim();
+}
+
+/** An unparseable cut-off counts as passed: fail closed, never open-ended. */
+function legacyBrokerOpen(now = Date.now()): boolean {
+  const until = legacyUntil();
+  if (!until) return true;
+  const at = Date.parse(until);
+  return Number.isFinite(at) && now < at;
+}
+
+/** The Murage Worker broker, until the configured cut-off. */
+function legacyBrokerAccess(): BrokerAccess | null {
+  const access = workerBrokerCredential();
+  if (!access || !legacyBrokerOpen()) return null;
+  return { ...access, kind: "legacy" };
+}
+
+/** The FluxRouter broker URL whenever this build turns it on, token or not. */
+function fluxBrokerUrl(): string {
+  if (managedFluxBrokerUrl !== undefined) return managedFluxBrokerUrl;
+  const url = process.env.MURAGE_FLUX_COMPOSIO_BROKER_URL?.trim();
+  if (!url) return "";
+  try {
+    return normalizeManagedBrokerUrl(url);
+  } catch {
+    return "";
+  }
+}
+
+/** A well-formed Flux broker credential, before readiness is considered. The
+ * token has the same 64-hex shape as the Worker's; the Flux API key is never
+ * a broker credential (it reaches engines, this token never does). */
+function fluxBrokerCandidate(): { url: string; token: string } | null {
+  if (managedFluxAccess !== undefined) return managedFluxAccess;
+  const url = fluxBrokerUrl();
+  const token = process.env.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN?.trim();
+  if (!url || !token || !managedBrokerToken.test(token)) return null;
+  return { url, token };
+}
+
+/** The Flux broker, only while its health probe says it is ready. */
+function fluxBrokerAccess(): BrokerAccess | null {
+  const candidate = fluxBrokerCandidate();
+  if (!candidate || !fluxReadiness || fluxReadiness.url !== candidate.url || !fluxReadiness.ready) return null;
+  return { ...candidate, kind: "flux" };
+}
+
+function legacyClaim(): LegacyClaim {
+  if (managedLegacyClaim !== undefined) return managedLegacyClaim;
+  const raw = process.env.MURAGE_COMPOSIO_LEGACY_CLAIM;
+  if (!raw) return { state: "none" };
+  try {
+    const parsed = legacyClaimSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : { state: "none" };
+  } catch {
+    return { state: "none" };
+  }
+}
+
+function accountKind(): AccountKind | undefined {
+  const kind = managedAccountKind !== undefined ? managedAccountKind : process.env.MURAGE_FLUX_COMPOSIO_ACCOUNT_KIND;
+  return kind === "personal" || kind === "shared" ? kind : undefined;
+}
+
+// ── Flux broker readiness ──────────────────────────────────────────────
+// `activeBroker` must stay synchronous, so it reads a cache that the async
+// routes prime. A healthy answer is trusted for 5 minutes; an unhealthy one
+// for only 20 seconds, so a transient blip cannot pull connected apps away
+// from every bot for 5 minutes. The initial value is "not ready".
+const FLUX_READY_TTL_MS = 5 * 60_000;
+const FLUX_NOT_READY_TTL_MS = 20_000;
+const FLUX_PROBE_TIMEOUT_MS = 5_000;
+let fluxReadiness: { url: string; ready: boolean; at: number } | null = null;
+let fluxReadinessProbe: { url: string; promise: Promise<void> } | null = null;
+
+async function probeFluxReadiness(url: string): Promise<void> {
+  let ready = false;
+  try {
+    const response = await fetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
+    const body = response.status === 200 ? await response.json().catch(() => null) : null;
+    ready = body !== null && typeof body === "object" && (body as { ready?: unknown }).ready === true;
+  } catch {
+    ready = false;
+  }
+  if (fluxBrokerCandidate()?.url === url) fluxReadiness = { url, ready, at: Date.now() };
+}
+
+/** Refresh the Flux broker's readiness when the cache is stale.
+ *
+ * One probe at a time. A route awaits it (bounded by the 5-second probe
+ * timeout). A turn passes `{ turn: true }` and never waits on a probe that is
+ * already running, so an offline laptop adds the probe to at most one turn
+ * per negative TTL. */
+export async function primeBrokerReadiness(options: { turn?: boolean } = {}): Promise<void> {
+  const candidate = fluxBrokerCandidate();
+  if (!candidate) return;
+  const cached = fluxReadiness;
+  if (cached && cached.url === candidate.url) {
+    const ttl = cached.ready ? FLUX_READY_TTL_MS : FLUX_NOT_READY_TTL_MS;
+    if (Date.now() - cached.at < ttl) return;
+  }
+  if (fluxReadinessProbe && fluxReadinessProbe.url === candidate.url) {
+    if (options.turn) return;
+    return fluxReadinessProbe.promise;
+  }
+  const probe = { url: candidate.url, promise: probeFluxReadiness(candidate.url) };
+  fluxReadinessProbe = probe;
+  try {
+    await probe.promise;
+  } finally {
+    if (fluxReadinessProbe === probe) fluxReadinessProbe = null;
+  }
+}
+
+/** Forget the readiness answer; the next primed request probes again. */
+export function invalidateBrokerReadiness(): void {
+  fluxReadiness = null;
+}
+
+type BrokerEvent = { type: "murage:flux-composio-token-rejected" };
+let brokerEventSink: ((event: BrokerEvent) => void) | null = null;
+/** Where broker events go: the desktop main process, over the private port. */
+export function setBrokerEventSink(sink: ((event: BrokerEvent) => void) | null): void {
+  brokerEventSink = sink;
+}
+
+async function responseCode(response: Response): Promise<string | undefined> {
+  try {
+    const body = (await response.clone().json()) as { code?: unknown } | null;
+    return typeof body?.code === "string" ? body.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What a data call says when no broker holds this workspace's connected
+ * apps. It names the two ways out, in the order they are worth taking. */
+export const BROKER_UNAVAILABLE =
+  "Connected apps need FluxRouter. Connect FluxRouter in Settings → Models, or add your own Composio key.";
+
+/** React to what a broker's answer says about the broker itself. */
+async function observeBrokerResponse(broker: BrokerAccess, response: Response): Promise<void> {
+  if (broker.kind === "flux") {
+    if (response.status === 404 || response.status === 503) {
+      // 404 is how the Flux broker answers while it is dark.
+      invalidateBrokerReadiness();
+    } else if (response.status === 401 && (await responseCode(response)) === "broker_token_revoked") {
+      invalidateBrokerReadiness();
+      brokerEventSink?.({ type: "murage:flux-composio-token-rejected" });
+    }
+    return;
+  }
+  if (response.status === 410 && legacyClaim().state !== "claimed" && (await responseCode(response)) === "migrated_to_flux") {
+    legacyMovedElsewhere = true;
+  }
 }
 
 /** Which broker a request should use, resolved in exactly one place.
@@ -213,10 +467,111 @@ function brokerAccess(): { url: string; token: string } | null {
  * ever concerned the people who have no key of their own.
  *
  * `brokerRequest` takes `cfg` and resolves through here rather than reading
- * the broker itself, so no caller can route around this. */
-function activeBroker(cfg: AppConfig): { url: string; token: string } | null {
+ * the broker itself, so no caller can route around this.
+ *
+ * Behind a workspace key, the order is FluxRouter, then the Murage Worker,
+ * then nothing:
+ *   - Flux (broker token present AND the Flux broker healthy) whenever this
+ *     install carries no live legacy identity: it was claimed, the claim hit
+ *     a terminal conflict, the Worker abandoned it, or it never registered.
+ *   - The Worker until its cut-off while the legacy identity is still the one
+ *     holding the user's connections (no claim, one offered, one pending),
+ *     and as the fallback when Flux is not ready. Both brokers point at the
+ *     same Composio user after a claim, so the fallback orphans nothing.
+ *   - Neither: connected apps are unavailable and the panel offers FluxRouter.
+ * Nothing here depends on whether the build is packaged, so dev and packaged
+ * resolve the same broker for the same credentials; the Composio identity
+ * itself is chosen by the broker from the account, never by this process. */
+function activeBroker(cfg: AppConfig): BrokerAccess | null {
   if (cfg.composio?.apiKey) return null;
-  return brokerAccess();
+  const legacy = legacyBrokerAccess();
+  const flux = fluxBrokerAccess();
+  const claim = legacyClaim().state;
+  const legacyIdentityLive = legacy !== null && (claim === "none" || claim === "offered" || claim === "pending");
+  if (flux && !legacyIdentityLive) return flux;
+  if (legacy) return legacy;
+  return null;
+}
+
+/** Which broker data calls use right now; null for a workspace key or none. */
+export function connectionBroker(cfg: AppConfig): BrokerKind | null {
+  return activeBroker(cfg)?.kind ?? null;
+}
+
+/** Whether this build turns the FluxRouter broker on at all. */
+export function fluxBrokerEnabled(): boolean {
+  return fluxBrokerUrl() !== "";
+}
+
+const CLAIM_TO_MIGRATION: Record<LegacyClaimState, ConnectorMigrationState> = {
+  none: "none",
+  offered: "offered",
+  pending: "pending",
+  claimed: "claimed",
+  conflict: "claim-conflict",
+  abandoned: "abandoned",
+};
+
+/** Where this install is in the move from the Murage Worker to FluxRouter.
+ * Secret-free: the install id is a support reference, never a credential. */
+export function connectorMigration(cfg: AppConfig): ConnectorMigration {
+  const until = legacyUntil() || null;
+  const kind = accountKind();
+  const tokenError = managedTokenError !== undefined ? managedTokenError ?? undefined : undefined;
+  const base: ConnectorMigration = { state: "none", legacyUntil: until };
+  if (kind) base.accountKind = kind;
+  if (tokenError) base.tokenError = tokenError;
+  if (cfg.composio?.apiKey) return base;
+  const claim = legacyClaim();
+  if (claim.installationId) base.installationId = claim.installationId;
+  if (claim.at) base.at = claim.at;
+  if (claim.code) base.code = claim.code;
+  if (legacyMovedElsewhere && claim.state !== "claimed") return { ...base, state: "moved-elsewhere" };
+  const state = CLAIM_TO_MIGRATION[claim.state];
+  if (state === "none" && activeBroker(cfg)?.kind === "legacy") return { ...base, state: "legacy" };
+  return { ...base, state };
+}
+
+// The last /v1/me from the Flux broker, for the free-allowance line.
+const FLUX_ACCOUNT_STATUS_TTL_MS = 60_000;
+let fluxAccountStatus: { url: string; token: string; at: number; freeRunsRemainingToday: number | null } | null = null;
+const fluxMeSchema = z.object({ freeRunsRemainingToday: z.number().int().min(0).nullable().optional() }).passthrough();
+
+/** Refresh the cached account status when the Flux broker is in use. Never
+ * throws; an unreadable answer just leaves the line off. */
+export async function refreshFluxAccountStatus(cfg: AppConfig): Promise<void> {
+  const broker = activeBroker(cfg);
+  if (broker?.kind !== "flux") return;
+  const cached = fluxAccountStatus;
+  if (cached && cached.url === broker.url && cached.token === broker.token && Date.now() - cached.at < FLUX_ACCOUNT_STATUS_TTL_MS) return;
+  try {
+    const response = await brokerRequest(cfg, "/v1/me", { signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) return;
+    const body = fluxMeSchema.safeParse(await response.json());
+    if (!body.success) return;
+    fluxAccountStatus = { url: broker.url, token: broker.token, at: Date.now(), freeRunsRemainingToday: body.data.freeRunsRemainingToday ?? null };
+  } catch {
+    // leave the previous answer, if any
+  }
+}
+
+function freeRunsRemainingToday(cfg: AppConfig): number | null {
+  const broker = activeBroker(cfg);
+  const cached = fluxAccountStatus;
+  if (broker?.kind !== "flux" || !cached || cached.url !== broker.url || cached.token !== broker.token) return null;
+  return cached.freeRunsRemainingToday;
+}
+
+/** The connected-apps facts every panel response carries. `fluxConfigured`
+ * is a boolean only; the Flux key never leaves the server. */
+export function connectorPanelFields(cfg: AppConfig, fluxIsConfigured: boolean) {
+  return {
+    broker: connectionBroker(cfg),
+    migration: connectorMigration(cfg),
+    fluxConfigured: fluxIsConfigured,
+    fluxBrokerEnabled: fluxBrokerEnabled(),
+    freeRunsRemainingToday: freeRunsRemainingToday(cfg),
+  };
 }
 
 // Adapted from upstream52cd9563. Credentials are hashed, never duplicated in
@@ -321,7 +676,7 @@ export function connectorSystemPrompt(access: ConnectorAccess): string {
     case "bot-off":
       return " You have no connected-app tools this turn because connected apps are switched off for you specifically — a per-bot setting the user controls. The workspace's connections may exist and be perfectly healthy. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
     case "unconfigured":
-      return " You have no connected-app tools this turn because this workspace has no connected-apps service set up — there is no project key and no managed connection service, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Connections settings; do not claim a particular service failed or is disconnected.";
+      return " You have no connected-app tools this turn because this workspace has no connected-apps service set up — connected apps run through FluxRouter and this workspace has neither FluxRouter nor its own Composio key, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Connections settings; do not claim a particular service failed or is disconnected.";
     case "engine":
       return " You have no connected-app tools this turn because the engine you are running on cannot mount connector tools. The workspace's connections may exist and be perfectly healthy, and another engine would reach them. If the user asks for work in a connected service, say that this bot's current engine cannot use connected apps and that switching its model/engine would; never tell them the service is disconnected.";
   }
@@ -355,15 +710,21 @@ export function requiredAppsSystemPrompt(
  * broker owner's money on behalf of someone holding their own key. */
 async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): Promise<Response> {
   const broker = activeBroker(cfg);
-  if (!broker) throw new Error("The connected-apps service is unavailable");
+  if (!broker) throw new Error(BROKER_UNAVAILABLE);
   const headers = new Headers(init?.headers);
+  // Only ever the broker token. The Flux API key reaches engines and must
+  // never be what unlocks the user's connected apps.
   headers.set("authorization", `Bearer ${broker.token}`);
   if (init?.body) headers.set("content-type", "application/json");
-  return fetch(`${broker.url}${path}`, {
+  const response = await fetch(`${broker.url}${path}`, {
     ...init,
     headers,
     signal: init?.signal ?? AbortSignal.timeout(30_000),
   });
+  // What the answer says about the broker itself — readiness, a revoked token,
+  // an install that was moved elsewhere — is learned in exactly one place.
+  await observeBrokerResponse(broker, response);
+  return response;
 }
 
 function projectHeaders(apiKey: string, json = false) {
@@ -620,6 +981,10 @@ export async function mcpIntegration(
   cfg: AppConfig,
   context: IntegrationContext,
 ): Promise<ComposioMcpIntegration | null> {
+  // The turn's own readiness refresh. `{ turn: true }` never waits on a probe
+  // that is already running, so an offline laptop adds the 5-second probe to
+  // at most one turn per negative TTL instead of every turn.
+  await primeBrokerReadiness({ turn: true });
   if (!configured(cfg)) return null;
   return {
     command: process.execPath,
@@ -663,7 +1028,7 @@ export async function relayMcp(
     headers.set("authorization", `Bearer ${broker.token}`);
     identity = backendFingerprint("managed-mcp", url, broker.token);
   } else {
-    if (!projectKey) throw new Error("Connected apps are unavailable");
+    if (!projectKey) throw new Error(BROKER_UNAVAILABLE);
     const session = await ensureProjectSession(cfg);
     projectSessionId = session.session_id;
     assertCurrent();
@@ -847,7 +1212,7 @@ export async function connectedServices(cfg: AppConfig): Promise<Record<string, 
       }]),
     );
   }
-  if (!cfg.composio?.apiKey) throw new Error("Connected apps are unavailable");
+  if (!cfg.composio?.apiKey) throw new Error(BROKER_UNAVAILABLE);
   const session = await ensureProjectSession(cfg);
   const userId = session.config?.user_id ?? cfg.composio.userId;
   if (!userId) throw new Error("Composio Session returned no user ID");

@@ -277,6 +277,8 @@ type SkillRecordingPayload = {
       /** Save a provider credential through Electron's OS-backed store. */
       mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
       mutateFluxConnection?(input: import("../../shared/flux-connection").FluxConnectionMutation): Promise<import("../../shared/flux-connection").FluxConnectionStatus>;
+      /** Run the legacy connected-apps claim once (user consent). */
+      claimLegacyComposio?(): Promise<{ state: "none" | "offered" | "pending" | "claimed" | "conflict" | "abandoned"; code?: string; installationId?: string; at?: string; confirmPending?: boolean }>;
       setCredential?(
         name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken",
         value: string,

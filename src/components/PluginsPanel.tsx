@@ -90,6 +90,204 @@ export function requiresAccountAlias(message: string) {
   return /account alias.*existing connection.*not replaced/i.test(message);
 }
 
+/** What the server says about which broker holds the user's connected apps
+ * (see `connectorPanelFields` in server/composio.ts). Secret-free. */
+export interface ConnectorPanelFields {
+  broker: "flux" | "legacy" | null;
+  migration: {
+    state: "none" | "legacy" | "offered" | "pending" | "claimed" | "claim-conflict" | "abandoned" | "moved-elsewhere";
+    legacyUntil: string | null;
+    code?: string;
+    accountKind?: "personal" | "shared";
+    tokenError?: string;
+    installationId?: string;
+    at?: string;
+  };
+  fluxConfigured: boolean;
+  fluxBrokerEnabled: boolean;
+  freeRunsRemainingToday: number | null;
+}
+
+export const EMPTY_CONNECTOR_PANEL_FIELDS: ConnectorPanelFields = {
+  broker: null,
+  migration: { state: "none", legacyUntil: null },
+  fluxConfigured: false,
+  fluxBrokerEnabled: false,
+  freeRunsRemainingToday: null,
+};
+
+export function connectorPanelFieldsFrom(response: Partial<ConnectorPanelFields> | null | undefined): ConnectorPanelFields {
+  return {
+    broker: response?.broker === "flux" || response?.broker === "legacy" ? response.broker : null,
+    migration: response?.migration && typeof response.migration.state === "string"
+      ? response.migration
+      : EMPTY_CONNECTOR_PANEL_FIELDS.migration,
+    fluxConfigured: response?.fluxConfigured === true,
+    fluxBrokerEnabled: response?.fluxBrokerEnabled === true,
+    freeRunsRemainingToday: typeof response?.freeRunsRemainingToday === "number" ? response.freeRunsRemainingToday : null,
+  };
+}
+
+const CLAIM_TO_MIGRATION_STATE = {
+  none: "none", offered: "offered", pending: "pending", claimed: "claimed",
+  conflict: "claim-conflict", abandoned: "abandoned",
+} as const;
+
+/** The claim state the main process just returned, in the shape the panel's
+ * migration field already uses, so the button's result paints immediately
+ * instead of waiting for the next connectors response. */
+export function migrationFromClaim(
+  claim: { state: keyof typeof CLAIM_TO_MIGRATION_STATE; code?: string; installationId?: string; at?: string } | null | undefined,
+  legacyUntil: string | null,
+): ConnectorPanelFields["migration"] {
+  const state = claim && CLAIM_TO_MIGRATION_STATE[claim.state];
+  if (!state) return { state: "none", legacyUntil };
+  const migration: ConnectorPanelFields["migration"] = { state, legacyUntil };
+  if (claim?.code) migration.code = claim.code;
+  if (claim?.installationId) migration.installationId = claim.installationId;
+  if (claim?.at) migration.at = claim.at;
+  return migration;
+}
+
+export type ConnectedAppsNoticeAction = "enable-flux" | "own-key" | "open-settings" | "billing" | "claim" | "keep-legacy";
+export type ConnectedAppsNotice =
+  | { kind: "flux-cta"; title: string; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
+  | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
+  | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
+
+export const FLUXROUTER_BILLING_URL = "https://fluxrouter.ai/dashboard/billing";
+const CLAIMED_NOTICE_MS = 24 * 60 * 60 * 1000;
+
+/** The cut-off date as people read it; null when absent or unparseable. */
+export function formatLegacyCutoff(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeZone: "UTC" }).format(at);
+}
+
+function tokenErrorNotice(code: string | undefined): ConnectedAppsNotice | null {
+  if (!code) return null;
+  if (code === "flux_key_budget_exhausted") {
+    return { kind: "line", tone: "warning", text: t("connectedApps.flux.tokenBudget"), action: { id: "billing", label: t("connectedApps.flux.tokenBudgetButton") } };
+  }
+  if (code === "flux_key_blocked") return { kind: "line", tone: "warning", text: t("connectedApps.flux.tokenBlocked") };
+  if (code === "flux_key_expired" || code === "flux_key_invalid" || code === "composio_no_account") {
+    return { kind: "line", tone: "warning", text: t("connectedApps.flux.tokenReconnect"), action: { id: "enable-flux", label: t("connectedApps.flux.openSettings") } };
+  }
+  return null;
+}
+
+function conflictText(code: string | undefined, date: string | null, installationId: string | undefined): string {
+  const id = installationId ?? "";
+  switch (code) {
+    case "account_already_claimed":
+      return date ? t("connectedApps.flux.conflict.accountAlreadyClaimed", { date }) : t("connectedApps.flux.conflict.accountAlreadyClaimedNoDate");
+    case "account_has_connections":
+      return date ? t("connectedApps.flux.conflict.accountHasConnections", { date }) : t("connectedApps.flux.conflict.accountHasConnectionsNoDate");
+    case "install_already_claimed":
+      return t("connectedApps.flux.conflict.installAlreadyClaimed", { installationId: id });
+    case "claims_closed":
+      return t("connectedApps.flux.conflict.claimsClosed");
+    default:
+      return t("connectedApps.flux.conflict.other");
+  }
+}
+
+/** Every connected-apps notice the panel shows, in order, from what the
+ * server reported. Pure, so each branch is testable without a renderer. */
+export function connectedAppsNotices(input: {
+  configured: boolean;
+  stale: boolean;
+  mode: "managed" | "self-hosted" | "unavailable";
+  fields: ConnectorPanelFields;
+  consentDismissed?: boolean;
+  now?: number;
+}): ConnectedAppsNotice[] {
+  const { configured, stale, mode, fields } = input;
+  const now = input.now ?? Date.now();
+  const migration = fields.migration;
+  const date = formatLegacyCutoff(migration.legacyUntil);
+  const notices: ConnectedAppsNotice[] = [];
+  const tokenNotice = tokenErrorNotice(migration.tokenError);
+
+  if (!configured) {
+    if (stale) return notices;
+    if (!fields.fluxBrokerEnabled) {
+      // No FluxRouter broker in this build at all: every dev run, and any
+      // release where the URL constant is still empty. Offering to "enable
+      // FluxRouter" here would point at a door this build does not have.
+      notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.notInBuild"), action: { id: "own-key", label: t("connectedApps.flux.openSettings") } });
+    } else if (!fields.fluxConfigured) {
+      notices.push({
+        kind: "flux-cta",
+        title: t("connectedApps.flux.ctaTitle"),
+        body: t("connectedApps.flux.ctaBody"),
+        actions: [
+          { id: "enable-flux", label: t("connectedApps.flux.ctaButton") },
+          { id: "own-key", label: t("connectedApps.flux.ctaByok") },
+        ],
+      });
+    } else if (tokenNotice) {
+      notices.push(tokenNotice);
+    } else {
+      notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.unreachable") });
+    }
+    return notices;
+  }
+  if (mode === "self-hosted") return notices;
+
+  if (migration.state === "claimed" && migration.at && now - Date.parse(migration.at) < CLAIMED_NOTICE_MS) {
+    notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.claimed") });
+  }
+  if (fields.broker === "flux") {
+    notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.modeFlux") });
+    if (migration.accountKind === "shared") notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.shared") });
+    if (fields.freeRunsRemainingToday !== null) {
+      notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.freeRuns", { count: fields.freeRunsRemainingToday }) });
+    }
+    if (tokenNotice) notices.push(tokenNotice);
+    return notices;
+  }
+
+  // The Murage Worker broker.
+  if (migration.state === "moved-elsewhere") {
+    notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.movedElsewhere", { installationId: migration.installationId ?? "" }) });
+    return notices;
+  }
+  if (migration.state === "claim-conflict") {
+    notices.push({ kind: "line", tone: "warning", text: conflictText(migration.code, date, migration.installationId) });
+    return notices;
+  }
+  if (migration.state === "offered" && !input.consentDismissed) {
+    notices.push({
+      kind: "consent",
+      body: t("connectedApps.flux.consent"),
+      actions: [
+        { id: "claim", label: t("connectedApps.flux.consentButton") },
+        { id: "keep-legacy", label: date ? t("connectedApps.flux.consentKeep", { date }) : t("connectedApps.flux.consentKeepNoDate") },
+      ],
+    });
+    return notices;
+  }
+  if (migration.state === "pending") notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.claimPending") });
+  if (!fields.fluxBrokerEnabled) {
+    // This build has no FluxRouter broker at all (0.1.52 behaviour, or the
+    // release constant still empty). Naming a move that cannot happen here
+    // would only send people looking for a button that is not there.
+    notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.legacyPlain") });
+    return notices;
+  }
+  notices.push({
+    kind: "line",
+    tone: "muted",
+    text: date ? t("connectedApps.flux.legacyUntil", { date }) : t("connectedApps.flux.legacyNoDate"),
+    ...(fields.fluxConfigured ? {} : { action: { id: "enable-flux" as const, label: t("connectedApps.flux.legacyConnect") } }),
+  });
+  if (tokenNotice) notices.push(tokenNotice);
+  return notices;
+}
+
 export type ConnectorInventoryPhase = "loading" | "ready" | "error";
 
 /** What the primary connector button does. A pending authorization continues
@@ -216,6 +414,11 @@ export function PluginsPanel() {
   const [source, setSource] = useState<"api" | "curated">("curated");
   const [configured, setConfigured] = useState(true);
   const [mode, setMode] = useState<"managed" | "self-hosted" | "unavailable">("unavailable");
+  // Which broker holds these apps, and where this install is in the move from
+  // Murage's own service to FluxRouter. Every connector response carries it.
+  const [panelFields, setPanelFields] = useState<ConnectorPanelFields>(EMPTY_CONNECTOR_PANEL_FIELDS);
+  const [consentDismissed, setConsentDismissed] = useState(false);
+  const [claiming, setClaiming] = useState(false);
   // Paint what we last knew before any request goes out: the module cache if
   // this window already fetched, otherwise the inventory saved on disk. An
   // empty panel is never the first thing a connected user sees.
@@ -333,6 +536,42 @@ export function PluginsPanel() {
     pollTimers.current.clear();
   }, []);
 
+  const notices = connectedAppsNotices({ configured, stale, mode, fields: panelFields, consentDismissed });
+
+  /** What each notice's button does. Moving connected apps is the only one
+   * that changes anything, and it runs in the main process (it holds the
+   * credentials); the rest just open the right settings section. */
+  const runNoticeAction = useCallback((action: ConnectedAppsNoticeAction) => {
+    if (action === "billing") {
+      window.open(FLUXROUTER_BILLING_URL, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (action === "keep-legacy") {
+      setConsentDismissed(true);
+      return;
+    }
+    if (action === "claim") {
+      const claimLegacy = window.muragebox?.claimLegacyComposio;
+      if (!claimLegacy) return;
+      setClaiming(true);
+      setError(null);
+      void claimLegacy()
+        .then((state) => {
+          setPanelFields((previous) => ({ ...previous, migration: { ...previous.migration, ...migrationFromClaim(state, previous.migration.legacyUntil) } }));
+          void loadConnectionInventory(true);
+        })
+        .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+        .finally(() => setClaiming(false));
+      return;
+    }
+    dispatch({ type: "togglePlugins", open: false });
+    // "enable-flux" lands on Models, where FluxRouter lives; "own-key" and
+    // "open-settings" open settings as they always have.
+    dispatch(action === "enable-flux"
+      ? { type: "toggleAppSettings", open: true, section: "models" }
+      : { type: "toggleAppSettings", open: true });
+  }, [dispatch, loadConnectionInventory]);
+
   useEffect(() => {
     if (inventoryPhase !== "ready") return;
     cachedConnectorStatus = status;
@@ -350,6 +589,7 @@ export function PluginsPanel() {
         setSource(r.source ?? "curated");
         setConfigured(Boolean(r.configured));
         setMode(r.mode ?? "unavailable");
+        setPanelFields(connectorPanelFieldsFrom(r));
       })
       .catch((e) => {
         if (!alive) return;
@@ -620,36 +860,82 @@ export function PluginsPanel() {
             people hunting for an outage that did not exist. It says what is
             actually true now, and stays true for a packaged user whose broker
             really is down. */}
-        {!configured && !stale && (
-          <div className="mx-6 mb-1 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning sm:mx-8">
-            Connected apps aren't available on this launch. Add your own Composio key in settings, or try again after restarting.{" "}
-            <button
-              className="font-medium underline underline-offset-2"
-              onClick={() => {
-                close();
-                dispatch({ type: "toggleAppSettings", open: true });
-              }}
-            >
-              Open settings
-            </button>
-          </div>
-        )}
-        {/* WHICH Composio account this is talking to, said out loud.
-            There are two, they hold different connections, and the app used
-            to switch between them in silence. The broker's env only exists in
-            a packaged build, so connecting apps in dev on your own key and
-            then running the release used to empty the list — the accounts are
-            not deleted, they are on the far side of a different project under
-            a different user id, and nothing said so. One line is the whole
-            fix for the confusion; the precedence change in
-            `server/composio.ts` is the fix for the cause. */}
-        {configured && (
+        {/* WHICH Composio account this is talking to, said out loud, and — for
+            an install whose apps still live on Murage's own service — where
+            they are in the move to FluxRouter. There are several possible
+            accounts, they hold different connections, and the app used to
+            switch between them in silence: connecting apps in dev on your own
+            key and then running the release used to empty the list, because
+            the accounts are on the far side of a different project under a
+            different user id and nothing said so.
+
+            Every branch comes from `connectedAppsNotices`, which is pure and
+            takes only what the server reported, so the copy for each state is
+            tested without a renderer. */}
+        {configured && mode === "self-hosted" && (
           <div className="mx-6 mb-1 text-[12px] text-ink-secondary sm:mx-8">
-            {mode === "self-hosted"
-              ? "Connected with your own Composio key. These apps stay with your key."
-              : "Connected through Murage's service."}
+            Connected with your own Composio key. These apps stay with your key.
           </div>
         )}
+        {notices.map((notice, index) => {
+          if (notice.kind === "flux-cta") {
+            return (
+              <div key={`cta-${index}`} className="mx-6 mb-1 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning sm:mx-8">
+                <div className="font-medium">{notice.title}</div>
+                <div className="mt-1 text-ink-secondary">{notice.body}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {notice.actions.map((action) => (
+                    <button
+                      key={action.id}
+                      className="font-medium underline underline-offset-2"
+                      onClick={() => runNoticeAction(action.id)}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+          if (notice.kind === "consent") {
+            return (
+              <div key={`consent-${index}`} className="mx-6 mb-1 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-ink sm:mx-8">
+                <div>{notice.body}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {notice.actions.map((action) => (
+                    <button
+                      key={action.id}
+                      disabled={claiming && action.id === "claim"}
+                      className="font-medium underline underline-offset-2 disabled:opacity-60"
+                      onClick={() => runNoticeAction(action.id)}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div
+              key={`line-${index}`}
+              className={cn(
+                "mx-6 mb-1 text-[12px] sm:mx-8",
+                notice.tone === "warning" ? "rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning" : "text-ink-secondary",
+              )}
+            >
+              {notice.text}
+              {notice.action && (
+                <>
+                  {" "}
+                  <button className="font-medium underline underline-offset-2" onClick={() => runNoticeAction(notice.action!.id)}>
+                    {notice.action.label}
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
         {configured && source === "curated" && mode === "self-hosted" && (
           <div className="mx-6 mb-1 text-[12px] text-ink-secondary sm:mx-8">
             Showing featured apps.{" "}

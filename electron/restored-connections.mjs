@@ -23,7 +23,7 @@ export function restoredConnectionProfile(dataDir) {
 /** Murage connection credentials, not native provider/Fuigo inheritance. */
 export function restoredHarnessEnvironment(environment, profile) {
   const result = { ...environment };
-  if (profile) for (const key of ["COMPOSIO_API_KEY", "MURAGE_COMPOSIO_BROKER_URL", "MURAGE_COMPOSIO_BROKER_TOKEN", "MURAGE_COMPANION_HOSTED_URL", "MURAGE_COMPANION_DIR", "MURAGE_BROWSER_CONNECTION"]) delete result[key];
+  if (profile) for (const key of ["COMPOSIO_API_KEY", "MURAGE_COMPOSIO_BROKER_URL", "MURAGE_COMPOSIO_BROKER_TOKEN", "MURAGE_FLUX_COMPOSIO_BROKER_URL", "MURAGE_FLUX_COMPOSIO_BROKER_TOKEN", "MURAGE_FLUX_COMPOSIO_ACCOUNT_KIND", "MURAGE_COMPOSIO_LEGACY_BROKER_UNTIL", "MURAGE_COMPOSIO_LEGACY_CLAIM", "MURAGE_COMPANION_HOSTED_URL", "MURAGE_COMPANION_DIR", "MURAGE_BROWSER_CONNECTION"]) delete result[key];
   return result;
 }
 
