@@ -6,17 +6,13 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Bug,
   Copy,
-  Folder,
   ListTree,
-  Monitor,
   MessageSquareReply,
   Pencil,
   Pin,
   PinOff,
   RefreshCw,
-  Search,
   Square,
   Volume2,
   Webhook,
@@ -25,7 +21,6 @@ import {
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { plainTextClamped } from "@/lib/plain-text";
 import { telegramMessageDisplay } from "@/lib/telegram-message-display";
-import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
 import {
   useStore,
   useStreaming,
@@ -43,11 +38,11 @@ import { ProviderErrorCard } from "./ProviderErrorCard";
 import { RuntimeErrorCard } from "./RuntimeErrorCard";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
 import { BotAvatar } from "./Avatar";
+import { ChatHeader } from "./ChatHeader";
 import { CommAvatar } from "./CommAvatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
-import { stateForBot } from "@/lib/mascot";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
@@ -59,7 +54,6 @@ import { Composer } from "./Composer";
 import { IntakeTurn } from "./IntakeTurn";
 import { readIntakeCard } from "@/lib/onboarding-intake";
 import { ChatFindBar } from "./ChatFindBar";
-import { RoleBadge } from "./RoleBadge";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -67,20 +61,13 @@ import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { ScreenFrameMedia } from "./ImageMedia";
 import { ArtifactCards } from "./ArtifactCards";
-import { openFiles } from "./Files";
-import { useDesktopSurface } from "@/lib/use-surface";
-import { ModelPicker } from "./ModelPicker";
-import { MemoryLauncher } from "./MemoryLauncher";
 import { RenameTitle } from "./RenameTitle";
-import { TaskPicker } from "./TaskPicker";
-import { UsagePopover } from "./UsagePopover";
 
 import { SpeakButton } from "./SpeakButton";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
-import { CallButton, CallOverlay } from "./CallView";
+import { CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
-import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { useFocusMessage } from "@/lib/focus-message";
 import { groupTranscript } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
@@ -1353,126 +1340,16 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       {/* Call mode covers the thread while the bot is on the line */}
       <CallOverlay bot={bot} />
-      {/* Header */}
-      <div
-        className={cn(
-          // @container so the chips on the right can fold to icon bubbles
-          // when the column is narrow (side panel open, small window)
-          "@container/chathead flex items-center justify-between px-5 py-3",
-          // Room for the drawer button, which overlays this corner below md.
-          "pl-11 md:pl-5",
-          // The status bar sits over this row in a standalone install. calc()
-          // rather than a bare pt-[env()] so the desktop keeps its py-3 top
-          // padding when the inset resolves to 0px.
-          "pt-[calc(0.75rem+env(safe-area-inset-top))]",
-        )}
-      >
-        {/* The right-hand cluster is all `shrink-0`, so this group is what pays
-            for a narrow column: measured at 390px the name button was 0px wide
-            and the header showed six unlabelled icons and no conversation name.
-            Container queries rather than `max-md:` on purpose — the same
-            collapse happens in a desktop window with a side panel open, which
-            is the width the container actually reports. */}
-        <div className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-md/chathead:px-0">
-          <button
-            onClick={() => dispatch({ type: "toggleSettings", open: true })}
-            className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50"
-            title="Open agent profile"
-            aria-label={`Open ${bot.name}'s profile`}
-          >
-            <BotAvatar
-              bot={bot}
-              state={stateForBot({ ...bot, messages })}
-              size={28}
-              motion={mascotMotion?.kind ?? "none"}
-              motionKey={mascotMotion?.nonce ?? 0}
-            />
-          </button>
-          <RenameTitle
-            value={bot.name}
-            onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
-            onActivate={() => dispatch({ type: "toggleSettings", open: true })}
-            showEditButton
-            className="truncate text-[15px] font-semibold text-ink"
-            inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
-            // 40px of shrink-0 pencil beside a name that has no width left to
-            // give. Rename is the Name field in the agent profile, which the
-            // name button itself opens.
-            editButtonClassName="@max-md/chathead:hidden"
-          />
-          {/* Three tiers, one mark. Without shrink-0 and nowrap this pill was
-              measured at 390px wrapping to three lines, taking the header from
-              72px to 85.5px, overlapping the Find button by 79.4px and leaving
-              the bot name 0px wide — both live on the badge itself. In a
-              narrow column the icon alone carries the signal, the way the
-              chips beside it already fold. */}
-          <RoleBadge
-            bot={bot}
-            labelClassName="@max-md/chathead:hidden"
-            className="@max-md/chathead:px-1"
-          />
-          {bot.busy && <WorkingDots className="text-ink-secondary" />}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            onClick={() => setFindOpen((open) => !open)}
-            aria-label="Find in conversation"
-            aria-pressed={findOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title="Find in conversation (⌘F)"
-          >
-            <Search size={18} />
-          </button>
-          <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} compact />
-          {bot.busy && (
-            <button
-              onClick={() => dispatch({ type: "interrupt", botId: bot.id,threadId:bot.threadId })}
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink",
-                COMPACT_BUBBLE,
-              )}
-              title="Stop this turn"
-            >
-              <Square size={12} className="fill-current" />
-              <span className="@max-4xl/chathead:hidden">Stop</span>
-            </button>
-          )}
-          <TaskPicker bot={bot} />
-          <UsageChip bot={bot} />
-          <WorkingFolderChip bot={bot} />
-          {/* The same picker is in the agent profile (SettingsPanel), which the
-              header name opens — so in a narrow column this is a duplicate that
-              costs the conversation name its width. It also drops the 380px
-              menu that has nowhere to open on a 390px screen. */}
-          <ModelPicker key={`model-${bot.threadId}`} bot={bot} threadId={bot.threadId} />
-          <CallButton bot={bot} />
-          <button
-            onClick={() => dispatch({ type: "toggleComputer" })}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title="Bot's computer"
-          >
-            <Monitor size={18} />
-          </button>
-          <button
-            onClick={() => dispatch({ type: "toggleInspector" })}
-            aria-label="Inspector"
-            aria-pressed={state.inspectorOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              state.inspectorOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title="Inspector — runtime events and raw protocol for this thread"
-          >
-            <Bug size={18} />
-          </button>
-        </div>
-      </div>
+      {/* Header — a priority layout that measures its own container (U0-T1).
+          It lives in ChatHeader.tsx so it can be mounted and measured on its
+          own at real widths; everything it needs is passed in. */}
+      <ChatHeader
+        bot={bot}
+        messages={messages}
+        mascotMotion={mascotMotion}
+        findOpen={findOpen}
+        onToggleFind={() => setFindOpen((open) => !open)}
+      />
 
       {findOpen && <ChatFindBar threadId={bot.threadId} onClose={() => setFindOpen(false)} />}
 
@@ -1668,76 +1545,5 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       </div>
 
     </main>
-  );
-}
-
-/** What the open task has spent — quiet until the first turn settles.
- *
- * Click still opens the bot's settings, where the Usage card lives. The
- * breakdown is no longer only there: hovering or focusing the chip opens
- * `UsagePopover` beside it, which is the affordance a native `title` could
- * never be (see the note at the top of that file). */
-function UsageChip({ bot }: { bot: Bot }) {
-  const { state, dispatch } = useStore();
-  const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
-  const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
-  const text = usage ? usageChip(usage, billing) : "";
-  if (!usage || !text) return null;
-  // Every line, always the same shape — including the honest sentences for an
-  // engine that reports no cache or no cost, and the caveat that says these
-  // are the LAST SETTLED turn's figures while a turn is still running.
-  const lines = usageReport(usage, { billing, busy: bot.busy, activity: bot.activity });
-  // folded: one figure — cost when the engine reports one, else tokens
-  // Folded, the same rule: money only where money is owed.
-  const short = billing === "metered" && hasFiniteCost(usage.costUsd)
-    ? formatUsd(usage.costUsd)
-    : formatTokens(freshTokens(usage));
-  return (
-    <UsagePopover
-      lines={lines}
-      onAllBots={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })}
-      // The fold moved here from the button so the wrapper folds away with
-      // it; the button keeps its own `@max-4xl/chathead:px-2`, and the two
-      // spans keep the swap between the full figure and `short`.
-      className="@max-md/chathead:hidden"
-      trigger={({ describedBy }) => (
-        <button
-          onClick={() => dispatch({ type: "toggleSettings", open: true })}
-          // Read-only status whose click target is the agent profile — the same
-          // place the header name goes. In a narrow column it is a duplicate that
-          // costs the conversation its name.
-          className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
-          aria-describedby={describedBy}
-          aria-label={`Usage: ${text}`}
-        >
-          <span className="@max-4xl/chathead:hidden">{text}</span>
-          <span className="hidden @max-4xl/chathead:inline">{short}</span>
-        </button>
-      )}
-    />
-  );
-}
-
-/** Opens this bot/task's deliverables; working-folder configuration stays
- * in settings and is never changed by file navigation. */
-function WorkingFolderChip({ bot }: { bot: Bot }) {
-  const desktop = useDesktopSurface();
-  const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
-  const folder = task?.cwd === undefined ? bot.cwd : (task.cwd ?? undefined);
-  if (desktop !== true) return null;
-  const name = folder?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Files";
-  return (
-    <button
-      onClick={() => openFiles({ botId: bot.id, threadId: bot.threadId })}
-      className={cn(
-        "flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
-        COMPACT_SQUARE,
-      )}
-      title={folder ? `Files in ${folder}` : `Files for ${bot.name}`}
-      aria-label={`Open files for ${bot.name}`}
-    >
-      <Folder size={12} className="@max-4xl/chathead:size-[14px]" />
-      <span className="truncate font-mono @max-4xl/chathead:hidden">{name}</span>
-    </button>
   );
 }

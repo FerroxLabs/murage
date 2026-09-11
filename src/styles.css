@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/* Chat header chip fold (U0-T1). The header decides from what it measures
+   whether its chips (task, model, folder, usage, Stop, Memory) show a label
+   or only their icon, and stamps `data-chat-header-chips` on itself:
+   "full", "titled" (only the task keeps its title) or "compact".
+   `chip-trim:` utilities apply under titled AND compact; `chip-fold:` under
+   compact alone — the task title is the one label that outlasts the rest.
+   A JS-measured fold rather than a `@container` breakpoint, because the
+   trigger is "the bot's name would lose its track", which no fixed width can
+   express. The same chips outside the chat header (the model picker in the
+   agent profile) have no such ancestor and always keep their labels. */
+@custom-variant chip-fold (&:where([data-chat-header-chips="compact"] *));
+@custom-variant chip-trim (&:where([data-chat-header-chips="titled"] *, [data-chat-header-chips="compact"] *));
+
 /* ─────────────────────────────────────────────────────────────────────────
    THEMES
 

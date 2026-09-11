@@ -10,8 +10,8 @@
 //   2. WHERE ITS BOX ACTUALLY LANDS. The chip sits in a cluster hard against
 //      the right edge of the header, so "does it overflow the viewport" is a
 //      question about a rectangle, not about a class name. This file reads the
-//      rectangle at 1440x900, at the width where the chip folds to one figure,
-//      and at 390x844.
+//      rectangle at 1440x900, at a width where the header has had to give
+//      the chip up to its More menu, and at 390x844.
 //   3. THAT ESCAPE AND AN OUTSIDE CLICK CLOSE IT.
 //
 // The workspace has no engine and therefore no settled turn, so no seeded bot
@@ -148,23 +148,40 @@ test.describe("the token chip's popover", () => {
     const wide = await measure(app, "1440x900, full chip");
     expect(wide.width).toBeGreaterThan(200);
 
-    // 2. The @max-4xl fold: the chip is one figure, the popover is unchanged.
+    // 2. A narrower column. The header measures itself (U0-T1) and, before
+    //    it would let the conversation name lose its track, moves the usage
+    //    figure into its More menu — the chip is RELOCATED, not folded and not
+    //    dropped. Where exactly that happens is a measurement, so this reads
+    //    the header's own record of it rather than assuming a width: if the
+    //    chip is still inline it must still open its popover inside the
+    //    viewport; if it has moved, the same figure must be in the menu.
     await app.setViewportSize({ width: 760, height: 900 });
     await app.mouse.move(0, 0);
     await expect(panel(app)).toHaveCount(0);
-    await chip(app).hover();
-    await measure(app, "760x900, folded chip");
+    if (await chip(app).isVisible()) {
+      await chip(app).hover();
+      await measure(app, "760x900, chip still inline");
+    } else {
+      await app.getByRole("button", { name: "More actions", exact: true }).click();
+      const item = app.getByRole("menu", { name: "More header actions" }).getByRole("menuitem", { name: /^Usage: / });
+      await expect(item).toBeVisible();
+      const text = await item.textContent();
+      // eslint-disable-next-line no-console
+      console.log(`[usage popover] 760x900 → chip relocated into the More menu as "${text?.trim()}"`);
+      expect(text).toContain("14.3k tok");
+      await app.keyboard.press("Escape");
+    }
 
-    // 3. A phone. `@max-md/chathead:hidden` takes the whole chip — and with it
-    //    its anchor — out of the header, because at this width the
-    //    conversation's own name has no pixels to spare. Nothing to overflow.
+    // 3. A phone. The header gives the chip up to its menu long before this
+    //    width, because the conversation's own name has no pixels to spare.
+    //    Nothing left in the row to overflow.
     await app.setViewportSize({ width: 390, height: 844 });
     await app.mouse.move(0, 0);
     await expect(chip(app)).toHaveCount(0);
     await expect(panel(app)).toHaveCount(0);
     const scrollWidth = await app.evaluate(() => document.documentElement.scrollWidth);
     // eslint-disable-next-line no-console
-    console.log(`[usage popover] 390x844 → chip folded out of the header; document scrollWidth ${scrollWidth}`);
+    console.log(`[usage popover] 390x844 → chip relocated out of the header; document scrollWidth ${scrollWidth}`);
     expect(scrollWidth).toBeLessThanOrEqual(391);
   });
 });

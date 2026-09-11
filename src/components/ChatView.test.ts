@@ -175,3 +175,101 @@ describe("motion is optional", () => {
     expect(reduced).toMatch(/\.msg-sheet,\s*\.msg-sheet-backdrop\s*\{\s*animation:\s*none;?\s*\}/);
   });
 });
+
+// U0-T1. The rendered behaviour — hit rectangles, name widths, menus and
+// screenshots at 320/390/480/640/820/1024 in both skins — is proved in a
+// browser by src/e2e/chat-header.human.spec.ts. These are the wiring
+// contracts that spec depends on.
+describe("the chat header answers to its container, not the window", () => {
+  const header = read("./ChatHeader.tsx");
+  const memoryLauncher = read("./MemoryLauncher.tsx");
+  const layout = read("../lib/chat-header-layout.ts");
+
+  it("is one measured component ChatView hands its state to", () => {
+    expect(chat).toContain('import { ChatHeader } from "./ChatHeader"');
+    expect(chat).toMatch(/<ChatHeader[\s\S]{0,200}findOpen=\{findOpen\}[\s\S]{0,120}onToggleFind=/);
+    // The old inline header is gone, not merely bypassed.
+    expect(chat).not.toContain("@container/chathead");
+    expect(chat).not.toContain("<TaskPicker");
+    expect(chat).not.toContain("<ModelPicker");
+  });
+
+  it("measures the chat container rather than the viewport", () => {
+    // A `max-md:` breakpoint would miss the case this exists for: a 1600px
+    // window with the sidebar and the computer panel open. The header
+    // measures ITSELF (its own box is the chat column's width) and decides
+    // from that, including whether the chips fold.
+    expect(header).toContain("useChatHeaderLayout(headerRef, contentKey)");
+    expect(header).toContain("data-chat-header-chips={layout.chips}");
+    expect(layout).toContain("new ResizeObserver(read)");
+    expect(layout).toContain("observer.observe(header)");
+    expect(header).not.toMatch(/\bmax-md:/);
+    expect(header).not.toContain("window.innerWidth");
+    expect(header).not.toContain("@container");
+    // What changes the chips' width without changing the header's box —
+    // a task switch, a model change — restarts the ladder through the key.
+    expect(header).toMatch(/const contentKey = \[[\s\S]*task\?\.title[\s\S]*bot\.modelSelection\.model[\s\S]*\]\.join/);
+  });
+
+  it("keeps identity, Stop, the task/model context and the call button at every width", () => {
+    for (const fixed of ["<TaskPicker bot={bot} />", "<CallButton bot={bot} />", "<BotAvatar", "<RenameTitle"]) {
+      expect(header).toContain(fixed);
+    }
+    // None of the four is wrapped in an `inHeader(...)` gate.
+    expect(header).not.toMatch(/inHeader\("(task|model|call|name|stop)"\)/);
+    expect(header).toMatch(/\{bot\.busy && \(\s*<button[\s\S]{0,400}chatHeader\.stop/);
+  });
+
+  it("relocates the rest into one menu instead of hiding it", () => {
+    for (const slot of ["folder", "usage", "find", "computer", "inspector"]) {
+      expect(header, `${slot} is not gated on the layout`).toContain(`inHeader("${slot}")`);
+    }
+    expect(header).toContain("<ChatHeaderMenu");
+    // Every relocated slot that has an action supplies a menu item.
+    for (const id of ["usage", "inspector", "computer", "find", "memory", "folder"]) {
+      expect(header).toMatch(new RegExp(`id: "${id}"`));
+    }
+  });
+
+  it("moves the memory trigger without unmounting the dialog", () => {
+    // A resize must never discard a memory edit in progress, so the launcher
+    // stays mounted and only `showTrigger` changes.
+    expect(header).toMatch(/<MemoryLauncher[\s\S]{0,400}showTrigger=\{inHeader\("memory"\)\}/);
+    expect(header).toMatch(/<MemoryLauncher[\s\S]{0,500}open=\{memoryOpen\}/);
+    expect(memoryLauncher).toContain("showTrigger");
+    expect(memoryLauncher).toContain("returnFocusRef");
+  });
+
+  it("moves the task/model pickers between rows by class, not by re-parenting", () => {
+    // Re-parenting would remount them: an open dropdown would close and the
+    // selected task could change on a resize.
+    expect(header).toMatch(/data-chat-header-secondary[\s\S]{0,300}twoRow \? "order-last w-full/);
+    const secondary = header.slice(header.indexOf("data-chat-header-secondary"));
+    expect(secondary.indexOf("<TaskPicker")).toBeGreaterThan(-1);
+    expect(secondary.indexOf("<ModelPicker")).toBeGreaterThan(-1);
+    // On the labelled second row the chips may truncate down to a floor,
+    // everywhere else they overflow so the measurement can see them.
+    expect(header).toMatch(/!twoRow \|\| layout\.chips === "compact"\s*\? "\*:shrink-0"/);
+    expect(header).toContain('? "[&>[data-header-labelled]]:min-w-[5.5rem]"');
+    expect(header).toContain(': "[&>*:not([data-header-labelled=task])]:shrink-0 [&>[data-header-labelled=task]]:min-w-[5.5rem]"');
+  });
+
+  it("gives the identity cluster the space the controls leave", () => {
+    // ROOT CAUSE of the shipped overlap: the identity cluster was the only
+    // thing without `shrink-0`, and had no `flex-1` to claim what was left.
+    expect(header).toContain('className="flex min-w-0 flex-1 items-center gap-2.5');
+    expect(header).toContain("data-chat-header-name");
+  });
+
+  it("opens the effective workspace, never the folder setting", () => {
+    expect(header).toMatch(/WorkingFolderChip[\s\S]{0,600}openFiles\(\{ botId: bot\.id, threadId: bot\.threadId \}\)/);
+    expect(header).not.toMatch(/WorkingFolderChip[\s\S]{0,600}toggleSettings/);
+    // A custom task folder cannot read as the bot's default.
+    expect(header).toContain('return { path: task.cwd, origin: "task" }');
+    expect(header).toContain('return { path: bot.cwd, origin: "bot" }');
+    expect(header).toContain('return { origin: "default" }');
+    // The complete resolved location travels as the accessible description.
+    expect(header).toMatch(/aria-label=\{`\$\{workspaceActionLabel\(workspace\)\} — \$\{detail\}`\}/);
+    expect(header).toContain("description: workspaceDetail(workspace)");
+  });
+});
