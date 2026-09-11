@@ -24,7 +24,19 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, chownSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fchownSync,
+  fstatSync,
+  lchownSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export class ServiceAccountRefused extends Error {
@@ -214,30 +226,51 @@ export function prepareDataDir(dataDir, account, { euid }) {
   } catch (error) {
     if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT") throw error;
   }
-  if (!st) {
-    const first = mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-    if (euid === 0 && account.uid !== 0 && first) {
-      // Only the directories this call created; nothing that already existed.
-      for (let dir = dataDir; ; dir = dirname(dir)) {
-        chownSync(dir, account.uid, account.gid);
-        if (dir === first || dir === dirname(dir)) break;
+  const notPlain = () =>
+    new ServiceAccountRefused("DATA_DIR_NOT_A_DIRECTORY", `${dataDir} exists and is not a plain directory; setup will not write through it.`);
+  if (st && (st.isSymbolicLink() || !st.isDirectory())) throw notPlain();
+
+  // Everything below works on an fd opened without following a symlink, not
+  // on the path: when root prepares this directory for another account, that
+  // account can rename it away and plant a symlink at any moment, and a
+  // chmod or chown by path would follow the link to wherever it points.
+  const first = st ? undefined : mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  let fd;
+  try {
+    fd = openSync(dataDir, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
+  } catch (error) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+    if (code === "ELOOP" || code === "EMLINK" || code === "ENOTDIR") throw notPlain();
+    throw error;
+  }
+  try {
+    const now = fstatSync(fd);
+    if (!now.isDirectory()) throw notPlain();
+    if (!st) {
+      fchmodSync(fd, 0o700);
+      if (euid === 0 && account.uid !== 0 && first) {
+        fchownSync(fd, account.uid, account.gid);
+        // The other directories this call created, and nothing that already
+        // existed. lchown, so one swapped for a symlink is not followed.
+        for (let dir = dataDir; dir !== first && dir !== dirname(dir); ) {
+          dir = dirname(dir);
+          lchownSync(dir, account.uid, account.gid);
+        }
       }
+      return { created: true };
     }
-    chmodSync(dataDir, 0o700);
-    return { created: true };
+    if (now.uid !== account.uid) {
+      throw new ServiceAccountRefused(
+        "DATA_DIR_FOREIGN_OWNER",
+        `${dataDir} belongs to uid ${now.uid}, not to ${account.user} (uid ${account.uid}). Setup does not re-own existing ` +
+          `data. Fix the ownership yourself if that data is ${account.user}'s, or choose another MURAGE_DATA_DIR.`
+      );
+    }
+    if ((now.mode & 0o077) !== 0) fchmodSync(fd, 0o700);
+    return { created: false };
+  } finally {
+    closeSync(fd);
   }
-  if (st.isSymbolicLink() || !st.isDirectory()) {
-    throw new ServiceAccountRefused("DATA_DIR_NOT_A_DIRECTORY", `${dataDir} exists and is not a plain directory; setup will not write through it.`);
-  }
-  if (st.uid !== account.uid) {
-    throw new ServiceAccountRefused(
-      "DATA_DIR_FOREIGN_OWNER",
-      `${dataDir} belongs to uid ${st.uid}, not to ${account.user} (uid ${account.uid}). Setup does not re-own existing ` +
-        `data. Fix the ownership yourself if that data is ${account.user}'s, or choose another MURAGE_DATA_DIR.`
-    );
-  }
-  if ((st.mode & 0o077) !== 0) chmodSync(dataDir, 0o700);
-  return { created: false };
 }
 
 /**

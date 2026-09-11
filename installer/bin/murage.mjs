@@ -32,6 +32,7 @@ import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupP
 import { createDoorNonce, deploymentOwner, doorVersion, probeDoor, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { envFilePermissions, inspectEnvFile, readEnvFile, retainRecoveryCopy, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
+import { NotPlainFile, asAccount } from "../lib/private-files.mjs";
 import {
   ServiceAccountRefused,
   accountCanReach,
@@ -576,8 +577,10 @@ function announceDeviceDoorClosed() {
  * @property {string} envFile
  * @property {ReturnType<typeof lookupAccount> | null} account the account the
  *   service runs as (Linux only; null elsewhere, where no unit is staged)
- * @property {{ uid: number, gid: number } | null} owner who setup's files
- *   belong to, when root prepares them for another account
+ * @property {{ uid: number, gid: number, groups?: number[] } | null} owner who
+ *   setup's files belong to, when root prepares them for another account. Setup
+ *   also does that file work AS this account (`asAccount`), because it happens
+ *   inside a directory the account controls.
  * @property {{ uid: number, gid: number } | null} spawnAs the account the
  *   setup-time sidecar runs as, when root acts for another account
  */
@@ -598,6 +601,19 @@ function resolveSetupContext(argv) {
     if (parsed.serviceUser) {
       fail("--service-user names the account of the systemd unit, and setup stages one on Linux only.");
       process.exit(2);
+    }
+    // The data directory is tightened here, once, through an fd; the env file
+    // write no longer chmods whatever directory it finds (see `writeEnvFile`).
+    if (process.platform !== "win32") {
+      const euid = typeof process.geteuid === "function" ? process.geteuid() : null;
+      const gid = typeof process.getegid === "function" ? process.getegid() : 0;
+      try {
+        prepareDataDir(resolve(DATA_DIR), { user: userInfo().username, uid: euid ?? 0, gid }, { euid });
+      } catch (error) {
+        if (!(error instanceof ServiceAccountRefused)) throw error;
+        fail(error.message);
+        process.exit(2);
+      }
     }
     return { dataDir: DATA_DIR, envFile: ENV_FILE, account: null, owner: null, spawnAs: null };
   }
@@ -623,7 +639,7 @@ function resolveSetupContext(argv) {
     ok(`service account: ${c.b(`${account.user}:${account.group}`)} (uid ${account.uid}; ${chosen.source}), home ${c.dim(account.home)}`);
     ok(`data dir: ${c.dim(paths.dataDir)} (owned by ${account.user}, 0700)`);
     const forAnother = euid === 0 && account.uid !== 0 ? { uid: account.uid, gid: account.gid } : null;
-    return { ...paths, account, owner: forAnother, spawnAs: forAnother };
+    return { ...paths, account, owner: forAnother && { ...forAnother, groups: account.groups }, spawnAs: forAnother };
   } catch (error) {
     if (!(error instanceof ServiceAccountRefused)) throw error;
     fail(error.message);
@@ -648,7 +664,16 @@ async function setup(argv = []) {
   // A rerun edits the existing env file rather than starting it over, so it is
   // read and validated before anything else happens. A file setup cannot
   // carry over whole is not rewritten at all.
-  const current = inspectEnvFile(ctx.envFile);
+  //
+  // When root runs setup for the service account, every env-file operation
+  // runs AS that account (`asAccount`). The file lives in a directory the
+  // account owns, and the account has the whole Tailscale enrolment and key
+  // prompt to swap the file or the directory for a symlink. Done as root, the
+  // recovery copy would then copy /etc/shadow into a file the account can
+  // read, and the write would chmod /etc. Done as the account, a redirect
+  // reaches only what the account could reach anyway. The bytes checked here
+  // are the bytes the recovery copy keeps; the path is not read twice.
+  const current = asAccount(ctx.owner, () => inspectEnvFile(ctx.envFile, { uid: ctx.owner ? ctx.owner.uid : null }));
   if (current.problems.length) {
     fail(`setup will not rewrite ${ctx.envFile}: it could not carry every line over.`);
     for (const problem of current.problems) console.log(`      ${c.dim("- " + problem)}`);
@@ -712,12 +737,22 @@ async function setup(argv = []) {
     providerEnv,
     proxyVerified: Boolean(enrolment.ok && enrolment.served),
   });
-  if (merged.replaced.length) {
-    const copy = retainRecoveryCopy(ctx.envFile, { owner: ctx.owner });
-    warn(`replacing the stored ${merged.replaced.join(", ")}; the previous file is kept as ${c.dim(String(copy))} (mode 0600).`);
+  try {
+    asAccount(ctx.owner, () => {
+      if (merged.replaced.length) {
+        const copy = retainRecoveryCopy(ctx.envFile, { owner: ctx.owner, bytes: current.bytes });
+        warn(`replacing the stored ${merged.replaced.join(", ")}; the previous file is kept as ${c.dim(String(copy))} (mode 0600).`);
+      }
+      for (const key of merged.changed) warn(`${key} in ${ctx.envFile} is now ${merged.bag[key]}, the value this setup uses.`);
+      writeEnvFile(ctx.envFile, merged.bag, { owner: ctx.owner });
+    });
+  } catch (error) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error)?.code;
+    if (!(error instanceof NotPlainFile) && code !== "EACCES" && code !== "EPERM") throw error;
+    fail(`setup did not write ${ctx.envFile}: ${/** @type {Error} */ (error).message}`);
+    console.log(c.dim("  The env file, if there was one, is unchanged. Fix that path, then re-run setup."));
+    process.exit(2);
   }
-  for (const key of merged.changed) warn(`${key} in ${ctx.envFile} is now ${merged.bag[key]}, the value this setup uses.`);
-  writeEnvFile(ctx.envFile, merged.bag, { owner: ctx.owner });
   const carried = Object.keys(current.bag).length;
   ok(`wrote ${c.dim(ctx.envFile)} (mode 0600${current.exists ? `; ${carried} existing setting${carried === 1 ? "" : "s"} carried over` : ""})`);
 

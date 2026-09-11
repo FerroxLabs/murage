@@ -4,7 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -120,6 +133,7 @@ test("the replacement is a new private file, and a symlinked env file is never w
     exists: true,
     bag: {},
     problems: [`${link} is not a regular file (a symlink or something else)`],
+    bytes: null,
   });
   writeEnvFile(link, { B: "2" });
   assert.equal(readFileSync(target, "utf8"), "A=1\n", "the link's target is untouched");
@@ -127,11 +141,16 @@ test("the replacement is a new private file, and a symlinked env file is never w
 
 test("inspectEnvFile carries a valid file over, and refuses one it cannot without quoting any line", () => {
   const dir = scratch();
-  assert.deepEqual(inspectEnvFile(join(dir, "absent.env")), { exists: false, bag: {}, problems: [] });
+  assert.deepEqual(inspectEnvFile(join(dir, "absent.env")), { exists: false, bag: {}, problems: [], bytes: null });
 
   const good = join(dir, "good.env");
   writeFileSync(good, "# comment\nANTHROPIC_API_KEY=sk-ant-1\nCUSTOM=a=b\n\n");
-  assert.deepEqual(inspectEnvFile(good), { exists: true, bag: { ANTHROPIC_API_KEY: "sk-ant-1", CUSTOM: "a=b" }, problems: [] });
+  assert.deepEqual(inspectEnvFile(good), {
+    exists: true,
+    bag: { ANTHROPIC_API_KEY: "sk-ant-1", CUSTOM: "a=b" },
+    problems: [],
+    bytes: Buffer.from("# comment\nANTHROPIC_API_KEY=sk-ant-1\nCUSTOM=a=b\n\n"),
+  });
 
   const bad = join(dir, "bad.env");
   writeFileSync(bad, "OPENAI_API_KEY=sk-SECRETVALUE\nsk-proj-PASTEDWITHOUTANAME\nhas space=1\n");
@@ -153,6 +172,90 @@ test("retainRecoveryCopy keeps the exact previous bytes beside the file, private
   writeFileSync(path, "ANTHROPIC_API_KEY=sk-ant-second\n");
   retainRecoveryCopy(path);
   assert.equal(readFileSync(copy, "utf8"), "ANTHROPIC_API_KEY=sk-ant-second\n");
+});
+
+// ── the file or its directory swapped for a symlink after inspection ──────
+// When root runs setup for the service account, that account owns the data
+// directory and has the whole enrolment and key prompt to swap things. Root's
+// own protection is `asAccount` (private-files.test.mjs runs it as root); these
+// check that the env-file code never re-reads or re-follows a path either.
+
+test("a file swapped for a symlink between inspection and the recovery copy: the copy holds the inspected bytes", () => {
+  const dir = scratch();
+  const victim = join(dir, "victim-secret");
+  writeFileSync(victim, "ROOT_ONLY_CONTENT\n", { mode: 0o600 });
+  const path = join(dir, "murage.env");
+  writeFileSync(path, "ANTHROPIC_API_KEY=sk-ant-OLD\n", { mode: 0o600 });
+
+  const inspected = inspectEnvFile(path, { uid: process.getuid() });
+  assert.deepEqual(inspected.problems, []);
+  unlinkSync(path);
+  symlinkSync(victim, path);
+
+  const copy = retainRecoveryCopy(path, { bytes: inspected.bytes });
+  assert.equal(readFileSync(copy, "utf8"), "ANTHROPIC_API_KEY=sk-ant-OLD\n", "the bytes that were checked, not the link's target");
+  assert.ok(!readFileSync(copy, "utf8").includes("ROOT_ONLY_CONTENT"));
+
+  // Without the inspected bytes, the path is read through a no-follow fd, and
+  // the link is refused: no copy is made at all.
+  rmSync(copy);
+  assert.throws(() => retainRecoveryCopy(path), /not a regular file/);
+  assert.throws(() => lstatSync(copy), { code: "ENOENT" });
+  // A regular file that belongs to someone other than the account is refused too.
+  unlinkSync(path);
+  writeFileSync(path, "A=1\n");
+  assert.throws(() => retainRecoveryCopy(path, { owner: { uid: process.getuid() + 1, gid: process.getgid() } }), /is owned by uid/);
+  assert.throws(() => lstatSync(copy), { code: "ENOENT" });
+});
+
+test("inspectEnvFile reports a file with the wrong owner, and a FIFO, without hanging or reading them", () => {
+  const dir = scratch();
+  const path = join(dir, "murage.env");
+  writeFileSync(path, "A=1\n");
+  const foreign = inspectEnvFile(path, { uid: process.getuid() + 1 });
+  assert.equal(foreign.bytes, null);
+  assert.deepEqual(foreign.bag, {});
+  assert.match(foreign.problems.join("\n"), /is owned by uid/);
+
+  const fifo = join(dir, "fifo.env");
+  assert.equal(spawnSync("mkfifo", [fifo]).status, 0);
+  assert.deepEqual(inspectEnvFile(fifo).problems, [`${fifo} is not a regular file (a symlink or something else)`]);
+});
+
+test("writeEnvFile refuses a symlinked directory: the target is not chmodded and nothing is published in it", () => {
+  const root = scratch();
+  const real = join(root, "elsewhere");
+  mkdirSync(real);
+  chmodSync(real, 0o755);
+  const link = join(root, "datalink");
+  symlinkSync(real, link);
+
+  assert.throws(() => writeEnvFile(join(link, "murage.env"), { A: "1" }), /not a plain directory/);
+  assert.equal(statSync(real).mode & 0o777, 0o755, "the link's target keeps its mode");
+  assert.deepEqual(readdirSync(real), [], "nothing was published through the link");
+});
+
+test("writeEnvFile writes only into a directory the owner holds and nobody else can write, and chmods only one it created", () => {
+  const root = scratch();
+  const existing = join(root, "existing");
+  mkdirSync(existing);
+  chmodSync(existing, 0o755);
+  writeEnvFile(join(existing, "murage.env"), { A: "1" });
+  assert.equal(statSync(join(existing, "murage.env")).mode & 0o777, 0o600);
+  // Behaviour change in this fix: an existing directory is no longer chmodded
+  // (setup tightens the data directory itself, through an fd, in prepareDataDir).
+  assert.equal(statSync(existing).mode & 0o777, 0o755);
+
+  const other = { uid: process.getuid() + 1, gid: process.getgid() };
+  assert.throws(() => writeEnvFile(join(existing, "murage.env"), { A: "2" }, { owner: other }), /is owned by uid/);
+  assert.equal(readFileSync(join(existing, "murage.env"), "utf8").includes("A=1"), true, "the refused write changed nothing");
+
+  const shared = join(root, "shared");
+  mkdirSync(shared);
+  chmodSync(shared, 0o775);
+  assert.throws(() => writeEnvFile(join(shared, "murage.env"), { A: "1" }), /writable by other accounts/);
+  assert.equal(statSync(shared).mode & 0o777, 0o775);
+  assert.deepEqual(readdirSync(shared), []);
 });
 
 const STORED = {
