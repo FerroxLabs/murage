@@ -59,6 +59,11 @@
 // for the life of the process, a failure (or a probe that could not run, say
 // on a read-only root) until VOLUME_CLOCK_RETRY_MS have gone by, so an
 // untrusted volume costs one temp file a minute at most, not one per file.
+// The probe speaks only for the root's own device: a listing descends into a
+// volume mounted inside the root (an image, a share, a FUSE mount), and a file
+// there reports that volume's device number, which nobody probed. Such a file
+// keeps the refusal, whatever the root's verdict; probing inside a user's
+// subfolder would leave temp files there, so it is not done.
 //
 // Cost, measured on the 0.1.52 build Mac (Apple silicon, APFS) with the
 // independent bench (200 x 2 MiB files through listWorkspaceDirectory, stamps
@@ -161,13 +166,18 @@ export function probeVolumeClock(directory: string): boolean {
   finally { try { unlinkSync(path); } catch { /* never written, or already gone */ } }
 }
 
-/** The held verdict for `stat.dev`, probing `root` when none is fresh. */
+/** The held verdict for `dev`, probing `root` when none is fresh. Only the
+ * root's own device can pass: the probe file is written there, so a device
+ * the root does not sit on (a volume mounted inside it) was never probed and
+ * is never trusted, whatever the root's verdict. */
 function volumeClockTrusted(root: string, dev: number): boolean {
   if (forcedVolumeClock !== undefined) return forcedVolumeClock;
   const now = Date.now();
   const known = volumeClocks.get(dev);
   if (known && (known.trusted || now < known.retryAt)) return known.trusted;
-  const trusted = probeVolumeClock(root);
+  let rootDev: number | undefined;
+  try { rootDev = lstatSync(root).dev; } catch { /* unreadable root: nothing was probed */ }
+  const trusted = rootDev === dev && probeVolumeClock(root);
   volumeClocks.set(dev, { trusted, retryAt: now + VOLUME_CLOCK_RETRY_MS });
   return trusted;
 }
