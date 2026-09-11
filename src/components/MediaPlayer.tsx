@@ -161,11 +161,14 @@ function DownloadAction({ asset, url, onClick }: { asset: MediaAsset; url: strin
 
 /** The card a person sees when the bytes exist but this computer will not
  * play them: no silent empty box, and the file is still reachable. */
-export function MediaUnplayableCard({ asset, url, reason, className }: {
+export function MediaUnplayableCard({ asset, url, reason, className, onDownload }: {
   asset: MediaAsset;
   url?: string;
   reason: string;
   className?: string;
+  /** The player's renew-on-click: a card shown after the capability stopped
+   * working must not hand out the very link the harness now refuses. */
+  onDownload?: (event: { preventDefault: () => void }) => void;
 }) {
   return (
     <span className={cn(CARD, className)} data-media-player={asset.kind} data-media-player-state="unplayable">
@@ -173,7 +176,7 @@ export function MediaUnplayableCard({ asset, url, reason, className }: {
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <AlertTriangle size={12} className="shrink-0" aria-hidden="true" />
         <span className="min-w-0">{reason}</span>
-        {url && <DownloadAction asset={asset} url={url} />}
+        {url && <DownloadAction asset={asset} url={url} onClick={onDownload} />}
       </span>
     </span>
   );
@@ -272,11 +275,30 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
     return refreshing.current;
   };
 
+  const onDownload = (event: { preventDefault: () => void }) => {
+    if (!refresh || !mediaSourceExpired(source)) return;
+    // The link in the page carries a capability the harness would refuse.
+    // Fetch a fresh one and save through it; the person clicked once.
+    event.preventDefault();
+    void askAgain().then(next => {
+      if (!next) return;
+      setSource(next);
+      if (typeof document === "undefined") return;
+      const anchor = document.createElement("a");
+      anchor.href = next.url;
+      anchor.download = asset.name;
+      anchor.referrerPolicy = "no-referrer";
+      anchor.click();
+    });
+  };
+
+  // Every "Save a copy" this card shows — beside the player, on the
+  // cannot-play card, and after a failure — renews the same way.
   if (support === "no") {
-    return <MediaUnplayableCard asset={asset} url={source.url} reason={t("media.player.unsupportedHere")} className={className} />;
+    return <MediaUnplayableCard asset={asset} url={source.url} reason={t("media.player.unsupportedHere")} className={className} onDownload={onDownload} />;
   }
   if (failure) {
-    return <MediaUnplayableCard asset={asset} url={source.url} reason={failure} className={className} />;
+    return <MediaUnplayableCard asset={asset} url={source.url} reason={failure} className={className} onDownload={onDownload} />;
   }
 
   const shared = {
@@ -325,23 +347,6 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
     },
   };
 
-  const onDownload = (event: { preventDefault: () => void }) => {
-    if (!refresh || !mediaSourceExpired(source)) return;
-    // The link in the page carries a capability the harness would refuse.
-    // Fetch a fresh one and save through it; the person clicked once.
-    event.preventDefault();
-    void askAgain().then(next => {
-      if (!next) return;
-      setSource(next);
-      if (typeof document === "undefined") return;
-      const anchor = document.createElement("a");
-      anchor.href = next.url;
-      anchor.download = asset.name;
-      anchor.referrerPolicy = "no-referrer";
-      anchor.click();
-    });
-  };
-
   return (
     <span className={cn(CARD, className)} data-media-player={asset.kind} data-media-player-state="ready">
       <MediaHeader asset={asset} duration={duration} />
@@ -357,6 +362,15 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
 
 // ── The transcript surface ───────────────────────────────────────────────
 
+/** The one gate before the harness is asked anything: a suffix from the U-28
+ * hint table AND a bubble that knows its own conversation. Anything else is
+ * the caller's fallback with no request at all. Pure, so the rule is testable
+ * without a DOM; LocalMedia's effect asks exactly when this is non-null. */
+export function localMediaRequestFor(scope: WorkspaceScopeRef | undefined, path: string): LocalMediaRequest | null {
+  if (!mediaHintForPath(path) || !scope) return null;
+  return { scope: { botId: scope.botId, threadId: scope.threadId }, absolutePath: path };
+}
+
 /** A path a transcript carried. Renders `fallback` — the caller's existing,
  * already safe affordance — unless and until the harness proves the file is
  * this conversation's and playable. The path itself is never used as a URL,
@@ -369,23 +383,22 @@ export function LocalMedia({ scope, path, fallback, api = defaultApi, resolve = 
   api?: MediaApi;
   resolve?: typeof localMedia;
 }) {
-  const hint = mediaHintForPath(path);
   const [resolution, setResolution] = useState<LocalMediaResolution | null>(null);
-  const eligible = Boolean(hint && scope);
+  const eligible = localMediaRequestFor(scope, path) !== null;
   const botId = scope?.botId, threadId = scope?.threadId;
   // The latest request this surface is showing; a refresh that lands after
   // the path or conversation changed must not overwrite the newer answer.
   const current = useRef<LocalMediaRequest | null>(null);
 
   useEffect(() => {
-    if (!eligible || botId === undefined || threadId === undefined) { current.current = null; return; }
-    const request: LocalMediaRequest = { scope: { botId, threadId }, absolutePath: path };
+    const request = localMediaRequestFor(botId === undefined || threadId === undefined ? undefined : { botId, threadId }, path);
+    if (!request) { current.current = null; return; }
     current.current = request;
     let alive = true;
     setResolution(null);
     void resolve(request, api).then(value => { if (alive) setResolution(value); });
     return () => { alive = false; };
-  }, [eligible, botId, threadId, path, api, resolve]);
+  }, [botId, threadId, path, api, resolve]);
 
   // The card asks for this when its capability stopped working: the same
   // three questions again, with the cached answer dropped first. A file that
