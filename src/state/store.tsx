@@ -15,6 +15,7 @@ import {
 } from "react";
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
+import { hostStoppedReason } from "../../shared/host-stop";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
 import { initialWorkspacePaneState, workspacePaneReducer, type WorkspacePaneAction, type WorkspacePaneState } from "@/lib/workspace-pane";
@@ -842,6 +843,16 @@ function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppStat
   return { ...state, bots: state.bots.map((b) => (b.id === botId ? fn(b) : b)) };
 }
 
+/** The avatar's reaction to an activity row. A settled tool run plays
+ * success or failure; a still-running one plays working. A host-stop notice
+ * (shared/host-stop.ts) is ok:false but is a neutral stop, not a failure —
+ * the transcript shows a StoppedRow, never a red card — so the avatar plays
+ * nothing for it (STOP2). */
+function activityMotion(message: Message): Exclude<EmberMotion, "none"> | null {
+  if (message.tool?.ok === false) return hostStoppedReason(message.tool.name) === undefined ? "failure" : null;
+  return message.tool?.ok === true ? "success" : "working";
+}
+
 function withMascotMotion(
   state: AppState,
   botId: string,
@@ -1203,11 +1214,7 @@ export function reducer(state: AppState, action: Action): AppState {
         action.message.kind === "options"
           ? "thinking"
           : action.message.kind === "activity"
-            ? action.message.tool?.ok === false
-              ? "failure"
-              : action.message.tool?.ok === true
-                ? "success"
-                : "working"
+            ? activityMotion(action.message)
             : action.message.role === "bot" && action.message.kind === "text"
               ? "blink"
               : null;
@@ -1228,14 +1235,7 @@ export function reducer(state: AppState, action: Action): AppState {
           ),
         };
       }
-      const motion =
-        action.message.kind === "activity"
-          ? action.message.tool?.ok === false
-            ? "failure"
-            : action.message.tool?.ok === true
-              ? "success"
-              : "working"
-          : null;
+      const motion = action.message.kind === "activity" ? activityMotion(action.message) : null;
       const next = motion ? withMascotMotion(state, bot.id, motion) : state;
       return updateBot(next, bot.id, (b) => ({
         ...b,
