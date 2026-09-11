@@ -1780,6 +1780,232 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       "low", "medium", "high", "xhigh", "max",
     ]);
   });
+
+  // ── AskUserQuestion (0.1.52 ASK2) ──────────────────────────────────────
+  // The CLI routes its own AskUserQuestion through this permission host, so
+  // the whole round trip — card, answer, skip, timeout — lives here.
+  const AUQ_INPUT = {
+    questions: [
+      {
+        question: "Which format should the report use?",
+        header: "Format",
+        options: [
+          { label: "Summary", description: "A short overview" },
+          { label: "Detailed", description: "Every finding with its evidence" },
+        ],
+        multiSelect: false,
+      },
+      {
+        question: "Which sections should it include?",
+        header: "Sections",
+        options: [{ label: "Intro" }, { label: "Findings" }, { label: "Outro" }],
+        multiSelect: true,
+      },
+    ],
+  };
+
+  /** Raise an AskUserQuestion on a live turn the way the MCP proxy does. */
+  const askUserQuestion = async (threadId: string, askId: string, input: unknown = AUQ_INPUT) => {
+    await create("hang");
+    await instance.adapter.sendTurn({ threadId, text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+    const conn = await connectSocket(permissionSocketPath(threadId));
+    const nextAnswer = answerQueue(conn);
+    conn.write(JSON.stringify({ t: "ask", id: askId, kind: "question", tool: "AskUserQuestion", input }) + "\n");
+    return { conn, nextAnswer };
+  };
+
+  const endTurn = async (threadId: string, conn: Socket) => {
+    conn.end();
+    await instance.adapter.interruptTurn(threadId);
+    await recorder.until((e) => e.type === "turn.completed");
+  };
+
+  it("opens an AskUserQuestion as a question card carrying every question", async () => {
+    const { conn } = await askUserQuestion("t-auq-open", "auq-1");
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.requestId === "auq-1");
+    expect(opened).toMatchObject({
+      requestType: "question",
+      tool: "AskUserQuestion",
+      // the subtitle is the first question, not the raw JSON it used to be
+      summary: "Which format should the report use?",
+      // the first question's labels keep voice and older clients working
+      choices: ["Summary", "Detailed"],
+    });
+    expect((opened as { questions?: unknown }).questions).toEqual([
+      {
+        id: "q1",
+        question: "Which format should the report use?",
+        header: "Format",
+        options: [
+          { label: "Summary", description: "A short overview" },
+          { label: "Detailed", description: "Every finding with its evidence" },
+        ],
+        multiSelect: false,
+        allowOther: true,
+      },
+      {
+        id: "q2",
+        question: "Which sections should it include?",
+        header: "Sections",
+        options: [{ label: "Intro" }, { label: "Findings" }, { label: "Outro" }],
+        multiSelect: true,
+        allowOther: true,
+      },
+    ]);
+    await endTurn("t-auq-open", conn);
+  });
+
+  it("sends the owner's picks back keyed by question text", async () => {
+    const { conn, nextAnswer } = await askUserQuestion("t-auq-answer", "auq-2");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "auq-2");
+    await expect(
+      instance.adapter.respondToRequest("t-auq-answer", "auq-2", {
+        behavior: "answer",
+        answers: [
+          { id: "q1", selected: ["Detailed"] },
+          { id: "q2", selected: ["Intro", "Outro"], other: "and an appendix" },
+        ],
+      }),
+    ).resolves.toBe("answered");
+    // the exact shape server/permission-proxy.ts puts in updatedInput.answers
+    expect(await nextAnswer()).toMatchObject({
+      id: "auq-2",
+      behavior: "answer",
+      answers: {
+        "Which format should the report use?": "Detailed",
+        "Which sections should it include?": ["Intro", "Outro", "and an appendix"],
+      },
+    });
+    await endTurn("t-auq-answer", conn);
+  });
+
+  it("refuses an answer that does not match the questions that were shown", async () => {
+    const { conn } = await askUserQuestion("t-auq-bad", "auq-3");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "auq-3");
+    // a label nobody offered, and a second pick on a single-select
+    for (const answers of [
+      [{ id: "q1", selected: ["Exhaustive"] }, { id: "q2", selected: ["Intro"] }],
+      [{ id: "q1", selected: ["Summary", "Detailed"] }, { id: "q2", selected: ["Intro"] }],
+      [{ id: "q1", selected: ["Summary"] }],
+    ]) {
+      await expect(instance.adapter.respondToRequest("t-auq-bad", "auq-3", { behavior: "answer", answers })).resolves.toBe(
+        "unavailable",
+      );
+    }
+    // the card is still open, so the owner can correct it
+    await expect(
+      instance.adapter.respondToRequest("t-auq-bad", "auq-3", {
+        behavior: "answer",
+        answers: [{ id: "q1", selected: ["Summary"] }, { id: "q2", selected: ["Intro"] }],
+      }),
+    ).resolves.toBe("answered");
+    await endTurn("t-auq-bad", conn);
+  });
+
+  // Regression: the broker rejected `deny` for a question kind, so closing a
+  // question card returned "unavailable" and the engine waited out its whole
+  // timeout — fifteen minutes of a bot doing nothing (research §1.2).
+  it("delivers a skip immediately instead of leaving the engine waiting", async () => {
+    const { conn, nextAnswer } = await askUserQuestion("t-auq-skip", "auq-4");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "auq-4");
+    await expect(instance.adapter.respondToRequest("t-auq-skip", "auq-4", { behavior: "deny" })).resolves.toBe("rejected");
+    const reply = await nextAnswer();
+    expect(reply).toMatchObject({ id: "auq-4", behavior: "deny" });
+    expect(reply.message).toMatch(/skipped this question/i);
+    expect(reply.message).not.toMatch(/best judgment/i);
+    const resolved = await recorder.until((e) => e.type === "request.resolved" && e.requestId === "auq-4");
+    expect(resolved).toMatchObject({ behavior: "deny", source: "user" });
+    await endTurn("t-auq-skip", conn);
+  });
+
+  it("never lets a question be allowed like a permission", async () => {
+    const { conn } = await askUserQuestion("t-auq-allow", "auq-5");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "auq-5");
+    await expect(instance.adapter.respondToRequest("t-auq-allow", "auq-5", { behavior: "allow" })).resolves.toBe("unavailable");
+    await endTurn("t-auq-allow", conn);
+  });
+
+  it("answers a malformed question at once instead of opening a card nobody can answer", async () => {
+    // duplicate question texts: Claude keys its answers by text, so this can
+    // never be answered unambiguously
+    const duplicated = { questions: [AUQ_INPUT.questions[0], { ...AUQ_INPUT.questions[0] }] };
+    const { conn, nextAnswer } = await askUserQuestion("t-auq-bogus", "auq-6", duplicated);
+    const reply = await nextAnswer();
+    expect(reply).toMatchObject({ id: "auq-6", behavior: "deny" });
+    expect(reply.message).toMatch(/could not show this question/i);
+    expect(recorder.events.filter((e) => e.type === "request.opened" && e.requestId === "auq-6")).toHaveLength(0);
+    await endTurn("t-auq-bogus", conn);
+  });
+
+  it("tells the engine honestly when the wait runs out, and never guesses an answer", async () => {
+    // The shipped wait is 30 minutes; the driver clamps a configured one to
+    // one second, which is what makes this assertable without inflating any
+    // other timeout.
+    await create("hang", {}, { questionTimeoutMs: 1_000 });
+    await instance.adapter.sendTurn({ threadId: "t-auq-timeout", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+    const conn = await connectSocket(permissionSocketPath("t-auq-timeout"));
+    const nextAnswer = answerQueue(conn);
+    conn.write(JSON.stringify({ t: "ask", id: "auq-7", kind: "question", tool: "AskUserQuestion", input: AUQ_INPUT }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "auq-7");
+
+    const reply = await nextAnswer();
+    // a deny with a note, never an allow with empty answers (which Claude
+    // reports as "The user did not answer the questions") and never the old
+    // "use your best judgment", which the model read as the owner's words
+    expect(reply).toMatchObject({ id: "auq-7", behavior: "deny" });
+    expect(reply.message).toMatch(/did not answer within 1 min/i);
+    expect(reply.message).not.toMatch(/best judgment/i);
+    expect(reply.answers).toBeUndefined();
+    const resolved = await recorder.until((e) => e.type === "request.resolved" && e.requestId === "auq-7");
+    expect(resolved).toMatchObject({ behavior: "deny", source: "timeout" });
+    await endTurn("t-auq-timeout", conn);
+  });
+
+  it("keeps a permission ask on its own 15-minute wait, untouched by the question wait", async () => {
+    await create("hang", {}, { questionTimeoutMs: 1_000 });
+    await instance.adapter.sendTurn({ threadId: "t-auq-mixed", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+    const conn = await connectSocket(permissionSocketPath("t-auq-mixed"));
+    const nextAnswer = answerQueue(conn);
+    conn.write(JSON.stringify({ t: "ask", id: "perm-1", tool: "Bash", input: { command: "echo hi" } }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "perm-1");
+    // well past the 1s question wait: a permission must still be pending
+    await new Promise((resolve) => setTimeout(resolve, 1_400));
+    expect(recorder.events.filter((e) => e.type === "request.resolved" && e.requestId === "perm-1")).toHaveLength(0);
+    await expect(instance.adapter.respondToRequest("t-auq-mixed", "perm-1", { behavior: "allow" })).resolves.toBe("allowed-once");
+    expect(await nextAnswer()).toMatchObject({ behavior: "allow" });
+    await endTurn("t-auq-mixed", conn);
+  });
+
+  it("runs a whole AskUserQuestion turn through the real permission host", async () => {
+    // The fake CLI spawns the muragebox MCP server from --mcp-config and
+    // calls the prompt tool exactly as Claude Code 2.1.268 does, then builds
+    // the tool_result string the binary would. This is the end-to-end proof
+    // that the proxy's reply is a shape Claude accepts as answers.
+    await create("ask-user-question");
+    const turn = instance.adapter.sendTurn({ threadId: "t-auq-e2e", text: "ask me" });
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === "AskUserQuestion");
+    expect(opened).toMatchObject({ requestType: "question" });
+    await expect(
+      instance.adapter.respondToRequest("t-auq-e2e", opened.requestId!, {
+        behavior: "answer",
+        answers: [
+          { id: "q1", selected: ["Summary"] },
+          { id: "q2", selected: ["Intro", "Findings"] },
+        ],
+      }),
+    ).resolves.toBe("answered");
+    await turn;
+    await recorder.until((e) => e.type === "turn.completed");
+    const said = recorder.events.map((event) => JSON.stringify(event)).join("\n");
+    // the "all labels" template — Claude treats these as real answers
+    expect(said).toContain("Your questions have been answered");
+    expect(said).toContain('Which format should the report use?\\"=\\"Summary');
+    expect(said).toContain('Which sections should it include?\\"=\\"Intro, Findings');
+    expect(said).not.toContain("The user did not answer the questions");
+  });
 });
 
 // Auth state must come from the CLI, not from probing its credential store:
