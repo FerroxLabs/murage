@@ -55,6 +55,32 @@ export function requeueStaleMemoryWork(work: MemoryWork, worker: string): boolea
   return Boolean(database().prepare("UPDATE memory_jobs SET status='pending',lease_owner=NULL,lease_until=0 WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased'").run(work.id,worker,work.leaseGeneration).changes);
 }
 
+/** The bound on requeueStaleMemoryWork (RED2K). Each stale requeue is one
+ * more claim-and-run of the same job under an authority that moved again
+ * before it could publish; under continuous churn (a settings sweep that
+ * saves a bot per tick, a roster import) that is unbounded work with no
+ * record of it — the baseline's lease-expiry reclaim was equally unbounded,
+ * just slower. Five is well above what a burst of churn produces in one lease
+ * (the refused publication and the reclaim are one tick apart, and a bot,
+ * room or task creation moves the revision once), so genuine races still
+ * cost nothing; past it the job spends an attempt through the ordinary
+ * deferral path, so the attempt cap (3) ends a job that can never publish
+ * under a standing authority, with the reason on the row. */
+export const STALE_MEMORY_REQUEUE_LIMIT = 5;
+
+/** Defer a job whose publication was refused as stale, spending one attempt
+ * exactly as publishMemoryWork does for a worker's own deferral (retry in 5 s
+ * on the first attempt, 30 s after; `failed` at the attempt cap). The source
+ * and policy fence is what refused the publication, so this bypasses only
+ * that; the lease fence is the same as requeueStaleMemoryWork: only the
+ * holder's own live lease, never one another worker took over or a job a
+ * newer source revision cancelled. */
+export function deferStaleMemoryWork(work: MemoryWork, worker: string, reason: string, now=Date.now()): boolean {
+  return Boolean(database().prepare(`UPDATE memory_jobs SET status=CASE WHEN attempts+1>=3 THEN 'failed' ELSE 'deferred' END,
+    attempts=attempts+1,retry_at=?+CASE WHEN attempts=0 THEN 5000 ELSE 30000 END,lease_owner=NULL,lease_until=0,error=?
+    WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased'`).run(now,reason,work.id,worker,work.leaseGeneration).changes);
+}
+
 export function heartbeatMemoryJob(work: MemoryWork, worker: string, now=Date.now()) {
   return Boolean(database().prepare("UPDATE memory_jobs SET lease_until=? WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased' AND lease_until>=?").run(now+30000,work.id,worker,work.leaseGeneration,now).changes);
 }
