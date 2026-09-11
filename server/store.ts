@@ -760,6 +760,16 @@ interface ThreadState {
   activeLeafId: string | null;
 }
 
+/** bots.json never carries runtime activity: `busy`/`activity` are transient
+ * per bot and per task, so every writer (ordinary saves and the package
+ * transaction) serializes the same durable shape. */
+function persistedBotsJson(bots: readonly BotRecord[]): string {
+  return JSON.stringify(bots.map(({ busy: _busy, activity: _activity, ...bot }) => ({
+    ...bot,
+    tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, ...task }) => task),
+  })), null, 2);
+}
+
 export class Store {
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
@@ -1000,7 +1010,7 @@ export class Store {
       const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
       return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
     });
-    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, JSON.stringify(normalized.map(({busy:_busy,activity:_activity,...bot})=>({...bot,tasks:bot.tasks?.map(({busy:_taskBusy,activity:_taskActivity,...task})=>task)})), null, 2)));
+    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, persistedBotsJson(normalized)));
     for (const next of normalized) {
       this.accessRoles.set(next.id, accessRoleBinding({ ...next, accessRoleEpoch: 0 }));
       const supplied = bots.find(bot => bot.id === next.id);
@@ -1034,7 +1044,7 @@ export class Store {
     const nextGroups = [...this.groups, ...groups];
     return {
       files: new Map([
-        ["bots.json", Buffer.from(JSON.stringify(nextBots, null, 2))],
+        ["bots.json", Buffer.from(persistedBotsJson(nextBots))],
         ["groups.json", Buffer.from(JSON.stringify(nextGroups.map(({ busyBotId: _busy, ...group }) => group), null, 2))],
       ]),
       publish: () => {
