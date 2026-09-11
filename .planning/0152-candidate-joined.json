@@ -1,0 +1,234 @@
+{
+  "scenario": "0152 Q1-T5 joined candidate",
+  "ok": true,
+  "node": "v24.20.0",
+  "platform": "darwin",
+  "dataDir": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verify-data-pCs0m3",
+  "logs": [
+    "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verification-evidence/server-1789123297835-7421.log",
+    "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verification-evidence/server-1789123301912-7421.log"
+  ],
+  "incidents": [
+    "Candidate reporter's turn \"Write the weekly report. __fixture_write_output__:outputs/weekly-report.md\" ended with error: MEMORY_CONTEXT_REVOKED before the engine started (attempt 1); sent again after 1500 ms",
+    "Candidate artist's turn \"After the restart.\" ended with error: MEMORY_CONTEXT_REVOKED before the engine started (attempt 1); sent again after 1500 ms"
+  ],
+  "steps": [
+    {
+      "step": "1. fresh isolated profile: two bots on two fixture engines, memory active, fixture image provider selected",
+      "ok": true,
+      "detail": {
+        "dataDir": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verify-data-pCs0m3",
+        "url": "http://127.0.0.1:21271",
+        "seeded": [
+          {
+            "id": "65055f7b-afde-4d4f-a6e8-4e0b4a305015",
+            "name": "Ember"
+          }
+        ],
+        "reporter": "69200cc2-6366-4ab1-9a66-54dbdf0ffd1b",
+        "artist": "1e1b9844-1671-4c38-b9c3-ecf46fb27673",
+        "installationId": "7526dde5-9dee-4fd8-aa81-5fdf5038c1f5"
+      },
+      "at": "2026-09-11T10:41:38.579Z"
+    },
+    {
+      "step": "2a. both bots are busy at the same time: the reporter holds a turn that has already written the report; the artist holds an authority turn",
+      "ok": true,
+      "detail": {
+        "reportOnDisk": "9be8c080d4a8c3ed5be0a5fee07481692b8ace7ce1ce86c40a71df8f23366e7f",
+        "both": [
+          {
+            "id": "1e1b9844-1671-4c38-b9c3-ecf46fb27673",
+            "busy": true
+          },
+          {
+            "id": "69200cc2-6366-4ab1-9a66-54dbdf0ffd1b",
+            "busy": true
+          },
+          {
+            "id": "65055f7b-afde-4d4f-a6e8-4e0b4a305015"
+          }
+        ]
+      },
+      "at": "2026-09-11T10:41:40.750Z"
+    },
+    {
+      "step": "2b. the artist's approved generation is one attachment, one retained original and one saved version, billed once",
+      "ok": true,
+      "detail": {
+        "referenceId": "8ced49be-46d2-48f8-9d7f-f256bea74e03.png",
+        "artifactId": "2ab570bd-e843-4887-9ea7-1590d41c4d61",
+        "receipt": {
+          "calls": 1,
+          "url": "https://api.openai.com/v1/images/generations",
+          "provider": "openai",
+          "model": "gpt-image-2",
+          "n": 1,
+          "references": 0,
+          "referenceHashes": [],
+          "quality": "medium",
+          "responseFormat": null,
+          "providerRouting": null,
+          "singleImageField": false,
+          "multiImageField": false,
+          "redirect": "error"
+        }
+      },
+      "at": "2026-09-11T10:41:41.057Z"
+    },
+    {
+      "step": "2c. IMG-SEED: the generated image is prepared as a reference by attachment id and by pinned saved version, the edit is approved naming one reference, the provider receives the exact bytes, billed once more",
+      "ok": true,
+      "detail": {
+        "prepared": [
+          {
+            "id": "8ced49be-46d2-48f8-9d7f-f256bea74e03.png",
+            "sha256": "3fd24bcfdb17a6027c5f3ed896d17a020d6ff9d9e4d06362461a9b44b6ac1b52",
+            "mime": "image/png",
+            "bytes": 68,
+            "source": "attachment",
+            "width": 1,
+            "height": 1
+          },
+          {
+            "id": "8ced49be-46d2-48f8-9d7f-f256bea74e03.png",
+            "sha256": "3fd24bcfdb17a6027c5f3ed896d17a020d6ff9d9e4d06362461a9b44b6ac1b52",
+            "mime": "image/png",
+            "bytes": 68,
+            "source": "artifact",
+            "width": 1,
+            "height": 1
+          }
+        ],
+        "editSubtitle": "One image from 1 reference image · openai · gpt-image-2 · medium · 1024x1024. Provider charges apply; exact cost is not available.",
+        "receipt": {
+          "calls": 2,
+          "url": "https://api.openai.com/v1/images/edits",
+          "provider": "openai",
+          "model": "gpt-image-2",
+          "n": "1",
+          "references": 1,
+          "referenceHashes": [
+            "3fd24bcfdb17a6027c5f3ed896d17a020d6ff9d9e4d06362461a9b44b6ac1b52"
+          ],
+          "quality": "medium",
+          "responseFormat": null,
+          "providerRouting": null,
+          "singleImageField": false,
+          "multiImageField": false,
+          "redirect": "error"
+        },
+        "editedArtifactId": "d76a4ec0-722b-467e-983f-69d6c07755de"
+      },
+      "at": "2026-09-11T10:41:41.597Z"
+    },
+    {
+      "step": "3a. the artist is stopped: interrupt settles it, its turn capability is revoked (desktop route 401, open MCP session refused) while the reporter is still busy",
+      "ok": true,
+      "detail": {
+        "afterStop": "unauthorized"
+      },
+      "at": "2026-09-11T10:41:41.724Z"
+    },
+    {
+      "step": "3b. the reporter finishes: the shell-written report is one saved version, one registered receipt and one host card",
+      "ok": true,
+      "detail": {
+        "reportArtifactId": "42695a12-2a4d-4e77-911a-c618ffe0252e",
+        "cardMessageId": "16697552-e9d9-4e7d-8714-0c4bea9b48af",
+        "receipt": {
+          "producer": "shell-output",
+          "path_token": "outputs/weekly-report.md",
+          "sha256": "9be8c080d4a8c3ed5be0a5fee07481692b8ace7ce1ce86c40a71df8f23366e7f",
+          "stage": "registered",
+          "artifact_id": "42695a12-2a4d-4e77-911a-c618ffe0252e",
+          "attachment_id": null,
+          "message_id": "16697552-e9d9-4e7d-8714-0c4bea9b48af",
+          "error_category": null
+        }
+      },
+      "at": "2026-09-11T10:41:41.838Z"
+    },
+    {
+      "step": "4. the owner's edit lands exactly, keeps the replaced revision as a saved version, and a stale-revision write is refused",
+      "ok": true,
+      "detail": {
+        "revisionBefore": "r1.pBaWTLFk5tq9NyVsiXZrJbmLzXSkV9Z34ieUu3xSkzw",
+        "revisionAfter": "r1.RxFlPTViDj4ehggac7IeENJmBVYAeKmH9AY5uZa7yDM",
+        "keptArtifactId": "0ab1ee66-b252-4771-ae2a-0e1fc13ca5f8",
+        "staleStatus": 409
+      },
+      "at": "2026-09-11T10:41:41.859Z"
+    },
+    {
+      "step": "5a. after a real harness restart over the same data, bots, transcripts, host cards, attachments, saved versions and their bytes, the working file and its revision, receipts, memory sources and the provider call count are identical",
+      "ok": true,
+      "detail": {
+        "bots": [
+          {
+            "id": "1e1b9844-1671-4c38-b9c3-ecf46fb27673",
+            "messages": 10
+          },
+          {
+            "id": "69200cc2-6366-4ab1-9a66-54dbdf0ffd1b",
+            "messages": 13
+          },
+          {
+            "id": "65055f7b-afde-4d4f-a6e8-4e0b4a305015",
+            "messages": 2
+          }
+        ],
+        "artifacts": {
+          "reporter": [
+            {
+              "id": "0ab1ee66-b252-4771-ae2a-0e1fc13ca5f8",
+              "sha256": "9be8c080d4a8c3ed5be0a5fee07481692b8ace7ce1ce86c40a71df8f23366e7f",
+              "producer": null
+            },
+            {
+              "id": "42695a12-2a4d-4e77-911a-c618ffe0252e",
+              "sha256": "9be8c080d4a8c3ed5be0a5fee07481692b8ace7ce1ce86c40a71df8f23366e7f",
+              "producer": "shell-output"
+            }
+          ],
+          "artist": [
+            {
+              "id": "2ab570bd-e843-4887-9ea7-1590d41c4d61",
+              "sha256": "3fd24bcfdb17a6027c5f3ed896d17a020d6ff9d9e4d06362461a9b44b6ac1b52",
+              "producer": "image-operation"
+            },
+            {
+              "id": "d76a4ec0-722b-467e-983f-69d6c07755de",
+              "sha256": "3fd24bcfdb17a6027c5f3ed896d17a020d6ff9d9e4d06362461a9b44b6ac1b52",
+              "producer": "image-operation"
+            }
+          ]
+        },
+        "memorySources": 29,
+        "providerCalls": 2
+      },
+      "at": "2026-09-11T10:41:42.750Z"
+    },
+    {
+      "step": "5b. both bots take a new turn after the restart; the edited report and its two saved versions are untouched and the provider was not called again",
+      "ok": true,
+      "detail": {
+        "messages": [
+          {
+            "id": "1e1b9844-1671-4c38-b9c3-ecf46fb27673",
+            "messages": 13
+          },
+          {
+            "id": "69200cc2-6366-4ab1-9a66-54dbdf0ffd1b",
+            "messages": 17
+          },
+          {
+            "id": "65055f7b-afde-4d4f-a6e8-4e0b4a305015",
+            "messages": 2
+          }
+        ]
+      },
+      "at": "2026-09-11T10:41:44.970Z"
+    }
+  ]
+}
