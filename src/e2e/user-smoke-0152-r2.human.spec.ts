@@ -56,7 +56,7 @@ const FLUX_KEY_FILE = process.env.MURAGE_SMOKE_FLUX_KEY_FILE || "";
 const FAKE_CLI = join(ROOT, "server", "testing", "fake-claude-cli.ts");
 const FAKE_PI = join(ROOT, "server", "testing", "fake-pi-cli.ts");
 const MP4_FIXTURE = process.env.MURAGE_SMOKE_MP4 || "";
-/** The version scripts/prepare-fuigo.mjs pins (1.0.12 once LFU2 merged). */
+/** The version scripts/prepare-fuigo.mjs pins (1.0.13 once FUIGO13 merged). */
 const EXPECTED_FUIGO = /export const FUIGO_VERSION = "([\d.]+)"/.exec(readFileSync(join(ROOT, "scripts", "prepare-fuigo.mjs"), "utf8"))?.[1] ?? "unknown";
 const HARNESS_URL = `http://127.0.0.1:${HARNESS_PORT}`;
 
