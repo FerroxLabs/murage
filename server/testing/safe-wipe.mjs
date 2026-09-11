@@ -346,16 +346,43 @@ export async function safeWipe(target, options = {}) {
   throw lastError;
 }
 
+/** Mirror of node:fs's own URL test (internal/url isURL, used by
+ * toPathIfFileURL and by fileURLToPath itself):
+ *   Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined)
+ * fs never checks `instanceof URL` and never checks the *type* of href or
+ * protocol, only their truthiness; fileURLToPath then reads hostname and
+ * pathname and ignores href entirely. So a cross-realm URL, a hand-rolled
+ * { href, protocol, hostname, pathname }, and an object whose href is a
+ * number, boolean, object or Buffer all reach the real delete, and the
+ * test here must be exactly as loose as fs's (a stricter `typeof href ===
+ * "string"` let the odd-href shapes fall through to "[object Object]" and
+ * past the guard, fix round 1). The only thing this adds is the object
+ * check, which fs applies before it gets here (a string or Buffer is never
+ * passed to isURL).
+ * @param {unknown} target
+ * @returns {target is { href: unknown; protocol: unknown }} */
+const isUrlLike = (target) => Boolean(target) && typeof target === "object"
+  && Boolean(target.href) && Boolean(target.protocol)
+  && target.auth === undefined && target.path === undefined;
+
 /**
  * The path a node:fs delete names, as a string, from any of the spellings
- * fs accepts: a `file:` URL, a Buffer, or a string. `String(url)` is
- * "file:///..." which resolves to a nonexistent path under the checkout and
- * is judged unprotected, so a URL used to walk past the guard (FOLLOW7).
+ * fs accepts: a `file:` URL or URL-like object, a Buffer, or a string.
+ * `String(url)` is "file:///..." (and String(object) is "[object Object]")
+ * which resolves to a nonexistent path under the checkout and is judged
+ * unprotected, so a URL or a duck-typed one used to walk past the guard
+ * (FOLLOW7). The path is taken with fileURLToPath(target) rather than
+ * `new URL(target.href)` because fs deletes what the object's hostname and
+ * pathname name, not what its href says; and it throws the same
+ * ERR_INVALID_FILE_URL_HOST fs would for a shape fs cannot turn into a path,
+ * so nothing is deleted in that case either. A URL-like object with a
+ * non-file scheme is handed on as String(href): fs then throws its own
+ * ERR_INVALID_URL_SCHEME before touching anything.
  * @param {string | URL | Buffer | unknown} target
  * @returns {string}
  */
 export function wipeTargetPath(target) {
-  if (target instanceof URL) return target.protocol === "file:" ? fileURLToPath(target) : String(target);
+  if (isUrlLike(target)) return target.protocol === "file:" ? fileURLToPath(target) : String(target.href);
   if (Buffer.isBuffer(target)) return target.toString();
   return String(target);
 }
@@ -367,8 +394,8 @@ let guardInstalled = false;
  * node --test preload so files that were never routed through safeWipeSync
  * still cannot reach a data directory. Named imports see the patch because
  * Node's builtin ESM facades are re-synced after the assignment. The target
- * is judged by the path it names whether it is a string, a `file:` URL or a
- * Buffer (wipeTargetPath).
+ * is judged by the path it names whether it is a string, a `file:` URL, a
+ * URL-like object fs would duck-type, or a Buffer (wipeTargetPath).
  * @param {import("./safe-wipe.d.mts").SafeWipeOptions} [options]
  */
 export function installSafeWipeGuard(options = {}) {
