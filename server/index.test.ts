@@ -2853,6 +2853,8 @@ describe("harness HTTP API", () => {
       color: "purple",
       mascotExpression: "focused",
       autoApprove: true,
+      // AUTOOP2: a bot that never chose a computer mounts this Mac, so profile-level Auto needs the acknowledgement (harmless elsewhere).
+      acknowledgeLocalAuto: true,
       alwaysAllow: ["Bash:git"],
     });
     await desktopApi("PATCH", `/api/bots/${second.id}`, {
