@@ -319,6 +319,20 @@ function cloneSchedule(schedule: RoutineSchedule): RoutineSchedule {
   return { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
 }
 
+/** Whether two sanitized schedules describe the same occurrences. Weekdays
+ * compare as a set, so a reordered selection is still the same schedule. */
+function sameSchedule(a: RoutineSchedule, b: RoutineSchedule): boolean {
+  if (a.type === "once" && b.type === "once") return a.at === b.at;
+  if (a.type === "interval" && b.type === "interval") {
+    return a.everyMinutes === b.everyMinutes && a.anchorAt === b.anchorAt;
+  }
+  if (a.type === "daily" && b.type === "daily") {
+    const days = new Set(a.weekdays);
+    return a.time === b.time && days.size === new Set(b.weekdays).size && b.weekdays.every((day) => days.has(day));
+  }
+  return false;
+}
+
 function cloneAttachments(attachments: readonly RoutineContextAttachment[] | undefined): RoutineContextAttachment[] {
   return attachments?.map((attachment) => ({ ...attachment })) ?? [];
 }
@@ -773,10 +787,17 @@ export class RoutineManager {
       if (now >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks) throw new Error("This file watch expired or reached its check limit. Confirm a new watch to continue");
       this.options.validateWatchSource?.(routine.watch.ownerBotId, routine.botId, routine.watch.state.definition.source);
     }
+    // An edit that leaves the schedule and the enabled state alone (a rename,
+    // new instructions, a different timeout) keeps the cursor. Recomputing it
+    // from `now` would silently skip an occurrence that became due since the
+    // last tick, or erase an offline catch-up. A changed schedule, a pause or
+    // a resume still recalculates. (#988 subset, adapted from OpenMausBot
+    // 1e6737b0; FIFO dispatch order is deliberately not part of this.)
+    const keepsCursor = clean.enabled && routine.enabled && sameSchedule(clean.schedule, routine.schedule);
     const cancelledRuns: RoutineRun[] = [];
     this.commitMutation(() => {
       Object.assign(routine, clean, {
-        nextRunAt: clean.enabled ? this.initialOccurrence(clean.schedule, now) : null,
+        nextRunAt: !clean.enabled ? null : keepsCursor ? routine.nextRunAt : this.initialOccurrence(clean.schedule, now),
         // `updatedAt` doubles as the optimistic revision on durable routine
         // confirmation cards. Keep it monotonic even for two writes in one ms.
         updatedAt: Math.max(now, routine.updatedAt + 1),
