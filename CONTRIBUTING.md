@@ -82,7 +82,7 @@ Data lives in `~/.murage/` (bots, transcripts, per-thread NDJSON event logs, con
 
 ## Tests
 
-The suite is colocated (`server/**/*.test.ts`) and runs with `pnpm test`. Three layers:
+The suite is colocated (`server/**/*.test.ts`) and runs with `pnpm test`. Four layers:
 
 - **Unit** — registry, bus, store. Pure in-process, use the fake driver in
   [`server/testing/fake-driver.ts`](server/testing/fake-driver.ts).
