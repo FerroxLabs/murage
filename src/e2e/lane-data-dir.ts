@@ -27,9 +27,3 @@ export function laneDataDir(purpose = "human specs never use ~/.murage"): string
   // (reuseExistingServer), which is the wipe's problem, not the config's.
   return assertSafeToWipe(resolve(raw), { checkLeases: false }).path;
 }
-
-/** Playwright `outputDir` for a spec: a named folder inside the lane data dir. */
-export function laneEvidenceDir(name: string, purpose?: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new Error(`evidence folder name must be a plain segment, got ${JSON.stringify(name)}`);
-  return resolve(laneDataDir(purpose), name);
-}

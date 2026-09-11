@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { database } from "../database.ts";
 import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts";
-import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryRequestPrefix } from "../../shared/memory.ts";
+import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import { threadCheckpointId } from "./checkpoints.ts";
@@ -75,30 +75,43 @@ function hydrate(id: string, version: number, access: MemoryAccess, allowSuperse
 }
 
 /** Engine-facing rendering: attributed remembered words only. Record ids, scopes
- * and evidence handles stay in BundleRecord, the receipts and the MCP tools. */
+ * and evidence handles stay in BundleRecord, the receipts and the MCP tools.
+ * Each line opens with its turn-local handle (m1, m2, …): the 1-based position
+ * of the record in the bundle, which is also its position in recordVersions and
+ * in the disclosure receipt (MEMJSON2). */
 const ASSERTION_LABELS: Record<string, string> = {
   "owner-statement": "the owner said",
   "tool-observation": "a tool showed",
   "assistant-inference": "earlier assistant inference",
   "unverified-import": "imported, unverified",
 };
-function referenceLine(record: BundleRecord): string {
+function referenceLine(record: BundleRecord, position: number): string {
   const attribution = ASSERTION_LABELS[record.assertion] ?? "unattributed";
   const kind = /^[a-z][a-z-]{0,31}$/.test(record.kind) ? record.kind : "note";
   // One JSON string literal per line: stored text cannot introduce a newline,
   // the closing tag or the current-request boundary. Angle brackets are
   // escaped so the frame's tags never appear inside remembered text.
   const quoted = JSON.stringify(record.text).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
-  return `- (${attribution}; ${kind}${record.pinned ? "; pinned by the owner" : ""}) ${quoted}`;
+  return `- ${memoryHandle(position)} (${attribution}; ${kind}${record.pinned ? "; pinned by the owner" : ""}) ${quoted}`;
 }
 function render(records: BundleRecord[]) {
   if (!records.length) return "";
-  return [MEMORY_REFERENCE_PREAMBLE, MEMORY_REFERENCE_OPEN, ...records.map(referenceLine), MEMORY_REFERENCE_CLOSE].join("\n");
+  return [MEMORY_REFERENCE_PREAMBLE, MEMORY_REFERENCE_OPEN, ...records.map((record, index) => referenceLine(record, index + 1)), MEMORY_REFERENCE_CLOSE].join("\n");
+}
+
+/** The record a turn-local handle names in this bundle, or undefined when the
+ * handle is malformed or past the last remembered line. Position N of the
+ * frame is recordVersions[N-1]: the same order the receipt persists. */
+export function memoryHandleRecord(bundle: MemoryBundle, handle: unknown): {id: string; version: number} | undefined {
+  const position = memoryHandlePosition(handle);
+  if (position === undefined) return undefined;
+  const row = bundle.recordVersions[position - 1];
+  return row ? {id: row.id, version: row.version} : undefined;
 }
 function tokens(text: string) { return Buffer.byteLength(memoryRequestPrefix(text),"utf8"); }
 
 /** No tokenizer dependency: UTF-8 bytes conservatively bound tokens, including metadata. */
-export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal} = {}): Promise<BoundedMemoryBundle> {
+export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]} = {}): Promise<BoundedMemoryBundle> {
   assertMemoryAccess(access);
   options.signal?.throwIfAborted();
   const available = options.availableContextTokens ?? 20480;
@@ -107,6 +120,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const db = database();
   // Do not prefilter stale pins: losing their evidence is a mandatory dispatch failure.
   const pinRows = db.prepare("SELECT id,version FROM memory_records WHERE state='active' AND owner_pinned=1 AND scope_id IN (SELECT value FROM json_each(?)) ORDER BY id,version").all(JSON.stringify(access.scopeIds));
+  // More pins than handles cannot fit any budget either; name the real limit.
+  if (pinRows.length > MEMORY_HANDLE_LIMIT) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
   const pinned = pinRows.map(row => {
     try { return hydrateMemoryRecord(String(row.id),Number(row.version),access); }
     catch { assertMemoryAccess(access); throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch"); }
@@ -132,11 +147,21 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     } catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
   }
   if (query.trim()) {
+    // The dispatching message is captured before its own bundle is built, so
+    // recall would otherwise hand the engine its current request back as a
+    // remembered "source" chunk (MEMJSON2). Any record whose evidence rests
+    // solely on this turn's own messages is left out of recall; pins and the
+    // thread checkpoint are untouched (a pin is an owner constraint, and the
+    // checkpoint is one record summarising the whole thread).
+    const ownSources = ownMessageSources(db,access.threadId,options.excludeMessageIds);
     try {
       const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal});
       degradedReason = result.degradedReason ?? degradedReason;
       for (const hit of result.hits) {
-        try { add(hydrateMemoryRecord(hit.id,hit.version,access),evidence); }
+        try {
+          const record = hydrateMemoryRecord(hit.id,hit.version,access);
+          if (!citesOnly(record,ownSources)) add(record,evidence);
+        }
         catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
       }
     } catch {
@@ -172,6 +197,18 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   Object.freeze(pinned); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
   bundles.set(bundle,{access,records:selected});
   return bundle;
+}
+
+/** Source ids captured from the given messages of the dispatching thread. */
+function ownMessageSources(db: ReturnType<typeof database>, threadId: string, messageIds: readonly string[] | undefined): Set<string> {
+  const ids = [...new Set((messageIds ?? []).filter(id => typeof id === "string" && id))];
+  if (!ids.length) return new Set();
+  const rows = db.prepare("SELECT id FROM memory_sources WHERE thread_id=? AND message_id IN (SELECT value FROM json_each(?))").all(threadId,JSON.stringify(ids));
+  return new Set(rows.map(row => String(row.id)));
+}
+/** True when every evidence handle of a record points at one of the sources. */
+function citesOnly(record: BundleRecord, sources: Set<string>): boolean {
+  return sources.size > 0 && record.evidence.length > 0 && record.evidence.every(handle => sources.has(handle.sourceId));
 }
 
 /** Must run immediately before the adapter call, after all other asynchronous setup. */

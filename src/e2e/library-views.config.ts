@@ -1,2 +1,3 @@
 import { defineConfig } from "@playwright/test";
-export default defineConfig({ testDir: ".", testMatch: "library-views.human.spec.ts", workers: 1, retries: 0, timeout: 30000, expect: { timeout: 5000 }, reporter: "list", outputDir: "../../.planning/next-programme/library-views-browser-results", use: { headless: true, trace: "retain-on-failure" } });
+import { evidenceDir } from "./evidence";
+export default defineConfig({ testDir: ".", testMatch: "library-views.human.spec.ts", workers: 1, retries: 0, timeout: 30000, expect: { timeout: 5000 }, reporter: "list", outputDir: evidenceDir("library-views"), use: { headless: true, trace: "retain-on-failure" } });

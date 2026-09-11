@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { evidenceDir } from "./evidence";
 
 export default defineConfig({
   testDir: ".",
@@ -8,6 +9,6 @@ export default defineConfig({
   timeout: 60000,
   expect: { timeout: 5000 },
   reporter: "list",
-  outputDir: "../../test-results/question-card",
+  outputDir: evidenceDir("question-card"),
   use: { headless: true, trace: "retain-on-failure" },
 });

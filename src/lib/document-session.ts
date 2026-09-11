@@ -307,7 +307,7 @@ export interface SaveFailure {
   currentRevision?: FileRevision;
 }
 
-const RETRYABLE = new Set<DocumentErrorCode>(["bot-writing", "write-failed", "quota-exceeded", "network", "unknown"]);
+const RETRYABLE = new Set<DocumentErrorCode>(["bot-writing", "workspace_stopped_turn_closing", "write-failed", "quota-exceeded", "network", "unknown"]);
 
 export type FailOutcome = "failed" | "conflict" | "ignored";
 

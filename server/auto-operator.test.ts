@@ -145,7 +145,10 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
         name: "Chief",
         section: "Auto operator test",
         chiefOfStaff: true,
+        // A Chief that never chose a computer drives this Mac in Auto, so the
+        // desktop dialog's acknowledgement rides along (AUTOOP2 finding 1).
         autoApprove: true,
+        acknowledgeLocalAuto: true,
       })).status).toBe(200);
 
       // The Chief's held turn is what gives create_bot its authority.

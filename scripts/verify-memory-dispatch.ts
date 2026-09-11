@@ -11,7 +11,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { launchVerificationServer, runControlMurage } from "./control-murage.ts";
-import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../shared/memory.ts";
+import { MEMORY_HANDLE_PATTERN, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle } from "../shared/memory.ts";
 
 type Bot = {id:string;threadId:string;name:string;modelSelection:{instanceId:string;model:string}};
 type Dump = {pid:number;argv:string[];prompt:{message:{content:string}};systemPrompt:string|null;mcpConfig:{mcpServers:Record<string,{env?:Record<string,string>}>}};
@@ -63,7 +63,7 @@ async function main() {
     db!.prepare("INSERT INTO memory_evidence(record_id,record_version,source_id,source_revision,start_byte,end_byte) VALUES(?,1,?,1,0,?)").run(id,sourceId,Buffer.byteLength(text));
     return {id,scopeId,text,sourceId,messageId};
   }
-  function assertPayload(received:Dump,expected:Pinned[],forbidden:string[]) {
+  function assertPayload(received:Dump,expected:Pinned[],forbidden:string[],request?:string) {
     const text=received.prompt.message.content;
     assert.equal(typeof text,"string");
     const preamble=`${MEMORY_REFERENCE_PREAMBLE}\n${MEMORY_REFERENCE_OPEN}\n`;
@@ -75,25 +75,36 @@ async function main() {
     // checkpoint and recalled evidence (the greeting and earlier turns are
     // captured before the first dispatch): well-formed, never pinned, and
     // never carrying a forbidden canary (checked over the whole prompt below).
+    // MEMJSON2: every line opens with its turn-local handle, m1..mN in frame
+    // order — the only reference the engine gets, and the one the memory
+    // tools resolve through the receipt (checked live below).
     const lines=text.slice(preamble.length,end).split("\n");
-    assert.deepEqual(lines.slice(0,expected.length),expected.map(record=>`- (the owner said; fact; pinned by the owner) ${JSON.stringify(record.text)}`),
+    assert.deepEqual(lines.slice(0,expected.length),expected.map((record,index)=>`- ${memoryHandle(index+1)} (the owner said; fact; pinned by the owner) ${JSON.stringify(record.text)}`),
       "Provider memory payload differs from authoritative source-backed pins");
-    for(const line of lines.slice(expected.length)){
-      assert.match(line,/^- \([^()\n]+\) "(?:[^"\\\n]|\\.)*"$/,`Malformed memory reference line: ${line}`);
-      assert(!line.includes("pinned by the owner"),`Unexpected pinned memory line: ${line}`);
+    const LINE=/^- (m[1-9][0-9]{0,2}) \(([^()\n]+)\) "(?:[^"\\\n]|\\.)*"$/;
+    for(const [index,line] of lines.entries()){
+      const match=LINE.exec(line);
+      assert(match,`Malformed memory reference line: ${line}`);
+      assert.equal(match[1],memoryHandle(index+1),`Handle out of frame order: ${line}`);
+      assert.match(match[1],MEMORY_HANDLE_PATTERN);
+      if(index>=expected.length)assert(!line.includes("pinned by the owner"),`Unexpected pinned memory line: ${line}`);
+      // MEMJSON2: the dispatching message is captured before its bundle is
+      // built; its own chunk must never come back as a remembered source.
+      if(request)assert(!line.endsWith(`; source) ${JSON.stringify(request)}`),`Recall echoed the current request back: ${line}`);
     }
     // MEMJSON1: provenance stays Murage-side (receipt below); the engine gets
     // words only. Evidence keys, source ids and scope ids never reach the
     // prompt; record ids never reach the memory block (the fixture's own
     // request text may legitimately contain a record id as a substring).
     const block=text.slice(preamble.length,end);
-    for(const provenance of ["sourceId","startByte","endByte","scopeId","\"evidence\"",...expected.flatMap(record=>[record.sourceId,record.scopeId])])
+    for(const provenance of ["sourceId","startByte","endByte","scopeId","\"evidence\"","\"version\"","\"revision\"",...expected.flatMap(record=>[record.sourceId,record.scopeId,record.messageId])])
       assert(!text.includes(provenance),`Provider input carries Murage-side memory provenance: ${provenance}`);
     for(const record of expected)assert(!block.includes(record.id),`Memory block carries record id ${record.id}`);
     const serialized=JSON.stringify({prompt:received.prompt,systemPrompt:received.systemPrompt,mcpConfig:received.mcpConfig});
     for(const canary of forbidden)assert(!serialized.includes(canary),"Provider received a forbidden/private canary");
     assert(!received.systemPrompt?.includes(MEMORY_REFERENCE_PREAMBLE),"Reference memory was promoted to system instructions");
     assert(received.mcpConfig.mcpServers["murage-memory"]?.env?.MURAGE_MEMORY_TOKEN,"Dedicated memory MCP capability missing");
+    return lines;
   }
   async function receipt(threadId:string,pins:Pinned[]) {
     const row=await until("delivered authoritative disclosure",()=>{
@@ -122,6 +133,18 @@ async function main() {
     const made=await api("POST","/api/groups",{name:"Memory fixture room",memberIds:[a.id,b.id],setup:{bulletin:"Fixture only",defaultResponder:{kind:"mentions"}}});
     assert.equal(made.status,201);const room=made.body.group as {id:string;threadId:string};
     assert.equal((await api("PUT",`/api/bots/${a.id}/memory`,{text:"LEGACY_PRIVATE_NOTEBOOK_CANARY"})).status,200);
+    // The memory worker's idle pass migrates detected notebooks on its own
+    // 1 s cadence and every import revokes every disclosure, so under load
+    // that pass could land between a delivery and its receipt read below.
+    // Import the notebook through the owner route first: the revoke happens
+    // here, before any dispatch, and the later passes find nothing new. The
+    // canary now lives in the authority as an unverified import and must
+    // still stay out of every provider input below.
+    const preview=await api("POST","/api/memory/action",{action:"import-preview",selections:[{kind:"bot",botId:a.id}]});
+    assert.equal(preview.status,200,JSON.stringify(preview.body));
+    const imported=await api("POST","/api/memory/action",{action:"import-commit",previewId:preview.body.previewId,track:true});
+    assert.equal(imported.status,200,JSON.stringify(imported.body));
+    assert.equal(imported.body.imported,1,"Legacy notebook was not imported before the first dispatch");
     db=new DatabaseSync(join(fixture.info.dataDir,"messages.db"));
     db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
     const privateA=pin("fixture-a-private","bot",a.id,"PRIVATE_A_CANARY Keep the launch date confidential.",a.threadId);
@@ -131,7 +154,7 @@ async function main() {
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(),[]);
 
     const direct=await send(a,"dispatch-fixture-first");
-    assertPayload(direct,[privateA],[privateB.text,shared.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"]);
+    assertPayload(direct,[privateA],[privateB.text,shared.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"],"dispatch-fixture-first");
     await receipt(a.threadId,[privateA]);
     checks.push({name:"actual-direct-dispatch",threadId:a.threadId,recordIds:[privateA.id],status:"PASS"});
 
@@ -144,7 +167,7 @@ async function main() {
     const current=pin("fixture-a-current","bot",a.id,"CURRENT_APPROVED_DECISION Use the public checklist.",a.threadId);
     db.exec("COMMIT");
     const restricted=await send(a,"dispatch-fixture-restricted-resume");
-    assertPayload(restricted,[current],[privateA.text,privateB.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"]);
+    assertPayload(restricted,[current],[privateA.text,privateB.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"],"dispatch-fixture-restricted-resume");
     assert(!restricted.argv.includes("--resume"),"Revoked native history was resumed");
     assert.notEqual(restricted.pid,direct.pid,"Revoked history remained in the same provider process");
     await receipt(a.threadId,[current]);
@@ -156,7 +179,7 @@ async function main() {
     assert(other,"Fixture requires two declared model selections");
     const switched=await api("PATCH",`/api/bots/${a.id}`,{modelSelection:{instanceId:a.modelSelection.instanceId,model:other}});assert.equal(switched.status,200);
     const changed=await send(a,"dispatch-fixture-model-switch");
-    assertPayload(changed,[current],[privateA.text,privateB.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"]);
+    assertPayload(changed,[current],[privateA.text,privateB.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"],"dispatch-fixture-model-switch");
     assert.equal(changed.argv[changed.argv.indexOf("--model")+1],other);
     await receipt(a.threadId,[current]);
     checks.push({name:"model-switch-context-refresh",threadId:a.threadId,recordIds:[current.id],status:"PASS"});
@@ -164,7 +187,7 @@ async function main() {
     clearDump();
     const groupSend=await api("POST",`/api/groups/${room.id}/messages`,{text:`@${a.name} dispatch-fixture-room`});assert.equal(groupSend.status,202);
     const groupDump=await dump();await settled("channel",room.id);
-    assertPayload(groupDump,[shared],[privateA.text,privateB.text,current.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"]);
+    assertPayload(groupDump,[shared],[privateA.text,privateB.text,current.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"],`@${a.name} dispatch-fixture-room`);
     await receipt(room.threadId,[shared]);
     checks.push({name:"actual-room-dispatch-private-exclusion",threadId:room.threadId,recordIds:[shared.id],status:"PASS"});
 
@@ -172,13 +195,25 @@ async function main() {
     // observable again. Holding its reply preserves the live turn capability.
     assert.equal((await api("PATCH",`/api/bots/${a.id}`,{modelSelection:a.modelSelection})).status,200);
     const held=await send(a,"__fixture_hold_authority__ dispatch-fixture-capabilities",true);
-    assertPayload(held,[current],[privateA.text,privateB.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"]);
+    assertPayload(held,[current],[privateA.text,privateB.text,"LEGACY_PRIVATE_NOTEBOOK_CANARY"],"__fixture_hold_authority__ dispatch-fixture-capabilities");
     const memoryToken=held.mcpConfig.mcpServers["murage-memory"].env!.MURAGE_MEMORY_TOKEN;
     const agentsToken=held.mcpConfig.mcpServers.agents?.env?.MURAGE_COMMS_TOKEN;
     assert(agentsToken,"Fixture requires agents capability for separation check");
     const get={handles:[{id:current.id,version:1}]};
     const memory=await api("POST","/api/internal/memory/get",get,{authorization:`Bearer ${memoryToken}`});assert.equal(memory.status,200);
     assert(JSON.stringify(memory.body).includes(current.text));
+    // MEMJSON2: the handle printed on the pin's line (m1) reaches the exact
+    // record through this turn's receipt; the first handle past the frame
+    // resolves nothing, and the agents capability still cannot use handles.
+    const heldLines=assertPayload(held,[current],[]);
+    const byHandle=await api("POST","/api/internal/memory/get",{handles:[{handle:"m1"}]},{authorization:`Bearer ${memoryToken}`});
+    assert.equal(byHandle.status,200,JSON.stringify(byHandle.body));
+    assert.deepEqual(byHandle.body.records.map((record:any)=>[record.handle,record.id,record.version,record.text]),[["m1",current.id,1,current.text]]);
+    assert.deepEqual(byHandle.body.records[0].evidence,[{sourceId:current.sourceId,revision:1,startByte:0,endByte:Buffer.byteLength(current.text)}]);
+    const past=await api("POST","/api/internal/memory/get",{handles:[{handle:memoryHandle(heldLines.length+1)}]},{authorization:`Bearer ${memoryToken}`});
+    assert.equal(past.status,404);assert.match(String(past.body.error),/^MEMORY_HANDLE_UNKNOWN/);
+    const crossHandle=await api("POST","/api/internal/memory/get",{handles:[{handle:"m1"}]},{authorization:`Bearer ${agentsToken}`});assert.equal(crossHandle.status,403);
+    checks.push({name:"turn-local-handle-resolution",threadId:a.threadId,recordIds:[current.id],status:"PASS"});
     const crossMemory=await api("POST","/api/internal/memory/get",get,{authorization:`Bearer ${agentsToken}`});assert.equal(crossMemory.status,403);
     const crossDelegation=await api("POST","/api/internal/delegate-bot",{fromBotId:a.id,fromThreadId:a.threadId,toBotId:b.id,message:"fixture denied handoff"},{authorization:`Bearer ${memoryToken}`});
     assert.equal(crossDelegation.status,403);
@@ -189,7 +224,7 @@ async function main() {
     });
     checks.push({name:"live-memory-and-delegation-capability-separation",status:"PASS"});
     checks.push({name:"cancelled-turn-memory-revocation",status:"PASS"});
-    assert.equal(checks.length,6);
+    assert.equal(checks.length,7);
     console.log(JSON.stringify({ok:true,checks,fixtureLog:fixture.info.logPath,node:process.version,
       limits:"Fake Claude transport only; no native Claude/Codex/Fuigo/API runtime, semantic quality, GUI or successful autonomous handoff proof"}));
   } finally {

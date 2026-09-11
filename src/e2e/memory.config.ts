@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { evidenceDir } from "./evidence";
 
 // Each project starts its own fake-provider server and actual UI in the spec.
 // No port reuse, shared scratch reset, production URL or retry is permitted.
@@ -11,7 +12,7 @@ export default defineConfig({
   timeout: 90000,
   expect: { timeout: 10000 },
   reporter: "list",
-  outputDir: "../../.planning/memory-evidence/p08-browser-results",
+  outputDir: evidenceDir("memory"),
   use: { headless: true, trace: "retain-on-failure", screenshot: "only-on-failure" },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 1000 } } },

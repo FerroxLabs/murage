@@ -5,6 +5,7 @@ import { DATA_DIR } from "./config.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeArtifacts } from "./artifacts.ts";
+import { initializeMessageTables } from "./message-tables.ts";
 
 let handle: DatabaseSync | null = null;
 let handlePath: string | null = null;
@@ -20,11 +21,7 @@ export function database(): DatabaseSync {
   const db = new DatabaseSync(file);
   try {
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
-    db.exec(`CREATE TABLE IF NOT EXISTS messages (
-      thread_id TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, role TEXT NOT NULL,
-      kind TEXT NOT NULL, text TEXT, json TEXT NOT NULL, PRIMARY KEY(thread_id,id));
-      CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
-      CREATE TABLE IF NOT EXISTS thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);`);
+    initializeMessageTables(db);
     migrateMemorySchema(db, freshInstallation ? "active" : "off");
     initializeInbox(db);
     initializeArtifacts(db);
