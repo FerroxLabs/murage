@@ -1,5 +1,27 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { classifyProviderError, providerErrorPresentation, type ProviderErrorInfo } from "./provider-error.ts";
+import { classifyLocalResourceConflict, classifyProviderError, LOCAL_RESOURCE_BUSY_MESSAGES, providerErrorPresentation, type ProviderErrorInfo } from "./provider-error.ts";
+
+describe("local resource contention", () => {
+  it("recognizes exactly the refusal copy the server throws for held leases", () => {
+    const thrown = ["../server/index.ts", "../server/independent-thread-runs.ts"].flatMap((file) =>
+      [...readFileSync(new URL(file, import.meta.url), "utf8").matchAll(/"(Another thread is using [^"]+)"/g)].map((match) => match[1]));
+    expect(new Set(thrown)).toEqual(new Set(LOCAL_RESOURCE_BUSY_MESSAGES.keys()));
+    expect(classifyLocalResourceConflict("Another thread is using this working folder. Wait for it to finish.")).toEqual({ kind: "resource-busy", resource: "working-folder" });
+    expect(classifyLocalResourceConflict(" Another thread is using this computer. Wait for it to finish.\n")).toEqual({ kind: "resource-busy", resource: "computer" });
+    expect(classifyLocalResourceConflict("Another thread is using this browser profile. Wait for it to finish.")).toEqual({ kind: "resource-busy", resource: "browser" });
+    expect(classifyLocalResourceConflict("Another thread is using this browser, computer or working folder.")).toEqual({ kind: "resource-busy", resource: "shared" });
+  });
+  it("does not let engine text, lookalikes or malformed saved messages borrow the wait card", () => {
+    const message = "Another thread is using this computer. Wait for it to finish.";
+    expect(classifyLocalResourceConflict(message, message)).toBeUndefined();
+    expect(classifyLocalResourceConflict(message + " Check your API key.")).toBeUndefined();
+    expect(classifyLocalResourceConflict("another thread is using this computer. wait for it to finish.")).toBeUndefined();
+    expect(classifyLocalResourceConflict("constructor")).toBeUndefined();
+    expect(classifyLocalResourceConflict(undefined)).toBeUndefined();
+    expect(classifyLocalResourceConflict({ message })).toBeUndefined();
+  });
+});
 
 describe("safe provider error details", () => {
   it("identifies observed Flux credit rejection without carrying response secrets or URLs", () => {

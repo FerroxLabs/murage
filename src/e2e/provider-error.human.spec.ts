@@ -18,7 +18,7 @@ test.beforeAll(async () => {
       load(id) {
         if (id.endsWith("/src/styles.css")) return readFileSync(id, "utf8").replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source "./components";');
         if (id !== "\0provider-error-fixture") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {ProviderErrorCard} from '/src/components/ProviderErrorCard.tsx';import {RuntimeErrorCard} from '/src/components/RuntimeErrorCard.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const q=new URLSearchParams(location.search);setLocale(q.get('lang')||'en');document.documentElement.dataset.skin=q.get('skin')||'dark';window.retryCalls=0;window.settingsCalls=0;createRoot(document.getElementById('root')).render(React.createElement(q.has('runtime')?RuntimeErrorCard:ProviderErrorCard,{message:'Internal error',details:q.has('detail')?'Internal error — diagnostic text beyond a short badge. Provider response: HTTP 500. Engine error code: -32603. <script>window.injected=true</script>':undefined,info:{kind:q.get('kind')||'credits',httpStatus:Number(q.get('status')||402),...(q.get('provider')==='flux-router'?{provider:'flux-router'}:{})},onRetry:q.has('noRetry')?undefined:()=>window.retryCalls++,onOpenProviderSettings:()=>window.settingsCalls++}));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {ProviderErrorCard} from '/src/components/ProviderErrorCard.tsx';import {RuntimeErrorCard} from '/src/components/RuntimeErrorCard.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const q=new URLSearchParams(location.search);setLocale(q.get('lang')||'en');document.documentElement.dataset.skin=q.get('skin')||'dark';window.retryCalls=0;window.settingsCalls=0;createRoot(document.getElementById('root')).render(React.createElement(q.has('runtime')?RuntimeErrorCard:ProviderErrorCard,{message:q.get('message')||'Internal error',details:q.has('detail')?'Internal error — diagnostic text beyond a short badge. Provider response: HTTP 500. Engine error code: -32603. <script>window.injected=true</script>':undefined,info:{kind:q.get('kind')||'credits',httpStatus:Number(q.get('status')||402),...(q.get('provider')==='flux-router'?{provider:'flux-router'}:{})},onRetry:q.has('noRetry')?undefined:()=>window.retryCalls++,onOpenProviderSettings:()=>window.settingsCalls++}));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/__provider?") && req.url !== "/__provider") return next();
@@ -120,4 +120,44 @@ for (const width of [390, 1000]) test(`runtime errors explain missing context an
   expect(await page.evaluate(() => [(window as any).settingsCalls, (window as any).retryCalls])).toEqual([1, 1]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`runtime-error-${width}.png`), fullPage: true });
+});
+
+const BUSY = "Another thread is using this computer. Wait for it to finish.";
+for (const skin of ["light", "dark"]) for (const width of [390, 1000]) test(`local resource contention offers wait and retry guidance, not provider advice, in ${skin} at ${width}px`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto(origin + "/__provider?runtime=1&skin=" + skin + "&message=" + encodeURIComponent(BUSY));
+  const alert = page.getByRole("alert");
+  await expect(page.getByRole("heading", { name: "Another thread is using this computer", exact: true })).toBeVisible();
+  await expect(alert).toContainText("Wait for the other thread to finish, or stop it, then retry.");
+  await expect(alert).not.toContainText(/provider|account|sign-in|API key|credits|configured model|hit a problem/i);
+  await expect(page.getByRole("button", { name: "Provider settings" })).toHaveCount(0);
+  await expect(page.getByRole("link")).toHaveCount(0);
+  await expect(alert.getByRole("button")).toHaveCount(1);
+  const retry = page.getByRole("button", { name: "Retry", exact: true });
+  expect((await retry.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  // Keyboard only: the first stop is Retry, then the diagnostics disclosure.
+  await page.keyboard.press("Tab");
+  await expect(retry).toBeFocused();
+  await page.keyboard.press("Enter");
+  expect(await page.evaluate(() => [(window as any).retryCalls, (window as any).settingsCalls])).toEqual([1, 0]);
+  await page.keyboard.press("Tab");
+  await expect(page.getByText("Technical details", { exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(alert.locator("pre")).toHaveText(BUSY);
+  // The warning treatment is the theme's own token, not the danger card.
+  const colors = await alert.evaluate(section => {
+    const icon = section.querySelector("span[aria-hidden]")!;
+    const probe = document.createElement("span"); probe.style.color = "var(--color-warning)"; document.body.append(probe);
+    const warning = getComputedStyle(probe).color; probe.remove();
+    return { icon: getComputedStyle(icon).color, warning, border: getComputedStyle(section).borderTopColor };
+  });
+  expect(colors.icon).toBe(colors.warning);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath(`resource-busy-${skin}-${width}.png`), fullPage: true });
+});
+
+test("an ordinary runtime error whose details repeat the busy copy keeps the diagnostic card", async ({ page }) => {
+  await page.goto(origin + "/__provider?runtime=1&detail=1&message=" + encodeURIComponent(BUSY));
+  await expect(page.getByRole("heading", { name: "This request hit a problem" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Provider settings", exact: true })).toBeVisible();
 });

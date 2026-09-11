@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { classifyLocalResourceConflict } from "../shared/provider-error.ts";
 
 const FAKE_ACP=join(dirname(fileURLToPath(import.meta.url)),"testing","fake-acp-cli.ts");
 const processAlive=(pid:number)=>{try{process.kill(pid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code==="EPERM";}};
@@ -88,6 +89,11 @@ it("refuses a competing working-directory launch without touching its peer's run
   await hold(bot.id,bot.first,"workspace-first");rmSync(join(fixture.info.dataDir,"second-dump.json"),{force:true});
   expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.second,text:"competing workspace"})).status).toBe(202);
   await expect.poll(async()=>(await messages(bot.second)).some(message=>message.tool?.name?.includes("Another thread is using this working folder")),{timeout:5000}).toBe(true);
+  // The saved refusal must stay recognizable as local contention so the chat
+  // offers wait/retry guidance instead of provider or account advice.
+  const refusal=(await messages(bot.second)).find(message=>message.tool?.name?.includes("Another thread is using this working folder"))!;
+  expect(refusal.tool.ok).toBe(false);expect(refusal.tool.providerError).toBeUndefined();expect(refusal.tool.setup).toBeFalsy();
+  expect(classifyLocalResourceConflict(refusal.tool.name.slice("error:".length).trim(),refusal.tool.errorDetails)).toEqual({kind:"resource-busy",resource:"working-folder"});
   expect(existsSync(join(fixture.info.dataDir,"second-dump.json"))).toBe(false);
   expect((await botState(bot.id)).tasks.find((task:any)=>task.threadId===bot.first).busy).toBe(true);
   await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first});

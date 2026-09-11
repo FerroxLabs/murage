@@ -442,6 +442,20 @@ describe.sequential("Composio Sessions", () => {
     )).toBe(true);
   });
 
+  // Adapted from OpenMausBot PR #758 (merge 86b19df10a0aaebdc66f9da41c46f42d26dd3843).
+  it("uses the provided alias for the first account authorization", async () => {
+    const cfg: AppConfig = {
+      composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
+    };
+    const before = calls.length;
+    await expect(authorizeService(cfg, "slack", "team")).resolves.toEqual({
+      url: "https://connect.composio.dev/link/slack",
+    });
+    const linkCalls = calls.slice(before).filter((call) => call.method === "POST" && call.path.endsWith("/link"));
+    expect(linkCalls).toHaveLength(1);
+    expect(linkCalls[0].body).toEqual({ toolkit: "slack", alias: "team" });
+  });
+
   it("enumerates connected services independently of catalog position", async () => {
     const cfg: AppConfig = {
       composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
