@@ -4627,20 +4627,44 @@ const telegram = new TelegramService({ dataDir: DATA_DIR,
       if (!bot || bot.hidden) return [];
       return store.messagesFor(bot.threadId).flatMap(message => {
         const card = message.card;
-        if (!card?.requestId || !card.tool || card.answered || card.dismissed || card.routineRequest || card.skillRequest
+        if (!card?.requestId || card.answered || card.dismissed || card.routineRequest || card.skillRequest
           || askMessageByRequest.get(`${bot.threadId}:${card.requestId}`) !== message.id) return [];
+        const fingerprint = createHash("sha256").update(JSON.stringify([bot.id, bot.threadId, bot.modelSelection, message.id, card])).digest("hex");
+        if (isQuestionCard(card)) {
+          // A question rides to Telegram with its answer buttons (0.1.52
+          // ASK3). A secret answer never goes through a chat service, and an
+          // expired card takes no engine answer any more: both stay in-app.
+          const questions = questionsForCard(card);
+          if (card.expired || questions.some(question => question.secret)) return [];
+          return [{ id: message.id, fingerprint, summary: redactSecretsInText(`${bot.name} has a question`), questions }];
+        }
+        if (!card.tool) return [];
         const summary = redactSecretsInText(`${bot.name} requests approval\nTool: ${card.tool}\n${card.subtitle ?? ""}${card.held ? `\n${card.held}` : ""}`);
         if (summary.length > 3000) return []; // full review stays in-app
-        return [{ id: message.id, fingerprint: createHash("sha256").update(JSON.stringify([bot.id, bot.threadId, bot.modelSelection, message.id, card])).digest("hex"), summary }];
+        return [{ id: message.id, fingerprint, summary }];
       });
     };
+    // (plain JS on purpose: telegram-permission-wiring.test.ts evaluates this expression as written)
     return { pending, resolve: async (approval, behavior) => {
       const current = pending().find(item => item.id === approval.id && item.fingerprint === approval.fingerprint);
       const bot = store.bot(targetBotId);
       if (!current || !bot) return false;
       const card = store.messagesFor(bot.threadId).find(message => message.id === approval.id)?.card;
-      if (!card?.requestId) return false;
+      // a question is never answered with allow/deny
+      if (!card?.requestId || isQuestionCard(card)) return false;
       return (await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name })) !== "unavailable";
+    }, answer: async (approval, reply) => {
+      const current = pending().find(item => item.id === approval.id && item.fingerprint === approval.fingerprint);
+      const bot = store.bot(targetBotId);
+      const card = current && bot ? store.messagesFor(bot.threadId).find(message => message.id === approval.id)?.card : undefined;
+      if (!bot || !card?.requestId || !isQuestionCard(card)) return { ok: false, error: "This question is no longer open." };
+      // The same validation and scope as the desktop card: the answer is
+      // checked against the persisted questions before the engine sees it.
+      const body = reply.behavior === "skip" ? { behavior: "skip" } : { behavior: "answer", answers: reply.answers };
+      const decided = questionReply(bot.threadId, card.requestId, body, reply.behavior === "skip");
+      if (decided.kind !== "deliver") return { ok: false, error: decided.kind === "error" ? decided.error : "This question takes no answer any more." };
+      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, decided.behavior, decided.message, { id: bot.id, name: bot.name }, decided.answers);
+      return outcome === "unavailable" ? { ok: false, error: "Your bot stopped waiting for this answer." } : { ok: true };
     } };
   },
   enqueue: (connectionId, targetBotId, input) => {
