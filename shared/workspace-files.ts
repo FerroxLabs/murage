@@ -225,6 +225,9 @@ export const WORKSPACE_FILE_ERROR_STATUS = {
   "revision-conflict": 409,
   "already-exists": 409,
   "bot-writing": 423,
+  /** STOPRESTORE2: the only holder of the workspace is a turn the user already
+   * stopped whose engine did not close within its budget. Retryable. */
+  "workspace_stopped_turn_closing": 423,
   "root-changed": 409,
   "cursor-stale": 409,
   "quota-exceeded": 507,
