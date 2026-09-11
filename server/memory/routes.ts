@@ -48,6 +48,11 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         const candidateId=saveMemoryCandidate(input.replacement,input.evidence,input.idempotencyKey,access);
         const previous=db.prepare("SELECT supersedes_id FROM memory_records WHERE id=? AND version=1").get(candidateId);
         if(previous?.supersedes_id && previous.supersedes_id!==input.id)throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+        // One proposal names exactly one target version. A replay against a
+        // later version must not add a second derivation: owner approval reads
+        // this row to validate the exact revision that was reviewed.
+        const recorded=db.prepare("SELECT parent_version FROM memory_derivations WHERE parent_id=? AND child_id=? AND child_version=1").all(input.id,candidateId);
+        if(recorded.some(row=>Number(row.parent_version)!==input.version))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
         db.prepare("UPDATE memory_records SET supersedes_id=? WHERE id=? AND state='candidate'").run(input.id,candidateId);
         db.prepare("INSERT OR IGNORE INTO memory_derivations VALUES(?,?,?,1)").run(input.id,input.version,candidateId);
         return {candidateId,state:"candidate",pendingReview:true,record:{id:input.id,version:input.version}};
