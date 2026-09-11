@@ -32,6 +32,37 @@ export const c = {
 
 let _rl = null;
 let _stdinEnded = false;
+/**
+ * The safety net under unattended mode.
+ *
+ * `--non-interactive` works by answering every question from flags and
+ * environment ahead of time, and each call site is guarded. A guard that is
+ * ever missed — a question added later, a branch nobody thought about — would
+ * otherwise block a provisioning run forever on a prompt nobody will answer,
+ * with no output saying why. With prompts refused, a missed guard is a loud,
+ * traceable crash instead of a hang.
+ */
+let _promptsRefused = false;
+
+export class InteractivePromptRefused extends Error {
+  /** @param {string} question */
+  constructor(question) {
+    super(
+      `this run is --non-interactive and cannot ask: ${JSON.stringify(String(question).trim())}. ` +
+        "That is a bug in the installer: the question has no unattended equivalent wired up."
+    );
+    this.name = "InteractivePromptRefused";
+    this.code = "INTERACTIVE_PROMPT_REFUSED";
+  }
+}
+
+/**
+ * Refuse (or allow again) every interactive prompt from this process.
+ * @param {boolean} refused
+ */
+export function refuseInteractivePrompts(refused = true) {
+  _promptsRefused = refused;
+}
 /** Shared interfaces closed on purpose, to give the terminal to the secret
  * prompt. That close is not stdin ending; the next prompt opens a new one. */
 const _handedOver = new WeakSet();
@@ -56,6 +87,7 @@ export function closeRl() {
 
 /** @param {string} question @returns {Promise<string>} */
 export function ask(question) {
+  if (_promptsRefused) return Promise.reject(new InteractivePromptRefused(question));
   if (_stdinEnded) return Promise.resolve("");
   return new Promise((res) => {
     const rl = rlInstance();
@@ -109,6 +141,7 @@ export async function confirm(question, dflt = true) {
  * @returns {Promise<string>}
  */
 export function askSecret(question) {
+  if (_promptsRefused) return Promise.reject(new InteractivePromptRefused(question));
   if (_stdinEnded) return Promise.resolve("");
   if (!process.stdin.isTTY) return ask(question);
   if (_rl) {
