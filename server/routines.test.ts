@@ -664,6 +664,115 @@ describe("RoutineManager", () => {
     expect(h.started).toHaveLength(2);
   });
 
+  // #988 subset (adapted from OpenMausBot 1e6737b0): an edit that leaves the
+  // schedule and the enabled state alone keeps the routine's cursor.
+  // Recomputing it from "now" silently skipped an occurrence that had become
+  // due since the last tick, or erased an offline catch-up.
+  it("keeps a due occurrence when only the name or instructions change", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Daily work", prompt: "Original", botId: "maus-1",
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+    });
+    const due = routine.nextRunAt!;
+    // due, but the scheduler has not ticked since
+    h.setNow(due + 60_000);
+    const edited = h.manager.update(routine.id, { name: "Renamed", prompt: "Updated" })!;
+    expect(edited.nextRunAt).toBe(due);
+    expect(edited.updatedAt).toBeGreaterThan(routine.updatedAt);
+
+    // The kept cursor is the durable one, before anything dispatches.
+    expect(JSON.parse(readFileSync(h.options.file!, "utf8")).routines[0]).toMatchObject({ name: "Renamed", nextRunAt: due });
+    expect(new RoutineManager({ ...h.options, emit: () => {} }).listRoutines()[0]).toMatchObject({ name: "Renamed", nextRunAt: due });
+
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(1);
+    expect(h.manager.listRuns()[0]).toMatchObject({ scheduledFor: due, status: "running", routineName: "Renamed" });
+    expect(h.started).toHaveLength(1);
+    expect(h.started[0]!.prompt).toBe("Updated");
+    expect(h.manager.listRoutines()[0]!.nextRunAt).toBeGreaterThan(due);
+  });
+
+  it.each([
+    ["daily", { type: "daily", time: "09:00", weekdays: [1, 3] }],
+    ["interval", { type: "interval", everyMinutes: 30, anchorAt: new Date(2026, 7, 17, 8, 5).getTime() }],
+    ["one-time", { type: "once", at: new Date(2026, 7, 17, 8, 30, 15, 123).getTime() }],
+  ] satisfies Array<[string, RoutineSchedule]>)(
+    "keeps a due %s occurrence when the same schedule and enabled state are saved again",
+    async (_kind, schedule) => {
+      const h = harness();
+      const routine = h.manager.create({ name: "Resaved", prompt: "Check it", botId: "maus-1", schedule });
+      const due = routine.nextRunAt!;
+      h.setNow(due + 60_000);
+      const resaved = h.manager.update(routine.id, { name: "Resaved again", schedule: structuredClone(schedule), enabled: true })!;
+      expect(resaved.nextRunAt).toBe(due);
+      expect(resaved.schedule).toEqual(schedule);
+      await h.manager.tick();
+      expect(h.manager.listRuns()).toHaveLength(1);
+      expect(h.manager.listRuns()[0]).toMatchObject({ scheduledFor: due, status: "running" });
+    },
+  );
+
+  it("recalculates the cursor when the schedule itself changes", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Moved", prompt: "Check it", botId: "maus-1",
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+    });
+    h.setNow(routine.nextRunAt! + 60_000);
+    const later = { type: "daily", time: "10:00", weekdays: [1] } satisfies RoutineSchedule;
+    expect(h.manager.update(routine.id, { schedule: later })?.nextRunAt).toBe(nextOccurrence(later, h.nowValue()));
+    const interval = { type: "interval", everyMinutes: 45, anchorAt: new Date(2026, 7, 17, 7, 0).getTime() } satisfies RoutineSchedule;
+    const moved = h.manager.update(routine.id, { schedule: interval })!;
+    expect(moved.nextRunAt).toBe(nextOccurrence(interval, h.nowValue()));
+    expect(moved.nextRunAt).toBeGreaterThan(h.nowValue());
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toEqual([]);
+  });
+
+  it("clears the cursor on pause and recalculates it on resume instead of reviving a stale occurrence", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Paused", prompt: "Check it", botId: "maus-1",
+      schedule: { type: "daily", time: "09:00", weekdays: [1, 2] },
+    });
+    const due = routine.nextRunAt!;
+    h.setNow(due + 60_000);
+    expect(h.manager.update(routine.id, { enabled: false })?.nextRunAt).toBeNull();
+    // an edit while paused keeps it paused
+    expect(h.manager.update(routine.id, { name: "Still paused" })?.nextRunAt).toBeNull();
+    const resumed = h.manager.update(routine.id, { enabled: true })!;
+    expect(resumed.nextRunAt).toBe(nextOccurrence(resumed.schedule, h.nowValue()));
+    expect(resumed.nextRunAt).toBeGreaterThan(due);
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toEqual([]);
+  });
+
+  it("keeps the previous definition and cursor when an edit cannot be saved", () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Durable", prompt: "Original", botId: "maus-1",
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+    });
+    const due = routine.nextRunAt!;
+    h.setNow(due + 60_000);
+    const file = h.options.file!;
+    // A directory at the destination makes the final atomic rename fail
+    // after the temporary file has been written.
+    rmSync(file, { force: true });
+    mkdirSync(file);
+    expect(() => h.manager.update(routine.id, { schedule: { type: "daily", time: "10:00", weekdays: [1] } })).toThrow();
+    expect(() => h.manager.update(routine.id, { name: "Renamed" })).toThrow();
+    expect(h.manager.listRoutines()[0]).toMatchObject({
+      name: "Durable", nextRunAt: due, updatedAt: routine.updatedAt,
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+    });
+
+    rmSync(file, { recursive: true, force: true });
+    rmSync(`${file}.tmp`, { force: true });
+    expect(h.manager.update(routine.id, { name: "Renamed" })).toMatchObject({ name: "Renamed", nextRunAt: due });
+  });
+
   it("catches up at most the latest interval occurrence without a backlog", async () => {
     const h = harness();
     const anchorAt = new Date(2026, 7, 17, 8, 5).getTime();
