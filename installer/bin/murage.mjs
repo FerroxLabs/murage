@@ -44,7 +44,16 @@ import {
 } from "../lib/service-account.mjs";
 import { stageUnit } from "../lib/systemd.mjs";
 import * as ts from "../lib/tailscale.mjs";
-import { ask, askSecret, c, closeRl, confirm, fail, heading, ok, qrBlock, warn } from "../lib/ui.mjs";
+import { ask, askSecret, c, closeRl, confirm, fail, heading, ok, qrBlock, refuseInteractivePrompts, warn } from "../lib/ui.mjs";
+import {
+  EXIT,
+  PROVIDER_ENV,
+  inferProviderEnvName,
+  isUnattended,
+  readAllStdin,
+  resolveUnattendedPlan,
+  splitUnattendedArgs,
+} from "../lib/unattended.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INSTALLER_ROOT = resolve(HERE, "..");
@@ -70,14 +79,6 @@ const DEFAULT_PORT = 8799;
  */
 const DOOR_PORT = ts.doorPort(process.env);
 const DEFAULT_TAG = "tag:murage";
-
-/** Provider env names Murage's own config recognises (server/config.ts). */
-const PROVIDER_ENV = {
-  anthropic: "ANTHROPIC_API_KEY",
-  openai: "OPENAI_API_KEY",
-  gemini: "GEMINI_API_KEY",
-  xai: "XAI_API_KEY",
-};
 
 // ── payload resolution ────────────────────────────────────────────────────
 
@@ -231,13 +232,14 @@ function checkNode() {
 
 // ── tailscale enrolment ───────────────────────────────────────────────────
 
-async function ensureTailscaleInstalled() {
+/** @param {UnattendedPlan | null} plan */
+async function ensureTailscaleInstalled(plan) {
   if (ts.isInstalled()) {
     ok("tailscale is installed");
     return true;
   }
   console.log(c.dim("\n  Tailscale is not installed. It is what keeps this box off the public internet."));
-  if (!(await confirm("  Install Tailscale now?", true))) {
+  if (!(plan ? plan.installTailscale : await confirm("  Install Tailscale now?", true))) {
     fail("Skipped. Without Tailscale this deployment has no secure path in — setup will not claim otherwise.");
     return false;
   }
@@ -261,13 +263,16 @@ async function ensureTailscaleInstalled() {
  * @param {SetupContext} ctx
  * @param {number} [port] the port the proxy will front — the BROWSER DOOR,
  *   not the harness. See `DOOR_PORT`.
+ * @param {number} [harnessPort]
+ * @param {UnattendedPlan | null} [plan] the answers an unattended run supplied
+ *   ahead of time; null for an interactive run, which asks instead.
  * @returns {Promise<{ ok: boolean, served?: boolean, verdict?: any, share?: any, reasons?: string[] }>}
  */
-async function enrolTailnet(ctx, port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
+async function enrolTailnet(ctx, port = DOOR_PORT, harnessPort = DEFAULT_PORT, plan = null) {
   const already = ts.verdictFromStatus(ts.status());
   if (already.ok) {
     ok(`already on the tailnet as ${c.b(already.dnsName ?? already.ips[0])}`);
-    if (!(await confirm("  Re-run enrolment with a new auth key?", false))) {
+    if (!(plan ? plan.reenroll : await confirm("  Re-run enrolment with a new auth key?", false))) {
       // `served` has to be answered even on this path, or an already-enrolled
       // box with a working proxy would be reported as having none.
       const share = ts.shareStatus({ port });
@@ -278,29 +283,37 @@ async function enrolTailnet(ctx, port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
       // state a box is left in by an earlier setup that could not find a door
       // to front. Re-running setup has to be able to FIX that without demanding
       // a fresh auth key for a node that is already on the tailnet.
-      return { ...(await frontTheDoor(ctx, port, harnessPort)), verdict: already, reenrolled: false };
+      return { ...(await frontTheDoor(ctx, port, harnessPort, plan)), verdict: already, reenrolled: false };
     }
   }
 
-  console.log(c.dim("\n  Paste a Tailscale auth key. Mint one at:"));
-  console.log(c.dim(`    ${c.o("https://login.tailscale.com/admin/settings/keys")}`));
-  console.log(c.dim("  For a disposable cloud box choose an EPHEMERAL key: the node then evicts"));
-  console.log(c.dim("  itself from your tailnet when the box is destroyed, instead of lingering"));
-  console.log(c.dim("  forever as a dead entry. (Ephemeral is a property of the KEY — there is no"));
-  console.log(c.dim("   `tailscale up` flag for it, so setup cannot choose it for you.)"));
-  console.log(c.dim("  The key is read without echo and written to a 0600 file; it is never passed"));
-  console.log(c.dim("  as a command-line argument, so it cannot leak via `ps` or shell history.\n"));
+  if (plan) {
+    // The source, never the key. A path or an environment variable NAME is not
+    // a secret; the bytes behind it are, and they are not printed anywhere.
+    ok(`using the Tailscale auth key from ${c.dim(plan.authKeySource ?? "(none)")}`);
+  } else {
+    console.log(c.dim("\n  Paste a Tailscale auth key. Mint one at:"));
+    console.log(c.dim(`    ${c.o("https://login.tailscale.com/admin/settings/keys")}`));
+    console.log(c.dim("  For a disposable cloud box choose an EPHEMERAL key: the node then evicts"));
+    console.log(c.dim("  itself from your tailnet when the box is destroyed, instead of lingering"));
+    console.log(c.dim("  forever as a dead entry. (Ephemeral is a property of the KEY — there is no"));
+    console.log(c.dim("   `tailscale up` flag for it, so setup cannot choose it for you.)"));
+    console.log(c.dim("  The key is read without echo and written to a 0600 file; it is never passed"));
+    console.log(c.dim("  as a command-line argument, so it cannot leak via `ps` or shell history.\n"));
+  }
 
-  const authKey = await ts.readAuthKey({ readSecret: () => askSecret("  Tailscale auth key: ") });
+  const authKey = plan ? plan.authKey : await ts.readAuthKey({ readSecret: () => askSecret("  Tailscale auth key: ") });
   if (!authKey) {
     fail("No auth key given. Setup will not report this box as secured.");
     return { ok: false, reasons: ["no auth key supplied"] };
   }
 
-  const tagAnswer = await ask(`  ACL tag to advertise [${DEFAULT_TAG}, or "none"]: `);
+  const tagAnswer = plan ? (plan.tag ?? "") : await ask(`  ACL tag to advertise [${DEFAULT_TAG}, or "none"]: `);
   const tagChoice = (tagAnswer || DEFAULT_TAG).trim();
   const tags = tagChoice.toLowerCase() === "none" ? [] : [tagChoice.startsWith("tag:") ? tagChoice : `tag:${tagChoice}`];
-  const hostname = (await ask("  Tailnet hostname for this box [leave blank for the OS hostname]: ")) || undefined;
+  const hostname = plan
+    ? (plan.hostname ?? undefined)
+    : (await ask("  Tailnet hostname for this box [leave blank for the OS hostname]: ")) || undefined;
 
   // The proxy is only offered if the thing it would front is actually there.
   // A `tailscale serve` pointed at a dead port is a tailnet URL that answers
@@ -315,7 +328,9 @@ async function enrolTailnet(ctx, port = DOOR_PORT, harnessPort = DEFAULT_PORT) {
   const brought = await bringDoorUp(ctx, port, harnessPort);
   let https = false;
   if (brought.up) {
-    https = await confirm("  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)", true);
+    https = plan
+      ? plan.https
+      : await confirm("  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)", true);
   }
 
   try {
@@ -496,16 +511,19 @@ async function bringDoorUp(ctx, port, harnessPort) {
  * @param {SetupContext} ctx
  * @param {number} port the door port
  * @param {number} harnessPort
+ * @param {UnattendedPlan | null} [plan]
  * @returns {Promise<{ ok: boolean, served: boolean, reasons: string[], share?: any }>}
  */
-async function frontTheDoor(ctx, port, harnessPort) {
+async function frontTheDoor(ctx, port, harnessPort, plan = null) {
   const brought = await bringDoorUp(ctx, port, harnessPort);
   try {
     if (!brought.up) return { ok: true, served: false, reasons: [] };
-    const https = await confirm(
-      "  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)",
-      true
-    );
+    const https = plan
+      ? plan.https
+      : await confirm(
+          "  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)",
+          true
+        );
     console.log(c.dim("  putting the tailnet-only proxy in front of the loopback listener…"));
     const serve = ts.runTailscale(ts.buildServeArgs({ port, https }));
     if (!serve.ok) {
@@ -586,16 +604,46 @@ function announceDeviceDoorClosed() {
  */
 
 /**
+ * @typedef {Awaited<ReturnType<typeof resolveUnattendedPlan>> extends { plan: infer P } ? P : never} _PlanShape
+ * @typedef {{
+ *   nonInteractive: true,
+ *   wantTailscale: boolean,
+ *   installTailscale: boolean,
+ *   reenroll: boolean,
+ *   https: boolean,
+ *   systemd: boolean,
+ *   authKey: string | null,
+ *   authKeySource: string | null,
+ *   tag: string | null,
+ *   hostname: string | null,
+ *   providerKey: string | null,
+ *   providerEnvName: string | null,
+ *   providerKeySource: string | null,
+ * }} UnattendedPlan
+ */
+
+/**
  * Decide, before setup touches anything, which account the service runs as
  * and where its data lives. Exits 2 with the reason when it has to refuse.
- * @param {string[]} argv
+ * @param {string[]} argv what is left after `splitUnattendedArgs`
+ * @param {string | null} [serviceUserFromEnv] MURAGE_SERVICE_USER, used only
+ *   when `--service-user` was not given — so provisioning can name the account
+ *   in its environment file instead of its command line.
  * @returns {SetupContext}
  */
-function resolveSetupContext(argv) {
+function resolveSetupContext(argv, serviceUserFromEnv = null) {
   const parsed = parseSetupArgs(argv);
   if (parsed.error) {
     fail(parsed.error);
     process.exit(2);
+  }
+  if (!parsed.serviceUser && serviceUserFromEnv) {
+    const fromEnv = parseSetupArgs(["--service-user", serviceUserFromEnv]);
+    if (fromEnv.error) {
+      fail(fromEnv.error.replace("--service-user", "MURAGE_SERVICE_USER"));
+      process.exit(2);
+    }
+    parsed.serviceUser = fromEnv.serviceUser;
   }
   if (process.platform !== "linux") {
     if (parsed.serviceUser) {
@@ -647,9 +695,75 @@ function resolveSetupContext(argv) {
   }
 }
 
+/**
+ * Pull the unattended options off the command line and decide whether this run
+ * is one. Exits 2 on anything wrong, before the run touches a thing.
+ * @param {string[]} argv
+ * @param {string} command for the "only applies with --non-interactive" message
+ * @returns {{ options: Record<string, any>, rest: string[], nonInteractive: boolean }}
+ */
+function unattendedMode(argv, command) {
+  const split = splitUnattendedArgs(argv);
+  if ("error" in split) {
+    fail(split.error);
+    process.exit(EXIT.USAGE);
+  }
+  const mode = isUnattended(split.options, process.env);
+  if (mode.error) {
+    fail(mode.error);
+    process.exit(EXIT.USAGE);
+  }
+  if (!mode.nonInteractive) {
+    // Supplying an unattended answer but not asking for unattended mode is how
+    // a provisioning run ends up blocked on a prompt with its answers already
+    // in hand. Named, not ignored.
+    const given = Object.keys(split.options).filter((key) => key !== "nonInteractive");
+    if (given.length) {
+      fail(
+        `${command}: those options only apply to an unattended run. Add --non-interactive (or set ` +
+          "MURAGE_NON_INTERACTIVE=1), or drop them and answer the prompts."
+      );
+      process.exit(EXIT.USAGE);
+    }
+  } else {
+    // Belt and braces: from here a prompt is a bug, and must not hang.
+    refuseInteractivePrompts();
+  }
+  return { options: split.options, rest: split.rest, nonInteractive: mode.nonInteractive };
+}
+
+/**
+ * Resolve every unattended answer, or exit 2 having listed everything that is
+ * missing or wrong. Runs before the first thing setup changes.
+ * @param {Record<string, any>} options
+ * @param {Record<string, string>} storedBag the validated current env file
+ * @returns {Promise<UnattendedPlan>}
+ */
+async function unattendedPreflight(options, storedBag) {
+  const installed = ts.isInstalled();
+  const enrolled = installed ? ts.verdictFromStatus(ts.status()).ok : false;
+  const resolved = await resolveUnattendedPlan({
+    options,
+    env: process.env,
+    storedProviderKeys: Object.values(PROVIDER_ENV).filter((key) => storedBag[key]),
+    tailscale: { installed, enrolled },
+    readStdin: () => readAllStdin(),
+  });
+  if (!resolved.ok) {
+    fail("this run is --non-interactive, and it cannot ask. Nothing has been changed. Still needed:");
+    for (const problem of resolved.problems) console.log(`      ${c.dim("- " + problem)}`);
+    console.log(c.dim("\n  `murage help` lists every unattended input and what it defaults to."));
+    closeRl();
+    process.exit(EXIT.USAGE);
+  }
+  for (const warning of resolved.warnings) warn(warning);
+  return /** @type {UnattendedPlan} */ (resolved.plan);
+}
+
 async function setup(argv = []) {
   heading("Murage — headless cloud deploy (tailnet only)");
 
+  const mode = unattendedMode(argv, "murage setup");
   const found = resolveServerEntry();
   if (!found) {
     fail("Server payload not found.");
@@ -659,7 +773,7 @@ async function setup(argv = []) {
   }
   ok(`server payload: ${c.dim(found.entry)} (${found.kind})`);
   if (!checkNode()) process.exit(1);
-  const ctx = resolveSetupContext(argv);
+  const ctx = resolveSetupContext(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null);
 
   // A rerun edits the existing env file rather than starting it over, so it is
   // read and validated before anything else happens. A file setup cannot
@@ -687,36 +801,59 @@ async function setup(argv = []) {
     process.exit(2);
   }
 
+  // 0. Every unattended answer, resolved and checked before the first change.
+  //    Placed here rather than earlier because the provider-key requirement
+  //    depends on what the existing env file already holds, and the auth-key
+  //    requirement on whether this node is already enrolled — both read-only
+  //    facts, both known by now, and neither of them a change to this box.
+  /** @type {UnattendedPlan | null} */
+  const plan = mode.nonInteractive ? await unattendedPreflight(mode.options, current.bag) : null;
+
   // 1. Tailscale FIRST. Everything after it depends on knowing whether this box
   //    has a secure path in, and there is no point wiring a provider key into a
   //    box we are about to tell the operator not to trust.
-  const installed = await ensureTailscaleInstalled();
-  let enrolment = { ok: false, reasons: ["tailscale not installed"] };
+  const skipTailnet = Boolean(plan && !plan.wantTailscale);
+  if (skipTailnet) warn("--no-tailscale: this box will NOT be enrolled, and setup will not report it as secured.");
+  const installed = skipTailnet ? false : await ensureTailscaleInstalled(plan);
+  let enrolment = {
+    ok: false,
+    reasons: [skipTailnet ? "--no-tailscale was given: this box was never enrolled" : "tailscale not installed"],
+  };
   // NOTE the port: the proxy fronts the browser door, not `port` (the harness).
-  if (installed) enrolment = await enrolTailnet(ctx, DOOR_PORT, port);
+  if (installed) enrolment = await enrolTailnet(ctx, DOOR_PORT, port, plan);
 
   // 2. Provider key. Enter keeps whatever is already stored; it never clears.
+  //    Unattended, "Enter" is `--no-provider-key` or simply having one already
+  //    in the file — the preflight refused the run if neither was true, so a
+  //    provisioning rerun keeps the keys it wrote the first time.
   console.log("");
   const storedKeys = Object.values(PROVIDER_ENV).filter((key) => current.bag[key]);
-  const entry = await askSecret(
-    storedKeys.length
-      ? `  Paste a provider API key to add or replace one (configured: ${storedKeys.join(", ")}), or Enter to keep them: `
-      : "  Paste a provider API key (Anthropic / OpenAI / Gemini / xAI), or Enter to skip: "
-  );
   /** @type {Record<string,string>} */
   const providerEnv = {};
-  if (entry) {
-    let name = null;
-    if (/^sk-ant-/i.test(entry)) name = PROVIDER_ENV.anthropic;
-    else if (/^AIza/.test(entry)) name = PROVIDER_ENV.gemini;
-    else if (/^xai-/i.test(entry)) name = PROVIDER_ENV.xai;
-    else if (/^sk-/i.test(entry)) name = PROVIDER_ENV.openai;
-    if (!name) {
-      const which = (await ask("  Which provider is this key for? [anthropic/openai/gemini/xai] ")).toLowerCase();
-      name = PROVIDER_ENV[which] ?? null;
+  if (plan) {
+    if (plan.providerKey && plan.providerEnvName) {
+      providerEnv[plan.providerEnvName] = plan.providerKey;
+      ok(`provider key for ${c.b(plan.providerEnvName)}, read from ${c.dim(plan.providerKeySource ?? "?")}`);
+    } else if (storedKeys.length) {
+      ok(`no provider key supplied this run; keeping the stored ${storedKeys.join(", ")}`);
+    } else {
+      warn("no provider API key (--no-provider-key): the server has no model to call until one is added.");
     }
-    if (name) providerEnv[name] = entry;
-    else warn(`Unrecognised provider — not stored.${storedKeys.length ? " The keys already configured are kept." : ""} Re-run setup to add one.`);
+  } else {
+    const entry = await askSecret(
+      storedKeys.length
+        ? `  Paste a provider API key to add or replace one (configured: ${storedKeys.join(", ")}), or Enter to keep them: `
+        : "  Paste a provider API key (Anthropic / OpenAI / Gemini / xAI), or Enter to skip: "
+    );
+    if (entry) {
+      let name = inferProviderEnvName(entry);
+      if (!name) {
+        const which = (await ask("  Which provider is this key for? [anthropic/openai/gemini/xai] ")).toLowerCase();
+        name = PROVIDER_ENV[which] ?? null;
+      }
+      if (name) providerEnv[name] = entry;
+      else warn(`Unrecognised provider — not stored.${storedKeys.length ? " The keys already configured are kept." : ""} Re-run setup to add one.`);
+    }
   }
 
   // 3. Env file, merged onto the existing one (see `setupEnvBag`). Note what is
@@ -784,7 +921,7 @@ async function setup(argv = []) {
     console.log(c.dim(`    ssh -N -L ${port}:127.0.0.1:${port} <user>@<this-box>`));
   }
 
-  await maybeSystemd(ctx, enrolment.ok);
+  await maybeSystemd(ctx, enrolment.ok, plan);
 
   console.log(c.b("\n  Next:"));
   console.log(`    ${c.o("murage start")}     ${c.dim("# run the harness AND the browser door (foreground)")}`);
@@ -872,10 +1009,12 @@ function printQr(url) {
  * root's home is a unit that fails at every boot.
  * @param {SetupContext} ctx
  * @param {boolean} tailscaleConfigured
+ * @param {UnattendedPlan | null} [plan]
  */
-async function maybeSystemd(ctx, tailscaleConfigured) {
+async function maybeSystemd(ctx, tailscaleConfigured, plan = null) {
   if (process.platform !== "linux" || !ctx.account) return false;
-  if (!(await confirm("\n  Stage a systemd unit so it runs 24/7 and restarts on reboot?", false))) return false;
+  const wanted = plan ? plan.systemd : await confirm("\n  Stage a systemd unit so it runs 24/7 and restarts on reboot?", false);
+  if (!wanted) return false;
   const { account } = ctx;
   const cliPath = fileURLToPath(import.meta.url);
   for (const [path, need, what] of [
@@ -948,7 +1087,17 @@ export function planStart(env, server) {
   return { go: true, address: bind.address, mode: bind.mode, port };
 }
 
-async function start() {
+async function start(argv = []) {
+  // `start` asks nothing — it reads the env file setup wrote and runs. The
+  // flags are accepted so that one provisioning script can pass the same
+  // `--non-interactive` to every subcommand, and `refuseInteractivePrompts`
+  // then proves the claim rather than asserting it: if a prompt is ever added
+  // here without an unattended equivalent, this run fails loudly.
+  const mode = unattendedMode(argv, "murage start");
+  if (mode.rest.length) {
+    fail("murage start takes no arguments (the only options are --non-interactive / --yes).");
+    process.exit(EXIT.USAGE);
+  }
   const found = resolveServerEntry();
   if (!found) {
     fail("Server payload not found. Run `murage setup`, or set MURAGE_SERVER_ENTRY.");
@@ -1201,7 +1350,15 @@ async function reportDoor(dataDir) {
   else fail(`something answers on ${where} (HTTP ${door.status}), but it is NOT this deployment's browser door: ${door.reason}`);
 }
 
-function resetpass() {
+/**
+ * Hand the break-glass reset to the server build, if it has one.
+ * @param {string[]} argv everything after `resetpass`
+ */
+function resetpass(argv = []) {
+  // The unattended switches are consumed here, never forwarded: the server's
+  // own flags are its business, and passing it options it does not know would
+  // turn a reset into an argument error.
+  const mode = unattendedMode(argv, "murage resetpass");
   const found = resolveServerEntry();
   if (!found) {
     fail("Server payload not found.");
@@ -1224,7 +1381,10 @@ function resetpass() {
   }
   const env = { ...process.env, ...readEnvFile(ENV_FILE) };
   env.MURAGE_DATA_DIR = env.MURAGE_DATA_DIR || DATA_DIR;
-  const child = spawn(process.execPath, [found.entry, "--resetpass", ...process.argv.slice(3)], {
+  // Declared to the server too, so a build that does have a password to reset
+  // can refuse to prompt instead of hanging a provisioning run.
+  if (mode.nonInteractive) env.MURAGE_NON_INTERACTIVE = "1";
+  const child = spawn(process.execPath, [found.entry, "--resetpass", ...mode.rest], {
     env,
     stdio: "inherit",
   });
@@ -1245,8 +1405,33 @@ function help() {
   Data dir : ${c.dim(DATA_DIR)}   ${c.dim("(override with MURAGE_DATA_DIR)")}
   Env file : ${c.dim(ENV_FILE)}   ${c.dim("(0600)")}
 
-  ${c.dim("The auth key is never taken as a CLI argument. Pass it on the prompt, or")}
-  ${c.dim("in MURAGE_TS_AUTHKEY / TS_AUTHKEY for an unattended install.")}
+  ${c.b("Unattended setup (provisioning)")}
+  ${c.dim("--non-interactive (or --yes / -y, or MURAGE_NON_INTERACTIVE=1) never prompts.")}
+  ${c.dim("Anything it still needs is listed in one go and the run exits 2, changing nothing.")}
+
+    ${c.o("--tailscale-auth-key-file <path>")}  ${c.dim("MURAGE_TAILSCALE_AUTHKEY_FILE — first line is the key")}
+    ${c.o("--tailscale-auth-key-stdin")}        ${c.dim("read it from stdin instead")}
+    ${c.o("--provider-key-file <path>")}        ${c.dim("MURAGE_PROVIDER_KEY_FILE")}
+    ${c.o("--provider-key-stdin")}              ${c.dim("(only one secret may come from stdin)")}
+    ${c.o("--provider <name>")}                 ${c.dim("MURAGE_PROVIDER: anthropic|openai|gemini|xai")}
+    ${c.o("--no-provider-key")}                 ${c.dim("deploy without one (keys already in the env file are kept)")}
+    ${c.o("--service-user <account>")}          ${c.dim("MURAGE_SERVICE_USER")}
+    ${c.o("--tailnet-tag <tag|none>")}          ${c.dim(`MURAGE_TAILNET_TAG (default ${DEFAULT_TAG})`)}
+    ${c.o("--tailnet-hostname <name>")}         ${c.dim("MURAGE_TAILNET_HOSTNAME (default: the OS hostname)")}
+    ${c.o("--https / --no-https")}              ${c.dim("MURAGE_TAILNET_HTTPS (default: https)")}
+    ${c.o("--install-tailscale / --no-…")}      ${c.dim("MURAGE_INSTALL_TAILSCALE (default: install)")}
+    ${c.o("--reenroll / --no-reenroll")}        ${c.dim("MURAGE_TAILSCALE_REENROLL (default: keep an existing enrolment)")}
+    ${c.o("--systemd / --no-systemd")}          ${c.dim("MURAGE_STAGE_SYSTEMD (default: do not stage a unit)")}
+    ${c.o("--no-tailscale")}                    ${c.dim("deploy with no tailnet at all (exits 3)")}
+
+  ${c.b("Exit codes")}
+    ${c.o("0")}  ${c.dim("done, and the box is on your tailnet")}
+    ${c.o("1")}  ${c.dim("this environment cannot run it (no server payload, unusable node, failed install)")}
+    ${c.o("2")}  ${c.dim("the request was wrong or incomplete; nothing was changed")}
+    ${c.o("3")}  ${c.dim("setup finished, but the box is NOT on the tailnet")}
+
+  ${c.dim("A secret is never taken as a CLI argument: `ps` shows arguments to every user")}
+  ${c.dim("on the box. Pass a file path or stdin, or MURAGE_TS_AUTHKEY / TS_AUTHKEY.")}
 `);
 }
 
@@ -1254,9 +1439,9 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 if (isMain) {
   const cmd = (process.argv[2] || "help").toLowerCase();
   if (cmd === "setup") await setup(process.argv.slice(3));
-  else if (cmd === "start") await start();
+  else if (cmd === "start") await start(process.argv.slice(3));
   else if (cmd === "status") await status();
-  else if (cmd === "resetpass" || cmd === "reset-password") resetpass();
+  else if (cmd === "resetpass" || cmd === "reset-password") resetpass(process.argv.slice(3));
   else if (cmd === "version" || cmd === "--version" || cmd === "-v") {
     try {
       console.log(JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")).version);

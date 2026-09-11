@@ -170,9 +170,13 @@ Never pass it as an argument. There is no flag for it, on purpose: `/proc/<pid>/
 is world-readable and shell history is a file.
 
 ```sh
-murage setup                       # prompts, no echo
-MURAGE_TS_AUTHKEY=tskey-… murage setup   # unattended
+murage setup                             # prompts, no echo
+MURAGE_TS_AUTHKEY=tskey-… murage setup   # from the environment
+murage setup --non-interactive --tailscale-auth-key-file /run/murage/ts.key
 ```
+
+See [Unattended setup](#unattended-setup-provisioning) for the full
+non-interactive flag set.
 
 Internally it goes to a `0600` file in a `0700` directory, is passed as
 `--auth-key=file:<path>`, and is shredded in a `finally` block.
@@ -190,6 +194,109 @@ chosen when you create it — there is no `tailscale up` flag for it, so setup
 cannot choose it for you. With one, a destroyed droplet evicts itself from your
 tailnet instead of lingering as a dead entry.
 
+## Unattended setup (provisioning)
+
+The one-person cloud deployment is the foundation of a hosted service, so the
+installer has to run with nobody at the keyboard. `--non-interactive` (also
+`--yes` / `-y`, or `MURAGE_NON_INTERACTIVE=1`) **never prompts**. Every question
+setup would ask has an equivalent input, and every default is the one a human
+pressing Enter would get.
+
+If anything is still missing, the run prints **all** of it at once, exits `2`,
+and changes nothing — one round trip per provisioning attempt, not one per
+question.
+
+```sh
+install -m 600 /dev/null /run/murage/ts.key
+printf '%s\n' "$TS_KEY" > /run/murage/ts.key
+install -m 600 /dev/null /run/murage/anthropic.key
+printf '%s\n' "$ANTHROPIC_KEY" > /run/murage/anthropic.key
+
+sudo murage setup \
+  --non-interactive \
+  --service-user murage \
+  --tailscale-auth-key-file /run/murage/ts.key \
+  --provider-key-file       /run/murage/anthropic.key \
+  --tailnet-tag      tag:murage \
+  --tailnet-hostname murage-prod-1 \
+  --https \
+  --systemd
+
+case $? in
+  0) echo "on the tailnet" ;;
+  2) echo "bad or incomplete request; nothing was changed"; exit 1 ;;
+  3) echo "deployed, but NOT on the tailnet"; exit 1 ;;
+  *) echo "this box cannot run it"; exit 1 ;;
+esac
+
+shred -u /run/murage/ts.key /run/murage/anthropic.key
+```
+
+Every flag also has an environment form, so the whole thing can live in a
+systemd `EnvironmentFile` or a cloud-init `write_files` block instead of a
+command line.
+
+| Flag | Environment | Default | Meaning |
+| --- | --- | --- | --- |
+| `--non-interactive`, `--yes`, `-y` | `MURAGE_NON_INTERACTIVE` | off | never prompt; fail fast instead |
+| `--tailscale-auth-key-file <path>` | `MURAGE_TAILSCALE_AUTHKEY_FILE` | — | first line of the file is the key |
+| `--tailscale-auth-key-stdin` | — | — | read it from stdin instead |
+| — | `MURAGE_TS_AUTHKEY`, `TS_AUTHKEY`, `TAILSCALE_AUTHKEY` | — | the key itself, as before |
+| `--provider-key-file <path>` | `MURAGE_PROVIDER_KEY_FILE` | — | first line of the file is the key |
+| `--provider-key-stdin` | — | — | only **one** secret may come from stdin |
+| `--provider <name>` | `MURAGE_PROVIDER` | inferred from the key's prefix | `anthropic`, `openai`, `gemini` or `xai` |
+| `--no-provider-key` | `MURAGE_SKIP_PROVIDER_KEY` | off | deploy without one |
+| `--service-user <account>` | `MURAGE_SERVICE_USER` | `$SUDO_USER`, else the invoking user | the account the unit runs as; required when setup runs as root |
+| `--tailnet-tag <tag\|none>` | `MURAGE_TAILNET_TAG` | `tag:murage` | ACL tag to advertise |
+| `--tailnet-hostname <name>` | `MURAGE_TAILNET_HOSTNAME` | the OS hostname | tailnet name for this box |
+| `--https` / `--no-https` | `MURAGE_TAILNET_HTTPS` | https | needs HTTPS certificates enabled for your tailnet |
+| `--install-tailscale` / `--no-install-tailscale` | `MURAGE_INSTALL_TAILSCALE` | install | install Tailscale if it is missing |
+| `--reenroll` / `--no-reenroll` | `MURAGE_TAILSCALE_REENROLL` | keep | re-run enrolment on a box already on the tailnet |
+| `--systemd` / `--no-systemd` | `MURAGE_STAGE_SYSTEMD` | do not stage | stage the unit (it is still installed by hand, see above) |
+| `--no-tailscale` | `MURAGE_WANT_TAILSCALE=0` | want it | deploy with no tailnet at all; always exits `3` |
+
+`murage start` and `murage resetpass` take `--non-interactive` too, so one
+provisioning script can pass the same switch to every subcommand. Neither of
+them asks anything today; the switch makes that a checked promise rather than
+an assumption — if a prompt is ever added without an unattended equivalent, the
+run fails loudly instead of hanging.
+
+### Secrets
+
+**No secret is ever accepted as a command-line argument.** `--tailscale-auth-key`,
+`--auth-key`, `--provider-key` and `--api-key` are refused by name, with the
+correct form in the error and without echoing what you passed: `ps` shows every
+argument of every process to every user on the box, and shell history is a file.
+
+A secret file is read through an fd opened `O_NOFOLLOW`, so a symlink planted at
+the path is refused rather than followed, and only its first line is used — a
+trailing newline from `printf` or a heredoc is not part of the key. A file that
+anyone but its owner can read still works, but setup says so. Nothing prints the
+key: the log names the *source* (`/run/murage/ts.key`, `$MURAGE_TS_AUTHKEY`,
+`stdin`), which is not a secret, and never the bytes.
+
+### Reruns
+
+A rerun is idempotent, and needs fewer inputs than the first run, not more:
+
+- a box already on the tailnet needs **no auth key** (pass `--reenroll` to join
+  again with a fresh one);
+- a provider key already in the env file needs **no new key**, and is kept;
+- everything already in `murage.env` survives, exactly as with the interactive
+  rerun described above.
+
+So the second `murage setup --non-interactive` on a provisioned box carries no
+secrets at all.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | done, and the box is on your tailnet |
+| `1` | this environment cannot run it: no server payload, an unusable node, a failed Tailscale install |
+| `2` | the request was wrong or incomplete — a bad flag, a missing unattended input, an env file that could not be carried over. **Nothing was changed** |
+| `3` | setup finished, but the box is **not** on the tailnet. It is reachable only through an SSH tunnel |
+
 ## Environment
 
 | Variable | Meaning |
@@ -206,6 +313,7 @@ tailnet instead of lingering as a dead entry.
 | `MURAGE_COMPANION_BIND` | forced to `off` by `start`/`setup`, overwriting whatever is inherited — the **device door** (8810) binds nothing here. The sidecar's own default is `lan` (`0.0.0.0`), which is right for a desktop and is public ingress on a rented box |
 | `MURAGE_BROWSER_BIND` | forced to `loopback` by `start`/`setup`, overwriting whatever is inherited — `tailscale serve` dials `127.0.0.1`, and a door bound to the tailnet address instead answers it with nothing |
 | `MURAGE_TS_AUTHKEY`, `TS_AUTHKEY` | auth key for an unattended setup |
+| `MURAGE_NON_INTERACTIVE`, `MURAGE_TAILSCALE_AUTHKEY_FILE`, `MURAGE_PROVIDER_KEY_FILE`, `MURAGE_PROVIDER`, `MURAGE_SERVICE_USER`, `MURAGE_TAILNET_TAG`, `MURAGE_TAILNET_HOSTNAME`, `MURAGE_TAILNET_HTTPS`, `MURAGE_INSTALL_TAILSCALE`, `MURAGE_TAILSCALE_REENROLL`, `MURAGE_STAGE_SYSTEMD`, `MURAGE_SKIP_PROVIDER_KEY`, `MURAGE_WANT_TAILSCALE` | [unattended setup](#unattended-setup-provisioning) |
 | `MURAGE_TAILSCALE_BIN` | explicit path to the `tailscale` CLI (non-standard installs, tests) |
 | `MURAGE_TRUSTED_PROXY` | set to `1` by setup only when the tailnet proxy was actually configured |
 
