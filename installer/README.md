@@ -156,6 +156,14 @@ MURAGE_TS_AUTHKEY=tskey-… murage setup   # unattended
 Internally it goes to a `0600` file in a `0700` directory, is passed as
 `--auth-key=file:<path>`, and is shredded in a `finally` block.
 
+"No echo" means no byte of the key reaches the terminal. It is read by a
+readline interface of its own: stdin in raw mode (so the terminal does not echo
+it), output discarded (so readline does not either), and no history (so Up at
+the next prompt cannot bring it back). A pasted key and its Enter are handled
+the same way. Ctrl-D skips the prompt, and Ctrl-C interrupts setup. The provider
+key prompt works the same. `installer/test/ui-secret.test.mjs` checks the raw
+bytes on a real pseudo-terminal (POSIX; it uses python3's `pty`).
+
 For a disposable box, mint an **ephemeral** key. That is a property of the key,
 chosen when you create it — there is no `tailscale up` flag for it, so setup
 cannot choose it for you. With one, a destroyed droplet evicts itself from your
