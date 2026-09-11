@@ -83,13 +83,14 @@ function fixture() {
   return { taskRoot, deps, scope, put, db, storage, access, artifactCount };
 }
 
-function refusal(action: () => unknown): WorkspaceFileError {
-  try { action(); } catch (error) { if (error instanceof WorkspaceFileError) return error; throw error; }
+/** The refusal a sync save-version or an async write throws (rejects with). */
+async function refusal(action: () => unknown): Promise<WorkspaceFileError> {
+  try { await action(); } catch (error) { if (error instanceof WorkspaceFileError) return error; throw error; }
   throw new Error("expected a refusal");
 }
 
 describe("an equal-length rewrite inside one timestamp tick", () => {
-  it("gets a new revision from every surface and is never saved or written over as the old one", () => {
+  it("gets a new revision from every surface and is never saved or written over as the old one", async () => {
     const f = fixture();
     const path = f.put("notes/a.md", "one");
     const now = Date.now();
@@ -113,11 +114,11 @@ describe("an equal-length rewrite inside one timestamp tick", () => {
     expect(nativeWorkspaceFile(f.deps, { scope: f.scope, relativePath: "notes/a.md" }).revision).toBe(current);
     expect(mediaWorkspaceRevision(f.taskRoot, "notes/a.md", rewritten)).toBe(current);
 
-    const version = refusal(() => saveWorkspaceVersion(f.deps, { scope: f.scope, relativePath: "notes/a.md", revision }));
+    const version = await refusal(() => saveWorkspaceVersion(f.deps, { scope: f.scope, relativePath: "notes/a.md", revision }));
     expect([version.code, version.currentRevision]).toEqual(["revision-conflict", current]);
     expect(f.artifactCount()).toBe(0);
 
-    const write = refusal(() => writeWorkspaceMarkdown(f.deps, { scope: f.scope, relativePath: "notes/a.md", baseRevision: revision, requestId: "req-1", content: "one", bom: false }));
+    const write = await refusal(() => writeWorkspaceMarkdown(f.deps, { scope: f.scope, relativePath: "notes/a.md", baseRevision: revision, requestId: "req-1", content: "one", bom: false }));
     expect([write.code, write.currentRevision]).toEqual(["revision-conflict", current]);
     expect(readFileSync(path, "utf8")).toBe("two");
     expect(f.artifactCount()).toBe(0);
@@ -127,20 +128,20 @@ describe("an equal-length rewrite inside one timestamp tick", () => {
     expect(readArtifact(f.db, f.storage, artifact.id, f.access).bytes.toString("utf8")).toBe("two");
   });
 
-  it("refuses the commit when the file is rewritten in the same tick after the save checked it", () => {
+  it("refuses the commit when the file is rewritten in the same tick after the save checked it", async () => {
     const f = fixture();
     const path = f.put("b.md", "# base\n");
     const now = Date.now();
     held.set(inode(lstatSync(path)), { mtimeMs: now, ctimeMs: now });
     const revision = readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "b.md" }).revision;
-    const error = refusal(() => writeWorkspaceMarkdown(f.deps, { scope: f.scope, relativePath: "b.md", baseRevision: revision, requestId: "req-2", content: "# mine\n", bom: false },
+    const error = await refusal(() => writeWorkspaceMarkdown(f.deps, { scope: f.scope, relativePath: "b.md", baseRevision: revision, requestId: "req-2", content: "# mine\n", bom: false },
       { beforeCommit: () => writeFileSync(path, "# tool\n") }));
     expect(error.code).toBe("revision-conflict");
     expect(error.currentRevision).toBe(readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "b.md" }).revision);
     expect(readFileSync(path, "utf8")).toBe("# tool\n");
   });
 
-  it("never keeps a same-tick rewrite as the previous version, even one flipped back before the commit", () => {
+  it("never keeps a same-tick rewrite as the previous version, even one flipped back before the commit", async () => {
     // Base check sees A; a tool writes B while the previous version is
     // copied into Files; it writes A back before the pre-commit recheck.
     // Every stamp is the same all along, so the recheck alone would pass and
@@ -151,7 +152,7 @@ describe("an equal-length rewrite inside one timestamp tick", () => {
     held.set(inode(lstatSync(path)), { mtimeMs: now, ctimeMs: now });
     const revision = readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "flip.md" }).revision;
     let flippedBack = false;
-    const error = refusal(() => writeWorkspaceMarkdown(f.deps, { scope: f.scope, relativePath: "flip.md", baseRevision: revision, requestId: "req-3", content: "# mine\n", bom: false },
+    const error = await refusal(() => writeWorkspaceMarkdown(f.deps, { scope: f.scope, relativePath: "flip.md", baseRevision: revision, requestId: "req-3", content: "# mine\n", bom: false },
       { beforeKeep: () => writeFileSync(path, "# B\n"), beforeCommit: () => { flippedBack = true; writeFileSync(path, "# A\n"); } }));
     expect(error.code).toBe("revision-conflict");
     // Refused at the copy, before the flip back could hide the change.
@@ -166,13 +167,13 @@ describe("an equal-length rewrite inside one timestamp tick", () => {
     expect(readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "flip.md" }).revision).toBe(revision);
   });
 
-  it("leaves no Files entry when the file is rewritten in the same tick after Save version checked it", () => {
+  it("leaves no Files entry when the file is rewritten in the same tick after Save version checked it", async () => {
     const f = fixture();
     const path = f.put("v.md", "one");
     const now = Date.now();
     held.set(inode(lstatSync(path)), { mtimeMs: now, ctimeMs: now });
     const revision = readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "v.md" }).revision;
-    const error = refusal(() => saveWorkspaceVersion(f.deps, { scope: f.scope, relativePath: "v.md", revision }, { beforeKeep: () => writeFileSync(path, "two") }));
+    const error = await refusal(() => saveWorkspaceVersion(f.deps, { scope: f.scope, relativePath: "v.md", revision }, { beforeKeep: () => writeFileSync(path, "two") }));
     expect([error.code, error.currentRevision]).toEqual(["revision-conflict", readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "v.md" }).revision]);
     expect(f.artifactCount()).toBe(0);
     expect(existsSync(f.storage) ? readdirSync(f.storage) : []).toEqual([]);
