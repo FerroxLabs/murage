@@ -22,9 +22,26 @@ async function launch() {
     const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
     const root = fileURLToPath(new URL("../../", import.meta.url));
+    // `?component=engines` mounts the real EnginesSettings (the section under
+    // every Claude engine row, onChanged={refreshInstances}) over a store whose
+    // refreshInstances is the real GET /api/instances against this harness.
     const ui = vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "accounts-vite"), resolve: { alias: { "@": join(root, "src") } }, server: { host: "127.0.0.1", hmr: false, watch: null, proxy: { "/api": { target: fixture.info.url, headers } } }, plugins: [react(), tailwindcss(), {
-      name: "accounts-fixture", resolveId(id) { if (id === "/__accounts.js") return "\0accounts-fixture"; },
-      load(id) { if (id !== "\0accounts-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {ClaudeAccountsSettings} from '/src/components/ClaudeAccountsSettings.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'light';window.copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>window.copied.push(value)},configurable:true});createRoot(document.getElementById('root')).render(React.createElement(ClaudeAccountsSettings));`; },
+      name: "accounts-fixture", enforce: "pre",
+      resolveId(id) { if (id === "/__accounts.js") return "\0accounts-fixture"; if (id === "@/state/store" || id.endsWith("/src/state/store")) return "\0accounts-store"; },
+      load(id) {
+        if (id === "\0accounts-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore)}`;
+        if (id !== "\0accounts-fixture") return;
+        return `import React from 'react';import {createRoot} from 'react-dom/client';import {api} from '/src/state/store.tsx?original';import {ClaudeAccountsSettings} from '/src/components/ClaudeAccountsSettings.tsx';import '/src/styles.css';
+document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'light';window.copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>window.copied.push(value)},configurable:true});
+const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn)};window.dispatched=[];window.fleetRefreshes=0;
+const state={config:{profile:{name:'Fixture',email:'fixture@example.com'},composio:{mode:'unavailable',configured:false},features:{},browserProfiles:[],rooms:{turnTimeoutMinutes:5}},bots:[],groups:[],routines:[],routineRuns:[],webhooks:[],appSettingsSection:'general',instances:[]};
+const publish=()=>{window.fixtureStore={state:{...state},dispatch,refreshInstances,flushBotPatches:async()=>{}};listeners.forEach(fn=>fn())};
+function dispatch(action){window.dispatched.push(action);publish()}
+async function refreshInstances(){window.fleetRefreshes++;const {instances}=await api('/api/instances');state.instances=instances;publish()}
+publish();
+let element=React.createElement(ClaudeAccountsSettings);
+if(new URLSearchParams(location.search).get('component')==='engines'){await refreshInstances();const {EnginesSettings}=await import('/src/components/EnginesSettings.tsx');element=React.createElement(EnginesSettings)}
+createRoot(document.getElementById('root')).render(element);`; },
       configureServer(server) { server.middlewares.use((req, res, next) => { if (!req.url?.startsWith("/__accounts?")) return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app);color:var(--color-ink)"><main id="root" style="max-width:760px;height:calc(100dvh - 48px);overflow-y:auto;margin:24px auto;padding:16px"></main><script type="module" src="/__accounts.js"></script>'); }); },
     }] });
     await ui.listen(Number(process.env.MURAGE_E2E_UI_PORT) || 0); const address = ui.httpServer!.address(); if (!address || typeof address === "string") throw Error("Accounts UI fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
@@ -208,5 +225,83 @@ test("a list that left before a change cannot redraw over it", async ({ page }, 
   await expect(page.getByText("Early outside", { exact: true })).toBeVisible();
   await expect(page.getByText("Early renamed", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add Claude account", exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+// In the Engines settings the section's onChanged is the store's
+// refreshInstances: GET /api/instances refreshes every catalog and snapshots
+// every engine. Awaiting that inside `busy` greyed every account button for
+// one full-fleet probe per create, rename or remove (CLAC2 verifier). Holding
+// /api/instances makes the probe last as long as the test needs: the section
+// must be usable while it is held, and the engine list must still show the
+// change once it answers.
+test("the accounts section stays usable while the engine list re-probes", async ({ page }, info) => {
+  let gate: Promise<void> | undefined, open = () => {}, held = 0;
+  await page.route(url => url.pathname === "/api/instances", async route => {
+    if (route.request().method() === "GET" && gate) { held++; await gate; }
+    await route.continue();
+  });
+  const holdFleet = () => { held = 0; gate = new Promise(resolve => { open = () => { gate = undefined; resolve(); }; }); };
+  const releaseFleet = () => open();
+  const fleetRefreshes = () => page.evaluate(() => (window as any).fleetRefreshes as number);
+  await expectNoNamedAccounts();
+  await page.goto(origin + "/__accounts?component=engines&skin=" + (info.project.name === "narrow" ? "dark" : "light"));
+  const section = page.getByRole("region", { name: "Claude accounts" });
+  const engineRow = (name: string) => page.locator(`span[title="${name}"]`);
+  await expect(engineRow("Verification fixture")).toBeVisible();
+  await expect(section.getByText("Verification fixture", { exact: true })).toBeVisible();
+  const others = page.getByText(/^Other accounts and installations/);
+  await expect(others).toHaveCount(0);
+  const add = section.getByRole("button", { name: "Add Claude account", exact: true });
+  const refreshesBefore = await fleetRefreshes();
+
+  await add.click();
+  await section.getByLabel("Account name", { exact: true }).fill("Work");
+  holdFleet();
+  await section.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(section.getByText("Work", { exact: true })).toBeVisible();
+  await expect(section.getByRole("status")).toContainText("Sign in explicitly");
+  await expect.poll(() => held).toBe(1);
+  expect(await fleetRefreshes()).toBe(refreshesBefore + 1);
+  // Interactive while the fleet probe is held: every button, and a whole rename.
+  await expect(add).toBeEnabled();
+  await expect(section.getByRole("button", { name: "Refresh accounts", exact: true })).toBeEnabled();
+  const edit = section.getByRole("button", { name: "Edit Work account", exact: true });
+  await expect(edit).toBeEnabled();
+  await expect(section.getByRole("button", { name: "Remove Work account", exact: true })).toBeEnabled();
+  await edit.click();
+  await section.getByLabel("Account name", { exact: true }).fill("Work renamed");
+  await section.getByRole("button", { name: "Save account", exact: true }).click();
+  await expect(section.getByRole("status")).toContainText("Account settings saved.");
+  await expect(section.getByText("Work renamed", { exact: true })).toBeVisible();
+  await expect(section.getByRole("button", { name: "Edit Work renamed account", exact: true })).toBeEnabled();
+  // The rename's own fleet refresh waits for the held one: still one probe out.
+  expect(held).toBe(1);
+  expect(await fleetRefreshes()).toBe(refreshesBefore + 1);
+  await expect(others).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("accounts-held-fleet-" + info.project.name + ".png"), fullPage: true });
+
+  releaseFleet();
+  // Both probes answer in turn; the engine list then lists the renamed account.
+  await expect.poll(fleetRefreshes).toBe(refreshesBefore + 2);
+  await expect(others).toHaveText(/Other accounts and installations · 1/);
+  await others.click();
+  await expect(engineRow("Work renamed")).toBeVisible();
+  await expect(engineRow("Work")).toHaveCount(0);
+  const created = ((await api("/api/claude-accounts")).accounts as ClaudeAccount[]).find(account => account.displayName === "Work renamed")!;
+  expect(created).toBeTruthy();
+
+  await section.getByRole("button", { name: "Remove Work renamed account", exact: true }).click();
+  holdFleet();
+  await section.getByRole("button", { name: "Confirm removal of Work renamed", exact: true }).click();
+  await expect(section.locator(`[data-claude-account="${created.instanceId}"]`)).toHaveCount(0);
+  await expect(section.getByRole("status")).toContainText("Login and credential files were retained");
+  await expect.poll(() => held).toBe(1);
+  await expect(add).toBeEnabled();
+  await expect(engineRow("Work renamed")).toBeVisible();
+  releaseFleet();
+  await expect(engineRow("Work renamed")).toHaveCount(0);
+  await expect(others).toHaveCount(0);
+  expect(((await api("/api/instances")).instances as Array<{ instanceId: string }>).some(entry => entry.instanceId === created.instanceId)).toBe(false);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

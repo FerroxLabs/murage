@@ -52,6 +52,43 @@ export function claudeAccountsListOrder() {
     receipt() { receipts++; },
   };
 }
+/** The section's change sequence. `busy` (every button greyed) spans the
+ * request and the section's own list, which probes Claude instances only. The
+ * page's engine list (`fleet`: EnginesSettings passes refreshInstances, GET
+ * /api/instances, catalog refresh plus a snapshot of every engine) runs only
+ * after `busy` is cleared: awaiting it inside `busy` greyed every account
+ * button for one full-fleet probe per create, rename or remove (CLAC2
+ * verifier, CLAC3). Fleet refreshes run one at a time, each requested after
+ * the previous answered, so the last answer reflects the last change. */
+export interface ClaudeAccountChangeSection {
+  /** Sends the change; resolves with the server's receipt. */
+  request(method: string, id: string | undefined, body: unknown): Promise<unknown>;
+  /** Draws a successful receipt: the row, the notice, the closed form. */
+  draw(method: string, id: string | undefined, receipt: unknown): void;
+  /** The section's own list (GET /api/claude-accounts). */
+  load(): Promise<void>;
+  /** The page's engine list, when the section has one to keep current. */
+  fleet(): Promise<void> | undefined;
+  busy(value: boolean): void;
+  error(message: string): void;
+}
+export function claudeAccountChanger(section: ClaudeAccountChangeSection) {
+  let gate = false, fleet: Promise<void> = Promise.resolve();
+  return async (method: string, id?: string, body?: unknown) => {
+    if (gate) return;
+    gate = true; section.busy(true);
+    let drawn = false;
+    try {
+      const receipt = await section.request(method, id, body);
+      section.draw(method, id, receipt); drawn = true;
+      try { await section.load(); } catch { section.error(t("claudeAccounts.refreshError")); }
+    } catch (cause) { section.error(cause instanceof Error ? cause.message : t("claudeAccounts.changeError")); }
+    finally { gate = false; section.busy(false); }
+    if (!drawn) return;
+    fleet = fleet.then(() => section.fleet()).then(() => undefined, () => section.error(t("claudeAccounts.refreshError")));
+    await fleet;
+  };
+}
 const button = "rounded-lg border border-hairline/40 px-3 py-2 text-xs text-ink hover:bg-raised/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
 const input = "mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50";
 
@@ -61,7 +98,8 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<string | null>(null), [removing, setRemoving] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(""), [configDir, setConfigDir] = useState("");
-  const gate = useRef(false), [order] = useState(claudeAccountsListOrder);
+  const [order] = useState(claudeAccountsListOrder), fleet = useRef(onChanged);
+  fleet.current = onChanged;
   const load = async () => {
     const fresh = order.request();
     try {
@@ -71,20 +109,18 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     } catch (cause) { if (fresh()) throw cause; }
   };
   useEffect(() => { void load().catch(cause => setError(cause.message)); }, []);
-  const change = async (method: string, id?: string, body?: unknown) => {
-    if (gate.current) return;
-    gate.current = true; setBusy(true); setError(""); setNotice("");
-    try {
-      const receipt = await api(`/api/claude-accounts${id ? `/${encodeURIComponent(id)}` : ""}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const [change] = useState(() => claudeAccountChanger({
+    request: (method, id, body) => api(`/api/claude-accounts${id ? `/${encodeURIComponent(id)}` : ""}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) }),
+    draw: (method, id, receipt) => {
       setEditing(null); setRemoving(null);
       order.receipt();
       setAccounts(current => claudeAccountsAfterChange(current, method, id, receipt));
       setNotice(t(method === "POST" ? "claudeAccounts.added" : method === "DELETE" ? "claudeAccounts.removed" : "claudeAccounts.saved"));
-      try { await load(); await onChanged?.(); }
-      catch { setError(t("claudeAccounts.refreshError")); }
-    } catch (cause) { setError(cause instanceof Error ? cause.message : t("claudeAccounts.changeError")); }
-    finally { gate.current = false; setBusy(false); }
-  };
+    },
+    load, fleet: () => fleet.current?.(),
+    busy: value => { setBusy(value); if (value) { setError(""); setNotice(""); } },
+    error: setError,
+  }));
   const edit = (account?: ClaudeAccount) => {
     setEditing(account?.instanceId ?? "new"); setRemoving(null); setDisplayName(account?.displayName ?? "");
     setConfigDir(account?.configDir ?? ""); setError(""); setNotice("");
