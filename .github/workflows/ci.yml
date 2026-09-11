@@ -155,7 +155,7 @@ jobs:
         if: failure() && matrix.os == 'ubuntu-latest'
         with:
           name: murage-human-spec-report
-          path: ${{ runner.temp }}/murage-e2e/human-results
+          path: ${{ runner.temp }}/murage-e2e-scratch/human-results
           if-no-files-found: ignore
           retention-days: 7
       - name: production UI build
@@ -219,7 +219,7 @@ jobs:
         if: always()
         with:
           name: murage-scoped-human-confirmation
-          path: ${{ runner.temp }}/murage-e2e/human-results
+          path: ${{ runner.temp }}/murage-e2e-scratch/human-results
           if-no-files-found: warn
           retention-days: 7
 
