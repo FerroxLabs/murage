@@ -7,7 +7,7 @@
 // the collision happens on every machine instead of only on a busy Linux
 // runner, and every surface that issues or checks a revision is asked about it.
 import type { Stats } from "node:fs";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -125,6 +125,45 @@ describe("an equal-length rewrite inside one timestamp tick", () => {
     expect(error.code).toBe("revision-conflict");
     expect(error.currentRevision).toBe(readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "b.md" }).revision);
     expect(readFileSync(path, "utf8")).toBe("# tool\n");
+  });
+
+  it("never keeps a same-tick rewrite as the previous version, even one flipped back before the commit", () => {
+    // Base check sees A; a tool writes B while the previous version is
+    // copied into Files; it writes A back before the pre-commit recheck.
+    // Every stamp is the same all along, so the recheck alone would pass and
+    // B would be kept as the version the person "replaced".
+    const f = fixture();
+    const path = f.put("flip.md", "# A\n");
+    const now = Date.now();
+    held.set(inode(lstatSync(path)), { mtimeMs: now, ctimeMs: now });
+    const revision = readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "flip.md" }).revision;
+    let flippedBack = false;
+    const error = refusal(() => writeWorkspaceMarkdown(f.deps, { scope: f.scope, relativePath: "flip.md", baseRevision: revision, requestId: "req-3", content: "# mine\n", bom: false },
+      { beforeKeep: () => writeFileSync(path, "# B\n"), beforeCommit: () => { flippedBack = true; writeFileSync(path, "# A\n"); } }));
+    expect(error.code).toBe("revision-conflict");
+    // Refused at the copy, before the flip back could hide the change.
+    expect(flippedBack).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe("# B\n");
+    expect(error.currentRevision).toBe(readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "flip.md" }).revision);
+    // Nothing kept, nothing staged left behind.
+    expect(f.artifactCount()).toBe(0);
+    expect(readdirSync(f.taskRoot)).toEqual(["flip.md"]);
+    // The recheck by itself could not have refused: A flipped back is the base revision again.
+    writeFileSync(path, "# A\n");
+    expect(readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "flip.md" }).revision).toBe(revision);
+  });
+
+  it("leaves no Files entry when the file is rewritten in the same tick after Save version checked it", () => {
+    const f = fixture();
+    const path = f.put("v.md", "one");
+    const now = Date.now();
+    held.set(inode(lstatSync(path)), { mtimeMs: now, ctimeMs: now });
+    const revision = readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "v.md" }).revision;
+    const error = refusal(() => saveWorkspaceVersion(f.deps, { scope: f.scope, relativePath: "v.md", revision }, { beforeKeep: () => writeFileSync(path, "two") }));
+    expect([error.code, error.currentRevision]).toEqual(["revision-conflict", readWorkspaceFile(f.deps, { scope: f.scope, relativePath: "v.md" }).revision]);
+    expect(f.artifactCount()).toBe(0);
+    expect(existsSync(f.storage) ? readdirSync(f.storage) : []).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe("two");
   });
 });
 

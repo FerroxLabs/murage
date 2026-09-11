@@ -673,12 +673,17 @@ export function parseWorkspaceWriteRequest(body: unknown): WorkspaceWriteRequest
   };
 }
 
-function registerWorkspaceFile(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef, root: string, relativePath: string, name?: string): Artifact {
+/** Copy the file into Files. `expectedSha256` (the verified revision's
+ * content digest; null above the text limit) makes registerArtifact refuse
+ * before it writes a blob or a row when the bytes are not those exact bytes,
+ * so a refused copy never leaves a Files entry holding changed content. */
+function registerWorkspaceFile(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef, root: string, relativePath: string, expectedSha256: string | null, name?: string): Artifact {
   const botName = deps.store.bots.find(bot => bot.id === scope.botId)?.name ?? "";
   // The exact root this request resolved and authorized, never the first
   // scope that happens to share the bot and conversation.
   return registerArtifact(deps.database(), join(deps.dataDir, "artifact-files"), { botId: scope.botId, threadId: scope.threadId, relativePath, ...(name !== undefined ? { name } : {}) },
-    { owner: true, scopes: [{ botId: scope.botId, botName, threadId: scope.threadId, workspaceRoot: root }] });
+    { owner: true, scopes: [{ botId: scope.botId, botName, threadId: scope.threadId, workspaceRoot: root }] },
+    expectedSha256 === null ? {} : { expectedSha256 });
 }
 
 function currentRevision(root: string, relativePath: string, path: string): FileRevision | undefined {
@@ -688,15 +693,20 @@ function currentRevision(root: string, relativePath: string, path: string): File
   } catch { return undefined; }
 }
 
-/** Keep the revision about to be replaced as a saved version in Files. */
-function keepPreviousRevision(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef, root: string, relativePath: string, path: string, previous: FileRevision): string {
-  try { return registerWorkspaceFile(deps, scope, root, relativePath).id; }
+/** Keep the revision about to be replaced as a saved version in Files: the
+ * copy must hash to the digest the base revision carries. An equal-length
+ * rewrite between the base check and this copy (even one flipped back
+ * before the pre-commit recheck, inside one timestamp tick) is refused as a
+ * conflict, so the kept version is never bytes the person never opened. */
+function keepPreviousRevision(deps: WorkspaceFilesDeps, scope: WorkspaceScopeRef, root: string, relativePath: string, path: string, previous: { revision: FileRevision; sha256: string | null }): string {
+  try { return registerWorkspaceFile(deps, scope, root, relativePath, previous.sha256).id; }
   catch (error) {
     if (error instanceof ArtifactError && error.status === 507) fail("quota-exceeded", "The Files library is full, so the previous version could not be kept. Nothing was overwritten; free space in Files or save a copy.");
+    if (error instanceof ArtifactError && error.reason === "content-changed") conflict(currentRevision(root, relativePath, path));
     // registerArtifact answers 409 both for a file that changed while it was
     // copied and for unsafe Files storage: only the first is a conflict.
     const now = currentRevision(root, relativePath, path);
-    if (now !== previous) conflict(now);
+    if (now !== previous.revision) conflict(now);
     fail("write-failed", "The previous version could not be kept, so nothing was overwritten.");
   }
 }
@@ -720,9 +730,17 @@ function syncDirectory(path: string): void {
 }
 
 export interface WorkspaceWriteHooks {
+  /** Test seam: runs after the base revision is verified and the new bytes
+   * are staged, immediately before the prior revision is copied into Files. */
+  beforeKeep?: () => void;
   /** Test seam: runs after the new bytes are staged and the prior revision is
    * kept, immediately before the final identity recheck and commit. */
   beforeCommit?: () => void;
+}
+export interface WorkspaceSaveVersionHooks {
+  /** Test seam: runs after the chosen revision is verified, immediately
+   * before it is copied into Files. */
+  beforeKeep?: () => void;
 }
 
 /** Revision-conditioned atomic Markdown write. Never silent: a changed,
@@ -751,13 +769,13 @@ export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: Workspace
   }
   try {
     const observed = observeFile(root, rootStat, parts);
-    let previousRevision: FileRevision | null = null;
+    let previousRevision: FileRevision | null = null, previous: { revision: FileRevision; sha256: string | null } | undefined;
     if (create) {
       if (observed.stat) fail("already-exists", "A file with that name already exists. Choose another name.");
     } else {
       if (!observed.stat) fail("not-found", MOVED);
       requireRegularFile(observed.stat);
-      const previous = requireRevision(root, relativePath, observed.stat);
+      previous = requireRevision(root, relativePath, observed.stat);
       previousRevision = previous.revision;
       if (previousRevision !== request.baseRevision) conflict(previousRevision);
       // Saving exactly what is on disk changes nothing: no rewrite, no new
@@ -771,7 +789,8 @@ export function writeWorkspaceMarkdown(deps: WorkspaceFilesDeps, body: Workspace
     const directory = observed.directories.at(-1)!.path;
     temp = join(directory, `${WORKSPACE_SAVE_TEMP_PREFIX}${randomUUID()}.tmp`);
     const staged = stageBytes(temp, bytes, create ? 0o600 : observed.stat!.mode & 0o777);
-    const artifactId = create ? undefined : keepPreviousRevision(deps, scope, root, relativePath, observed.path, previousRevision!);
+    hooks.beforeKeep?.();
+    const artifactId = previous === undefined ? undefined : keepPreviousRevision(deps, scope, root, relativePath, observed.path, previous);
     hooks.beforeCommit?.();
     // Final identity recheck immediately before the atomic replacement.
     assertUnchanged(observed.directories);
@@ -837,7 +856,7 @@ export function parseWorkspaceSaveVersionRequest(body: unknown): WorkspaceSaveVe
 /** Explicit Save version: copy the exact revision the owner chose into Files
  * (register_artifact's verified path). Refused if the file changed. The
  * saved version carries no invented producer or run. */
-export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSaveVersionRequest | unknown): WorkspaceSaveVersionResponse {
+export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSaveVersionRequest | unknown, hooks: WorkspaceSaveVersionHooks = {}): WorkspaceSaveVersionResponse {
   const request = parseWorkspaceSaveVersionRequest(body);
   const { scope, relativePath } = request;
   const parts = fileParts(relativePath);
@@ -848,10 +867,17 @@ export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSa
   requireRegularFile(observed.stat);
   const chosen = requireRevision(root, relativePath, observed.stat);
   if (chosen.revision !== request.revision) conflict(chosen.revision);
+  hooks.beforeKeep?.();
+  // The copy is exactly the chosen revision: registerArtifact compares its
+  // own SHA-256 with the digest the revision carries (within the text limit)
+  // before it writes a blob or a row, so a rewrite between the check above
+  // and the copy — even an equal-length one inside one timestamp tick, which
+  // keeps every timestamp — is refused and leaves no Files entry behind.
   let artifact: Artifact;
-  try { artifact = registerWorkspaceFile(deps, scope, root, relativePath, request.name?.trim()); }
+  try { artifact = registerWorkspaceFile(deps, scope, root, relativePath, chosen.sha256, request.name?.trim()); }
   catch (error) {
     if (!(error instanceof ArtifactError)) throw error;
+    if (error.reason === "content-changed") conflict(currentRevision(root, relativePath, observed.path));
     if (error.status === 413) fail("too-large", error.message);
     if (error.status === 507) fail("quota-exceeded", error.message);
     if (error.status === 403) fail("private-file", error.message);
@@ -859,11 +885,7 @@ export function saveWorkspaceVersion(deps: WorkspaceFilesDeps, body: WorkspaceSa
     if (now !== request.revision) conflict(now);
     fail("write-failed", error.message);
   }
-  // The copy is exactly the chosen revision: its own SHA-256 is the digest the
-  // revision carries (within the text limit), and the file is still that
-  // revision after the copy. Timestamps alone cannot promise this — an
-  // equal-length rewrite inside one timestamp tick keeps all of them.
-  if (chosen.sha256 !== null && artifact.sha256 !== chosen.sha256) conflict(currentRevision(root, relativePath, observed.path));
+  // Still that revision after the copy.
   assertUnchanged(observed.directories);
   const after = currentRevision(root, relativePath, observed.path);
   if (after !== request.revision) conflict(after);
