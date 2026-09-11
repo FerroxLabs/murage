@@ -19,7 +19,7 @@ interface FolderTrustStatus {
  * and, for the folder currently set, what Murage remembers about it with a
  * way to forget it (the next turn there asks again). Reads the record
  * through GET /api/folder-trust; a folder with nothing to trust says so. */
-export function FolderTrustNote({ folder }: { folder: string | undefined }) {
+export function FolderTrustNote({ folder, botId }: { folder: string | undefined; botId?: string }) {
   const [status, setStatus] = useState<FolderTrustStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,7 +29,9 @@ export function FolderTrustNote({ folder }: { folder: string | undefined }) {
     setStatus(null);
     setError(null);
     if (!folder) return;
-    api(`/api/folder-trust?folder=${encodeURIComponent(folder)}`)
+    // FUIGOTRUST3 (4): the upstream store is the one THIS bot's engine
+    // reads (its instance's FUIGO_HOME), not the first Fuigo install's
+    api(`/api/folder-trust?folder=${encodeURIComponent(folder)}${botId ? `&bot=${encodeURIComponent(botId)}` : ""}`)
       .then((result: FolderTrustStatus) => {
         if (!cancelled) setStatus(result);
       })
@@ -39,7 +41,7 @@ export function FolderTrustNote({ folder }: { folder: string | undefined }) {
     return () => {
       cancelled = true;
     };
-  }, [folder]);
+  }, [folder, botId]);
 
   const forget = async () => {
     if (!folder) return;

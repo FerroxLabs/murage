@@ -558,6 +558,7 @@
   "folderTrust.expiredNote": "Personne n'a décidé à temps, ce tour a donc été arrêté. Renvoyez le message pour que la question vous soit posée.",
   "folderTrust.lateFinishedNote": "Le tour s'est terminé avant que quelqu'un ne réponde ; il s'est donc déroulé sans les fichiers de ce dossier. Envoyez un autre message pour que la question vous soit posée à nouveau.",
   "folderTrust.lateStoppedNote": "Le tour a été arrêté avant que quelqu'un ne réponde ; il s'exécutait sans les fichiers de ce dossier. Envoyez un autre message pour que la question vous soit posée à nouveau.",
+  "folderTrust.lateFailedNote": "Le tour a échoué avant que quelqu'un ne réponde ; il s'exécutait sans les fichiers de ce dossier. Envoyez un autre message pour que la question vous soit posée à nouveau.",
   "folderTrust.lateTimeoutNote": "Personne n'a répondu pendant l'exécution du tour ; il s'est donc déroulé sans les fichiers de ce dossier. Envoyez un autre message pour que la question vous soit posée à nouveau.",
   "folderTrust.pickerNote": "Un dossier que vous choisissez ici est approuvé : ses fichiers AGENTS.md, CLAUDE.md, .mcp.json et ses compétences s'appliquent aux tours du bot.",
   "folderTrust.statusTrusted": "Approuvé",

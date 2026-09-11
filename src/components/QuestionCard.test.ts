@@ -355,6 +355,11 @@ describe("the folder-trust card", () => {
     expect(stopped).toContain("The turn was stopped before anyone answered; it had been running without this folder&#x27;s files.");
     const timeout = render(trustCard({ answered: "expired", expired: true, folderTrust: { key: "/repo", folder: "/repo", sources: ["AGENTS.md"], late: "timeout" } }));
     expect(timeout).toContain("Nobody answered while the turn was running, so it ran without this folder&#x27;s files.");
+    // FUIGOTRUST3 (3): a turn that failed under the open card is not "stopped"
+    const failed = render(trustCard({ answered: "expired", expired: true, folderTrust: { key: "/repo", folder: "/repo", sources: ["AGENTS.md"], late: "failed" } }));
+    expect(failed).toContain("The turn failed before anyone answered; it had been running without this folder&#x27;s files.");
+    expect(failed).not.toContain("The turn was stopped before anyone answered");
+    expect(failed).not.toContain("so this turn was stopped");
   });
 
   it("shows the decision read-only once made", () => {

@@ -169,7 +169,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
           New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"}; start a new task to use the new folder.
         </div>
       )}
-      <FolderTrustNote folder={bot.cwd} />
+      <FolderTrustNote folder={bot.cwd} botId={bot.id} />
     </div>
   );
 }

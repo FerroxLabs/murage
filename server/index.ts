@@ -2258,7 +2258,7 @@ async function answerRequest(
  * told so honestly (or is gone), the card stays visible as Expired with
  * "Send as a message", and an unattended one keeps needing the owner in the
  * Inbox and buzzes once more. Idempotent: a settled card is left alone. */
-function expireQuestionCard(threadId: string, message: Message, folderTrustLate?: "finished" | "stopped" | "timeout"): void {
+function expireQuestionCard(threadId: string, message: Message, folderTrustLate?: "finished" | "stopped" | "failed" | "timeout"): void {
   const card = message.card;
   if (!card || card.answered || !isQuestionCard(card)) return;
   store.patchMessage(threadId, message.id, {
@@ -12545,9 +12545,18 @@ const server = createServer(async (req, res) => {
         folderTrust.forget(checked.cwd);
         return json(res, 200, { ok: true });
       }
-      // the user's own Fuigo store, as a native-login turn would read it
-      const fuigoInstance = registry.instances().find((instance) => instance.driverKind === "fuigoAgent");
-      const scan = scanFolderTrustSources(checked.cwd, { fuigoHome: fuigoHomeForTrust(fuigoInstance, false) });
+      // the user's own Fuigo store, as THIS bot's native-login turn would
+      // read it (FUIGOTRUST3 (4): `bot=` names the bot the picker is
+      // editing — its instance's FUIGO_HOME, and never for a provider-routed
+      // selection, whose turns run under a temporary home); without a bot,
+      // the first Fuigo instance's home
+      const botId = url.searchParams.get("bot");
+      const forBot = botId ? store.bot(botId) : null;
+      if (botId && !forBot) return json(res, 404, { error: "no such bot" });
+      const fuigoInstance = forBot
+        ? registry.get(forBot.modelSelection.instanceId) ?? undefined
+        : registry.instances().find((instance) => instance.driverKind === "fuigoAgent");
+      const scan = scanFolderTrustSources(checked.cwd, { fuigoHome: fuigoHomeForTrust(fuigoInstance, Boolean(forBot?.modelSelection.connectionId)) });
       const record = folderTrust.record(checked.cwd) ?? null;
       return json(res, 200, {
         key: scan.key,

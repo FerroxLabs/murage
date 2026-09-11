@@ -6,6 +6,7 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly —
 // resolveCliSpawn turns it into `node <script>`, so these run everywhere.
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
+import { scanFolderTrustSources } from "../../folder-trust.ts";
 import type { ProviderTurnRoute } from "../../provider-routing.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
@@ -2147,6 +2149,139 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system", folderTrustLate: "stopped" });
     expect(chips()).toEqual(["untrusted folder: AGENTS.md / CLAUDE.md"]);
+  });
+
+  // FUIGOTRUST3 (3): a turn that FAILS while the late card is open is named
+  // as failed, never "stopped before anyone answered"
+  it("late request, the turn fails before anyone answers: the card closes as failed-untrusted with the withheld chip", async () => {
+    process.env.FAKE_ACP_TRUST_FAIL_PROMPT = "1";
+    try {
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({
+        threadId: "t-late-failed",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, sources: [] },
+      });
+      await recorder.until((e) => e.type === "request.opened");
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ turnId, ok: false, stopReason: "rpc_error" });
+      expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system", folderTrustLate: "failed" });
+      expect(chips()).toEqual(["untrusted folder: AGENTS.md / CLAUDE.md"]);
+      // the chip is inside the turn, before turn.completed
+      const chipAt = recorder.events.findIndex((e) => e.type === "item.started");
+      const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
+      expect(chipAt).toBeGreaterThan(-1);
+      expect(chipAt).toBeLessThan(doneAt);
+      expect(readDump().decision).toEqual({ outcome: "reject" });
+    } finally {
+      delete process.env.FAKE_ACP_TRUST_FAIL_PROMPT;
+    }
+  });
+
+  // FUIGOTRUST3 (1): the engine sends its request ONLY when its own store did
+  // not trust the folder, so a request on an upstream-trusted turn means the
+  // two readings of trusted_folders.toml disagree (a hand-edited document
+  // Murage's parser accepts, the engine's rejects). The engine's reading is
+  // the one that runs: no grant on Murage's reading alone.
+  it("an upstream-trusted turn whose engine still asks is never granted automatically: Murage's own record answers, else the card", async () => {
+    process.env.FAKE_ACP_TRUST_STORE_REJECTED = "1";
+    const fuigoHome = join(scratch, "fuigo-home");
+    mkdirSync(fuigoHome, { recursive: true });
+    // a document Murage's reader accepts (the inline-table spelling)
+    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders]\n"${realpathSync.native(folder)}" = { trusted = true, decided_at = 1789152451 }\n`);
+    process.env.FUIGO_HOME = fuigoHome;
+    try {
+      await create();
+      // no record: the engine's request raises the card; Don't trust answers it reject
+      const { turnId } = await instance.adapter.sendTurn({
+        threadId: "t-upstream-asks",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, sources: ["AGENTS.md"], upstreamTrusted: true },
+      });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({ turnId, tool: "folder_trust", folderTrust: { key: folder, folder, sources: ["AGENTS.md"] } });
+      // the engine was spawned without --trust and asked
+      expect(readDump()).toMatchObject({ argv: ["agent", "stdio"], folderTrust: { trustedAtBuild: false, requested: true } });
+      await expect(answer("t-upstream-asks", (opened as any).requestId, "Don't trust")).resolves.toBe("answered");
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(readDump().decision).toEqual({ outcome: "reject" });
+      expect(assistantText()).toBe("agents: withheld");
+      expect(chips()).toEqual(["untrusted folder: AGENTS.md"]);
+
+      // Murage's own record says reject: it answers the engine, no card,
+      // and the chip upstreamTrusted had suppressed is shown after all
+      recorder.stop();
+      recorder = recordEvents(instance.adapter);
+      await instance.adapter.sendTurn({
+        threadId: "t-upstream-asks-reject",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, decision: "reject", sources: ["AGENTS.md"], upstreamTrusted: true },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+      expect(readDump()).toMatchObject({ argv: ["agent", "stdio"], folderTrust: { trustedAtBuild: false, requested: true }, decision: { outcome: "reject" } });
+      expect(assistantText()).toBe("agents: withheld");
+      expect(chips()).toEqual(["untrusted folder: AGENTS.md"]);
+
+      // Murage's own record says trust: --trust rides argv, the engine's
+      // store is not consulted and it never asks
+      recorder.stop();
+      recorder = recordEvents(instance.adapter);
+      await instance.adapter.sendTurn({
+        threadId: "t-upstream-asks-trust",
+        text: "go",
+        cwd: folder,
+        folderTrust: { key: folder, folder, decision: "trust", sources: ["AGENTS.md"], upstreamTrusted: true },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+      expect(readDump()).toMatchObject({ argv: ["--trust", "agent", "stdio"], folderTrust: { trustedAtBuild: true, requested: false } });
+      expect(assistantText()).toContain(CANARY);
+      expect(chips()).toEqual([]);
+    } finally {
+      delete process.env.FUIGO_HOME;
+      delete process.env.FAKE_ACP_TRUST_STORE_REJECTED;
+    }
+  });
+
+  // FUIGOTRUST3 (2): the engine keys a linked git worktree on its main
+  // checkout, so a standalone `fuigo --trust` there covers every worktree
+  it("a linked git worktree runs under the main checkout's standalone grant: no card, no --trust, no chip, the engine's store speaks", async () => {
+    const main = join(scratch, "main");
+    mkdirSync(main, { recursive: true });
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: scratch } });
+    git(main, "init", "-q", ".");
+    git(main, "commit", "-q", "--allow-empty", "-m", "init");
+    const lane = join(scratch, "lane");
+    git(main, "worktree", "add", "-q", "-b", "lane", lane);
+    writeFileSync(join(lane, "AGENTS.md"), `# lane\n${CANARY}\n`);
+    const fuigoHome = join(scratch, "fuigo-home");
+    mkdirSync(fuigoHome, { recursive: true });
+    // what `fuigo --trust` wrote from the main checkout: its canonical root
+    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders."${realpathSync.native(main)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    process.env.FUIGO_HOME = fuigoHome;
+    try {
+      await create();
+      const scan = scanFolderTrustSources(lane, { fuigoHome });
+      expect(scan).toEqual({ key: realpathSync.native(main), folder: realpathSync.native(lane), sources: ["AGENTS.md"], upstreamTrusted: true });
+      await instance.adapter.sendTurn({
+        threadId: "t-worktree",
+        text: "go",
+        cwd: lane,
+        folderTrust: { key: scan.key, folder: scan.folder, decision: "reject", sources: scan.sources, upstreamTrusted: true },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+      expect(readDump()).toMatchObject({ argv: ["agent", "stdio"], folderTrust: { trustedAtBuild: true, requested: false } });
+      expect(assistantText()).toContain(CANARY);
+      expect(chips()).toEqual([]);
+    } finally {
+      delete process.env.FUIGO_HOME;
+    }
   });
 
   it("a driver whose engine does not gate folders ignores the record: no card, no capability, no --trust", async () => {
