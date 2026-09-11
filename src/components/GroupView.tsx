@@ -477,7 +477,19 @@ function DefaultResponderSelect({ group, members }: { group: Group; members: Bot
  * rejected folder must not stick in local state. */
 function RoomWorkingFolder({ group }: { group: Group }) {
   const { capabilities } = useDesktopCapabilities();
+  const { state } = useStore();
   const home = capabilities.host.homeDir;
+  // FUIGOTRUST4 (3): the trust note describes the room's Fuigo members —
+  // each member's turn reads its own instance's store and route — never the
+  // first Fuigo instance's as if it were the room's
+  const fuigoMembers = useMemo(
+    () =>
+      group.memberIds
+        .map((id) => state.bots.find((b) => b.id === id))
+        .filter((b): b is Bot => Boolean(b) && state.instances.some((i) => i.instanceId === b!.modelSelection.instanceId && i.driverKind === "fuigoAgent"))
+        .map((b) => ({ id: b.id, name: b.name })),
+    [group.memberIds, state.bots, state.instances],
+  );
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -551,7 +563,7 @@ function RoomWorkingFolder({ group }: { group: Group }) {
         </form>
       )}
       {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
-      <FolderTrustNote folder={shownCwd} />
+      <FolderTrustNote folder={shownCwd} members={fuigoMembers} />
     </div>
   );
 }

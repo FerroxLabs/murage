@@ -1358,9 +1358,13 @@ function fuigoHomeForTrust(instance: Pick<ProviderInstance, "instanceId" | "driv
  * consulted. */
 function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined, providerRouted: boolean): SendTurnInput["folderTrust"] {
   if (instance.adapter.capabilities.folderTrust !== true || !cwd) return undefined;
-  const scan = scanFolderTrustSources(cwd, { fuigoHome: fuigoHomeForTrust(instance, providerRouted) });
+  const fuigoHome = fuigoHomeForTrust(instance, providerRouted);
+  const scan = scanFolderTrustSources(cwd, { fuigoHome });
   if (isUnrecordableTrustRoot(scan.key)) return undefined;
-  const decision = folderTrust.decision(scan.folder);
+  // looked up by the engine's key for this turn (its registry collapses a
+  // `fuigo -w` worktree onto its source repo, FUIGOTRUST4), then the
+  // folder's own
+  const decision = folderTrust.decision(scan.folder, { fuigoHome });
   return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}) };
 }
 /** A folder the human chose in a picker is trusted at that moment (the
@@ -2167,7 +2171,9 @@ async function answerRequest(
     const decision = folderTrustDecision(answers);
     if (decision) {
       try {
-        folderTrust.remember(question.folderTrust.folder, decision, "card");
+        // under the key the card asked about — the engine's key for that
+        // turn (FUIGOTRUST4), which the question carries
+        folderTrust.remember(question.folderTrust.folder, decision, "card", { key: question.folderTrust.key });
       } catch (error) {
         console.warn(`[folder-trust] could not record the decision: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -3868,6 +3874,32 @@ function unavailableModelMessage(instanceId: string): string {
     : "Choose a model for this bot to get started. If you haven't connected a provider yet, add your Flux Router key or connect another provider in App Settings.";
 }
 
+/** The engine and provider route a turn on `bot` would use: the one rule
+ * for the direct turn (`startTurn`) and for anything that describes a turn
+ * before it runs — the folder-trust picker note (FUIGOTRUST4 (2)), which must
+ * not say "the user's own store does not apply" for a turn that would be
+ * refused. A cloud run borrows the Box runner and is never provider-routed;
+ * otherwise `selectedProviderRoute` throws the turn's own 409 (a disabled
+ * connection, an unavailable model). The thrown error is the refusal a
+ * turn would report. */
+function turnRouting(bot: Pick<BotRecord, "modelSelection">, runOn?: RoutineRunOn): { instance: ProviderInstance; providerRoute: ProviderTurnRoute | undefined } {
+  const instance = runOn === "cloud"
+    ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+    : registry.get(bot.modelSelection.instanceId);
+  if (!instance) {
+    throw Object.assign(
+      new Error(
+        runOn === "cloud"
+          ? "the Cloud VM runner is unavailable — configure Box in App Settings"
+          : unavailableModelMessage(bot.modelSelection.instanceId),
+      ),
+      { status: 409 },
+    );
+  }
+  const providerRoute = runOn === "cloud" ? undefined : selectedProviderRoute(bot.modelSelection, instance.driverKind);
+  return { instance, providerRoute };
+}
+
 async function startTurn(
   botId: string,
   text: string,
@@ -3940,22 +3972,9 @@ async function startTurn(
   // a task takes its name from the first thing you asked it to do
   if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
-  const instance = opts?.runOn === "cloud"
-    ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
-    : registry.get(bot.modelSelection.instanceId);
-  if (!instance) {
-    throw Object.assign(
-      new Error(
-        opts?.runOn === "cloud"
-          ? "the Cloud VM runner is unavailable — configure Box in App Settings"
-          : unavailableModelMessage(bot.modelSelection.instanceId),
-      ),
-      { status: 409 },
-    );
-  }
+  const { instance, providerRoute } = turnRouting(bot, opts?.runOn);
   const instanceId = instance.instanceId;
   const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
-  const providerRoute = opts?.runOn === "cloud" ? undefined : selectedProviderRoute(bot.modelSelection, instance.driverKind);
   activeProviderSelections.delete(threadId);
   // a cloud routine borrows the instance default model, so it borrows no
   // per-bot effort either
@@ -12542,22 +12561,57 @@ const server = createServer(async (req, res) => {
       if (!checked.ok) return json(res, 400, { error: checked.error });
       if (!checked.cwd) return json(res, 400, { error: "folder is required" });
       if (method === "DELETE") {
-        folderTrust.forget(checked.cwd);
+        // FUIGOTRUST4: a Forget from a bot's picker also clears the record a
+        // card made under that bot's engine key (a `fuigo -w` worktree's
+        // source repo)
+        const forgetBotId = url.searchParams.get("bot");
+        const forgetBot = forgetBotId ? store.bot(forgetBotId) : null;
+        if (forgetBotId && !forgetBot) return json(res, 404, { error: "no such bot" });
+        let forgetHome: string | null = null;
+        if (forgetBot) {
+          try {
+            const routing = turnRouting(forgetBot);
+            forgetHome = fuigoHomeForTrust(routing.instance, Boolean(routing.providerRoute));
+          } catch {
+            /* a refused turn consults no store; the folder's own key is forgotten */
+          }
+        }
+        folderTrust.forget(checked.cwd, { fuigoHome: forgetHome });
         return json(res, 200, { ok: true });
       }
-      // the user's own Fuigo store, as THIS bot's native-login turn would
-      // read it (FUIGOTRUST3 (4): `bot=` names the bot the picker is
-      // editing — its instance's FUIGO_HOME, and never for a provider-routed
-      // selection, whose turns run under a temporary home); without a bot,
-      // the first Fuigo instance's home
+      // the user's own Fuigo store, as THIS bot's turn would read it
+      // (FUIGOTRUST3 (4): `bot=` names the bot the picker is editing — its
+      // instance's FUIGO_HOME, and never for a provider-routed turn, which
+      // runs under a temporary home); without a bot, the first Fuigo
+      // instance's home. FUIGOTRUST4 (2): whether the turn is provider-
+      // routed is the turn's own rule (`turnRouting`, `runOn=cloud` borrows
+      // the Box runner), so a bot whose turn would be REFUSED — a disabled
+      // connection, an unavailable model — is reported as refused, never as
+      // "runs without the user's store".
       const botId = url.searchParams.get("bot");
       const forBot = botId ? store.bot(botId) : null;
       if (botId && !forBot) return json(res, 404, { error: "no such bot" });
-      const fuigoInstance = forBot
-        ? registry.get(forBot.modelSelection.instanceId) ?? undefined
-        : registry.instances().find((instance) => instance.driverKind === "fuigoAgent");
-      const scan = scanFolderTrustSources(checked.cwd, { fuigoHome: fuigoHomeForTrust(fuigoInstance, Boolean(forBot?.modelSelection.connectionId)) });
-      const record = folderTrust.record(checked.cwd) ?? null;
+      const runOnParam = url.searchParams.get("runOn");
+      if (runOnParam !== null && runOnParam !== "cloud" && runOnParam !== "ember") return json(res, 400, { error: "runOn must be cloud or ember" });
+      const runOn: RoutineRunOn | undefined = runOnParam === "cloud" ? "cloud" : undefined;
+      let fuigoInstance: ProviderInstance | undefined;
+      let providerRouted = false;
+      let refused: string | null = null;
+      if (forBot) {
+        try {
+          const routing = turnRouting(forBot, runOn);
+          fuigoInstance = routing.instance;
+          providerRouted = Boolean(routing.providerRoute);
+        } catch (error) {
+          refused = error instanceof Error ? error.message : String(error);
+        }
+      } else {
+        fuigoInstance = registry.instances().find((instance) => instance.driverKind === "fuigoAgent");
+      }
+      const engineGates = fuigoInstance?.adapter.capabilities.folderTrust === true;
+      const fuigoHome = refused ? null : fuigoHomeForTrust(fuigoInstance, providerRouted);
+      const scan = scanFolderTrustSources(checked.cwd, { fuigoHome });
+      const record = folderTrust.record(checked.cwd, { fuigoHome }) ?? null;
       return json(res, 200, {
         key: scan.key,
         folder: scan.folder,
@@ -12565,6 +12619,14 @@ const server = createServer(async (req, res) => {
         gated: !isUnrecordableTrustRoot(scan.key),
         record: record ? { decision: record.decision, decidedAt: record.decidedAt, source: record.source } : null,
         upstreamTrusted: scan.upstreamTrusted === true,
+        // which store speaks for the folder on this bot's turn: the user's
+        // own Fuigo install ("own"), none — a provider-routed turn's
+        // temporary home ("temporary") or an engine that does not gate
+        // folders ("none") — or no turn at all (`refused` names why)
+        upstreamStore: refused || !engineGates ? "none" : fuigoHome ? "own" : "temporary",
+        engineGates: !refused && engineGates,
+        instanceId: fuigoInstance?.instanceId ?? null,
+        refused,
       });
     }
 

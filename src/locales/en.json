@@ -566,6 +566,9 @@
   "folderTrust.statusUndecided": "Not decided yet — the first turn here will ask",
   "folderTrust.statusUpstream": "Trusted by your own Fuigo install (fuigo --trust) — its files apply whatever Murage remembers",
   "folderTrust.statusNothing": "Nothing to trust here yet",
+  "folderTrust.statusRefused": "This bot's turns would not start: {reason}",
+  "folderTrust.statusNotGated": "Not gated by this bot's engine — the folder's files apply as they always did",
+  "folderTrust.perMember": "Per member — each member's own engine decides:",
   "folderTrust.forget": "Forget",
   "folderTrust.forgetError": "Could not forget this folder's trust decision."
 }
