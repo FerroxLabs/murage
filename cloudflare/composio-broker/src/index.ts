@@ -686,9 +686,24 @@ async function authorize(
   ctx: ExecutionContext,
 ) {
   const session = await ensureSession(installation, env, ctx);
-  // Listing can be denied to the broker's key scope; authorize must still
-  // work, with the alias guardrails degrading to first-account behavior.
-  const accounts = await listConnectedAccounts(env, installation.composio_user_id, [slug]).catch(() => []);
+  // Read-only status views may degrade when the inventory is unavailable, but
+  // this is a write. An outage or a denied list scope is not proof that no
+  // account exists, and linking without the inventory would skip the alias,
+  // duplicate and per-toolkit account-count protections. Refuse instead.
+  let accounts: ConnectedAccountResponse[];
+  try {
+    accounts = await listConnectedAccounts(env, installation.composio_user_id, [slug]);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: "connected-account inventory unavailable; link refused",
+      id: installation.id,
+      error: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+    }));
+    return json({
+      error: "Connected accounts could not be checked right now, so no new link was created. Try again in a moment.",
+      code: "account_inventory_unavailable",
+    }, 503);
+  }
   const serviceAccounts = accounts.filter((account) => account.toolkit?.slug?.toLowerCase() === slug);
   const usableAccounts = serviceAccounts.filter((account) => /^(active|initiated|initializing|pending)$/i.test(account.status ?? ""));
   if (usableAccounts.length >= MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit) {
