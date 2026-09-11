@@ -161,9 +161,10 @@ judging the target by the path it names whether it is a string, a `file:`
 URL, a URL-like object or a Buffer (`String(url)` is `file:///...` and
 `String(object)` is `[object Object]`, nonexistent paths under the checkout,
 which a URL once used to walk past the guard — FOLLOW7; `node:fs` never
-checks `instanceof URL`, it duck-types any `{ href, protocol }` and deletes
-the object's `pathname`, so the guard mirrors that test and judges the
-`pathname`, not the `href`) —
+checks `instanceof URL`, it duck-types any object whose `href` and
+`protocol` are truthy — of any type, a numeric `href: 1` counts — with no
+legacy `auth`/`path`, and deletes the object's `pathname`, so the guard
+mirrors that test exactly and judges the `pathname`, never the `href`) —
 the vitest setup file installs it, and `pnpm test:electron` preloads it
 (`--import ./server/testing/safe-wipe-preload.mjs`) for `node --test` files,
 which get no faked home.

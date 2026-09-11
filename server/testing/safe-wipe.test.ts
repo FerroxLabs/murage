@@ -278,9 +278,24 @@ describe("installSafeWipeGuard", () => {
     const decoy = { ...duck, href: pathToFileURL(join(scratch, "decoy")).href };
     expect(wipeTargetPath(decoy)).toBe(probe);
     expect(() => assertNotProtected(wipeTargetPath(decoy), opts)).toThrow(/lies inside the Murage data directory/);
+    // fs's test is `href && protocol` (truthy, any type), not "string href":
+    // fileURLToPath reads only hostname and pathname, so a numeric, boolean,
+    // object or Buffer href over a protected pathname is still deleted by
+    // raw fs and must be judged by that pathname, not "[object Object]".
+    for (const href of [1, true, {}, Buffer.from("x")]) {
+      const oddHref = { href, protocol: "file:", hostname: "", pathname: real.pathname };
+      expect(wipeTargetPath(oddHref)).toBe(probe);
+      expect(() => assertNotProtected(wipeTargetPath(oddHref), opts)).toThrow(/lies inside the Murage data directory/);
+    }
     // Shapes node:fs does not treat as URLs keep the string fallback: a
-    // legacy url.parse object (`path` defined) and a non-file scheme.
+    // legacy url.parse object (`auth` or `path` defined), a falsy href or
+    // protocol, and a non-file scheme (fs itself then throws
+    // ERR_INVALID_URL_SCHEME before deleting anything).
     expect(wipeTargetPath({ ...duck, path: real.pathname })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, auth: null })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, href: "" })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, href: 0 })).toBe("[object Object]");
+    expect(wipeTargetPath({ ...duck, protocol: "" })).toBe("[object Object]");
     expect(wipeTargetPath({ href: "https://example.com/x", protocol: "https:" })).toBe("https://example.com/x");
   });
 
@@ -305,6 +320,13 @@ describe("installSafeWipeGuard", () => {
     // fs deletes the pathname, so a scratch href cannot launder a leased pathname...
     expect(() => fs.rmSync(duckLike({ href: freeUrl.href }), { recursive: true, force: true })).toThrow(SafeWipeRefused);
     expect(existsSync(marker)).toBe(true);
+    // ...nor can a truthy non-string href, which fs accepts just the same
+    // (its test is `href && protocol`, and fileURLToPath never reads href).
+    for (const href of [1, true, {}, Buffer.from("x")] as unknown[] as string[]) {
+      expect(() => fs.rmSync(duckLike({ href }), { recursive: true, force: true })).toThrow(SafeWipeRefused);
+      await expect(fs.promises.rm(duckLike({ href }), { recursive: true, force: true })).rejects.toBeInstanceOf(SafeWipeRefused);
+      expect(existsSync(marker)).toBe(true);
+    }
     // ...and a leased href over a free pathname is the ordinary temp delete
     // fs would perform: judged by the pathname, admitted, and only `free` goes.
     fs.rmSync(duckLike({ pathname: freeUrl.pathname }), { recursive: true, force: true });
