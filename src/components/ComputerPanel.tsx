@@ -52,6 +52,7 @@ import {
   localAutoHostPlatform,
   localComputerDisabledReason,
   localComputerSelectable,
+  type HarnessAnnouncement,
 } from "@/lib/local-computer";
 import {
   readComputerPanelView,
@@ -74,12 +75,16 @@ type ComputerChoice = "auto" | "cloud" | "vm" | "local" | "browser" | "off";
  *  PATCH without it and show a bare 400 instead of the dialog. */
 export function planComputerDestinationChange({
   capabilities,
+  harness,
   userAgent,
   current,
   next,
   autoApprove,
 }: {
   capabilities: Pick<DesktopCapabilities, "host">;
+  /** The harness's own platform from `/api/config` (`state.config.harness`);
+   *  it decides over the UA — see `localAutoHostPlatform`. */
+  harness?: HarnessAnnouncement | null;
   userAgent?: string;
   current: Bot["computer"];
   next: ComputerChoice;
@@ -87,7 +92,7 @@ export function planComputerDestinationChange({
 }): { kind: "warn"; choice: "local" | "auto" } | { kind: "patch"; patch: { computer: Exclude<Bot["computer"], undefined> | null; browser?: true } } | null {
   if (next === (current ?? "auto")) return null;
   const to = next === "auto" ? undefined : next;
-  const platform = localAutoHostPlatform(capabilities, userAgent);
+  const platform = localAutoHostPlatform(capabilities, { harness, userAgent });
   if ((next === "auto" || next === "local") && computerSwitchNeedsLocalAutoWarning({ platform, from: current, to, autoApprove })) {
     return { kind: "warn", choice: next };
   }
@@ -1322,7 +1327,7 @@ export function ComputerPanel({
             ...(!builtInBrowserEnabled(state.config)
               ? { browser: !builtInBrowserEnabled(state.config) ? "Enable Browser in Settings" : "Browser setup required on this host" } : {}),
           }} onSelect={(mode) => {
-            const plan = planComputerDestinationChange({ capabilities, current: bot.computer, next: mode, autoApprove: bot.autoApprove });
+            const plan = planComputerDestinationChange({ capabilities, harness: state.config?.harness, current: bot.computer, next: mode, autoApprove: bot.autoApprove });
             if (!plan) return;
             if (plan.kind === "warn") { setLocalAutoWarningChoice(plan.choice); setLocalAutoWarning(true); return; }
             dispatch({ type: "updateBot", botId: bot.id, patch: plan.patch });

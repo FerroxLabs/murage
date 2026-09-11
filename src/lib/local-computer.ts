@@ -73,14 +73,50 @@ export function autoSelectsLocalComputer({
   return platform !== "linux" && computer !== "cloud" && capabilitiesReady && localSelectable;
 }
 
-/** The host platform the local-Auto warning decides on. In a plain browser
- *  (the dev rig, the browser door) the host is not announced as a desktop,
- *  but the harness runs on the same machine, so the UA stands in for it. */
+/** What the harness says about itself on `GET /api/config` (`harness` in
+ *  `ConfigStatus`, src/state/store.tsx): the platform the server's own
+ *  consent rule runs on. `platform` is the harness's `process.platform`. */
+export type HarnessAnnouncement = { platform?: string };
+
+/** The host platform the local-Auto warning decides on.
+ *
+ *  The server decides local-Auto consent from ITS `process.platform`
+ *  (`autoMountsLocalComputer` in server/local-routing.ts), so the renderer's
+ *  copy of the rule must run on the same platform, and the harness announces
+ *  it on `/api/config` (`harness.platform`, the route the renderer already
+ *  reads at startup). That answer wins whenever it is present — over the
+ *  browser UA and over the desktop shell's own answer alike, since the
+ *  harness is the thing that refuses the PATCH.
+ *
+ *  Only while the harness has not answered (config not loaded yet, or an
+ *  older harness that does not announce itself) does the renderer fall back:
+ *  the desktop shell's platform in Electron, else the UA in a plain browser
+ *  (the dev rig, the browser door), where the host is not announced as a
+ *  desktop. The UA is the BROWSER's machine, not necessarily the harness's
+ *  — a Linux or Windows tab through the browser door on a Mac harness used
+ *  to get a bare 400 with no dialog, and a Mac tab on a Linux harness a
+ *  dialog the server never required — which is why the announcement exists
+ *  (FOLLOW5). */
 export function localAutoHostPlatform(
   capabilities: Pick<DesktopCapabilities, "host">,
-  userAgent: string = typeof navigator === "undefined" ? "" : navigator.userAgent,
+  {
+    harness,
+    userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent,
+  }: { harness?: HarnessAnnouncement | null; userAgent?: string } = {},
 ): DesktopCapabilities["host"]["platform"] {
+  const announced = harnessPlatform(harness);
+  if (announced) return announced;
   return capabilities.host.platform === "other" && /Mac/.test(userAgent) ? "darwin" : capabilities.host.platform;
+}
+
+/** The harness's announced platform folded into the renderer's platform
+ *  names, or `undefined` when the harness has not answered. A platform the
+ *  renderer has no name for (a BSD, say) is "other" — the server mounts
+ *  nothing there, and it must never fall through to a UA guess. */
+function harnessPlatform(harness: HarnessAnnouncement | null | undefined): DesktopCapabilities["host"]["platform"] | undefined {
+  const platform = harness?.platform;
+  if (typeof platform !== "string" || platform === "") return undefined;
+  return platform === "darwin" || platform === "linux" || platform === "win32" ? platform : "other";
 }
 
 /** Whether switching a bot to Auto hands it THIS computer, and so must show
