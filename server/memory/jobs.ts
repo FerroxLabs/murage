@@ -32,6 +32,29 @@ export function claimMemoryJob(worker: string, now = Date.now()): MemoryWork | n
   });
 }
 
+/** A publication refused because the authority moved under the lease — the
+ * source revision, the policy revision or the deletion epoch changed while
+ * the worker held the job (STALE_MEMORY_SOURCE), or the lease itself is no
+ * longer the holder's (STALE_MEMORY_LEASE). The work is discarded either way;
+ * what differs is what happens to the job next. */
+export function isStaleMemoryPublication(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "STALE_MEMORY_SOURCE" || message === "STALE_MEMORY_LEASE";
+}
+
+/** Return a job whose publication was refused as stale to `pending` at once,
+ * so the next claim runs it under the current authority. Attempts are not
+ * counted: the worker did not fail, the authority moved. Only the holder's
+ * own live lease is released — a lease another worker took over (a newer
+ * generation) and a job cancelled by a newer source revision are untouched,
+ * and the next claim's generation still fences the old holder's late output.
+ * Without this the job stayed `leased` with nobody working it until the
+ * lease expired: up to 30 s in which a queue that should be drained holds one
+ * job (RED2J, the checkpoint-roll drain under load). */
+export function requeueStaleMemoryWork(work: MemoryWork, worker: string): boolean {
+  return Boolean(database().prepare("UPDATE memory_jobs SET status='pending',lease_owner=NULL,lease_until=0 WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased'").run(work.id,worker,work.leaseGeneration).changes);
+}
+
 export function heartbeatMemoryJob(work: MemoryWork, worker: string, now=Date.now()) {
   return Boolean(database().prepare("UPDATE memory_jobs SET lease_until=? WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased' AND lease_until>=?").run(now+30000,work.id,worker,work.leaseGeneration,now).changes);
 }

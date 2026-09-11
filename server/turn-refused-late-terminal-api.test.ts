@@ -27,6 +27,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { hostStoppedReason } from "../shared/host-stop.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -41,6 +42,7 @@ const groupState = async (id: string) => (await api("GET", "/api/bots?messages=0
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body.messages as any[];
 const replies = async (threadId: string) => (await messages(threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text);
 const chips = (thread: any[]) => thread.filter(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:")).map(message => message.tool.name);
+const stoppedNotices = (thread: any[]) => thread.filter(message => message.kind === "activity" && hostStoppedReason(message.tool?.name));
 const dispatches = (): Array<{ turnId: string; threadId: string }> => existsSync(dumpPath) ? readFileSync(dumpPath, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 const disclosures = (threadId: string) => {
   const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
@@ -193,5 +195,67 @@ posixOnly("a refused child's late terminal event does not stop the re-dispatch",
     await expect.poll(async () => (await replies(room.threadId)).length, { timeout: 15000 }).toBe(2);
     expect((await replies(room.threadId))[1].from.botId).toBe(member.id);
     expect(chips(await messages(room.threadId))).toEqual([]);
+  }, 120000);
+
+  // RED2J (RED2I verifier): runGroupMemberTurn checks that its internal
+  // generation still owns the thread after the room claim and before the
+  // dispatch. That generation can be revoked in that window by the harness
+  // itself — the member's model or connected-app access changed, its thread
+  // was stopped or deleted, the provider fleet reloaded — and the check used
+  // to `return false` with the room's busyBotId still held, the member still
+  // working, no chip and no reply: a silently stuck room. Every exit after
+  // the claim now releases the room and the bot through the same path a
+  // rejected dispatch takes, and a "stopped:" notice (shared/host-stop.ts)
+  // says why. The window is held by the same fixture hold on waitForClear
+  // (the last await before that check); the owner's access review for the
+  // speaking member revokes the generation (revokeInternalBot) while held.
+  it("room member path: a generation revoked between the claim and the dispatch releases the room with a stopped notice", async () => {
+    const member = await createBot("Revoked owner member"), other = await createBot("Revoked owner other");
+    const createdRoom = await api("POST", "/api/groups", { name: "Revoked owner room", memberIds: [member.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: member.id } } });
+    expect(createdRoom.status).toBe(201);
+    const room = createdRoom.body.group as { id: string; threadId: string };
+    const idle = async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; };
+    resetGates();
+    // Turns run ungated here: the window under test is before sendTurn.
+    writeFileSync(sessionGate, "");
+    expect((await replies(room.threadId)).length).toBe(0);
+    // The member turn of exactly this thread is held after the room claim,
+    // before the owner check.
+    writeFileSync(`${redispatchHold}.armed`, room.threadId);
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "room turn whose generation is revoked before dispatch" })).status).toBe(202);
+    await expect.poll(() => existsSync(`${redispatchHold}.waiting`), { timeout: 15000 }).toBe(true);
+    expect(readFileSync(`${redispatchHold}.waiting`, "utf8")).toBe(room.threadId);
+    expect((await groupState(room.id)).busyBotId).toBe(member.id);
+    expect((await botState(member.id)).busy).toBe(true);
+    expect(dispatches()).toEqual([]);
+    // Inside that window the owner reviews the member's connected-app
+    // access: the harness revokes every internal turn of that bot.
+    const view = await api("GET", `/api/bots/${member.id}/access`);
+    expect(view.status).toBe(200);
+    expect((await api("PUT", `/api/bots/${member.id}/access`, { action: "configure", revision: view.body.policy.revision, mode: "unrestricted", allowWrites: true, grants: [] })).status).toBe(200);
+    writeFileSync(redispatchHold, "");
+
+    // Without the release the room stays busy here: busyBotId held, the
+    // member working, no chip, no reply, and no later message answered.
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => (await botState(member.id)).busy, { timeout: 15000 }).toBe(false);
+    const thread = await messages(room.threadId);
+    expect(chips(thread)).toEqual([]);
+    expect((await replies(room.threadId)).length).toBe(0);
+    expect(dispatches()).toEqual([]);
+    const notices = stoppedNotices(thread);
+    expect(notices).toHaveLength(1);
+    expect(notices[0].from?.botId).toBe(member.id);
+    expect(notices[0].tool.ok).toBe(false);
+    expect(hostStoppedReason(notices[0].tool.name)).toBe("the bot's settings or access changed while its turn was being set up, so it was not started");
+    // and the room is free: the next message runs to a reply.
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "runs after the revoked room turn" })).status).toBe(202);
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => (await replies(room.threadId)).length, { timeout: 15000 }).toBe(1);
+    expect((await replies(room.threadId))[0].from.botId).toBe(member.id);
+    expect((await replies(room.threadId))[0].text).toBe("Hello from late");
+    expect(dispatches()).toEqual([{ turnId: expect.any(String), threadId: room.threadId }]);
+    expect(chips(await messages(room.threadId))).toEqual([]);
+    expect(stoppedNotices(await messages(room.threadId))).toHaveLength(1);
   }, 120000);
 });

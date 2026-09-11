@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { SPAWNED_PROXIES,SERVER_ROOT } from "../proxy-paths.ts";
 import { DATA_DIR } from "../config.ts";
 import { database,transaction } from "../database.ts";
-import { claimMemoryJob, heartbeatMemoryJob, publishMemoryWork } from "./jobs.ts";
+import { claimMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, publishMemoryWork, requeueStaleMemoryWork } from "./jobs.ts";
 import { memoryState } from "./repository.ts";
 import { resultSchema, type MemoryWork,type MemorySearchInput } from "./worker-protocol.ts";
 import type { IndexHit } from "./index.ts";
@@ -101,7 +101,19 @@ export class MemoryWorkerController {
       if(event.type==="index-error"){this.error="MEMORY_INDEX_FAILED";this.indexing=false;return;}
       if(!this.work)return;
       try {
-        const result=resultSchema.parse(event.result);publishMemoryWork(this.work,this.owner,result);this.error=null;
+        const result=resultSchema.parse(event.result);
+        try { publishMemoryWork(this.work,this.owner,result); }
+        catch(error) {
+          // The authority moved while the worker held the job (a bot, room or
+          // task changed the policy revision; a deletion; a newer source
+          // revision). The result is discarded, not the job: it is requeued
+          // now and runs again under the current authority on the next tick.
+          // Not a worker failure, so no attempt is spent and no error is
+          // reported for it.
+          if(!isStaleMemoryPublication(error))throw error;
+          this.requeueStale(error);this.work=null;setImmediate(()=>this.tick());return;
+        }
+        this.error=null;
         if(result.status==="complete") {
           // Capture is already durable. A failed derived checkpoint must not
           // recast that committed source job as a failed capture.
@@ -125,8 +137,20 @@ export class MemoryWorkerController {
     if(!this.work)return;
     this.error=reason;
     try {publishMemoryWork(this.work,this.owner,{id:this.work.id,leaseGeneration:this.work.leaseGeneration,status:"deferred",nextCursor:this.work.cursor,chunks:[],reason});}
-    catch { /* superseded work is deliberately not acknowledged */ }
+    catch(error) {
+      // Superseded work is deliberately not acknowledged as a deferral, but
+      // the job must not sit leased with nobody working it: release the
+      // holder's own lease so the next claim picks it up at once.
+      if(isStaleMemoryPublication(error))this.requeueStale(error);
+    }
     this.work=null;
+  }
+  private requeueStale(error: unknown) {
+    if(!this.work)return;
+    const reason=error instanceof Error?error.message:String(error);
+    let requeued=false;
+    try { requeued=requeueStaleMemoryWork(this.work,this.owner); } catch { /* the database is unavailable; the lease expires on its own */ }
+    console.warn(`[memory] worker result for job ${this.work.id} was ${reason} (the authority moved while the job was leased); ${requeued?"requeued for the next claim":"lease no longer held, nothing to requeue"}`);
   }
   async stop() {
     this.stopping=true;if(this.timer)clearInterval(this.timer);this.timer=null;
