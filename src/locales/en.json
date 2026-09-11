@@ -183,5 +183,14 @@
   "markdownEditor.conflict.keepMine": "Keep my version",
   "markdownEditor.conflict.compare": "Compare",
   "markdownEditor.conflict.mine": "Your text",
-  "markdownEditor.conflict.disk": "On disk"
+  "markdownEditor.conflict.disk": "On disk",
+  "markdownEditor.conflict.reading": "Reading the version on disk…",
+  "markdownEditor.conflict.readFailed": "Could not read the version on disk, so neither choice can be applied yet. Your text is kept.",
+  "markdownEditor.conflict.readFailedNetwork": "Could not read the version on disk: Murage could not be reached. Your text is kept.",
+  "markdownEditor.conflict.readUnavailable": "The version on disk cannot be read here, so neither choice can be applied yet. Your text is kept.",
+  "markdownEditor.conflict.retryRead": "Read the disk version again",
+  "markdownEditor.heldDraft.title": "An unsaved draft from an earlier session was found",
+  "markdownEditor.heldDraft.body": "You started typing before it loaded. Both texts are kept, and your new typing is not stored as a draft until you choose which one to continue with.",
+  "markdownEditor.heldDraft.restore": "Use the earlier draft",
+  "markdownEditor.heldDraft.keepCurrent": "Keep what I typed"
 }
