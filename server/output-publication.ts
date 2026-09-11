@@ -24,7 +24,7 @@ import {
 } from "../shared/output-publication.ts";
 import { OUTPUT_NAMESPACE, WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES } from "../shared/workspace-files.ts";
 import type { Artifact } from "../shared/artifacts.ts";
-import { ArtifactError, artifactWorkspaceIdentity, registerArtifact, type ArtifactScope } from "./artifacts.ts";
+import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, ArtifactError, artifactWorkspaceIdentity, registerArtifact, type ArtifactScope } from "./artifacts.ts";
 import { IMAGE_MAX_BYTES, saveImage, type SavedAttachment } from "./attachments.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
@@ -182,9 +182,20 @@ function readStableFile(path: string, limit: number, expected?: Stats): Buffer {
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   ".html": "text/html", ".htm": "text/html", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
-  ".txt": "text/plain", ".md": "text/plain", ".csv": "text/plain", ".tsv": "text/plain", ".json": "text/plain", ".log": "text/plain",
 };
-const mimeFor = (path: string) => MIME_BY_EXTENSION[extname(path).toLowerCase()] ?? "application/octet-stream";
+const utf8 = (bytes: Buffer) => { try { new TextDecoder("utf-8", { fatal: true }).decode(bytes); return true; } catch { return false; } };
+/** The receipt's mime describes what Files will show for the saved copy. Text
+ * is the shared artifact list (ARTIFACT_TEXT_EXTENSIONS: documents, data,
+ * source and configuration formats) under the same bounds as the artifact
+ * preview — at most ARTIFACT_PREVIEW_MAX_BYTES and valid UTF-8 — so a binary
+ * blob behind a text extension, or an oversized text file, is recorded as an
+ * octet stream, exactly as it downloads. */
+const mimeFor = (path: string, bytes: Buffer) => {
+  const extension = extname(path).toLowerCase();
+  if (MIME_BY_EXTENSION[extension]) return MIME_BY_EXTENSION[extension];
+  if (ARTIFACT_TEXT_EXTENSIONS.includes(extension) && bytes.length <= ARTIFACT_PREVIEW_MAX_BYTES && utf8(bytes)) return "text/plain";
+  return "application/octet-stream";
+};
 
 /** Same private-name rule as Files registration: setup, memory and
  * credential locations are never deliverables, even under outputs/. */
@@ -267,7 +278,7 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
       try { bytes = readStableFile(join(snapshot.root, ...path.split("/")), OUTPUT_PUBLICATION_LIMITS.maxFileBytes, stat); }
       catch { notSaved++; continue; }
       let receipt: LocalOutputReceipt;
-      try { receipt = recordOutputReceipt(db, { producer: "shell-output", botId: snapshot.botId, threadId: snapshot.threadId, runId: snapshot.runId, pathToken: path, sha256: sha256(bytes), mime: mimeFor(path), bytes: bytes.length }); }
+      try { receipt = recordOutputReceipt(db, { producer: "shell-output", botId: snapshot.botId, threadId: snapshot.threadId, runId: snapshot.runId, pathToken: path, sha256: sha256(bytes), mime: mimeFor(path, bytes), bytes: bytes.length }); }
       catch { notSaved++; continue; }
       // U-02: cancelled or failed turns keep verified receipts only.
       if (!event.ok) continue;
