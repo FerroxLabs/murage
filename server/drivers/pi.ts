@@ -439,6 +439,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       turnId: string;
       pending: Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>;
       child?: { stdin: { write: (s: string) => void } };
+      /** Asks opened as host-control permission requests (local-computer scope). */
+      scopedRequests: Set<string>;
     }>();
 
     const emit = (event: RuntimeEvent) => {
@@ -465,6 +467,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       }
       const turnId = newId();
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
+      const scopedRequests = new Set<string>();
       let settled = false;
 
       // An explicit pick must land on exactly that provider/model. A bare id
@@ -618,7 +621,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
         settle(true, "cancelled");
       };
-      active.set(threadId, { stop, turnId, pending, child });
+      active.set(threadId, { stop, turnId, pending, child, scopedRequests });
 
       const onEvent = (evt: PiEvent) => {
         appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
@@ -675,6 +678,17 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               flushAssistantText();
               const reqId = evt.id ?? newId();
               const isQuestion = evt.method === "input";
+              // Carry the trusted host-control scope to the shared policy
+              // gate, as the Claude, Codex and ACP drivers do. Without it
+              // index.ts treats the card as ordinary: it offers a bare-title
+              // "Always allow" and a remembered grant later auto-approves
+              // host actions with Auto off (A7). pi's extension protocol has
+              // no trusted per-call tag — the title is extension-composed text
+              // and is never parsed for this — so every permission ask on a
+              // host-controlling turn is scoped conservatively. Questions are
+              // not permissions and always reach the human anyway.
+              const scoped = controlsHost && !isQuestion;
+              if (scoped) scopedRequests.add(reqId);
               // Register BEFORE emitting: the harness may auto-approve from
               // inside its synchronous request.opened listener. Emitting first
               // made respondToRequest see no pending ask, return unavailable,
@@ -691,6 +705,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 requestType: isQuestion ? "question" : "permission",
                 tool: String(evt.title ?? "pi"),
                 summary: String(evt.title ?? "pi wants confirmation"),
+                ...(scoped ? { approvalScope: "local-computer" as const } : {}),
               });
             }
             return;
@@ -903,6 +918,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           const answer = entry?.pending.get(requestId);
           if (!entry || !answer) return "unavailable";
           entry.pending.delete(requestId);
+          const scoped = entry.scopedRequests.delete(requestId);
           answer({ behavior: decision.behavior, message: decision.message });
           emit({
             ...base(threadId, entry.turnId),
@@ -910,6 +926,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             type: "request.resolved",
             behavior: decision.behavior,
             source: "user",
+            ...(scoped ? { approvalScope: "local-computer" as const } : {}),
           });
           return decision.behavior === "allow" ? "allowed-once" : decision.behavior === "answer" ? "answered" : "rejected";
         },

@@ -5,7 +5,7 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | interleave | turn-error | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | question | interleave | turn-error | no-models | exit-early
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
 //   FAKE_PI_SET_MODEL ok (default) | reject (success:false with pi's error text) | silent (never answers)
 //   FAKE_PI_SESSION   ok (default) | reject (new_session / switch_session answer success:false)
@@ -135,6 +135,22 @@ const streamPermissionTurn = () => {
   // wait for the answer before finishing
 };
 
+// host-confirm: the pi-mcp-extension's gate before a host computer tool runs —
+// a `ctx.ui.confirm` ask whose title the extension composes. Held like
+// permission until extension_ui_response arrives.
+const streamHostConfirmTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: "Allow click on your computer?", message: "Run computer:click" });
+};
+
+// question: an `input` ask, which is a question for the human, not a permission.
+const streamQuestionTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "extension_ui_request", id: "ask-q", method: "input", title: "Which branch should I use?" });
+};
+
 /** Scripted text → tool → text → tool → text turn for order-contract tests. */
 const streamInterleaveTurn = () => {
   send({ type: "agent_start" });
@@ -247,12 +263,14 @@ function handle(cmd: any) {
       send({ type: "response", command: "prompt", success: true });
       if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
+      else if (mode === "host-confirm") streamHostConfirmTurn();
+      else if (mode === "question") streamQuestionTurn();
       else if (mode === "interleave") streamInterleaveTurn();
       else if (mode === "turn-error") streamErrorTurn();
       else streamTurn();
       return;
     case "extension_ui_response":
-      if (cmd.id === "ask-1") finishPermissionTurn();
+      if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q") finishPermissionTurn();
       return;
     case "abort":
       send({ type: "turn_end", message: { stopReason: "cancelled", usage: { input: 0, output: 0 } }, usage: { input: 0, output: 0 } });
