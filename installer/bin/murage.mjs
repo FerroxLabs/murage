@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
 import { BindRefused, resolveBindFromEnv } from "../lib/bind.mjs";
 import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupProbe, waitForDoor } from "../lib/companion.mjs";
-import { envFilePermissions, readEnvFile, writeEnvFile } from "../lib/env-file.mjs";
+import { envFilePermissions, inspectEnvFile, readEnvFile, retainRecoveryCopy, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
 import {
   ServiceAccountRefused,
@@ -532,7 +532,22 @@ async function setup(argv = []) {
   if (!checkNode()) process.exit(1);
   const ctx = resolveSetupContext(argv);
 
-  const port = Number(process.env.MURAGE_PORT || DEFAULT_PORT);
+  // A rerun edits the existing env file rather than starting it over, so it is
+  // read and validated before anything else happens. A file setup cannot
+  // carry over whole is not rewritten at all.
+  const current = inspectEnvFile(ctx.envFile);
+  if (current.problems.length) {
+    fail(`setup will not rewrite ${ctx.envFile}: it could not carry every line over.`);
+    for (const problem of current.problems) console.log(`      ${c.dim("- " + problem)}`);
+    console.log(c.dim("  Fix or remove those lines by hand (nothing has been changed), then re-run setup."));
+    process.exit(2);
+  }
+
+  const port = Number(process.env.MURAGE_PORT || current.bag.MURAGE_PORT || DEFAULT_PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    fail(`invalid MURAGE_PORT (${process.env.MURAGE_PORT ? "from the environment" : `in ${ctx.envFile}`}); nothing has been changed.`);
+    process.exit(2);
+  }
 
   // 1. Tailscale FIRST. Everything after it depends on knowing whether this box
   //    has a secure path in, and there is no point wiring a provider key into a
@@ -542,9 +557,14 @@ async function setup(argv = []) {
   // NOTE the port: the proxy fronts the browser door, not `port` (the harness).
   if (installed) enrolment = await enrolTailnet(ctx, DOOR_PORT, port);
 
-  // 2. Provider key.
+  // 2. Provider key. Enter keeps whatever is already stored; it never clears.
   console.log("");
-  const entry = await askSecret("  Paste a provider API key (Anthropic / OpenAI / Gemini / xAI), or Enter to skip: ");
+  const storedKeys = Object.values(PROVIDER_ENV).filter((key) => current.bag[key]);
+  const entry = await askSecret(
+    storedKeys.length
+      ? `  Paste a provider API key to add or replace one (configured: ${storedKeys.join(", ")}), or Enter to keep them: `
+      : "  Paste a provider API key (Anthropic / OpenAI / Gemini / xAI), or Enter to skip: "
+  );
   /** @type {Record<string,string>} */
   const providerEnv = {};
   if (entry) {
@@ -558,29 +578,35 @@ async function setup(argv = []) {
       name = PROVIDER_ENV[which] ?? null;
     }
     if (name) providerEnv[name] = entry;
-    else warn("Unrecognised provider — skipping the key. Re-run setup to add one.");
+    else warn(`Unrecognised provider — not stored.${storedKeys.length ? " The keys already configured are kept." : ""} Re-run setup to add one.`);
   }
 
-  // 3. Env file. Note what is NOT here: no ALLOW_REMOTE, no HOST, nothing that
-  //    can produce a wildcard bind. MURAGE_BIND_MODE=loopback is the whole
-  //    statement about reachability.
-  const bag = {
-    MURAGE_DATA_DIR: DATA_DIR,
-    MURAGE_PORT: String(port),
-    MURAGE_BIND_MODE: "loopback",
-    NODE_ENV: "production",
-    ...providerEnv,
-  };
+  // 3. Env file, merged onto the existing one (see `setupEnvBag`). Note what is
+  //    NOT added here: no ALLOW_REMOTE, no HOST, nothing that can produce a
+  //    wildcard bind. MURAGE_BIND_MODE=loopback is the whole statement about
+  //    reachability.
+  //
   // `tailscale serve` is a same-host reverse proxy: verified on a live tailnet,
   // a request through it reaches the app with remoteAddress AND localAddress
   // both 127.0.0.1. So under serve, "the peer is loopback" no longer means "the
   // human at the console" — declare the proxy so no trust check reads it that way.
-  // Only when a proxy was actually configured. If serve was skipped because the
-  // door is not up, nothing is proxying and declaring a trusted proxy would be
-  // a claim about a component that is not running.
-  if (enrolment.ok && enrolment.served) bag.MURAGE_TRUSTED_PROXY = "1";
-  writeEnvFile(ctx.envFile, bag, { owner: ctx.owner });
-  ok(`wrote ${c.dim(ctx.envFile)} (mode 0600)`);
+  // Declared when this run verified a proxy; never withdrawn by a run that
+  // could not see one (see `setupEnvBag`).
+  const merged = setupEnvBag({
+    existing: current.bag,
+    processEnv: process.env,
+    dataDir: ctx.dataDir,
+    providerEnv,
+    proxyVerified: Boolean(enrolment.ok && enrolment.served),
+  });
+  if (merged.replaced.length) {
+    const copy = retainRecoveryCopy(ctx.envFile, { owner: ctx.owner });
+    warn(`replacing the stored ${merged.replaced.join(", ")}; the previous file is kept as ${c.dim(String(copy))} (mode 0600).`);
+  }
+  for (const key of merged.changed) warn(`${key} in ${ctx.envFile} is now ${merged.bag[key]}, the value this setup uses.`);
+  writeEnvFile(ctx.envFile, merged.bag, { owner: ctx.owner });
+  const carried = Object.keys(current.bag).length;
+  ok(`wrote ${c.dim(ctx.envFile)} (mode 0600${current.exists ? `; ${carried} existing setting${carried === 1 ? "" : "s"} carried over` : ""})`);
 
   // 4. Report — honestly.
   console.log("");
@@ -627,6 +653,58 @@ async function setup(argv = []) {
 
 /** `murage setup` finished, but the box is not on the tailnet. */
 export const SETUP_NOT_SECURED = 3;
+
+/**
+ * The env file a setup run writes, merged onto the one already there.
+ *
+ * A rerun used to build a fresh bag of defaults plus whatever key was typed,
+ * so pressing Enter at the key prompt deleted every stored provider key and
+ * every custom setting. Now:
+ *
+ *  - everything already in the file survives unless named below;
+ *  - provider keys change only when one is entered; Enter keeps them all;
+ *  - MURAGE_DATA_DIR is where this setup put the data (reported if it moved);
+ *  - MURAGE_PORT keeps the stored value unless setup's own environment sets
+ *    one; MURAGE_BIND_MODE keeps a valid stored value; NODE_ENV is only filled
+ *    in when absent;
+ *  - MURAGE_TRUSTED_PROXY is set when this run verified a proxy in front of
+ *    the door, and otherwise left as it was. Removing it is the unsafe
+ *    direction: without it a request arriving through a proxy that still
+ *    exists reads as a loopback peer, so a run that could not see the proxy
+ *    does not get to take the declaration away.
+ *
+ * Pure, so every one of those is testable without a tailnet.
+ * @param {object} opts
+ * @param {Record<string, string>} opts.existing the validated current file ({} when none)
+ * @param {Record<string, string | undefined>} opts.processEnv setup's own environment
+ * @param {string} opts.dataDir
+ * @param {Record<string, string>} opts.providerEnv keys entered this run ({} when skipped)
+ * @param {boolean} opts.proxyVerified this run verified a tailnet proxy in front of the door
+ * @returns {{ bag: Record<string, string>, replaced: string[], changed: string[] }}
+ */
+export function setupEnvBag({ existing, processEnv, dataDir, providerEnv, proxyVerified }) {
+  /** @type {Record<string, string>} */
+  const bag = { ...existing };
+  /** @type {string[]} */
+  const changed = [];
+  const select = (key, value) => {
+    if (bag[key] !== undefined && bag[key] !== value) changed.push(key);
+    bag[key] = value;
+  };
+  select("MURAGE_DATA_DIR", dataDir);
+  if (processEnv.MURAGE_PORT) select("MURAGE_PORT", String(processEnv.MURAGE_PORT));
+  else if (!bag.MURAGE_PORT) bag.MURAGE_PORT = String(DEFAULT_PORT);
+  if (bag.MURAGE_BIND_MODE !== "loopback" && bag.MURAGE_BIND_MODE !== "tailnet") select("MURAGE_BIND_MODE", "loopback");
+  if (!bag.NODE_ENV) bag.NODE_ENV = "production";
+  /** @type {string[]} */
+  const replaced = [];
+  for (const [key, value] of Object.entries(providerEnv)) {
+    if (bag[key] !== undefined && bag[key] !== value) replaced.push(key);
+    bag[key] = value;
+  }
+  if (proxyVerified) bag.MURAGE_TRUSTED_PROXY = "1";
+  return { bag, replaced, changed };
+}
 
 function printQr(url) {
   const block = qrBlock(url);

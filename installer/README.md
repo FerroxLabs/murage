@@ -59,6 +59,24 @@ deployment uses. If you ever *do* want the device door on a box like this, set
 that address) rather than to `lan`; an unrecognised value makes the sidecar
 refuse to start rather than fall back to `0.0.0.0`.
 
+## Re-running setup
+
+`setup` is safe to run again, to re-enrol, repair the proxy, or stage the
+unit. It edits the env file rather than starting it over:
+
+- Pressing Enter at the provider-key prompt keeps every key already stored.
+  Setup names which ones are configured (never their values).
+- Entering a key replaces only that provider's key. When that overwrites a
+  different stored value, the previous file is kept as `murage.env.previous`
+  (mode `0600`), because that key may have no other copy.
+- Custom settings, a custom `MURAGE_PORT` and a valid `MURAGE_BIND_MODE`
+  survive. `MURAGE_TRUSTED_PROXY` is added when setup verified a proxy, and
+  is never removed by a run that could not see one.
+- The file is replaced atomically, so an interrupted write leaves the
+  previous complete file. A file with a line setup cannot carry over (not
+  `KEY=value`, a malformed key, or a symlink) is not rewritten at all: setup
+  names the line numbers and stops before changing anything.
+
 ## Running it 24/7: the service account
 
 On Linux, `setup` offers to stage a systemd unit. The unit always names the
