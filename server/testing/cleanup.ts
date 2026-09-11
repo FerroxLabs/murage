@@ -8,6 +8,8 @@
 import type { ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 
+import { assertSafeToWipe } from "./safe-wipe.mjs";
+
 /** How `waitForExit` should end the child, and how long to allow. */
 export interface WaitForExitOptions {
   /** Sent immediately. Omit for a child the caller has already signalled. */
@@ -79,12 +81,17 @@ export function waitForExit(
  * itself. Retry briefly; if the directory still will not go, warn and leave
  * it for the OS to reap. A leaked temp dir is a non-event — a red CI run that
  * says nothing about the code under test is not.
+ *
+ * The one thing that is not a non-event: the path not being a temp directory
+ * at all. assertSafeToWipe runs first, throws SafeWipeRefused naming the path,
+ * and is never retried — see safe-wipe.mjs and docs/verification/data-safety.md.
  */
 export async function removeTempDir(dir: string): Promise<void> {
+  const { path } = assertSafeToWipe(dir);
   let lastError: unknown;
   for (let i = 0; i < 20; i++) {
     try {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(path, { recursive: true, force: true });
       return;
     } catch (error) {
       lastError = error;
