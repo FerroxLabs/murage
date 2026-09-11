@@ -247,6 +247,18 @@ describe("external changes", () => {
     expect(resolveConflict(dirty, "reload")).toMatchObject({ ok: false, refused: "no-conflict" });
   });
 
+  it("lets the conflict a bot's write raises replace the refusal of the save it held (F4-T7)", () => {
+    // Save refused while the bot held the workspace; the bot then rewrote
+    // the file. The conflict is the current fact; "a bot is writing, try
+    // again" is over and must not stand beside it.
+    const begun = startSave(editDocument(openDocumentSession(read()), "mine"));
+    const held = failSave(begun.state, "req-1", { code: "bot-writing" }).state;
+    expect(held).toMatchObject({ status: "error", error: { code: "bot-writing", retryable: true } });
+    const changed = observeExternalChange(held, { revision: rev("r2"), content: "theirs", bom: false });
+    expect(changed.effect).toBe("conflict");
+    expect(changed.state).toMatchObject({ status: "conflict", draft: "mine", error: null, conflict: { source: "external-change", currentRevision: rev("r2"), disk: { content: "theirs" } } });
+  });
+
   it("defers a change seen during a save and settles it against the new base", () => {
     const begun = startSave(editDocument(openDocumentSession(read()), "mine"));
     const during = observeExternalChange(begun.state, { revision: rev("r3"), content: "bot wrote after us", bom: false });
