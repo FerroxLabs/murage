@@ -72,6 +72,13 @@ it("negotiates MCP and exposes only four bounded memory tools", async () => {
   const listed = await rpc("tools/list");
   expect(listed.result.tools.map((tool: Json) => tool.name)).toEqual(["memory_search", "memory_get", "memory_save", "memory_propose_correction"]);
   expect(listed.result.tools.every((tool: Json) => tool.inputSchema.additionalProperties === false)).toBe(true);
+  // MEMJSON2: both record-addressing tools advertise the turn-local handle next to id/version.
+  const get = listed.result.tools.find((tool: Json) => tool.name === "memory_get");
+  expect(Object.keys(get.inputSchema.properties.handles.items.properties).sort()).toEqual(["handle", "id", "version"]);
+  expect(get.inputSchema.properties.handles.items.properties.handle.pattern).toBe("^m[1-9][0-9]{0,2}$");
+  const correction = listed.result.tools.find((tool: Json) => tool.name === "memory_propose_correction");
+  expect(correction.inputSchema.required).toEqual(["replacement", "evidence", "idempotencyKey"]);
+  expect(correction.inputSchema.properties.handle.pattern).toBe("^m[1-9][0-9]{0,2}$");
   expect((await rpc("ping")).result).toEqual({});
   expect(requests).toEqual([]);
 });
@@ -80,8 +87,11 @@ it("forwards approved fields to fixed routes using the server-issued capability"
   const cases = [
     ["memory_search", "search", { query: "nightly backups", limit: 20, historical: true, cursor: "cursor" }],
     ["memory_get", "get", { handles: [{ id: "record", version: 2 }] }],
+    // MEMJSON2: turn-local handles from <remembered-context> pass through verbatim.
+    ["memory_get", "get", { handles: [{ handle: "m1" }, { id: "record", version: 2 }, { handle: "m999" }] }],
     ["memory_save", "save", { text: "candidate", evidence, idempotencyKey: "save-once" }],
     ["memory_propose_correction", "propose-correction", { id: "record", version: 2, replacement: "proposed", evidence, idempotencyKey: "correct-once" }],
+    ["memory_propose_correction", "propose-correction", { handle: "m12", replacement: "proposed", evidence, idempotencyKey: "correct-once" }],
   ] as const;
   for (const [name, route, args] of cases) {
     const reply = await call(name, args);
@@ -99,6 +109,15 @@ it("rejects caller authority claims and oversized or malformed arguments before 
     ["memory_search", { query: "ok", limit: 21 }],
     ["memory_get", { handles: Array.from({ length: 21 }, () => ({ id: "r", version: 1 })) }],
     ["memory_get", { handles: [{ id: "r", version: 1, scopeId: "private" }] }],
+    // A reference is a handle or an exact id+version, never a mix, a bare id or a malformed handle.
+    ["memory_get", { handles: [{ handle: "m1", id: "r", version: 1 }] }],
+    ["memory_get", { handles: [{ id: "r" }] }],
+    ["memory_get", { handles: [{ handle: "m0" }] }],
+    ["memory_get", { handles: [{ handle: "m1000" }] }],
+    ["memory_get", { handles: [{ handle: "r" }] }],
+    ["memory_get", { handles: [{}] }],
+    ["memory_propose_correction", { handle: "m1", id: "r", version: 1, replacement: "candidate", evidence, idempotencyKey: "k" }],
+    ["memory_propose_correction", { replacement: "candidate", evidence, idempotencyKey: "k" }],
     ["memory_save", { text: "x".repeat(4097), evidence, idempotencyKey: "k" }],
     ["memory_save", { text: "candidate", evidence: [], idempotencyKey: "k" }],
     ["memory_propose_correction", { id: "r", version: 1, replacement: "candidate", evidence, idempotencyKey: "k", ownerApproved: true }],

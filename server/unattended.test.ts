@@ -226,7 +226,10 @@ posixOnly("unattended turns keep asking", () => {
       expect(
         (
           await desktopApi("PATCH", `/api/bots/${bot.id}`, {
+            // Auto on a bot that never chose a computer drives this Mac, so
+            // the desktop dialog's acknowledgement rides along (AUTOOP2 finding 1).
             autoApprove: true,
+            acknowledgeLocalAuto: true,
             modelSelection: { instanceId: "grok", model: "fake-model" },
           })
         ).status,
@@ -268,12 +271,13 @@ posixOnly("unattended turns keep asking", () => {
       // mark crossing the hop, the gate protects the bot that READ the
       // payload and releases the bot that ACTS on it.
       const teammate = await makeBot("grok");
-      expect((await desktopApi("PATCH", `/api/bots/${teammate.id}`, { name: "Teammate", autoApprove: true })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${teammate.id}`, { name: "Teammate", autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
 
       const delegator = await makeBot("delegator");
       expect((await desktopApi("PATCH", `/api/bots/${delegator.id}`, {
         name: "Delegator",
         autoApprove: true,
+        acknowledgeLocalAuto: true,
         modelSelection: { instanceId: "delegator", model: "fake-model" },
       })).status).toBe(200);
 
@@ -324,6 +328,7 @@ posixOnly("unattended turns keep asking", () => {
       expect((await desktopApi("PATCH", `/api/bots/${target.id}`, {
         name: "Answerer",
         autoApprove: true,
+        acknowledgeLocalAuto: true,
         modelSelection: { instanceId: "grok", model: "fake-model" },
       })).status).toBe(200);
 
@@ -331,6 +336,7 @@ posixOnly("unattended turns keep asking", () => {
       expect((await desktopApi("PATCH", `/api/bots/${asker.id}`, {
         name: "Asker",
         autoApprove: true,
+        acknowledgeLocalAuto: true,
         hidden: true, // keep it out of its own peer list's way
         modelSelection: { instanceId: "asker", model: "fake-model" },
       })).status).toBe(200);

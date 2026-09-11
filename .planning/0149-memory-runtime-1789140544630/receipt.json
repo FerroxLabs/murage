@@ -1,0 +1,482 @@
+{
+  "startedAt": "2026-09-11T15:29:04.631Z",
+  "evidence": "/Volumes/Mando/WaylandBots/murage-0152-lanes/MEMJSON2/.planning/0149-memory-runtime-1789140544630",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "claude/0e735646-05fc-4697-9f07-b8ebcf1444a7",
+      "status": "PASS",
+      "pid": 67709,
+      "receipt": {
+        "bundle_id": "195a2bc6-76f0-457d-adbe-d2bc136b3dbe",
+        "driver_instance": "verification",
+        "native_session": "d1d9be10-faf8-41b7-9f83-8dba1e4efe06",
+        "record_versions": "[{\"id\":\"checkpoint:1b45789369536b542bc5ff72857f292049e6efc11a069c64880e7f8e595b88d7\",\"version\":1},{\"id\":\"legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da:chunk:0\",\"version\":1},{\"id\":\"db8ae74281c6cca1e1c94e79bd61b2b30cd732eff58d1a27a7cb200cf820cb8a\",\"version\":1}]",
+        "source_versions": "[{\"id\":\"message:28c93d0d-578c-4d23-b0b4-0b1f577f3e89:a67e9c5c-ca3d-469f-92cd-1b5e5f80758e\",\"revision\":1},{\"id\":\"legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da\",\"revision\":1}]",
+        "state": "delivered"
+      }
+    },
+    {
+      "name": "claude/62f32d68-ffbc-4c8e-860a-2955ee8a2a7d",
+      "status": "PASS",
+      "pid": 67715,
+      "receipt": {
+        "bundle_id": "b9bd53b5-4cd4-4d9f-bffc-ddf6a1b17f37",
+        "driver_instance": "verification",
+        "native_session": "a4928a75-6504-4880-89c2-0fd8451a0994",
+        "record_versions": "[{\"id\":\"checkpoint:b399259843860b69d0b7ccb2dbda30713c22ce81e1151025633f9b5ffba0fb50\",\"version\":1},{\"id\":\"legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78:chunk:0\",\"version\":1},{\"id\":\"2606ae22508f6e5fbd07b4d428b1ba02ad8fab60a9fb31c1f04bfa661f627afc\",\"version\":1}]",
+        "source_versions": "[{\"id\":\"message:c3cc9471-f0c2-46c8-8008-7041ea535cd8:2b3f9888-b4bd-45af-929b-13d922e52bd4\",\"revision\":1},{\"id\":\"legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78\",\"revision\":1}]",
+        "state": "delivered"
+      }
+    },
+    {
+      "name": "claude/room-exclusion",
+      "status": "PASS",
+      "pid": 67798,
+      "receipt": {
+        "bundle_id": "21b5f2c9-a73f-4bc8-a903-a4ab6cc63a5c",
+        "driver_instance": "verification",
+        "native_session": "7abd2b1b-0b40-4f9f-9758-34c589c9e0db",
+        "record_versions": "[]",
+        "source_versions": "[]",
+        "state": "delivered"
+      }
+    },
+    {
+      "name": "codex/0e735646-05fc-4697-9f07-b8ebcf1444a7",
+      "status": "PASS",
+      "pid": 67987,
+      "receipt": {
+        "bundle_id": "cc03192b-c524-4bfb-8fa4-616d58f23483",
+        "driver_instance": "verification-codex",
+        "native_session": "codex-thread-1",
+        "record_versions": "[{\"id\":\"9352979c0400cc3c73a7e8303bde9ea2cac4b354919a1b4b33d70084220ae806\",\"version\":1},{\"id\":\"legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da:chunk:0\",\"version\":1},{\"id\":\"checkpoint:1b45789369536b542bc5ff72857f292049e6efc11a069c64880e7f8e595b88d7\",\"version\":5},{\"id\":\"db8ae74281c6cca1e1c94e79bd61b2b30cd732eff58d1a27a7cb200cf820cb8a\",\"version\":1}]",
+        "source_versions": "[{\"id\":\"message:28c93d0d-578c-4d23-b0b4-0b1f577f3e89:a8bbd11d-f726-4d7b-96e8-d454ff66135d\",\"revision\":1},{\"id\":\"legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da\",\"revision\":1},{\"id\":\"message:28c93d0d-578c-4d23-b0b4-0b1f577f3e89:9677aa03-66eb-4da2-9a08-ea3cd500ea91\",\"revision\":2},{\"id\":\"message:28c93d0d-578c-4d23-b0b4-0b1f577f3e89:a67e9c5c-ca3d-469f-92cd-1b5e5f80758e\",\"revision\":1},{\"id\":\"message:28c93d0d-578c-4d23-b0b4-0b1f577f3e89:aeefd9ea-81f0-4300-93cc-391021f8c08e\",\"revision\":1}]",
+        "state": "delivered"
+      }
+    },
+    {
+      "name": "codex/62f32d68-ffbc-4c8e-860a-2955ee8a2a7d",
+      "status": "PASS",
+      "pid": 67991,
+      "receipt": {
+        "bundle_id": "cb68d998-00fc-4152-aeda-1e5785322aea",
+        "driver_instance": "verification-codex",
+        "native_session": "codex-thread-1",
+        "record_versions": "[{\"id\":\"legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78:chunk:0\",\"version\":1},{\"id\":\"923a3ca4594bf0e177a7ce5ec8b232eb724c604ef245ce9d7c896ca91a51801d\",\"version\":1},{\"id\":\"checkpoint:b399259843860b69d0b7ccb2dbda30713c22ce81e1151025633f9b5ffba0fb50\",\"version\":5},{\"id\":\"2606ae22508f6e5fbd07b4d428b1ba02ad8fab60a9fb31c1f04bfa661f627afc\",\"version\":1}]",
+        "source_versions": "[{\"id\":\"legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78\",\"revision\":1},{\"id\":\"message:c3cc9471-f0c2-46c8-8008-7041ea535cd8:dfe9272c-b3d4-4dc3-9163-7e072d03c7c4\",\"revision\":1},{\"id\":\"message:c3cc9471-f0c2-46c8-8008-7041ea535cd8:2b3f9888-b4bd-45af-929b-13d922e52bd4\",\"revision\":1},{\"id\":\"message:c3cc9471-f0c2-46c8-8008-7041ea535cd8:2e1d87ea-1159-4290-84b2-80eeb04b219c\",\"revision\":1},{\"id\":\"message:c3cc9471-f0c2-46c8-8008-7041ea535cd8:b6e05986-ea98-4b9c-97ac-10de8d553645\",\"revision\":2}]",
+        "state": "delivered"
+      }
+    },
+    {
+      "name": "codex/room-exclusion",
+      "status": "PASS",
+      "pid": 68012,
+      "receipt": {
+        "bundle_id": "fbe0d6b4-8d47-4812-a5e8-1a0ddcd670f5",
+        "driver_instance": "verification-codex",
+        "native_session": "codex-thread-1",
+        "record_versions": "[{\"id\":\"2feb61a6e200bbaa3a6b35dafabec74d1c73219d39ad3d031b641b91823c3323\",\"version\":1},{\"id\":\"checkpoint:06310360c8d686981ea3be18c952b14253f2462902b5f2552a2a97b0ae9c7db1\",\"version\":4}]",
+        "source_versions": "[{\"id\":\"message:89400fff-e341-4d1e-99f0-a716a8943f4b:92ca2b84-09ff-431e-8f4e-018888b50b05\",\"revision\":1},{\"id\":\"message:89400fff-e341-4d1e-99f0-a716a8943f4b:cfd1b694-7179-4539-8a8b-d89c55b572e3\",\"revision\":1},{\"id\":\"message:89400fff-e341-4d1e-99f0-a716a8943f4b:d99e01ec-bc7b-4d4a-b7ce-1919a820b355\",\"revision\":2}]",
+        "state": "delivered"
+      }
+    }
+  ],
+  "lifecycle": [
+    {
+      "phase": "first-start",
+      "url": "http://127.0.0.1:20724",
+      "pid": 67597,
+      "dataDir": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verify-data-OXQVXW",
+      "logPath": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verification-evidence/server-1789140544641-67595.log"
+    },
+    {
+      "phase": "restarted",
+      "url": "http://127.0.0.1:20724",
+      "pid": 67805,
+      "dataDir": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verify-data-OXQVXW",
+      "logPath": "/var/folders/8h/chxws5390hx17g49p75b2xn00000gn/T/murage-verification-evidence/server-1789140554753-67595.log",
+      "closedPids": [
+        67597,
+        67615,
+        67709,
+        67715,
+        67798
+      ]
+    }
+  ],
+  "limits": "Actual Murage HTTP/server/worker/Claude and Codex drivers with local fake CLI transports; keyword recall only. No vendor model/native binary/GUI/platform/capacity claim.",
+  "import": {
+    "commit": {
+      "imported": 2,
+      "skipped": 0,
+      "recordIds": [
+        "legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da:chunk:0",
+        "legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78:chunk:0"
+      ],
+      "originals": "preserved"
+    },
+    "originalA": {
+      "id": "legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da:chunk:0",
+      "version": 1,
+      "scope_id": "bd0d2185-92a7-4fca-96ff-4dadcf2f95f7",
+      "text": "Amaranth itinerary decision: AMARANTH_PRIVATE_CANARY use the silver lantern.",
+      "assertion": "unverified-import",
+      "owner_pinned": 0,
+      "source_id": "legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da",
+      "source_revision": 1,
+      "content_hash": "3673873f4bdbeee9c155f25c7648f8063df255ea7f52ea4db33450d014a8135d"
+    },
+    "originalB": {
+      "id": "legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78:chunk:0",
+      "version": 1,
+      "scope_id": "464bd6ff-28a0-44c4-80bc-d837ff4c4955",
+      "text": "Basil itinerary decision: BASIL_PRIVATE_CANARY use the copper lantern.",
+      "assertion": "unverified-import",
+      "owner_pinned": 0,
+      "source_id": "legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78",
+      "source_revision": 1,
+      "content_hash": "d17f41443fbb9b116bdb1be8d2de8eabccf05db70128491241bd35e38cf72e53"
+    },
+    "counts": [
+      {
+        "id": "legacy:07e668f5551bb2f8ac64f6f4be3ddd96884186aa238dc505a428275a055f3c78",
+        "revision": 1,
+        "content_hash": "d17f41443fbb9b116bdb1be8d2de8eabccf05db70128491241bd35e38cf72e53",
+        "versions": 1
+      },
+      {
+        "id": "legacy:a473ea5372ea6f63c7bbbc8c7724d6225269bbe272173e86f7309b9bfa15d1da",
+        "revision": 1,
+        "content_hash": "3673873f4bdbeee9c155f25c7648f8063df255ea7f52ea4db33450d014a8135d",
+        "versions": 1
+      }
+    ],
+    "originalHashes": [
+      "3673873f4bdbeee9c155f25c7648f8063df255ea7f52ea4db33450d014a8135d",
+      "d17f41443fbb9b116bdb1be8d2de8eabccf05db70128491241bd35e38cf72e53"
+    ]
+  },
+  "firstMemoryStatus": {
+    "installationId": "360b0c89-2778-451a-97ec-6ffc29a9f395",
+    "policyRevision": 3,
+    "deletionEpoch": 0,
+    "mode": "active",
+    "retention": {
+      "records": [
+        {
+          "state": "active",
+          "count": 8,
+          "bytes": 860
+        }
+      ],
+      "sourceBytes": 1511,
+      "automaticPermanentForgetting": false,
+      "originalSourcesRetained": true
+    },
+    "configuration": {
+      "excludedThreadIds": [],
+      "extractorInstanceId": null
+    },
+    "scopes": [
+      {
+        "id": "bd0d2185-92a7-4fca-96ff-4dadcf2f95f7",
+        "kind": "bot",
+        "ownerKey": "0e735646-05fc-4697-9f07-b8ebcf1444a7",
+        "label": "Amaranth memory fixture"
+      },
+      {
+        "id": "591cdb50-cbdd-4d82-a49c-a70c6d6552c9",
+        "kind": "bot",
+        "ownerKey": "41b59145-86e8-442a-bf83-724a80e87196",
+        "label": "Ember"
+      },
+      {
+        "id": "464bd6ff-28a0-44c4-80bc-d837ff4c4955",
+        "kind": "bot",
+        "ownerKey": "62f32d68-ffbc-4c8e-860a-2955ee8a2a7d",
+        "label": "Basil memory fixture"
+      },
+      {
+        "id": "b3010624-eb5c-44ff-ae5b-3342e89b71f2",
+        "kind": "conversation",
+        "ownerKey": "28c93d0d-578c-4d23-b0b4-0b1f577f3e89",
+        "label": "28c93d0d-578c-4d23-b0b4-0b1f577f3e89"
+      },
+      {
+        "id": "403bfec6-8803-492e-a33b-b62e2549743c",
+        "kind": "conversation",
+        "ownerKey": "3f23ce69-71e3-4c64-b394-0ea3030d25f7",
+        "label": "3f23ce69-71e3-4c64-b394-0ea3030d25f7"
+      },
+      {
+        "id": "c7c02be3-4c95-4803-b26c-fcb658d186a5",
+        "kind": "conversation",
+        "ownerKey": "89400fff-e341-4d1e-99f0-a716a8943f4b",
+        "label": "89400fff-e341-4d1e-99f0-a716a8943f4b"
+      },
+      {
+        "id": "c96af656-eb4b-4abf-96ce-88df2ace2fa7",
+        "kind": "conversation",
+        "ownerKey": "c3cc9471-f0c2-46c8-8008-7041ea535cd8",
+        "label": "c3cc9471-f0c2-46c8-8008-7041ea535cd8"
+      },
+      {
+        "id": "34a34960-99b6-42ac-81ad-adf1e2d1c162",
+        "kind": "room",
+        "ownerKey": "de2143fe-0d0e-4a17-8d9e-52650fb2d8c3",
+        "label": "Memory runtime room"
+      },
+      {
+        "id": "8e988cac-2a19-4160-adfe-5825d524f650",
+        "kind": "team",
+        "ownerKey": "",
+        "label": "General"
+      },
+      {
+        "id": "fc7e8c6b-1bd0-43af-9b6e-8e5a78df4ef3",
+        "kind": "team",
+        "ownerKey": "Memory runtime",
+        "label": "Memory runtime"
+      },
+      {
+        "id": "89b51dbe-b360-4e89-bd44-38db933cd647",
+        "kind": "workspace",
+        "ownerKey": "360b0c89-2778-451a-97ec-6ffc29a9f395",
+        "label": "360b0c89-2778-451a-97ec-6ffc29a9f395"
+      }
+    ],
+    "records": {
+      "candidate": 0,
+      "active": 8,
+      "archived": 0,
+      "superseded": 0,
+      "deleted": 0
+    },
+    "backlog": {
+      "pending": 0,
+      "leased": 0,
+      "deferred": 0,
+      "failed": 0,
+      "oldestQueuedAt": null
+    },
+    "model": {
+      "state": "missing",
+      "bytesDownloaded": 0,
+      "totalBytes": 135393639,
+      "revision": "2c4055b12046f11709e9df2c122e59ffbdc2f900",
+      "model": "Xenova/paraphrase-multilingual-MiniLM-L12-v2"
+    },
+    "extractors": [
+      {
+        "instanceId": "@murage/flux-fast",
+        "label": "Flux Router · Fast",
+        "eligible": false,
+        "reason": "Add your Flux Router key in app settings."
+      },
+      {
+        "instanceId": "@murage/flux-standard",
+        "label": "Flux Router · Standard",
+        "eligible": false,
+        "reason": "Add your Flux Router key in app settings."
+      },
+      {
+        "instanceId": "@murage/flux-auto",
+        "label": "Flux Router · Auto",
+        "eligible": false,
+        "reason": "Add your Flux Router key in app settings."
+      }
+    ],
+    "cost": {
+      "day": "2026-09-11",
+      "inputReserved": 0,
+      "outputReserved": 0,
+      "callsThisMinute": 0,
+      "inputLimit": 100000,
+      "outputLimit": 20000,
+      "callsPerMinuteLimit": 6
+    },
+    "deletion": {
+      "pending": 0
+    },
+    "workerError": null,
+    "runtime": {
+      "running": true,
+      "ready": true,
+      "indexing": false,
+      "queryCount": 0,
+      "error": null
+    }
+  },
+  "secondMemoryStatus": {
+    "installationId": "360b0c89-2778-451a-97ec-6ffc29a9f395",
+    "policyRevision": 3,
+    "deletionEpoch": 0,
+    "mode": "active",
+    "retention": {
+      "records": [
+        {
+          "state": "active",
+          "count": 18,
+          "bytes": 1651
+        },
+        {
+          "state": "archived",
+          "count": 11,
+          "bytes": 2668
+        }
+      ],
+      "sourceBytes": 3185,
+      "automaticPermanentForgetting": false,
+      "originalSourcesRetained": true
+    },
+    "configuration": {
+      "excludedThreadIds": [],
+      "extractorInstanceId": null
+    },
+    "scopes": [
+      {
+        "id": "bd0d2185-92a7-4fca-96ff-4dadcf2f95f7",
+        "kind": "bot",
+        "ownerKey": "0e735646-05fc-4697-9f07-b8ebcf1444a7",
+        "label": "Amaranth memory fixture"
+      },
+      {
+        "id": "591cdb50-cbdd-4d82-a49c-a70c6d6552c9",
+        "kind": "bot",
+        "ownerKey": "41b59145-86e8-442a-bf83-724a80e87196",
+        "label": "Ember"
+      },
+      {
+        "id": "464bd6ff-28a0-44c4-80bc-d837ff4c4955",
+        "kind": "bot",
+        "ownerKey": "62f32d68-ffbc-4c8e-860a-2955ee8a2a7d",
+        "label": "Basil memory fixture"
+      },
+      {
+        "id": "b3010624-eb5c-44ff-ae5b-3342e89b71f2",
+        "kind": "conversation",
+        "ownerKey": "28c93d0d-578c-4d23-b0b4-0b1f577f3e89",
+        "label": "28c93d0d-578c-4d23-b0b4-0b1f577f3e89"
+      },
+      {
+        "id": "403bfec6-8803-492e-a33b-b62e2549743c",
+        "kind": "conversation",
+        "ownerKey": "3f23ce69-71e3-4c64-b394-0ea3030d25f7",
+        "label": "3f23ce69-71e3-4c64-b394-0ea3030d25f7"
+      },
+      {
+        "id": "c7c02be3-4c95-4803-b26c-fcb658d186a5",
+        "kind": "conversation",
+        "ownerKey": "89400fff-e341-4d1e-99f0-a716a8943f4b",
+        "label": "89400fff-e341-4d1e-99f0-a716a8943f4b"
+      },
+      {
+        "id": "c96af656-eb4b-4abf-96ce-88df2ace2fa7",
+        "kind": "conversation",
+        "ownerKey": "c3cc9471-f0c2-46c8-8008-7041ea535cd8",
+        "label": "c3cc9471-f0c2-46c8-8008-7041ea535cd8"
+      },
+      {
+        "id": "34a34960-99b6-42ac-81ad-adf1e2d1c162",
+        "kind": "room",
+        "ownerKey": "de2143fe-0d0e-4a17-8d9e-52650fb2d8c3",
+        "label": "Memory runtime room"
+      },
+      {
+        "id": "8e988cac-2a19-4160-adfe-5825d524f650",
+        "kind": "team",
+        "ownerKey": "",
+        "label": "General"
+      },
+      {
+        "id": "fc7e8c6b-1bd0-43af-9b6e-8e5a78df4ef3",
+        "kind": "team",
+        "ownerKey": "Memory runtime",
+        "label": "Memory runtime"
+      },
+      {
+        "id": "89b51dbe-b360-4e89-bd44-38db933cd647",
+        "kind": "workspace",
+        "ownerKey": "360b0c89-2778-451a-97ec-6ffc29a9f395",
+        "label": "360b0c89-2778-451a-97ec-6ffc29a9f395"
+      }
+    ],
+    "records": {
+      "candidate": 0,
+      "active": 18,
+      "archived": 11,
+      "superseded": 0,
+      "deleted": 0
+    },
+    "backlog": {
+      "pending": 0,
+      "leased": 0,
+      "deferred": 0,
+      "failed": 0,
+      "oldestQueuedAt": null
+    },
+    "model": {
+      "state": "missing",
+      "bytesDownloaded": 0,
+      "totalBytes": 135393639,
+      "revision": "2c4055b12046f11709e9df2c122e59ffbdc2f900",
+      "model": "Xenova/paraphrase-multilingual-MiniLM-L12-v2"
+    },
+    "extractors": [
+      {
+        "instanceId": "@murage/flux-fast",
+        "label": "Flux Router · Fast",
+        "eligible": false,
+        "reason": "Add your Flux Router key in app settings."
+      },
+      {
+        "instanceId": "@murage/flux-standard",
+        "label": "Flux Router · Standard",
+        "eligible": false,
+        "reason": "Add your Flux Router key in app settings."
+      },
+      {
+        "instanceId": "@murage/flux-auto",
+        "label": "Flux Router · Auto",
+        "eligible": false,
+        "reason": "Add your Flux Router key in app settings."
+      }
+    ],
+    "cost": {
+      "day": "2026-09-11",
+      "inputReserved": 0,
+      "outputReserved": 0,
+      "callsThisMinute": 0,
+      "inputLimit": 100000,
+      "outputLimit": 20000,
+      "callsPerMinuteLimit": 6
+    },
+    "deletion": {
+      "pending": 0
+    },
+    "workerError": null,
+    "runtime": {
+      "running": true,
+      "ready": true,
+      "indexing": false,
+      "queryCount": 0,
+      "error": null
+    }
+  },
+  "cleanup": {
+    "status": "passed",
+    "closedPids": [
+      67805,
+      67845,
+      67709,
+      67715,
+      67798,
+      67987,
+      67991,
+      68012
+    ],
+    "ownedProfileRemoved": true
+  },
+  "finishedAt": "2026-09-11T15:29:19.326Z"
+}
