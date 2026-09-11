@@ -20,6 +20,26 @@ import { stripVTControlCharacters } from "node:util";
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "../child-teardown.ts";
+import {
+  createLifecycleRecorder,
+  errnoCategory,
+  type LifecycleFields,
+  type LifecycleStopReason,
+} from "../lifecycle-diagnostic.ts";
+
+/** Lifecycle facts of a JSON-RPC error: validated numbers only, and a method
+ * only when the response matched a pending request (R1-T8). */
+function lifecycleRejection(error: unknown, rpcId: unknown, method?: string): LifecycleFields {
+  const fields: LifecycleFields = {};
+  if (typeof rpcId === "number" && Number.isSafeInteger(rpcId) && rpcId >= 0) fields.rpcId = rpcId;
+  if (method !== undefined) fields.method = method;
+  const { code, data } = (error && typeof error === "object" ? error : {}) as { code?: unknown; data?: unknown };
+  if (typeof code === "number" && Number.isSafeInteger(code)) fields.rpcCode = code;
+  const status = data && typeof data === "object" && !Array.isArray(data) ? (data as { http_status?: unknown }).http_status : undefined;
+  if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) fields.httpStatus = status;
+  return fields;
+}
 import { classifyProviderError } from "../../../shared/provider-error.ts";
 import { redactSecretsInText } from "../../redact.ts";
 
@@ -215,6 +235,15 @@ const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
 const SESSION_CONFIG_TIMEOUT = envOr("MURAGE_ACP_SESSION_CONFIG_MS", 60_000); // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_NEW_MS", 90_000);
 const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // history replay on a long thread is slow
+/** After session/cancel the agent may still answer the prompt; past this the
+ * turn settles as cancelled and the child is terminated. */
+const ACP_CANCEL_GRACE_MS = 5_000;
+/** A stop that starts with session/cancel reaches the kill only after the
+ * grace period, so its close budget is measured from there. */
+const acpStopBudget = (): TeardownWait => {
+  const closeMs = providerCloseDeadlineMs();
+  return { closeMs, maxMs: ACP_CANCEL_GRACE_MS + closeMs };
+};
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -289,12 +318,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       await refreshModels();
       const listeners = new Set<RuntimeEventListener>();
       interface Turn {
-        stop: () => void;
+        stop: (reason: LifecycleStopReason) => void;
         interrupt: () => void;
         turnId: string;
         asks: Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>;
       }
       const active = new Map<string, Turn>();
+      // Settlement removes a turn from `active` before its child has exited.
+      // Ownership of that child lasts until close is observed (A2).
+      const teardowns = new TurnTeardowns();
 
       const emit = (event: RuntimeEvent) => {
         for (const l of [...listeners]) l(event);
@@ -422,13 +454,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             : turn;
         const mcpServers = acpMcpServers(turn);
 
-        const child = spawnCli(config.cli, support.spawnArgs(config, cliTurn), {
-          cwd,
-          env,
-          stdio: ["pipe", "pipe", "pipe"],
+        // R1-T8: one bounded, allowlisted lifecycle trace per child generation.
+        const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId });
+        lifecycle.record("spawn_requested");
+        const child = (() => {
+          try {
+            return spawnCli(config.cli, support.spawnArgs(config, cliTurn), {
+              cwd,
+              env,
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+          } catch (error) {
+            lifecycle.record("spawn_failed", { errno: errnoCategory(error) });
+            throw error;
+          }
+        })();
+        let spawned = false;
+        child.once("spawn", () => {
+          spawned = true;
+          lifecycle.record("spawned", { pid: child.pid ?? null });
         });
 
         child.once("close", () => providerBinding?.cleanup());
+        const teardown = teardowns.track(threadId, turnId, child);
         const state = { settled: false, promptSent: false, cancelRequested: false, text: "" };
         const asks = new Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>();
         let nextId = 1;
@@ -457,10 +505,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               timer.unref?.();
             }
             rpcPending.set(id, { method, resolve, reject, timer });
+            lifecycle.record("rpc_requested", { rpcId: id, method });
             send({ jsonrpc: "2.0", id, method, params });
           });
 
-        const stop = () => killCliTree(child);
+        // Requesting termination is not closure; the teardown observes close.
+        const stop = (reason: LifecycleStopReason) => {
+          lifecycle.record("stop_requested", {
+            reason,
+            pid: child.pid ?? null,
+            settled: state.settled,
+            cancelRequested: state.cancelRequested,
+            promptSent: state.promptSent,
+          });
+          teardown.markStopRequested();
+          killCliTree(child, lifecycle.observeStopRoute);
+        };
 
         /** Emit buffered assistant text as its own item, then clear it. */
         const flushAssistantText = () => {
@@ -470,9 +530,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
         };
 
-        const settle = (ok: boolean, stopReason: string | null) => {
+        const settle = (
+          ok: boolean,
+          stopReason: string | null,
+          cause: LifecycleStopReason = ok ? "turn_complete" : "turn_failure",
+        ) => {
           if (state.settled) return;
           state.settled = true;
+          lifecycle.record("turn_settled", {
+            reason: cause,
+            settled: true,
+            cancelRequested: state.cancelRequested,
+            promptSent: state.promptSent,
+          });
           if (interruptTimer) clearTimeout(interruptTimer);
           for (const finish of [...asks.values()]) finish("cancel", "system");
           for (const p of rpcPending.values()) {
@@ -483,7 +553,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           active.delete(threadId);
           flushAssistantText();
           emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null });
-          stop(); // the agent process does not exit on its own
+          stop(cause); // the agent process does not exit on its own
         };
 
         // server→client permission request → canonical request.opened
@@ -635,10 +705,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             appendNative(threadId, { dir: "in", source: SOURCE, msg: nativeLogMessage(msg) });
             if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
               const pend = rpcPending.get(msg.id);
+              if (!pend && msg.error) {
+                // No pending request matches: never attach a method to it.
+                lifecycle.record("rpc_rejected", lifecycleRejection(msg.error, msg.id));
+              }
               if (pend) {
                 rpcPending.delete(msg.id);
                 if (pend.timer) clearTimeout(pend.timer);
                 if (msg.error) {
+                  lifecycle.record("rpc_rejected", lifecycleRejection(msg.error, msg.id, pend.method));
                   const error = new Error(acpRpcErrorMessage(msg.error));
                   Object.assign(error, { code: msg.error.code, data: msg.error.data, acpMethod: pend.method });
                   pend.reject(error);
@@ -660,10 +735,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (stderr.length > 8192) stderr = stderr.slice(-8192);
         });
         child.on("error", (e) => {
+          if (!spawned) lifecycle.record("spawn_failed", { errno: errnoCategory(e) });
           emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
           settle(false, "spawn_error");
         });
-        child.on("close", (code) => {
+        child.on("close", (code, signal) => {
+          // Observed before settle() clears pending RPC state. A close with no
+          // earlier stop_requested is unsolicited; its initiator stays unknown.
+          lifecycle.record("closed", {
+            code,
+            signal,
+            pid: child.pid ?? null,
+            pendingMethods: [...rpcPending.values()].map((pending) => pending.method),
+            pendingCount: rpcPending.size,
+            settled: state.settled,
+            cancelRequested: state.cancelRequested,
+            promptSent: state.promptSent,
+          });
           if (!state.settled) {
             if (state.cancelRequested) {
               settle(true, "cancelled");
@@ -679,13 +767,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         });
 
+        // interruptTurn cannot tell a user's Stop from a watchdog or a settings
+        // change, so the requested stop is recorded as `unspecified`.
         const interrupt = () => {
           if (state.settled) return;
           state.cancelRequested = true;
-          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
-          else stop();
+          if (sessionId) {
+            lifecycle.record("stop_requested", {
+              reason: "unspecified",
+              pid: child.pid ?? null,
+              settled: false,
+              cancelRequested: true,
+              promptSent: state.promptSent,
+            });
+            send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+          } else stop("unspecified");
           if (interruptTimer) clearTimeout(interruptTimer);
-          interruptTimer = setTimeout(() => settle(true, "cancelled"), 5_000);
+          interruptTimer = setTimeout(() => settle(true, "cancelled", "cancel_timeout"), ACP_CANCEL_GRACE_MS);
           interruptTimer.unref?.();
         };
         active.set(threadId, { stop, interrupt, turnId, asks });
@@ -900,7 +998,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             localComputerMcp: !config.fullAuto,
           },
           sendTurn,
-          interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),
+          // Close-confirmed stop (A2): resolve only once the child that served
+          // this thread has closed; reject at the bounded deadline while the
+          // process stays owned. A thread with no live child is already closed.
+          interruptTurn: async (threadId, turnId) => {
+            active.get(threadId)?.interrupt();
+            const result = await teardowns.wait(threadId, turnId, acpStopBudget());
+            if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
+            return result;
+          },
+          awaitTurnTeardown: (threadId, turnId) => teardowns.wait(threadId, turnId, acpStopBudget()),
           respondToRequest: async (threadId, requestId, decision) => {
             const turn = active.get(threadId);
             const finish = turn?.asks.get(requestId);
@@ -910,7 +1017,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
           hasSession: (threadId) => active.has(threadId),
           stopAll: async () => {
-            for (const { stop } of active.values()) stop();
+            for (const { stop } of active.values()) stop("driver_dispose");
+            const result = await teardowns.waitAll({ closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() });
+            if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           },
           onEvent: (listener) => {
             listeners.add(listener);
@@ -918,7 +1027,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
         },
         dispose: async () => {
-          for (const { stop } of active.values()) stop();
+          for (const { stop } of active.values()) stop("driver_dispose");
+          const result = await teardowns.waitAll({ closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() });
+          // Same as codex: an unconfirmed close keeps listeners attached so
+          // the owned child's late events are still accounted for.
+          if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           listeners.clear();
         },
       };

@@ -25,6 +25,16 @@ import { removeTempDir } from "../../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
+/** Signal 0 probes existence without touching the process. */
+const processAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 /** A harness that exists only in tests: it exercises the opt-in session-config
  *  model hook so PR 1 can prove the core capability without shipping a visible
  *  engine. Real harnesses live in their own file. */
@@ -210,6 +220,10 @@ describe("ACP turns (fake CLI)", () => {
   afterEach(async () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
+    delete process.env.FAKE_ACP_PID_FILE;
+    delete process.env.FAKE_ACP_TERM;
+    delete process.env.FAKE_ACP_TERM_MS;
+    delete process.env.MURAGE_PROVIDER_CLOSE_MS;
     delete process.env.XAI_API_KEY;
     delete process.env.OPENCODE_API_KEY;
     delete process.env.CURSOR_API_KEY;
@@ -697,6 +711,217 @@ describe("ACP turns (fake CLI)", () => {
     expect(errors).toEqual([]);
     expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
     expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
+  it("close-confirmed stop: interruptTurn resolves only after the ACP child has exited", async () => {
+    const pidFile = join(scratch, "acp.pid");
+    process.env.FAKE_ACP_PID_FILE = pidFile;
+    process.env.FAKE_ACP_TERM = "linger";
+    process.env.FAKE_ACP_TERM_MS = "400";
+    await create(GrokAgentDriver, "cancel-ack");
+    const threadId = "t-close-confirmed";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(processAlive(pid)).toBe(true);
+    // The agent acknowledges the cancel at once; the child keeps running until
+    // it is terminated. Returning here used to hand its workspace away early.
+    await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(pid)).toBe(false);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toEqual([
+      expect.objectContaining({ turnId, ok: true, stopReason: "cancelled" }),
+    ]);
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+  });
+
+  it("close-confirmed stop: a child still alive at the deadline stays owned", async () => {
+    const pidFile = join(scratch, "acp.pid");
+    process.env.FAKE_ACP_PID_FILE = pidFile;
+    process.env.FAKE_ACP_TERM = "ignore";
+    process.env.MURAGE_PROVIDER_CLOSE_MS = "300";
+    await create(GrokAgentDriver, "cancel-ack");
+    const threadId = "t-close-unconfirmed";
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    try {
+      if (process.platform === "win32") {
+        // taskkill /T /F cannot be intercepted by the child: the real Windows
+        // route ends it, so the stop is confirmed there.
+        await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+        return;
+      }
+      await expect(instance.adapter.interruptTurn(threadId)).rejects.toMatchObject({
+        code: "provider_stop_unconfirmed",
+        stopResult: { closeConfirmed: false, reason: "timeout" },
+      });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(instance.adapter.hasSession(threadId)).toBe(false);
+      expect(processAlive(pid)).toBe(true);
+      await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({
+        closeConfirmed: false,
+        reason: "timeout",
+      });
+      process.kill(pid, "SIGKILL");
+      // the child stayed tracked, so its late close is still observed
+      await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    } finally {
+      if (processAlive(pid)) process.kill(pid, "SIGKILL");
+    }
+  });
+
+  it("close-confirmed stop: awaitTurnTeardown follows the exact turn's child, not a newer one", async () => {
+    const pidFile = join(scratch, "acp.pid");
+    process.env.FAKE_ACP_PID_FILE = pidFile;
+    await create();
+    const threadId = "t-teardown-generation";
+    const first = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const firstPid = Number(readFileSync(pidFile, "utf8"));
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, first.turnId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(firstPid)).toBe(false);
+
+    process.env.FAKE_ACP_MODE = "cancel-ack";
+    const second = await instance.adapter.sendTurn({ threadId, text: "again" });
+    await recorder.until((e) => e.type === "content.delta" && e.turnId === second.turnId);
+    const secondPid = Number(readFileSync(pidFile, "utf8"));
+    expect(secondPid).not.toBe(firstPid);
+    // The closed older generation is confirmed without waiting on, or
+    // vouching for, the live replacement.
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, first.turnId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(secondPid)).toBe(true);
+    await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+    expect(processAlive(secondPid)).toBe(false);
+  });
+
+  const lifecycleRows = (threadId: string) =>
+    readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { dir: string; msg: Record<string, any> })
+      .filter((row) => row.dir === "lifecycle")
+      .map((row) => row.msg);
+
+  it("lifecycle diagnostics: a completed turn traces one generation from spawn to close", async () => {
+    await create();
+    const threadId = `t-lifecycle-complete-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "LIFECYCLE_PROMPT_CANARY" });
+    await recorder.until((e) => e.type === "turn.completed");
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    const rows = lifecycleRows(threadId);
+    const events = rows.map((row) => row.event);
+    expect(events[0]).toBe("spawn_requested");
+    expect(rows.filter((row) => row.event === "rpc_requested").map((row) => row.method)).toEqual(
+      expect.arrayContaining(["initialize", "session/new", "session/prompt"]),
+    );
+    const at = (name: string) => events.indexOf(name);
+    expect(at("spawned")).toBeGreaterThan(-1);
+    expect(at("turn_settled")).toBeLessThan(at("stop_requested"));
+    expect(at("stop_requested")).toBeLessThan(at("stop_route"));
+    expect(at("stop_route")).toBeLessThan(at("closed"));
+    expect(rows[at("turn_settled")]).toMatchObject({ reason: "turn_complete", settled: true, promptSent: true, cancelRequested: false });
+    expect(rows[at("stop_requested")]).toMatchObject({ reason: "turn_complete" });
+    expect(rows[at("stop_route")]).toMatchObject({
+      route: process.platform === "win32" ? "windows_taskkill" : "posix_group_sigterm",
+      result: "requested",
+    });
+    const closed = rows[at("closed")];
+    expect(closed).toMatchObject({ settled: true, pendingMethods: [], pendingCount: 0, pid: rows[at("spawned")].pid });
+    expect(closed).toHaveProperty("code");
+    expect(closed).toHaveProperty("signal");
+    expect(typeof closed.code === "number" || typeof closed.signal === "string").toBe(true);
+    expect(new Set(rows.map((row) => row.processGeneration)).size).toBe(1);
+    expect(rows.every((row) => row.type === "engine_lifecycle" && row.schema === 1 && row.turnId === turnId && row.driver === "grokAgent")).toBe(true);
+    const sequences = rows.map((row) => row.sequence);
+    expect([...sequences].sort((a, b) => a - b)).toEqual(sequences);
+    expect(JSON.stringify(rows)).not.toContain("LIFECYCLE_PROMPT_CANARY");
+  });
+
+  it("lifecycle diagnostics: an unsolicited close is recorded before settlement with no stop request", async () => {
+    await create(GrokAgentDriver, "exit-on-prompt");
+    const threadId = `t-lifecycle-unsolicited-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const rows = lifecycleRows(threadId);
+    const events = rows.map((row) => row.event);
+    const closedAt = events.indexOf("closed");
+    expect(closedAt).toBeGreaterThan(-1);
+    expect(events.slice(0, closedAt)).not.toContain("stop_requested");
+    expect(events.indexOf("turn_settled")).toBeGreaterThan(closedAt);
+    expect(rows[closedAt]).toMatchObject({
+      code: process.platform === "win32" ? 1073807364 : 4,
+      signal: null,
+      settled: false,
+      cancelRequested: false,
+      promptSent: true,
+      pendingMethods: ["session/prompt"],
+      pendingCount: 1,
+    });
+    expect(rows.find((row) => row.event === "turn_settled")).toMatchObject({ reason: "turn_failure" });
+    // later cleanup appends; it does not rewrite the close
+    expect(rows.filter((row) => row.event === "stop_route_result").at(-1)).toMatchObject({ route: "already_exited" });
+  });
+
+  it("lifecycle diagnostics: a requested cancel is recorded before the close it preceded", async () => {
+    await create(GrokAgentDriver, "exit-on-cancel");
+    const threadId = `t-lifecycle-cancel-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
+    await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+    const rows = lifecycleRows(threadId);
+    const events = rows.map((row) => row.event);
+    const stopAt = events.indexOf("stop_requested");
+    const closedAt = events.indexOf("closed");
+    expect(stopAt).toBeGreaterThan(-1);
+    expect(stopAt).toBeLessThan(closedAt);
+    expect(rows[stopAt]).toMatchObject({ reason: "unspecified", cancelRequested: true, settled: false });
+    expect(rows[closedAt]).toMatchObject({ cancelRequested: true, settled: false, pendingMethods: ["session/prompt"], pendingCount: 1 });
+  });
+
+  it("lifecycle diagnostics: an RPC rejection is attributed to its pending method before close", async () => {
+    await create(GrokAgentDriver, "rpc-error:session/new");
+    const threadId = `t-lifecycle-rejected-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "turn.completed");
+    await instance.adapter.awaitTurnTeardown!(threadId, turnId);
+    const rows = lifecycleRows(threadId);
+    const rejectedAt = rows.findIndex((row) => row.event === "rpc_rejected");
+    expect(rows[rejectedAt]).toMatchObject({ method: "session/new", rpcCode: -32603, httpStatus: 500 });
+    expect(typeof rows[rejectedAt].rpcId).toBe("number");
+    expect(rejectedAt).toBeLessThan(rows.findIndex((row) => row.event === "closed"));
+    expect(rows.find((row) => row.event === "turn_settled")).toMatchObject({ reason: "turn_failure" });
+    expect(JSON.stringify(rows)).not.toMatch(/fake-private|fake-secret|billing\.invalid|Internal error/);
+  });
+
+  it("lifecycle diagnostics: a rejection with an unknown RPC id names no method", async () => {
+    await create(GrokAgentDriver, "unknown-rpc-error");
+    const threadId = `t-lifecycle-unknown-id-${Date.now()}`;
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const rejected = lifecycleRows(threadId).filter((row) => row.event === "rpc_rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({ rpcCode: -32603, httpStatus: 500 });
+    expect(rejected[0]).not.toHaveProperty("method");
+    expect(rejected[0]).not.toHaveProperty("rpcId");
+    expect(JSON.stringify(rejected)).not.toContain("fake-secret-canary");
+  });
+
+  it("lifecycle diagnostics: consecutive children on one thread keep distinct generations", async () => {
+    await create();
+    const threadId = `t-lifecycle-generations-${Date.now()}`;
+    for (const text of ["one", "two"]) {
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    }
+    const rows = lifecycleRows(threadId);
+    const generations = [...new Set(rows.map((row) => row.processGeneration))];
+    expect(generations).toHaveLength(2);
+    for (const generation of generations) {
+      const own = rows.filter((row) => row.processGeneration === generation);
+      expect(own.filter((row) => row.event === "closed")).toHaveLength(1);
+      expect(new Set(own.map((row) => row.turnId)).size).toBe(1);
+    }
   });
 
   it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {

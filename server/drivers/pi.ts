@@ -28,6 +28,7 @@ import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv }
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { describeSpawnFailure, killCliTree, spawnCli } from "../procs.ts";
+import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
 import type {
@@ -442,6 +443,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       /** Asks opened as host-control permission requests (local-computer scope). */
       scopedRequests: Set<string>;
     }>();
+    // settle() emits the terminal event and then requests termination; the
+    // child is owned until its close is observed (A2).
+    const teardowns = new TurnTeardowns();
+    // pi requests the kill in the same tick as settlement, so no grace period.
+    const piStopBudget = (): TeardownWait => {
+      const closeMs = providerCloseDeadlineMs();
+      return { closeMs, maxMs: closeMs };
+    };
 
     const emit = (event: RuntimeEvent) => {
       for (const l of [...listeners]) l(event);
@@ -541,6 +550,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           throw err;
         }
       })();
+      const teardown = teardowns.track(threadId, turnId, child);
       let buf = "";
       let assistantText = "";
       // resolve one-shot RPC responses (new_session / switch_session / set_model)
@@ -593,6 +603,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         } catch {
           /* already closed */
         }
+        teardown.markStopRequested();
         try {
           killCliTree(child);
         } catch {
@@ -614,6 +625,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         } catch {
           /* ignore */
         }
+        teardown.markStopRequested();
         try {
           killCliTree(child);
         } catch {
@@ -912,7 +924,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           effortLevels: EFFORT_LEVELS,
         },
         sendTurn,
-        interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        // Close-confirmed stop (A2): stop() settles and requests termination;
+        // resolve only after the child closed, reject at the deadline.
+        interruptTurn: async (threadId, turnId) => {
+          active.get(threadId)?.stop();
+          const result = await teardowns.wait(threadId, turnId, piStopBudget());
+          if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
+          return result;
+        },
+        awaitTurnTeardown: (threadId, turnId) => teardowns.wait(threadId, turnId, piStopBudget()),
         respondToRequest: async (threadId, requestId, decision) => {
           const entry = active.get(threadId);
           const answer = entry?.pending.get(requestId);
@@ -933,6 +953,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
           for (const { stop } of active.values()) stop();
+          const result = await teardowns.waitAll(piStopBudget());
+          if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
         },
         onEvent: (listener) => {
           listeners.add(listener);
@@ -941,6 +963,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       },
       dispose: async () => {
         for (const { stop } of active.values()) stop();
+        const result = await teardowns.waitAll(piStopBudget());
+        if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
         listeners.clear();
       },
     };

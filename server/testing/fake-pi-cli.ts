@@ -12,8 +12,11 @@
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
 //                  and env hygiene (no leaked secrets into the pi child). Model
 //                  pins, thinking levels and received prompts are appended too.
+//   FAKE_PI_PID_FILE   write this child's pid (close-confirmed stop tests)
+//   FAKE_PI_LINGER_MS  stay alive this long after SIGTERM or stdin end (max
+//                  10 s). POSIX-only observation: Windows taskkill /F runs no handler.
 
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_PI_MODE ?? "happy";
 const modelPairs = (process.env.FAKE_PI_MODELS ?? "ollama-cloud/glm-5.2,openai/gpt-4o")
@@ -31,6 +34,10 @@ if (argv.includes("--version") || argv.includes("-v")) {
   process.stdout.write("pi 0.84.2 (fake)\n");
   process.exit(0);
 }
+
+const lingerMs = Math.min(10_000, Number(process.env.FAKE_PI_LINGER_MS) || 0);
+const lingerThenExit = () => setTimeout(() => process.exit(0), lingerMs);
+if (lingerMs > 0) process.on("SIGTERM", lingerThenExit);
 
 if (process.env.FAKE_PI_DUMP) {
   try {
@@ -192,7 +199,8 @@ process.stdin.on("data", (chunk) => {
     handle(cmd);
   }
 });
-process.stdin.on("end", () => process.exit(0));
+if (process.env.FAKE_PI_PID_FILE) writeFileSync(process.env.FAKE_PI_PID_FILE, String(process.pid));
+process.stdin.on("end", () => (lingerMs > 0 ? lingerThenExit() : process.exit(0)));
 
 function handle(cmd: any) {
   switch (cmd.type) {
