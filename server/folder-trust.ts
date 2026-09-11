@@ -90,13 +90,96 @@ export function isUnrecordableTrustRoot(key: string): boolean {
   return canonicalFolder(key) === canonicalHome();
 }
 
+/** `[core]` settings of a git directory that decide its working tree, read
+ * the way libgit2 does when it opens the directory: `core.bare` and
+ * `core.worktree`. Missing or unreadable config = neither set. */
+function gitCoreConfig(gitDir: string): { bare: boolean; worktree: string | null } {
+  let text: string;
+  try {
+    text = readFileSync(join(gitDir, "config"), "utf8");
+  } catch {
+    return { bare: false, worktree: null };
+  }
+  let inCore = false;
+  let bare = false;
+  let worktree: string | null = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/^\s+/, "").replace(/\s*[#;].*$/, "");
+    if (!line) continue;
+    if (line.startsWith("[")) {
+      inCore = /^\[\s*core\s*\]$/i.test(line);
+      continue;
+    }
+    if (!inCore) continue;
+    const eq = line.indexOf("=");
+    if (eq < 0) continue;
+    const name = line.slice(0, eq).trim().toLowerCase();
+    let value = line.slice(eq + 1).trim();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+    if (name === "bare") bare = value.toLowerCase() === "true";
+    else if (name === "worktree") worktree = value;
+  }
+  return { bare, worktree };
+}
+
+/** The main checkout's root for a LINKED git worktree root (`<root>/.git`
+ * is a file naming a gitdir under the main repository's `worktrees/`), or
+ * null when `root` is not one. Mirrors the git-topology branch of upstream
+ * `workspace_key` (fuigo-workspace/src/trust.rs, git2): the linked
+ * worktree's common gitdir is opened as the main repository, and the
+ * collapse fires ONLY for the conventional `<main>/.git` layout — the main
+ * repository's inferred working tree must own the common gitdir as its
+ * `.git`. A bare repository (no working tree) or a `--separate-git-dir`
+ * checkout (the gitdir's parent is not the checkout) fails that guard and
+ * the worktree keeps its own root, narrow and never widened. A submodule's
+ * `.git` file names a gitdir with no `commondir`/`gitdir` files and is not
+ * a worktree either. */
+export function linkedWorktreeMainRoot(root: string): string | null {
+  const dotGit = join(root, ".git");
+  let link: string;
+  try {
+    if (!statSync(dotGit).isFile()) return null;
+    link = readFileSync(dotGit, "utf8");
+  } catch {
+    return null;
+  }
+  const named = /^gitdir:\s*(.+?)\s*$/m.exec(link);
+  if (!named) return null;
+  const gitDir = canonicalFolder(resolve(root, named[1]!));
+  // libgit2 `repo_is_worktree`: a `gitdir` file inside the gitdir marks a
+  // linked worktree; `commondir` names the shared (main) git directory
+  let commonRel: string;
+  try {
+    if (!isFile(join(gitDir, "gitdir"))) return null;
+    commonRel = readFileSync(join(gitDir, "commondir"), "utf8").trim();
+  } catch {
+    return null;
+  }
+  if (!commonRel) return null;
+  const commonDir = canonicalFolder(resolve(gitDir, commonRel));
+  if (commonDir === gitDir || !isDir(commonDir)) return null;
+  const core = gitCoreConfig(commonDir);
+  // the main repository's working tree as libgit2 infers it: `core.worktree`
+  // when set (relative to the gitdir), none for a bare repository, else the
+  // gitdir's parent
+  const mainWorkdir = core.worktree ? resolve(commonDir, core.worktree) : core.bare ? null : dirname(commonDir);
+  if (!mainWorkdir) return null;
+  if (canonicalFolder(join(mainWorkdir, ".git")) !== commonDir) return null;
+  return canonicalFolder(mainWorkdir);
+}
+
 /** The trust key for a folder: the canonical git root when the folder sits in
  * a repository whose root is recordable, else the canonical folder itself.
- * Mirrors upstream `workspace_key` (fuigo-workspace/src/trust.rs) minus its
- * managed-worktree source-repo collapse. */
+ * A linked git worktree keys on its MAIN checkout's root (FUIGOTRUST3), so
+ * every worktree of a repository shares one key with the checkout a
+ * standalone `fuigo --trust` was run in. Mirrors upstream `workspace_key`
+ * (fuigo-workspace/src/trust.rs) minus its managed-worktree registry
+ * collapse (`~/.fuigo/worktrees.db`, a `fuigo -w` bookkeeping database
+ * Murage does not read). */
 export function folderTrustKey(folder: string): string {
   const root = gitRootOf(folder);
-  if (root && !isUnrecordableTrustRoot(root)) return root;
+  const key = root ? linkedWorktreeMainRoot(root) ?? root : null;
+  if (key && !isUnrecordableTrustRoot(key)) return key;
   return canonicalFolder(folder);
 }
 
@@ -368,14 +451,18 @@ function pathStartsWith(path: string, prefix: string): boolean {
 }
 
 /** Whether the engine's own store trusts `folder`, by upstream `is_trusted`
- * (fuigo-workspace/src/trust.rs): among recorded folders that are an
- * ancestor-or-self of the canonical query AND share its workspace key (the
- * same git root — a nested repo is not covered), the deepest decides; on a
- * depth tie every tied record must say trusted; over-broad keys (home, a
- * filesystem root, a relative path) are ignored. */
+ * (fuigo-workspace/src/trust.rs), which the engine queries with the
+ * folder's WORKSPACE KEY (`is_trusted(workspace_key(cwd))`): among recorded
+ * folders that are an ancestor-or-self of that key AND share its own
+ * workspace key (the same git root — a nested repo is not covered, and a
+ * hand-edited record below the root covers nothing), the deepest decides;
+ * on a depth tie every tied record must say trusted; over-broad keys (home,
+ * a filesystem root, a relative path) are ignored. A linked worktree is
+ * queried by its main checkout's root (FUIGOTRUST3), so a standalone
+ * `fuigo --trust` on the main repository covers its worktrees. */
 export function upstreamTrustsFolder(records: ReadonlyMap<string, boolean>, folder: string): boolean {
   if (!records.size) return false;
-  const query = canonicalFolder(folder);
+  const query = folderTrustKey(canonicalFolder(folder));
   const queryKey = folderTrustKey(query);
   let bestDepth: number | null = null;
   let trusted = false;

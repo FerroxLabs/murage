@@ -2,9 +2,10 @@
 // what a folder would contribute to a Fuigo turn, the trust key that mirrors
 // upstream `workspace_key` (git root, else the folder; home and filesystem
 // roots never), and the durable store the driver decides from.
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, parse } from "node:path";
+import { dirname, join, parse } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -42,6 +43,27 @@ afterEach(async () => {
 const repo = (name: string) => {
   const dir = join(root, name);
   mkdirSync(join(dir, ".git"), { recursive: true });
+  return dir;
+};
+/** A real git repository with one commit (a linked worktree needs a HEAD)
+ * and linked worktrees added with `git worktree add`, the way Murage's own
+ * release lanes are laid out. */
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync("git", args, {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: root },
+  }).toString();
+const realRepo = (name: string, ...initArgs: string[]) => {
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  git(dir, "init", "-q", ...initArgs, ".");
+  git(dir, "commit", "-q", "--allow-empty", "-m", "init");
+  return dir;
+};
+const linkedWorktree = (main: string, name: string, branch = name) => {
+  const dir = join(root, name);
+  git(main, "worktree", "add", "-q", "-b", branch, dir);
   return dir;
 };
 
@@ -113,6 +135,69 @@ describe("trust keys", () => {
     expect(isUnrecordableTrustRoot("relative/path")).toBe(true);
     expect(isUnrecordableTrustRoot(root)).toBe(false);
     expect(canonicalFolder(join(root, "missing"))).toBe(join(root, "missing"));
+  });
+
+  // FUIGOTRUST3 (2): upstream `workspace_key` collapses a linked git
+  // worktree onto its MAIN checkout's root, so every worktree of a repo
+  // shares one trust key with the checkout `fuigo --trust` was run in.
+  // Murage's own release lanes are linked worktrees: without the collapse
+  // a standalone grant on the main repo is unseen, the card is raised, and a
+  // Don't trust shows the withheld chip while the engine runs trusted.
+  it("keys a linked git worktree on its main checkout, like upstream workspace_key", () => {
+    const main = realRepo("main");
+    const wt1 = linkedWorktree(main, "wt1");
+    const wt2 = linkedWorktree(main, "wt2");
+    // the main checkout keys off its own root
+    expect(folderTrustKey(main)).toBe(main);
+    expect(folderTrustKey(join(main, "src"))).toBe(main);
+    // each linked worktree collapses onto it, from the root or a subfolder
+    expect(gitRootOf(wt1)).toBe(wt1);
+    expect(folderTrustKey(wt1)).toBe(main);
+    expect(folderTrustKey(wt2)).toBe(main);
+    const deep = join(wt1, "server", "drivers");
+    mkdirSync(deep, { recursive: true });
+    expect(folderTrustKey(deep)).toBe(main);
+    expect(scanFolderTrustSources(deep)).toMatchObject({ key: main, folder: deep });
+    // the scan still walks the worktree's own tree (the loaders walk the cwd chain)
+    writeFileSync(join(wt1, "AGENTS.md"), "# wt1 only");
+    expect(scanFolderTrustSources(deep).sources).toEqual(["AGENTS.md"]);
+    expect(scanFolderTrustSources(main).sources).toEqual([]);
+    // a submodule-shaped .git file (gitdir with no commondir) is not a worktree
+    const sub = join(main, "vendor", "lib");
+    mkdirSync(sub, { recursive: true });
+    mkdirSync(join(main, ".git", "modules", "lib"), { recursive: true });
+    writeFileSync(join(sub, ".git"), "gitdir: ../../.git/modules/lib\n");
+    expect(folderTrustKey(sub)).toBe(sub);
+  });
+
+  it("never widens a worktree of a bare or separate-git-dir repository past its own folder", () => {
+    // a bare repo's common dir is the bare dir itself; its parent contains
+    // every sibling, so the key stays the worktree's own folder
+    const bare = join(root, "repo.git");
+    mkdirSync(bare, { recursive: true });
+    git(bare, "init", "-q", "--bare", ".");
+    const seed = join(root, "seed");
+    mkdirSync(seed, { recursive: true });
+    git(seed, "init", "-q", ".");
+    git(seed, "commit", "-q", "--allow-empty", "-m", "init");
+    git(seed, "push", "-q", bare, "HEAD:refs/heads/main");
+    const bareWt = join(root, "bare-wt");
+    git(bare, "worktree", "add", "-q", bareWt, "main");
+    expect(folderTrustKey(bareWt)).toBe(bareWt);
+    expect(folderTrustKey(bareWt)).not.toBe(root);
+    // `git init --separate-git-dir`: the common dir's inferred workdir is
+    // the gitdir's parent, not the checkout, so the layout guard rejects it
+    const checkout = join(root, "checkout");
+    const gitstore = join(root, "gitstore");
+    mkdirSync(checkout, { recursive: true });
+    git(checkout, "init", "-q", "--separate-git-dir", gitstore, ".");
+    git(checkout, "commit", "-q", "--allow-empty", "-m", "init");
+    expect(folderTrustKey(checkout)).toBe(checkout);
+    const sepWt = join(root, "sep-wt");
+    git(checkout, "worktree", "add", "-q", "-b", "sep", sepWt);
+    expect(folderTrustKey(sepWt)).toBe(sepWt);
+    expect(folderTrustKey(sepWt)).not.toBe(root);
+    expect(dirname(gitstore)).toBe(root);
   });
 
   it("maps the engine's configKinds to names a person recognises", () => {
@@ -187,9 +272,13 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     // …but not a nested repository with its own workspace key
     expect(upstreamTrustsFolder(new Map([[repoDir, true]]), nested)).toBe(false);
     expect(upstreamTrustsFolder(new Map([[nested, true]]), nested)).toBe(true);
-    // the nearer decision wins: an explicit child untrust overrides the root's grant
-    expect(upstreamTrustsFolder(new Map([[repoDir, true], [pkg, false]]), pkg)).toBe(false);
+    // FUIGOTRUST3 (2): upstream `is_trusted` queries the WORKSPACE KEY (the
+    // root), not the cwd, so a hand-edited record below the root never
+    // covers a query and never overrides the root's grant — the engine
+    // trusts the package; Murage must say the same or its chip would lie
+    expect(upstreamTrustsFolder(new Map([[repoDir, true], [pkg, false]]), pkg)).toBe(true);
     expect(upstreamTrustsFolder(new Map([[repoDir, true], [pkg, false]]), join(repoDir, "packages"))).toBe(true);
+    expect(upstreamTrustsFolder(new Map([[pkg, true]]), pkg)).toBe(false);
     // a hand-edited alias that ties on depth and contradicts fails closed
     expect(upstreamTrustsFolder(new Map([[plain, true], [`${plain}/`, false]]), plain)).toBe(false);
     expect(upstreamTrustsFolder(new Map([[plain, true], [`${plain}/`, true]]), plain)).toBe(true);
@@ -198,6 +287,29 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     // a sibling is not covered, and an empty store trusts nothing
     expect(upstreamTrustsFolder(new Map([[plain, true]]), repoDir)).toBe(false);
     expect(upstreamTrustsFolder(new Map(), plain)).toBe(false);
+  });
+
+  it("a standalone `fuigo --trust` on the main checkout covers its linked worktrees, and the record's cascade is judged on the workspace key like upstream", () => {
+    const main = realRepo("main");
+    const wt = linkedWorktree(main, "lane");
+    const deep = join(wt, "server");
+    mkdirSync(deep, { recursive: true });
+    // the grant standalone Fuigo wrote from the main checkout
+    expect(upstreamTrustsFolder(new Map([[main, true]]), wt)).toBe(true);
+    expect(upstreamTrustsFolder(new Map([[main, true]]), deep)).toBe(true);
+    // a grant written from inside the worktree is keyed on main too, so it
+    // covers the main checkout and the other worktrees
+    expect(upstreamTrustsFolder(new Map([[main, true]]), main)).toBe(true);
+    // a declined main checkout declines its worktrees
+    expect(upstreamTrustsFolder(new Map([[main, false]]), wt)).toBe(false);
+    // a hand-edited record on the worktree's own path is not the workspace
+    // key (the engine never writes one): upstream is_trusted queries the
+    // key, so it neither covers nor overrides
+    expect(upstreamTrustsFolder(new Map([[wt, true]]), wt)).toBe(false);
+    expect(upstreamTrustsFolder(new Map([[main, true], [wt, false]]), wt)).toBe(true);
+    const home = fuigoHomeIn("fuigo-home-wt");
+    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${main}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    expect(scanFolderTrustSources(deep, { fuigoHome: home })).toEqual({ key: main, folder: deep, sources: [], upstreamTrusted: true });
   });
 
   it("the scan reports upstreamTrusted only when a Fuigo home is given and its store trusts the workspace", () => {
