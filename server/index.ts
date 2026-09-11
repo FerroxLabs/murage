@@ -4263,7 +4263,15 @@ async function startTurn(
           if(stopCloseConfirmed(await instance.adapter.interruptTurn(threadId))===false)throw new Error("provider termination is unconfirmed");
           if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
         } catch(error) { acceptedTurnCleanupFailed=true;throw error; }
-      },()=>memoryReceipt?.accepted());
+      },(accepted)=>{
+        // Bind the writer lease to the provider turn BEFORE acceptance can
+        // refuse it: a memory disclosure revoked at acceptance stops the
+        // provider turn (stopAfterSetup above), and only a bound lease is
+        // released by that turn's terminal event. Unbound, the folder — and
+        // every workspace save in it — stayed held until restart (F4-T7).
+        projectTurnLeases.bind(threadId, dispatchClaimId, accepted.turnId);
+        memoryReceipt?.accepted();
+      });
       if (!internalCapabilities.bindProviderTurn(threadId, dispatchClaimId, dispatch.value.turnId)) {
         revokeInternalGeneration(threadId, dispatchClaimId);
       }
@@ -5393,7 +5401,12 @@ async function runGroupMemberTurn(
           await instance.adapter.interruptTurn(threadId);
           if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
         } catch(error) { acceptedRoomCleanupFailed=true;throw error; }
-      },()=>memoryReceipt?.accepted());
+      },(accepted)=>{
+        // Same as the direct path: bound before acceptance can refuse, so the
+        // stopped provider turn's terminal event releases the folder.
+        projectTurnLeases.bind(threadId, internalGeneration, accepted.turnId);
+        memoryReceipt?.accepted();
+      });
     })()
       .then((dispatch) => {
         if (!internalCapabilities.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId)) {
