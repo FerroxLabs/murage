@@ -92,6 +92,19 @@ it("names the reference count in the owner's paid approval",async()=>{
  expect(card.card?.title).toBe("Approve image edit");expect(card.card?.subtitle).toContain("One image from 3 reference images · openai · gpt-image-2");
  f.operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");await refusal;expect(provider).not.toHaveBeenCalled();
 });
+it("names the pinned upstream endpoint in an OpenRouter approval and nothing for other providers",async()=>{
+ const f=fixture(),provider=vi.fn();
+ const routed={...detail,connectionId:"openrouter",provider:"openrouter" as const,model:"openai/gpt-image-2",operation:"edit" as const,referenceCount:2,endpointTag:"openai"};
+ const job=f.operations.execute(f.actor,"pinned",{prompt:"edit"},async reserve=>{await reserve(routed);provider();});
+ const refusal=expect(job).rejects.toThrow("not approved");const card=await f.card();
+ expect(card.card?.subtitle).toContain("One image from 2 reference images · openrouter · openai/gpt-image-2 (pinned to openai, no fallback)");
+ f.operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");await refusal;expect(provider).not.toHaveBeenCalled();
+ const g=fixture();
+ const plain=g.operations.execute(g.actor,"plain",{prompt:"draw"},async reserve=>{await reserve(detail);provider();});
+ const plainRefusal=expect(plain).rejects.toThrow("not approved");const plainCard=await g.card();
+ expect(plainCard.card?.subtitle).toContain("One image · openai · gpt-image-2.");expect(plainCard.card?.subtitle).not.toContain("pinned");
+ g.operations.resolve(g.actor.threadId,plainCard.card!.requestId!,"deny");await plainRefusal;expect(provider).not.toHaveBeenCalled();
+});
 it.skipIf(process.platform==="win32")("refuses symlinked image workspaces without writing outside the bot",()=>{
  const f=fixture(),parent=join(DATA_DIR,"workspaces"),target=join(DATA_DIR,"other-private-workspace");mkdirSync(parent,{recursive:true});mkdirSync(target);symlinkSync(target,join(parent,f.bot.id));
  expect(()=>publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail)).toThrow("private directory");expect(existsSync(join(target,"generated-images"))).toBe(false);
