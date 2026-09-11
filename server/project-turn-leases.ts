@@ -19,7 +19,12 @@ interface TurnLease {
  *   released the folder within the bound — refuse, tell the user to retry. */
 export type RestoreAdmission =
   | { ok: true; lease: ProjectFolderLease }
-  | { ok: false; reason: "conflict" | "still-closing" };
+  | { ok: false; reason: "still-closing" }
+  /** `code` is the registry's own refusal (`conflict`, `owner-in-use`,
+   * `invalid-path`, ...) so a caller can tell a busy folder from an unusable
+   * path (STOPRESTORE2: the workspace editor answers `bot-writing` for the
+   * former and `root-changed` for the latter). */
+  | { ok: false; reason: "conflict"; code: ProjectFolderLeaseError["code"] };
 
 /** Writer admission bookkeeping for provider generations, not an OS lock.
  * Revoking a capability does not prove that its provider stopped writing. */
@@ -104,15 +109,16 @@ export class ProjectTurnLeases {
     for (;;) {
       try { return { ok: true, lease: this.folders.acquireRestore(ownerId, cwd) }; }
       catch (error) {
-        if (!(error instanceof ProjectFolderLeaseError) || error.code !== "conflict") return { ok: false, reason: "conflict" };
+        if (!(error instanceof ProjectFolderLeaseError)) return { ok: false, reason: "conflict", code: "conflict" };
+        if (error.code !== "conflict") return { ok: false, reason: "conflict", code: error.code };
       }
       let blockers: ProjectFolderLease[];
       try { blockers = this.folders.conflicts(cwd, "restore"); }
-      catch { return { ok: false, reason: "conflict" }; }
+      catch (error) { return { ok: false, reason: "conflict", code: error instanceof ProjectFolderLeaseError ? error.code : "conflict" }; }
       // Released between the refusal and this check: acquire on the next pass.
       if (blockers.length === 0) continue;
       if (!blockers.every(lease => lease.mode === "writer" && this.owners.get(lease.ownerId)?.stopRequested === true)) {
-        return { ok: false, reason: "conflict" };
+        return { ok: false, reason: "conflict", code: "conflict" };
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) return { ok: false, reason: "still-closing" };

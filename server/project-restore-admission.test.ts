@@ -107,8 +107,12 @@ async function startFixture(signal: AbortSignal, options: { env?: Record<string,
     expect(turn.status).toBe(202);
     const threadId: string = turn.body.threadId;
     expect(threadId).toBeTruthy();
-    await until("the fixture engine to receive the turn", () => existsSync(dump));
-    const pid = Number(JSON.parse(readFileSync(dump, "utf8")).pid);
+    // The dump is observable before its bytes are complete under load: wait
+    // for a parseable record that names the engine's pid.
+    const pid = await until("the fixture engine to receive the turn", () => {
+      if (!existsSync(dump)) return 0;
+      try { return Number(JSON.parse(readFileSync(dump, "utf8")).pid) || 0; } catch { return 0; }
+    });
     expect(pid).toBeGreaterThan(0);
     return { threadId, pid };
   };

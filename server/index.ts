@@ -374,12 +374,13 @@ import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { TelegramService } from "./telegram-service.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES } from "./bot-package-manifest.ts";
 import { commitPackageImportFiles, recoverPackageImportTransaction } from "./package-import-transaction.ts";
-import { shouldMountLocalComputer } from "./local-routing.ts";
+import { autoMountsLocalComputer, shouldMountLocalComputer } from "./local-routing.ts";
 // 0.1.52 K0 delegation seams (docs/plans/0152-CONTRACTS.md).
 import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { hostStoppedActivityName } from "../shared/host-stop.ts";
 import { createOutputPublisher, managedImageOutputPath, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
 import { localModelsRoute } from "./local-models.ts";
@@ -477,7 +478,10 @@ function selectedProviderRoute(selection: ModelSelection, driverKind: string): P
   validateProviderTurnRoute(driverKind, route); return route;
 }
 /** A turn the host stops on its own (not the user's Stop) settles as cancelled
- * with no error card, so the conversation says why it ended (STOP1). */
+ * with no error card, so the conversation says why it ended (STOP1). The
+ * "stopped:" name prefix (shared/host-stop.ts) is what the transcripts key
+ * on: a neutral stopped row that stays visible in a 1:1 thread even with
+ * Settings → Tool calls off, never the red error card (STOP2). */
 function noteHostStoppedTurn(threadId: string, botId: string, reason: string): void {
   const bot = store.bot(botId);
   try {
@@ -487,7 +491,7 @@ function noteHostStoppedTurn(threadId: string, botId: string, reason: string): v
       ...(bot && store.groupByThread(threadId) ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}),
       // ok:false: a settled, not-successful chip. No "error:" prefix, so no
       // error card and no Retry.
-      tool: { name: `Stopped — ${reason}`, ok: false },
+      tool: { name: hostStoppedActivityName(reason), ok: false },
     });
   } catch { /* the thread may already be gone */ }
 }
@@ -1323,7 +1327,9 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
-const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders };
+// STOPRESTORE2: the workspace editor's overwrite hold waits for a stopped
+// turn's lease the way a restore does (projectTurns + the engine close budget).
+const featureRouteDeps = { dataDir: DATA_DIR, database, store, artifactScopes, projectFolders: projectTurnLeases.folders, projectTurns: projectTurnLeases, stoppedTurnCloseMs: providerCloseDeadlineMs };
 const outputPublisher = createOutputPublisher(featureRouteDeps);
 const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
 function turnMemoryAccess(botId: string, threadId: string, generation: string): MemoryAccess {
@@ -4238,7 +4244,10 @@ async function startTurn(
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
-        let bundle=await buildMemoryBundle(query,access,memoryWorker,{availableContextTokens});
+        // The just-appended user message is already captured; keep its own
+        // chunk out of this turn's recall (MEMJSON2).
+        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript]};
+        let bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);
         let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
           memoryRefreshed=true;
@@ -4256,7 +4265,7 @@ async function startTurn(
           bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
             if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
             else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-          },{availableContextTokens});
+          },memoryOptions);
           // The same await can invalidate disclosed history; re-filter with the
           // original authority rather than replaying a pre-reset snapshot.
           const allowed=filterMemoryReplay(threadId,activeMessages,access);
@@ -5431,7 +5440,7 @@ async function runGroupMemberTurn(
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-    },{availableContextTokens});
+    },{availableContextTokens,excludeMessageIds:latestUser?[latestUser.id]:[]});
     const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
     text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
@@ -8015,7 +8024,9 @@ const server = createServer(async (req, res) => {
       if(requiredKind==="memory") {
         if(method!=="POST")return json(res,405,{error:"memory routes require POST"});
         const access=memoryAccess(internalCapabilities,internalClaim,()=>({bots:store.bots,groups:store.groups}));
-        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker));
+        // Turn-local handles (m1, m2, …) resolve only through the receipt of
+        // the dispatch this capability was minted for (MEMJSON2).
+        return json(res,200,await memoryAgentRoute(path,await readBody(req),access,memoryWorker,memoryDispatches.get(internalClaim.threadId)));
       }
       const internalEventId = internalOwner.eventId;
       const admitEventAction = (kind: "create" | "handoff", admissionId: string) => {
@@ -11009,12 +11020,21 @@ const server = createServer(async (req, res) => {
       // create the combination — a bot curling the loopback API from a tool
       // call, a script, a stale client — is refused. The renderer dialog
       // alone is not a boundary; this check is.
-      const wantsComputer = body.computer !== undefined ? body.computer : existingBot?.computer;
+      // The rule is the RESOLVED destination, not the literal field: a bot
+      // that never chose a computer (`undefined`, the "Auto" destination)
+      // mounts this computer on macOS exactly as an explicit "local" does,
+      // so Auto on it needs the same acknowledgement — the same
+      // `autoMountsLocalComputer` the thread route applies. Anything else
+      // would let Auto onto a fresh Mac bot's desktop at profile level with
+      // no warning while the thread route asked for one (AUTOOP2 finding 1).
+      // The acknowledgement is never persisted: the granted combination
+      // itself is the proof, so once local Auto stands, re-asserting it or
+      // patching unrelated fields needs no re-ack, while leaving the local
+      // computer ends the grant and coming back needs the warning again.
+      const wantsComputer = body.computer === null ? undefined : body.computer !== undefined ? body.computer : existingBot?.computer;
       const wantsAuto = body.autoApprove !== undefined ? body.autoApprove : existingBot?.autoApprove === true;
-      const alreadyGranted = existingBot?.computer === "local" && existingBot?.autoApprove === true;
-      const autoMayUseLocal = body.computer === null && shouldMountLocalComputer({ requested: undefined,
-        hostPlatform: process.platform, providerSupportsLocal: true });
-      if ((wantsComputer === "local" || autoMayUseLocal) && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
+      const alreadyGranted = existingBot?.autoApprove === true && autoMountsLocalComputer(existingBot.computer);
+      if (autoMountsLocalComputer(wantsComputer) && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
         return json(res, 400, {
           error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)",
         });
@@ -12098,7 +12118,7 @@ const server = createServer(async (req, res) => {
       if(body.modelSelection!==undefined){const checked=checkedModelSelection(body.modelSelection,{selection:current.modelSelection,busy:false},body.requireAvailableModel===true);if(!checked.ok)return json(res,checked.status,{error:checked.error});patch.modelSelection=checked.selection;}
       if(body.autoApprove!==undefined){
         if(typeof body.autoApprove!=="boolean")return json(res,400,{error:"autoApprove must be true or false"});
-        if(body.autoApprove&&!current.autoApprove&&shouldMountLocalComputer({requested:current.computer==="vm"||current.computer==="browser"?"off":current.computer,hostPlatform:process.platform,providerSupportsLocal:true})&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first"});
+        if(body.autoApprove&&!current.autoApprove&&autoMountsLocalComputer(current.computer)&&body.acknowledgeLocalAuto!==true)return json(res,400,{error:"Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)"});
         patch.autoApprove=body.autoApprove;
       }
       if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;}

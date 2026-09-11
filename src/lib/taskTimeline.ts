@@ -1,3 +1,5 @@
+import { hostStoppedReason } from "../../shared/host-stop.ts";
+
 /** The persisted message fields this pure projection needs. Keeping this
  * structural avoids pulling the renderer's TSX store into server tests. */
 export interface TimelineMessage {
@@ -35,6 +37,13 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
       });
       sawUserInput = true;
     } else if (message.kind === "activity" && message.tool) {
+      // a host stop is neither a tool run nor a failure: the harness observed
+      // the turn end, and says why — the neutral dot, never the red one
+      const stoppedReason = hostStoppedReason(message.tool.name);
+      if (stoppedReason) {
+        events.push({ id: message.id, at: message.at, label: `Stopped — ${stoppedReason}`, state: "observed", kind: "tool" });
+        continue;
+      }
       const failed = message.tool.ok === false || message.tool.name.startsWith("error:");
       events.push({
         id: message.id,

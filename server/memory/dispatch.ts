@@ -2,7 +2,7 @@ import type { MemoryBundle } from "../../shared/memory.ts";
 import { database } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import type { MemorySearchBridge } from "./search.ts";
-import { assertMemoryBundle, buildMemoryBundle } from "./bundle.ts";
+import { assertMemoryBundle, buildMemoryBundle, memoryHandleRecord } from "./bundle.ts";
 import { bindMemoryDisclosureSession, deliverMemoryDisclosure, linkMemoryDisclosureOutput, prepareMemoryDisclosure } from "./disclosures.ts";
 
 /** Changed references replace a native context through fresh authorized replay.
@@ -40,6 +40,13 @@ export class MemoryDispatchReceipt {
   /** Event subscribers cannot throw out of the shared bus or skip capability cleanup. */
   completed(ok:boolean) { if(ok||this.observedOutput)try { this.accepted(); } catch(error) { this.failure=error; } }
   output(messageId:string) { this.observedOutput=true; linkMemoryDisclosureOutput(this.bundle.bundleId,messageId); }
+  /** Resolve a turn-local handle (m1, m2, …) from the remembered-context frame
+   * this receipt delivered. Only the capability that dispatched the turn may
+   * resolve its handles: the same bot, thread and generation (MEMJSON2). */
+  resolveHandle(handle:string,access:MemoryAccess):{id:string;version:number}|undefined {
+    if(access.botId!==this.access.botId||access.threadId!==this.access.threadId||access.generation!==this.access.generation)return undefined;
+    return memoryHandleRecord(this.bundle,handle);
+  }
 }
 
 /** Session shutdown can overlap checkpoint publication. Build only after that
