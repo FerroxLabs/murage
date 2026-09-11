@@ -496,6 +496,9 @@ function noteHostStoppedTurn(threadId: string, botId: string, reason: string): v
     });
   } catch { /* the thread may already be gone */ }
 }
+/** The reason a room member turn reports when its internal generation was
+ * revoked after the room claim and before dispatch (runGroupMemberTurn). */
+const ROOM_TURN_REVOKED_BEFORE_DISPATCH = "the bot's settings or access changed while its turn was being set up, so it was not started";
 function providerRouteIsCurrent(route: ProviderTurnRoute | undefined): boolean { return !route || providerConnections.isCurrent(route.connectionId, route.revision); }
 providerConnections.subscribe(changedIds => {
   for (const [threadId, active] of activeProviderSelections) if (changedIds.includes(active.route.connectionId) && !providerRouteIsCurrent(active.route)) {
@@ -5318,6 +5321,30 @@ async function runGroupMemberTurn(
 
   store.patchGroup(group.id, { busyBotId: bot.id }); // the store's change stream carries the frame
   groupSpeakers.set(threadId, { botId: bot.id, name: bot.name, color: bot.color });
+  // The room claim above is this attempt's. Every exit before a provider
+  // turn is accepted releases it through this one path — the same steps a
+  // rejected dispatch takes (the dispatch catch below finishes as
+  // "dispatch_failed" and lands here): the speaker and busyBotId cleared,
+  // the bot idle, delegations waiting on it retried, the browser capability
+  // released and the queues drained. An exit that skipped any of this left
+  // the room silently busy — working, no chip, no reply (RED2J).
+  const releaseUnstartedRoomTurn = async () => {
+    if (skillAuthoring) skillAuthoringClaim.claimed = false;
+    if (store.group(group.id)?.busyBotId === bot.id) {
+      groupSpeakers.delete(threadId);
+      store.patchGroup(group.id, { busyBotId: null, unread: true });
+    }
+    if (store.bot(bot.id)?.busy) {
+      store.setActivity(bot.id, "idle");
+      retryDelegationsWaitingOn(bot.id);
+    }
+    await releaseBrowserCapabilityForThread(threadId);
+    // No turn.completed follows a room turn that never started. Anything
+    // queued while this bot briefly owned the room must be retried now.
+    drainQueuedSends();
+    drainConnectorResumes();
+    drainSecretResumes();
+  };
 
   const roster = group.memberIds
     .map((id) => store.bot(id))
@@ -5424,18 +5451,26 @@ async function runGroupMemberTurn(
     return false;
   }
   let replyText = "";
+  // This attempt's internal generation can be revoked between the claim and
+  // the dispatch: the bot's model or connected-app access changed, its thread
+  // was stopped or deleted, or the provider fleet reloaded. No provider turn
+  // starts on a revoked generation. That is the host stopping the turn, not
+  // an error: the room says why (STOP2 "stopped:" notice), and the room and
+  // the bot are released exactly as after a rejected dispatch, so the next
+  // message is answered. Returning here without that release left the room
+  // busy with no chip and no reply (RED2I verifier).
+  if (internalTurnOwners.get(threadId)?.generation !== internalGeneration) {
+    noteHostStoppedTurn(threadId, bot.id, ROOM_TURN_REVOKED_BEFORE_DISPATCH);
+    await releaseUnstartedRoomTurn();
+    return false;
+  }
   if (workspace) {
     try {
-      if (internalTurnOwners.get(threadId)?.generation !== internalGeneration) return false;
       cwd = projectTurnLeases.acquire(threadId, internalGeneration, cwd ?? homedir()).canonicalPath;
     } catch {
       const message = "This project's files are being restored. Wait for the restore to finish before running this task.";
       store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: `error: ${message}`, ok: false } });
-      if (store.group(group.id)?.busyBotId === bot.id) {
-        groupSpeakers.delete(threadId);
-        store.patchGroup(group.id, { busyBotId: null, unread: true });
-      }
-      store.setActivity(bot.id, "idle");
+      await releaseUnstartedRoomTurn();
       onDispatchError?.(message);
       return true;
     }
@@ -5732,15 +5767,7 @@ async function runGroupMemberTurn(
       true,
     );
   }
-  if (outcome === "dispatch_failed") {
-    if (skillAuthoring) skillAuthoringClaim.claimed = false;
-    await releaseBrowserCapabilityForThread(threadId);
-    // No turn.completed follows a rejected room dispatch. Anything that was
-    // queued while this bot briefly owned the room must be retried now.
-    drainQueuedSends();
-    drainConnectorResumes();
-    drainSecretResumes();
-  }
+  if (outcome === "dispatch_failed") await releaseUnstartedRoomTurn();
   if (outcome === "provider_failed") {
     if (skillAuthoring) skillAuthoringClaim.claimed = false;
     return false;
