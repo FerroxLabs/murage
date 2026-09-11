@@ -168,6 +168,17 @@ export function unitText(opts) {
   const home = absolutePath("HOME", account.home);
   const nodeDir = dirname(execPath);
   if (nodeDir.includes(":")) throw new UnitRefused("PATH", "the node runtime's directory contains ':', which PATH cannot hold");
+  // The server's installation lease is NOT inside the data dir: it is a
+  // sibling of it (`electron/data-dir-lease.mjs`, `dataDirLeasePaths`:
+  // `<parent of the data dir>/.murage-data-owner-<sha256>.lease`, plus
+  // hard-linked candidate and reaper records next to it), so replacing the
+  // data dir leaves the ownership record in place. Under ProtectHome=read-only
+  // a unit that grants only the data dir crashes at every start with
+  // `DataDirLeaseError: LEASE_IO` and systemd restarts it forever (seen live
+  // on Ubuntu 24.04). The parent is granted as well. A data dir directly
+  // under `/` would make that grant the whole filesystem, so it is refused.
+  const leaseDir = dirname(dataDir);
+  if (leaseDir === "/") throw new UnitRefused("ReadWritePaths=", `${dataDir} sits directly under /, and the server keeps its lease beside the data dir; put it one level deeper`);
 
   const wants = opts.tailscale ? "\nWants=tailscaled.service\nAfter=tailscaled.service" : "";
   return `[Unit]
@@ -198,7 +209,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=${pathListWord("MURAGE_DATA_DIR", dataDir)}
+ReadWritePaths=${pathListWord("MURAGE_DATA_DIR", dataDir)} ${pathListWord("the data dir's parent", leaseDir)}
 
 [Install]
 WantedBy=multi-user.target
