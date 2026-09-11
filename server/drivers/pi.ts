@@ -701,6 +701,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // not permissions and always reach the human anyway.
               const scoped = controlsHost && !isQuestion;
               if (scoped) scopedRequests.add(reqId);
+              // A `select` asks the owner to pick an option — a question, even
+              // while it is still carded as a permission here. The method is
+              // pi's trusted signal (the title is extension text), so it rides
+              // on the event and the harness never auto-approves, remembers or
+              // AI-reviews it. `confirm` stays an ordinary permission.
+              const questionTool = evt.method === "select";
               // Register BEFORE emitting: the harness may auto-approve from
               // inside its synchronous request.opened listener. Emitting first
               // made respondToRequest see no pending ask, return unavailable,
@@ -718,6 +724,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 tool: String(evt.title ?? "pi"),
                 summary: String(evt.title ?? "pi wants confirmation"),
                 ...(scoped ? { approvalScope: "local-computer" as const } : {}),
+                ...(questionTool ? { questionTool: true as const } : {}),
               });
             }
             return;

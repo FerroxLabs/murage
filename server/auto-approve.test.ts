@@ -4,7 +4,17 @@
 // question is never answered by the machine.
 import { describe, expect, it } from "vitest";
 
-import { approvalKey, autoDecision, autoVerdict, looksDestructive, looksSensitive } from "./auto-approve.ts";
+import {
+  approvalHoldNote,
+  approvalKey,
+  autoDecision,
+  autoVerdict,
+  isQuestionGrant,
+  isQuestionTool,
+  looksDestructive,
+  looksSensitive,
+  withoutQuestionGrants,
+} from "./auto-approve.ts";
 
 describe("looksDestructive", () => {
   const dangerous = [
@@ -266,6 +276,76 @@ describe("autoDecision", () => {
     expect(
       autoVerdict({ alwaysAllow: [title, `local-computer:${title}`] }, title, title, { scope: "local-computer" }),
     ).toEqual({ approve: null, source: "local-computer-block", rule: `local-computer:${title}` });
+  });
+});
+
+describe("question tools", () => {
+  // The live defect: every Claude bot in auto mode "approved" its own
+  // AskUserQuestion with no answers, and Claude read "The user did not answer
+  // the questions." A question is for the owner; no rule may answer it.
+  const identities = [
+    "AskUserQuestion", // Claude Code, through the permission host
+    "ASKUSERQUESTION",
+    "mcp__some_server__AskUserQuestion",
+    "mcp__muragebox__ask_user", // Murage's own ask tool
+    "ask_user", // Codex requestUserInput as carded
+    "ask_user_question", // Fuigo
+    "_fuigo/ask_user_question", // Fuigo extension method
+    "item/tool/requestUserInput", // Codex method
+    "request_user_input",
+    "functions.request_user_input",
+    "elicitation", // Codex form elicitation as carded
+    "elicitation/create", // ACP elicitation method
+    "mcpServer/elicitation/request",
+    "clarify", // Hermes
+    "question", // OpenCode
+  ];
+  const summary = '{"questions":[{"question":"Which branch?"}]}';
+  const held = { approve: null, source: "question-tool" };
+
+  it.each(identities)("never auto-approves %s, in any mode, scope or turn origin", (tool) => {
+    const everyGrant = { autoApprove: true, alwaysAllow: [tool, `local-computer:${tool}`, "Bash:git"] };
+    expect(autoVerdict(everyGrant, tool, summary)).toEqual(held);
+    expect(autoVerdict(everyGrant, tool, summary, { unattended: true })).toEqual(held);
+    expect(autoVerdict(everyGrant, tool, summary, { scope: "local-computer" })).toEqual(held);
+    expect(autoVerdict({ alwaysAllow: [tool] }, tool, summary)).toEqual(held);
+    expect(autoDecision(everyGrant, tool, summary)).toBeNull();
+  });
+
+  it.each(identities)("offers no Always allow for %s and recognizes its grant", (tool) => {
+    expect(isQuestionTool(tool)).toBe(true);
+    expect(approvalKey(tool, "anything")).toBeUndefined();
+    expect(approvalKey(tool, "anything", "local-computer")).toBeUndefined();
+    expect(isQuestionGrant(tool)).toBe(true);
+    expect(isQuestionGrant(`local-computer:${tool}`)).toBe(true);
+  });
+
+  it("honours the driver's trusted question signal for a title it cannot name", () => {
+    // Pi `select`: the title is extension text, so only the flag identifies it
+    const title = "Pick a deployment target";
+    expect(autoVerdict({ autoApprove: true, alwaysAllow: [title] }, title, title).source).toBe("always-allow");
+    expect(autoVerdict({ autoApprove: true, alwaysAllow: [title] }, title, title, { question: true })).toEqual(held);
+    expect(autoDecision({ autoApprove: true }, title, title, { question: true, unattended: true })).toBeNull();
+  });
+
+  it("names the hold on the card", () => {
+    expect(approvalHoldNote({ approve: null, source: "question-tool" })).toMatch(/question/i);
+  });
+
+  it("does not mistake ordinary tools or grants for questions", () => {
+    for (const tool of ["Bash", "Read", "shell", "edit", "select", "mcp__computer__click", "mcp__computer__input", "questionnaire", "ask_bot"]) {
+      expect(isQuestionTool(tool)).toBe(false);
+    }
+    for (const key of ["Bash:git", "Read", "ask_bot:bot-123", "local-computer:mcp__computer__click", "Run bash: echo hi?"]) {
+      expect(isQuestionGrant(key)).toBe(false);
+    }
+    expect(autoVerdict({ autoApprove: true }, "Read", "src/index.ts").source).toBe("auto-mode");
+  });
+
+  it("strips only question grants from a remembered list", () => {
+    expect(
+      withoutQuestionGrants(["AskUserQuestion", "Bash:git", "local-computer:mcp__muragebox__ask_user", "Read", "ask_bot:bot-1"]),
+    ).toEqual(["Bash:git", "Read", "ask_bot:bot-1"]);
   });
 });
 

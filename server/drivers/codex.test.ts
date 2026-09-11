@@ -648,6 +648,24 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept", content: {} });
   });
 
+  it("never auto-answers a form elicitation, even in fullAuto, and declines with the MCP result shape (ASK1)", async () => {
+    await create({ mode: "form-elicitation", fullAuto: true });
+    const dump = join(scratch, "form-elicitation.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-form-elicitation", text: "deploy it" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({
+      requestType: "permission",
+      tool: "elicitation",
+      summary: "Which environment should I deploy to?",
+    });
+
+    await instance.adapter.respondToRequest("t-form-elicitation", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "decline" });
+  });
+
   it("stamps approvalScope on cards only when the turn controls this Mac", async () => {
     await create({ mode: "approval" });
 

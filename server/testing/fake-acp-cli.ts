@@ -711,8 +711,11 @@ function handle(msg: any) {
         });
       } else if (mode === "interleave") playInterleaveTurn();
       else if (mode !== "empty-reply") playTurn();
-      if (mode === "permission") {
-        // ask the client to approve a tool, then complete once answered
+      if (mode === "permission" || mode === "question-tool") {
+        // ask the client to approve a tool, then complete once answered.
+        // question-tool: the agent routes its AskUserQuestion tool through
+        // request_permission (named in the tool call), exactly the shape a
+        // question must never be auto-approved from.
         pendingPermissionId = 9001;
         onPermissionAnswered = complete;
         out({
@@ -720,7 +723,20 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: "session/request_permission",
           params: {
-            toolCall: { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
+            toolCall: mode === "question-tool"
+              ? {
+                  kind: "other",
+                  title: "AskUserQuestion",
+                  rawInput: {
+                    questions: [{
+                      question: "Which branch should I use?",
+                      header: "Branch",
+                      options: [{ label: "main" }, { label: "develop" }],
+                      multiSelect: false,
+                    }],
+                  },
+                }
+              : { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
             options: [
               { optionId: "allow-once", kind: "allow_once" },
               { optionId: "reject", kind: "reject_once" },
