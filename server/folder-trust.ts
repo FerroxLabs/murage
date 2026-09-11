@@ -363,12 +363,15 @@ export function scanFolderTrustSources(folder: string, options: FolderTrustScanO
 // Murage decision reaches that file, and only on a trusted turn.
 
 /** Fuigo's home for a child env: `FUIGO_HOME` verbatim when non-empty (the
- * engine uses it as-is, uncanonicalized), else `<home>/.fuigo`. Mirrors
- * `fuigoHome` in drivers/acp/fuigo.ts and upstream fuigo-dirs
- * `resolve_fuigo_home_from`. */
+ * engine uses it as-is, uncanonicalized), else `<home>/.fuigo` with the
+ * home canonicalized (upstream fuigo-dirs `fuigo_home_in`: `dunce::
+ * canonicalize(home)`), which is what the engine's managed-worktree prefix
+ * test compares a cwd against (FUIGOTRUST4). Mirrors upstream
+ * `resolve_fuigo_home_from`; the same files as `fuigoHome` in
+ * drivers/acp/fuigo.ts either way. */
 export function fuigoHomeFromEnv(env: Record<string, string | undefined>): string {
   if (env.FUIGO_HOME) return env.FUIGO_HOME;
-  return join(env.HOME || env.USERPROFILE || homedir(), ".fuigo");
+  return join(canonicalFolder(env.HOME || env.USERPROFILE || homedir()), ".fuigo");
 }
 
 export const UPSTREAM_TRUST_FILE = "trusted_folders.toml";

@@ -3,7 +3,7 @@
 // upstream `workspace_key` (git root, else the folder; home and filesystem
 // roots never), and the durable store the driver decides from.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, parse } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -403,6 +403,14 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     expect(fuigoHomeFromEnv({ FUIGO_HOME: "/custom/home", HOME: "/Users/x" })).toBe("/custom/home");
     expect(fuigoHomeFromEnv({ FUIGO_HOME: "", HOME: "/Users/x" })).toBe(join("/Users/x", ".fuigo"));
     expect(fuigoHomeFromEnv({ HOME: "/Users/x" })).toBe(join("/Users/x", ".fuigo"));
+    // the default home is canonicalized like upstream `fuigo_home_in`
+    // (FUIGOTRUST4: the engine's worktrees-dir prefix test compares a cwd
+    // against it); an explicit FUIGO_HOME stays verbatim
+    const real = join(root, "real-home");
+    mkdirSync(real, { recursive: true });
+    symlinkSync(real, join(root, "home-link"));
+    expect(fuigoHomeFromEnv({ HOME: join(root, "home-link") })).toBe(join(real, ".fuigo"));
+    expect(fuigoHomeFromEnv({ FUIGO_HOME: join(root, "home-link", ".fuigo") })).toBe(join(root, "home-link", ".fuigo"));
   });
 
   it("parses what the engine's serializer writes, and the hand-edit spellings a TOML reader accepts", () => {
