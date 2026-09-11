@@ -123,6 +123,10 @@ jobs:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: "0"
         run: pnpm exec vitest run electron/browser-closed-shadow.electron.test.mjs
       - run: pnpm check:electron
+      - name: Verify app permissions and guarded display capture
+        # Disposable profile, fake microphone, captures only its own page.
+        if: matrix.os == 'macos-latest'
+        run: node scripts/smoke-app-permissions.mjs
       - name: Install the Playwright browser
         # One host runs the human specs: they drive the real harness and a
         # real Vite dev server, and the pass they stand in for is a person at
