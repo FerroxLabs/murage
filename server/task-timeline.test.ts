@@ -27,6 +27,12 @@ describe("execution timeline", () => {
     ]);
   });
 
+  it("reads a host-stop notice as 'Stopped — why', not the raw prefix (STOP2)", () => {
+    expect(timelineEvents([
+      { id: "stop", role: "bot", kind: "activity", tool: { name: "stopped: this computer was switched off for the bot", ok: false }, at: 2 },
+    ])).toMatchObject([{ label: "Stopped — this computer was switched off for the bot", kind: "tool", state: "failed" }]);
+  });
+
   it("does not call every later user reply a new task", () => {
     const events = timelineEvents([
       { id: "task", role: "user", kind: "text", text: "Research this", at: 1 },
