@@ -16,10 +16,10 @@ rtk proxy node --experimental-strip-types scripts/eval-memory.ts --fixture serve
 rtk proxy node --experimental-strip-types scripts/verify-memory-dispatch.ts
 rtk proxy node --experimental-strip-types scripts/verify-memory-skill-review.ts
 rtk proxy pnpm exec tsc -p src/e2e/memory.tsconfig.json
-rtk proxy node node_modules/@playwright/test/cli.js test --config src/e2e/memory.config.ts
+MURAGE_E2E_DATA_DIR=<scratch dir outside the repo> rtk proxy node node_modules/@playwright/test/cli.js test --config src/e2e/memory.config.ts
 ```
 
-These are documented commands, not instructions to restart consumed verification cycles. Reuse valid receipts and obtain an explicit extension when the recorded package limit is exhausted. The browser fixture owns its server/Vite/profile, runs desktop and mobile sequentially, and preserves screenshots under `.planning/memory-evidence/p08-browser-results/` for visual inspection.
+These are documented commands, not instructions to restart consumed verification cycles. Reuse valid receipts and obtain an explicit extension when the recorded package limit is exhausted. The browser fixture owns its server/Vite/profile, runs desktop and mobile sequentially, and preserves screenshots under `$MURAGE_E2E_DATA_DIR/memory-results/` for visual inspection (the variable is required; browser evidence is never written inside the repository).
 
 The evaluation script uses the frozen 240-query corpus, real authoritative service/worker/local model and the notebook baseline. Long-history fixture expansion is declared in its source and report. It never generates fake native answers or silently spends on a model. All 60 native answer cases require separate recorded cost admission and actual provider results.
 
