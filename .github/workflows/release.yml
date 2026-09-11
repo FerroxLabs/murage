@@ -607,60 +607,19 @@ jobs:
 
       - name: Prove the draft holds the exact staged bytes
         # An upload that half-succeeded is invisible until a user's download
-        # fails its checksum.
-        # Compare GitHub's own digest for every asset against what we staged.
+        # fails its checksum. Compare GitHub's own digest for every asset
+        # against what we staged. Names, upload state and any reported digest
+        # fail at once; GitHub computes digests asynchronously, so a digest
+        # that is not reported yet gets a bounded wait (6 x 10 s). A digest
+        # still absent after that HOLDS the release: this step fails, so
+        # Publish never runs. Resume without rebuilding by re-running the
+        # failed assemble job: the build artifacts are reused, retained uploads
+        # are kept, and this proof runs again against the same draft.
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_ID: ${{ steps.upload.outputs.release_id }}
-        run: |
-          node --input-type=module - "$VERSION" <<'EOF'
-          import { createHash } from "node:crypto";
-          import { execFileSync } from "node:child_process";
-          import { readFileSync, readdirSync } from "node:fs";
-          import { join } from "node:path";
-          const version = process.argv[2];
-          const expected = new Map(readdirSync("assets").map((name) => [
-            name,
-            `sha256:${createHash("sha256").update(readFileSync(join("assets", name))).digest("hex")}`,
-          ]));
-          const { assertDraft } = await import("./scripts/release-guard.mjs");
-          const view = () => assertDraft(version, Number(process.env.RELEASE_ID)).assets;
-          // Names and upload state are deterministic and available the moment
-          // gh answers, so they are checked unconditionally. Digests are
-          // GitHub's and are computed asynchronously, so those get a bounded
-          // wait before we accept "not reported" — the earlier version took
-          // the first null as final, which let a wrong NAME through whenever
-          // the digest had simply not landed yet.
-          let assets = view();
-          if (assets.length !== expected.size) {
-            throw new Error(`expected ${expected.size} assets on the draft, got ${assets.length}`);
-          }
-          const missing = [...expected.keys()].filter((name) => !assets.some((a) => a.name === name));
-          const extra = assets.filter((a) => !expected.has(a.name)).map((a) => a.name);
-          if (missing.length || extra.length) {
-            throw new Error(`asset names differ — missing: ${missing.join(", ") || "none"}; unexpected: ${extra.join(", ") || "none"}`);
-          }
-          const pending = assets.filter((a) => a.state && a.state !== "uploaded").map((a) => a.name);
-          if (pending.length) {
-            throw new Error(`assets not finished uploading: ${pending.join(", ")}`);
-          }
-          for (let attempt = 0; attempt < 6 && assets.some((a) => !a.digest); attempt += 1) {
-            execFileSync("sleep", ["10"]);
-            assets = view();
-          }
-          const unreported = assets.filter((asset) => !asset.digest).map((asset) => asset.name);
-          for (const asset of assets) {
-            if (!asset.digest) continue;
-            if (expected.get(asset.name) !== asset.digest) {
-              throw new Error(`digest mismatch for ${asset.name}`);
-            }
-          }
-          if (unreported.length > 0) {
-            console.log(`::warning::GitHub reported no digest after 60s for ${unreported.length} asset(s): ${unreported.join(", ")}`);
-          }
-          console.log(`ok: the draft has ${assets.length} assets, ${assets.length - unreported.length} digest-verified`);
-          EOF
+        run: node scripts/release-digests.mjs verify "$VERSION" "$RELEASE_ID" assets
 
       - name: Publish (only when asked to)
         if: ${{ inputs.publish }}
@@ -668,6 +627,8 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_ID: ${{ steps.upload.outputs.release_id }}
+        # The guard re-checks every digest against the staged bytes right
+        # before flipping the draft, so publication cannot outrun the proof.
         run: |
-          node scripts/release-guard.mjs publish "$VERSION" "$RELEASE_ID"
+          node scripts/release-guard.mjs publish "$VERSION" "$RELEASE_ID" assets
           echo "v$VERSION is live"
