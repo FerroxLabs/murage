@@ -29,7 +29,14 @@ export function hydrateMemoryRecord(id: string, version: number, access: MemoryA
  * refused on its own). A disclosed version in that state is stale, not
  * revoked. Everything else stays fail-closed: the record must be the current
  * thread's checkpoint, unpinned, untombstoned, with a newer active version and
- * every evidence source intact. */
+ * every evidence source intact.
+ *
+ * "The current thread" is the thread the turn is dispatched for
+ * (access.threadId), never the bot's own thread: a room member's turn is
+ * claimed for the room thread (server/index.ts runGroupMemberTurn), so the
+ * room checkpoint — which rolls on every member's prompt and reply — is that
+ * turn's own, while the member's own-thread checkpoint and other rooms'
+ * checkpoints are not (dispatch-preparation.test.ts, RED2E). */
 export function supersededThreadCheckpoint(id: string, version: number, access: MemoryAccess): boolean {
   const db = database();
   const row = db.prepare("SELECT scope_id,kind,state,owner_pinned FROM memory_records WHERE id=? AND version=?").get(id,version);

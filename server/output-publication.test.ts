@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
-import { describeArtifact, listArtifacts, previewArtifact, registerArtifact, type ArtifactScope } from "./artifacts.ts";
+import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, listArtifacts, previewArtifact, registerArtifact, type ArtifactScope } from "./artifacts.ts";
 import { ensureTaskWorkspace } from "./workspace.ts";
 import {
   completeImageOutput, createOutputPublisher, managedImageOutputPath, outputReceiptsForRun, publishAssistantImage, resumePendingAssistantImages, retainImageOutput,
@@ -74,6 +74,39 @@ it("publishes a shell-written outputs/ report from a successful managed turn as 
   expect(previewArtifact(database(), storage(), id!, f.access)).toMatchObject({ content, artifact: { id, sourceState: "changed" } });
   const reopened = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   expect(reopened.messagesFor(f.bot.threadId).filter(message => message.artifactIds?.includes(id!)).map(message => message.id)).toEqual([cards[0]!.id]);
+});
+
+// RED2E: the receipt mime follows the shared artifact text list
+// (ARTIFACT_TEXT_EXTENSIONS) under the artifact preview's bounds, not a
+// narrower private list: a .py output is text and previews inline; a binary,
+// a non-UTF-8 blob behind a text extension and an oversized text file are
+// octet streams that download.
+it("records source outputs as text under the shared artifact list and binaries as octet streams", async () => {
+  const f = fixture();
+  f.dispatch();
+  const script = "def main():\n    print('verified')\n";
+  f.write("outputs/tools/report.py", script);
+  f.write("outputs/tools/model.bin", png);
+  f.write("outputs/tools/blob.py", Buffer.from([0xff, 0xfe, 0x00, 0xc3, 0x28]));
+  f.write("outputs/tools/big.py", Buffer.concat([Buffer.from("# "), Buffer.alloc(ARTIFACT_PREVIEW_MAX_BYTES, 0x61)]));
+  await f.complete(true);
+
+  const byPath = Object.fromEntries(f.receipts().map(receipt => [receipt.pathToken, receipt]));
+  expect(byPath["outputs/tools/report.py"]).toMatchObject({ stage: "registered", mime: "text/plain", bytes: Buffer.byteLength(script) });
+  expect(byPath["outputs/tools/model.bin"]).toMatchObject({ stage: "registered", mime: "application/octet-stream" });
+  expect(byPath["outputs/tools/blob.py"]).toMatchObject({ stage: "registered", mime: "application/octet-stream" });
+  expect(byPath["outputs/tools/big.py"]).toMatchObject({ stage: "registered", mime: "application/octet-stream", bytes: ARTIFACT_PREVIEW_MAX_BYTES + 2 });
+  expect(ARTIFACT_TEXT_EXTENSIONS).toContain(".py");
+
+  // The saved copies agree with the receipts: the script previews inline as
+  // text; the others are download-only.
+  const preview = (path: string) => previewArtifact(database(), storage(), byPath[path]!.artifactId!, f.access);
+  expect(preview("outputs/tools/report.py")).toMatchObject({ mode: "text", content: script, artifact: { kind: "text", mime: "text/plain" } });
+  expect(preview("outputs/tools/model.bin")).toMatchObject({ mode: "download", artifact: { kind: "other" } });
+  expect(preview("outputs/tools/blob.py")).toMatchObject({ mode: "download" });
+  expect(preview("outputs/tools/big.py")).toMatchObject({ mode: "download" });
+  expect(f.cards()).toHaveLength(1);
+  expect(f.cards()[0]!.text).toBe("Saved 4 files: big.py, blob.py, model.bin, report.py");
 });
 
 it("publishes only files that are new or changed since dispatch", async () => {
