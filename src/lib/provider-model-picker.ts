@@ -2,7 +2,7 @@
 // Apache-2.0): scoped identity, honest metadata and bounded grouped discovery.
 import type { PublicProviderConnection, ProviderModel } from "../../shared/provider-connections.ts";
 import { providerEngineProtocol } from "../../shared/provider-engine.ts";
-import { localPickerModel } from "../../shared/local-models.ts";
+import { localEngineSupport, localPickerModel } from "../../shared/local-models.ts";
 export interface PickerSelection { instanceId: string; model: string; connectionId?: string }
 export interface PickerEngine { instanceId: string; driverKind: string; displayName: string; enabled?: boolean; snapshot: {state: "available"|"unavailable"; authenticated?: boolean}; models: {default:string;options:Array<{id:string;label:string;custom?:boolean;provider?:string;localServer?:string;localTools?:"pass"|"partial"|"failed"}>} }
 export interface PickerModel { key: string; selection: PickerSelection; label: string; group: string; provider: string; contextWindow?: number; pricing?: ProviderModel["pricing"]; stale?: boolean;
@@ -58,6 +58,17 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
  *  presence is a fact about this computer, not about what was typed. */
 export function localPickerRows(rows: readonly PickerModel[]): PickerModel[] {
   return rows.filter((row) => row.group === LOCAL_MODELS_GROUP);
+}
+/** Whether the Local rail shows its "no local server" row for this engine.
+ *  Only an engine the Local models section actually feeds (spec E1/E3: a
+ *  `tools` driver, whose catalog carries a `localServer` row once a server is
+ *  detected) can be told there is none. A chat-only driver (openai-compat,
+ *  grok) never receives local rows — its Engines line already says "chat only
+ *  (no tools)" — so the row would be a permanent, false statement there; a
+ *  driver with no local support at all (gemini, cursor) has no rail. */
+export function showNoLocalServerRow(engine: Pick<PickerEngine, "driverKind"> | null | undefined, rows: readonly PickerModel[]): boolean {
+  if (!engine || localEngineSupport(engine.driverKind) !== "tools") return false;
+  return localPickerRows(rows).length === 0;
 }
 /** "qwen3.8-27b · llama.cpp on seanbeast" (spec V3), whichever half the
  *  engine's own catalog supplied. */
