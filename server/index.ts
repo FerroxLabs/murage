@@ -3201,8 +3201,30 @@ bus.subscribe((event: RuntimeEvent) => {
       // tally at turn.completed (below) so retries never double-count
       turnUsage.set(event.threadId, { input: event.input, output: event.output, cachedInput: event.cachedInput });
       break;
-    case "turn.completed":
-      activeProviderSelections.delete(event.threadId); {
+    case "turn.completed": {
+      // The run this terminal event may settle is the one bound to this
+      // provider turn. A Stop the driver acknowledged before its child
+      // closed (interruptTurn returning void: Claude) released the run at
+      // once, and the child's later close still emits turn.completed for
+      // that turn; by then a replacement run can own the thread (Windows
+      // ends the child through an asynchronous taskkill, so its close
+      // always lands after the next send). That event must not settle the
+      // replacement: before its own dispatch (no provider turn bound yet,
+      // phase "setup") or with another provider turn bound, the thread's
+      // run is not this event's run. Only a run inside sendTurn (phase
+      // "dispatching", no id yet) may be settled by an unbound completion,
+      // which some adapters publish synchronously before sendTurn resolves.
+      // A driver's retry relaunch keeps its turn id (claude.ts sendTurn), so
+      // the run bound at acceptance is still the one its completion names.
+      const threadRun=directRuns.get(event.threadId);
+      const directRun=threadRun&&(event.turnId===undefined||(threadRun.providerTurnId===undefined?threadRun.phase==="dispatching":threadRun.providerTurnId===event.turnId))?threadRun:undefined;
+      // An earlier provider turn's late close while a newer run owns the
+      // thread: its own per-turn state (leases, images, memory settlement)
+      // is folded below; the thread-level state the replacement now owns
+      // — its provider selection, its running usage and reply, its unread
+      // and "done" notification — is not this event's to consume.
+      const replacementOwnsThread=Boolean(threadRun)&&!directRun;
+      if(!replacementOwnsThread)activeProviderSelections.delete(event.threadId);
       const generatedKey = generatedImageTurnKey(event.threadId, event.turnId);
       const generated = generatedImagesByTurn.get(generatedKey) ?? [];
       generatedImagesByTurn.delete(generatedKey);
@@ -3255,10 +3277,10 @@ bus.subscribe((event: RuntimeEvent) => {
       else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, settledOutcome);
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
-      const reply = lastReply.get(event.threadId) ?? "";
-      lastReply.delete(event.threadId);
-      const lastReported = turnUsage.get(event.threadId);
-      turnUsage.delete(event.threadId);
+      const reply = replacementOwnsThread ? "" : (lastReply.get(event.threadId) ?? "");
+      if(!replacementOwnsThread)lastReply.delete(event.threadId);
+      const lastReported = replacementOwnsThread ? undefined : turnUsage.get(event.threadId);
+      if(!replacementOwnsThread)turnUsage.delete(event.threadId);
       // group turns run on the room's thread — the speaking bot's task
       // tally is not the right home for a shared room's spend, so only
       // 1:1 task turns are tallied for now.
@@ -3279,21 +3301,6 @@ bus.subscribe((event: RuntimeEvent) => {
           costUsd: event.cost ?? null,
         });
         // settled → idle; a setup failure already marked it dead, keep that
-        const threadRun=directRuns.get(event.threadId);
-        // The run this terminal event may settle is the one bound to this
-        // provider turn. A Stop the driver acknowledged before its child
-        // closed (interruptTurn returning void: Claude) released the run at
-        // once, and the child's later close still emits turn.completed for
-        // that turn; by then a replacement run can own the thread (Windows
-        // ends the child through an asynchronous taskkill, so its close
-        // always lands after the next send). That event must not settle the
-        // replacement: before its own dispatch (no provider turn bound yet,
-        // phase "setup") or with another provider turn bound, the thread's
-        // run is not this event's run. Only a run inside sendTurn (phase
-        // "dispatching", no id yet) may be settled by an unbound completion,
-        // which some adapters publish synchronously before sendTurn resolves.
-        const directRun=threadRun&&(event.turnId===undefined||(threadRun.providerTurnId===undefined?threadRun.phase==="dispatching":threadRun.providerTurnId===event.turnId))?threadRun:undefined;
-        const replacementOwnsThread=Boolean(threadRun)&&!directRun;
         if(directRun)directRuns.settling(directRun);
         const releaseDirect=()=>{
           // A newer run owns the thread: this is an earlier provider turn's
@@ -3330,8 +3337,10 @@ bus.subscribe((event: RuntimeEvent) => {
         const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
         // Group-origin routines belong to that channel's unread state. Their
         // hidden execution task should not light up the bot's 1:1 sidebar too.
-        if (!routineReportGroup) store.patchTask(bot.id,event.threadId, { unread: true });
-        if (routineRun?.status !== "failed") {
+        // A stopped turn's late close under a replacement run is not a result
+        // to announce either: the replacement's own completion will be.
+        if (!routineReportGroup && !replacementOwnsThread) store.patchTask(bot.id,event.threadId, { unread: true });
+        if (routineRun?.status !== "failed" && !replacementOwnsThread) {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
           const completionDetail = routineRun
