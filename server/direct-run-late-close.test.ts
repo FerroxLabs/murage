@@ -23,20 +23,32 @@
 //     relaunch is the SAME turn: its turn.completed must carry the id the
 //     harness bound the run to at acceptance, or the run is never released
 //     and the bot stays busy until restart.
+//  4. The same retried turn, seen from what the user does next (the 0.1.53
+//     hotfix symptom). The run is not the only thing the harness binds to
+//     the id sendTurn returned: the folder writer lease and the routine
+//     scheduler's admission are too. A relaunch that minted a fresh id left
+//     the lease held after the bot read idle — workspace Save/Restore
+//     answered 423 `bot-writing` until restart — and a Telegram message that
+//     arrived during the turn was never dispatched. So after the retried
+//     turn settles, the owner's save must land on disk and the queued
+//     channel delivery must run and reply. Telegram is the fetch fixture in
+//     testing/telegram-fetch-preload.mjs; the transport has no endpoint
+//     override.
 //
 // Both engines here are the fake CLI, one instance per fixture shape so the
 // knobs (per-instance `environment`) cannot leak into each other's launches.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
+const TELEGRAM_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href;
 const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
 const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET } as const;
 // U-17: only a launch that died before its prompt was written may be
@@ -46,7 +58,15 @@ const PRE_ACCEPT_PROMPT = "x".repeat(1000 * 1024);
 
 interface BotView { id: string; threadId: string; busy: boolean; tasks?: Array<{ activity?: string }> }
 interface MessageView { id: string; role: string; kind: string; text?: string; turnId?: string; tool?: { name: string; ok?: boolean } }
+interface RoutineRunView { id: string; status: string; triggerSource?: string; botId: string; threadId?: string; output?: string; error?: string }
 interface Reply { status: number; body: any }
+// Telegram fixture identities: the paired owner's private chat with bot 123.
+const TELEGRAM_OWNER = 777;
+const TELEGRAM_TOKEN = "123:abcdefghijklmnopqrstuvwxyz123456";
+const telegramMessage = (updateId: number, text: string) => ({
+  update_id: updateId,
+  message: { message_id: updateId, date: 1_700_000_000 + updateId, text, from: { id: TELEGRAM_OWNER, is_bot: false }, chat: { id: TELEGRAM_OWNER, type: "private" } },
+});
 
 describe("direct run settlement across a late close and a retry relaunch", () => {
   let child: ChildProcess;
@@ -57,6 +77,7 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
   let retryDump: string;
   let retryLaunches: string;
   let finishGateDir: string;
+  let telegramDir: string;
 
   const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> => {
     const res = await fetch(`${base}${path}`, {
@@ -100,6 +121,8 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
     stopDump = join(home, "stop-dump.json");
     retryDump = join(home, "retry-dump.json");
     retryLaunches = join(home, "retry-launches");
+    telegramDir = join(home, "telegram-fixture");
+    mkdirSync(telegramDir);
     writeFileSync(
       join(home, ".murage", "config.json"),
       JSON.stringify({
@@ -113,16 +136,17 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
           // Shape 2: the first launch of every turn dies before reading its
-          // prompt (counted in FAKE_CLAUDE_STATE); the relaunch replies.
+          // prompt (counted in FAKE_CLAUDE_STATE); the relaunch replies, or
+          // holds until the finish gate when the prompt asks it to (shape 4).
           claudeRetry: {
             driver: "claudeAgent",
-            environment: { FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: retryDump, FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS: "1", FAKE_CLAUDE_STATE: retryLaunches, FAKE_CLAUDE_RETRY_SCALE: "0.001" },
+            environment: { FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: retryDump, FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS: "1", FAKE_CLAUDE_STATE: retryLaunches, FAKE_CLAUDE_RETRY_SCALE: "0.001", FAKE_CLAUDE_FINISH_GATE_DIR: finishGateDir },
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -131,6 +155,7 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
         MURAGE_PORT: String(port),
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
+        FAKE_TELEGRAM_DIR: telegramDir,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -247,4 +272,92 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
   }, 90_000);
+
+  it("after a retried turn settles, the owner's save lands and a Telegram message that arrived during the turn is delivered", async () => {
+    const project = join(home, "project");
+    mkdirSync(project, { recursive: true });
+    const note = join(project, "notes.md");
+    const NOTE = "# Notes\n", EDIT = "# Notes\n\nEdited after the retried turn.\n";
+    writeFileSync(note, NOTE);
+    // Memory off: an active memory would recall the held turn's prompt — the
+    // fixture marker included — into the channel turn's context, and the
+    // fake would hold that turn too. Nothing here is about memory.
+    expect((await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
+    const bot = await makeBot("claudeRetry", "Retried turn, then Save");
+    const scopeQuery = `botId=${encodeURIComponent(bot.id)}&threadId=${encodeURIComponent(bot.threadId)}`;
+    const save = (requestId: string, baseRevision: string) => desktopApi("POST", "/api/workspace-files/write", {
+      scope: { botId: bot.id, threadId: bot.threadId }, relativePath: "notes.md", baseRevision, requestId, content: EDIT, bom: false,
+    });
+    const telegramSent = (): Array<{ chatId: string; text: string }> => {
+      const file = join(telegramDir, "sent.jsonl");
+      return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
+    };
+    const telegramUpdates: unknown[] = [];
+    const telegramArrives = (update: unknown) => {
+      telegramUpdates.push(update);
+      const staged = join(telegramDir, "updates.json.tmp");
+      writeFileSync(staged, JSON.stringify(telegramUpdates));
+      renameSync(staged, join(telegramDir, "updates.json"));
+    };
+    const channelRuns = async (): Promise<RoutineRunView[]> =>
+      ((await api("GET", "/api/routines")).body.runs as RoutineRunView[]).filter((run) => run.triggerSource === "channel" && run.botId === bot.id);
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { cwd: project })).status).toBe(200);
+      // Pair Telegram with this bot: the owner answers the pairing code from
+      // their private chat, and the channel polls it up.
+      expect((await desktopApi("PATCH", "/api/config", { telegram: { botToken: TELEGRAM_TOKEN } })).status).toBe(200);
+      const pair = await desktopApi("POST", "/api/telegram/pair", { targetBotId: bot.id });
+      expect(pair.status).toBe(200);
+      telegramArrives(telegramMessage(1, `/pair ${pair.body.code}`));
+      await expect.poll(async () => (await desktopApi("GET", "/api/telegram/status")).body.paired, { timeout: 15_000, interval: 100 }).toBe(true);
+
+      // The retried turn: its first launch dies before reading its prompt,
+      // the relaunch reads it and holds until the finish gate.
+      writeFileSync(retryLaunches, "0");
+      rmSync(retryDump, { force: true });
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: `${PRE_ACCEPT_PROMPT}\n__fixture_hold_authority__` })).status).toBe(202);
+      const relaunch = await readJsonFileWhenReady<{ pid: number }>(retryDump, 20_000);
+      expect(readFileSync(retryLaunches, "utf8")).toBe("2");
+      expect(await busy(bot.id)).toBe(true);
+      // The owner's message arrives while the turn runs: queued behind the
+      // busy bot, on the bot's own conversation.
+      telegramArrives(telegramMessage(2, "status please"));
+      await expect.poll(async () => (await channelRuns()).map((run) => run.status), { timeout: 15_000, interval: 100 }).toEqual(["queued"]);
+      // A live turn refuses the owner's save at once: the writer lease is
+      // held for the whole turn, relaunch included.
+      const opened = await desktopApi("GET", `/api/workspace-files/read?${scopeQuery}&path=notes.md`);
+      expect(opened.status).toBe(200);
+      const refused = await save("save-during-turn", opened.body.revision);
+      expect(refused.status).toBe(423);
+      expect(refused.body.code).toBe("bot-writing");
+      expect(readFileSync(note, "utf8")).toBe(NOTE);
+
+      // The relaunch finishes. Its turn.completed carries the id the harness
+      // bound at acceptance, so the run AND the writer lease are released in
+      // the same fold that reads the bot idle: the save that follows is the
+      // user's next click, not a retry loop.
+      writeFileSync(join(finishGateDir, String(relaunch.pid)), "finish");
+      await expect.poll(() => busy(bot.id), { timeout: 15_000, interval: 100 }).toBe(false);
+      expect((await botView(bot.id))?.tasks?.[0]?.activity).toBe("idle");
+      const saved = await save("save-after-retry", opened.body.revision);
+      expect(saved.status).toBe(200);
+      expect(saved.body).toMatchObject({ requestId: "save-after-retry", previousRevision: opened.body.revision, relativePath: "notes.md" });
+      expect(readFileSync(note, "utf8")).toBe(EDIT);
+      // The queued channel delivery dispatches on the idle bot and its reply
+      // reaches the owner's chat.
+      await expect.poll(async () => (await channelRuns()).map((run) => run.status), { timeout: 30_000, interval: 100 }).toEqual(["completed"]);
+      const [delivered] = await channelRuns();
+      expect(delivered).toMatchObject({ threadId: bot.threadId, output: "hello from fake claude" });
+      await expect.poll(() => telegramSent(), { timeout: 15_000, interval: 100 }).toEqual([{ chatId: String(TELEGRAM_OWNER), text: "hello from fake claude" }]);
+      const messages = await messagesOf(bot.threadId);
+      expect(messages.map((message) => message.tool?.name ?? "").filter((name) => name.startsWith("error:"))).toEqual([]);
+      expect(messages.some((message) => message.role === "user" && message.text?.includes("status please"))).toBe(true);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("POST", "/api/telegram/revoke");
+      await desktopApi("PATCH", "/api/config", { telegram: { botToken: "", targetBotId: "" } });
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "active" });
+    }
+  }, 120_000);
 });
