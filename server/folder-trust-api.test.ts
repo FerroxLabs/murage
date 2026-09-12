@@ -301,7 +301,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     // then the person runs `fuigo --trust` in that folder: the engine's own
     // store trusts it (its canonical key), which the engine reads before it
     // ever asks Murage
-    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(workspace)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(workspace))}]\ntrusted = true\ndecided_at = 1789152451\n`);
     try {
       expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject" } });
       await send(bot, "again");
@@ -339,7 +339,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     // picked, then forgotten: Murage has no record of its own and would
     // raise the card for the worktree's AGENTS.md — but the user's own
     // Fuigo trusts the main checkout, which the engine keys the worktree on
-    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(main)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(main))}]\ntrusted = true\ndecided_at = 1789152451\n`);
     try {
       expect((await request("PATCH", `/api/bots/${bot.id}`, { cwd: lane })).status).toBe(200);
       // the picker recorded the worktree under the main checkout's key
@@ -374,14 +374,14 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     const other = await makeBot("Other-home bot", "fuigo-other-home");
     const status = (folder: string, botId?: string) => request("GET", `/api/folder-trust?folder=${encodeURIComponent(folder)}${botId ? `&bot=${botId}` : ""}`);
     // only the OTHER install trusts the folder
-    writeFileSync(join(home, "other-fuigo-home", "trusted_folders.toml"), `[folders."${realpathSync.native(project)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(home, "other-fuigo-home", "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(project))}]\ntrusted = true\ndecided_at = 1789152451\n`);
     try {
       expect((await status(project)).body).toMatchObject({ upstreamTrusted: false });
       expect((await status(project, first.id)).body).toMatchObject({ upstreamTrusted: false });
       expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: true, sources: ["AGENTS.md"] });
       // and the other way round: only the FIRST install trusts it
       rmSync(join(home, "other-fuigo-home", "trusted_folders.toml"), { force: true });
-      writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(project)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+      writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(project))}]\ntrusted = true\ndecided_at = 1789152451\n`);
       expect((await status(project)).body).toMatchObject({ upstreamTrusted: true });
       expect((await status(project, first.id)).body).toMatchObject({ upstreamTrusted: true });
       expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: false });
@@ -412,7 +412,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     mkdirSync(project, { recursive: true });
     writeFileSync(join(project, "AGENTS.md"), "# routed\n");
     // the user's own install trusts the folder
-    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders."${realpathSync.native(project)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(project))}]\ntrusted = true\ndecided_at = 1789152451\n`);
     const status = (folder: string, botId?: string, runOn?: string) =>
       request("GET", `/api/folder-trust?folder=${encodeURIComponent(folder)}${botId ? `&bot=${botId}` : ""}${runOn ? `&runOn=${runOn}` : ""}`);
     // a provider connection with a fixture catalog (instrumented fetch, no network)
@@ -564,7 +564,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       // never session/new): the person's own `fuigo --trust` grant is read
       // by the engine at build, so no prompt, no card, no chip, and the
       // instruction reaches the reply — the (2) contract on the other path
-      writeFileSync(toml, `[folders."${realpathSync.native(workspace)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+      writeFileSync(toml, `[folders.${JSON.stringify(realpathSync.native(workspace))}]\ntrusted = true\ndecided_at = 1789152451\n`);
       await send(bot, "again");
       await settled(bot);
       const resumed = readDump();

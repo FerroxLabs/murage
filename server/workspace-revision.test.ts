@@ -9,7 +9,7 @@
 import type { Stats } from "node:fs";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { artifactSourceFingerprint, initializeArtifacts, readArtifact } from "./artifacts.ts";
@@ -43,7 +43,7 @@ vi.mock("node:fs", async (importOriginal) => {
     if (stat && volume.shape) volume.shape(stat);
     return stat;
   };
-  const isProbe = (path: unknown) => String(path).includes("/.murage-clock-probe-");
+  const isProbe = (path: unknown) => String(path).includes(`${sep}.murage-clock-probe-`);
   return {
     ...fs,
     lstatSync: ((...args: Parameters<typeof fs.lstatSync>) => {
@@ -82,7 +82,9 @@ afterEach(() => {
 const inode = (stat: Stats) => `${stat.dev}:${stat.ino}`;
 
 function fixture() {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "murage-workspace-revision-"))); roots.push(base);
+  // .native: the canonical root every surface issues revisions under (on
+  // Windows the long name of an 8.3 temp path such as RUNNER~1)
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-workspace-revision-"))); roots.push(base);
   const dataDir = join(base, "data"), taskRoot = join(dataDir, "workspaces", "bot", "threads", "thread");
   mkdirSync(taskRoot, { recursive: true });
   const bot = { id: "bot", name: "Research bot", threadId: "thread", resumeCursors: {}, tasks: [{ threadId: "thread", cwd: taskRoot, resumeCursors: {} }] };
@@ -238,9 +240,9 @@ describe("remembered digests", () => {
     const first = list();
     expect(first).toHaveLength(20);
     expect(first.every(Boolean)).toBe(true);
-    expect(opened.filter(item => item.includes("/many/")).length).toBe(20);
+    expect(opened.filter(item => item.includes(`${sep}many${sep}`)).length).toBe(20);
     expect(list()).toEqual(first);
-    expect(opened.filter(item => item.includes("/many/")).length).toBe(20);
+    expect(opened.filter(item => item.includes(`${sep}many${sep}`)).length).toBe(20);
   });
 
   it("never remembers a state whose ctime equals mtime on a volume that failed the clock probe, so a rewrite that puts mtime back is read again", () => {
@@ -317,7 +319,7 @@ describe("remembered digests", () => {
       held.set(inode(lstatSync(path)), { mtimeMs: old, ctimeMs: old });
     }
     const list = () => listWorkspaceDirectory(f.deps, { scope: f.scope, directory: "plain" }).entries.map(entry => entry.revision);
-    const opens = () => opened.filter(item => item.includes("/plain/")).length;
+    const opens = () => opened.filter(item => item.includes(`${sep}plain${sep}`)).length;
     __setVolumeClockForTests(false);
     const first = list();
     expect(first).toHaveLength(20);
@@ -390,10 +392,10 @@ describe("the volume clock probe", () => {
   it("passes on this machine's temp volume with one hidden file that is gone afterwards", () => {
     // The build Mac (APFS) and the Linux runners (ext4, overlay) keep a
     // change time of their own with sub-second stamps.
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
     expect(probeVolumeClock(dir)).toBe(true);
     expect(probes).toHaveLength(1);
-    expect(probes[0]!.startsWith(`${dir}/.murage-clock-probe-`)).toBe(true);
+    expect(probes[0]!.startsWith(`${dir}${sep}.murage-clock-probe-`)).toBe(true);
     expect(leftovers(dir)).toEqual([]);
   });
 
@@ -405,7 +407,7 @@ describe("the volume clock probe", () => {
     // readback by path would report that file's stamps. Everything after
     // the create must go through the descriptor the create returned, which
     // stays bound to the inode whatever the name now points at.
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
     expect(probeVolumeClock(dir)).toBe(true);
     expect(probes).toHaveLength(1);
     expect(pathOps).toEqual([]);
@@ -499,7 +501,7 @@ describe("the volume clock probe", () => {
 
   it("fails a mount that mirrors mtime into ctime, and such a volume keeps hashing on every observation", () => {
     volume.shape = stat => { stat.ctimeMs = stat.mtimeMs; };
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
     expect(probeVolumeClock(dir)).toBe(false);
     expect(leftovers(dir)).toEqual([]);
 
@@ -521,7 +523,7 @@ describe("the volume clock probe", () => {
   });
 
   it("fails whole-second stamps and a clock that runs ahead", () => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-clock-probe-"))); roots.push(dir);
     volume.shape = stat => { stat.mtimeMs = Math.floor(stat.mtimeMs / 1000) * 1000; stat.ctimeMs = Math.floor(stat.ctimeMs / 1000) * 1000; };
     expect(probeVolumeClock(dir)).toBe(false);
     volume.shape = stat => { stat.mtimeMs += 30_000; stat.ctimeMs += 30_000; };

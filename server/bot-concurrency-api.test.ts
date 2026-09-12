@@ -5,6 +5,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
+import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 
 // Isolated HTTP server and fake Claude only. The descriptor mounts a fake host
 // connection; the fake engine records its configuration and never starts MCP.
@@ -150,7 +151,9 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
     expect(first.pid).not.toBe(second.pid);
     const workspaces = await Promise.all(bots.map(async bot => (await task(bot)).cwd));
     expect(workspaces[0]).not.toBe(workspaces[1]);
-    for (const cwd of workspaces) expect(cwd).toContain(fixture.info.dataDir);
+    // the harness works under its lease's canonical data dir (on Windows the
+    // long, case-folded spelling of the mkdtemp path)
+    for (const cwd of workspaces) expect(cwd).toContain(dataDirLeasePaths(fixture.info.dataDir).canonicalDataDir);
     for (const bot of bots) expect((await task(bot)).busy).toBe(true);
     if (outcome === "host") {
       for (const captured of [first, second]) {

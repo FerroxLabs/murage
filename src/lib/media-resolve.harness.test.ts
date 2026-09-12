@@ -83,7 +83,10 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 beforeEach(() => { forgetLocalMedia(); __resetMediaAssetsForTests(); });
 
 function fixture() {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "murage-media-chain-"))); roots.push(base);
+  // .native: the canonical spelling the workspace routes report (on Windows
+  // the long name of an 8.3 temp path such as RUNNER~1, which the JS
+  // realpath keeps as written)
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-media-chain-"))); roots.push(base);
   const dataDir = join(base, "data");
   const taskRoot = join(dataDir, "workspaces", "research", "threads", "task-7");
   const roomRoot = join(dataDir, "workspaces", "research", "threads", "room-1");

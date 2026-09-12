@@ -53,10 +53,13 @@ vi.mock("@/state/store", async (importOriginal) => {
 });
 
 const here = dirname(fileURLToPath(import.meta.url));
-const panel = readFileSync(join(here, "PluginsPanel.tsx"), "utf8");
-const lockSource = readFileSync(join(here, "ConnectedAppsLock.tsx"), "utf8");
+// Source shapes are matched across lines: read them with LF endings whatever
+// the checkout wrote (a Windows checkout with core.autocrlf is CRLF).
+const source = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+const panel = source(join(here, "PluginsPanel.tsx"));
+const lockSource = source(join(here, "ConnectedAppsLock.tsx"));
 const en = JSON.parse(readFileSync(join(here, "../locales/en.json"), "utf8")) as Record<string, string>;
-const composio = readFileSync(join(here, "../../server/composio.ts"), "utf8");
+const composio = source(join(here, "../../server/composio.ts"));
 
 describe("pending OAuth recovery", () => {
   it("checks a pending authorization without a URL and continues only with its retained URL", () => {

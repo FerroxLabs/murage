@@ -1,15 +1,19 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { ClaudeDriver } from "./claude.ts";
 import type { ProviderInstance } from "../contracts.ts";
+import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents } from "../testing/events.ts";
 
 let scratch="";
 const instances:ProviderInstance[]=[];
-afterEach(async()=>{for(const instance of instances.splice(0))await instance.dispose();vi.unstubAllEnvs();if(scratch)rmSync(scratch,{recursive:true,force:true});});
+// removeTempDir, not a bare rmSync: dispose() has signalled the fake CLIs but
+// a just-killed child lets go of its cwd a beat later (on Windows an rmSync
+// in that beat is EPERM on the directory itself).
+afterEach(async()=>{for(const instance of instances.splice(0))await instance.dispose();vi.unstubAllEnvs();if(scratch)await removeTempDir(scratch);});
 
 it("isolates native account catalog/auth/turn/review subprocesses and sessions",async()=>{
   scratch=mkdtempSync(join(tmpdir(),"murage-account-driver-"));

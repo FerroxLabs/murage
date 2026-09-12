@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
-const staging = readFileSync(new URL("../build/windows-upgrade-staging.nsh", import.meta.url), "utf8");
-const install = readFileSync(new URL("../build/windows-sandbox-acl.nsh", import.meta.url), "utf8");
+// The NSIS sources are matched across lines: read them with LF endings
+// whatever the checkout wrote (a Windows checkout with core.autocrlf is CRLF;
+// makensis accepts either).
+const nsh = (file) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const staging = nsh("../build/windows-upgrade-staging.nsh");
+const install = nsh("../build/windows-sandbox-acl.nsh");
 
 it("leaves fresh installations outside legacy staging", () => {
   const freshGuard = staging.indexOf('IfFileExists "$INSTDIR\\Uninstall ${PRODUCT_FILENAME}.exe" 0 murage_stage_done');

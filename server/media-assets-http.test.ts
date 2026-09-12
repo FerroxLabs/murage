@@ -79,6 +79,18 @@ it("resolves saved and workspace media for the desktop only and streams exact ra
     setImmediate(() => controller.abort());
     await attempt;
   }
+  // An abandoned request gives its slot back when its socket closes, which
+  // is the client's abort reaching the server: on macOS and Linux most of
+  // the burst never reaches it at all and the rest close before the next
+  // request lands; on Windows every one reaches the server and the closes
+  // of the loopback connections land a few tens of milliseconds after the
+  // burst (WIN1 measured ~80 ms for the 24). A slot that is never given
+  // back keeps answering 503 past any such wait, which is what this bounds.
+  await expect.poll(async () => {
+    const response = await fetch(`${fixture.info.url}${url}`, { headers: { range: "bytes=0-" } });
+    await response.arrayBuffer();
+    return response.status;
+  }, { timeout: 5_000, interval: 25 }).toBe(206);
   for (let index = 0; index < 10; index++) {
     const seek = await fetch(`${fixture.info.url}${url}`, { headers: { range: `bytes=${index * 4096}-` } });
     expect(seek.status).toBe(206);
