@@ -889,14 +889,18 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // still closing: the child is alive and the thread still reads busy
     expect(instance.adapter.hasSession("t-stop-resend")).toBe(true);
     expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
-    const startedAt = Date.now();
     process.env.FAKE_CLAUDE_MODE = "happy";
     const second = await instance.adapter.sendTurn({ threadId: "t-stop-resend", text: "two" });
-    // the send resolved only after the stopped turn settled, not before
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(400);
     expect(second.turnId).not.toBe(first.turnId);
-    const stopped = recorder.events.find((e) => e.type === "turn.completed");
-    expect(stopped).toMatchObject({ turnId: first.turnId, ok: true, stopReason: "cancelled" });
+    // The send resolved only after the stopped turn settled, not before:
+    // its cancelled completion is already on record, and the second turn's
+    // own start comes after it. (Order, not elapsed time: the fake honours
+    // the SIGTERM delay on POSIX, while Windows' taskkill /F ends the child
+    // at once and only its close is asynchronous.)
+    const stoppedAt = recorder.events.findIndex((e) => e.type === "turn.completed");
+    expect(recorder.events[stoppedAt]).toMatchObject({ turnId: first.turnId, ok: true, stopReason: "cancelled" });
+    const secondStartedAt = recorder.events.findIndex((e) => e.type === "turn.started" && e.turnId === second.turnId);
+    expect(secondStartedAt).toBeGreaterThan(stoppedAt);
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(done).toMatchObject({ ok: true });
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
