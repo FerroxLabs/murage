@@ -876,6 +876,32 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
   });
 
+  // A Stop is "requested, not observed": interruptTurn returns as soon as
+  // the kill is sent, and the real CLI tears down its MCP children before it
+  // exits (Windows ends it through an asynchronous taskkill). The next send
+  // in that window is not a second turn on a running thread: it waits for
+  // the stopped child's close and then runs (WIN1 fix round).
+  it("a send that arrives while a stopped turn's child is still closing waits for the close, then runs", async () => {
+    await create("hang", { FAKE_CLAUDE_SIGTERM_DELAY_MS: "600" });
+    const first = await instance.adapter.sendTurn({ threadId: "t-stop-resend", text: "one" });
+    await recorder.until((e) => e.type === "session.started");
+    await instance.adapter.interruptTurn("t-stop-resend");
+    // still closing: the child is alive and the thread still reads busy
+    expect(instance.adapter.hasSession("t-stop-resend")).toBe(true);
+    expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+    const startedAt = Date.now();
+    process.env.FAKE_CLAUDE_MODE = "happy";
+    const second = await instance.adapter.sendTurn({ threadId: "t-stop-resend", text: "two" });
+    // the send resolved only after the stopped turn settled, not before
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(400);
+    expect(second.turnId).not.toBe(first.turnId);
+    const stopped = recorder.events.find((e) => e.type === "turn.completed");
+    expect(stopped).toMatchObject({ turnId: first.turnId, ok: true, stopReason: "cancelled" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  }, 20_000);
+
   it("a user Stop kills the turn and settles it as cancelled, not failed or hung (STOP1)", async () => {
     await create("hang");
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });

@@ -48,6 +48,7 @@ import {
   type QuestionSpec,
 } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
+import { providerCloseDeadlineMs } from "./child-teardown.ts";
 import {
   classifyError,
   computeBackoff,
@@ -715,7 +716,30 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     await refreshModels();
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
-    const active = new Map<string, { stop: () => void; turnId: string; broker?: Awaited<ReturnType<typeof createPermissionBroker>> }>();
+    interface ActiveTurn {
+      stop: () => void;
+      turnId: string;
+      broker?: Awaited<ReturnType<typeof createPermissionBroker>>;
+      /** Murage asked this turn to stop (interruptTurn/resetSession/stopAll). */
+      stopRequested: () => boolean;
+      /** Resolves when the turn is over here: its child closed (or a retry
+       * backoff was cancelled) and the thread is free for the next send. */
+      closed: Promise<void>;
+      close: () => void;
+    }
+    const active = new Map<string, ActiveTurn>();
+    const activeTurn = (turnId: string, broker: ActiveTurn["broker"], stop: () => void, stopRequested: () => boolean): ActiveTurn => {
+      let close = () => {};
+      const closed = new Promise<void>((resolve) => { close = resolve; });
+      return { stop, turnId, broker, stopRequested, closed, close };
+    };
+    /** The thread's turn is over: forget it and release anyone waiting behind its Stop. */
+    const forgetActive = (threadId: string) => {
+      const entry = active.get(threadId);
+      if (!entry) return;
+      active.delete(threadId);
+      entry.close();
+    };
 
     // One live CLI process per thread, kept across turns. Under
     // --input-format stream-json the CLI settles a turn with `result` while
@@ -842,7 +866,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * never released and the bot stayed busy until restart. */
     const sendTurn = async (turn: SendTurnInput, relaunch?: { turnId: string }) => {
       const { threadId } = turn;
-      if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      const running = active.get(threadId);
+      if (running) {
+        if (!running.stopRequested()) throw new Error("a turn is already running on this thread");
+        // A Stop is "requested, not observed": interruptTurn returns as soon
+        // as the kill is sent, the harness reads the thread idle, and the
+        // person's next message can arrive while the stopped child is still
+        // closing — the real CLI tears down its MCP children and flushes
+        // first, and Windows ends it through an asynchronous taskkill. That
+        // turn is not "already running": wait for its close, bounded by the
+        // same deadline the harness gives a stopped child, then proceed.
+        await Promise.race([
+          running.closed,
+          new Promise<void>((_, reject) => {
+            const timer = setTimeout(() => reject(new Error("the stopped turn has not closed yet; wait a moment and send again")), providerCloseDeadlineMs());
+            timer.unref?.();
+            void running.closed.finally(() => clearTimeout(timer));
+          }),
+        ]);
+        if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      }
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
       if (controlsHost && config.permissionMode === "bypassPermissions") {
         throw new Error("local computer control requires the interactive approval broker");
@@ -1019,19 +1062,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           submission: null,
         };
         live.turn = liveTurn;
-        active.set(threadId, {
-          stop: () => {
-            liveTurn.stopRequested = true;
-            killCliTree(live.child);
-          },
-          turnId,
-          broker: live.broker,
-        });
+        active.set(threadId, activeTurn(turnId, live.broker, () => {
+          liveTurn.stopRequested = true;
+          killCliTree(live.child);
+        }, () => liveTurn.stopRequested === true));
         emit({ ...base(threadId, turnId), type: "turn.started" });
         liveTurn.submission = writeUser(live, threadId, turn.text, liveTurn.boundary);
         const written = await liveTurn.submission;
         if (!written) {
-          active.delete(threadId);
+          forgetActive(threadId);
           live.turn = null;
           closeSession(threadId, "stdin write failed");
           retryState.delete(threadId);
@@ -1203,7 +1242,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (session.systemPromptPath) {
           if (removePrivateTempDir(session.systemPromptPath)) session.systemPromptPath = null;
         }
-        active.delete(threadId);
+        forgetActive(threadId);
         session.turn = null;
         // A settled turn owns no retry budget. Retained CLI sessions may run
         // many later turns on this thread, and each must start fresh.
@@ -1433,7 +1472,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               // an interrupt during the backoff landed here via stop(); the
               // turn settles as cancelled and no zombie relaunch happens
               if (retry.cancelled) {
-                active.delete(threadId);
+                forgetActive(threadId);
                 retryState.delete(threadId);
                 emit({
                   ...base(threadId, turnId),
@@ -1445,7 +1484,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 return;
               }
               // hand the thread back before recursing — the relaunch's own
-              // guard would otherwise reject it as "already running"
+              // guard would otherwise reject it as "already running". The
+              // turn itself continues, so nobody waiting behind a Stop is
+              // released here (a stopped turn never reaches this branch).
               active.delete(threadId);
               try {
                 const cursor = session.sessionId ?? sessionId ?? undefined;
@@ -1510,7 +1551,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         retryAbort.abort();
         killCliTree(child);
       };
-      active.set(threadId, { stop, turnId, broker });
+      active.set(threadId, activeTurn(turnId, broker, stop, () => launchTurn.stopRequested === true || retry.cancelled));
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
       // prompt over stdin as a stream-json message — never argv (ARG_MAX).
