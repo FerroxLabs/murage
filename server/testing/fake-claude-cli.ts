@@ -513,14 +513,6 @@ const playTurn = (prompt: JsonValue) => {
       process.once("SIGTERM", () => {
         process.stdout.write(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, stop_reason: null, total_cost_usd: 0 }) + "\n", () => process.exit(143));
       });
-    } else if (promptText(prompt).includes("__fixture_slow_exit_on_stop__")) {
-      // A CLI that takes a moment to go after Stop: the driver's kill
-      // returns and the bot reads idle while this process is still alive,
-      // so its close lands after whatever the person sends next. Windows
-      // is like this on every Stop (taskkill runs asynchronously); this
-      // marker makes the window as wide on POSIX. Bounded well inside the
-      // driver's 5 s hard kill.
-      process.once("SIGTERM", () => { setTimeout(() => process.exit(143), 400); });
     }
     const gateDir = process.env.FAKE_CLAUDE_FINISH_GATE_DIR;
     const gate = gateDir ? join(gateDir, String(process.pid)) : undefined;
