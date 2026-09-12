@@ -29,7 +29,10 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 function fixture() {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "murage-workspace-write-"))); roots.push(base);
+  // .native: the canonical spelling the workspace routes report (on Windows
+  // the long name of an 8.3 temp path such as RUNNER~1, which the JS
+  // realpath keeps as written)
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-workspace-write-"))); roots.push(base);
   const dataDir = join(base, "data"), taskRoot = join(dataDir, "workspaces", "bot", "threads", "thread");
   mkdirSync(taskRoot, { recursive: true });
   const task: { threadId: string; cwd?: string | null; resumeCursors: Record<string, unknown> } = { threadId: "thread", cwd: taskRoot, resumeCursors: {} };
@@ -148,6 +151,10 @@ describe("revision-conditioned Markdown write", () => {
     const old = Buffer.concat([BOM, Buffer.from("# Old\r\n", "utf8")]);
     const path = f.put("reports/report.md", old);
     chmodSync(path, 0o640);
+    // the mode as this OS keeps it: 0o640 on POSIX; Windows has only the
+    // read-only attribute, so a writable file reads 0o666 there
+    const mode = statSync(path).mode & 0o777;
+    expect(mode).toBe(process.platform === "win32" ? 0o666 : 0o640);
     const opened = f.read("reports/report.md");
     const receipt = await f.save("reports/report.md", "# New\r\nline two\r\n", opened.revision, { bom: true, draftRevision: 7, requestId: "save-42" });
     const expected = Buffer.concat([BOM, Buffer.from("# New\r\nline two\r\n", "utf8")]);
@@ -155,7 +162,7 @@ describe("revision-conditioned Markdown write", () => {
     expect(receipt).toMatchObject({ requestId: "save-42", scope: f.scope, relativePath: "reports/report.md", previousRevision: opened.revision, bytes: expected.length, draftRevision: 7 });
     expect(receipt.revision).not.toBe(opened.revision);
     expect(f.read("reports/report.md")).toMatchObject({ revision: receipt.revision, bom: true, newline: "crlf", content: "# New\r\nline two\r\n" });
-    expect(statSync(path).mode & 0o777).toBe(0o640);
+    expect(statSync(path).mode & 0o777).toBe(mode);
     expect(lstatSync(path).nlink).toBe(1);
     // The replaced revision is recoverable, byte for byte, from Files.
     expect(receipt.artifactId).toBeTruthy();

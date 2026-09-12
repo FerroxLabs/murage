@@ -7,13 +7,18 @@
 // data dir.
 import { readdirSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { evidenceDir, evidenceRoot } from "./evidence";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const original = process.env.MURAGE_E2E_DATA_DIR;
+// Lane-shaped paths, resolved the way laneDataDir/evidenceDir resolve them:
+// on Windows that adds the current drive letter (`D:\lane\.e2e\CLAC3`).
+const LANE = resolve("/lane/.e2e/CLAC3");
+const PROOF = resolve("/proof/evidence-local-models");
+const FOLLOW4 = resolve("/lane/.e2e/FOLLOW4");
 afterEach(() => { if (original === undefined) delete process.env.MURAGE_E2E_DATA_DIR; else process.env.MURAGE_E2E_DATA_DIR = original; });
 
 describe("evidenceDir", () => {
@@ -27,17 +32,17 @@ describe("evidenceDir", () => {
 
   it("puts each spec's results under the lane's data dir", () => {
     process.env.MURAGE_E2E_DATA_DIR = "/lane/.e2e/CLAC3";
-    expect(evidenceDir("claude-accounts")).toBe(join("/lane/.e2e/CLAC3", "claude-accounts-results"));
-    expect(evidenceRoot("claude-accounts")).toBe("/lane/.e2e/CLAC3");
+    expect(evidenceDir("claude-accounts")).toBe(join(LANE, "claude-accounts-results"));
+    expect(evidenceRoot("claude-accounts")).toBe(LANE);
   });
 
   it("honours a spec's own documented override only when it is set", () => {
     process.env.MURAGE_E2E_DATA_DIR = "/lane/.e2e/CLAC3";
-    expect(evidenceDir("local-models", "/proof/evidence-local-models")).toBe("/proof/evidence-local-models");
-    expect(evidenceDir("local-models", "")).toBe(join("/lane/.e2e/CLAC3", "local-models-results"));
-    expect(evidenceDir("local-models", undefined)).toBe(join("/lane/.e2e/CLAC3", "local-models-results"));
+    expect(evidenceDir("local-models", "/proof/evidence-local-models")).toBe(PROOF);
+    expect(evidenceDir("local-models", "")).toBe(join(LANE, "local-models-results"));
+    expect(evidenceDir("local-models", undefined)).toBe(join(LANE, "local-models-results"));
     delete process.env.MURAGE_E2E_DATA_DIR;
-    expect(evidenceDir("local-models", "/proof/evidence-local-models")).toBe("/proof/evidence-local-models");
+    expect(evidenceDir("local-models", "/proof/evidence-local-models")).toBe(PROOF);
   });
 
   it("refuses a root or override Playwright must never wipe: a home, a data dir, an unmarked path", () => {
@@ -60,7 +65,7 @@ describe("evidenceDir", () => {
     process.env.MURAGE_E2E_DATA_DIR = "/lane/.e2e/FOLLOW4";
     vi.resetModules();
     const configured = (await import("../../playwright.config")).default;
-    expect(configured.outputDir).toBe(join("/lane/.e2e/FOLLOW4", "human-results"));
+    expect(configured.outputDir).toBe(join(FOLLOW4, "human-results"));
     expect(configured.testDir).toBe("./src/e2e");
     delete process.env.MURAGE_E2E_DATA_DIR;
     vi.resetModules();

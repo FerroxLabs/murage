@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, ut
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -510,7 +510,7 @@ describe("workspace assets", () => {
     writeFileSync(join(homeDir, "home.png"), png());
     for (const workspaceRoot of [homeDir, join(homeDir, "..")]) {
       const homeScoped = { ...f.deps, artifactScopes: (): ArtifactScope[] => [{ botId: f.botId, botName: "b", threadId: f.threadId, workspaceRoot }] };
-      const relativePath = workspaceRoot === homeDir ? "home.png" : `${fs.realpathSync.native(homeDir).split("/").at(-1)}/home.png`;
+      const relativePath = workspaceRoot === homeDir ? "home.png" : `${basename(fs.realpathSync.native(homeDir))}/home.png`;
       const revision = mediaWorkspaceRevision(fs.realpathSync.native(workspaceRoot), relativePath, fs.lstatSync(join(homeDir, "home.png")));
       const home = await mediaAssetsRoute(request("POST", MEDIA_ROUTES.resolve, { body: { ref: { source: "workspace", scope, relativePath, revision } } }), homeScoped);
       expect(home.status, workspaceRoot).toBe(200); expect((home.body as MediaResolveResponse).asset.availability, workspaceRoot).toBe("denied");

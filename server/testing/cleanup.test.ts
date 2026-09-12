@@ -36,7 +36,9 @@ const fixture = (name: string) => {
 };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-beforeAll(() => { scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-cleanup-"))); });
+// .native: removeTempDir reports the canonical spelling, which on Windows
+// expands an 8.3 short temp name (RUNNER~1) that the JS realpath keeps.
+beforeAll(() => { scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-cleanup-"))); });
 afterAll(async () => {
   for (const child of holders) await waitForExit(child, { signal: "SIGTERM" });
   safeWipeSync(scratch);

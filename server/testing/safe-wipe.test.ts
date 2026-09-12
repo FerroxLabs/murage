@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs, { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { hostname, tmpdir, userInfo } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -15,8 +15,9 @@ import { waitForExit } from "./cleanup.ts";
 import { assertNotProtected, assertSafeToWipe, canonicalPath, installSafeWipeGuard, SafeWipeRefused, safeWipe, safeWipeSync, wipeTargetPath } from "./safe-wipe.mjs";
 
 // A home that is NOT under the OS temp dir, so the data-dir rules apply to
-// it the way they apply to a real account. It never has to exist.
-const FAKE_HOME = "/nonexistent-safe-wipe-7f3a/home";
+// it the way they apply to a real account. It never has to exist. Resolved
+// so that on Windows it carries the drive letter every canonical path does.
+const FAKE_HOME = resolve("/nonexistent-safe-wipe-7f3a/home");
 const opts = { homedir: FAKE_HOME };
 
 let scratch: string;
@@ -37,7 +38,10 @@ const refuses = (target: string, reason: RegExp, options: Parameters<typeof asse
 };
 
 beforeAll(() => {
-  scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-safe-wipe-")));
+  // .native: the canonical spelling safe-wipe reports (on Windows a temp dir
+  // under an 8.3 short name — RUNNER~1 on GitHub's runners — realpaths to
+  // its long name only through the native call).
+  scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-safe-wipe-")));
   // A live foreign lease owner: a real process that is not this one.
   leaseHolder = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
 });
