@@ -3279,9 +3279,27 @@ bus.subscribe((event: RuntimeEvent) => {
           costUsd: event.cost ?? null,
         });
         // settled → idle; a setup failure already marked it dead, keep that
-        const directRun=directRuns.get(event.threadId);
+        const threadRun=directRuns.get(event.threadId);
+        // The run this terminal event may settle is the one bound to this
+        // provider turn. A Stop the driver acknowledged before its child
+        // closed (interruptTurn returning void: Claude) released the run at
+        // once, and the child's later close still emits turn.completed for
+        // that turn; by then a replacement run can own the thread (Windows
+        // ends the child through an asynchronous taskkill, so its close
+        // always lands after the next send). That event must not settle the
+        // replacement: before its own dispatch (no provider turn bound yet,
+        // phase "setup") or with another provider turn bound, the thread's
+        // run is not this event's run. Only a run inside sendTurn (phase
+        // "dispatching", no id yet) may be settled by an unbound completion,
+        // which some adapters publish synchronously before sendTurn resolves.
+        const directRun=threadRun&&(event.turnId===undefined||(threadRun.providerTurnId===undefined?threadRun.phase==="dispatching":threadRun.providerTurnId===event.turnId))?threadRun:undefined;
+        const replacementOwnsThread=Boolean(threadRun)&&!directRun;
         if(directRun)directRuns.settling(directRun);
         const releaseDirect=()=>{
+          // A newer run owns the thread: this is an earlier provider turn's
+          // late close. Its leases were completed above; the thread stays
+          // busy for the run that owns it, and nothing queued may drain.
+          if(replacementOwnsThread)return;
           if(directRun&&!directRuns.current(directRun)){
             // Stop already released this generation after the same confirmed
             // close; queued work may proceed unless a newer run owns the thread.
