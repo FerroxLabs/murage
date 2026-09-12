@@ -928,12 +928,31 @@ async function interruptDirectThread(botId:string,threadId:string):Promise<void>
   if(stopCloseConfirmed(stopped)===false)throw unconfirmedDirectStop(threadId,run?.generation);
   if(run&&claim?.phase!=="dispatching"&&directRuns.current(run)){
     if(screenPollers.get(botId)?.threadId===threadId)await finalScreenFrame(botId,threadId);
+    // Released before its child closed: that child's later turn.completed
+    // names this provider turn, and it must settle nothing but its own
+    // per-turn state — never a replacement run, whatever phase the
+    // replacement is in when the close lands (turn.completed fold).
+    if(run.providerTurnId)rememberReleasedStoppedTurn(threadId,run.providerTurnId);
     directRuns.release(run);store.setTaskActivity(botId,threadId,"idle");
     // The bot reads idle now, but a legacy "requested, not observed" stop
     // keeps the folder writer lease until the engine's terminal event. Mark
     // it so a restore inside that window waits for the release (STOPRESTORE1).
     projectTurnLeases.markStopRequested(run.generation);
   }
+}
+/** Provider turns whose direct run a Stop released before the child closed
+ * (a driver whose interruptTurn returns as soon as the kill is sent: Claude).
+ * Their terminal event is still to come and is that turn's own; a run that
+ * owns the thread by then is a replacement it must leave alone. Bounded like
+ * the notices below: a close that never arrives must not accumulate. */
+const releasedStoppedTurns=new Set<string>();
+function rememberReleasedStoppedTurn(threadId:string,turnId:string):void{
+  releasedStoppedTurns.add(`${threadId}\0${turnId}`);
+  if(releasedStoppedTurns.size>512)releasedStoppedTurns.delete(releasedStoppedTurns.values().next().value!);
+}
+/** True once for the stopped turn's own terminal event. */
+function takeReleasedStoppedTurn(threadId:string,turnId:string|undefined):boolean{
+  return turnId!==undefined&&releasedStoppedTurns.delete(`${threadId}\0${turnId}`);
 }
 /** One visible notice per retained generation; the caller keeps the lease. */
 const reportedUnconfirmedDirectStops=new Set<string>();
@@ -3201,8 +3220,35 @@ bus.subscribe((event: RuntimeEvent) => {
       // tally at turn.completed (below) so retries never double-count
       turnUsage.set(event.threadId, { input: event.input, output: event.output, cachedInput: event.cachedInput });
       break;
-    case "turn.completed":
-      activeProviderSelections.delete(event.threadId); {
+    case "turn.completed": {
+      // The run this terminal event may settle is the one bound to this
+      // provider turn. A Stop the driver acknowledged before its child
+      // closed (interruptTurn returning void: Claude) released the run at
+      // once, and the child's later close still emits turn.completed for
+      // that turn; by then a replacement run can own the thread (Windows
+      // ends the child through an asynchronous taskkill, so its close
+      // always lands after the next send). That event must not settle the
+      // replacement: before its own dispatch (no provider turn bound yet,
+      // phase "setup") or with another provider turn bound, the thread's
+      // run is not this event's run. Only a run inside sendTurn (phase
+      // "dispatching", no id yet) may be settled by an unbound completion,
+      // which some adapters publish synchronously before sendTurn resolves.
+      // A driver's retry relaunch keeps its turn id (claude.ts sendTurn), so
+      // the run bound at acceptance is still the one its completion names.
+      // A stopped turn whose run was already released (interruptDirectThread)
+      // is known by id: its close settles no run at all, so a replacement
+      // still inside sendTurn (phase "dispatching", no id yet — the Claude
+      // driver waits there for exactly this close) is safe from it too.
+      const threadRun=directRuns.get(event.threadId);
+      const releasedStop=takeReleasedStoppedTurn(event.threadId,event.turnId);
+      const directRun=threadRun&&!releasedStop&&(event.turnId===undefined||(threadRun.providerTurnId===undefined?threadRun.phase==="dispatching":threadRun.providerTurnId===event.turnId))?threadRun:undefined;
+      // An earlier provider turn's late close while a newer run owns the
+      // thread: its own per-turn state (leases, images, memory settlement)
+      // is folded below; the thread-level state the replacement now owns
+      // — its provider selection, its running usage and reply, its unread
+      // and "done" notification — is not this event's to consume.
+      const replacementOwnsThread=Boolean(threadRun)&&!directRun;
+      if(!replacementOwnsThread)activeProviderSelections.delete(event.threadId);
       const generatedKey = generatedImageTurnKey(event.threadId, event.turnId);
       const generated = generatedImagesByTurn.get(generatedKey) ?? [];
       generatedImagesByTurn.delete(generatedKey);
@@ -3255,10 +3301,10 @@ bus.subscribe((event: RuntimeEvent) => {
       else recordMemorySettlement(event.threadId, `terminal:${store.activeLeaf(event.threadId)}`, settledOutcome);
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       void outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
-      const reply = lastReply.get(event.threadId) ?? "";
-      lastReply.delete(event.threadId);
-      const lastReported = turnUsage.get(event.threadId);
-      turnUsage.delete(event.threadId);
+      const reply = replacementOwnsThread ? "" : (lastReply.get(event.threadId) ?? "");
+      if(!replacementOwnsThread)lastReply.delete(event.threadId);
+      const lastReported = replacementOwnsThread ? undefined : turnUsage.get(event.threadId);
+      if(!replacementOwnsThread)turnUsage.delete(event.threadId);
       // group turns run on the room's thread — the speaking bot's task
       // tally is not the right home for a shared room's spend, so only
       // 1:1 task turns are tallied for now.
@@ -3279,9 +3325,12 @@ bus.subscribe((event: RuntimeEvent) => {
           costUsd: event.cost ?? null,
         });
         // settled → idle; a setup failure already marked it dead, keep that
-        const directRun=directRuns.get(event.threadId);
         if(directRun)directRuns.settling(directRun);
         const releaseDirect=()=>{
+          // A newer run owns the thread: this is an earlier provider turn's
+          // late close. Its leases were completed above; the thread stays
+          // busy for the run that owns it, and nothing queued may drain.
+          if(replacementOwnsThread)return;
           if(directRun&&!directRuns.current(directRun)){
             // Stop already released this generation after the same confirmed
             // close; queued work may proceed unless a newer run owns the thread.
@@ -3312,8 +3361,10 @@ bus.subscribe((event: RuntimeEvent) => {
         const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
         // Group-origin routines belong to that channel's unread state. Their
         // hidden execution task should not light up the bot's 1:1 sidebar too.
-        if (!routineReportGroup) store.patchTask(bot.id,event.threadId, { unread: true });
-        if (routineRun?.status !== "failed") {
+        // A stopped turn's late close under a replacement run is not a result
+        // to announce either: the replacement's own completion will be.
+        if (!routineReportGroup && !replacementOwnsThread) store.patchTask(bot.id,event.threadId, { unread: true });
+        if (routineRun?.status !== "failed" && !replacementOwnsThread) {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
           const completionDetail = routineRun

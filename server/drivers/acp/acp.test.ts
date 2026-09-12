@@ -2070,7 +2070,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     const fuigoHome = join(scratch, "fuigo-home");
     mkdirSync(fuigoHome, { recursive: true });
     // the engine stores canonical keys (realpath), never the spelling it was given
-    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders."${realpathSync.native(folder)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(folder))}]\ntrusted = true\ndecided_at = 1789152451\n`);
     process.env.FUIGO_HOME = fuigoHome;
     try {
       await instance.adapter.sendTurn({
@@ -2189,7 +2189,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     const fuigoHome = join(scratch, "fuigo-home");
     mkdirSync(fuigoHome, { recursive: true });
     // a document Murage's reader accepts (the inline-table spelling)
-    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders]\n"${realpathSync.native(folder)}" = { trusted = true, decided_at = 1789152451 }\n`);
+    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders]\n${JSON.stringify(realpathSync.native(folder))} = { trusted = true, decided_at = 1789152451 }\n`);
     process.env.FUIGO_HOME = fuigoHome;
     try {
       await create();
@@ -2262,7 +2262,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     const fuigoHome = join(scratch, "fuigo-home");
     mkdirSync(fuigoHome, { recursive: true });
     // what `fuigo --trust` wrote from the main checkout: its canonical root
-    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders."${realpathSync.native(main)}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(fuigoHome, "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(main))}]\ntrusted = true\ndecided_at = 1789152451\n`);
     process.env.FUIGO_HOME = fuigoHome;
     try {
       await create();

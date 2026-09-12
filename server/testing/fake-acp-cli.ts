@@ -317,17 +317,20 @@ let folderTrustInteractive = false;
 // the workspace key is enough for a fixture — the server's reader mirrors
 // the real cascade. The key is the cwd's git root, collapsed onto the main
 // checkout's root for a linked worktree (`workspace_key`; the conventional
-// `<main>/.git` layout only), else the cwd itself.
+// `<main>/.git` layout only), else the cwd itself — canonical either way,
+// as the engine's dunce::canonicalize keeps it (a cwd handed over as an 8.3
+// short name on Windows is stored under its long one).
 const fakeWorkspaceKey = (): string => {
   const cwd = process.cwd();
+  const canonical = (path: string) => { try { return realpathSync.native(path); } catch { return path; } };
   try {
     const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     const common = resolve(cwd, execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
     const gitDir = resolve(cwd, execFileSync("git", ["rev-parse", "--git-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
     if (top && realpathSync.native(common) !== realpathSync.native(gitDir) && basename(common) === ".git") return realpathSync.native(dirname(common));
-    return top ? realpathSync.native(top) : cwd;
+    return top ? realpathSync.native(top) : canonical(cwd);
   } catch {
-    return cwd;
+    return canonical(cwd);
   }
 };
 const storeTrustsCwd = (): boolean => {
@@ -335,7 +338,9 @@ const storeTrustsCwd = (): boolean => {
   const home = process.env.FUIGO_HOME || join(process.env.HOME || process.env.USERPROFILE || homedir(), ".fuigo");
   try {
     const text = readFileSync(join(home, "trusted_folders.toml"), "utf8");
-    const table = text.indexOf(`[folders."${fakeWorkspaceKey()}"]`);
+    // the key as the engine's `toml` crate writes it: a basic string, so a
+    // Windows path's backslashes are escaped
+    const table = text.indexOf(`[folders.${JSON.stringify(fakeWorkspaceKey())}]`);
     if (table < 0) return false;
     const body = text.slice(table).split("\n").slice(1).join("\n");
     const next = body.search(/^\[/m);

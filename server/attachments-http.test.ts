@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlMurage } from "../scripts/control-murage.ts";
+import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 
 it("streams a bounded upload through the isolated app, preserves retry bytes and serves its image", async () => {
   const session = await launchVerificationServer();
@@ -18,7 +19,9 @@ it("streams a bounded upload through the isolated app, preserves retry bytes and
     } as RequestInit & { duplex: "half" });
     const first = await upload(); expect(first.status).toBe(201);
     const saved = await first.json() as { path: string; bytes: number };
-    expect(saved.path).toBe(join(realpathSync(session.info.dataDir), "attachments", `${id}.txt`));
+    // saved under the harness's canonical data dir: the lease's spelling
+    // (on Windows long and case-folded, whatever mkdtemp returned)
+    expect(saved.path).toBe(join(dataDirLeasePaths(session.info.dataDir).canonicalDataDir, "attachments", `${id}.txt`));
     expect(saved.bytes).toBe(25 * 1024 * 1024);
     expect(createHash("sha256").update(readFileSync(saved.path)).digest("hex"))
       .toBe(createHash("sha256").update(Buffer.alloc(saved.bytes, 7)).digest("hex"));
