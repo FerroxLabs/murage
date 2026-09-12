@@ -3481,7 +3481,12 @@ describe("harness HTTP API", () => {
     const systemFor = async (botId: string, text: string): Promise<string> => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${botId}/messages`, { text })).status).toBe(202);
-      const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
+      // 20 s like roomSystemFor below: every call after the first sends into
+      // a bot this helper just stopped, so its turn launches only once the
+      // driver's resetSession has closed the previous child. On Windows that
+      // close is an asynchronous taskkill, and under a loaded runner it can
+      // outrun the 5 s default before the dump is written.
+      const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 20_000);
       expect((await api("POST", `/api/bots/${botId}/interrupt`)).status).toBe(200);
       // Stop acknowledges cancellation before provider teardown finishes.
       // Do not remove the shared dump and change the next turn's config
