@@ -1255,6 +1255,27 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(readFileSync(join(scratch, "launches"), "utf8")).toBe("3");
   }, 20_000);
 
+  // The harness binds a run, its folder writer lease, its internal
+  // capability generation and a channel routine's delivery to the id sendTurn
+  // returned. A relaunch is the SAME turn continuing (turn.retrying already
+  // carries that id), so every event it emits — the second turn.started and
+  // the eventual turn.completed — must carry it too; a fresh id would leave
+  // the harness waiting on a completion that never arrives (WIN1 fix round).
+  it("a relaunched turn keeps the id sendTurn returned through to turn.completed", async () => {
+    process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-same-id");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-retry-id", text: PRE_ACCEPT_PROMPT });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, turnId });
+    expect(recorder.events.filter((e) => e.type === "turn.retrying").map((e) => e.turnId)).toEqual([turnId]);
+    expect(recorder.events.filter((e) => e.type === "turn.started").map((e) => e.turnId)).toEqual([turnId, turnId]);
+    expect(recorder.events.every((e) => e.threadId !== "t-retry-id" || e.turnId === turnId)).toBe(true);
+    expect(readFileSync(join(scratch, "launches-same-id"), "utf8")).toBe("2");
+  }, 20_000);
+
   it("stops retrying at the attempt cap and settles the turn as failed", async () => {
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "9";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-cap");
