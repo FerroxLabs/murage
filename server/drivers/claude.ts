@@ -833,14 +833,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     // is a fresh sendTurn, and the attempt cap must survive across launches
     const retryState = new Map<string, { attempt: number; cancelled: boolean }>();
 
-    const sendTurn = async (turn: SendTurnInput) => {
+    /** `relaunch` is the retry path's own: a transient pre-accept exit
+     * relaunches the CLI for the SAME turn, so the relaunch keeps the id the
+     * caller was given. The harness binds the run, its folder writer lease,
+     * its internal capability generation and a channel routine's delivery to
+     * that id, and `turn.retrying` already carries it; a fresh id on the
+     * relaunch made the eventual turn.completed a stranger's — the run was
+     * never released and the bot stayed busy until restart. */
+    const sendTurn = async (turn: SendTurnInput, relaunch?: { turnId: string }) => {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
       if (controlsHost && config.permissionMode === "bypassPermissions") {
         throw new Error("local computer control requires the interactive approval broker");
       }
-      const turnId = newId();
+      const turnId = relaunch?.turnId ?? newId();
       const retryAbort = new AbortController();
       const retry = retryState.get(threadId) ?? { attempt: 0, cancelled: false };
       retry.cancelled = false;
@@ -1442,7 +1449,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               active.delete(threadId);
               try {
                 const cursor = session.sessionId ?? sessionId ?? undefined;
-                await sendTurn({ ...turn, resumeCursor: cursor });
+                await sendTurn({ ...turn, resumeCursor: cursor }, { turnId });
               } catch (e) {
                 retryState.delete(threadId);
                 emit({
