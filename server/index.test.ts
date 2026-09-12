@@ -3481,7 +3481,12 @@ describe("harness HTTP API", () => {
     const systemFor = async (botId: string, text: string): Promise<string> => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${botId}/messages`, { text })).status).toBe(202);
-      const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
+      // 20 s like roomSystemFor below: every call after the first sends into
+      // a bot this helper just stopped, so its turn launches only once the
+      // driver's resetSession has closed the previous child. On Windows that
+      // close is an asynchronous taskkill, and under a loaded runner it can
+      // outrun the 5 s default before the dump is written.
+      const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 20_000);
       expect((await api("POST", `/api/bots/${botId}/interrupt`)).status).toBe(200);
       // Stop acknowledges cancellation before provider teardown finishes.
       // Do not remove the shared dump and change the next turn's config
@@ -4675,6 +4680,10 @@ describe("harness HTTP API", () => {
       // got a bare 400 and no dialog). The harness announces it on the
       // config route the renderer already reads at startup, on both doors.
       for (const get of [api, desktopApi]) expect((await get("GET", "/api/config")).body.harness).toEqual({ platform: process.platform });
+      // A bot curling loopback has no desktop proof and is refused first,
+      // on every platform — before any destination rule is consulted.
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(404);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(404);
       const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
       const blindTask = await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { autoApprove: true });
       const afterBlind = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
@@ -4708,9 +4717,17 @@ describe("harness HTTP API", () => {
       // Naming this computer explicitly is the same desktop the person
       // already acknowledged on macOS; on a host whose default destination
       // never mounted it, "local" is a new grant and asks again.
+      // An explicit "local" mounts the desktop on macOS and Linux, never on
+      // Windows (server/local-routing.ts). On macOS it is the same desktop
+      // already acknowledged above, so no new warning; on Linux the blind
+      // grant above never mounted a computer, so naming "local" is a new
+      // local grant that asks; on Windows "local" mounts nothing, so there
+      // is nothing to warn about.
+      const localMountsHere = process.platform === "darwin" || process.platform === "linux";
       const explicit = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
-      expect(explicit.status).toBe(mountsThisComputer ? 200 : 400);
-      if (!mountsThisComputer) expect(explicit.body.error).toContain("acknowledgeLocalAuto");
+      const explicitAsks = localMountsHere && !mountsThisComputer;
+      expect(explicit.status).toBe(explicitAsks ? 400 : 200);
+      if (explicitAsks) expect(explicit.body.error).toContain("acknowledgeLocalAuto");
       // Leaving this computer ends the grant; coming back to the default
       // destination with Auto still on needs the warning again on macOS.
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
@@ -4720,7 +4737,14 @@ describe("harness HTTP API", () => {
     } finally { await desktopApi("DELETE", `/api/bots/${bot.id}`); }
   });
 
-  it("grants Auto on this computer only through the warning acknowledgement", async () => {
+  // The subject — the local-computer Auto warning on an explicit "local" —
+  // exists only where a local computer can be mounted. Windows never mounts
+  // one (server/local-routing.ts: shouldMountLocalComputer is false for every
+  // setting on win32), so there is no desktop to gate and computer:"local"
+  // is a no-op; the macOS/Linux acknowledgement flow below cannot arise. The
+  // AUTOOP2 test above keeps Windows coverage of the resolved-destination
+  // rule (no warning, because nothing mounts).
+  it.skipIf(process.platform === "win32")("grants Auto on this computer only through the warning acknowledgement", async () => {
     const created = await api("POST", "/api/bots");
     const bot = created.body.bot;
     // Auto with the computer OFF needs no warning on any host. (A fresh
@@ -4731,8 +4755,8 @@ describe("harness HTTP API", () => {
       true,
     );
 
-    // A bot curling loopback has no desktop proof and is refused first.
-    expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(404);
+    // (A loopback caller's 404 — no desktop proof — is platform-independent
+    // and asserted in the AUTOOP2 test above, which Windows runs too.)
     // Even an authenticated renderer must supply the warning acknowledgement.
     const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
     expect(blind.status).toBe(400);
@@ -4867,8 +4891,15 @@ describe("harness HTTP API", () => {
     const empty = await api("POST", `/api/bots/${bot.id}/messages`, { text: "   " });
     expect(empty.status).toBe(400);
 
-    // the seeded bot's selection points at the ghost instance — sending a
-    // real message must fail loudly, not 202-and-hang
+    // Point this bot at the ghost engine (an unknown driver the registry
+    // resolves to nothing) so the send fails loudly on every host. The
+    // seeded starter's own selection is defaultSelection() at boot, which is
+    // the available fake engine wherever it probes ready in time (Windows CI
+    // did; a cold macOS/Linux boot did not) — an unstable precondition this
+    // test used to lean on. Setting it here makes the "unavailable" path the
+    // subject, not an accident of boot timing.
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { modelSelection: STATE_ONLY_SELECTION })).status).toBe(200);
+    // sending a real message must fail loudly, not 202-and-hang
     const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
     expect(send.status).toBe(409);
     expect(send.body.error).toContain("unavailable");

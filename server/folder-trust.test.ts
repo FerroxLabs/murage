@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, parse } from "node:path";
+import { dirname, join, parse, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -68,6 +68,17 @@ const linkedWorktree = (main: string, name: string, branch = name) => {
   git(main, "worktree", "add", "-q", "-b", branch, dir);
   return dir;
 };
+
+/** A `trusted_folders.toml` record the way the engine's `toml` crate writes
+ * one: the folder as a TOML basic string, so a Windows path's backslashes
+ * are escaped (`"C:\\Users\\x"`), never read as `\U` escapes. */
+const trustRecord = (folder: string, trusted = true) => `[folders.${JSON.stringify(folder)}]\ntrusted = ${trusted}\ndecided_at = 1789152451\n`;
+/** The one spelling of a cwd the engine's registry matches BY PATH:
+ * `WorktreeDb::get` treats a string with a `/` as a path and anything else
+ * as an id or label, so a backslash-only Windows spelling never collapses
+ * a managed worktree onto its source (the engine's own rule, mirrored in
+ * managedWorktreeSourceRepo). Identity on POSIX. */
+const engineCwd = (folder: string) => folder.split(sep).join("/");
 
 describe("scanFolderTrustSources", () => {
   it("names nothing for a plain folder, so no card is ever raised for it", () => {
@@ -299,24 +310,30 @@ CREATE INDEX IF NOT EXISTS idx_worktrees_created ON worktrees(created_at);
     expect(gitRootOf(clone)).toBe(clone);
     expect(folderTrustKey(clone)).toBe(clone);
     // the registry (the engine's first step) collapses it onto the source
-    expect(managedWorktreeSourceRepo(clone, home)).toBe(source);
-    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(source);
+    expect(managedWorktreeSourceRepo(engineCwd(clone), home)).toBe(source);
+    expect(folderTrustKey(engineCwd(clone), { fuigoHome: home })).toBe(source);
+    if (sep === "\\") {
+      // the engine's own rule on Windows: a backslash-only cwd is looked up
+      // as an id or label, never by path, so it stays its own workspace
+      expect(managedWorktreeSourceRepo(clone, home)).toBeNull();
+      expect(folderTrustKey(clone, { fuigoHome: home })).toBe(clone);
+    }
     // from a subfolder too: the engine walks up to the registered path
     const deep = join(clone, "src", "lib");
     mkdirSync(deep, { recursive: true });
-    expect(folderTrustKey(deep, { fuigoHome: home })).toBe(source);
+    expect(folderTrustKey(engineCwd(deep), { fuigoHome: home })).toBe(source);
     // the source checkout itself, and the source's subfolders, share it
     expect(folderTrustKey(join(source, "sub"), { fuigoHome: home })).toBe(source);
     // the scan describes the engine's key; the store's cascade is judged on it
-    expect(scanFolderTrustSources(deep, { fuigoHome: home })).toMatchObject({ key: source, folder: deep });
-    expect(upstreamTrustsFolder(new Map([[source, true]]), clone)).toBe(false);
-    expect(upstreamTrustsFolder(new Map([[source, true]]), clone, { fuigoHome: home })).toBe(true);
-    expect(upstreamTrustsFolder(new Map([[source, false]]), clone, { fuigoHome: home })).toBe(false);
+    expect(scanFolderTrustSources(engineCwd(deep), { fuigoHome: home })).toMatchObject({ key: source, folder: deep });
+    expect(upstreamTrustsFolder(new Map([[source, true]]), engineCwd(clone))).toBe(false);
+    expect(upstreamTrustsFolder(new Map([[source, true]]), engineCwd(clone), { fuigoHome: home })).toBe(true);
+    expect(upstreamTrustsFolder(new Map([[source, false]]), engineCwd(clone), { fuigoHome: home })).toBe(false);
     // a standalone `fuigo --trust` in the source repo covers the managed clone
-    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${source}"]\ntrusted = true\ndecided_at = 1789152451\n`);
-    expect(scanFolderTrustSources(deep, { fuigoHome: home })).toEqual({ key: source, folder: deep, sources: [], upstreamTrusted: true });
+    writeFileSync(join(home, "trusted_folders.toml"), trustRecord(source));
+    expect(scanFolderTrustSources(engineCwd(deep), { fuigoHome: home })).toEqual({ key: source, folder: deep, sources: [], upstreamTrusted: true });
     // a different home (a provider-routed turn's temporary one) has no registry
-    expect(scanFolderTrustSources(deep, { fuigoHome: fuigoHomeIn("routed-turn-home") })).toEqual({ key: clone, folder: deep, sources: [] });
+    expect(scanFolderTrustSources(engineCwd(deep), { fuigoHome: fuigoHomeIn("routed-turn-home") })).toEqual({ key: clone, folder: deep, sources: [] });
     expect(scanFolderTrustSources(deep)).toEqual({ key: clone, folder: deep, sources: [] });
   });
 
@@ -335,9 +352,9 @@ CREATE INDEX IF NOT EXISTS idx_worktrees_created ON worktrees(created_at);
       // a record naming the home folder can never be a trust key
       { path: fromHome, source: homedir() },
     ]);
-    expect(folderTrustKey(fromSubdir, { fuigoHome: home })).toBe(source);
-    expect(folderTrustKey(orphan, { fuigoHome: home })).toBe(gone);
-    expect(folderTrustKey(fromHome, { fuigoHome: home })).toBe(fromHome);
+    expect(folderTrustKey(engineCwd(fromSubdir), { fuigoHome: home })).toBe(source);
+    expect(folderTrustKey(engineCwd(orphan), { fuigoHome: home })).toBe(gone);
+    expect(folderTrustKey(engineCwd(fromHome), { fuigoHome: home })).toBe(fromHome);
   });
 
   it("consults the registry only for a folder under <FUIGO_HOME>/worktrees, and reads it read-only: a missing, unreadable or unrelated database changes nothing", () => {
@@ -345,25 +362,25 @@ CREATE INDEX IF NOT EXISTS idx_worktrees_created ON worktrees(created_at);
     const home = fuigoHomeIn("fuigo-home");
     const clone = managedClone(home, source, "feat");
     // no database yet: git decides, and none is created by the read
-    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(clone);
+    expect(folderTrustKey(engineCwd(clone), { fuigoHome: home })).toBe(clone);
     expect(() => readFileSync(join(home, "worktrees.db"))).toThrow();
     // a database without this worktree
     writeWorktreesDb(home, [{ path: join(home, "worktrees", "repo", "other"), source }]);
-    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(clone);
+    expect(folderTrustKey(engineCwd(clone), { fuigoHome: home })).toBe(clone);
     // a dead record still maps (the engine does not filter on status)
     writeWorktreesDb(home, [{ path: clone, source, status: "dead" }]);
-    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(source);
+    expect(folderTrustKey(engineCwd(clone), { fuigoHome: home })).toBe(source);
     // a clone of the same repo OUTSIDE the worktrees dir is never looked up,
     // even when a record names it
     const outside = join(root, "outside-clone");
     git(root, "clone", "-q", source, outside);
     writeWorktreesDb(home, [{ path: realpathSync.native(outside), source }]);
-    expect(folderTrustKey(outside, { fuigoHome: home })).toBe(realpathSync.native(outside));
+    expect(folderTrustKey(engineCwd(outside), { fuigoHome: home })).toBe(realpathSync.native(outside));
     // a damaged database: the engine logs and falls through to git
     writeFileSync(join(home, "worktrees.db"), "not a database");
     rmSync(join(home, "worktrees.db-wal"), { force: true });
     rmSync(join(home, "worktrees.db-shm"), { force: true });
-    expect(folderTrustKey(clone, { fuigoHome: home })).toBe(clone);
+    expect(folderTrustKey(engineCwd(clone), { fuigoHome: home })).toBe(clone);
     // the worktrees dir itself is not a worktree
     expect(managedWorktreeSourceRepo(join(home, "worktrees"), home)).toBeNull();
   });
@@ -376,17 +393,17 @@ CREATE INDEX IF NOT EXISTS idx_worktrees_created ON worktrees(created_at);
     const store = new FolderTrustStore(join(root, "folder-trust.json"));
     // the picker recorded the clone by its own (git) key
     expect(store.remember(clone, "trust", "picker")).toBe(clone);
-    expect(store.decision(clone, { fuigoHome: home })).toBe("trust");
-    expect(store.record(clone, { fuigoHome: home })?.folder).toBe(clone);
+    expect(store.decision(engineCwd(clone), { fuigoHome: home })).toBe("trust");
+    expect(store.record(engineCwd(clone), { fuigoHome: home })?.folder).toBe(clone);
     // a card on a native turn records the engine's key: the source
-    expect(store.remember(clone, "reject", "card", { fuigoHome: home })).toBe(source);
+    expect(store.remember(engineCwd(clone), "reject", "card", { fuigoHome: home })).toBe(source);
     expect(store.decision(source)).toBe("reject");
-    expect(store.decision(clone, { fuigoHome: home })).toBe("reject");
+    expect(store.decision(engineCwd(clone), { fuigoHome: home })).toBe("reject");
     // ... and not the clone's own key, which a routed turn (no registry) reads
     expect(store.decision(clone)).toBe("trust");
     // Forget with the engine's home clears both
-    expect(store.forget(clone, { fuigoHome: home })).toBe(true);
-    expect(store.decision(clone, { fuigoHome: home })).toBeUndefined();
+    expect(store.forget(engineCwd(clone), { fuigoHome: home })).toBe(true);
+    expect(store.decision(engineCwd(clone), { fuigoHome: home })).toBeUndefined();
     expect(store.decision(clone)).toBeUndefined();
     expect(store.decision(source)).toBeUndefined();
   });
@@ -401,8 +418,9 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
 
   it("resolves the Fuigo home the way the engine does: FUIGO_HOME verbatim, else <home>/.fuigo", () => {
     expect(fuigoHomeFromEnv({ FUIGO_HOME: "/custom/home", HOME: "/Users/x" })).toBe("/custom/home");
-    expect(fuigoHomeFromEnv({ FUIGO_HOME: "", HOME: "/Users/x" })).toBe(join("/Users/x", ".fuigo"));
-    expect(fuigoHomeFromEnv({ HOME: "/Users/x" })).toBe(join("/Users/x", ".fuigo"));
+    // a home that does not exist resolves (drive letter and all on Windows)
+    expect(fuigoHomeFromEnv({ FUIGO_HOME: "", HOME: "/Users/x" })).toBe(join(resolve("/Users/x"), ".fuigo"));
+    expect(fuigoHomeFromEnv({ HOME: "/Users/x" })).toBe(join(resolve("/Users/x"), ".fuigo"));
     // the default home is canonicalized like upstream `fuigo_home_in`
     // (FUIGOTRUST4: the engine's worktrees-dir prefix test compares a cwd
     // against it); an explicit FUIGO_HOME stays verbatim
@@ -494,7 +512,7 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     expect(upstreamTrustsFolder(new Map([[wt, true]]), wt)).toBe(false);
     expect(upstreamTrustsFolder(new Map([[main, true], [wt, false]]), wt)).toBe(true);
     const home = fuigoHomeIn("fuigo-home-wt");
-    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${main}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(home, "trusted_folders.toml"), trustRecord(main));
     expect(scanFolderTrustSources(deep, { fuigoHome: home })).toEqual({ key: main, folder: deep, sources: [], upstreamTrusted: true });
   });
 
@@ -502,13 +520,13 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     const dir = repo("granted");
     writeFileSync(join(dir, "AGENTS.md"), "# a");
     const home = fuigoHomeIn("fuigo-home");
-    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${dir}"]\ntrusted = true\ndecided_at = 1789152451\n`);
+    writeFileSync(join(home, "trusted_folders.toml"), trustRecord(dir));
     expect(scanFolderTrustSources(dir)).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
     expect(scanFolderTrustSources(dir, { fuigoHome: null })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
     expect(scanFolderTrustSources(dir, { fuigoHome: home })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"], upstreamTrusted: true });
     expect(scanFolderTrustSources(join(dir, "sub"), { fuigoHome: home })).toMatchObject({ upstreamTrusted: true });
     // a declined record upstream is no grant; Murage's own record still governs
-    writeFileSync(join(home, "trusted_folders.toml"), `[folders."${dir}"]\ntrusted = false\n`);
+    writeFileSync(join(home, "trusted_folders.toml"), trustRecord(dir, false));
     expect(scanFolderTrustSources(dir, { fuigoHome: home })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
     // an empty (provider-routed) home trusts nothing
     expect(scanFolderTrustSources(dir, { fuigoHome: fuigoHomeIn("routed-turn-home") })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });

@@ -63,7 +63,11 @@ describe("listClaudeAccounts", () => {
     expect(accounts.map(account => account.instanceId)).toEqual(["claude", created.instanceId]);
     const work = accounts[1];
     expect(work).toMatchObject({ displayName: "Work", managed: true, isDefault: false, configDir: directory, snapshot: { state: "available", authenticated: true } });
-    expect(work.signInCommand).toContain(`CLAUDE_CONFIG_DIR='${directory}'`);
+    // the command is written for the platform's own shell: a PowerShell
+    // block on Windows, a sh subshell elsewhere (claudeSignInCommand)
+    const windows = process.platform === "win32";
+    expect(work.signInShell).toBe(windows ? "powershell" : "sh");
+    expect(work.signInCommand).toContain(windows ? `$env:CLAUDE_CONFIG_DIR = '${directory}'` : `CLAUDE_CONFIG_DIR='${directory}'`);
     expect(work.signInCommand).toContain("'auth' 'login'");
     expect(calls.filter(call => call.instanceId === "codex" || call.call === "refreshModels")).toEqual([]);
 

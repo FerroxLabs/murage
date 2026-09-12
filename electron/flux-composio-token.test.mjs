@@ -231,7 +231,9 @@ describe("the token's supporting helpers", () => {
 // main.mjs boots Electron on import, so its wiring is checked by source
 // shape (the harness-resources suite does the same).
 describe("who mints, in which build", () => {
-  const main = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "main.mjs"), "utf8");
+  // LF whatever the checkout wrote: the shapes below span lines, and a
+  // Windows checkout with core.autocrlf is CRLF.
+  const main = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "main.mjs"), "utf8").replace(/\r\n/g, "\n");
 
   it("mints and claims from the desktop shell only when packaged", () => {
     // A dev shell has no encrypted Flux key and no server child to hand a

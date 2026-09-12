@@ -36,7 +36,10 @@ function scopesFor(dataDir: string, bots: FakeBot[], groups: FakeGroup[]): Artif
 }
 
 function fixture() {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "murage-workspace-files-"))); roots.push(base);
+  // .native: the canonical spelling the workspace routes report (on Windows
+  // the long name of an 8.3 temp path such as RUNNER~1, which the JS
+  // realpath keeps as written)
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-workspace-files-"))); roots.push(base);
   const dataDir = join(base, "data"), taskRoot = join(dataDir, "workspaces", "bot", "threads", "thread");
   mkdirSync(taskRoot, { recursive: true });
   const bot: FakeBot = { id: "bot", name: "Research bot", threadId: "thread", resumeCursors: {}, tasks: [{ threadId: "thread", cwd: taskRoot, resumeCursors: {} }] };
