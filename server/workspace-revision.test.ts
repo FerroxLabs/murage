@@ -33,7 +33,7 @@ import type { WorkspaceScopeRef } from "../shared/workspace-files.ts";
 const { held, opened, probes, pathOps, volume } = vi.hoisted(() => ({
   held: new Map<string, { mtimeMs: number; ctimeMs: number }>(), opened: [] as string[], probes: [] as string[],
   pathOps: [] as { op: string; path: string }[],
-  volume: { shape: undefined as ((stat: Stats) => void) | undefined },
+  volume: { shape: undefined as ((stat: Stats) => void) | undefined, denyProbeCreate: false },
 }));
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -61,7 +61,15 @@ vi.mock("node:fs", async (importOriginal) => {
     lutimesSync: ((...args: Parameters<typeof fs.lutimesSync>) => { pathOps.push({ op: "lutimesSync", path: String(args[0]) }); return fs.lutimesSync(...args); }) as typeof fs.lutimesSync,
     openSync: ((...args: Parameters<typeof fs.openSync>) => {
       opened.push(String(args[0]));
-      if (isProbe(args[0]) && /x/.test(String(args[1]))) probes.push(String(args[0]));
+      const probeCreate = isProbe(args[0]) && /x/.test(String(args[1]));
+      if (probeCreate) probes.push(String(args[0]));
+      // A root the probe cannot create its file in. The product opens the
+      // probe exclusively and treats any failure as "no change time of its
+      // own"; this reproduces that create-refusal at the fs boundary because
+      // no directory an elevated Windows admin owns can be made unwritable to
+      // itself by chmod or ACL — the create-refused STATE, not the platform,
+      // is what the fallback keys on (POSIX uses a real chmod below).
+      if (probeCreate && volume.denyProbeCreate) throw Object.assign(new Error("EACCES: permission denied, open"), { code: "EACCES" });
       return fs.openSync(...args);
     }) as typeof fs.openSync,
     writeFileSync: ((...args: Parameters<typeof fs.writeFileSync>) => {
@@ -74,7 +82,7 @@ vi.mock("node:fs", async (importOriginal) => {
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
-  held.clear(); opened.length = 0; probes.length = 0; pathOps.length = 0; volume.shape = undefined; vi.restoreAllMocks(); __resetWorkspaceRevisionCacheForTests();
+  held.clear(); opened.length = 0; probes.length = 0; pathOps.length = 0; volume.shape = undefined; volume.denyProbeCreate = false; vi.restoreAllMocks(); __resetWorkspaceRevisionCacheForTests();
   for (const db of databases.splice(0)) db.close();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -537,10 +545,22 @@ describe("the volume clock probe", () => {
     expect(leftovers(dir)).toEqual([]);
   });
 
+  /** Make the probe's create fail the way an unwritable root does: a real
+   * chmod on POSIX, and on Windows an fs-boundary refusal, because no
+   * directory an elevated admin owns (the CI runner, and every dev box) can
+   * be made unwritable to that admin by chmod or ACL. Either way the product
+   * opens the probe exclusively and reads the failure as "no change time of
+   * its own"; that STATE is the subject, and it is reproduced identically. */
+  const denyWrites = (dir: string): (() => void) => {
+    if (process.platform !== "win32") { chmodSync(dir, 0o500); return () => chmodSync(dir, 0o700); }
+    volume.denyProbeCreate = true;
+    return () => { volume.denyProbeCreate = false; };
+  };
+
   it("fails where the root cannot be written, leaves nothing behind, and is asked again after the retry window", () => {
     const f = fixture();
     const path = settledPlain(f, "ro.md");
-    chmodSync(f.taskRoot, 0o500);
+    const allowWrites = denyWrites(f.taskRoot);
     try {
       const opens = () => opened.filter(item => item === path).length;
       const first = workspaceRevisionOf(f.taskRoot, "ro.md", lstatSync(path));
@@ -550,7 +570,7 @@ describe("the volume clock probe", () => {
       expect(opens()).toBe(2);
       expect(probes).toHaveLength(1);
       expect(leftovers(f.taskRoot)).toEqual([]);
-    } finally { chmodSync(f.taskRoot, 0o700); }
+    } finally { allowWrites(); }
     const later = Date.now() + VOLUME_CLOCK_RETRY_MS + 1;
     vi.spyOn(Date, "now").mockReturnValue(later);
     const again = workspaceRevisionOf(f.taskRoot, "ro.md", lstatSync(path));
