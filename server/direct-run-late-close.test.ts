@@ -1,25 +1,30 @@
 // Direct-run settlement across a Claude child's LATE close and a retry
 // relaunch, end to end against the real harness (WIN1 fix round).
 //
-// Two shapes share one fold in server/index.ts (turn.completed):
+// A Stop on the Claude driver is "requested, not observed": POST /interrupt
+// signals the child and the bot reads idle while the process is still
+// closing — the real CLI tears down its MCP children and flushes first, and
+// Windows ends it through an asynchronous taskkill on every Stop.
+// FAKE_CLAUDE_SIGTERM_DELAY_MS opens the same window on POSIX. Three shapes
+// share the turn.completed fold in server/index.ts:
 //
-//  1. Stop, then send again at once. A Stop on the Claude driver is
-//     "requested, not observed": POST /interrupt signals the child and the
-//     bot reads idle while the process is still closing. The next send is
-//     admitted behind that close (resetSession waits for it), so the stopped
+//  1. Stop, then edit the message and resend. The edited turn replays on a
+//     fresh session (the thread is rewound), so its dispatch waits for the
+//     stopped child's close inside memory's resetSession — the stopped
 //     turn's turn.completed lands while the replacement run is in setup.
-//     That event must settle its own (already released) run, never the
-//     replacement — 0.1.52 released the replacement and its dispatch was
-//     cancelled without a word: the message sat in the transcript, the bot
-//     went idle. Windows opens this window on every Stop (taskkill is
-//     asynchronous); FAKE_CLAUDE_SIGTERM_DELAY_MS opens it on POSIX.
-//
-//  2. A transient pre-accept exit that the driver retries (U-17). The
+//     0.1.52 released the replacement there and its dispatch was cancelled
+//     without a word: the message sat in the transcript, the bot went idle.
+//  2. Stop, then send the next message at once. The turn resumes the same
+//     session, so the driver itself meets the still-closing child: it used
+//     to refuse ("a turn is already running on this thread"); now it waits
+//     for the close, and that close lands while the replacement is inside
+//     sendTurn (phase "dispatching", no provider turn id yet).
+//  3. A transient pre-accept exit that the driver retries (U-17). The
 //     relaunch is the SAME turn: its turn.completed must carry the id the
 //     harness bound the run to at acceptance, or the run is never released
 //     and the bot stays busy until restart.
 //
-// Both engines here are the fake CLI, one instance per shape so the fixture
+// Both engines here are the fake CLI, one instance per fixture shape so the
 // knobs (per-instance `environment`) cannot leak into each other's launches.
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -40,7 +45,8 @@ const DESKTOP_HEADERS = { "x-murage-surface": "desktop", "x-murage-surface-secre
 const PRE_ACCEPT_PROMPT = "x".repeat(1000 * 1024);
 
 interface BotView { id: string; threadId: string; busy: boolean; tasks?: Array<{ activity?: string }> }
-interface MessageView { role: string; kind: string; text?: string; turnId?: string; tool?: { name: string; ok?: boolean } }
+interface MessageView { id: string; role: string; kind: string; text?: string; turnId?: string; tool?: { name: string; ok?: boolean } }
+interface Reply { status: number; body: any }
 
 describe("direct run settlement across a late close and a retry relaunch", () => {
   let child: ChildProcess;
@@ -52,7 +58,7 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
   let retryLaunches: string;
   let finishGateDir: string;
 
-  const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
+  const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> => {
     const res = await fetch(`${base}${path}`, {
       method,
       headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
@@ -143,41 +149,73 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
     await removeTempDir(home);
   });
 
-  it("starts the turn sent right after Stop, before the stopped engine's child has closed", async () => {
-    const bot = await makeBot("claude", "Quick resend");
+  /** Send, wait for the fake to launch (its dump), Stop, wait for idle:
+   * the stopped child is now closing (FAKE_CLAUDE_SIGTERM_DELAY_MS) while
+   * the thread already reads idle — the window every shape below stands in. */
+  const stopMidTurn = async (bot: BotView, text: string) => {
+    rmSync(stopDump, { force: true });
+    const sent = await api("POST", `/api/bots/${bot.id}/messages`, { text });
+    expect(sent.status).toBe(202);
+    const launched = await readJsonFileWhenReady<{ pid: number }>(stopDump, 20_000);
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+    await expect.poll(() => busy(bot.id), { timeout: 5_000 }).toBe(false);
+    expect(process.kill(launched.pid, 0)).toBe(true);
+    return { pid: launched.pid, messageId: sent.body.message.id as string };
+  };
+  /** The replacement launched (a new fake, a new pid), the stopped child is
+   * gone, and the bot is still busy with the replacement: its late close
+   * settled nothing of the replacement's. Then the replacement finishes. */
+  const replacementRunsAndFinishes = async (bot: BotView, stoppedPid: number, userText: string) => {
+    const second = await readJsonFileWhenReady<{ pid: number }>(stopDump, 20_000);
+    expect(second.pid).not.toBe(stoppedPid);
+    await expect.poll(() => { try { process.kill(stoppedPid, 0); return false; } catch { return true; } }, { timeout: 10_000 }).toBe(true);
+    expect(await busy(bot.id)).toBe(true);
+    writeFileSync(join(finishGateDir, String(second.pid)), "finish");
+    await expect.poll(() => busy(bot.id), { timeout: 15_000 }).toBe(false);
+    const messages = await messagesOf(bot.threadId);
+    expect(messages.map((message) => message.tool?.name ?? "").filter((name) => name.startsWith("error:"))).toEqual([]);
+    expect(messages.some((message) => message.role === "user" && message.text === userText)).toBe(true);
+    // and the thread takes the next message at once — no phantom run
+    rmSync(stopDump, { force: true });
+    const again = await api("POST", `/api/bots/${bot.id}/messages`, { text: "one more" });
+    expect(again.status).toBe(202);
+    expect(again.body.queued).not.toBe(true);
+    const third = await readJsonFileWhenReady<{ pid: number }>(stopDump, 20_000);
+    writeFileSync(join(finishGateDir, String(third.pid)), "finish");
+    await expect.poll(() => busy(bot.id), { timeout: 15_000 }).toBe(false);
+  };
+
+  it("runs the edited message sent right after Stop, while the stopped engine's child is still closing (fresh session)", async () => {
+    const bot = await makeBot("claude", "Stop then edit");
     try {
+      const stopped = await stopMidTurn(bot, "hold this");
+      // Edit the stopped message: the thread rewinds, the edited turn
+      // replays on a fresh session, and its dispatch waits for the stopped
+      // child's close in setup — the late close lands there.
       rmSync(stopDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "hold this" })).status).toBe(202);
-      const first = await readJsonFileWhenReady<{ pid: number }>(stopDump, 20_000);
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
-      await expect.poll(() => busy(bot.id), { timeout: 5_000 }).toBe(false);
-      // Sent while the stopped child is still closing: this turn must run.
-      rmSync(stopDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "and now this" })).status).toBe(202);
-      const second = await readJsonFileWhenReady<{ pid: number }>(stopDump, 20_000);
-      expect(second.pid).not.toBe(first.pid);
-      // The stopped child is gone by now (its close is what the second
-      // launch waited for), and its late turn.completed left the
-      // replacement alone: the bot is still busy with it.
-      await expect.poll(() => { try { process.kill(first.pid, 0); return false; } catch { return true; } }, { timeout: 10_000 }).toBe(true);
-      expect(await busy(bot.id)).toBe(true);
-      // The replacement finishes its turn normally.
-      writeFileSync(join(finishGateDir, String(second.pid)), "finish");
-      await expect.poll(() => busy(bot.id), { timeout: 15_000 }).toBe(false);
-      const messages = await messagesOf(bot.threadId);
-      expect(messages.map((message) => message.tool?.name ?? "").filter((name) => name.startsWith("error:"))).toEqual([]);
-      expect(messages.some((message) => message.role === "user" && message.text === "and now this")).toBe(true);
-      // and the thread takes the next message at once — no phantom run
-      rmSync(stopDump, { force: true });
-      const again = await api("POST", `/api/bots/${bot.id}/messages`, { text: "one more" });
-      expect(again.status).toBe(202);
-      expect(again.body.queued).not.toBe(true);
-      const third = await readJsonFileWhenReady<{ pid: number }>(stopDump, 20_000);
-      writeFileSync(join(finishGateDir, String(third.pid)), "finish");
-      await expect.poll(() => busy(bot.id), { timeout: 15_000 }).toBe(false);
+      expect((await api("POST", `/api/bots/${bot.id}/messages/${stopped.messageId}/edit`, { text: "hold this, corrected" })).status).toBe(202);
+      await replacementRunsAndFinishes(bot, stopped.pid, "hold this, corrected");
     } finally {
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 90_000);
+
+  it("runs the next message sent right after Stop, while the stopped engine's child is still closing (resumed session)", async () => {
+    // Memory off pins the resumed path: the dispatch keeps the session
+    // cursor and never resets, so the Claude driver itself meets the
+    // still-closing child (the same technique as folder-trust-api (7)).
+    expect((await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
+    const bot = await makeBot("claude", "Stop then resend");
+    try {
+      const stopped = await stopMidTurn(bot, "hold this");
+      rmSync(stopDump, { force: true });
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "and now this" })).status).toBe(202);
+      await replacementRunsAndFinishes(bot, stopped.pid, "and now this");
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "active" });
     }
   }, 90_000);
 
