@@ -3530,6 +3530,48 @@ describe("harness HTTP API", () => {
     }
   }, 40_000);
 
+  // WIN1: a Stop on the Claude driver is "requested, not observed" — the
+  // bot reads idle as soon as the kill is sent, while the child is still
+  // alive. Windows ends it through an asynchronous taskkill, so its close
+  // always lands after a send that follows the Stop at once; the fake's
+  // slow-exit marker opens the same window on POSIX. That late close emits
+  // the stopped turn's turn.completed, and the fold used to settle whatever
+  // run owned the thread by then: the replacement, still in setup, was
+  // released and its dispatch cancelled without a word (the person's
+  // message sat in the transcript and the bot went idle). The 0.1.52
+  // Windows CI run failed "tells the assistant why it has no connectors"
+  // on exactly this.
+  it("starts the turn sent right after Stop, before the stopped engine's child has closed (WIN1)", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Quick resend" })).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+      const busy = async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "hold this __fixture_slow_exit_on_stop__" })).status).toBe(202);
+      const first = await readJsonFileWhenReady<{ pid: number }>(fakeClaudeDump);
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      await expect.poll(busy, { timeout: 5_000 }).toBe(false);
+      // Sent while the stopped child is still closing: this turn must run.
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "and now this" })).status).toBe(202);
+      const second = await readJsonFileWhenReady<{ pid: number }>(fakeClaudeDump, 15_000);
+      expect(second.pid).not.toBe(first.pid);
+      expect(await busy()).toBe(true);
+      // the stopped engine is gone, the new one finishes its turn normally
+      await expect.poll(() => { try { process.kill(first.pid, 0); return false; } catch { return true; } }, { timeout: 10_000 }).toBe(true);
+      writeFileSync(join(home, "finish-fake", String(second.pid)), "finish");
+      await expect.poll(busy, { timeout: 10_000 }).toBe(false);
+      const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body.messages as Array<{ role: string; kind: string; text?: string; tool?: { name: string } }>;
+      expect(messages.map((message) => message.tool?.name ?? "").filter((name) => name.startsWith("error:"))).toEqual([]);
+      expect(messages.some((message) => message.role === "user" && message.text === "and now this")).toBe(true);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 40_000);
+
   // …and the same thing again in a ROOM, which had none of it.
   //
   // The fix for the silent denial above was scoped to the 1:1 call site, so
