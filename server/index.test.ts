@@ -4680,6 +4680,10 @@ describe("harness HTTP API", () => {
       // got a bare 400 and no dialog). The harness announces it on the
       // config route the renderer already reads at startup, on both doors.
       for (const get of [api, desktopApi]) expect((await get("GET", "/api/config")).body.harness).toEqual({ platform: process.platform });
+      // A bot curling loopback has no desktop proof and is refused first,
+      // on every platform — before any destination rule is consulted.
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(404);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(404);
       const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
       const blindTask = await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { autoApprove: true });
       const afterBlind = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
@@ -4751,8 +4755,8 @@ describe("harness HTTP API", () => {
       true,
     );
 
-    // A bot curling loopback has no desktop proof and is refused first.
-    expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" })).status).toBe(404);
+    // (A loopback caller's 404 — no desktop proof — is platform-independent
+    // and asserted in the AUTOOP2 test above, which Windows runs too.)
     // Even an authenticated renderer must supply the warning acknowledgement.
     const blind = await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
     expect(blind.status).toBe(400);
