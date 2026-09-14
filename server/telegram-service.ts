@@ -33,6 +33,7 @@ export class TelegramService {
   private resumeMessage: string | null = null;
   private resumeFailures = 0;
   private nextRetryAt: number | null = null;
+  private receiverConflict = false;
   private readonly options: TelegramServiceOptions;
   constructor(options: TelegramServiceOptions) { this.options = options; }
   private connectionFile() { return join(this.options.dataDir, "telegram", "connection.json"); }
@@ -63,11 +64,13 @@ export class TelegramService {
     const active = this.resumeState === "active";
     return { ...status, connecting: this.connecting, enabled: active && status.enabled, paired: active && status.paired,
       pending: active ? status.pending : 0, resumeState: this.resumeState, resumeMessage: this.resumeMessage, nextRetryAt: active ? status.nextRetryAt : this.nextRetryAt,
+      canResume: !this.connecting && Boolean(this.connection?.enabled && !this.connection.paused) && (this.resumeState === "retry" || (this.resumeState === "blocked" && this.receiverConflict)),
       requiresRevoke: Boolean(this.connection?.enabled && this.resumeState !== "pair-required") };
   }
   /** Resume a previously authorized binding, never infer a replacement target. */
   async resume(token: string, targetBotId: string) {
     if (this.connecting || this.resumeState === "active" || this.connection?.paused) return false;
+    this.receiverConflict = false;
     this.connecting = true; this.resumeState = "verifying"; this.resumeMessage = null;
     const generation = ++this.generation, controller = new AbortController(); this.controller = controller;
     let verifying = false;
@@ -166,8 +169,9 @@ export class TelegramService {
       const current = this.channel?.status();
       if (generation !== this.generation || !current?.enabled) return;
       if (["auth", "forbidden", "conflict"].includes(current.error ?? "")) {
+        this.receiverConflict = current.error === "conflict";
         this.resumeState = "blocked";
-        this.resumeMessage = current.error === "conflict" ? "Another app is receiving this Telegram bot's messages, so Murage paused. Stop that app, then restart Murage to reconnect. Your pairing is saved." : "Telegram rejected this connection. Check access or revoke before pairing again.";
+        this.resumeMessage = current.error === "conflict" ? "Another app is receiving this Telegram bot's messages, so Murage paused. Stop that app, then use Retry now to reconnect. Your pairing is saved." : "Telegram rejected this connection. Check access or revoke before pairing again.";
         return;
       }
       this.schedule(generation);
@@ -175,6 +179,7 @@ export class TelegramService {
     this.timer.unref();
   }
   async revoke() {
+    this.receiverConflict = false;
     ++this.generation; this.connecting = false; this.controller?.abort(); this.controller = undefined;
     if (this.timer) clearTimeout(this.timer);
     this.resumeState = "idle"; this.resumeMessage = null; this.nextRetryAt = null;
@@ -184,5 +189,5 @@ export class TelegramService {
     if (this.identity) await this.options.revokeRuns(this.identity);
     if (failed) { this.resumeState = "blocked"; this.resumeMessage = "Telegram stopped, but its saved connection could not be fully revoked. Restore access to the saved data and try Revoke again."; throw new Error(this.resumeMessage); }
   }
-  stop() { ++this.generation; this.connecting = false; this.controller?.abort(); if (this.timer) clearTimeout(this.timer); this.channel?.stop(); this.resumeState = "idle"; this.nextRetryAt = null; }
+  stop() { ++this.generation; this.receiverConflict = false; this.connecting = false; this.controller?.abort(); if (this.timer) clearTimeout(this.timer); this.channel?.stop(); this.resumeState = "idle"; this.nextRetryAt = null; }
 }

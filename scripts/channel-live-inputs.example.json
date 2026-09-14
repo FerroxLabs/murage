@@ -1,0 +1,51 @@
+{
+  "_comment": "Placeholders only. Copy per platform to a private location outside the repository, keep one platform per file, and replace every <...> value. Credential files are created by the owner with mode 0600; this file never contains a token.",
+  "telegram": {
+    "version": 1,
+    "platform": "telegram",
+    "authorityReference": "<exact approval text or reference supplied by Sean for this live run>",
+    "dedicated": true,
+    "testHostname": "<output of `hostname` on the test computer>",
+    "limits": { "maxOperatorMessages": 4, "maxOutboundMessages": 3, "maxMinutes": 30 },
+    "denylistIdentityIds": ["<production Telegram bot numeric ID, supplied by Sean, optional but recommended>"],
+    "telegram": {
+      "botId": "<dedicated test bot numeric ID>",
+      "botUsername": "<dedicated_test_bot_username>",
+      "ownerUserId": "<dedicated owner Telegram numeric user ID>",
+      "tokenFile": "</absolute/private/path/telegram-test-bot.token>"
+    }
+  },
+  "slack": {
+    "version": 1,
+    "platform": "slack",
+    "authorityReference": "<exact approval text or reference>",
+    "dedicated": true,
+    "testHostname": "<hostname>",
+    "limits": { "maxOperatorMessages": 5, "maxOutboundMessages": 4, "maxMinutes": 30 },
+    "denylistIdentityIds": [],
+    "slack": {
+      "teamId": "<T... test workspace ID>",
+      "appId": "<A... test app ID>",
+      "botUserId": "<U... bot user ID from auth.test>",
+      "botId": "<B... bot ID from auth.test>",
+      "ownerUserId": "<U... dedicated owner member ID>",
+      "appTokenFile": "</absolute/private/path/slack-test-app.token>",
+      "botTokenFile": "</absolute/private/path/slack-test-bot.token>"
+    }
+  },
+  "discord": {
+    "version": 1,
+    "platform": "discord",
+    "authorityReference": "<exact approval text or reference>",
+    "dedicated": true,
+    "testHostname": "<hostname>",
+    "limits": { "maxOperatorMessages": 5, "maxOutboundMessages": 4, "maxMinutes": 30 },
+    "denylistIdentityIds": [],
+    "discord": {
+      "applicationId": "<dedicated test application snowflake>",
+      "botUserId": "<dedicated test bot user snowflake>",
+      "ownerUserId": "<dedicated owner user snowflake>",
+      "tokenFile": "</absolute/private/path/discord-test-bot.token>"
+    }
+  }
+}

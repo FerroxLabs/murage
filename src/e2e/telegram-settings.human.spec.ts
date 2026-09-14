@@ -15,6 +15,31 @@ test.beforeAll(async()=>{
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
+test('Receiver conflict Retry restores pairing without exposing Retry for other blocked states',async({page},testInfo)=>{
+  let state={configured:true,enabled:false,paired:false,pending:0,uncertain:0,connecting:false,requiresRevoke:true,canResume:true,resumeState:'blocked',resumeMessage:'Stop the other receiver, then use Retry now. Your pairing is saved.',error:'conflict' as string|null};
+  let retries=0,pairs=0,revokes=0;
+  await page.route('**/api/desktop-secret',route=>route.fulfill({json:{secret:'fixture'}}));
+  await page.route('**/api/telegram/status',route=>route.fulfill({json:state}));
+  await page.route('**/api/telegram/resume',route=>{retries++;state={...state,enabled:true,paired:true,canResume:false,resumeState:'active',resumeMessage:'',error:null};return route.fulfill({json:state});});
+  await page.route('**/api/telegram/pair',route=>{pairs++;return route.fulfill({status:409,json:{}});});
+  await page.route('**/api/telegram/revoke',route=>{revokes++;return route.fulfill({json:{}});});
+  await page.goto(`${origin}/__telegram`);
+  for(const width of [390,820,1440]){
+    await page.setViewportSize({width,height:1000});
+    await expect(page.getByText('Another app is receiving this bot',{exact:true})).toBeVisible();
+    const retry=page.getByRole('button',{name:'Retry now',exact:true});await expect(retry).toBeEnabled();
+    await expect(page.getByRole('button',{name:'Pair with Chief',exact:true})).toBeDisabled();
+    await expect(page.getByLabel('Bot token',{exact:true})).toBeDisabled();
+    const box=await retry.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width);
+    await page.screenshot({path:testInfo.outputPath(`conflict-retry-${width}.png`),fullPage:true});
+  }
+  const retry=page.getByRole('button',{name:'Retry now',exact:true});await retry.focus();await expect(retry).toBeFocused();await page.keyboard.press('Enter');
+  await expect(page.getByText('Paired',{exact:true})).toBeVisible();await expect(retry).toHaveCount(0);expect(retries).toBe(1);expect(pairs).toBe(0);expect(revokes).toBe(0);
+  for(const error of ['auth','forbidden','conflict']){
+    state={...state,enabled:false,paired:false,canResume:false,resumeState:'blocked',resumeMessage:'Retry now is not authorised for this saved connection.',error};
+    await page.getByRole('button',{name:'Refresh status',exact:true}).click();await expect(retry).toHaveCount(0);
+  }
+});
 test('Telegram token, pairing, refresh and revoke remain deliberate with recoverable failures',async({page},testInfo)=>{
   await page.setViewportSize({width:390,height:844});
   let state={configured:false,enabled:false,paired:false,pending:false,uncertain:false,connecting:false,pairingExpired:false};let pairs=0;let fail=false;let statusReads=0;let revokes=0;

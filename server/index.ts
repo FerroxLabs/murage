@@ -10259,7 +10259,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, pairing);
     }
     if (path === "/api/telegram/resume" && method === "POST") {
-      if (telegram.status().resumeState !== "retry") return json(res, 409, { error: "Reconnect retry is not available for this connection." });
+      if (!telegram.status().canResume) return json(res, 409, { error: "Reconnect retry is not available for this connection." });
       const token = cfg.telegram?.botToken, targetBotId = cfg.telegram?.targetBotId;
       if (!token || !targetBotId) return json(res, 409, { error: "Save and pair your Telegram bot first." });
       await telegram.resume(token, targetBotId);
