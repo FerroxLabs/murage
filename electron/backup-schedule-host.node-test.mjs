@@ -239,6 +239,24 @@ test("closed policy cannot be enabled without support and disable preserves last
   }finally{g.cleanup();}
 });
 
+test("scheduled key selection verifies the host before reading the key",async()=>{
+  const f=fixture();let verified=0;
+  try{
+    writeFileSync(f.keyFile,"invalid fixture key that must not be read");
+    const guarded=f.create({verifyEncrypted:async()=>{verified++;throw Error("AGE_TOOL_UNVERIFIED");}});
+    await assert.rejects(guarded.selectReferences(),/AGE_TOOL_UNVERIFIED/);assert.equal(verified,1);
+  }finally{f.cleanup();}
+});
+test("scheduled capture rechecks the host before the lazy identity read",async()=>{
+  const f=fixture();let verified=0,received=false;
+  try{
+    await f.arm();
+    const guarded=f.create({verifyEncrypted:async()=>{verified++;throw Error("AGE_TOOL_UNVERIFIED");},capture:async request=>{await request.readIdentity();received=true;}});
+    await assert.rejects(guarded.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+    assert.equal(verified,1);assert.equal(received,false);
+  }finally{f.cleanup();}
+});
+
 test("real isolated private worker verifies an encrypted handoff under delegated ownership",{timeout:60000},async()=>{
   const data=backupFixture(),keys=testAgeKeys();data.db.close();const f=fixture({installation:()=>data.data});let owner;let logs="",success=false;
   const diagnostic={stages:["fixture-ready"],workerCreated:false,inputCount:0,exitCode:null,resultOk:null,resultError:null,workerErrorCode:null,privateLogDetected:false};

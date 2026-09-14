@@ -27,6 +27,11 @@ export function createBackupScheduleHost(host) {
   const coordinator=host.coordinator;
   let running=false,timer=null,lastError=null,upgradeRequest=null,upgradeCandidateId=null;
   const now=()=>host.now?.()??Date.now();
+  const verifyIdentityAccess=async()=>{
+    const installation=host.installation();
+    await host.verifyEncrypted?.();
+    if(!host.supported()||installation!==host.installation())throw Error("BACKUP_UNAVAILABLE");
+  };
   const read=async()=>{
     const encoded=await host.readProtected(BACKUP_SCHEDULE_BINDINGS_KEY);
     if(!encoded)return null;
@@ -114,7 +119,7 @@ export function createBackupScheduleHost(host) {
       coordinator.claimHandoff(intent.id,hash(b),installationIdentity(host.installation()));
       claimed=true;
       const output=path.join(b.destination,s.job.id+".age");
-      const readIdentity=async()=>{await checked();const key=readBackupIdentity(b.keyFile,host.installation());if(key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");return key.identity;};
+      const readIdentity=async()=>{await checked();await verifyIdentityAccess();const key=readBackupIdentity(b.keyFile,host.installation());if(key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");return key.identity;};
       coordinator.beginHandoffCapture(intent.id);
       const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
       if(result?.ok!==true||result.operation!=="backup-encrypted"||result.path!==output||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
@@ -195,6 +200,8 @@ export function createBackupScheduleHost(host) {
       const keyFile=await host.chooseKey();if(!keyFile)return {cancelled:true};
       const installation=realpathSync(host.installation()),target=realpathSync(destination);
       if(target===installation||target.startsWith(installation+path.sep)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
+      await verifyIdentityAccess();
+      if(installation!==realpathSync(host.installation()))throw Error("BACKUP_REFERENCE_CHANGED");
       const key=readBackupIdentity(keyFile,installation);if(!key.recipient)throw Error("BACKUP_IDENTITY_HEADER_REQUIRED");
       if(!await host.confirmReferences())return {cancelled:true};
       const b={version:1,installationIdentity:installationIdentity(installation),installationRef:"installation-"+hash(installation).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:realpathSync(keyFile),keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};

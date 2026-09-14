@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { AGE_ORIGINAL_SHA256,trustedBackupAgeExecutable } from "./backup-age-attestation.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 export const BACKUP_MODE_ARGUMENT = "--murage-backup-mode";
@@ -11,6 +12,50 @@ export function verifiedBackupTool(resources) {
   if (!pin) return null;
   const file = path.join(resources, "backup-tools", pin.arch, "age");
   return trustedBackupAgeExecutable(file)?file:null;
+}
+
+/** Desktop-owned availability, not a renderer grant. Windows actions reverify
+ * the fixed packaged resources before reading a recovery identity. */
+export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable }) {
+  const windows = process.platform === "win32";
+  let state = "pending", tool = null, pending = null, generation = 0;
+  const unavailable = () => Object.assign(new Error("Encrypted backup unavailable"), { code: "BACKUP_UNAVAILABLE" });
+  const currentTool = () => {
+    if (!isUsable()) return null;
+    return windows ? state === "ready" ? tool : null : verifiedBackupTool(resourcesPath);
+  };
+  const requireTool = async () => {
+    if (!isUsable()) throw unavailable();
+    if (!windows) {
+      const file = verifiedBackupTool(resourcesPath);
+      if (!file || !isUsable()) throw unavailable();
+      return file;
+    }
+    if (pending) return pending;
+    const epoch = ++generation;
+    state = "pending"; tool = null;
+    const work = (async () => {
+      const { createWindowsBackupResourceResolver } = await import(pathToFileURL(path.join(resourcesPath, "server", "windows-backup-resources.js")).href);
+      if (!isUsable() || epoch !== generation) throw unavailable();
+      const verified = await createWindowsBackupResourceResolver({ resourcesPath, currentExecutable })();
+      const helper = path.join(resourcesPath, "backup-tools", "x64", "murage-backup-age.exe");
+      if (typeof verified?.executable !== "string" || verified.executable.toLowerCase() !== helper.toLowerCase() || !isUsable() || epoch !== generation) throw unavailable();
+      tool = path.join(resourcesPath, "backup-tools", "x64", "age.exe"); state = "ready";
+      return tool;
+    })().catch(error => {
+      if (epoch === generation) { state = "failed"; tool = null; }
+      throw error;
+    });
+    pending = work;
+    try { return await work; } finally { if (pending === work) pending = null; }
+  };
+  return {
+    currentTool,
+    status: () => ({ state: windows ? state : currentTool() ? "ready" : "failed" }),
+    requireTool,
+    invalidate() { generation += 1; state = "failed"; tool = null; },
+    async settled() { await pending?.catch(() => {}); },
+  };
 }
 export function backupActivityBusy(value) {
   if (!Array.isArray(value?.bots) || !Array.isArray(value?.groups)) throw new Error("BACKUP_ACTIVITY_UNAVAILABLE");
