@@ -15,6 +15,21 @@ const routineRequest = {
   createdAt: 1,
 };
 
+describe("ApprovalCard hold explanation", () => {
+  it.each([undefined, "allow", "deny"] as const)("only presents a current hold for unanswered cards (%s)", answered => {
+    const held = "This task started outside the desktop. Your approval is required before this action can continue.";
+    const message: Message = { id: "held-card", role: "bot", kind: "options", at: 1,
+      card: { title: "Approval", subtitle: "Synthetic web search", options: ["Allow", "Deny"], tool: "WebSearch", held, answered } };
+    const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+    if (answered) {
+      expect(markup).not.toContain(held);
+      expect(markup).toContain(answered === "allow" ? "Allowed" : "Denied");
+    } else expect(markup).toContain(held);
+    expect(message.card!.held).toBe(held);
+    expect(message.card!.answered).toBe(answered);
+  });
+});
+
 const createRoutineOperation = {
   action: "create" as const,
   routine: {

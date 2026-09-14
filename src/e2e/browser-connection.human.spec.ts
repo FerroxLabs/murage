@@ -21,9 +21,15 @@ test.beforeAll(async () => {
     plugins: [{ name: "isolated-browser-display", enforce: "pre",
       resolveId(id) {
         if (id === "/__browser.js") return "\0browser-display-entry";
+        if (id === "/__approvals.js") return "\0approval-display-entry";
         if (id === "@/state/store" || id.replaceAll("\\", "/").endsWith("/src/state/store")) return "\0browser-display-store";
       },
       load(id) {
+        if (id === "\0approval-display-entry") return `
+          import React from 'react';import {createRoot}from'react-dom/client';import {ApprovalCard}from'/src/components/ApprovalCard.tsx';import'/src/styles.css';
+          const held='This task started outside the desktop. Your approval is required before this action can continue.';
+          createRoot(document.getElementById('root')).render(React.createElement(React.Fragment,null,...[undefined,'allow','deny'].map(answered=>
+            React.createElement('section',{'data-fixture-state':answered||'pending',style:{marginBottom:16}},React.createElement(ApprovalCard,{message:{id:answered||'pending',role:'bot',kind:'options',at:1,card:{title:'Approval',subtitle:'Synthetic web search',tool:'WebSearch',options:['Allow','Deny'],answered,held}}})))));`;
         if (id === "\0browser-display-store") return `
           export const useStore=()=>({state:{config:{browserProfiles:[]}},dispatch:()=>{}});
           export async function api(url,options){
@@ -40,9 +46,9 @@ test.beforeAll(async () => {
           createRoot(document.getElementById('root')).render(React.createElement(UnifiedBrowserPanel,{bot:{id:'fixture',name:'Test bot',busy:false}}));`;
       },
       configureServer(server) { server.middlewares.use((req, res, next) => {
-        if (req.url !== "/__browser") return next();
+        if (req.url !== "/__browser" && req.url !== "/__approvals") return next();
         res.setHeader("content-type", "text/html");
-        res.end('<!doctype html><html lang="en" data-skin="dark"><head><title>Browser state fixture</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:var(--color-app);color:var(--color-ink)"><main id="root" style="max-width:560px;margin:16px auto;padding:12px"></main><script type="module" src="/__browser.js"></script></body></html>');
+        res.end('<!doctype html><html lang="en" data-skin="dark"><head><title>Component state fixture</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:var(--color-app);color:var(--color-ink)"><main id="root" style="max-width:560px;margin:16px auto;padding:12px"></main><script type="module" src="'+(req.url === "/__approvals" ? "/__approvals.js" : "/__browser.js")+'"></script></body></html>');
       }); },
     }, react(), tailwindcss()] });
   await vite.listen(); const address = vite.httpServer!.address();
@@ -50,6 +56,22 @@ test.beforeAll(async () => {
   origin = `http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async () => { await vite?.close(); if (scratch) rmSync(scratch, { recursive: true }); });
+
+test("resolved approval cards no longer request approval", async ({ page }, info) => {
+  await page.route("**/*", route => route.request().url().startsWith(origin) || route.request().url().startsWith("data:") ? route.continue() : route.abort());
+  await page.goto(origin + "/__approvals");
+  const held = "This task started outside the desktop. Your approval is required before this action can continue.";
+  await expect(page.locator('[data-fixture-state="pending"]')).toContainText(held);
+  await expect(page.locator('[data-fixture-state="allow"]')).toContainText("Allowed");
+  await expect(page.locator('[data-fixture-state="deny"]')).toContainText("Denied");
+  await expect(page.locator('[data-fixture-state="allow"]')).not.toContainText(held);
+  await expect(page.locator('[data-fixture-state="deny"]')).not.toContainText(held);
+  for (const width of [390, 820, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`approval-states-${width}.png`), fullPage: true });
+  }
+});
 
 test("connection failure is truthful and recovery clears only the connection error", async ({ page }, info) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
