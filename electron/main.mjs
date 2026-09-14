@@ -2,7 +2,7 @@ import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutatePr
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createApprovalNotifications } from "./approval-notification.mjs";
-import { BACKUP_MODE_ARGUMENT, createBackupModeController, prepareBackupRestart, verifiedBackupTool } from "./backup-mode.mjs";
+import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup-schedule-host.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
@@ -271,15 +271,25 @@ async function prepareDesktopBackup(){
     if(!response.ok)throw new Error(action==="prepare"?"BACKUP_WORK_ACTIVE":"BACKUP_RELEASE_UNCONFIRMED");return response.json();
   },()=>cuaCleanedUp);
 }
+const desktopBackupTool = createBackupToolCapability({
+  resourcesPath: process.resourcesPath, currentExecutable: process.execPath,
+  isUsable: () => Boolean(app.isPackaged && desktopDataOwner && !desktopShutdownStarted),
+});
+async function requireDesktopBackupTool() {
+  const owner = desktopDataOwner, installation = desktopDataDir;
+  const tool = await desktopBackupTool.requireTool();
+  if (!owner || owner !== desktopDataOwner || installation !== desktopDataDir || desktopShutdownStarted) throw Object.assign(new Error("Backup ownership changed"), { code: "BACKUP_UNAVAILABLE" });
+  return tool;
+}
 const backupMode = createBackupModeController({
-  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && verifiedBackupTool(process.resourcesPath)),
+  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool()),
   readActivity: readBackupActivity,
   confirm: async () => {
     const answer = await dialog.showMessageBox(mainWindow, { type:"question", buttons:["Cancel","Restart into Backup mode"], defaultId:0, cancelId:0, noLink:true,
       message:"Close this workspace and restart into Backup mode?", detail:"Murage will close its idle services and reopen without starting engines, schedules or connected channels. You will choose the backup destination and independent recovery key there. No backup starts until you choose it." });
     return answer.response === 1;
   },
-  prepare:prepareDesktopBackup,
+  prepare:async()=>{await requireDesktopBackupTool();return prepareDesktopBackup();},
   restart: async () => {
     await cleanupDesktopForExit();
     app.relaunch({ args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
@@ -2029,7 +2039,8 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     runEncryptedSeparate: runEncryptedSeparateDesktopRecovery,
     retainedDestination: () => retainedSeparateDirectory,
     run: runDesktopRecovery,
-    encryptedAvailable: () => Boolean(desktopDataOwner && verifiedBackupTool(process.resourcesPath)),
+    encryptedAvailable: () => Boolean(desktopDataOwner && desktopBackupTool.currentTool()),
+    verifyEncrypted: requireDesktopBackupTool,
     retry: async () => {
       if(backupScheduleHost?.pendingUpgrade())await backupScheduleHost.returnUpgradeToWorkspace();
       app.relaunch({args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}); app.quit();
@@ -2107,7 +2118,9 @@ async function runSeparateDesktopRecovery(parameters, plan, signal = null) {
 }
 
 async function runEncryptedSeparateDesktopRecovery(parameters, plan) {
-  if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !verifiedBackupTool(process.resourcesPath)) throw Object.assign(new Error("Recovery unavailable"), { code:"RECOVERY_OWNERSHIP_REQUIRED" });
+  if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner) throw Object.assign(new Error("Recovery unavailable"), { code:"RECOVERY_OWNERSHIP_REQUIRED" });
+  await requireDesktopBackupTool();
+  if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner) throw Object.assign(new Error("Recovery unavailable"), { code:"RECOVERY_OWNERSHIP_REQUIRED" });
   // This allocates only the exclusive container, not its data target.
   const allocated=allocateSeparateInstallation(plan);
   retainedSeparateDirectory=allocated.dataDirectory;
@@ -2126,7 +2139,8 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   const dataDirectory = separate?.dataDirectory ?? desktopDataDir;
   const archiveOnly = operation === "plan-restore" && canRestoreSeparateInstallation();
   if (!desktopRecoveryMode || desktopShutdownStarted || (!archiveOnly && (!owner || !dataDirectory))) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
-  const ageTool=operation.includes("encrypted")?verifiedBackupTool(process.resourcesPath):null;
+  const ageTool=operation.includes("encrypted")?await requireDesktopBackupTool():null;
+  if (!desktopRecoveryMode || desktopShutdownStarted || (!separate && (owner !== desktopDataOwner || dataDirectory !== desktopDataDir))) throw Object.assign(new Error("Recovery ownership changed"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
   if(operation.includes("encrypted")&&(!ageTool||typeof parameters.readIdentity!=="function"))throw Object.assign(new Error("Encrypted backup unavailable"),{code:"BACKUP_UNAVAILABLE"});
   const args = operation === "backup-encrypted" ? ["backup-encrypted","--data-dir",dataDirectory,"--output",parameters.output,"--age-tool",ageTool,"--recipient",parameters.recipient,"--credential-policy","preserve-in-encrypted-fidelity"]
     : operation === "inspect-encrypted" ? ["inspect-encrypted","--archive",parameters.archive,"--age-tool",ageTool]
@@ -2164,7 +2178,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
   }); } catch(error) {
-    if(error?.code==="AGE_PROCESS_CLOSE_UNCONFIRMED"&&typeof error.retainedDirectory==="string")retainedSeparateDirectory=error.retainedDirectory;
+    if((process.platform==="win32"||error?.code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&typeof error?.retainedDirectory==="string"&&error.retainedDirectory.length<=8192)retainedSeparateDirectory=error.retainedDirectory;
     throw error;
   }
 }
@@ -3095,6 +3109,8 @@ async function initializeBackupRemoteHost(){
 }
 async function initializeBackupScheduleHost(){
   if(!app.isPackaged||!desktopDataOwner)return;
+  try { await requireDesktopBackupTool(); } catch { /* Keep backup unavailable without blocking ordinary startup. */ }
+  assertDesktopStartupActive();
   const installation=ownedDesktopDataDir();
   // Read-only selected-profile routing must precede the first protected backup
   // reference read, including closed startup and existing offline returns.
@@ -3107,7 +3123,7 @@ async function initializeBackupScheduleHost(){
   closedBackupController=createClosedBackupController({
     profile:()=>({version:1,platform:process.platform,owner:{uid:process.getuid?.()},requestedRoot:desktopRequestedDataDir,userData:fs.realpathSync.native(app.getPath("userData")),installation,installationIdentity:closedInstallationIdentity(installation),executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe"))}),
     triggerSource:path.join(process.resourcesPath,"server","backup-schedule-trigger.js"),
-    backupSupported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&verifiedBackupTool(process.resourcesPath)),provider,backup:()=>backupScheduleHost,
+    backupSupported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),provider,backup:()=>backupScheduleHost,
     confirmInstall:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Install backup job"],defaultId:0,cancelId:0,noLink:true,message:"Install an owning-user backup job?",detail:"This registers the staged job for this profile. Backups remain off until you explicitly enable closed-app backups. The job runs in your user session and does not save account passwords."});return answer.response===1;},
   });
   const choose=async(properties,title)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties});return answer.canceled?null:answer.filePaths[0]??null;};
@@ -3127,7 +3143,8 @@ async function initializeBackupScheduleHost(){
       assertClosedProfileBinding(closedBackupDescriptor);
       await closedBackupController.assertInvocation(closedBackupDescriptor,closedBackupInvocation.descriptorPath);
     },
-    supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&verifiedBackupTool(process.resourcesPath)),
+    supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),
+    verifyEncrypted:requireDesktopBackupTool,
     readProtected:async key=>{
       if(key!==BACKUP_SCHEDULE_BINDINGS_KEY)throw new Error("BACKUP_BINDINGS_UNAVAILABLE");
       const document=secureCredentialState?.read()??await loadSecureCredentials();
@@ -3140,7 +3157,7 @@ async function initializeBackupScheduleHost(){
     chooseDestination:()=>choose(["openDirectory","createDirectory"],"Choose scheduled backup destination"),
     chooseKey:()=>choose(["openFile"],"Choose independent age recovery key"),
     confirmReferences:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Save references"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent recovery-key copy",detail:"The key must remain outside this installation and available for scheduled backups. Keep a separate safe recovery copy. Saving these references does not enable backups or authorize a restart."});return answer.response===1;},
-    prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await readBackupActivity();return prepareDesktopBackup();},
+    prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup();},
     cleanupIdle:cleanupDesktopForExit,
     capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
     relaunch:async mode=>{
@@ -3464,6 +3481,7 @@ function cleanupDesktopForExit() {
   stopAutomaticRemoteBackups();
   backupScheduleHost?.stopPolling();
   desktopShutdownStarted = true;
+  desktopBackupTool.invalidate();
   // Optional hosted registration must not hold the credential queue open for
   // its network timeout. Cancel the request, then drain actual writes below.
   managedComposioShutdown.abort();
@@ -3495,6 +3513,7 @@ function cleanupDesktopForExit() {
     await awaitOwnedWork(Promise.all([...ownedServerChildren].map((child) => child.stop())), "The owned harness has not exited");
     desktopCleanupStage = "desktop startup";
     await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
+    await awaitOwnedWork(desktopBackupTool.settled(), "Backup resource verification has not settled");
     desktopCleanupStage = "credential writes";
     await awaitOwnedWork(Promise.allSettled([...backupRemoteOperations]), "Remote backup operations have not settled");
     await awaitOwnedWork(Promise.allSettled([...credentialWrites]), "Credential writes have not settled");

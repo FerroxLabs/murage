@@ -4,7 +4,7 @@ import { createInstallationRecoveryController } from "./installation-recovery-co
 import { readBackupIdentity } from "./backup-mode.mjs";
 
 const CHANNEL = "installation-recovery:action";
-export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog, baseDir, context, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run, retry, openDiagnostics, onClosed }) {
+export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog, baseDir, context, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, verifyEncrypted, retainedDestination, run, retry, openDiagnostics, onClosed }) {
   const page = path.join(baseDir, "recovery", "index.html");
   const pageUrl = pathToFileURL(page).href;
   const win = new BrowserWindow({
@@ -15,6 +15,11 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
   });
   const trusted = event => !win.isDestroyed() && event.sender === win.webContents &&
     event.senderFrame === win.webContents.mainFrame && event.senderFrame?.url === pageUrl;
+  const verifyIdentityAccess = async event => {
+    if (!trusted(event) || !isAvailable()) throw Error("RECOVERY_OWNERSHIP_REQUIRED");
+    await verifyEncrypted?.();
+    if (!trusted(event) || !isAvailable() || encryptedAvailable?.() !== true) throw Error("RECOVERY_OWNERSHIP_REQUIRED");
+  };
   const controller = createInstallationRecoveryController({
     isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run, retry, openDiagnostics,
     chooseEncryptedBackup: async () => {
@@ -25,11 +30,12 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
       const picked=await dialog.showSaveDialog(win,{title:"Save an encrypted application-data backup",defaultPath:"murage-application-backup.age",filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
       return picked.canceled?null:picked.filePath??null;
     },
-    chooseRecoveryIdentity: async () => {
+    chooseRecoveryIdentity: async event => {
       const picked=await dialog.showOpenDialog(win,{title:"Choose an independent age recovery key file",properties:["openFile"]});
       if(picked.canceled||picked.filePaths.length!==1)return null;
+      await verifyIdentityAccess(event);
       const file=picked.filePaths[0],recipient=readBackupIdentity(file,context.dataDirectory).recipient;
-      return{recipient,readIdentity:async()=>readBackupIdentity(file,context.dataDirectory).identity};
+      return{recipient,readIdentity:async()=>{await verifyIdentityAccess(event);return readBackupIdentity(file,context.dataDirectory).identity;}};
     },
     chooseBackup: async () => {
       const picked = await dialog.showOpenDialog(win, { title: "Choose a Murage installation backup", properties: ["openFile"], filters: [{ name: "Murage backup", extensions: ["zip"] }] });
