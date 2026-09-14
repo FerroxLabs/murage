@@ -96,7 +96,7 @@ export function ApprovalCard({
 
       {card.skillRequest && <SkillRequestPreview request={card.skillRequest} />}
 
-      {card.held && (
+      {card.held && !settled && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
           {card.held}
         </div>
