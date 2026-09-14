@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+const macAdmission = vi.hoisted(() => vi.fn());
+vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission }));
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 import { agentBrowserIntegration, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
 
@@ -12,6 +14,18 @@ afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive
 function fixtureAsset(body: Buffer) { return { target: "linux-x64", asset: "agent-browser-linux-x64", sha256: createHash("sha256").update(body).digest("hex"), bytes: body.length }; }
 
 describe("optional browser resolver and installation", () => {
+  it("admits a verified signed arm64 package with pinned version and never falls back when refused", () => {
+    const resources = temporary(), bundle = join(resources, "browser-engine");
+    mkdirSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64"), { recursive: true });
+    writeFileSync(join(bundle, "agent-browser"), "signed engine", { mode: 0o700 });
+    writeFileSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell"), "signed Chrome", { mode: 0o700 });
+    const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources, PATH: bundle } };
+    macAdmission.mockReturnValue(true);
+    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", version: AGENT_BROWSER_VERSION, runtimeVerified: false });
+    expect(macAdmission).toHaveBeenCalledWith(resources);
+    macAdmission.mockReturnValue(false);
+    expect(resolveAgentBrowserBinary(options)).toBeNull();
+  });
   it("resolves explicit executable before PATH, rejects bad override and directories", () => {
     const dataDir = temporary();
     const name = process.platform === "win32" ? "agent-browser.exe" : "agent-browser";
