@@ -80,6 +80,7 @@
   --color-success: #34d399;
   --color-danger: #f87171;
   --color-warning: #fbbf24;
+  --color-team-lead: #82b5ef;
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Segoe UI", system-ui, sans-serif;
@@ -146,6 +147,7 @@
   --color-danger: #f87171;        /* Wayland --danger, verbatim */
   --color-danger-ink: #2a0806;
   --color-warning: #fbbf24;       /* Wayland --warning, verbatim */
+  --color-team-lead: #82b5ef;     /* Sidebar role, not selection or activity */
   --color-scrollbar: #5c5c5c;
   --color-ember-line: #f5f5f5;
 
@@ -184,6 +186,7 @@
    decorative fills, Murage renders them as text.
    ───────────────────────────────────────────────────────────────────────── */
 [data-skin="light"] {
+  --color-team-lead: #245fa5;
   --code-color-scheme: light;
   --color-app: #f7f7f7;           /* Wayland --bg-1 — the content ground */
   --color-panel: #f0f0f0;         /* Wayland --bg-2 — sidebar and chrome,

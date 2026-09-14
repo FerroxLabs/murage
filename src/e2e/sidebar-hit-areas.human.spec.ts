@@ -3,13 +3,15 @@
 // 2eb4c7c5d32c85d8e0ae3e43d7f7861e81c2977f, Apache-2.0). A static markup
 // assertion cannot prove which element owns a pixel, so every claim below
 // clicks or taps the actual coordinates in Chromium.
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, chromium, type Locator, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let server: ViteDevServer, origin: string, cache: string;
@@ -41,7 +43,7 @@ test.beforeAll(async () => {
         window.fixtureStore={state:{...state},dispatch};
         createRoot(document.getElementById('root')).render(React.createElement(Sidebar,{open:true,onClose:()=>{}}));`;
     },
-    configureServer(vite) { vite.middlewares.use((req, res, next) => { if (req.url !== "/__hit" && !req.url?.startsWith("/__hit?")) return next(); res.setHeader("content-type", "text/html"); res.end('<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root" style="height:100dvh"></div><script type="module" src="/__hit.js"></script></body></html>'); }); },
+    configureServer(vite) { vite.middlewares.use((req, res, next) => { if (req.url !== "/__hit" && !req.url?.startsWith("/__hit?")) return next(); res.setHeader("content-type", "text/html"); res.end('<!doctype html><html lang="en"><head><meta charset="UTF-8"><title>Sidebar interaction fixture</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><main id="root" style="height:100dvh"></main><script type="module" src="/__hit.js"></script></body></html>'); }); },
   }] });
   await server.listen(0); const address = server.httpServer!.address(); if (!address || typeof address === "string") throw new Error("No fixture port"); origin = `http://127.0.0.1:${address.port}`;
 });
@@ -56,6 +58,83 @@ async function open(page: Page, { density = "comfortable", query = "" } = {}) {
 }
 const selectedId = (page: Page) => page.evaluate(() => (window as any).fixtureStore.state.selectedId as string);
 const select = (page: Page, id: string) => page.evaluate(value => (window as any).fixtureStore.dispatch({ type: "select", id: value }), id);
+
+test("team leader scoped accessibility review", async ({ page }, info) => {
+  test.skip(!process.env.MURAGE_AXE_CORE_PATH || !process.env.MURAGE_LIGHTHOUSE_CLI, "Optional local review requires explicit installed audit tools");
+  await page.setViewportSize({ width: 390, height: 900 });
+  await open(page, { query: "?selected=lead" });
+  await page.addScriptTag({ path: process.env.MURAGE_AXE_CORE_PATH! });
+  for (const skin of ["light", "dark"]) {
+    await page.evaluate(value => document.documentElement.dataset.skin = value, skin);
+    const result = await page.evaluate(async () => (window as any).axe.run('[data-sidebar-bot-row="lead"]'));
+    await info.attach(`leader-${skin}-axe`, { body: JSON.stringify(result), contentType: "application/json" });
+    expect(result.violations.filter((item: any) => ["serious", "critical"].includes(item.impact))).toEqual([]);
+  }
+  await promisify(execFile)(process.execPath, [process.env.MURAGE_LIGHTHOUSE_CLI!, `${origin}/__hit?selected=lead`,
+    "--only-categories=performance,accessibility", "--chrome-flags=--headless", "--output=json",
+    `--output-path=${info.outputPath("leader-lighthouse.json")}`, "--quiet"],
+  { env: { ...process.env, CHROME_PATH: chromium.executablePath() }, timeout: 50000 });
+});
+
+for (const skin of ["dark", "light"] as const) test(`team leader role colour stays distinct from selection (${skin})`, async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const density of ["comfortable", "compact", "icons"]) {
+    await open(page, { density });
+    await page.evaluate(value => document.documentElement.dataset.skin = value, skin);
+    await page.evaluate(() => {
+      const store = (window as any).fixtureStore;
+      store.dispatch({ type: "botPatched", bot: { ...store.state.bots.find((bot: any) => bot.id === "lead"), busy: true, unread: true } });
+    });
+    const lead = page.locator('[data-sidebar-bot-row="lead"]');
+    const chief = page.locator('[data-sidebar-bot-row="chief"]');
+    const member = page.locator('[data-sidebar-bot-row="analyst"]');
+    const label = lead.getByText("Team lead", { exact: true });
+    for (const width of [390, 820, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await select(page, "writer");
+      await expect(lead).toHaveClass(/border-team-lead\/30/);
+      await expect(chief).toHaveClass(/border-accent\/25/);
+      await expect(member).not.toHaveClass(/team-lead/);
+      await lead.locator("[data-sidebar-select]").focus();
+      await page.keyboard.press("Enter");
+      expect(await selectedId(page)).toBe("lead");
+      await expect(lead.locator("[data-sidebar-select]")).toBeFocused();
+      await expect(lead).toHaveClass(/border-team-lead\/45 bg-raised/);
+      await expect(label).toHaveCSS("color", skin === "dark" ? "rgb(130, 181, 239)" : "rgb(36, 95, 165)");
+      await expect(chief.getByText("Chief of Staff", { exact: true })).toHaveClass(/text-accent/);
+      if (density !== "icons") {
+        const rename = await lead.getByRole("button", { name: "Rename Research Director", exact: true }).boundingBox();
+        expect(rename!.height).toBeGreaterThanOrEqual(24);
+        expect(rename!.width).toBeGreaterThanOrEqual(24);
+        await expect(label).toBeVisible();
+        await expect(lead).toContainText("Working…");
+        await expect(lead.locator(".size-2.bg-accent")).toBeVisible();
+        const contrast = await label.evaluate(element => {
+          const luminance = (css: string) => {
+            const [r, g, b] = css.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => {
+              const c = value / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          };
+          const foreground = luminance(getComputedStyle(element).color);
+          const background = luminance(getComputedStyle(element.closest('[data-sidebar-bot-row]')!).backgroundColor);
+          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+        });
+        expect(contrast).toBeGreaterThanOrEqual(4.5);
+      }
+      const box = await lead.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (density === "comfortable") await page.screenshot({ path: info.outputPath(`leader-${skin}-${width}.png`) });
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
 const renames = (page: Page) => page.evaluate(() => (window as any).actions.filter((action: any) => action.type === "updateBot").map((action: any) => action.patch.name));
 /** The innermost row wrapper holding this locator (rows nest no further). */
 const rowOf = (page: Page, inner: Locator) => page.locator("div.group.relative").filter({ has: inner }).last();
@@ -66,7 +145,8 @@ async function formerArchivePoint(row: Locator) {
 }
 const ownerAt = (page: Page, point: { x: number; y: number }) => page.evaluate(({ x, y }) => {
   const element = document.elementFromPoint(x, y);
-  return { button: element?.closest("button")?.getAttribute("aria-label") ?? null, input: Boolean(element?.closest("input")) };
+  // The native row-selection button is not an overlaid action shortcut.
+  return { button: element?.closest("button:not([data-sidebar-select])")?.getAttribute("aria-label") ?? null, input: Boolean(element?.closest("input")) };
 }, point);
 
 for (const density of ["comfortable", "compact"]) for (const width of [1280, 390]) test(`an unavailable Archive leaves the Chief and team lead right edge selectable (${density}, ${width}px)`, async ({ page }, info) => {
@@ -170,7 +250,7 @@ test("Escape cancels a rename, Enter commits one, and Enter on the row still sel
   await page.keyboard.press("Enter");
   expect(await renames(page)).toEqual(["Pricing Analyst"]);
   expect(await selectedId(page)).toBe("writer");
-  const row = page.locator("div[role='button']").filter({ has: page.getByText("Pricing Analyst", { exact: true }) }).last();
+  const row = page.locator('[data-sidebar-select="analyst"]');
   await row.focus();
   await page.keyboard.press("Enter");
   expect(await selectedId(page)).toBe("analyst");
