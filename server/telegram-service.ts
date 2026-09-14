@@ -167,7 +167,7 @@ export class TelegramService {
       if (generation !== this.generation || !current?.enabled) return;
       if (["auth", "forbidden", "conflict"].includes(current.error ?? "")) {
         this.resumeState = "blocked";
-        this.resumeMessage = current.error === "conflict" ? "Telegram receiver conflict paused polling. Stop the other receiver, then use Retry." : "Telegram rejected this connection. Check access or revoke before pairing again.";
+        this.resumeMessage = current.error === "conflict" ? "Another app is receiving this Telegram bot's messages, so Murage paused. Stop that app, then restart Murage to reconnect. Your pairing is saved." : "Telegram rejected this connection. Check access or revoke before pairing again.";
         return;
       }
       this.schedule(generation);
