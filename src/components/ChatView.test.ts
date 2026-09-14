@@ -176,6 +176,18 @@ describe("motion is optional", () => {
   });
 });
 
+describe("B14 error recovery", () => {
+  it("renders an accessible dismiss control without coupling it to the draft", () => {
+    expect(chat).toMatch(/export function ErrorBanner[\s\S]{0,900}role="alert"/);
+    expect(chat).toMatch(/export function ErrorBanner[\s\S]{0,900}aria-label="Dismiss error"/);
+    expect(chat).toMatch(/export function ErrorBanner[\s\S]{0,900}\{message\}/);
+  });
+
+  it("clears only the existing global error state", () => {
+    expect(chat).toMatch(/<ErrorBanner[\s\S]{0,180}onDismiss=\{\(\) => dispatch\(\{ type: "error", message: null \}\)\}/);
+  });
+});
+
 // U0-T1. The rendered behaviour — hit rectangles, name widths, menus and
 // screenshots at 320/390/480/640/820/1024 in both skins — is proved in a
 // browser by src/e2e/chat-header.human.spec.ts. These are the wiring

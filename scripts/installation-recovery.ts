@@ -18,7 +18,8 @@ if (invokedAsMain()) {
     const message = code === "VM_WORKSPACE_BACKUP_UNSUPPORTED"
       ? "Backup cannot include persistent VM workspaces yet. Stop the VM and preserve its workspace separately; browser profiles need credential-safe handling. No backup was created and original data is unchanged."
       : error instanceof Error && error.message === usage ? usage : "The recovery operation could not complete. Preserve the installation, retained copies and recovery receipts; an interrupted restore may require rollback.";
-    process.stderr.write(JSON.stringify({ ok: false, error: code, ...(component ? { component } : {}), message }) + "\n");
+    const retainedDirectory = (process.platform === "win32" || code === "AGE_PROCESS_CLOSE_UNCONFIRMED") && error && typeof error === "object" && "retainedDirectory" in error && typeof error.retainedDirectory === "string" && error.retainedDirectory.length <= 8192 ? error.retainedDirectory : undefined;
+    process.stderr.write(JSON.stringify({ ok: false, error: code, ...(component ? { component } : {}), ...(retainedDirectory ? { retainedDirectory } : {}), message }) + "\n");
     process.exitCode = 1;
   }
 }

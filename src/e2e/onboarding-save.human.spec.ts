@@ -84,6 +84,7 @@ test.afterEach(() => { release?.(); release = undefined; });
 test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
 async function fill(page: import("@playwright/test").Page) {
+  await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
   await page.goto(`${origin}/__onboarding`);
   await page.getByRole("button", { name: "Add your details (optional)" }).click();
   await page.getByPlaceholder("Your name").fill("Fixture Person");

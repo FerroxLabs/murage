@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-const actions = new Set(["state", "choose-backup", "choose-separate-backup", "restore-separate", "capture-separate", "backup", "restore", "rollback", "retry", "diagnostics", "review-installation", "activate"]);
+const actions = new Set(["state", "choose-backup", "choose-separate-backup", "restore-separate", "capture-separate", "backup", "restore", "rollback", "retry", "diagnostics", "review-installation", "activate", "backup-encrypted", "choose-encrypted-backup", "restore-encrypted-new"]);
 const code = value => typeof value === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(value) ? value : "RECOVERY_OPERATION_FAILED";
-const controllerErrors = new Set(["UNTRUSTED_RECOVERY_SENDER", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_PREVIEW", "RECOVERY_SELECTION_EXPIRED", "RECOVERY_OWNERSHIP_REQUIRED"]);
+const controllerErrors = new Set(["UNTRUSTED_RECOVERY_SENDER", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_PREVIEW", "RECOVERY_SELECTION_EXPIRED", "RECOVERY_OWNERSHIP_REQUIRED", "BACKUP_IDENTITY_INVALID", "BACKUP_IDENTITY_MUST_BE_INDEPENDENT"]);
 
 /** Failure-window-only controller. Renderer input never supplies a path,
  * command or hash. The host owns dialogs, selection and process authority. */
@@ -17,19 +17,49 @@ export function createInstallationRecoveryController(host) {
   };
   const canSeparate = () => host.canRestoreSeparate?.() === true;
   const canCapture = () => canSeparate() && host.canCaptureSeparate?.() === true;
-  const state = () => ({ busy, available: host.isAvailable(), separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes } : null, result, error, activationAvailable: !!activationReview });
+  const state = () => ({ busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes } : null, result, error, activationAvailable: !!activationReview });
 
   return {
     async handle(event, input) {
       authorize(event);
-      if (!input || typeof input !== "object" || Array.isArray(input) || !actions.has(input.action) || Object.keys(input).some(key => key !== "action" && !(["restore", "restore-separate"].includes(input.action) && key === "selectionId") && !(input.action === "activate" && key === "reviewId"))) throw new Error("INVALID_RECOVERY_REQUEST");
+      if (!input || typeof input !== "object" || Array.isArray(input) || !actions.has(input.action) || Object.keys(input).some(key => key !== "action" && !(["restore", "restore-separate", "restore-encrypted-new"].includes(input.action) && key === "selectionId") && !(input.action === "activate" && key === "reviewId"))) throw new Error("INVALID_RECOVERY_REQUEST");
       if (input.action === "state") return state();
       if (busy) return { ...state(), error: "RECOVERY_BUSY" };
+      if(input.action.includes("encrypted")&&host.encryptedAvailable?.()!==true)return{...state(),error:"BACKUP_UNAVAILABLE"};
       if (input.action === "capture-separate" ? !canCapture() : ["choose-separate-backup", "restore-separate"].includes(input.action) ? !canSeparate() : !host.isAvailable() && !["diagnostics", "retry"].includes(input.action)) return { ...state(), error: "RECOVERY_OWNERSHIP_REQUIRED" };
       busy = true; error = null; result = null;
       if (input.action !== "activate") activationReview = null;
       try {
-        if (input.action === "capture-separate") {
+        if(input.action === "backup-encrypted"){
+          const destination=await host.chooseEncryptedDestination(event);authorize(event);
+          if(destination){
+            const key=await host.chooseRecoveryIdentity(event);authorize(event);
+            if(key){
+              if(!key.recipient)throw Object.assign(new Error("BACKUP_IDENTITY_HEADER_REQUIRED"),{code:"BACKUP_IDENTITY_HEADER_REQUIRED"});
+              if(await host.confirm(event,"backup-encrypted","",destination)){
+                authorize(event);if(!host.isAvailable()||host.encryptedAvailable?.()!==true)throw new Error("RECOVERY_OWNERSHIP_REQUIRED");
+                result=await host.run("backup-encrypted",{output:destination,recipient:key.recipient,readIdentity:key.readIdentity});
+              }
+            }
+          }
+        }else if(input.action === "choose-encrypted-backup"){
+          selection=null;const chosen=await host.chooseEncryptedBackup(event);authorize(event);
+          if(chosen){const key=await host.chooseRecoveryIdentity(event);authorize(event);if(key){
+            if(!host.isAvailable()||host.encryptedAvailable?.()!==true)throw new Error("RECOVERY_OWNERSHIP_REQUIRED");
+            const preview=await host.run("inspect-encrypted",{archive:chosen.path,readIdentity:key.readIdentity});authorize(event);
+            if(!host.isAvailable()||host.encryptedAvailable?.()!==true||preview.operation!=="inspect-encrypted"||preview.activationAvailable!==false||!/^[a-f0-9]{64}$/.test(preview.sha256))throw new Error("INVALID_RECOVERY_PREVIEW");
+            selection={id:randomUUID(),name:chosen.name,path:chosen.path,preview,plan:host.planSeparate(),encrypted:true,readIdentity:key.readIdentity};
+          }}
+        }else if(input.action === "restore-encrypted-new"){
+          if(!selection?.encrypted||input.selectionId!==selection.id)throw new Error("RECOVERY_SELECTION_EXPIRED");
+          const chosen=selection;
+          if(await host.confirm(event,"restore-encrypted-new",chosen.name,chosen.plan.dataDirectory)){
+            authorize(event);if(!host.isAvailable()||host.encryptedAvailable?.()!==true)throw new Error("RECOVERY_OWNERSHIP_REQUIRED");
+            selection=null;result=await host.runEncryptedSeparate({archive:chosen.path,sha256:chosen.preview.sha256,readIdentity:chosen.readIdentity},chosen.plan);
+            if(result?.status!=="restored-review-required"||result.activationAvailable!==false)throw new Error("INVALID_RECOVERY_PREVIEW");
+            await host.retry();
+          }
+        }else if (input.action === "capture-separate") {
           selection = null;
           result = await host.runCaptureSeparate(async preview => {
             authorize(event);
@@ -80,7 +110,7 @@ export function createInstallationRecoveryController(host) {
           }
         } else if (["restore", "restore-separate"].includes(input.action)) {
           const separate = input.action === "restore-separate";
-          if (!selection || input.selectionId !== selection.id || !!selection.plan !== separate) throw new Error("RECOVERY_SELECTION_EXPIRED");
+          if (!selection || selection.encrypted || input.selectionId !== selection.id || !!selection.plan !== separate) throw new Error("RECOVERY_SELECTION_EXPIRED");
           const chosen = selection;
           if (await host.confirm(event, input.action, chosen.name, chosen.plan?.dataDirectory)) {
             authorize(event);

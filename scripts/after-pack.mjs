@@ -11,6 +11,7 @@ import { validateFuigoProbeResources, stampSignedFuigoProbe } from "./fuigo-prob
 import { verifyBrowserBundle } from "./prepare-browser.mjs";
 import { browserBundlePaths } from "../server/browser-bundle-release.ts";
 import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
+import { verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
 
 async function requireRealDirectory(directory, mode = 0o755) {
   const details = await lstat(directory);
@@ -197,9 +198,16 @@ export default async function afterPack(context) {
     const browser = browserBundlePaths(path.join(resources, "browser-engine"), "win32-x64");
     const recovery = path.join(resources, "murage-recovery.exe");
     await requireRegularFile(recovery);
+    const backupDirectory = path.join(resources, "backup-tools", "x64");
+    const backupHelper = path.join(backupDirectory, "murage-backup-age.exe");
+    verifyWindowsBackupTools(backupDirectory);
+    await requireRegularFile(backupHelper);
+    const backupStat = await lstat(backupHelper);
+    if (backupStat.nlink !== 1 || backupStat.size < 1 || backupStat.size > 64 * 1024 ** 2) throw new Error("Packaged Windows backup helper is unsafe");
     const executables = [
       path.join(resources, HARNESS_RESOURCE_DIRECTORIES.MURAGE_FUIGO_DIR, FUIGO_EXECUTABLE_NAMES.win32),
       browser.engine, browser.chrome, recovery,
+      backupHelper,
       ...(fuigoProbe ? [fuigoProbe.file] : []),
     ];
     for (const executable of executables) {
@@ -210,7 +218,8 @@ export default async function afterPack(context) {
     for (const [file, pin] of [[browser.engine, WINDOWS_BROWSER_IMAGE_PINS.engine], [browser.chrome, WINDOWS_BROWSER_IMAGE_PINS.chrome]]) {
       if (!verifyWindowsBrowserImage(await readFile(file), pin).signed) throw new Error("Packaged Windows browser signing left an unsigned image");
     }
-    await verifyWindowsBrowserSignatures([browser.engine, browser.chrome, recovery, ...(fuigoProbe ? [fuigoProbe.file] : [])], process.env.SystemRoot);
+    verifyWindowsBackupTools(backupDirectory);
+    await verifyWindowsBrowserSignatures([browser.engine, browser.chrome, recovery, backupHelper, ...(fuigoProbe ? [fuigoProbe.file] : [])], process.env.SystemRoot);
     if (fuigoProbe) await stampSignedFuigoProbe(fuigoProbe);
   }
 

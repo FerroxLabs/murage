@@ -5,6 +5,13 @@ import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { parse } from "yaml";
 import { afterEach, expect, it, vi } from "vitest";
+import { ZipFile } from "yazl";
+vi.mock("../shared/windows-backup-tools.mjs", async () => {
+  const { createHash } = await import("node:crypto"); const sha = value => createHash("sha256").update(value).digest("hex");
+  return { WINDOWS_BACKUP_RAW_SHA256: { age: sha("raw age fixture"), keygen: sha("raw keygen fixture"), license: sha("raw license fixture") }, WINDOWS_BACKUP_ARCHIVE: { url: "https://invalid.example/never-used", sha256: "0".repeat(64) } };
+});
+import { WINDOWS_BACKUP_ARCHIVE } from "../shared/windows-backup-tools.mjs";
+import { stageWindowsBackupTools, verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
 
 vi.mock("./prepare-cloudflared.mjs", () => ({
   executableTarget: () => "win32-x64",
@@ -75,23 +82,27 @@ function fixture() {
   const helper = path.join(resources, "fuigo-probe", "launcher.exe"), helperManifest = path.join(resources, "fuigo-probe", "manifest.json");
   fs.writeFileSync(helper, header);
   fs.writeFileSync(helperManifest, JSON.stringify({ schema: 1, target: "win32-x64", executable: "launcher.exe", binarySha256: createHash("sha256").update(header).digest("hex") }));
+  const backupDirectory = path.join(resources, "backup-tools", "x64"); fs.mkdirSync(backupDirectory, { recursive: true });
+  const backupHelper = path.join(backupDirectory, "murage-backup-age.exe"); fs.writeFileSync(backupHelper, header);
+  for (const [file, bytes] of [["age.exe", "raw age fixture"], ["age-keygen.exe", "raw keygen fixture"], ["LICENSE", "raw license fixture"]]) fs.writeFileSync(path.join(backupDirectory, file), bytes);
   const signIf = vi.fn(async file => {
     expect(verifyFuigoExecutable).toHaveBeenCalledWith(executable, "win32-x64");
     expect(verifyBrowserBundle).toHaveBeenCalledWith(path.join(resources, "browser-engine"), "win32-x64");
     fs.appendFileSync(file, " signed fixture");
     return true;
   });
-  return { executable, recovery, browser, helper, helperManifest, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf } } };
+  return { executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf } } };
 }
 
 it("verifies pinned inventory before signing engines and updater helper", async () => {
-  const { context, executable, recovery, browser, helper, helperManifest, signIf } = fixture();
+  const { context, executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf } = fixture();
   await afterPack(context);
-  expect(signIf.mock.calls.map(([file]) => file)).toEqual([executable, browser.engine, browser.chrome, recovery, helper]);
+  expect(signIf.mock.calls.map(([file]) => file)).toEqual([executable, browser.engine, browser.chrome, recovery, backupHelper, helper]);
   expect(fs.readFileSync(recovery, "utf8")).toBe("recovery fixture signed fixture");
   expect(fs.readFileSync(browser.engine, "utf8")).toBe("pinned browser engine signed fixture");
   expect(fs.readFileSync(browser.chrome, "utf8")).toBe("pinned browser chrome signed fixture");
-  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith([browser.engine, browser.chrome, recovery, helper], process.env.SystemRoot);
+  expect(verifyWindowsBrowserSignatures).toHaveBeenCalledWith([browser.engine, browser.chrome, recovery, backupHelper, helper], process.env.SystemRoot);
+  verifyWindowsBackupTools(backupDirectory);
   expect(JSON.parse(fs.readFileSync(helperManifest, "utf8")).binarySha256).toBe(createHash("sha256").update(fs.readFileSync(helper)).digest("hex"));
   expect(fs.readFileSync(executable, "utf8")).toBe("pinned fixture signed fixture");
 });
@@ -123,10 +134,80 @@ it("never signs any engine when the browser bundle pin is rejected", async () =>
   expect(signIf).not.toHaveBeenCalled();
 });
 
-it.each(["agent-browser.exe", "chrome-headless-shell.exe", "murage-recovery.exe", "launcher.exe"])("fails closed when packaged signing is skipped for %s", async (name) => {
+it.each(["agent-browser.exe", "chrome-headless-shell.exe", "murage-recovery.exe", "launcher.exe", "murage-backup-age.exe"])("fails closed when packaged signing is skipped for %s", async (name) => {
   const { context, signIf } = fixture();
   signIf.mockImplementation(async file => path.basename(file) !== name);
   await expect(afterPack(context)).rejects.toThrow(`Windows signing did not complete: ${name}`);
+});
+
+it("refuses tampered raw backup tools before signing and detects signing-time mutation", async () => {
+  const first = fixture(); fs.appendFileSync(path.join(first.backupDirectory, "age.exe"), "tampered");
+  await expect(afterPack(first.context)).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(first.signIf).not.toHaveBeenCalled();
+  const second = fixture(); second.signIf.mockImplementation(async file => { if (file === second.backupHelper) fs.appendFileSync(path.join(second.backupDirectory, "age-keygen.exe"), "incorrect signature"); return true; });
+  await expect(afterPack(second.context)).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(verifyWindowsBrowserSignatures).not.toHaveBeenCalled();
+});
+
+it("requires the backup helper instead of accepting the copy step's missing-file warning", async () => {
+  const f = fixture(); fs.rmSync(f.backupHelper);
+  await expect(afterPack(f.context)).rejects.toThrow(); expect(f.signIf).not.toHaveBeenCalled();
+});
+
+it("copies all four backup resources individually without early signing", async () => {
+  const require = createRequire(import.meta.url), builder = path.dirname(require.resolve("electron-builder/package.json"));
+  const { FileMatcher, copyFiles } = require(require.resolve("app-builder-lib/out/fileMatcher.js", { paths: [builder] }));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "murage-backup-copy-")); temporaryDirectories.push(root);
+  const config = parse(fs.readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));
+  const entries = config.win.extraResources.filter(entry => entry.to.startsWith("backup-tools/x64/")); expect(entries).toHaveLength(4);
+  const source = path.join(root, "dist-native/backup-tools/win32-x64"); fs.mkdirSync(source, { recursive: true });
+  for (const entry of entries) fs.writeFileSync(path.join(root, entry.from), `original ${path.basename(entry.from)}`);
+  const transformer = vi.fn(() => null);
+  await copyFiles(entries.map(entry => new FileMatcher(path.join(root, entry.from), path.join(root, "resources", entry.to), value => value)), transformer, false);
+  expect(transformer).not.toHaveBeenCalled();
+  for (const entry of entries) expect(fs.readFileSync(path.join(root, "resources", entry.to), "utf8")).toBe(`original ${path.basename(entry.from)}`);
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  expect(pkg.scripts["package:win"]).toContain("pnpm prepare:backup-windows"); expect(pkg.scripts["package:win"]).toContain("pnpm build:backup-helper");
+});
+
+it("stages only pinned named ZIP members and refuses archive mismatch or existing collisions", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "murage-backup-stage-")); temporaryDirectories.push(root);
+  const zip = new ZipFile(), chunks = []; const done = new Promise((resolve, reject) => { zip.outputStream.on("data", chunk => chunks.push(chunk)); zip.outputStream.on("end", resolve); zip.outputStream.on("error", reject); });
+  for (const [file, value] of [["age/age.exe", "raw age fixture"], ["age/age-keygen.exe", "raw keygen fixture"], ["age/LICENSE", "raw license fixture"], ["age/ignored.txt", "not extracted"]]) zip.addBuffer(Buffer.from(value), file);
+  zip.end(); await done; const bytes = Buffer.concat(chunks), archive = path.join(root, "fixture.zip"); fs.writeFileSync(archive, bytes);
+  WINDOWS_BACKUP_ARCHIVE.sha256 = createHash("sha256").update(bytes).digest("hex");
+  const output = await stageWindowsBackupTools({ root, archive }); verifyWindowsBackupTools(output);
+  expect(fs.readdirSync(output).sort()).toEqual(["LICENSE", "age-keygen.exe", "age.exe"]); expect(fs.existsSync(path.join(output, "ignored.txt"))).toBe(false);
+  fs.appendFileSync(path.join(output, "age.exe"), "changed"); await expect(stageWindowsBackupTools({ root, archive })).rejects.toThrow("COLLISION");
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "murage-backup-bad-archive-")); temporaryDirectories.push(other);
+  fs.writeFileSync(archive, "not the pinned archive"); await expect(stageWindowsBackupTools({ root: other, archive })).rejects.toThrow("ARCHIVE_MISMATCH");
+});
+
+it("release signature gate exempts only exact verified upstream paths and still verifies the helper", async () => {
+  const workflow = parse(fs.readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
+  const gate = workflow.jobs.windows.steps.find(step => step.name === "Gate: the installer must actually be signed").run;
+  const fixed = "release/win-unpacked/resources/backup-tools/x64";
+  const exemptions = [...gate.matchAll(/\$rawBackupFiles\.Add\(\[System\.IO\.Path\]::GetFullPath\('([^']+)'\)\)/g)].map(match => match[1]);
+  expect(exemptions).toEqual([`${fixed}/age.exe`, `${fixed}/age-keygen.exe`]);
+  expect(gate).toContain("$rawBackupFiles.Contains([System.IO.Path]::GetFullPath($_.FullName))");
+  expect(gate).not.toMatch(/\$rawBackupFiles\.Contains\([^\n]*\$_\.Name/);
+  expect(gate.indexOf("if ($LASTEXITCODE -ne 0)")).toBeLessThan(gate.indexOf("$rawBackupFiles ="));
+  expect(gate).toContain("$allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.')");
+  expect(gate).toContain("@('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe')");
+  const snippet = /\$verifyBackup = @'\n([\s\S]*?)\n'@/.exec(gate)?.[1]; expect(snippet).toBeTruthy();
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const executeNodePart = new AsyncFunction("verifyWindowsBackupTools", "verifyWindowsBrowserSignatures", "process", snippet.replace(/^import .*;\n/gm, ""));
+  const f = fixture();
+  const verifyRaw = directory => { expect(directory).toBe(fixed); verifyWindowsBackupTools(f.backupDirectory); };
+  const verifySigned = vi.fn(async (files, systemRoot) => { expect(files).toEqual([`${fixed}/murage-backup-age.exe`]); await verifyWindowsBrowserSignatures([f.backupHelper], systemRoot); });
+  await executeNodePart(verifyRaw, verifySigned, { env: { SystemRoot: "C:\\Windows" } }); expect(verifySigned).toHaveBeenCalledOnce();
+  verifySigned.mockClear(); fs.rmSync(path.join(f.backupDirectory, "LICENSE"));
+  await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow(); expect(verifySigned).not.toHaveBeenCalled();
+  fs.writeFileSync(path.join(f.backupDirectory, "LICENSE"), "raw license fixture"); fs.appendFileSync(path.join(f.backupDirectory, "age.exe"), "changed");
+  await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(verifySigned).not.toHaveBeenCalled();
+  fs.writeFileSync(path.join(f.backupDirectory, "age.exe"), "raw age fixture");
+  verifyWindowsBrowserSignatures.mockRejectedValueOnce(new Error("Windows browser requires a valid Ferrox Labs signature"));
+  await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow("valid Ferrox Labs signature");
+  // This exercises the embedded Node gate and checks PowerShell source shape;
+  // it does not claim native PowerShell or a real Authenticode verification.
 });
 
 

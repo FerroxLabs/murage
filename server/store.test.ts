@@ -658,7 +658,19 @@ describe("Store", () => {
     const original = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "v1" });
     const reply = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "answer to v1" });
 
+    const events: unknown[] = [];
+    const publishedLeaves: Array<string | null> = [];
+    store.onChange((event) => {
+      events.push(event);
+      // Publication must observe the already committed branch head.
+      if (event.type === "thread") publishedLeaves.push(new Store(selection).activeLeaf(bot.threadId));
+    });
     const edited = store.branchMessage(bot.threadId, original.id, "v2")!;
+    expect(events).toEqual([
+      { type: "message", threadId: bot.threadId, message: edited },
+      { type: "thread", threadId: bot.threadId, activeLeafId: edited.id },
+    ]);
+    expect(publishedLeaves).toEqual([edited.id]);
     expect(edited.parentId).toBe(original.parentId); // sibling, not child
     expect(store.activeLeaf(bot.threadId)).toBe(edited.id);
 
@@ -926,7 +938,7 @@ describe("Store change stream", () => {
     store.branchMessage(bot.threadId, first.id, "b");
     store.setActiveLeaf(bot.threadId, first.id);
     store.toggleReaction(bot.threadId, first.id, "👍", "user");
-    expect(events.map((e) => e.type)).toEqual(["message.patch", "message", "thread", "message.patch"]);
+    expect(events.map((e) => e.type)).toEqual(["message.patch", "message", "thread", "thread", "message.patch"]);
     expect(events[2]).toMatchObject({ type: "thread", threadId: bot.threadId, activeLeafId: expect.any(String) });
   });
 

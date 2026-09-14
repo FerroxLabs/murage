@@ -543,11 +543,15 @@ export async function browseFacets(): Promise<Facet[]> {
  *  consumes whatever that returns. */
 export interface SearchableTeam {
   slug: string;
+  members?: number;
   name: string;
   summary: string;
   category: string;
   outcome?: string;
   skills: string[];
+  playbooks?: Array<{ key: string; name: string; summary: string }>;
+  adaptable?: boolean;
+  profileReviewHash?: string;
   requires: { apps: string[] };
 }
 

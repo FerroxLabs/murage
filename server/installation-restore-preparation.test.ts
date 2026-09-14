@@ -13,6 +13,7 @@ import { afterEach, expect, it } from "vitest";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { initializeMessageTables } from "./message-tables.ts";
+import { initializeImageOperations } from "./image-operations-schema.ts";
 import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 
@@ -42,6 +43,7 @@ async function fixture() {
   ];
   try {
     initializeMessageTables(db);
+    initializeImageOperations(db);
     for (const message of messages) db.prepare("INSERT INTO messages VALUES(?,?,?,?,?,?,?)").run("thread", message.id, message.at, message.role, message.kind, null, JSON.stringify(message));
     db.exec("INSERT INTO thread_state VALUES('thread','pending')");
   } finally { db.close(); }

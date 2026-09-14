@@ -6,6 +6,7 @@
 // readable.
 
 import type { ProviderErrorInfo } from "../shared/provider-error.ts";
+import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import type { MemoryBundle } from "../shared/memory.ts";
 import type { QuestionAnswer, QuestionSpec } from "../shared/questions.ts";
 
@@ -166,7 +167,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; providerError?: ProviderErrorInfo }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -195,11 +196,17 @@ export type RequestOutcome = "allowed-once" | "rejected" | "answered" | "unavail
 // the first turn (the agentcal per-turn-process model) with resumeCursor
 // carrying the provider-native continuation (e.g. a claude session id).
 export interface SendTurnInput {
+  /** Server-only synchronous submission fence. Supporting adapters call after
+   * setup immediately before prompt handoff, without an intervening await.
+   * On refusal, do not submit; return the addressable turnId for cleanup. */
+  beforeSubmit?: () => void;
   /** Server-authorized reference bundle; the shared adapter consumes it once. */
   memoryContext?: MemoryBundle;
   threadId: ThreadId;
   text: string;
   model?: string;
+  /** Exact server-authorized incoming bytes; never resolve paths in drivers. */
+  images?: Array<{ mimeType: string; data: string }>;
   /** Server custody only; never serialized into bot settings or the renderer. */
   providerRoute?: import("./provider-routing.ts").ProviderTurnRoute;
   effort?: EffortLevel;

@@ -124,9 +124,52 @@ type SkillRecordingPayload = {
     code?: "load-failed" | "renderer-gone";
   }
 
+  interface BackupScheduleStatus {
+    supported:boolean; pending:boolean; enabled:boolean; revision:number; phase:string;
+    preUpgradeSupported?:boolean;
+    schedule:import("../../shared/backup-schedule").BackupSchedule;
+    lastVerified?:import("../../shared/backup-schedule").BackupReceipt;
+    closedAppSupported?:boolean;
+    lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
+    refs?:{installationRef:string;destinationRef:string;recoveryRef:string;destinationLabel:string;recoveryLabel:string};
+    error?:string|null;
+  }
+  interface BackupClosedStatus {
+    supported:boolean;
+    state:"unconfigured"|"staged"|"installed"|"disabled"|"disabled-removal-pending"|"unavailable";
+    closedApp:boolean;
+    lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
+  }
   interface Window {
     muragebox?: {
       platform: NodeJS.Platform;
+      backup?: { status(): Promise<{ supported:boolean; pending:boolean }>; restart(): Promise<{ restarting:boolean }> };
+      backupSchedule?: {
+        status():Promise<BackupScheduleStatus>;
+        selectReferences():Promise<BackupScheduleStatus|{cancelled:true}>;
+        configure(revision:number,choices:import("../../shared/backup-schedule").BackupSchedule&{allowIdleRestart?:boolean;allowClosedApp?:boolean}):Promise<BackupScheduleStatus>;
+      };
+      backupClosed?: {
+        status():Promise<BackupClosedStatus>;
+        stage():Promise<BackupClosedStatus>;
+        install():Promise<BackupClosedStatus&{cancelled?:boolean}>;
+        disable():Promise<BackupClosedStatus>;
+      };
+      backupRemote?: {
+        status():Promise<import("../../server/backup-remote-host").BackupRemoteStatus>;
+        save(revision:number,input:{label:string;endpoint:string;bucket:string;prefix:string;region:string;bucketLookup:"auto"|"path"|"dns";credentials:{accessKeyId:string;secretAccessKey:string;sessionToken?:string}}):Promise<{saved:boolean}>;
+        selectRepositoryPassword(remoteRef:string,revision:number):Promise<{cancelled?:boolean;selected?:boolean}>;
+        connect(remoteRef:string,revision:number):Promise<{connected:boolean;remoteRef:string;revision:number;repositoryId:string}>;
+        uploadLatest(remoteRef:string,revision:number,jobId:string):Promise<{state:string;jobId:string;remoteRef:string;revision:number;snapshotId?:string}>;
+        reconcileLatest(remoteRef:string,revision:number,jobId:string):Promise<{state:string;jobId:string;snapshotId?:string}>;
+        listBackups(remoteRef:string,revision:number):Promise<{repositoryId:string;backups:{snapshotId:string;jobId:string;createdAt:number;verified:false}[];ignored:number}>;
+        downloadBackup(remoteRef:string,revision:number,snapshotId:string):Promise<{cancelled?:boolean;saved?:boolean;archivePath?:string;directory?:string}>;
+        setAutomaticUpload(remoteRef:string,revision:number,enabled:boolean):Promise<{saved:boolean}>;
+      };
+      approvalNotifications?: {
+        show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string }): Promise<{ accepted: boolean }>;
+        onOpen(callback: (target: { botId: string; threadId: string }) => void): () => void;
+      };
       startup?: {
         status(): Promise<StartupBackgroundState>;
         update(patch:{keepRunning?:boolean;startAtLogin?:boolean}):Promise<StartupBackgroundState>;
@@ -257,7 +300,7 @@ type SkillRecordingPayload = {
       pickFolder?(current?: string): Promise<string | null>;
       /** Writes the redacted diagnostics report to a user-chosen file;
        * resolves the path, or null when cancelled. */
-      exportDiagnostics?(): Promise<string | null>;
+      exportDiagnostics?(selection?: {threadId:string;messageId:string;diagnosticId:string}): Promise<string | null>;
       /** Asks where to save a bot-created file (inside ~/.murage), copies
        * it there and reveals it. Resolves the chosen path, or null if the
        * user cancelled the dialog. */
@@ -280,7 +323,7 @@ type SkillRecordingPayload = {
       /** Run the legacy connected-apps claim once (user consent). */
       claimLegacyComposio?(): Promise<{ state: "none" | "offered" | "pending" | "claimed" | "conflict" | "abandoned"; code?: string; installationId?: string; at?: string; confirmPending?: boolean }>;
       setCredential?(
-        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken",
+        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
@@ -318,6 +361,7 @@ export interface UpdaterState {
     | "downloading"
     | "downloaded"
     | "installing"
+    | "deferred"
     /** the command is on the clipboard; the user finishes in a terminal */
     | "handed-off"
     | "error";

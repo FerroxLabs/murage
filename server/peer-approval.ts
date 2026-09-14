@@ -27,6 +27,7 @@ export interface ApprovalBus {
   store: Store;
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
+  onApproval?: (botId: string, threadId: string, requestId: string, messageId: string) => void;
 }
 
 interface Pending {
@@ -135,6 +136,7 @@ export function requestPeerApproval(
       messageId: card.id,
       bus,
     });
+    try { bus.onApproval?.(from.id, sourceThreadId, requestId, card.id); } catch { /* Delivery never changes approval authority. */ }
   });
 }
 

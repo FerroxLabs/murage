@@ -27,7 +27,7 @@ describe('bound provider routes',()=>{
  });
  it('rejects catalog model IDs that could be interpreted as CLI switches',()=>{expect(()=>applyProviderRoute('qwenAgent',{}, {...route,model:'--dangerously-skip-permissions'})).toThrow();});
  it('keeps incompatible protocols and unproved CLI routes unavailable',()=>{
-  expect(providerEngineProtocol('claudeAgent','deepseek','openai')).toBeNull();expect(providerEngineProtocol('grokAgent','flux','openai')).toBeNull();expect(providerEngineProtocol('grok','flux','openai')).toBe('openai');expect(providerEngineProtocol('codex','openai','openai')).toBe('responses');
+  expect(providerEngineProtocol('claudeAgent','deepseek','openai')).toBeNull();expect(providerEngineProtocol('grokAgent','flux','openai')).toBe('openai');expect(providerEngineProtocol('grokAgent','openai','responses')).toBeNull();expect(providerEngineProtocol('grok','flux','openai')).toBe('openai');expect(providerEngineProtocol('codex','openai','openai')).toBe('responses');
  });
  for(const [name,driver,fake]of [['qwen',QwenAgentDriver,'fake-acp-cli.ts'],['hermes',HermesAgentDriver,'fake-acp-cli.ts'],['fuigo',FuigoAgentDriver,'fake-acp-cli.ts']]as const){
   it(`dispatches ${name} through the real adapter with a scoped provider connection`,async()=>{

@@ -2,20 +2,25 @@ import { useId } from "react";
 import { AlertTriangle, ArrowUpRight, RefreshCw, Settings2 } from "lucide-react";
 import { providerErrorPresentation, type ProviderErrorInfo } from "../../shared/provider-error";
 import { t } from "@/lib/i18n";
+import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
+import { parseRuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
 
 /** Structured provider errors use reviewed copy, never backend HTML/JSON or
  * a URL supplied in an error message. Retry remains an explicit user action. */
-export function ProviderErrorCard({ info, details, onRetry, onOpenProviderSettings }: {
+export function ProviderErrorCard({ info, details, diagnostic, turnId, incident, onRetry, onOpenProviderSettings }: {
   info: ProviderErrorInfo;
   details?: string;
+  diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
   onRetry?: () => void;
   onOpenProviderSettings: () => void;
 }) {
   const titleId = useId();
   const presentation = providerErrorPresentation(info);
-  const category = info.kind === "credits" || info.kind === "authentication" || info.kind === "permission" || info.kind === "rate-limit" || info.kind === "unavailable" ? info.kind : "unknown";
+  const category = info.kind === "credits" || info.kind === "payment" || info.kind === "authentication" || info.kind === "permission" || info.kind === "rate-limit" || info.kind === "unavailable" ? info.kind : "unknown";
   const provider = info.provider === "flux-router" ? "Flux Router" : t("providerError.provider");
   const hasHttpStatus = Number.isInteger(info.httpStatus) && info.httpStatus >= 100 && info.httpStatus <= 599;
+  const parsedDiagnostic = parseRuntimeErrorDiagnostic(diagnostic);
+  const hasDiagnostic = parsedDiagnostic?.turnId === turnId && parsedDiagnostic !== undefined;
   const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">
@@ -45,10 +50,11 @@ export function ProviderErrorCard({ info, details, onRetry, onOpenProviderSettin
           <RefreshCw size={14} aria-hidden="true" /> {t("providerError.retry")}
         </button>}
       </div>
-      {(hasHttpStatus || details) && <details className="mt-3 text-[11px] text-ink-secondary">
+      {(hasHttpStatus || details || hasDiagnostic) && <details className="mt-3 text-[11px] text-ink-secondary">
         <summary className={"w-fit cursor-pointer rounded py-1 " + focus}>{t("providerError.details")}</summary>
         {hasHttpStatus && <p className="mt-1">{t("providerError.status", { status: info.httpStatus })}</p>}
         {details && <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px]">{details}</pre>}
+        <DiagnosticDetails diagnostic={diagnostic} turnId={turnId} incident={incident} />
       </details>}
     </section>
   </div>;

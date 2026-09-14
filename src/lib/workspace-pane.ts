@@ -64,6 +64,9 @@ export interface WorkspaceTab {
 }
 
 export interface WorkspacePaneState {
+  compact: boolean;
+  section: "files" | "memory";
+  filesRequest?: { botId?: string; threadId?: string; artifactId?: string; library?: boolean };
   open: boolean;
   width: number;
   /** The document takes the whole column and the chat steps aside. */
@@ -77,6 +80,8 @@ export interface WorkspacePaneState {
 }
 
 export const initialWorkspacePaneState: WorkspacePaneState = {
+  compact: false,
+  section: "files",
   open: false,
   width: WORKSPACE_PANE_DEFAULT_WIDTH,
   expanded: false,
@@ -97,7 +102,7 @@ export type WorkspacePaneAction =
   /** Open (or focus) one file. A preview reuses the clean preview tab. */
   | ({ type: "open"; id?: string } & OpenWorkspaceFile)
   /** Show the rail for a conversation without opening a file. */
-  | { type: "show" }
+  | { type: "show"; section?: "files" | "memory"; filesRequest?: WorkspacePaneState["filesRequest"] }
   | { type: "activate"; id: string }
   | { type: "close"; id: string; force?: boolean }
   | { type: "cancelClose" }
@@ -107,7 +112,8 @@ export type WorkspacePaneAction =
   | { type: "setOpen"; open: boolean }
   | { type: "setWidth"; width: number; containerWidth?: number }
   | { type: "setExpanded"; expanded: boolean }
-  | { type: "setCompactView"; view: "chat" | "workspace" };
+  | { type: "setCompactView"; view: "chat" | "workspace" }
+  | { type: "setCompact"; compact: boolean };
 
 export function tabIdentity(tab: Pick<WorkspaceTab, "scope" | "relativePath">): DocumentIdentity {
   return { scope: { botId: tab.scope.botId, threadId: tab.scope.threadId }, relativePath: tab.relativePath };
@@ -137,8 +143,9 @@ function shown(state: WorkspacePaneState): WorkspacePaneState {
 export function workspacePaneReducer(state: WorkspacePaneState, action: WorkspacePaneAction): WorkspacePaneState {
   switch (action.type) {
     case "show":
-      return shown(state);
+      return shown({ ...state, section: action.section ?? "files", ...(action.filesRequest ? { filesRequest: action.filesRequest } : {}) });
     case "open": {
+      state = { ...state, section: "files", filesRequest: undefined };
       const mode = action.mode ?? "preview";
       const persistent = mode === "edit" || action.pin === true;
       const key = tabKey(action);
@@ -210,7 +217,9 @@ export function workspacePaneReducer(state: WorkspacePaneState, action: Workspac
     case "setExpanded":
       return state.expanded === action.expanded ? state : { ...state, expanded: action.expanded };
     case "setCompactView":
-      return state.compactView === action.view ? state : { ...state, compactView: action.view };
+      return state.compactView === action.view && !(action.view === "chat" && state.expanded) ? state : { ...state, compactView: action.view, ...(action.view === "chat" ? { expanded: false } : {}) };
+    case "setCompact":
+      return state.compact === action.compact ? state : { ...state, compact: action.compact };
     default:
       return state;
   }

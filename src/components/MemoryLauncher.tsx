@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { Brain, X } from "lucide-react";
 import { MemorySettings } from "./MemorySettings";
 import { t } from "@/lib/i18n";
+import { useDesktopSurface } from "@/lib/use-surface";
 
 /** One bot-scoped memory surface, opened from either the toolbar or profile.
  *
@@ -27,19 +28,26 @@ export function MemoryLauncher({
   /** Where focus goes when the dialog closes, if its opener is gone. */
   returnFocusRef?: RefObject<HTMLElement | null>;
 }) {
+  const desktop = useDesktopSurface();
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const setOpen = (next: boolean) => {
+    if (next && desktop === true) {
+      window.dispatchEvent(new CustomEvent("murage:open-memory", { detail: { botId } }));
+      onOpenChange?.(false);
+      return;
+    }
     if (controlledOpen === undefined) setOwnOpen(next);
     onOpenChange?.(next);
   };
   useEffect(() => {
+    if (open && desktop === true) { setOpen(true); return; }
     if (open) {
       if (!dialog.current?.open) dialog.current?.showModal();
     } else dialog.current?.close();
-  }, [open]);
+  }, [open, desktop]);
   useEffect(() => { setOpen(false); }, [botId]);
   const closed = () => {
     setOpen(false);

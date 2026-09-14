@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   StoreProvider,
+  createStreamDeltaBuffer,
   configStatusFromFrame,
   initialState,
   loadSnapshotBoundary,
@@ -13,6 +14,7 @@ import {
   useStore,
   viewedTaskBot,
   visibleNotificationThread,
+  visibleMessages,
   type Action,
   type Bot,
   type Group,
@@ -24,6 +26,90 @@ import { openLiveEvents, type LiveEventSourceLike, type LiveEventsPlatform } fro
 import { openerAt } from "../../shared/bot-openers.js";
 import { hostStoppedActivityName } from "../../shared/host-stop";
 import type { RoutineRun } from "../lib/routines";
+
+describe("stream delta buffer", () => {
+  it("falls back to 100ms when rAF is paused and emits the pending channels once", () => {
+    vi.useFakeTimers();
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = nextFrame++;
+      callbacks.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => callbacks.delete(id));
+    const flushed: Array<Array<[string, { text: string; reasoning: string }]>> = [];
+    try {
+      const buffer = createStreamDeltaBuffer((entries) => flushed.push(entries));
+      buffer.push("thread", "assistant_text", "answer");
+      buffer.push("thread", "reasoning_text", "because");
+
+      vi.advanceTimersByTime(99);
+      expect(flushed).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(flushed).toEqual([[["thread", { text: "answer", reasoning: "because" }]]]);
+      for (const callback of callbacks.values()) callback(100);
+      expect(flushed).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("drains an intact 64 Ki UTF-16 pending delta without capping accumulated output", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const flushed: Array<Array<[string, { text: string; reasoning: string }]>> = [];
+    try {
+      const delta = "x".repeat(64 * 1024);
+      const buffer = createStreamDeltaBuffer((entries) => flushed.push(entries));
+      buffer.push("thread", "assistant_text", delta);
+      expect(flushed).toEqual([[["thread", { text: delta, reasoning: "" }]]]);
+      vi.advanceTimersByTime(100);
+      expect(flushed).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("clearing or disposing cancels pending callbacks so stale tails cannot flush", () => {
+    vi.useFakeTimers();
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let staleFrame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callbacks.set(1, callback);
+      staleFrame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => callbacks.delete(id));
+    const flushed: Array<Array<[string, { text: string; reasoning: string }]>> = [];
+    try {
+      const buffer = createStreamDeltaBuffer((entries) => flushed.push(entries));
+      buffer.push("thread", "assistant_text", "ghost");
+      buffer.clear("thread");
+      staleFrame?.(100);
+      vi.advanceTimersByTime(100);
+      expect(flushed).toEqual([]);
+
+      buffer.push("other", "reasoning_text", "dispose-me");
+      buffer.dispose();
+      staleFrame?.(200);
+      vi.advanceTimersByTime(100);
+      expect(flushed).toEqual([]);
+
+      // React StrictMode re-runs effect setup after cleanup; a fresh stream
+      // may reuse this memoized helper without inheriting disposed deltas.
+      buffer.push("reactivated", "assistant_text", "fresh");
+      buffer.flush();
+      expect(flushed).toEqual([[["reactivated", { text: "fresh", reasoning: "" }]]]);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 type SnapshotFrame =
   | { kind: "hello"; resumed: boolean; cursor: string }
@@ -518,7 +604,7 @@ describe("workspace pane (F4-T3)", () => {
   }) as unknown as Bot;
 
   it("starts closed with no tabs", () => {
-    expect(initialState.workspacePane).toEqual({ open: false, width: 440, expanded: false, compactView: "chat", tabs: [], activeTabId: null, closeRequest: null });
+    expect(initialState.workspacePane).toEqual({ open: false, width: 440, expanded: false, compact: false, section: "files", compactView: "chat", tabs: [], activeTabId: null, closeRequest: null });
   });
 
   it("routes pane actions to the pane reducer and touches nothing else", () => {
@@ -1047,6 +1133,22 @@ describe("pending queued chip", () => {
 });
 
 describe("messageAdded leaf adoption", () => {
+  it("adopts an edited branch only on the authoritative thread event, then its answer", () => {
+    const original = { id: "original", at: 1, parentId: null, role: "user", kind: "text", text: "v1" } as Message;
+    const reply = { id: "reply", at: 2, parentId: "original", role: "bot", kind: "text", text: "old answer" } as Message;
+    const edited = { ...original, id: "edited", at: 3, text: "v2" };
+    const state = { ...initialState, bots: [{ id: "bot-1", threadId: "thread-1", messages: [original, reply], activeLeafId: reply.id } as Bot] };
+    const fork = reducer(state, { type: "messageAdded", threadId: "thread-1", message: edited });
+    expect(fork.bots[0].activeLeafId).toBe(reply.id);
+    const selected = reducer(fork, { type: "threadActive", threadId: "thread-1", activeLeafId: edited.id });
+    expect(selected.bots[0].activeLeafId).toBe(edited.id);
+    const answered = reducer(selected, { type: "messageAdded", threadId: "thread-1", message: { ...reply, id: "new-answer", parentId: edited.id, text: "new answer" } });
+    expect(answered.bots[0].activeLeafId).toBe("new-answer");
+    expect(visibleMessages(answered.bots[0]).map((message) => message.text)).toEqual(["v2", "new answer"]);
+    const late = reducer(answered, { type: "messageAdded", threadId: "thread-1", message: { ...original, id: "unrelated-late-user" } });
+    expect(late.bots[0].activeLeafId).toBe("new-answer");
+  });
+
   const baseBot = {
     id: "bot-1",
     threadId: "thread-1",

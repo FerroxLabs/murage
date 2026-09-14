@@ -9,7 +9,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
@@ -66,6 +67,61 @@ describe("CodexDriver turns (fake app-server)", () => {
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  it.each(["parent-isolation", "parent-early"])("isolates parent native events (%s)", async (mode) => {
+    await create({ mode });
+    process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
+    await instance.adapter.sendTurn({ threadId: "parent-isolation", text: "one parent action" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([
+      { ok: true, usage: { input: 11, output: 2 } },
+    ]);
+    expect(recorder.events.filter((e) => e.type === "content.delta")).toMatchObject([{ delta: "parent reply" }]);
+    expect(recorder.events.filter((e) => e.type === "item.completed")).toMatchObject([{ itemType: "assistant_text", text: "parent reply" }]);
+    expect(recorder.events.filter((e) => e.type === "thread.token-usage.updated")).toMatchObject([{ input: 20, output: 5 }]);
+    expect(recorder.events.some((e) => e.type === "item.started")).toBe(false);
+    expect(JSON.stringify(recorder.events)).not.toMatch(/FOREIGN|UNIDENTIFIED/);
+    expect(recorder.events.filter((e) => e.type === "runtime.error").map((e) => e.message)).toEqual(
+      mode === "parent-isolation" ? ["connection diagnostic"] : [],
+    );
+    const seen = JSON.parse(readFileSync(process.env.FAKE_CODEX_DUMP, "utf8"));
+    expect(seen.calls.filter((c: { method: string }) => c.method === "turn/start")).toHaveLength(1);
+  });
+
+  it.each(["terminal-error", "terminal-error-duplicate"])("surfaces a terminal provider error exactly once (%s)", async (mode) => {
+    await create({ mode });
+    await instance.adapter.sendTurn({ threadId: "terminal-diagnostic", text: "hi" });
+    await recorder.until(e => e.type === "turn.completed");
+    expect(recorder.events.filter(e => e.type === "runtime.error").map(e => e.message)).toEqual(["Provider rejected the request"]);
+    expect(recorder.events.filter(e => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
+    expect(recorder.events.findIndex(e => e.type === "runtime.error")).toBeLessThan(recorder.events.findIndex(e => e.type === "turn.completed"));
+    expect(recorder.events.some(e => e.type === "turn.retrying")).toBe(false);
+  });
+
+  it.each(["parent-invalid-ack", "parent-overflow"])("fails unbound parent output explicitly (%s)", async (mode) => {
+    await create({ mode });
+    await instance.adapter.sendTurn({ threadId: "parent-failure", text: "one parent action" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
+    expect(recorder.events.some((e) => e.type === "content.delta" || e.type === "thread.token-usage.updated")).toBe(false);
+    expect(recorder.events.find((e) => e.type === "runtime.error")?.message).toMatch(
+      mode === "parent-invalid-ack" ? /turn\/start.*turn identity/ : /before.*turn\/start.*limit/,
+    );
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+  });
+
+  it("preserves helper approval requests while ignoring helper completion", async () => {
+    await create({ mode: "parent-approval" });
+    process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
+    await instance.adapter.sendTurn({ threadId: "parent-approval", text: "one parent action" });
+    const ask = await recorder.until((e) => e.type === "request.opened");
+    expect(ask).toMatchObject({ summary: "helper command" });
+    expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+    await instance.adapter.respondToRequest("parent-approval", String(ask.requestId), { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(JSON.parse(readFileSync(process.env.FAKE_CODEX_DUMP, "utf8")).decision).toEqual({ decision: "decline" });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([{ ok: true }]);
   });
 
   it("runs the handshake and normalizes a full turn", async () => {
@@ -149,7 +205,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it(process.platform === "win32"
     ? "confirms native Windows termination despite the fixture's POSIX shutdown delay"
-    : "reports shutdown timeout without releasing the live process or listeners", async () => {
+    : "force-stops a delayed POSIX shutdown within the existing close budget", async () => {
     const dump = join(scratch, "shutdown-timeout.json");
     process.env.FAKE_CODEX_DUMP = dump;
     await create({ mode: "late-output", environment: { FAKE_CODEX_SHUTDOWN_DELAY_MS: "5500" } });
@@ -171,10 +227,9 @@ describe("CodexDriver turns (fake app-server)", () => {
       await expect(instance.adapter.stopAll()).resolves.toBeUndefined();
       await expect(instance.dispose()).resolves.toBeUndefined();
     } else {
-      await expect(instance.adapter.interruptTurn("t-timeout")).rejects.toThrow("shutdown is still pending");
-      expect(instance.adapter.hasSession?.("t-timeout")).toBe(true);
-      await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
-      await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+      await expect(instance.adapter.interruptTurn("t-timeout")).resolves.toBeUndefined();
+      await expect(instance.adapter.stopAll()).resolves.toBeUndefined();
+      await expect(instance.dispose()).resolves.toBeUndefined();
     }
     await recorder.until(event => event.type === "turn.completed");
     // Preserve the original POSIX read after the producer has closed its dump.
@@ -185,6 +240,26 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.filter(event => event.type === "content.delta").map(event => event.delta))
       .toEqual(["done from fake codex"]);
   }, 10000);
+
+  it("retains an uncertain stopped turn after root close and permits an explicit retry", async () => {
+    await create({ mode: "late-output" });
+    const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-uncertain-group", text: "go" });
+      await recorder.until(event => event.type === "runtime.error" && event.message.includes("did not shut down"));
+      await expect(instance.adapter.interruptTurn("t-uncertain-group")).rejects.toThrow("shutdown is still pending");
+      await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
+      await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+      expect(instance.adapter.hasSession("t-uncertain-group")).toBe(true);
+      expect(recorder.events.some(event => event.type === "turn.completed")).toBe(false);
+    } finally {
+      confirm.mockRestore();
+      await instance.adapter.interruptTurn("t-uncertain-group");
+    }
+    await recorder.until(event => event.type === "turn.completed");
+    expect(instance.adapter.hasSession("t-uncertain-group")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+  });
 
   it("strips ambient routing switches from the codex child env", async () => {
     // An OPENAI_BASE_URL left in the shell by a provider switcher would point
@@ -886,6 +961,18 @@ describe("CodexDriver turns (fake app-server)", () => {
     const replies = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text");
     expect(replies).toHaveLength(1);
   }, 20_000);
+
+  it("does not relaunch a provider safety rejection wrapped in 429", async () => {
+    await create({ mode: "safety-rejection" });
+    process.env.FAKE_CODEX_DUMP = join(scratch, "safety-calls.json");
+    await instance.adapter.sendTurn({ threadId: "safety-rejection", text: "synthetic request" });
+    await recorder.until(e => e.type === "turn.completed");
+    expect(recorder.events.filter(e => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
+    expect(recorder.events.filter(e => e.type === "turn.retrying")).toEqual([]);
+    expect(recorder.events.filter(e => e.type === "runtime.error")).toHaveLength(1);
+    const seen = JSON.parse(readFileSync(process.env.FAKE_CODEX_DUMP, "utf8"));
+    expect(seen.calls.filter((c: { method: string }) => c.method === "turn/start")).toHaveLength(1);
+  });
 
   it("stops retrying at the attempt cap and settles as failed", async () => {
     process.env.FAKE_CODEX_TRANSIENTS = "9";

@@ -33,6 +33,12 @@ afterPack: ./scripts/after-pack.mjs
 # ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
 files:
   - electron/**
+  - shared/backup-age-pins.mjs
+  - shared/backup-restic-pin.mjs
+  - shared/update-candidate.mjs
+  - installer/lib/systemd.mjs
+  - installer/lib/private-files.mjs
+  - installer/lib/service-account.mjs
   - "!electron/**/*.test.*"
   - "!electron/resources/speech-helper"
   - "!electron/resources/speech-helper.swift"
@@ -48,6 +54,8 @@ files:
 asar: true
 
 extraResources:
+  - from: electron/resources/murage-approval.wav
+    to: murage-approval.wav
   # Ship the app's own license terms in every desktop distribution.
   - from: LICENSE
     to: licenses/Murage-LICENSE.txt
@@ -55,6 +63,8 @@ extraResources:
     to: licenses/Murage-NOTICE.txt
   - from: third_party/installation-archive
     to: licenses/installation-archive
+  - from: third_party/restic
+    to: licenses/restic
   # cloudflared is distributed under Apache-2.0 as a separate executable.
   # Murage itself uses the same full license text; ship another named
   # copy so the third-party executable's terms remain unambiguous.
@@ -126,6 +136,15 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   # the dictation helper is a signed background app — Windows and Linux never see it
   extraResources:
+    - from: dist-native/backup-age
+      to: backup-tools
+      filter:
+        - "${arch}/age"
+        - LICENSE
+    - from: dist-native/backup-restic
+      to: backup-tools
+      filter:
+        - "${arch}/restic"
     - from: electron/resources/Murage Speech.app
       to: Murage Speech.app
     - from: electron/resources/Murage Recorder.app
@@ -173,6 +192,16 @@ win:
   extraResources:
     - from: dist-native/recovery/win32-x64/murage-recovery.exe
       to: murage-recovery.exe
+    # Individual copies bypass the directory signing transformer. afterPack
+    # signs only our helper; the three upstream assets retain exact raw pins.
+    - from: dist-native/backup-tools/win32-x64/murage-backup-age.exe
+      to: backup-tools/x64/murage-backup-age.exe
+    - from: dist-native/backup-tools/win32-x64/age.exe
+      to: backup-tools/x64/age.exe
+    - from: dist-native/backup-tools/win32-x64/age-keygen.exe
+      to: backup-tools/x64/age-keygen.exe
+    - from: dist-native/backup-tools/win32-x64/LICENSE
+      to: backup-tools/x64/LICENSE
     - from: dist-native/fuigo-probe/win32-x64/launcher.exe
       to: fuigo-probe/launcher.exe
     - from: dist-native/fuigo-probe/win32-x64/manifest.json
@@ -243,6 +272,11 @@ linux:
   extraResources:
     - from: dist-native/cua-linux-x64
       to: cua-linux-x64
+    - from: dist-native/backup-age-linux
+      to: backup-tools
+      filter:
+        - "${arch}/age"
+        - LICENSE
     - from: dist-native/fuigo-probe/linux-x64/launcher
       to: fuigo-probe/launcher
     - from: dist-native/fuigo-probe/linux-x64/manifest.json

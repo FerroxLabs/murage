@@ -41,8 +41,19 @@ describe("safe provider error details", () => {
       expect(providerErrorPresentation(info).billingUrl).toBeUndefined();
     }
     expect(classifyProviderError({ data: { http_status: "402", message: "credit balance is exhausted" } })).toBeUndefined();
-    expect(classifyProviderError({ data: { http_status: 402, message: "unknown failure" } })).toBeUndefined();
+    expect(classifyProviderError({ data: { http_status: 402, message: "unknown failure" } })).toEqual({kind:"payment",httpStatus:402});
     expect(classifyProviderError({ data: { http_status: 500, message: "credit balance is exhausted" } })).toBeUndefined();
+  });
+  it("classifies numeric402 without proven credit exhaustion as generic payment without provider or billing links",()=>{
+    for(const message of [undefined,null,42,{},"unknown failure","private fake-secret-canary https://billing.invalid/private","Account access unavailable https://fluxrouter.ai/home/billing?token=fake-secret-canary"]){
+      const info=classifyProviderError({data:{http_status:402,message}})!;
+      expect(info).toEqual({kind:"payment",httpStatus:402});
+      const display=providerErrorPresentation(info);
+      expect(display).toEqual({title:"Provider payment or account access required",summary:"The provider rejected this request with HTTP 402. This response does not establish that credits are exhausted.",resolution:"Check the provider's billing, account and selected-model access, including bring-your-own-key (BYOK) settings, before retrying."});
+      expect(JSON.stringify({info,display})).not.toMatch(/fake-secret-canary|billing\.invalid|fluxrouter\.ai/);
+    }
+    expect(providerErrorPresentation({kind:"payment",httpStatus:402,provider:"flux-router"}).billingUrl).toBeUndefined();
+    for(const status of ["402",402.1,NaN,Infinity,null,undefined,400,500])expect(classifyProviderError({data:{http_status:status,message:"credit balance is exhausted"}})).toBeUndefined();
   });
   it("does not trust lookalike or embedded provider URLs", () => {
     for (const url of ["https://fluxrouter.ai.evil.invalid/", "https://fluxrouter.ai@evil.invalid/", "https://evil.invalid/https://fluxrouter.ai/home/billing"]) {

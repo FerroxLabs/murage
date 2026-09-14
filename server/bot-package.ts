@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { schemaIssue, type JsonValue } from "./schema.ts";
@@ -135,6 +136,25 @@ export type ParsedBotPackage = z.infer<typeof packageSchema>;
 export type BotPackageDefinition = ParsedBotPackage["package"];
 export type BotPackageAgent = BotPackageDefinition["agents"][number];
 export type BotPackagePlaybook = NonNullable<BotPackageDefinition["playbooks"]>[number];
+
+/** The public package guidance assigned to one agent. Keeping this association
+ * beside the package parser prevents catalogue and apply paths from treating a
+ * team's union of playbooks as one bot's instructions. */
+export function packageAgentPlaybooks(
+  pkg: BotPackageDefinition,
+  agent: BotPackageAgent,
+): BotPackagePlaybook[] {
+  const assigned = new Set(agent.playbooks ?? []);
+  return (pkg.playbooks ?? []).filter((playbook) => assigned.has(playbook.key));
+}
+
+/** Binds an adapt-existing review to exactly the persona, declared skills and
+ * assigned playbooks that route is permitted to change. */
+export function packageAgentProfileReviewHash(pkg: BotPackageDefinition, agent: BotPackageAgent): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ id: pkg.id, release: pkg.release, agent, playbooks: packageAgentPlaybooks(pkg, agent) }))
+    .digest("hex");
+}
 
 export function isBotPackage(value: unknown): boolean {
   if (typeof value === "string") return /^---\r?\n[\s\S]*?\b(?:emberbot|botmrr):\s*1\b/m.test(value);

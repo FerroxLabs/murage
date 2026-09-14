@@ -45,7 +45,7 @@ export interface LiveEventsPlatform {
 }
 
 export interface LiveEventsHandlers {
-  onFrame: (frame: LiveFrame) => void;
+  onFrame: (frame: LiveFrame, delivery?: { replayed: boolean }) => void;
   /** Rebuild the consumer's complete snapshot after the server says its
    * replay gap cannot be filled. The transport commits the new cursor only
    * after this succeeds; false/rejection closes the stream and retries from
@@ -329,6 +329,11 @@ export function openLiveEvents(
     boundaryCursor: string | null;
     newestFrameCursor: string | null;
   } | null = null;
+  let replayBoundary: { stream: string; seq: number } | null = null;
+  const parseCursor = (value?: string) => {
+    const match = /^(.*):(\d+)$/.exec(value ?? "");
+    return match && Number.isSafeInteger(Number(match[2])) ? { stream: match[1], seq: Number(match[2]) } : null;
+  };
 
   const clearRetry = () => {
     if (retryTimer === null) return;
@@ -409,6 +414,7 @@ export function openLiveEvents(
       }
 
       if (frame.kind === "hello") {
+        replayBoundary = frame.resumed === true ? parseCursor(frame.cursor) : null;
         // `resumed:true` is followed by replay frames. Advancing to hello's
         // newest cursor here would skip any replay frame not yet delivered if
         // this socket died mid-replay. A failed resume has no replay, but its
@@ -459,7 +465,12 @@ export function openLiveEvents(
 
       // Hello is transport control, not application state. Consumers rebuild
       // through onSnapshotRequired and receive only numbered application data.
-      if (frame.kind !== "hello") handlers.onFrame(frame);
+      if (frame.kind !== "hello") {
+        const position = parseCursor(event.lastEventId);
+        const replayed = replayBoundary !== null && (!position || (position.stream === replayBoundary.stream && position.seq <= replayBoundary.seq));
+        if (position && replayBoundary && (position.stream !== replayBoundary.stream || position.seq > replayBoundary.seq)) replayBoundary = null;
+        handlers.onFrame(frame, { replayed });
+      }
     };
   };
 

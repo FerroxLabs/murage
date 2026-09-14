@@ -23,3 +23,10 @@ test("revalidating a worker summary retains inspected counts and restore hash", 
   const first = recoveryDesktopSummary({ ok: true, operation: "restore", archiveSha256: "a".repeat(64), snapshotId: "12345678-1234-1234-1234-123456789abc", status: "restored-review-required", activationAvailable: false, previousDataDir: "/retained/old", receipt: "/retained/receipt", omittedCount: 12, missingCount: 3 });
   assert.deepEqual(recoveryDesktopSummary(first), first);
 });
+test("encrypted summaries keep coverage bounded and preserve both encrypted and projected hashes",()=>{
+  const value={ok:true,operation:"restore-encrypted-new",encryptedSha256:"a".repeat(64),archiveSha256:"b".repeat(64),snapshotId:"12345678-1234-1234-1234-123456789abc",status:"restored-review-required",previousDataDir:null,receipt:"/receipt",activationAvailable:false,rawFidelityActivated:false,identity:"PRIVATE",coverage:{scope:"application-data",fullInstallation:false,components:[{path:"secret-name",status:"included"},{path:"native",status:"excluded"}]}};
+  const result=recoveryDesktopSummary(value);assert.equal(JSON.stringify(result).includes("PRIVATE"),false);assert.equal(JSON.stringify(result).includes("secret-name"),false);
+  assert.deepEqual(result.coverage,{scope:"application-data",fullInstallation:false,includedCount:1,excludedCount:1});assert.equal(result.archiveSha256,"b".repeat(64));assert.equal(result.encryptedSha256,"a".repeat(64));
+  assert.deepEqual(recoveryDesktopSummary(result),result);
+  assert.throws(()=>recoveryDesktopSummary({...value,rawFidelityActivated:true}));
+});

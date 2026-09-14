@@ -61,6 +61,17 @@ describe("peer approval card lifecycle", () => {
     expect(pendingCard(store, from)).toBeUndefined();
   });
 
+  it("emits exact pending identity and delivery failure cannot answer or fail the request", async () => {
+    let observed: string[] = [];
+    bus.onApproval = (...ids) => { observed = ids; throw new Error("notification unavailable"); };
+    const verdict = requestPeerApproval(bus, from, target, "same prompt", "ask_bot");
+    const card = pendingCard(store, from)!;
+    expect(observed).toEqual([from.id, from.threadId, card.card!.requestId, card.id]);
+    expect(card.card!.answered).toBeUndefined();
+    resolvePeerComms(bus, card.card!.requestId!, "deny");
+    expect(await verdict).toBe("deny");
+  });
+
   it("settles the card on deny too", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "delegate_bot");
     const card = pendingCard(store, from)!;

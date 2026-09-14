@@ -13,7 +13,7 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
-import { applyProviderRoute, validateProviderTurnRoute } from "../../provider-routing.ts";
+import { applyProviderRoute, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
 import {
   fromElicitationForm,
@@ -39,6 +39,8 @@ import { stripVTControlCharacters } from "node:util";
 
 import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
+import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
+import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "../child-teardown.ts";
 import {
@@ -58,7 +60,17 @@ function lifecycleRejection(error: unknown, rpcId: unknown, method?: string): Li
   if (typeof code === "number" && Number.isSafeInteger(code)) fields.rpcCode = code;
   const status = data && typeof data === "object" && !Array.isArray(data) ? (data as { http_status?: unknown }).http_status : undefined;
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) fields.httpStatus = status;
+  const terminalKind=data&&typeof data==="object"&&!Array.isArray(data)?failureKind((data as {error_kind?:unknown}).error_kind):undefined;
+  if(terminalKind)fields.terminalKind=terminalKind;
   return fields;
+}
+/** Project matched diagnostic facts; never spread an engine-owned object. */
+export function acpErrorDiagnostic(base:{eventId:string;turnId:string},processGeneration:string,error?:unknown){
+  const candidate=(error&&typeof error==="object"?error:{}) as {acpRpcId?:unknown;acpMethod?:unknown;fuigoObservedKind?:unknown};
+  const method=typeof candidate.acpMethod==="string"&&(DIAGNOSTIC_RPC_METHODS as readonly string[]).includes(candidate.acpMethod)?candidate.acpMethod:undefined;
+  const facts=lifecycleRejection(error,candidate.acpRpcId,method);
+  return parseRuntimeErrorDiagnostic({version:1,diagnosticId:base.eventId,turnId:base.turnId,processGeneration,
+    rpcId:facts.rpcId,method:facts.method,rpcCode:facts.rpcCode,httpStatus:facts.httpStatus,terminalKind:facts.terminalKind,observedKind:failureKind(candidate.fuigoObservedKind)});
 }
 import { classifyProviderError } from "../../../shared/provider-error.ts";
 import { redactSecretsInText } from "../../redact.ts";
@@ -68,6 +80,7 @@ import { redactSecretsInText } from "../../redact.ts";
  * into the transcript, where they may contain credentials or request text. */
 export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
   const info = classifyProviderError(error);
+  if (info?.kind === "payment") return "Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.";
   if (info?.kind === "credits") {
     if (info.provider === "flux-router") {
       return "Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.";
@@ -77,10 +90,7 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
   return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
 }
 
-const ACP_DIAGNOSTIC_METHODS = new Set([
-  "initialize", "authenticate", "session/new", "session/load", "session/prompt",
-  "session/set_mode", "session/set_model", "session/set_config_option",
-]);
+const ACP_DIAGNOSTIC_METHODS:ReadonlySet<string> = new Set(DIAGNOSTIC_RPC_METHODS);
 
 /** Preserve diagnostic facts without copying response bodies, requests or URLs. */
 export function acpRpcErrorDetails(error: unknown): string | undefined {
@@ -92,6 +102,9 @@ export function acpRpcErrorDetails(error: unknown): string | undefined {
   if (typeof acpMethod === "string" && ACP_DIAGNOSTIC_METHODS.has(acpMethod)) facts.push(`ACP request: ${acpMethod}`);
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) facts.push(`Provider response: HTTP ${status}`);
   if (typeof code === "number" && Number.isSafeInteger(code)) facts.push(`Engine error code: ${code}`);
+  const kind = data && typeof data === "object" && !Array.isArray(data)
+    ? failureKind((data as { error_kind?: unknown }).error_kind) : undefined;
+  if (kind) facts.push(`Engine failure category: ${kind}`);
   return facts.length ? facts.join("\n") : undefined;
 }
 
@@ -396,6 +409,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // bytes available to the normalizer, but never duplicate megabytes of
       // base64 into the provider-native diagnostic log.
       const nativeLogMessage = (msg: any): unknown => {
+        if (msg?.method === "session/prompt" && Array.isArray(msg?.params?.prompt)) {
+          return { ...msg, params: { ...msg.params, prompt: msg.params.prompt.map((block: any) =>
+            block?.type === "image" ? { ...block, data: "[image data omitted]" } : block) } };
+        }
         const content = msg?.params?.update?.content;
         if (
           msg?.method !== "session/update" ||
@@ -486,6 +503,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const sendTurn = async (turn: SendTurnInput) => {
         const { threadId } = turn;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+        if (support.driverKind === "grokAgent") {
+          const closed = await teardowns.wait(threadId, undefined, acpStopBudget());
+          if (!closed.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, closed);
+          if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+        }
         const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
         if (controlsHost && config.fullAuto) {
           throw new Error("local computer control requires interactive provider approvals");
@@ -505,7 +527,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           return { turnId };
         }
         if (turn.providerRoute) validateProviderTurnRoute(support.driverKind, turn.providerRoute);
-        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute) : null;
+        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute, { threadId }) : null;
+        const grokBinding = support.driverKind === "grokAgent" ? grokResumeBinding(threadId, providerBinding?.identity ?? null, turn.resumeCursor) : null;
+        if (grokBinding?.replay && !turn.transcript) throw new Error("Grok provider binding changed. Reload the conversation before continuing.");
+        const replayGrokTurn = () => ({ ...turn, text: ["[The provider session binding changed. Continue from this authorised conversation history:]", "",
+          ...turn.transcript!.map(item => `${item.role === "user" ? "User" : "Assistant"}: ${item.text}`), "", "[Latest message:]", turn.text].join("\n") });
+        let promptTurn = grokBinding?.replay ? replayGrokTurn() : turn;
         const resolvedModel = providerBinding?.model ?? support.resolveTurnModel?.(turn.model, env);
         if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model });
         const cliTurn =
@@ -528,6 +555,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const asks = new Map<string, AcpAskFinish>();
         let nextId = 1;
         let sessionId: string | null = null;
+        let promptStartedAt: number | null = null;
+        const failureObservations = createFuigoFailureObservations();
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
           number,
@@ -549,7 +578,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           try {
             child?.stdin.write(JSON.stringify(obj) + "\n");
           } catch {}
-          appendNative(threadId, { dir: "out", source: SOURCE, msg: obj });
+          appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
         };
         const request = (method: string, params: unknown, timeoutMs?: number) =>
           new Promise<any>((resolve, reject) => {
@@ -898,6 +927,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
 
         const handleNotification = (msg: any) => {
+          failureObservations.observe(msg, {
+            source: SOURCE, sessionId, promptStartedAt,
+            pendingPrompts: [...rpcPending.values()].filter(p => p.method === "session/prompt").length,
+            promptSent: state.promptSent, settled: state.settled, cancelRequested: state.cancelRequested,
+          });
           // Vendor side-channels (e.g. grok's `_x.ai/*`) are teed to the
           // native log but never normalized: the prompt result is the settle.
           if (msg.method !== "session/update") return;
@@ -988,9 +1022,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               rpcPending.delete(msg.id);
               if (pend.timer) clearTimeout(pend.timer);
               if (msg.error) {
-                lifecycle.record("rpc_rejected", lifecycleRejection(msg.error, msg.id, pend.method));
+                const observedKind=pend.method==="session/prompt"&&!state.settled&&!state.cancelRequested?failureObservations.kind():undefined;
+                lifecycle.record("rpc_rejected", {...lifecycleRejection(msg.error, msg.id, pend.method),...(observedKind?{observedKind}:{})});
                 const error = new Error(acpRpcErrorMessage(msg.error));
-                Object.assign(error, { code: msg.error.code, data: msg.error.data, acpMethod: pend.method });
+                Object.assign(error, { code: msg.error.code, data: msg.error.data, acpMethod: pend.method, acpRpcId:msg.id });
+                if (pend.method === "session/prompt" && !state.settled && !state.cancelRequested) {
+                  Object.assign(error, { fuigoFailureObservation: failureObservations.details(),fuigoObservedKind:observedKind });
+                }
                 pend.reject(error);
               } else {
                 pend.resolve(msg.result);
@@ -1101,8 +1139,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           spawned = true;
           lifecycle.record("spawned", { pid: proc.pid ?? null });
         });
-        proc.once("close", () => providerBinding?.cleanup());
         teardown = teardowns.track(threadId, turnId, proc);
+        teardown.onClosed(() => providerBinding?.cleanup());
         attachChild(proc);
         start();
 
@@ -1126,7 +1164,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             );
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
             const methodId = support.pickAuthMethod(methods);
-            if (!skipSubscriptionAuthForLocalInject(turn.model)) {
+            if (!(support.driverKind === "grokAgent" && providerBinding) && !skipSubscriptionAuthForLocalInject(turn.model)) {
               if (methodId) {
                 try {
                   await request("authenticate", { methodId }, INIT_TIMEOUT);
@@ -1139,7 +1177,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
             }
 
-            const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+            const cursor = grokBinding ? grokBinding.cursor : typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
             let sessionResult: any = null;
             if (cursor) {
               try {
@@ -1158,6 +1196,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
             }
             if (!sessionId) {
+              if (grokBinding && cursor) {
+                if (!turn.transcript) throw new Error("Grok session could not be restored. Reload the conversation before continuing.");
+                promptTurn = replayGrokTurn();
+              }
               sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
               sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
               if (!sessionId) throw new Error("session/new returned no sessionId");
@@ -1166,6 +1208,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let sessionStarted = false;
             const emitSessionStarted = () => {
               if (sessionStarted) return;
+              if (sessionId) grokBinding?.record(sessionId);
               sessionStarted = true;
               emit({
                 ...base(threadId, turnId),
@@ -1223,15 +1266,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               throw error;
             }
             emitSessionStarted();
-            state.promptSent = true;
+            if (!(support.driverKind === "grokAgent" && providerBinding)) {
+              state.promptSent = true;
+              promptStartedAt = Date.now();
+            }
             const text = support.buildPromptText
-              ? support.buildPromptText(turn)
-              : turn.system
-                ? `${turn.system}\n\n${turn.text}`
-                : turn.text;
+              ? support.buildPromptText(promptTurn)
+              : promptTurn.system
+                ? `${promptTurn.system}\n\n${promptTurn.text}`
+                : promptTurn.text;
+            if (support.driverKind === "grokAgent" && providerBinding) {
+              turn.beforeSubmit?.();
+              state.promptSent = true;
+              promptStartedAt = Date.now();
+            }
             const result = await request("session/prompt", {
               sessionId,
-              prompt: [{ type: "text", text }],
+              prompt: [{ type: "text", text }, ...(turn.images ?? []).map(image => ({ type: "image", ...image }))],
             });
             // opencode 1.18.18 reports usage at the result root; grok and
             // gemini put it under _meta. Read both rather than lose the count.
@@ -1253,10 +1304,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 : typeof result?.message === "string" && result.message
                   ? result.message
                   : `Model turn failed: ${reason ?? "unknown error"}`;
+              const eventBase=base(threadId,turnId);
               emit({
-                ...base(threadId, turnId),
+                ...eventBase,
                 type: "runtime.error",
                 message: errorMessage,
+                diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation),
               });
               settle(false, reason ?? "failed");
             }
@@ -1270,11 +1323,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // fallback for existing ACP supports.
               const needsAuth = code === "invalid_credentials" || code === "inactive_subscription"
                 || message === support.loginNote;
+              const eventBase=base(threadId,turnId);
               emit({
-                ...base(threadId, turnId),
+                ...eventBase,
                 type: "runtime.error",
                 message,
-                details: acpRpcErrorDetails(e),
+                diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation,e),
+                details: [acpRpcErrorDetails(e), e instanceof Error
+                  ? (e as Error & { fuigoFailureObservation?: string }).fuigoFailureObservation : undefined]
+                  .filter(Boolean).join("\n") || undefined,
                 ...(providerError ? { providerError } : {}),
                 ...(needsAuth ? { setup: true } : {}),
               });

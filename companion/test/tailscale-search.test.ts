@@ -18,6 +18,7 @@ async function listenerWithDelimiter(delimiter: string) {
 
 const windows64 = "C:\\Program Files\\Tailscale\\tailscale.exe";
 const windows32 = "C:\\Program Files (x86)\\Tailscale\\tailscale.exe";
+const standaloneMac = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 const fixtureStatus = JSON.stringify({ Self: {
   DNSName: "fixture.tail1234.ts.net.", TailscaleIPs: ["100.70.0.8"],
 } });
@@ -36,7 +37,57 @@ afterEach(() => {
 });
 
 describe("Tailscale executable discovery", () => {
+  it("runs a standalone macOS app child in CLI mode without changing the parent", async () => {
+    vi.stubEnv("TAILSCALE_BE_CLI", "0");
+    const listener = await listenerWithDelimiter(":");
+    run.mockImplementation((cli: string, _args: string[], options: ExecFileOptions, reply: Reply) => {
+      if (cli !== standaloneMac) return missing(reply);
+      // This exec stub is the standalone app: absent CLI mode it exits zero
+      // with GUI text, rather than returning the requested status JSON.
+      if (options.env?.TAILSCALE_BE_CLI !== "1") return reply(null, "Tailscale GUI failed to start", "");
+      return reply(null, fixtureStatus, "");
+    });
+
+    await listener.refreshTailnetName();
+
+    expect(listener.tailnetName()).toBe("fixture.tail1234.ts.net");
+    expect(run.mock.calls[0]?.[2].env?.TAILSCALE_BE_CLI).toBe("1");
+    expect(process.env.TAILSCALE_BE_CLI).toBe("0");
+  });
+
+  it("refuses malformed status from a standalone macOS app child", async () => {
+    const listener = await listenerWithDelimiter(":");
+    run.mockImplementation((cli: string, _args: string[], _options: ExecFileOptions, reply: Reply) => {
+      if (cli === standaloneMac) reply(null, "not JSON", "");
+      else missing(reply);
+    });
+
+    await listener.refreshTailnetName();
+
+    expect(listener.tailnetName()).toBeNull();
+    expect(listener.tailnetSelfAddress()).toBeNull();
+  });
+
+  it("runs the read-only Serve observer in CLI mode for a standalone macOS app", async () => {
+    vi.stubEnv("TAILSCALE_BE_CLI", "0");
+    const listener = await listenerWithDelimiter(":");
+    run.mockImplementation((cli: string, args: string[], options: ExecFileOptions, reply: Reply) => {
+      expect(cli).toBe(standaloneMac);
+      expect(args).toEqual(["serve", "status", "--json"]);
+      expect(options.env?.TAILSCALE_BE_CLI).toBe("1");
+      reply(null, JSON.stringify({ Web: { "fixture.tail1234.ts.net:443": {
+        Handlers: { "/": { Proxy: "http://127.0.0.1:8813" } },
+      } } }), "");
+    });
+
+    await expect(listener.refreshBrowserServe(8813, { candidates: [standaloneMac] })).resolves.toMatchObject({
+      owner: "ours", origin: "https://fixture.tail1234.ts.net", problem: null,
+    });
+    expect(process.env.TAILSCALE_BE_CLI).toBe("0");
+  });
+
   it.each([windows64, windows32])("finds the standard install at %s without shell quoting", async (installed) => {
+    vi.stubEnv("TAILSCALE_BE_CLI", "inherited-windows-value");
     const listener = await listenerWithDelimiter(";");
     run.mockImplementation((cli: string, _args: string[], _options: ExecFileOptions, reply: Reply) => {
       if (cli === installed) reply(null, fixtureStatus, "");
@@ -59,6 +110,7 @@ describe("Tailscale executable discovery", () => {
     expect(options.killSignal).toBe("SIGKILL");
     expect(options.timeout).toBeGreaterThan(0);
     expect(options.timeout).toBeLessThanOrEqual(5_000);
+    expect(options.env?.TAILSCALE_BE_CLI).toBe("inherited-windows-value");
   });
 
   it.each([

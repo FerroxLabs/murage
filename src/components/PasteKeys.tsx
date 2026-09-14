@@ -110,7 +110,7 @@ export interface PasteKeysBodyProps {
 }
 
 const HELP =
-  "Paste anything that has keys in it. Murage reads it here on this computer, shows you what it found, and saves nothing until you say so.";
+  "Review several keys from a note or .env file. Recognition happens on this computer; scanning saves nothing. Model keys add separate connections in Models. Service keys update the same settings above. Flux Router uses its single editor in Models.";
 
 /** Rendering only, so every state has a test that does not need a server. */
 export function PasteKeysBody({
@@ -138,7 +138,7 @@ export function PasteKeysBody({
 
   return (
     <div>
-      <div className="mb-1.5 text-[13px] text-ink-secondary">Paste several keys at once</div>
+      <div className="mb-1.5 text-[13px] text-ink-secondary">Review keys to add or replace</div>
       <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">{HELP}</div>
       <textarea
         ref={box}
@@ -223,10 +223,13 @@ function PasteKeyRow({
       : "Which key is this?";
 
   const alreadySaved = target ? providerConfigured(target, configured) : false;
+  const addsConnection = Boolean(target && target !== "flux" && PROVIDERS[target].modelPreset);
+  const statusUnknown = Boolean(target && target !== "flux" && !addsConnection &&
+    typeof configured?.[target as keyof ConfiguredFlags]?.configured !== "boolean");
 
   return (
     <div>
-      <div className="flex items-center gap-2 text-[13px]">
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span
           className={cn(
             "size-1.5 shrink-0 rounded-full",
@@ -259,10 +262,14 @@ function PasteKeyRow({
             ? "Manage Flux Router in Models. Opening Models clears this pasted copy; enter your key in the Flux Router card to connect."
             : ambiguous && !target
             ? "This prefix is used by more than one service, so Murage will not guess. Pick where it goes."
+            : addsConnection
+              ? "Adds a separate connection in Models. Existing accounts and their keys are kept."
+            : statusUnknown
+              ? "Waiting for saved-key status before offering Add or Replace."
             : target
               ? PROVIDERS[target].blurb
               : ""}
-          {target !== "flux" && alreadySaved && row.status !== "saved" && " Saving replaces the key already there."}
+          {target !== "flux" && alreadySaved && row.status !== "saved" && " Replacing updates the saved service key and can interrupt tasks using it."}
         </div>
       )}
 
@@ -295,7 +302,7 @@ function PasteKeyRow({
               onClick={onAccept}
               // A row with an open question cannot be confirmed. This is the
               // whole no-guessing rule, expressed as a disabled button.
-              disabled={target === null || row.status === "saving"}
+              disabled={target === null || statusUnknown || row.status === "saving"}
               className="flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               title={target === null ? "Pick which key this is first" : target === "flux" ? "Open the single Flux Router key editor" : "Save this key"}
             >
@@ -304,7 +311,7 @@ function PasteKeyRow({
               ) : (
                 <>
                   {target !== "flux" && <Check size={12} />}
-                  {target === "flux" ? "Open Flux Router in Models" : alreadySaved ? "Replace" : "Save"}
+                  {target === "flux" ? "Open Flux Router in Models" : addsConnection ? "Add connection" : statusUnknown ? "Checking saved key…" : alreadySaved ? "Replace key" : "Add key"}
                 </>
               )}
             </button>

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { TelegramChannel } from "./telegram-channel.ts";
+import { TelegramTransportError } from "./telegram-transport.ts";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const message = (id: number, text: string, extra = {}) => ({ update_id: id, message: { message_id: id + 1, date: 1, from: { id: 7, is_bot: false }, chat: { id: 7, type: "private" }, text, ...extra } });
@@ -37,7 +38,7 @@ it("pairs only exact private human challenge then persists and deduplicates deli
   expect(f.enqueue.mock.calls[0]).toEqual([{ deliveryId: "telegram:123:5", prompt: expect.stringContaining("UNTRUSTED TELEGRAM") }]);
   expect(f.transport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: "7", text: "Done" }));
   const restarted = new TelegramChannel(f.options); await restarted.pollOnce();
-  expect(f.enqueue).toHaveBeenCalledTimes(1); expect(f.transport.sendMessage).toHaveBeenCalledTimes(1);
+  expect(f.enqueue).toHaveBeenCalledTimes(1); expect(f.transport.sendMessage).toHaveBeenCalledTimes(2); // pairing confirmation + work reply
 });
 it("persists acceptance before enqueue and retries only through stable scheduler dedup after failure", async () => {
   const f = fixture(), channel = new TelegramChannel(f.options), challenge = channel.beginPairing();
@@ -57,7 +58,40 @@ it("never retries uncertain sends or crash-stale sending records", async () => {
   expect(channel.status().uncertain).toBe(1);
   const state = JSON.parse(readFileSync(f.options.file, "utf8")); state.records[0].state = "sending"; writeFileSync(f.options.file, JSON.stringify(state));
   const restarted = new TelegramChannel(f.options); await restarted.pollOnce();
-  expect(restarted.status().uncertain).toBe(1); expect(f.transport.sendMessage).toHaveBeenCalledTimes(1);
+  expect(restarted.status().uncertain).toBe(1); expect(f.transport.sendMessage).toHaveBeenCalledTimes(2); // confirmation + uncertain reply
+});
+it("retries definitive non-delivery only after the provider retry deadline, without replaying the run", async () => {
+  const f = fixture(); let now = 0;
+  const channel = new TelegramChannel({ ...f.options, now: () => now }); const challenge = channel.beginPairing();
+  f.updates([message(1, `/pair ${challenge.code}`)]); await channel.pollOnce();
+  f.transport.sendMessage.mockRejectedValueOnce(new TelegramTransportError("rate-limit", { retryAfterSeconds: 12 }));
+  f.updates([message(2, "work")]); await channel.pollOnce();
+  expect(channel.status()).toMatchObject({ uncertain: 0, error: null, deliveryError: "rate-limit", deliveryRetryAt: 12000, nextRetryAt: 12000 });
+  expect(f.enqueue).toHaveBeenCalledTimes(1); expect(f.transport.sendMessage).toHaveBeenCalledTimes(2); // confirmation + first reply attempt
+  f.updates([]); await channel.pollOnce(); expect(f.transport.sendMessage).toHaveBeenCalledTimes(2);
+  now = 12000; await channel.pollOnce();
+  expect(f.transport.sendMessage).toHaveBeenCalledTimes(3); expect(f.enqueue).toHaveBeenCalledTimes(1);
+  expect(channel.status()).toMatchObject({ uncertain: 0, error: null, deliveryError: null, deliveryRetryAt: null, nextRetryAt: null });
+});
+it("keeps definite rejected replies as durable non-delivery receipts without replaying after restart", async () => {
+  const f = fixture(), channel = new TelegramChannel(f.options), challenge = channel.beginPairing();
+  f.updates([message(1, `/pair ${challenge.code}`)]); await channel.pollOnce();
+  f.transport.sendMessage.mockRejectedValueOnce(new TelegramTransportError("forbidden")).mockRejectedValueOnce(new TelegramTransportError("invalid-request"));
+  f.updates([message(2, "first work")]); await channel.pollOnce();
+  f.updates([message(2, "first work"), message(3, "second work")]); await channel.pollOnce();
+  expect(channel.status()).toMatchObject({ rejected: 2, uncertain: 0, error: null, deliveryError: "invalid-request" });
+  expect(f.enqueue).toHaveBeenCalledTimes(2); expect(f.transport.sendMessage).toHaveBeenCalledTimes(3); // confirmation + two rejected replies
+  const restarted = new TelegramChannel(f.options); await restarted.pollOnce();
+  expect(restarted.status()).toMatchObject({ rejected: 2, uncertain: 0 });
+  expect(f.enqueue).toHaveBeenCalledTimes(2); expect(f.transport.sendMessage).toHaveBeenCalledTimes(3);
+});
+it("generation-fences a late poll rejection after stop", async () => {
+  const f = fixture(), channel = new TelegramChannel(f.options); channel.beginPairing();
+  let rejectPoll!: (error: Error) => void;
+  f.transport.getUpdates.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPoll = reject; }));
+  const pending = channel.pollOnce(); await vi.waitFor(() => expect(rejectPoll).toBeTypeOf("function"));
+  channel.stop(); rejectPoll(new TelegramTransportError("offline")); await pending;
+  expect(channel.status()).toMatchObject({ error: null, nextRetryAt: null, deliveryError: null });
 });
 it("revoke invalidates an in-flight poll and textual approvals never enqueue", async () => {
   const f = fixture(), channel = new TelegramChannel(f.options), challenge = channel.beginPairing();

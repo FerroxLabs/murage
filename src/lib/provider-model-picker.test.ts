@@ -18,10 +18,37 @@ import {
   localRowNote,
   localToolsWarning,
   pickerModels,
+  pickerConnectionsToRefresh,
   showNoLocalServerRow,
   unavailableSelectionLabel,
   type PickerEngine,
 } from "./provider-model-picker";
+import type { PublicProviderConnection } from "../../shared/provider-connections";
+
+function fluxConnection(): PublicProviderConnection {
+  const ids=["flux-auto","flux-reasoning","flux-standard","flux-fast","flux-pinned-glm-5-3","future-vendor-choice"];
+  return {id:"flux-account",preset:"flux",label:"Flux Router",enabled:true,configured:true,revision:"r1",baseUrl:"https://api.fluxrouter.ai/v1",protocol:"openai",state:"catalog-ready",
+    catalog:{connectionId:"flux-account",fetchedAt:1000,stale:false,assurance:"catalog-only",models:[
+      ...ids.map(id=>({connectionId:"flux-account",preset:"flux" as const,id,label:id,enabled:true,chatEligible:true,capabilities:{chat:true},outputModalities:["text"]})),
+      {connectionId:"flux-account",preset:"flux",id:"future-visual-arm",label:"Visual",enabled:true,chatEligible:false,capabilities:{chat:false},outputModalities:["image"]},
+    ]}};
+}
+it("offers the full authoritative Flux chat list on every already-supported connection engine",()=>{
+  const connection=fluxConnection();
+  for(const driverKind of ["claudeAgent","codex","qwenAgent","hermesAgent","fuigoAgent","grok","openai-compat"]){
+    const instance:PickerEngine={instanceId:driverKind,driverKind,displayName:driverKind,snapshot:{state:"available",authenticated:false},models:{default:"native",options:[]}};
+    const rows=pickerModels(instance,[connection]);
+    expect(rows.map(row=>row.selection)).toEqual(connection.catalog.models.filter(model=>model.chatEligible).map(model=>({instanceId:driverKind,connectionId:connection.id,model:model.id})));
+    expect(rows).toHaveLength(6);
+  }
+});
+it("refreshes cold Flux cache on open without retrying failures or refreshing unrelated providers",()=>{
+  const warm=fluxConnection(),cold={...warm,catalog:{...warm.catalog,fetchedAt:undefined,models:[]}};
+  const failed={...cold,id:"failed",catalog:{...cold.catalog,error:{code:"offline" as const,message:"Unavailable"}}};
+  const other={...cold,id:"other",preset:"openai" as const};
+  expect(pickerConnectionsToRefresh([warm,cold,failed,other,{...cold,id:"disabled",enabled:false}],false)).toEqual([cold]);
+  expect(pickerConnectionsToRefresh([warm,failed,other],true)).toEqual([warm,failed,other]);
+});
 
 function engine(options: PickerEngine["models"]["options"]): PickerEngine {
   return {

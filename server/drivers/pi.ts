@@ -610,6 +610,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       })();
       const teardown = teardowns.track(threadId, turnId, child);
+      teardown.onClosed(() => {
+        if (mcpTempDir) {
+          try { rmSync(mcpTempDir, { recursive: true, force: true }); } catch { /* best effort */ }
+        }
+      });
       let assistantText = "";
       // resolve one-shot RPC responses (new_session / switch_session / set_model)
       const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
@@ -666,13 +671,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           killCliTree(child);
         } catch {
           /* already gone */
-        }
-        if (mcpTempDir) {
-          try {
-            rmSync(mcpTempDir, { recursive: true, force: true });
-          } catch {
-            /* best effort */
-          }
         }
         active.delete(threadId);
       };
@@ -952,6 +950,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       if (settled) return { turnId };
 
       const message = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
+      // Keep the refused child addressable until the harness binds its lease
+      // and performs exact-turn teardown. Never submit across this refusal.
+      try { turn.beforeSubmit?.(); } catch { return { turnId }; }
+      if (settled) return { turnId };
       try {
         send({ type: "prompt", message });
       } catch {

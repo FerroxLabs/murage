@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -8,8 +9,13 @@ import { Store } from "./store.ts";
 import { saveImage } from "./attachments.ts";
 import { describeArtifact } from "./artifacts.ts";
 import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
+import { ImageGenerationService, type ImageReference } from "./image-generation.ts";
 import { managedImageOutputPath } from "./output-publication.ts";
 import { composeMessage } from "../src/lib/composer-attachments.ts";
+import { writeInstallationArchive } from "./installation-archive.ts";
+import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
+import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
+import { assertRestoreReviewed } from "../electron/restore-review.mjs";
 // C2 fault injection: attachment storage refuses the next N image commits.
 const faults = vi.hoisted(() => ({ saveImage: 0 }));
 vi.mock("./attachments.ts", async importOriginal => {
@@ -32,6 +38,54 @@ function fixture() {
   const card = async () => { await vi.waitFor(()=>expect(store.messagesFor(bot.threadId).some(m=>m.card?.tool==="generate_image" && !m.card.answered)).toBe(true)); return store.messagesFor(bot.threadId).find(m=>m.card?.tool==="generate_image"&&!m.card.answered)!; };
   return {store,bot,actor,controller,operations,waiting,card,revoke:()=>{active=false;}};
 }
+function generationFixture() {
+ const f=fixture();
+ const fetcher=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify({data:[{b64_json:png.toString("base64")}]})));
+ const service=new ImageGenerationService({resolveConnection:()=>({id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"}),connectionIds:()=>["flux"],fetch:fetcher});
+ const run=(id:string,request:Record<string,unknown>,refs:ImageReference[]=[])=>f.operations.execute(f.actor,id,request,(reserve,publish)=>service.generate(request,{reserve,publish,assertActive:f.actor.assertActive,signal:f.actor.signal},refs));
+ return {...f,fetcher,run,request:{connectionId:"flux",prompt:"fixture"}};
+}
+it("B15 permits corrected same-turn local size/reference validation with exactly one approval and POST",async()=>{
+ for(const invalid of [{size:"1536x1024"},{operation:"edit"}]){
+  const f=generationFixture();await expect(f.run("correctable",{...f.request,...invalid})).rejects.toThrow();
+  expect(f.fetcher).not.toHaveBeenCalled();expect(f.waiting).not.toHaveBeenCalled();
+  expect(database().prepare("SELECT id FROM image_operations WHERE generation=?").all(f.actor.generation)).toHaveLength(0);
+  const job=f.run("correctable",f.request);
+  expect(()=>f.run("concurrent",f.request)).toThrow("already active");
+  const card=await f.card();f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;
+  expect(f.fetcher).toHaveBeenCalledOnce();expect(f.waiting.mock.calls.filter(call=>call[1])).toHaveLength(1);
+  expect(()=>f.run("extra",f.request)).toThrow("One image attempt");
+ }
+});
+it("B15 denial, cancellation and unknown preflight failures cannot acquire approval with a new ID",async()=>{
+ for(const mode of ["deny","cancel","unknown"]){
+  const f=generationFixture();
+  if(mode==="unknown") {
+   await expect(f.operations.execute(f.actor,"first",f.request,async()=>{throw Error("unknown preflight");})).rejects.toThrow("unknown");
+  } else {
+   const job=f.run("first",f.request),refused=expect(job).rejects.toThrow();const card=await f.card();
+   if(mode==="cancel")f.controller.abort();else f.operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");await refused;
+  }
+  expect(()=>f.run("new-id",f.request)).toThrow("One image attempt");expect(f.fetcher).not.toHaveBeenCalled();
+ }
+});
+it("B15 timeout, 5xx and malformed provider responses fence both replay and a fresh request ID",async()=>{
+ for(const mode of ["timeout","5xx","decode"]){
+  const f=generationFixture();f.fetcher.mockImplementationOnce(async()=>{if(mode==="timeout")throw Error("lost response");return mode==="5xx"?new Response("failed",{status:503}):new Response("invalid json");});
+  const job=f.run("first",f.request),refused=expect(job).rejects.toThrow();const card=await f.card();f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow");await refused;
+  expect(()=>f.run("first",f.request)).toThrow("will not be retried");expect(()=>f.run("new-id",f.request)).toThrow("One image attempt");expect(f.fetcher).toHaveBeenCalledOnce();
+ }
+});
+it("B15 retains crash boundaries before and after approval and allows a genuinely new turn",async()=>{
+ for(const state of ["awaiting","running"]){
+  const f=generationFixture();f.operations.resumePendingPublications();
+  const id=createHash("sha256").update(`${f.actor.botId}:${f.actor.threadId}:${f.actor.generation}:crashed`).digest("hex");
+  const requestHash=createHash("sha256").update(JSON.stringify(f.request)).digest("hex");
+  database().prepare("INSERT INTO image_operations VALUES(?,?,?,?,NULL,?)").run(id,f.actor.generation,requestHash,state,Date.now());
+  expect(()=>f.run("crashed",f.request)).toThrow("will not be retried");expect(()=>f.run("new-id",f.request)).toThrow("One image attempt");
+  f.actor.generation=randomUUID();const job=f.run("next-turn",f.request);const card=await f.card();f.operations.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;expect(f.fetcher).toHaveBeenCalledOnce();
+ }
+});
 it("requires an exact owner count approval before work and persists a real artifact",async()=>{
  const f=fixture(), provider=vi.fn();
  const job=f.operations.execute(f.actor,"first",{prompt:"draw fixture"},async reserve=>{const ticket=await reserve(detail);provider();const artifact=publishImage(f.store,f.actor,{bytes:png,mime:"image/png"},detail);ticket.finish("published");return artifact;});
@@ -130,6 +184,52 @@ async function approveNext(f: ReturnType<typeof fixture>) {
   const card = await f.card();
   expect(f.operations.resolve(f.actor.threadId, card.card!.requestId!, "allow")).toBe("allowed-once");
 }
+
+it("backs up production startup schema and WAL data with image receipts into an inactive restore", async () => {
+  const f = fixture(), provider = vi.fn(), work = operationWork(provider);
+  expect(f.operations.resumePendingPublications()).toBe(0);
+  const publishedJob = f.operations.execute(f.actor, "published", { prompt: "fixture" }, work);
+  await approveNext(f);
+  const published = await publishedJob;
+  const pendingActor = { ...f.actor, generation: randomUUID() };
+  faults.saveImage = 1;
+  const pendingJob = f.operations.execute(pendingActor, "pending", { prompt: "fixture" }, work);
+  const refusal = expect(pendingJob).rejects.toThrow("kept locally");
+  await approveNext(f); await refusal;
+  const db = database();
+  db.exec("PRAGMA wal_autocheckpoint=0");
+  const message = f.store.appendMessage(f.bot.threadId, { role: "user", kind: "text", text: "WAL backup canary" });
+  db.exec("INSERT INTO memory_scopes VALUES('backup-scope','bot','backup-owner','[]',0)");
+  db.exec("INSERT INTO memory_records VALUES('backup-memory',1,'backup-scope','fact','Retain this memory','owner-statement','active',0,1,NULL,NULL,1)");
+  const operations = db.prepare("SELECT * FROM image_operations ORDER BY id").all();
+  const receipts = db.prepare("SELECT * FROM output_publications ORDER BY id").all();
+  const memory = db.prepare("SELECT * FROM memory_records WHERE id='backup-memory'").get();
+  const originalDb = readFileSync(join(DATA_DIR, "messages.db"));
+  const originalWal = readFileSync(join(DATA_DIR, "messages.db-wal"));
+  const parent = dirname(DATA_DIR), archive = join(parent, "image-backup.zip");
+  await writeInstallationArchive(DATA_DIR, archive);
+  const prepared = await prepareInstallationRestore(archive, parent);
+  expect(prepared.activationAvailable).toBe(false);
+  expect(() => assertRestoreReviewed(prepared.stateDirectory)).toThrowError(expect.objectContaining({ code: "RESTORE_REVIEW_REQUIRED" }));
+  const restored = new DatabaseSync(join(prepared.stateDirectory, "messages.db"), { readOnly: true });
+  try {
+    expect(inspectInstallationDatabase(restored).messages).toBe(db.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n);
+    expect(restored.prepare("SELECT * FROM image_operations ORDER BY id").all()).toEqual(operations);
+    expect(restored.prepare("SELECT * FROM output_publications ORDER BY id").all()).toEqual(receipts);
+    expect(restored.prepare("SELECT * FROM memory_records WHERE id='backup-memory'").get()).toEqual(memory);
+    expect(restored.prepare("SELECT mode FROM memory_meta").get()!.mode).toBe("paused");
+    expect(restored.prepare("SELECT text FROM messages WHERE id=?").get(message.id)!.text).toBe("WAL backup canary");
+    expect(restored.prepare("SELECT id FROM artifacts WHERE id=?").get(published.artifact.artifactId)!.id).toBe(published.artifact.artifactId);
+    for (const receipt of receipts) {
+      const bytes = readFileSync(join(managedImageOutputPath(prepared.stateDirectory, String(receipt.bot_id), String(receipt.thread_id)), String(receipt.path_token)));
+      expect(sha(bytes)).toBe(receipt.sha256);
+      expect(bytes).toEqual(png);
+    }
+  } finally { restored.close(); }
+  expect(readFileSync(join(DATA_DIR, "messages.db"))).toEqual(originalDb);
+  expect(readFileSync(join(DATA_DIR, "messages.db-wal"))).toEqual(originalWal);
+  expect(provider).toHaveBeenCalledTimes(2);
+});
 
 it("retains received image bytes when attachment storage fails and resumes publication with zero provider calls", async () => {
   const f = fixture(), provider = vi.fn(), work = operationWork(provider);

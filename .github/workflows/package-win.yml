@@ -133,6 +133,7 @@ jobs:
           path: |
             release/*.exe
             release/*.exe.blockmap
+            release/*.zip
             release/latest.yml
           if-no-files-found: error
           retention-days: 14

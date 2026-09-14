@@ -45,14 +45,35 @@ it("retains a last-good provider-specific catalog on auth/network errors without
 it("preserves credential bank when metadata cache is corrupt",()=>{
  const f=fixture();mkdirSync(f.cacheDir,{recursive:true});writeFileSync(join(f.cacheDir,f.id+".json"),"CORRUPT_CACHE");const bank=f.bank();expect(f.make().getCatalog(f.id).error?.code).toBe("invalid-catalog");expect(f.bank()).toBe(bank);expect(readFileSync(join(f.cacheDir,f.id+".json"),"utf8")).toBe("CORRUPT_CACHE");
 });
+it("recognizes current DeepSeek Flash and documented vision aliases without broad model guessing",()=>{
+ const f=fixture("deepseek"),connection=parseProviderBank(f.bank())[0]!;
+ const ids=["deepseek-flash","deepseek-v4-flash","deepseek-v4-flash-vision-exp"];
+ const models=normalizeProviderModels(connection,{data:[...ids.map(id=>({id})),{id:"deepseek-v4-pro"},{id:"deepseek-future"},{id:"deepseek-image"}]},1234);
+ for(const id of ids)expect(models.find(row=>row.id===id)).toMatchObject({chatEligible:true,capabilities:{chat:true,vision:true}});
+ expect(models.find(row=>row.id==="deepseek-v4-pro")?.capabilities.vision).toBeUndefined();
+ for(const id of ["deepseek-future","deepseek-image"])expect(models.find(row=>row.id===id)?.chatEligible).toBe(false);
+ expect(normalizeProviderModels(connection,{data:[{id:"deepseek-flash",capabilities:{vision:false},architecture:{output_modalities:["image"]}}]},1234)[0]).toMatchObject({chatEligible:false,capabilities:{vision:false}});
+});
+it("repairs old sparse DeepSeek cache classification without network or credential changes",async()=>{
+ const f=fixture("deepseek"),connection=parseProviderBank(f.bank())[0]!,bank=f.bank();
+ mkdirSync(f.cacheDir,{recursive:true});
+ const cachePath=join(f.cacheDir,f.id+".json");
+ const sparse={connectionId:f.id,preset:"deepseek",id:"deepseek-flash",label:"Flash",enabled:true,chatEligible:false,capabilities:{chat:false},outputModalities:["unknown"]};
+ const bytes=JSON.stringify({revision:connection.revision,catalog:{connectionId:f.id,models:[sparse,{...sparse,id:"deepseek-future"}],fetchedAt:1234,stale:false,assurance:"catalog-only"}});
+ writeFileSync(cachePath,bytes);
+ const restarted=f.make();
+ expect(restarted.getCatalog(f.id).models[0]).toMatchObject({id:"deepseek-flash",connectionId:f.id,chatEligible:true,capabilities:{chat:true,vision:true},outputModalities:["text"]});
+ expect(restarted.getCatalog(f.id).models[1]?.chatEligible).toBe(false);
+ expect(f.bank()).toBe(bank);expect(readFileSync(cachePath,"utf8")).toBe(bytes);expect(f.fetcher).not.toHaveBeenCalled();
+});
 it("normalizes 400 eligible models with route-scoped prices and excludes media/unknown from chat",()=>{
  const f=fixture("openrouter"),connection=parseProviderBank(f.bank())[0]!;
  const rows=Array.from({length:400},(_,index)=>({id:`vendor/text-${index}`,name:`Text ${index}`,architecture:{input_modalities:["text","image"],output_modalities:["text"]},context_length:128000,pricing:{prompt:"0.000001",completion:"0.000005"},supported_parameters:["tools","reasoning"]}));
  const models=normalizeProviderModels(connection,{data:[...rows,{id:"vendor/veo-3",architecture:{output_modalities:["video"]}},{id:"unknown/model"},{id:"text-embedding-3",architecture:{output_modalities:["text"]}}]},1234);
  expect(models.filter(row=>row.chatEligible)).toHaveLength(400);expect(models[0]!.pricing).toEqual({inputPerMillion:1,outputPerMillion:5,source:PROVIDER_PRESETS.openrouter.catalogUrl,updatedAt:1234});expect(models[0]!.capabilities).toEqual({chat:true,vision:true,tools:true,reasoning:true});expect(models[0]!.contextWindow).toBe(128000);
 });
-it("refuses stale catalog completion after a key rotation and never retries automatically",async()=>{
- const f=fixture();let resolve!:(response:Response)=>void;f.fetcher.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));const refreshing=f.service.refresh(f.id);const original=f.service.list()[0]!;
+it.each(["openai","flux"] as const)("refuses stale %s catalog completion after a key rotation and never retries automatically",async(preset)=>{
+ const f=fixture(preset);let resolve!:(response:Response)=>void;f.fetcher.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));const refreshing=f.service.refresh(f.id);const original=f.service.list()[0]!;
  await f.mutate({action:"update",id:f.id,revision:original.revision,key:"changed-private-key"});resolve(new Response(JSON.stringify({data:[{id:"gpt-stale"}]})));
  expect((await refreshing).error?.code).toBe("connection-changed");expect(f.service.getCatalog(f.id).models).toEqual([]);expect(f.fetcher).toHaveBeenCalledOnce();
 });
@@ -70,8 +91,8 @@ it("lists legacy credentials virtually without copying them into the named bank"
 });
 
 
-it("refreshes enabled provider catalogs once due at24hours and preserves keys and last-good rows", async () => {
- let now=1000;const f=fixture("openai",()=>now),bank=f.bank();
+it.each(["openai","flux"] as const)("refreshes enabled %s catalogs once due at24hours and preserves keys and last-good rows", async (preset) => {
+ let now=1000;const f=fixture(preset,()=>now),bank=f.bank();
  await f.service.refreshDue();expect(f.fetcher).toHaveBeenCalledTimes(1);const first=f.service.getCatalog(f.id);
  now+=24*60*60_000-1;await f.service.refreshDue();expect(f.fetcher).toHaveBeenCalledTimes(1);
  now++;f.fetcher.mockResolvedValueOnce(new Response("private failure",{status:401}));await f.service.refreshDue();
@@ -80,8 +101,8 @@ it("refreshes enabled provider catalogs once due at24hours and preserves keys an
  await f.service.refresh(f.id);expect(f.fetcher).toHaveBeenCalledTimes(3);expect(f.bank()).toBe(bank);
  expect(f.service.getCatalog(f.id).models[0].pricing).toBeUndefined();
 });
-it("shares scheduled/manual requests and refuses disabled connections without fetching",async()=>{
- let now=1000;const f=fixture("openai",()=>now);let finish!:(response:Response)=>void;
+it.each(["openai","flux"] as const)("shares scheduled/manual %s requests and refuses disabled connections without fetching",async(preset)=>{
+ let now=1000;const f=fixture(preset,()=>now);let finish!:(response:Response)=>void;
  f.fetcher.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
  const scheduled=f.service.refreshDue(),manual=f.service.refresh(f.id);expect(f.fetcher).toHaveBeenCalledOnce();
  finish(new Response(JSON.stringify({data:[{id:"gpt-6-new-catalog"},{id:"image-only"}]})));await Promise.all([scheduled,manual]);
@@ -94,4 +115,29 @@ it("respects a fresh persisted catalog on restart before the daily boundary",asy
  let now=1000;const f=fixture("openai",()=>now);await f.service.refresh(f.id);now+=60_000;
  await f.make().refreshDue();expect(f.fetcher).toHaveBeenCalledOnce();
  now+=24*60*60_000;await f.make().refreshDue();expect(f.fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("automatically discovers the complete per-key Flux catalog with explicit capability authority",async()=>{
+ const f=fixture("flux",()=>1000);
+ f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({data:[
+  ...["flux-auto","flux-fast","flux-standard","flux-reasoning","flux-pinned-glm-5-3","future-vendor-choice"].map(id=>({id,capability:"chat"})),
+  {id:"future-visual-arm",capability:"image"},{id:"future-voice-arm",capability:"audio"},
+  {id:"flux-pinned-disabled",capability:"chat",active:false},
+ ]})));
+ await f.service.refreshDue();expect(f.fetcher).toHaveBeenCalledOnce();
+ const catalog=f.service.getCatalog(f.id);
+ expect(catalog.models.filter(model=>model.enabled&&model.chatEligible).map(model=>model.id)).toEqual(["flux-auto","flux-fast","flux-standard","flux-reasoning","flux-pinned-glm-5-3","future-vendor-choice"]);
+ expect(catalog.models.find(model=>model.id==="future-visual-arm")).toMatchObject({chatEligible:false,outputModalities:["image"]});
+ expect(catalog.models.find(model=>model.id==="future-voice-arm")).toMatchObject({chatEligible:false,outputModalities:["audio"]});
+ expect(f.fetcher.mock.calls[0][0]).toBe(PROVIDER_PRESETS.flux.catalogUrl);
+});
+it("honors Flux metadata over names and refuses unknown or conflicting media capabilities",()=>{
+ const f=fixture("flux"),connection=parseProviderBank(f.bank())[0]!;
+ const rows=normalizeProviderModels(connection,{data:[{id:"image-analysis-chat",capability:"chat"},{id:"flux-auto",capability:"image"},{id:"flux-fast",capability:"unknown"},{id:"flux-standard",capability:"chat",output_modalities:["audio"]}]},1000);
+ expect(rows.map(row=>row.chatEligible)).toEqual([true,false,false,false]);
+});
+it("does not automatically refresh a conflicting legacy Flux credential",async()=>{
+ const f=fixture("flux");const service=new ProviderConnectionsService({readBank:()=>"[]",cacheDir:f.cacheDir,fetch:f.fetcher,
+  legacyConnections:()=>[{id:"legacy-flux",preset:"flux",label:"Flux",enabled:true,key:"fake-only",revision:"r1",legacy:true,managedIn:"connections",legacyError:"Choose the existing connection"}]});
+ await service.refreshDue();expect(f.fetcher).not.toHaveBeenCalled();expect(service.list()[0].catalog.error?.code).toBe("unavailable");
 });

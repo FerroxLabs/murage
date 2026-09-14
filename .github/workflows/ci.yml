@@ -30,9 +30,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  quality:
     if: ${{ !inputs.human_files }}
-    name: ${{ inputs.vitest_file && 'Scoped CI confirmation' || 'typecheck + test' }} (${{ matrix.os }})
+    name: quality gates (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -40,9 +40,7 @@ jobs:
         # supported host platforms. POSIX-only process tests self-skip.
         os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
-    # Ubuntu also runs the complete desktop/mobile human suite after runtime
-    # checks; the recorded 16-minute prelude left too little of the old 20m cap.
-    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 30 || 20 }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate scoped CI confirmation input
@@ -77,10 +75,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Prepare the pinned local memory test model
-        # P06 executes real offline inference; a clean runner must prepare the
-        # hash-pinned fixture before tests, not skip it or fetch during inference.
-        run: node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination "${{ github.workspace }}/.planning/memory-evidence/model"
       - name: Validate locale catalogs
         if: matrix.os == 'ubuntu-latest'
         run: pnpm i18n:check
@@ -90,35 +84,16 @@ jobs:
         # timeout.
         run: node --input-type=commonjs -e "require('electron')"
       - run: pnpm typecheck
+      - run: pnpm lint
       - name: Typecheck the Composio broker Worker
         # `pnpm test` runs the Worker's Vitest suite, but the suite does not
         # compile the Worker: wrangler types + tsc catch a binding or
         # Env-shape regression the tests never touch. Same job, same Node.
         run: pnpm broker:check
-      - name: Run tests
-        if: inputs.vitest_file == ''
-        run: pnpm test
-        env:
-          # Electron 43 currently exits with EXCEPTION_BREAKPOINT before ready
-          # on GitHub's Windows runners even after Chromium's required sandbox
-          # ACL is present. Production fails closed there through the tested
-          # browser-platform gate; keep probing the upstream regression below.
-          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
-      - name: Scoped Vitest confirmation and required downstream suites
-        if: inputs.vitest_file != ''
-        shell: bash
-        env:
-          VITEST_FILE: ${{ inputs.vitest_file }}
-          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
-        run: |
-          echo "Scoped Vitest confirmation only: $VITEST_FILE"
-          test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
-          pnpm check:contrast
-          pnpm exec vitest run "${test_paths[@]}"
-          pnpm broker:check
-          pnpm broker:test
-          pnpm test:electron
-          pnpm test:packaged-server
+      - run: pnpm check:contrast
+      - run: pnpm broker:test
+      - run: pnpm test:electron
+      - run: pnpm test:packaged-server
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
         continue-on-error: true
@@ -133,34 +108,104 @@ jobs:
         # Disposable profile, fake microphone, captures only its own page.
         if: matrix.os == 'macos-latest'
         run: node scripts/smoke-app-permissions.mjs
-      - name: Install the Playwright browser
-        # One host runs the human specs: they drive the real harness and a
-        # real Vite dev server, and the pass they stand in for is a person at
-        # one desk — three copies of it would buy nothing but runner minutes.
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm exec playwright install --with-deps chromium
-      - name: Run human specs
-        if: matrix.os == 'ubuntu-latest'
+
+  vitest:
+    if: ${{ !inputs.human_files }}
+    name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/3', matrix.vitest_shard) }} (${{ matrix.os }})
+    # Preserve the previous validator-before-tests ordering for scoped dispatch.
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
+        # Scoped dispatch keeps its existing single selected-file confirmation;
+        # ordinary CI uses all three bounded shards.
+        vitest_shard: ${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare the pinned local memory test model
+        # P06 executes real offline inference; a clean runner must prepare the
+        # hash-pinned fixture before tests, not skip it or fetch during inference.
+        run: node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination "${{ github.workspace }}/.planning/memory-evidence/model"
+      - name: Prepare Electron test runtime
+        run: node --input-type=commonjs -e "require('electron')"
+      - name: Run Vitest shard
+        if: inputs.vitest_file == ''
+        run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/3
         env:
-          # The rig's data dir and its evidence (playwright.config.ts routes
-          # outputDir to <MURAGE_E2E_DATA_DIR>/human-results through
-          # src/e2e/evidence.ts, which refuses to run without it): never
-          # test-results/ inside the checkout. Required, no default: the rig
-          # wipes this directory, and the name carries the "scratch" segment
-          # safe-wipe admits (data-safety.md).
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+      - name: Scoped Vitest confirmation
+        if: inputs.vitest_file != ''
+        shell: bash
+        env:
+          VITEST_FILE: ${{ inputs.vitest_file }}
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+        run: |
+          echo "Scoped Vitest confirmation only: $VITEST_FILE"
+          test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
+          pnpm exec vitest run "${test_paths[@]}"
+
+  human:
+    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    name: human specs (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install the Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: production UI build
+        run: pnpm exec vite build
+      - name: Run human specs
+        env:
           MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
         run: pnpm test:human
       - name: Upload human spec traces on failure
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure() && matrix.os == 'ubuntu-latest'
+        if: failure()
         with:
           name: murage-human-spec-report
           path: ${{ runner.temp }}/murage-e2e-scratch/human-results
           if-no-files-found: ignore
           retention-days: 7
-      - name: production UI build
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm exec vite build
+
+  required:
+    if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}
+    name: required CI completion
+    needs: [quality, vitest, human, control-plane, package-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every ordinary CI job to succeed
+        shell: bash
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          VITEST: ${{ needs.vitest.result }}
+          HUMAN: ${{ needs.human.result }}
+          CONTROL_PLANE: ${{ needs.control-plane.result }}
+          PACKAGE_LINUX: ${{ needs.package-linux.result }}
+        run: |
+          test "$QUALITY" = success
+          test "$VITEST" = success
+          test "$HUMAN" = success
+          test "$CONTROL_PLANE" = success
+          test "$PACKAGE_LINUX" = success
 
   human-confirmation:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}

@@ -159,7 +159,7 @@ describe("which provider draws the avatar", () => {
     expect(url).toBe(FLUX_IMAGE_URL);
     expect(init?.headers).toMatchObject({ authorization: "Bearer flux-live-key" });
     expect(JSON.parse(String(init?.body))).toMatchObject({
-      model: "flux-image-gpt",
+      model: "flux-image-gpt25-high",
       size: "1024x1024",
       n: 1,
       response_format: "b64_json",
@@ -167,18 +167,13 @@ describe("which provider draws the avatar", () => {
     // The picture is PNG whatever we asked for, because the Flux route forwards
     // no output_format. The mime is read off the bytes, not off the request.
     expect(result.mime).toBe("image/png");
-    expect(result).toMatchObject({ provider: "flux", model: "flux-image-gpt" });
+    expect(result).toMatchObject({ provider: "flux", model: "flux-image-gpt25-high" });
   });
 
-  it("never sends the id that silently degrades to the cheapest arm", async () => {
-    // `flux-image` is a BILLING TIER, not an alias (customer_pricing.py:117 vs
-    // capability_image.py:89). Sent as `model` it resolves to None, falls
-    // through to the Standard canonical, and Standard is pinned to
-    // together-flux — the cheapest of seven arms — with a 200 and no warning.
-    // A NAMED alias cannot do that: an unroutable explicit pick is a 400.
+  it("pins GPT Image 2.5 Flare high instead of the moving Flux default", async () => {
     expect(FLUX_IMAGE_MODEL).not.toBe(FLUX_IMAGE_TIER_NOT_AN_ALIAS);
-    expect(FLUX_IMAGE_MODEL).toBe("flux-image-gpt");
-    expect(FLUX_IMAGE_ARM).toBe("gpt-image-med");
+    expect(FLUX_IMAGE_MODEL).toBe("flux-image-gpt25-high");
+    expect(FLUX_IMAGE_ARM).toBe("gpt-image-25-high");
 
     const fetchMock = vi.fn<typeof fetch>(async () => imageResponse(png()));
     await generate("sk-image", fetchMock, "flux-live-key");
@@ -213,6 +208,15 @@ describe("which provider draws the avatar", () => {
 
     await expect(generate("sk-image", fetchMock, "flux-live-key")).rejects.toThrow("Flux Router");
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not fall back for an unknown arm or uncertain transport result", async () => {
+    const unknown = vi.fn<typeof fetch>(async () => new Response('{"error":{"message":"no image provider resolved"}}', { status: 400 }));
+    await expect(generate("sk-image", unknown, "flux-live-key")).rejects.toThrow("no image provider resolved");
+    expect(unknown).toHaveBeenCalledOnce();
+    const uncertain = vi.fn<typeof fetch>(async () => { throw new Error("connection lost"); });
+    await expect(generate("sk-image", uncertain, "flux-live-key")).rejects.toThrow("Could not reach Flux Router");
+    expect(uncertain).toHaveBeenCalledOnce();
   });
 
   it("surfaces the real reason when Flux is the only route", async () => {

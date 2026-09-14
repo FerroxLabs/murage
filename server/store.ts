@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import type { ConnectedAppAccess } from "../shared/bot-access.ts";
 import type { ProviderErrorInfo } from "../shared/provider-error.ts";
+import { parseRuntimeErrorDiagnostic, type RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -161,7 +162,7 @@ export interface Message {
    * for chips not worth interrupting the ear for. */
   /** `setup` marks an error the user fixes by installing or configuring
    * something — the UI offers setup instead of a retry that cannot work. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
@@ -218,6 +219,8 @@ export interface GroupTaskRecord {
   title: string;
   createdAt: number;
   pinnedCwd?: string | null;
+  /** Host-admitted local output desks, independently of the engine CWD. */
+  localOutputBotIds?: string[];
   pinnedMessageId?: string;
 }
 
@@ -231,6 +234,7 @@ export interface GroupRecord {
   threadId: ThreadId;
   /** User-created channels have independent tasks, newest first. */
   tasks?: GroupTaskRecord[];
+  localOutputBotIds?: string[];
   name: string;
   memberIds: string[];
   defaultResponder: GroupDefaultResponder;
@@ -269,6 +273,8 @@ export interface GroupRecord {
  * session. Sharing resume cursors between tasks would resume the other
  * task's session and quietly undo the whole thing. */
 export interface TaskRecord {
+  /** Host admission only; paths are always derived from current IDs. */
+  localOutputs?: true;
   /** Server-owned automation root; retained for reviewed card resumptions. */
   automationEventId?: string;
   threadId: ThreadId;
@@ -321,7 +327,17 @@ export interface TaskUsage {
  * is theirs and stays as typed. Stored, not just displayed: the transcript
  * is replayed into every rebuild, and a leaked key would otherwise be
  * permanent. */
+function sanitizeMessageDiagnostic<T extends Omit<Message, "id" | "at">>(message: T): T {
+  if (message.tool?.diagnostic === undefined) return message;
+  const tool = { ...message.tool };
+  delete tool.diagnostic;
+  const diagnostic = parseRuntimeErrorDiagnostic(message.tool.diagnostic);
+  if (message.role === "bot" && message.kind === "activity" && diagnostic?.turnId === message.turnId) tool.diagnostic = diagnostic;
+  return { ...message, tool };
+}
+
 function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number }>(message: T): T {
+  message = sanitizeMessageDiagnostic(message);
   if (message.role !== "bot") return message;
   const out = { ...message };
   if (typeof out.text === "string") out.text = redactSecretsInText(out.text);
@@ -1369,7 +1385,8 @@ export class Store {
     if (t) return t;
     // SQLite is the source of truth; a thread with no rows imports its
     // legacy messages-<threadId>.json once, inside readThread
-    const { messages, activeLeafId: storedLeaf } = mdb.readThread(threadId, messagesFile(threadId));
+    const { messages: storedMessages, activeLeafId: storedLeaf } = mdb.readThread(threadId, messagesFile(threadId));
+    const messages = storedMessages.map(sanitizeMessageDiagnostic);
     let activeLeafId = storedLeaf;
     // legacy rows carry no parentId — chain them in array order
     let prev: string | null = null;
@@ -1534,6 +1551,9 @@ export class Store {
     t.messages.push(full);
     t.activeLeafId = full.id;
     this.emit({ type: "message", threadId, message: full });
+    // A fork is not a child of the old leaf; publish the durable selection
+    // after its message so clients can display the server's active branch.
+    this.emit({ type: "thread", threadId, activeLeafId: full.id });
     return full;
   }
 
@@ -1558,7 +1578,7 @@ export class Store {
     const t = this.thread(threadId);
     const idx = t.messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
-    const next = { ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card };
+    const next = sanitizeMessageDiagnostic({ ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card });
     // SQLite is the durable source of truth. Persist before changing memory so
     // a failed write cannot make this process believe a card was answered
     // while a restart would still show it as pending.
@@ -1951,6 +1971,27 @@ export class Store {
     return task.cwd;
   }
 
+  /** Called only after host-local output lease admission, never from PATCH
+   * or package data. Neither provider CWD nor resume cursors move. */
+  admitLocalOutputs(botId: string, threadId: string): void {
+    const task = this.taskByThread(botId, threadId);
+    if (task) {
+      if (task.localOutputs === true) return;
+      task.localOutputs = true;
+      try { this.saveBots(); } catch (error) { delete task.localOutputs; throw error; }
+      this.emit({ type: "bot", botId });
+      return;
+    }
+    const group = this.groups.find(item => item.memberIds.includes(botId) && (item.tasks ?? [{ threadId: item.threadId }]).some(task => task.threadId === threadId));
+    if (!group || !this.bot(botId)) throw new Error("Output conversation is unavailable");
+    const holder = group.tasks?.find(item => item.threadId === threadId) ?? group;
+    const prior = holder.localOutputBotIds;
+    if (prior?.includes(botId)) return;
+    holder.localOutputBotIds = [...(prior ?? []), botId];
+    try { this.saveGroups(); } catch (error) { holder.localOutputBotIds = prior; throw error; }
+    this.emit({ type: "group", groupId: group.id });
+  }
+
   /** The folder a room's member turns run in. Pins on the first turn that
    * dispatches, from the room's `cwd` at that moment. Pinned, not read
    * live, for the same reason tasks pin (see pinTaskCwd): engines key
@@ -2020,7 +2061,8 @@ export class Store {
   }
 
   /** A fresh context on the same bot: new thread, new session, same
-   * persona/tools/computer. Becomes the active task. */
+   * persona/tools/computer. Active creation retains the visible model;
+   * detached routine tasks use the owner's defaults. */
   createTask(botId: string, title?: string, activate = true): TaskRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
@@ -2029,7 +2071,7 @@ export class Store {
       title: title?.trim().slice(0,80) || UNTITLED_TASK,
       createdAt: Date.now(),
       resumeCursors: {},
-      modelSelection:structuredClone(bot.modelSelection),autoApprove:bot.autoApprove===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
+      modelSelection:structuredClone((activate ? this.activeTask(botId)?.modelSelection : undefined) ?? bot.modelSelection),autoApprove:bot.autoApprove===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {

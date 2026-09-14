@@ -103,6 +103,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
   const [savedEveryBot, setSavedEveryBot] = useState(false);
   const [page, setPage] = useState(0), [revision, setRevision] = useState(0);
   const [result, setResult] = useState<ArtifactPage | null>(null), [preview, setPreview] = useState<ArtifactPreview | null>(null);
+  const [focusedPreview, setFocusedPreview] = useState(Boolean(initialArtifactId));
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [relativePath, setRelativePath] = useState(""), [name, setName] = useState("");
@@ -152,7 +153,17 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     setPage(0); setRevision(value => value + 1);
   };
   return <section className="mx-auto h-full w-full max-w-5xl overflow-y-auto bg-panel p-4 text-ink sm:p-6" aria-labelledby="files-title">
-    <header className="flex flex-wrap items-center justify-between gap-2"><h1 id="files-title" className="text-[22px] font-semibold">Files</h1><div className="flex flex-wrap gap-2">{onShowPane && scope && <button className={button} data-pane-action="show" onClick={() => onShowPane(scope)}>{t("workspacePane.showPane")}</button>}<button className={button} disabled={busy} onClick={refresh}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Files</button>}</div></header>
+    <h1 id="files-title" className="sr-only">Files</h1>
+    {focusedPreview && !preview && <div className="space-y-3"><p role="status" className="text-[13px]">{error ?? "Opening saved version…"}</p><button className={button} onClick={() => setFocusedPreview(false)}>{t("filesWorkspace.savedTitle")}</button></div>}
+    {preview && <section ref={previewPanel} role="region" aria-label="File preview" className="mb-5 rounded-xl border border-hairline p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void download(preview.artifact)}>Download saved copy</button><button className={button} onClick={() => { setPreview(null); setFocusedPreview(false); }}>Close preview</button></div></div>
+      <p className="my-2 text-[12px] text-ink-secondary">{t("filesWorkspace.savedSubtitle")}</p>
+      {preview.mode === "html" && <><p className="my-2 text-[12px] text-ink-secondary">Protected preview: scripts, external resources and app access are blocked.</p><iframe title={`Preview ${preview.artifact.name}`} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactPreviewHtml(preview.content ?? "")} className="h-[420px] w-full rounded-lg bg-white" /></>}
+      {preview.mode === "text" && <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-[12px]">{preview.content}</pre>}
+      {preview.mode === "image" && <ArtifactImageMedia artifact={preview.artifact} content={preview.content} />}
+      {preview.mode === "download" && <p className="mt-3 text-[13px] text-ink-secondary">Preview is unavailable for this format or size. Download the saved copy to review it.</p>}
+    </section>}
+    <div hidden={focusedPreview}>
+    <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[22px] font-semibold">Files</h2><div className="flex flex-wrap gap-2">{onShowPane && scope && <button className={button} data-pane-action="show" onClick={() => onShowPane(scope)}>{t("workspacePane.showPane")}</button>}<button className={button} disabled={busy} onClick={refresh}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Files</button>}</div></header>
     <p className="mt-2 text-[13px] text-ink-secondary">The files in a bot's working folder, and the verified copies Murage has saved. Refresh reloads both. A path mentioned in chat is not automatically a saved file.</p>
     <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
       <label className="text-[12px]">Bot<select className={`${field} mt-1 w-full`} value={botId} onChange={event => { setBotId(event.target.value); setThreadId(""); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All bots</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
@@ -191,11 +202,6 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
       <div className="space-y-3">{result?.items.map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} busy={busy} onPreview={() => void act(async () => setPreview(await api(`/api/artifacts/${artifact.id}/preview`) as ArtifactPreview))} onDownload={() => void download(artifact)} onSource={onSource ? () => onSource(artifact) : undefined} onNativeAction={onNativeAction} onOpenHere={onOpenInPane ? () => onOpenInPane({ botId: artifact.botId, threadId: artifact.threadId }, artifact.relativePath, "preview") : undefined} />)}</div>
       {result && <footer className="mt-4 flex items-center justify-between gap-3"><button className={button} disabled={busy || !page} onClick={() => setPage(value => value - 1)}>Previous</button><span className="text-[12px]">Page {page + 1} · {result.total} files</span><button className={button} disabled={busy || (page + 1) * result.pageSize >= result.total} onClick={() => setPage(value => value + 1)}>Next</button></footer>}
     </section>
-    {preview && <section ref={previewPanel} role="region" aria-label="File preview" className="mt-5 rounded-xl border border-hairline p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><div className="flex gap-2"><button className={button} disabled={busy} onClick={() => void download(preview.artifact)}>Download saved copy</button><button className={button} onClick={() => setPreview(null)}>Close preview</button></div></div>
-      {preview.mode === "html" && <><p className="my-2 text-[12px] text-ink-secondary">Protected preview: scripts, external resources and app access are blocked.</p><iframe title={`Preview ${preview.artifact.name}`} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactPreviewHtml(preview.content ?? "")} className="h-[420px] w-full rounded-lg bg-white" /></>}
-      {preview.mode === "text" && <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-[12px]">{preview.content}</pre>}
-      {preview.mode === "image" && <ArtifactImageMedia artifact={preview.artifact} content={preview.content} />}
-      {preview.mode === "download" && <p className="mt-3 text-[13px] text-ink-secondary">Preview is unavailable for this format or size. Download the saved copy to review it.</p>}
-    </section>}
+    </div>
   </section>;
 }

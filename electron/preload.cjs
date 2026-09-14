@@ -69,6 +69,40 @@ const desktopSurfaceSecret = (() => {
 contextBridge.exposeInMainWorld("muragebox", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
+  backup: {
+    status: () => ipcRenderer.invoke("backup-mode:status"),
+    restart: () => ipcRenderer.invoke("backup-mode:restart"),
+  },
+  backupSchedule: {
+    status: () => ipcRenderer.invoke("backup-schedule:status"),
+    selectReferences: () => ipcRenderer.invoke("backup-schedule:select"),
+    configure: (revision, choices) => ipcRenderer.invoke("backup-schedule:configure", revision, choices),
+  },
+  backupClosed: {
+    status: () => ipcRenderer.invoke("backup-closed:status"),
+    stage: () => ipcRenderer.invoke("backup-closed:stage"),
+    install: () => ipcRenderer.invoke("backup-closed:install"),
+    disable: () => ipcRenderer.invoke("backup-closed:disable"),
+  },
+  backupRemote: {
+    status: () => ipcRenderer.invoke("backup-remote:status"),
+    save: (revision, input) => ipcRenderer.invoke("backup-remote:save", revision, input),
+    selectRepositoryPassword: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:selectRepositoryPassword", remoteRef, revision),
+    connect: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:connect", remoteRef, revision),
+    uploadLatest: (remoteRef, revision, jobId) => ipcRenderer.invoke("backup-remote:uploadLatest", remoteRef, revision, jobId),
+    setAutomaticUpload: (remoteRef, revision, enabled) => ipcRenderer.invoke("backup-remote:setAutomaticUpload", remoteRef, revision, enabled),
+    reconcileLatest: (remoteRef, revision, jobId) => ipcRenderer.invoke("backup-remote:reconcileLatest", remoteRef, revision, jobId),
+    listBackups: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:listBackups", remoteRef, revision),
+    downloadBackup: (remoteRef, revision, snapshotId) => ipcRenderer.invoke("backup-remote:downloadBackup", remoteRef, revision, snapshotId),
+  },
+  approvalNotifications: {
+    show: payload => ipcRenderer.invoke("approval-notification:show", payload),
+    onOpen: cb => {
+      const handler = (_event, target) => cb(target);
+      ipcRenderer.on("approval-notification:open", handler);
+      return () => ipcRenderer.removeListener("approval-notification:open", handler);
+    },
+  },
   startup: {
     status:()=>ipcRenderer.invoke("startup-background:status"),
     update:patch=>ipcRenderer.invoke("startup-background:update",patch),
@@ -254,7 +288,7 @@ contextBridge.exposeInMainWorld("muragebox", {
   pickFolder: (current) => ipcRenderer.invoke("desktop:pick-folder", current),
   /** Writes the redacted diagnostics report to a user-chosen file; resolves
    * the path, or null when the save dialog was cancelled. */
-  exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
+  exportDiagnostics: (selection) => selection === undefined ? ipcRenderer.invoke("desktop:export-diagnostics") : ipcRenderer.invoke("desktop:export-diagnostics", selection),
   artifactAction: (id, action) => ipcRenderer.invoke("desktop:artifact-action", id, action),
   revealWorkspace: (botId, threadId) => ipcRenderer.invoke("desktop:reveal-workspace", botId, threadId),
   /** Open or reveal one live workspace file. The renderer names the

@@ -46,6 +46,44 @@ async function send(page:Page,text:string,threadId:string){
   await page.getByRole("textbox",{name:"Message Threads UI fixture",exact:true}).press("Enter");
   const response=await sent;expect(response.status()).toBe(202);expect(response.request().postDataJSON().threadId).toBe(threadId);
 }
+test("New task retains the visible model selection after click and reload",async({page},info)=>{
+  await page.route("**/*",route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
+  const before=await state();
+  const selection={...before.tasks.find((task:any)=>task.threadId===second).modelSelection,effort:"high"};
+  await api("PATCH",`/api/bots/${botId}/tasks/${second}`,{modelSelection:selection});
+  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));await page.goto(origin);
+  const sidebar=await openSidebar(page);await sidebar.getByText("Threads UI fixture",{exact:true}).click();
+  const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
+  if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
+  await choose(page,"Second thread");
+  await page.keyboard.press("Escape");
+  const model=page.getByRole("button",{name:/^Thread model:/});
+  const expectedLabel=`Thread model: ${labelTwo} · high effort`;
+  await expect(model).toHaveAttribute("aria-label",expectedLabel);
+  await expect.poll(async()=>(await state()).threadId).toBe(second);
+  const created=page.waitForResponse(response=>response.url().endsWith(`/api/bots/${botId}/tasks`)&&response.request().method()==="POST");
+  await page.getByRole("button",{name:"All threads",exact:true}).click();
+  await page.getByRole("button",{name:"New task",exact:true}).click();
+  const response=await created;expect(response.status()).toBe(201);
+  const result=await response.json(),threadId=result.task.threadId;
+  expect(before.tasks.some((task:any)=>task.threadId===threadId)).toBe(false);
+  expect(result.task.modelSelection).toEqual(selection);
+  const readback=await state();
+  expect(readback.threadId).toBe(threadId);
+  expect(readback.tasks).toHaveLength(before.tasks.length+1);
+  expect(readback.tasks.find((task:any)=>task.threadId===threadId).modelSelection).toEqual(selection);
+  expect((await api("GET",`/api/threads/${threadId}/messages?limit=10`)).messages).toEqual([]);
+  await expect(model).toHaveAttribute("aria-label",expectedLabel);
+  const tasks=page.getByRole("button",{name:"All threads",exact:true});
+  await expect(tasks).toContainText(result.task.title);
+  await expect(tasks).toContainText(String(before.tasks.length+1));
+  await page.reload();
+  await expect(model).toHaveAttribute("aria-label",expectedLabel);
+  await expect(tasks).toContainText(result.task.title);
+  expect((await state()).threadId).toBe(threadId);
+  await info.attach("new-task-readback",{body:JSON.stringify({threadId,selection,taskCount:readback.tasks.length}),contentType:"application/json"});
+  await page.screenshot({path:info.outputPath("new-task-selection-desktop.png")});
+});
 test("thread controls, sends, Stop and read state follow the visible conversation",async({page},info)=>{
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));await page.goto(origin);
   const sidebar=await openSidebar(page);await sidebar.getByText("Threads UI fixture",{exact:true}).click();

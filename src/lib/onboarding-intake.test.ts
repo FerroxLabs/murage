@@ -27,6 +27,7 @@ import {
   confirmIntakeProfile,
   describeIntakeSkill,
   intakeChipAction,
+  intakeClarifiedQuery,
   intakeProfileMatches,
   intakeSkillMatches,
   intakeVocabulary,
@@ -129,6 +130,12 @@ describe("topic tokens", () => {
   it("trims and bounds a person's answer before it becomes a query", () => {
     expect(intakeQuery("  reading   my\ncharts  ")).toBe("reading my charts");
     expect(intakeQuery("x".repeat(400))).toHaveLength(300);
+  });
+
+  it("carries the opening intent into one clarifier, unless the person corrects it", () => {
+    expect(intakeClarifiedQuery("trading", "and tax planning")).toBe("trading and tax planning");
+    expect(intakeClarifiedQuery("trading", "Actually, I mean chasing invoices")).toBe("chasing invoices");
+    expect(intakeClarifiedQuery("trading", "not charts, invoices")).toBe("invoices");
   });
 });
 
@@ -961,7 +968,7 @@ describe("the confirm press", () => {
     // Pinned, not defaulted. The agent already has a name in the sidebar and
     // may well have been given it by the person now talking to it.
     const { calls, request } = wire([applied, { ok: true }]);
-    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []));
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", undefined, deps(request, []));
     expect(calls[0]!.path).toBe("/api/bots/bot-1/assistant-profile");
     expect(calls[0]!.body).toEqual({ slug: "coin", rename: false });
   });
@@ -973,7 +980,7 @@ describe("the confirm press", () => {
     // header have to change on the press, not on the SSE round trip that
     // happens to follow it.
     const { events, request } = wire([applied, { ok: true }]);
-    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, events));
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", undefined, deps(request, events));
     expect(events).toEqual([
       "request POST /api/bots/bot-1/assistant-profile",
       "announce Numbers",
@@ -987,14 +994,14 @@ describe("the confirm press", () => {
     // known", which flashes the unconfigured state back onto the screen
     // between the press and the refetch.
     const { events, request } = wire([{ ...applied, installed: [] }, { ok: true }]);
-    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, events));
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", undefined, deps(request, events));
     expect(events).toContain("count bot-1=1");
   });
 
   it("ends the conversation even when some skills failed to install", async () => {
     const half = { ...applied, errors: ["pricing: not found"] };
     const { calls, request } = wire([half, { ok: true }]);
-    const result = await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []));
+    const result = await confirmIntakeProfile("bot-1", "msg-9", "coin", undefined, deps(request, []));
     expect(result.errors).toEqual(["pricing: not found"]);
     expect(calls.at(-1)!.body).toEqual({ messageId: "msg-9", outcome: "profile" });
   });
@@ -1003,7 +1010,7 @@ describe("the confirm press", () => {
     // A press that 404s on a phone, or fails on the network, must not write
     // a closing line saying the bot is now something it is not.
     const { calls, request } = wire([new Error("desktop only")]);
-    await expect(confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []))).rejects.toThrow();
+    await expect(confirmIntakeProfile("bot-1", "msg-9", "coin", undefined, deps(request, []))).rejects.toThrow();
     expect(calls).toHaveLength(1);
   });
 
@@ -1012,7 +1019,7 @@ describe("the confirm press", () => {
     // conversation that can, and it is the same route the profile panel has
     // always used.
     const { calls, request } = wire([applied, { ok: true }]);
-    await confirmIntakeProfile("bot-1", "msg-9", "coin", deps(request, []));
+    await confirmIntakeProfile("bot-1", "msg-9", "coin", undefined, deps(request, []));
     for (const call of calls) {
       expect(call.path).not.toContain("/skills/library");
       expect(call.path).not.toContain("/messages");
@@ -1038,6 +1045,7 @@ describe("what a chip press means", () => {
     expect(intakeChipAction(intake, ["Set that up", "Keep me general instead"], 0)).toEqual({
       kind: "apply",
       slug: "coin",
+      profileReviewHash: undefined,
     });
     expect(intakeChipAction(intake, ["Set that up", "Keep me general instead"], 1)).toEqual({
       kind: "close",

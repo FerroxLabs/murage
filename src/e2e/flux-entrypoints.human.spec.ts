@@ -12,6 +12,7 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 // This fixture verifies navigation and write boundaries, not provider readiness.
 let server: ViteDevServer, origin: string, cache: string;
 let failStatus = false;
+let composioConfigured = false;
 let writes: Array<{ path: string; body: Record<string, unknown> }> = [];
 let pageErrors: string[] = [];
 const proof = 'ab'.repeat(32);
@@ -46,7 +47,8 @@ test.beforeAll(async () => {
         const json = (value: unknown, status = 200) => { res.statusCode=status;res.setHeader('content-type','application/json');res.end(JSON.stringify(value)); };
         if (path === '/__flux-entry') { res.setHeader('content-type','text/html');res.end('<html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Flux entrypoint fixture</title></head><body><div id="root"></div><script type="module" src="/__flux-entry.js"></script></body></html>'); }
         else if (path === '/api/desktop-secret') json({ secret: proof });
-        else if (path === '/api/config' && req.method === 'GET') json({ ...config, surface: req.headers['x-murage-surface-secret'] === proof ? 'desktop' : 'remote' });
+        else if (path === '/api/config' && req.method === 'GET') json({ ...config, composio: { ...config.composio, configured: composioConfigured }, surface: req.headers['x-murage-surface-secret'] === proof ? 'desktop' : 'remote' });
+        else if (path === '/api/config' && req.method === 'PUT') { let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{const change=JSON.parse(body);writes.push({path,body:change});if(Object.keys(change).length!==1||typeof change.composio?.apiKey!=='string'){json({error:'Unexpected fixture config change'},409);return;}composioConfigured=Boolean(change.composio.apiKey);json({...config,composio:{...config.composio,configured:composioConfigured}});}); }
         else if (path === '/api/instances') json({ instances: [instance] });
         else if (path === '/api/bots') json({ bots: [], groups: [] });
         else if (path === '/api/flux-connection') json(failStatus ? { error: 'Fixture unavailable' } : { configured: false, revision: 'fixture', conflict: false, choices: [] }, failStatus ? 503 : 200);
@@ -60,7 +62,7 @@ test.beforeAll(async () => {
   });
   await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
-test.beforeEach(async ({page}) => { writes=[];failStatus=false;pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));await page.route('https://**/*',route=>route.abort()); });
+test.beforeEach(async ({page}) => { writes=[];failStatus=false;composioConfigured=false;pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));await page.route('https://**/*',route=>route.abort()); });
 test.afterEach(()=>{expect(pageErrors).toEqual([]);});
 test.afterAll(async()=>{await server?.close();if(cache)safeWipeSync(cache);});
 
@@ -98,6 +100,7 @@ test('Tools Flux paste navigates without saving or carrying the pasted key',asyn
   const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
   await dialog.getByRole('button',{name:'Tools & Connections',exact:true}).click();
   await expect(page.getByLabel('Box API key',{exact:true})).toBeVisible();
+  await page.getByText('Advanced: Add or replace keys',{exact:true}).click();
   expect(pageErrors).toEqual([]);
   const key='sk-flux-'+ 'F'.repeat(40);
   await page.getByLabel('Paste keys to look through').fill(`FLUX_API_KEY=${key}\nCOMPOSIO_API_KEY=ak_${'c'.repeat(32)}`);
@@ -115,6 +118,38 @@ test('Tools Flux paste navigates without saving or carrying the pasted key',asyn
   await page.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
   await expect(page.getByLabel('Flux Router key',{exact:true})).toHaveValue('');
   expect(writes).toEqual([]);expect(await page.content()).not.toContain(key);
+});
+test('advanced key review preserves canonical Add and Replace mutations',async({page},testInfo)=>{
+  await openFromOnboarding(page);
+  await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Tools & Connections',exact:true}).click();
+  const disclosure=page.getByText('Advanced: Add or replace keys',{exact:true});
+  const input=page.getByLabel('Paste keys to look through');
+  await expect(input).toBeHidden();
+  await disclosure.focus();await page.keyboard.press('Enter');await expect(input).toBeVisible();
+  const first='ak_'+ 'c'.repeat(32), second='ak_'+ 'd'.repeat(32), model='xai-'+ '7'.repeat(32);
+  await input.fill(`COMPOSIO_API_KEY=${first}\nXAI_API_KEY=${model}`);
+  await page.getByRole('button',{name:'Look for keys',exact:true}).click();
+  await expect(input).toHaveValue('');await expect(page.getByTestId('paste-key-row')).toHaveCount(2);expect(writes).toEqual([]);
+  await input.fill(`COMPOSIO_API_KEY=${first}`);await page.getByRole('button',{name:'Look for keys',exact:true}).click();
+  await expect(page.getByTestId('paste-key-row')).toHaveCount(2);
+  const service=page.getByTestId('paste-key-row').filter({hasText:'COMPOSIO_API_KEY'});
+  await expect(service.getByRole('button',{name:'Add key',exact:true})).toBeEnabled();
+  await expect(page.getByTestId('paste-key-row').filter({hasText:'XAI_API_KEY'}).getByRole('button',{name:'Add connection',exact:true})).toBeEnabled();
+  for(const width of [390,820,1440]){
+    await page.setViewportSize({width,height:900});await disclosure.scrollIntoViewIfNeeded();
+    await page.screenshot({path:testInfo.outputPath(`advanced-review-${width}.png`)});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  }
+  expect(await page.content()).not.toContain(first);expect(await page.content()).not.toContain(model);
+  await service.getByRole('button',{name:'Add key',exact:true}).click();await expect(service.getByText('Saved',{exact:true})).toBeVisible();
+  expect(writes).toHaveLength(1);expect(writes[0]).toEqual({path:'/api/config',body:{composio:{apiKey:first}}});
+  await input.fill(`COMPOSIO_API_KEY=${second}`);await page.getByRole('button',{name:'Look for keys',exact:true}).click();
+  await page.getByRole('button',{name:'Replace key',exact:true}).click();await expect(service.getByText('Saved',{exact:true})).toHaveCount(2);
+  expect(writes).toHaveLength(2);expect(writes[1]).toEqual({path:'/api/config',body:{composio:{apiKey:second}}});
+  await page.getByTestId('paste-key-row').filter({hasText:'XAI_API_KEY'}).getByRole('button',{name:'Add connection',exact:true}).click();
+  await expect.poll(()=>writes.length).toBe(3);expect(writes[2]).toEqual({path:'/api/provider-connections/mutate',body:{action:'create',preset:'xai',key:model}});
+  await disclosure.focus();await page.keyboard.press('Enter');await expect(input).toBeHidden();
+  await page.keyboard.press('Enter');await expect(input).toHaveValue('');
 });
 test('ambiguous nonFlux keys retain provider choice; failure has no legacy Flux input',async({page})=>{
   await openFromOnboarding(page);

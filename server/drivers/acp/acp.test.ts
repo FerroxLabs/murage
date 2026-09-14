@@ -18,7 +18,7 @@ import { scanFolderTrustSources } from "../../folder-trust.ts";
 import type { ProviderTurnRoute } from "../../provider-routing.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
@@ -56,6 +56,7 @@ const SELECT_MODEL_SUPPORT: AcpSupport = {
   isAuthenticated: () => true,
 };
 const SelectModelDriver = createAcpDriver(SELECT_MODEL_SUPPORT);
+const FuigoDiagnosticDriver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, nativeSource: "fuigo.acp", selectModel: undefined });
 
 /** Proves transformEnv can vary with the instance config, which is how the
  *  opencode driver picks its permission policy from `fullAuto`. */
@@ -1235,6 +1236,55 @@ describe("ACP turns (fake CLI)", () => {
     expect(acpRpcErrorDetails({ code: "fake-secret-canary", data: { http_status: "500", message: "private" } })).toBeUndefined();
     expect(acpRpcErrorDetails({ code: Infinity, data: { http_status: 999 } })).toBeUndefined();
   });
+  it.each(["missing","private","flux-url"])("classifies payment-required %s without exhaustion claims, setup or replay",async variant=>{
+    await create(GrokAgentDriver,`payment-required:${variant}`);
+    const threadId=`t-payment-${variant}`;
+    const {turnId}=await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    expect(await recorder.until(event=>event.type==="turn.completed")).toMatchObject({ok:false,stopReason:"rpc_error"});
+    await expect(instance.adapter.awaitTurnTeardown!(threadId,turnId)).resolves.toEqual({closeConfirmed:true});
+    const errors=recorder.events.filter(event=>event.type==="runtime.error");expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({message:"Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.",providerError:{kind:"payment",httpStatus:402},details:"ACP request: session/prompt\nProvider response: HTTP 402\nEngine error code: -32603"});
+    expect(errors[0].setup).not.toBe(true);expect(errors[0].providerError?.provider).toBeUndefined();
+    expect(recorder.events.filter(event=>event.type==="turn.completed")).toHaveLength(1);
+    expect(lifecycleRows(threadId).filter(row=>row.event==="rpc_requested"&&row.method==="session/prompt")).toHaveLength(1);
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|fluxrouter\.ai|private response/);
+  });
+
+  it.each(["auth", "http", "api", "serialization", "idle_timeout", "rate_limited", "empty_response", "max_tokens_truncation", "doom_loop_detected", "context_length"])("allows typed terminal failure category %s", (error_kind) => {
+    expect(acpRpcErrorDetails({ data: { error_kind } })).toBe(`Engine failure category: ${error_kind}`);
+    expect(acpRpcErrorDetails({ data: { error_kind: `${error_kind}\nfake-secret-canary` } })).toBeUndefined();
+  });
+
+  it("structured ACP diagnostics omit malformed facts rather than copying private fields",()=>{
+    const base={eventId:"ev-m00001-1",turnId:"11111111-1111-4111-8111-111111111111"},generation="22222222-2222-4222-8222-222222222222";
+    const diagnostic=acpErrorDiagnostic(base,generation,{acpRpcId:"1",acpMethod:"session/prompt\nfake-private",code:Infinity,data:{http_status:"402",error_kind:"fake-secret-canary",message:"private body"},fuigoObservedKind:"unknown",sessionId:"private-session"});
+    expect(diagnostic).toEqual({version:1,diagnosticId:base.eventId,turnId:base.turnId,processGeneration:generation});
+    expect(acpErrorDiagnostic({...base,turnId:"not-a-real-turn"},generation)).toBeUndefined();
+  });
+  it.each(["valid", "terminal", "foreign", "replay", "old", "missing-time", "future", "malformed", "unbounded", "unknown", "retry", "wrong-source"])("Fuigo diagnostic wire safely handles %s", async variant => {
+    await create(variant === "wrong-source" ? GrokAgentDriver : FuigoDiagnosticDriver, `fuigo-diagnostic:${variant}`);
+    const {turnId}=await instance.adapter.sendTurn({ threadId: "t-fuigo-diagnostic", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    await expect(instance.adapter.awaitTurnTeardown!("t-fuigo-diagnostic",turnId)).resolves.toEqual({closeConfirmed:true});
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    const observed=variant==="valid"||variant==="terminal";
+    expect(errors[0]).toMatchObject({ message: "Internal error", details: "ACP request: session/prompt\nProvider response: HTTP 404\nEngine error code: -32603"+(variant==="terminal"?"\nEngine failure category: max_tokens_truncation":"") + (observed ? "\nFuigo failure category observed during request: api\nFuigo retry state observed during request: failed" : "") });
+    const rows=lifecycleRows("t-fuigo-diagnostic").filter(row=>row.turnId===turnId),rejection=rows.find(row=>row.event==="rpc_rejected"&&row.method==="session/prompt")!;
+    expect(errors[0].diagnostic).toMatchObject({version:1,diagnosticId:errors[0].eventId,turnId,processGeneration:rejection.processGeneration,rpcId:rejection.rpcId,method:"session/prompt",rpcCode:-32603,httpStatus:404});
+    expect(errors[0].diagnostic?.observedKind).toBe(observed?"api":undefined);expect(rejection.observedKind).toBe(observed?"api":undefined);
+    expect(errors[0].diagnostic?.terminalKind).toBe(variant==="terminal"?"max_tokens_truncation":undefined);expect(rejection.terminalKind).toBe(variant==="terminal"?"max_tokens_truncation":undefined);
+    expect(rows.filter(row=>row.event==="rpc_requested"&&row.method==="session/prompt")).toHaveLength(1);
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|fake-private|billing\.invalid/);
+    expect(errors[0]).not.toHaveProperty("setup");
+  });
+
+  it.each(["success", "unmatched"])("Fuigo observations never turn %s into a terminal error", async variant => {
+    await create(FuigoDiagnosticDriver, `fuigo-diagnostic:${variant}`);
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-observation", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
+  });
 
   it.each(["initialize", "authenticate", "session/new", "session/load", "session/prompt", "session/set_mode", "session/set_model", "session/set_config_option"])("allows only known ACP diagnostic method %s", (acpMethod) => {
     expect(acpRpcErrorDetails({ acpMethod, code: -32603 })).toBe(`ACP request: ${acpMethod}\nEngine error code: -32603`);
@@ -1259,6 +1309,7 @@ describe("ACP turns (fake CLI)", () => {
     const errors = recorder.events.filter(event => event.type === "runtime.error");
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatchObject({ message: "Internal error", details: `ACP request: ${method}\nProvider response: HTTP 500\nEngine error code: -32603` });
+    expect(errors[0].diagnostic).toMatchObject({version:1,diagnosticId:errors[0].eventId,turnId:errors[0].turnId,method,rpcCode:-32603,httpStatus:500});
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-private|fake-secret-canary|billing\.invalid|session\/cancel/);
   });
 
@@ -1272,7 +1323,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
-    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("ACP request failed");
+    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.");
     expect(acpRpcErrorMessage({ message: "Authentication required", data: { token: "fake-secret-canary" } })).toBe("Authentication required");
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then retry—or choose another configured provider.");
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai.evil.invalid/" } })).not.toContain("Flux Router is out of credits");

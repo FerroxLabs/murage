@@ -19,7 +19,7 @@ vi.mock("@/lib/analytics", () => ({
 // asks the desktop shell what it is running on), and this suite runs in node.
 // A bare object is the honest answer: no shell, browser capabilities.
 (globalThis as unknown as { window?: unknown }).window ??= {};
-const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible } =
+const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible, sidebarBotPreview, sidebarGroupPreview } =
   await import("./Sidebar");
 import type {
   ArchivedTeamBot,
@@ -27,6 +27,49 @@ import type {
   TeamImportSkillError,
 } from "./TeamLibraryPanel";
 import { botRole } from "@/lib/bot-role";
+import type { Bot, Group, Message } from "@/state/store";
+
+describe("plain-text sidebar message previews", () => {
+  const message = (text: string, extra: Partial<Message> = {}): Message => ({
+    id: "preview-message", role: "bot", kind: "text", text, at: 1, ...extra,
+  } as Message);
+  const bot = (messages: Message[], extra: Partial<Bot> = {}): Bot => ({
+    id: "preview-bot", name: "Kessler", messages, ...extra,
+  } as Bot);
+
+  it("strips message Markdown without modifying the transcript", () => {
+    const original = message("**Kessler secured** the `report` and [sources](https://example.com).\n- Ready for review");
+    const before = JSON.stringify(original);
+    expect(sidebarBotPreview(bot([original]))).toBe("Kessler secured the report and sources. Ready for review");
+    expect(JSON.stringify(original)).toBe(before);
+  });
+
+  it("flattens setup-card titles too", () => {
+    expect(sidebarBotPreview(bot([message("", { kind: "options", card: { title: "## **Choose** a setup", subtitle: "", options: [] } })])))
+      .toBe("Choose a setup");
+  });
+
+  it("preserves status labels and ordinary punctuation", () => {
+    const messages = [message("**Ready**")];
+    expect(sidebarBotPreview(bot(messages, { busy: true }))).toBe("Working…");
+    expect(sidebarBotPreview(bot(messages, { busy: true, activity: "waiting-on-you" }))).toBe("Waiting for you…");
+    expect(sidebarBotPreview(bot([message("2 * 3 * 4 and snake_case")]))).toBe("2 * 3 * 4 and snake_case");
+    expect(sidebarBotPreview(bot([]))).toBe("");
+  });
+
+  it("uses the selected conversation branch, not the last stored fork", () => {
+    const messages = [message("**Root**", { id: "root" }), message("**Selected**", { id: "selected", parentId: "root" }), message("**Other fork**", { id: "other", parentId: "root" })];
+    expect(sidebarBotPreview(bot(messages, { activeLeafId: "selected" }))).toBe("Selected");
+  });
+
+  it("strips team message Markdown while preserving the sender label", () => {
+    const original = message("**Ready** with [notes](https://example.com)", { from: { botId: "preview-bot", name: "Kessler", color: "blue" } });
+    const group = { messages: [original], memberIds: ["preview-bot"] } as Group;
+    expect(sidebarGroupPreview(group, [])).toBe("Kessler: Ready with notes");
+    expect(original.text).toBe("**Ready** with [notes](https://example.com)");
+    expect(sidebarGroupPreview({ ...group, messages: [message("__Reviewed__", { role: "user" })] }, [])).toBe("You: Reviewed");
+  });
+});
 
 describe("presentation-only sidebar hiding", () => {
   it("restores visibility without admitting archived bots", () => {

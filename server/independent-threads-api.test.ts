@@ -53,6 +53,7 @@ it("runs distinct models/accounts concurrently, enforces three, and stops exactl
   const second=await hold(bot.id,bot.second,"second-independent",true);
   expect(first.pid).not.toBe(second.pid);expect(first.argv).toContain(modelOne);expect(second.argv).toContain(modelTwo);
   const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Third"})).body.task;
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
   await hold(bot.id,third.threadId,"third-independent");
   const fourth=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Fourth"})).body.task;
   expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:fourth.threadId,text:"fourth must not launch"})).status).toBe(409);
@@ -106,8 +107,8 @@ it("keeps a stopped ACP thread's working folder until its engine process has clo
   expect((await api("PATCH",`/api/bots/${created.id}/tasks/${acpThread}`,{modelSelection:{instanceId:"acpStop",model:"agent-default"},cwd:shared})).status).toBe(200);
   const waiting=(await api("POST",`/api/bots/${created.id}/tasks`,{title:"Same folder"})).body.task;
   const sibling=(await api("POST",`/api/bots/${created.id}/tasks`,{title:"Unrelated folder"})).body.task;
-  expect((await api("PATCH",`/api/bots/${created.id}/tasks/${waiting.threadId}`,{cwd:shared})).status).toBe(200);
-  expect((await api("PATCH",`/api/bots/${created.id}/tasks/${sibling.threadId}`,{cwd:unrelated})).status).toBe(200);
+  expect((await api("PATCH",`/api/bots/${created.id}/tasks/${waiting.threadId}`,{cwd:shared,modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
+  expect((await api("PATCH",`/api/bots/${created.id}/tasks/${sibling.threadId}`,{cwd:unrelated,modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
   expect((await api("POST",`/api/bots/${created.id}/messages`,{threadId:acpThread,text:"close-confirmed fixture"})).status).toBe(202);
   await expect.poll(()=>{try{return readFileSync(acpFile("rpc"),"utf8").includes("session/prompt");}catch{return false;}},{timeout:10000}).toBe(true);
   const pid=Number(readFileSync(acpFile("pid"),"utf8"));
@@ -136,7 +137,23 @@ it("routes owner defaults separately and refuses ambiguous legacy multi-thread s
   expect((await api("PATCH",`/api/bots/${created.id}`,{settingsScope:"defaults",modelSelection:{instanceId:"second",model:modelTwo},autoApprove:true})).status).toBe(200);
   expect((await botState(created.id)).tasks[0]).toMatchObject({modelSelection:{instanceId:"verification",model:modelOne},autoApprove:false});
   const second=(await api("POST",`/api/bots/${created.id}/tasks`,{})).body.task;
-  expect(second).toMatchObject({modelSelection:{instanceId:"second",model:modelTwo},autoApprove:true});
+  expect(second).toMatchObject({modelSelection:{instanceId:"verification",model:modelOne},autoApprove:true});
   expect((await api("PATCH",`/api/bots/${created.id}`,{autoApprove:false})).status).toBe(409);
   expect((await api("PATCH",`/api/bots/${created.id}`,{settingsScope:"defaults",autoApprove:false},false)).status).toBe(404);
 });
+
+it("new task retains the visible engine and model through the actual API and dispatch",async()=>{
+  const bot=await create();
+  const selection={instanceId:"second",model:modelTwo,effort:"high"};
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${bot.second}`,{modelSelection:selection})).status).toBe(200);
+  const created=await api("POST",`/api/bots/${bot.id}/tasks`,{});
+  expect(created.status).toBe(201);
+  expect(created.body.task.modelSelection).toEqual(selection);
+  const state=await botState(bot.id);
+  expect(state.threadId).toBe(created.body.task.threadId);
+  expect(state.tasks.find((task:any)=>task.threadId===state.threadId).modelSelection).toEqual(selection);
+  const invocation=await hold(bot.id,state.threadId,"inherited-selection",true);
+  expect(invocation.argv).toContain(modelTwo);
+  expect(invocation.argv).not.toContain("--resume");
+  expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:state.threadId})).status).toBe(200);
+},30000);

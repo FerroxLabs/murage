@@ -2,6 +2,9 @@
   "version": 1,
   "locales": {
     "de": {
+      "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
+      "providerError.payment.summary": "c266a6e129e8c8e2ff34ffe6ac5f4aa1c211fe0e125ca14643f13f0b876b992f",
+      "providerError.payment.resolution": "daa7f3bf4008ee2dbcc9853190d6a0b188a4eb45d1d7f0003f92ef9a8dbe43cc",
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
       "claudeAccounts.removed": "cb1aa106eb7ee6f7b3764ed5919aa351a2b089ada9f045554664293315a863d3",
       "claudeAccounts.saved": "42a29be1a363810951249bef4eaec7063b87b0c96d6cd97b46d38f3112d3bd7f",
@@ -576,6 +579,9 @@
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
     "es": {
+      "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
+      "providerError.payment.summary": "c266a6e129e8c8e2ff34ffe6ac5f4aa1c211fe0e125ca14643f13f0b876b992f",
+      "providerError.payment.resolution": "daa7f3bf4008ee2dbcc9853190d6a0b188a4eb45d1d7f0003f92ef9a8dbe43cc",
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
       "claudeAccounts.removed": "cb1aa106eb7ee6f7b3764ed5919aa351a2b089ada9f045554664293315a863d3",
       "claudeAccounts.saved": "42a29be1a363810951249bef4eaec7063b87b0c96d6cd97b46d38f3112d3bd7f",
@@ -1150,6 +1156,9 @@
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
     "fr": {
+      "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
+      "providerError.payment.summary": "c266a6e129e8c8e2ff34ffe6ac5f4aa1c211fe0e125ca14643f13f0b876b992f",
+      "providerError.payment.resolution": "daa7f3bf4008ee2dbcc9853190d6a0b188a4eb45d1d7f0003f92ef9a8dbe43cc",
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
       "claudeAccounts.removed": "cb1aa106eb7ee6f7b3764ed5919aa351a2b089ada9f045554664293315a863d3",
       "claudeAccounts.saved": "42a29be1a363810951249bef4eaec7063b87b0c96d6cd97b46d38f3112d3bd7f",
@@ -1724,6 +1733,9 @@
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
     "hi": {
+      "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
+      "providerError.payment.summary": "c266a6e129e8c8e2ff34ffe6ac5f4aa1c211fe0e125ca14643f13f0b876b992f",
+      "providerError.payment.resolution": "daa7f3bf4008ee2dbcc9853190d6a0b188a4eb45d1d7f0003f92ef9a8dbe43cc",
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
       "claudeAccounts.removed": "cb1aa106eb7ee6f7b3764ed5919aa351a2b089ada9f045554664293315a863d3",
       "claudeAccounts.saved": "42a29be1a363810951249bef4eaec7063b87b0c96d6cd97b46d38f3112d3bd7f",
@@ -2298,6 +2310,9 @@
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
     "ja": {
+      "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
+      "providerError.payment.summary": "c266a6e129e8c8e2ff34ffe6ac5f4aa1c211fe0e125ca14643f13f0b876b992f",
+      "providerError.payment.resolution": "daa7f3bf4008ee2dbcc9853190d6a0b188a4eb45d1d7f0003f92ef9a8dbe43cc",
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
       "claudeAccounts.removed": "cb1aa106eb7ee6f7b3764ed5919aa351a2b089ada9f045554664293315a863d3",
       "claudeAccounts.saved": "42a29be1a363810951249bef4eaec7063b87b0c96d6cd97b46d38f3112d3bd7f",
@@ -2872,6 +2887,9 @@
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
     "pt-br": {
+      "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
+      "providerError.payment.summary": "c266a6e129e8c8e2ff34ffe6ac5f4aa1c211fe0e125ca14643f13f0b876b992f",
+      "providerError.payment.resolution": "daa7f3bf4008ee2dbcc9853190d6a0b188a4eb45d1d7f0003f92ef9a8dbe43cc",
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
       "claudeAccounts.removed": "cb1aa106eb7ee6f7b3764ed5919aa351a2b089ada9f045554664293315a863d3",
       "claudeAccounts.saved": "42a29be1a363810951249bef4eaec7063b87b0c96d6cd97b46d38f3112d3bd7f",
@@ -3446,6 +3464,9 @@
       "folderTrust.forgetError": "66eb164bb0340decf269124f77b45b867eee6b07435d3c445579f37193c25458"
     },
     "zh": {
+      "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
+      "providerError.payment.summary": "c266a6e129e8c8e2ff34ffe6ac5f4aa1c211fe0e125ca14643f13f0b876b992f",
+      "providerError.payment.resolution": "daa7f3bf4008ee2dbcc9853190d6a0b188a4eb45d1d7f0003f92ef9a8dbe43cc",
       "claudeAccounts.added": "6195195b2b1a02c01d4a76ac5e996bdb83dc60369b1e27c36507d5e39ed08339",
       "claudeAccounts.removed": "cb1aa106eb7ee6f7b3764ed5919aa351a2b089ada9f045554664293315a863d3",
       "claudeAccounts.saved": "42a29be1a363810951249bef4eaec7063b87b0c96d6cd97b46d38f3112d3bd7f",

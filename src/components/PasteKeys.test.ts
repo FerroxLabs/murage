@@ -203,6 +203,7 @@ describe("extraction is a suggestion, never an action", () => {
     const picked = render({
       rows: [row(`my key is ${BARE}`, { chosen: "imageGen" as ProviderId })],
       scanned: true,
+      configured: { imageGen: { configured: false } },
     });
     expect(picked).toContain('aria-pressed="true"');
     expect(picked).not.toContain("Pick which key this is first");
@@ -270,17 +271,31 @@ describe("a key that is already saved is shown as saved", () => {
     });
     expect(html).toContain("Already connected");
     expect(html).toContain("Replace");
-    expect(html).toContain("Saving replaces the key already there.");
-    // POSITIVE control: with nothing saved it is a plain Save.
+    expect(html).toContain("Replacing updates the saved service key");
+    // With known empty storage the review offers Add.
     const empty = render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], scanned: true, configured: { composio: { configured: false } } });
     expect(empty).not.toContain("Already connected");
-    expect(empty).toContain("Save");
+    expect(empty).toContain("Add key");
   });
 
   it("never claims connected from a config that has not loaded", () => {
     expect(render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], scanned: true, configured: null })).not.toContain(
       "Already connected",
     );
+  });
+  it("disables service writes until that service's status is known", () => {
+    for (const configured of [null, {}, { box: { configured: false } }]) {
+      const html = render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], configured });
+      expect(html).toContain("Checking saved key…");
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[^]*?Checking saved key/);
+      expect(html).not.toContain(">Add key<");
+    }
+  });
+  it("adds a model connection even when an existing default account is configured", () => {
+    const html = render({ rows: [row(`XAI_API_KEY=${XAI}`)], configured: { xai: { configured: true } } });
+    expect(html).toContain("Add connection");
+    expect(html).toContain("Existing accounts and their keys are kept.");
+    expect(html).not.toContain("Replace key");
   });
 });
 

@@ -11,11 +11,17 @@
 <body>
   <main>
     <p class="eyebrow">MURAGE / RECOVERY</p>
-    <h1>Recover this installation</h1>
+    <h1 id="page-heading">Recover this installation</h1>
     <p id="reason">Checking installation ownership...</p>
     <p class="location"><span>Installation</span><br><code id="location">Checking...</code></p>
     <div id="error" role="alert" hidden></div>
     <p id="status" role="status" aria-live="polite"></p>
+    <section id="encrypted-backup" aria-labelledby="encrypted-heading" hidden>
+      <h2 id="encrypted-heading">Encrypted application-data backup</h2>
+      <p>Preserves original settings, conversations, files and channel history. Native sessions, VM homes and external folders are not included. A restore uses a safe paused recovery copy; credentials and channel bindings are not reactivated.</p>
+      <p>Choose an independent age recovery key file. To create a backup, use its original age-keygen file with the public-key header. Keep a separate key copy: losing it prevents recovery.</p>
+      <div class="actions"><button data-action="backup-encrypted" class="primary">Create encrypted backup</button><button data-action="choose-encrypted-backup">Inspect encrypted backup</button></div>
+    </section>
     <section id="ownership" aria-labelledby="ownership-heading" hidden>
       <h2 id="ownership-heading">Computer ownership needs review</h2>
       <p id="ownership-summary"></p>
@@ -36,8 +42,8 @@
     </section>
     <p class="location"><code id="retained-destination" hidden></code></p>
     <section aria-labelledby="backup-heading">
-      <h2 id="backup-heading">Restore a private backup</h2>
-      <p>Inspect a backup before making changes. Your current installation is retained, and restored agents stay paused.</p>
+      <h2 id="backup-heading">Projected recovery ZIP</h2>
+      <p>This existing format contains a reduced recovery copy and is not encrypted. Inspect before making changes. Your current installation is retained, and restored agents stay paused.</p>
       <button data-action="choose-backup" class="primary">Choose backup</button>
       <div id="preview" hidden>
         <h3 id="backup-name"></h3>
@@ -47,6 +53,7 @@
         <p class="location"><code id="separate-destination" hidden></code></p>
         <button data-action="restore" id="restore">Restore and keep paused</button>
         <button data-action="restore-separate" id="restore-separate" hidden>Restore separately and restart for review</button>
+        <button data-action="restore-encrypted-new" id="restore-encrypted-new" hidden>Restore encrypted backup separately for review</button>
       </div>
     </section>
     <section aria-labelledby="activation-heading">

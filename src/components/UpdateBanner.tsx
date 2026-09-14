@@ -46,6 +46,7 @@ export function UpdateBanner() {
 
   // while busy the card owns the moment: no dismissing, no second click
   const installing = s.status === "installing";
+  const deferred = s.status === "deferred";
   const busy = s.status === "downloading" || installing;
   // Ubuntu system packages can't be swapped under a running app, so the
   // command is copied and a terminal opens; the user finishes there.
@@ -53,7 +54,7 @@ export function UpdateBanner() {
   const handoff = s.installMode === "handoff";
 
   const title =
-    s.status === "available"
+    deferred ? "Update waiting for backup" : s.status === "available"
       ? `Murage ${s.version} is available`
       : s.status === "downloading"
         ? `Downloading ${s.version ?? "update"}…`
@@ -67,7 +68,7 @@ export function UpdateBanner() {
               ? "Finish in a terminal"
               : "Update could not finish";
   const subtitle =
-    s.status === "available"
+    deferred ? "This update is waiting for the pre-upgrade backup flow. Review Backup settings if it needs attention." : s.status === "available"
       ? "A newer version is ready to download."
       : s.status === "downloading"
         ? // no percent yet means the transfer hasn't reported in — don't imply 0
@@ -96,7 +97,7 @@ export function UpdateBanner() {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold text-ink">{title}</div>
-          <div className="mt-0.5 break-words text-[12.5px] text-ink-secondary" role={s.status === "error" ? "alert" : undefined} title={subtitle}>
+          <div className="mt-0.5 break-words text-[12.5px] text-ink-secondary" role={s.status === "error" ? "alert" : deferred ? "status" : undefined} title={subtitle}>
             {subtitle}
           </div>
         </div>
@@ -142,7 +143,7 @@ export function UpdateBanner() {
         </div>
       )}
 
-      {!busy && (
+      {!busy && !deferred && (
         <div className="mt-2.5 flex gap-2">
           {s.status === "available" && (
             <button

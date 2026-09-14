@@ -13,12 +13,19 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { patchAppImageUpdater } from "./patch-appimage-updater.mjs";
+import { assertWindowsVerifierSource, patchWindowsSignatureVerifier } from "./patch-windows-signature-verifier.mjs";
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outfile = join(root, "electron/vendor/electron-updater.cjs");
 
-await build({
+const updaterPackage = require.resolve("electron-updater/package.json");
+assertWindowsVerifierSource(
+  JSON.parse(await readFile(updaterPackage, "utf8")).version,
+  await readFile(join(dirname(updaterPackage), "out/windowsExecutableCodeSignatureVerifier.js")),
+);
+
+const result = await build({
   entryPoints: [require.resolve("electron-updater")],
   bundle: true,
   platform: "node",
@@ -26,10 +33,12 @@ await build({
   format: "cjs",
   external: ["electron"],
   outfile,
+  write: false,
   logLevel: "info",
 });
 
 // Throws when upstream's shape moved, so a bundle that would silently break
 // AppImage launchers never reaches a release.
-await writeFile(outfile, patchAppImageUpdater(await readFile(outfile, "utf8")));
-console.log("patched AppImage install to overwrite in place");
+const patched = patchWindowsSignatureVerifier(patchAppImageUpdater(result.outputFiles[0].text));
+await writeFile(outfile, patched);
+console.log("patched AppImage install and fail-closed Windows signature verification");

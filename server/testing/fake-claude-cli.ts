@@ -54,8 +54,8 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
 const scriptedReplies = (() => {
@@ -478,6 +478,27 @@ const playTurn = (prompt: JsonValue) => {
   }
 
   // Shell-output fixture: writes a real file inside the turn's working folder
+  // B11 ordinary request: consume the actual appended system destination,
+  // including resumed CLI sessions. No implicit outputs/ fallback.
+  const destinationRequest = [...promptText(prompt).matchAll(/Create HTML, MD and TXT files named (b11-[a-z0-9-]+)/g)].at(-1);
+  if (destinationRequest) {
+    const systemFile = argAfter("--append-system-prompt-file");
+    const system = systemFile ? readFileSync(systemFile, "utf8") : "";
+    const encoded = /^Murage file destination: (.+)$/m.exec(system)?.[1];
+    if (!encoded) throw new Error("Fixture did not receive a file destination");
+    const destination: string = JSON.parse(encoded);
+    // The launcher makes HOME equal to its task-owned fixture. Never let
+    // this fixture instruction name any real profile or arbitrary folder.
+    const fixtureRoot = process.env.MURAGE_DATA_DIR;
+    if (!fixtureRoot || !destination.startsWith(realpathSync.native(fixtureRoot) + sep)) throw new Error("Fixture destination is outside its isolated data");
+    mkdirSync(destination, { recursive: true });
+    for (const [extension, contents] of [["html", "<!doctype html><h1>B11</h1>"], ["md", "# B11\n"], ["txt", "B11 text\n"]]) {
+      writeFileSync(join(destination, `${destinationRequest[1]}.${extension}`), contents);
+    }
+    appendFileSync(join(fixtureRoot, "b11-destinations.jsonl"), JSON.stringify({ destination, cwd: process.cwd(), resumed: Boolean(argAfter("--resume")), name: destinationRequest[1] }) + "\n");
+  }
+
+  // Shell-output fixture: writes a real file inside the turn's working folder
   // the way a Bash/Write tool would, without ever calling register_artifact.
   // Runs before the hang branch so held turns write too. A Markdown path gets
   // a Markdown report (the workspace editor's format); anything else HTML.
@@ -504,7 +525,7 @@ const playTurn = (prompt: JsonValue) => {
   // `__fixture_finish_turn__` completes normally even when the suite runs
   // the fake in hang mode, so a test can observe a real terminal turn.
   const finishNow = promptText(prompt).includes("__fixture_finish_turn__");
-  if ((mode === "hang" && !finishNow) || promptText(prompt).includes("__fixture_hold_authority__")) {
+  if ((mode === "hang" && !finishNow) || fixtureRequested(promptText(prompt), "__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
     if (promptText(prompt).includes("__fixture_error_result_on_stop__")) {

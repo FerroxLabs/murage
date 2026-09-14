@@ -80,13 +80,13 @@ export function IntakeTurn({ bot, message }: { bot: Bot; message: Message }) {
 
   const report = (cause: unknown) => setFailure(cause instanceof Error ? cause.message : String(cause));
 
-  const applyProfile = async (slug: string) => {
+  const applyProfile = async (slug: string, profileReviewHash?: string) => {
     if (busy || !slug || desktop !== true) return;
     setBusy(true);
     setFailure("");
     setErrors([]);
     try {
-      const applied = await confirmIntakeProfile(bot.id, message.id, slug, {
+      const applied = await confirmIntakeProfile(bot.id, message.id, slug, profileReviewHash, {
         request: api,
         // Straight into the sidebar and the chat header, without waiting for
         // the broadcast to come back around. The question asked for something,
@@ -137,7 +137,7 @@ export function IntakeTurn({ bot, message }: { bot: Bot; message: Message }) {
     const action = intakeChipAction(intake, card.options, index);
     if (!action) return;
     if (action.kind === "apply") {
-      void applyProfile(action.slug);
+      void applyProfile(action.slug, action.profileReviewHash);
       return;
     }
     if (action.kind === "reply") {

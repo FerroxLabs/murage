@@ -10,13 +10,19 @@ it("actual root approval actions bind live card, instance and thread and resolve
   const expression = source.slice(start + "approvals: ".length, end).trim().replace(/,$/, "");
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const message = { id: "card", card: { requestId: "request", tool: "Write", subtitle: "fixture.txt", answered: undefined as string | undefined } };
-  const store = { bot: () => bot, messagesFor: () => [message] };
+  let currentChief: typeof bot | null = bot;
+  const store = { bot: () => bot, workspaceChief: () => currentChief, messagesFor: () => [message] };
   const answerRequest = vi.fn(async () => { message.card.answered = "allow"; return "allowed-once"; });
   const actions = new Function("store", "askMessageByRequest", "createHash", "redactSecretsInText", "answerRequest", "isQuestionCard", "questionsForCard", "questionReply", `return (${expression})("bot");`)(store, new Map([["thread:request", "card"]]), createHash, (text: string) => text, answerRequest, isQuestionCard, questionsForCard, () => ({ kind: "none" }));
   const offered = actions.pending()[0];
   message.card.subtitle = "different action";
   expect(await actions.resolve(offered, "allow")).toBe(false);
   const changed = actions.pending()[0];
+  currentChief = null;
+  expect(actions.pending()).toEqual([]);
+  expect(await actions.resolve(changed, "allow")).toBe(false);
+  expect(answerRequest).not.toHaveBeenCalled();
+  currentChief = bot;
   expect(await actions.resolve(changed, "allow")).toBe(true);
   expect(await actions.resolve(changed, "allow")).toBe(false);
   expect(answerRequest).toHaveBeenCalledExactlyOnceWith("thread", "claude", "request", "allow", undefined, { id: "bot", name: "Fixture" });
@@ -36,7 +42,7 @@ it("actual root approval actions publish a question with its questions and answe
   const questions = [{ id: "q1", question: "Which format?", options: [{ label: "Summary" }, { label: "Detailed" }], multiSelect: false, allowOther: true }];
   const message = { id: "card", card: { requestId: "request", subtitle: "Which format?", options: ["Summary", "Detailed"], questions, answered: undefined as string | undefined } };
   const secret = { id: "secret", card: { requestId: "request-2", subtitle: "Token?", options: [], questions: [{ id: "q1", question: "Token?", options: [], multiSelect: false, allowOther: true, secret: true }] } };
-  const store = { bot: () => bot, messagesFor: () => [message, secret] };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message, secret] };
   const answerRequest = vi.fn(async () => { message.card.answered = "answer"; return "answered"; });
   const questionReply = vi.fn((_thread: string, _request: string, body: any, skip: boolean) =>
     skip ? { kind: "deliver", behavior: "deny", message: "skipped" } : { kind: "deliver", behavior: "answer", message: "Detailed", answers: body.answers });

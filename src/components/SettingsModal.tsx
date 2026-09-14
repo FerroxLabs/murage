@@ -24,8 +24,11 @@ import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { BackupSettings } from "./BackupSettings";
 import { StartupSettings } from "./StartupSettings";
 import { TelegramSettings } from "./TelegramSettings";
+import { SlackSettings } from "./SlackSettings";
+import { DiscordSettings } from "./DiscordSettings";
 import { StarterProfiles } from "./StarterProfiles";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -146,7 +149,7 @@ export function UpdatesRow() {
   if (!window.muragebox?.updater) return null;
   const updater = window.muragebox.updater;
   const label =
-    s?.status === "checking"
+    s?.status === "deferred" ? "This update is waiting for the pre-upgrade backup flow. Review Backup settings if it needs attention." : s?.status === "checking"
       ? "Checking…"
       : s?.status === "available"
         ? `${s.version} available`
@@ -163,7 +166,7 @@ export function UpdatesRow() {
               : "You're on the latest version we know of.";
   return (
     <Card title={t("updates.title")} subtitle={label}>
-      <button
+      {s?.status !== "deferred" && <button
         onClick={() => {
           if (s?.status === "available") return void updater.download();
           if (s?.status === "downloaded") return void updater.install();
@@ -180,7 +183,7 @@ export function UpdatesRow() {
             : s?.status === "installing" ? "Preparing…"
               : s?.status === "error" ? t("updates.retry")
             : t("updates.check")}
-      </button>
+      </button>}
     </Card>
   );
 }
@@ -743,6 +746,7 @@ export function SettingsModal() {
                 </Card>
                 {desktop === true && <NotificationSettings />}
                 {desktop === true && <StartupSettings />}
+                {desktop === true && <BackupSettings />}
                 {desktop === true && <><Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
@@ -773,12 +777,6 @@ export function SettingsModal() {
                       Connected apps service is ready
                     </div>
                   ) : null}
-                  {/* Paste a whole .env once instead of filling the rows below
-                      one at a time. It only ever SUGGESTS: each key found is
-                      confirmed separately, an ambiguous one is not confirmable
-                      until the person says which provider it is, and the blob
-                      is never React state so it cannot reach a render tree. */}
-                  <PasteKeys />
                   <TranscriptionSettings />
                   <SearchSettings />
                   <ImageSettings />
@@ -793,6 +791,10 @@ export function SettingsModal() {
                   <ApiKeyRow section="composio" />
                   <ApiKeyRow section="box" />
                   <VpsConnection />
+                  <details className="border-t border-hairline/40 pt-2">
+                    <summary className="min-h-11 cursor-pointer py-3 text-[13px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Advanced: Add or replace keys</summary>
+                    <PasteKeys />
+                  </details>
                 </div>
               </Card>
             )}
@@ -807,7 +809,7 @@ export function SettingsModal() {
               </>
             )}
 
-            {desktop === true && section === "channels" && <TelegramSettings />}
+            {desktop === true && section === "channels" && <div className="space-y-4"><TelegramSettings /><SlackSettings /><DiscordSettings /></div>}
 
             {desktop === true && section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
 

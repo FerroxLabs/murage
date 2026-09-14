@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildNotificationOptions,
+  createApprovalDeduper,
   requestNotificationPermission,
   showNotification,
   type NotifyFrame,
@@ -36,6 +37,36 @@ function installNotification(permission: NotificationPermission, focused = false
 afterEach(() => vi.unstubAllGlobals());
 
 describe("desktop notifications", () => {
+  it("delivers a fresh focused approval through the native bridge once", () => {
+    const { notices } = installNotification("granted", true);
+    const show = vi.fn(async () => ({ accepted: true }));
+    Object.assign(window, { muragebox: { platform: "darwin", approvalNotifications: { show } } });
+    const approval = { ...frame, kind: "approval" as const, requestId: "focused-approval", messageId: "card" };
+    showNotification(approval, vi.fn(), undefined, frame.threadId);
+    showNotification(approval, vi.fn(), undefined, frame.threadId);
+    expect(show).toHaveBeenCalledOnce();
+    expect(show).toHaveBeenCalledWith({ botId: frame.botId, threadId: frame.threadId, requestId: approval.requestId, messageId: "card", title: frame.title, body: frame.body });
+    expect(notices).toHaveLength(0);
+  });
+  it.each(["default", "denied"] as const)("does not deliver an approval with permission %s", permission => {
+    const { notices } = installNotification(permission, true);
+    const show = vi.fn();
+    Object.assign(window, { muragebox: { platform: "darwin", approvalNotifications: { show } } });
+    showNotification({ ...frame, kind: "approval", requestId: `permission-${permission}`, messageId: "card" }, vi.fn());
+    expect(show).not.toHaveBeenCalled();
+    expect(notices).toHaveLength(0);
+  });
+  it("does not retry a failing native alert through an audible web fallback", async () => {
+    const { notices } = installNotification("granted");
+    const show = vi.fn(async () => { throw new Error("native refused"); });
+    Object.assign(window, { muragebox: { platform: "win32", approvalNotifications: { show } } });
+    const approval = { ...frame, kind: "approval" as const, requestId: "failed-native", messageId: "card" };
+    showNotification(approval, vi.fn());
+    await Promise.resolve();
+    showNotification(approval, vi.fn());
+    expect(show).toHaveBeenCalledOnce();
+    expect(notices).toHaveLength(0);
+  });
   it("does not request permission from a background notification frame", () => {
     const { notices, requestPermission } = installNotification("default");
     showNotification(frame, vi.fn());
@@ -124,6 +155,18 @@ describe("desktop notifications", () => {
     showNotification(frame, vi.fn(), null);
     expect(notices[1]?.options?.icon).toBeUndefined();
   });
+});
+
+it("dedupes request identity rather than copy, with bounded recent retention", () => {
+  const claim = createApprovalDeduper(2);
+  const approval = { ...frame, kind: "approval" as const, requestId: "same-id", messageId: "card" };
+  expect(claim(approval)).toBe(true);
+  expect(claim({ ...approval, body: "changed", messageId: "duplicate-card" })).toBe(false);
+  expect(claim({ ...approval, threadId: "different" })).toBe(true);
+  expect(claim({ ...approval, requestTurnId: "next-turn" })).toBe(true);
+  expect(claim(approval)).toBe(true);
+  expect(claim({ ...approval, botId: "other-bot" })).toBe(true);
+  expect(claim({ ...approval, requestId: undefined })).toBe(false);
 });
 
 describe("buildNotificationOptions", () => {

@@ -46,7 +46,7 @@ describe("first paint", () => {
     expect(rail).toContain('role="separator"');
     expect(rail).toContain('aria-orientation="vertical"');
     expect(rail).toContain("width:440px");
-    expect(rail).toContain("max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full");
+    expect(rail).not.toContain("absolute inset-0 z-40 w-full");
     expect(rail).not.toContain("Back to chat");
 
     const expanded = render({ pane: pane([{ type: "show" }, { type: "setExpanded", expanded: true }]) });
@@ -56,9 +56,13 @@ describe("first paint", () => {
 
     const compact = render({ pane: pane([{ type: "show" }]), narrow: true });
     expect(compact).toContain('data-layout="compact"');
+    expect(compact).toContain("absolute inset-0 z-40 w-full");
     expect(compact).toContain("Back to chat");
     expect(compact).not.toContain('role="separator"');
     expect(compact).not.toMatch(/<aside[^>]*\shidden/);
+    const constrained = render({ pane: pane([{ type: "show" }, { type: "setCompact", compact: true }]), narrow: undefined });
+    expect(constrained).toContain('data-layout="compact"');
+    expect(constrained).toContain("absolute inset-0 z-40 w-full");
     // Back to chat hides the pane but keeps it mounted, so its drafts survive.
     const backInChat = render({ pane: pane([{ type: "show" }, { type: "setCompactView", view: "chat" }]), narrow: true });
     expect(backInChat).toMatch(/<aside[^>]*\shidden=""/);

@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import * as yauzl from "yauzl";
 import { ZipFile as ZipWriter } from "yazl";
 import { z } from "zod";
-import { stageInstallationState } from "./installation-state-snapshot.ts";
+import { stageInstallationState, type StateSnapshotManifest } from "./installation-state-snapshot.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 
@@ -40,10 +40,16 @@ function limits(options: ArchiveLimits) {
   return { maxBytes, maxFiles };
 }
 
-function validateManifest(value: unknown, options: ArchiveLimits): InstallationArchiveManifest {
+export function validateInstallationArchiveManifest(value: unknown, options: ArchiveLimits = {}): InstallationArchiveManifest {
   const parsed = manifestSchema.safeParse(value);
   if (!parsed.success) fail("INVALID_ARCHIVE_MANIFEST");
   const manifest = parsed.data;
+  validateArchiveFileList(manifest, options);
+  return manifest;
+}
+
+/** Shared path/budget mechanics; each format keeps its own strict schema. */
+export function validateArchiveFileList(manifest: Pick<InstallationArchiveManifest, "files" | "database">, options: ArchiveLimits = {}) {
   const budget = limits(options);
   const names = new Set<string>();
   let total = 0;
@@ -60,7 +66,6 @@ function validateManifest(value: unknown, options: ArchiveLimits): InstallationA
   if (manifest.database.status === "copied") {
     if (!database || database.bytes !== manifest.database.bytes || database.sha256 !== manifest.database.sha256) fail("INVALID_DATABASE_MANIFEST");
   } else if (database) fail("INVALID_DATABASE_MANIFEST");
-  return manifest;
 }
 
 async function fileHash(path: string): Promise<string> {
@@ -74,6 +79,11 @@ async function fileHash(path: string): Promise<string> {
  * as authority to write elsewhere. Returned state still requires schema,
  * reference, credential and paused-restore reconstruction before activation. */
 export async function inspectInstallationArchive(archive: string, outputParent: string, options: ArchiveLimits = {}) {
+  return inspectArchiveEntries(archive, outputParent, value => validateInstallationArchiveManifest(value, options), options);
+}
+
+/** A distinct format supplies its own strict manifest parser, never a v1 bypass. */
+export async function inspectArchiveEntries<T extends Pick<InstallationArchiveManifest, "files">>(archive: string, outputParent: string, parseManifest: (value: unknown) => T, options: ArchiveLimits = {}) {
   const budget = limits(options);
   if (options.signal?.aborted) fail("SNAPSHOT_CANCELLED");
   const before = lstatSync(archive);
@@ -82,7 +92,7 @@ export async function inspectInstallationArchive(archive: string, outputParent: 
   const directory = mkdtempSync(join(dataDirLeasePaths(outputParent).canonicalDataDir, ".murage-archive-inspection-"));
   let zip: yauzl.ZipFile | undefined;
   let success = false;
-  let manifest: InstallationArchiveManifest | undefined;
+  let manifest: T | undefined;
   let declared = new Map<string, InstallationArchiveManifest["files"][number]>();
   let inFlight: Promise<void> | undefined;
   const seen = new Set<string>();
@@ -146,7 +156,7 @@ export async function inspectInstallationArchive(archive: string, outputParent: 
             } else {
               let value: unknown;
               try { value = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { fail("INVALID_ARCHIVE_MANIFEST"); }
-              manifest = validateManifest(value, options);
+              manifest = parseManifest(value);
               declared = new Map(manifest.files.map(file => [`state/${file.path}`, file]));
               if (source.entryCount !== manifest.files.length + 1) fail("ARCHIVE_ENTRY_COUNT_MISMATCH");
             }
@@ -176,11 +186,20 @@ export async function inspectInstallationArchive(archive: string, outputParent: 
  * failures for repetitive logs; archive compression can be added separately. */
 export async function writeInstallationArchive(dataDir: string, destination: string, options: ArchiveLimits = {}) {
   if (!portableArchivePath(basename(destination))) fail("INVALID_DESTINATION");
+  try { lstatSync(destination); fail("DESTINATION_EXISTS"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const stage = await stageInstallationState(dataDir, dirname(destination), options);
+  try { return await writeInstallationStageArchive(stage, destination, options); }
+  finally { rmSync(stage.directory, { recursive: true, force: true }); }
+}
+
+/** Serialise an already-owned recovery stage; fidelity callers avoid recapture. */
+export async function writeInstallationStageArchive(stage: { directory: string; manifest: StateSnapshotManifest }, destination: string, options: ArchiveLimits = {}) {
+  if (!portableArchivePath(basename(destination))) fail("INVALID_DESTINATION");
   const parent = dataDirLeasePaths(dirname(destination)).canonicalDataDir;
   const target = join(parent, basename(destination));
   try { lstatSync(target); fail("DESTINATION_EXISTS"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const stage = await stageInstallationState(dataDir, parent, options);
   let scratch: string | undefined;
   let writer: ZipWriter | undefined;
   let output: ReturnType<typeof createWriteStream> | undefined;
@@ -188,7 +207,7 @@ export async function writeInstallationArchive(dataDir: string, destination: str
   const inputs = new Set<Readable>();
   try {
     scratch = mkdtempSync(join(parent, ".murage-archive-write-"));
-    const manifest = validateManifest({ ...stage.manifest, format: "murage.installation", files: stage.manifest.files.map(file => ({ ...file, path: file.path.replaceAll("\\", "/").normalize("NFC") })) }, options);
+    const manifest = validateInstallationArchiveManifest({ ...stage.manifest, format: "murage.installation", files: stage.manifest.files.map(file => ({ ...file, path: file.path.replaceAll("\\", "/").normalize("NFC") })) }, options);
     const file = join(scratch, "backup.zip");
     writer = new ZipWriter();
     output = createWriteStream(file, { flags: "wx", mode: 0o600 });

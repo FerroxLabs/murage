@@ -282,7 +282,22 @@ jobs:
       - name: "Gate: the installer must actually be signed"
         shell: pwsh
         run: |
-          # Every executable we ship must carry a VALID signature, ours or a
+          # Only the two exact upstream age paths may remain unsigned, after
+          # the complete raw inventory (including LICENSE) passes shared pins.
+          # Our backup helper still requires a valid Ferrox signature.
+          $verifyBackup = @'
+          import { verifyWindowsBackupTools } from './scripts/prepare-windows-backup-tools.mjs';
+          import { verifyWindowsBrowserSignatures } from './server/browser-windows-identity.ts';
+          const backup = 'release/win-unpacked/resources/backup-tools/x64';
+          verifyWindowsBackupTools(backup);
+          await verifyWindowsBrowserSignatures([backup + '/murage-backup-age.exe'], process.env.SystemRoot);
+          '@
+          & node --input-type=module -e $verifyBackup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $rawBackupFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          [void]$rawBackupFiles.Add([System.IO.Path]::GetFullPath('release/win-unpacked/resources/backup-tools/x64/age.exe'))
+          [void]$rawBackupFiles.Add([System.IO.Path]::GetFullPath('release/win-unpacked/resources/backup-tools/x64/age-keygen.exe'))
+          # Every other executable must carry a VALID signature, ours or a
           # vendor's. But we bundle third-party binaries (cloudflared) that are
           # signed by their own publisher, so demanding our subject everywhere
           # rejects a perfectly good Cloudflare signature. Allowlist the
@@ -291,6 +306,7 @@ jobs:
           $allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.')
           $script:fail = 0
           Get-ChildItem release -Filter *.exe -Recurse | ForEach-Object {
+            if ($rawBackupFiles.Contains([System.IO.Path]::GetFullPath($_.FullName))) { return }
             $sig = Get-AuthenticodeSignature $_.FullName
             $subject = $sig.SignerCertificate.Subject
             Write-Host "$($_.Name): $($sig.Status) $subject"

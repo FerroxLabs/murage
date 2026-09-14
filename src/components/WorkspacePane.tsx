@@ -34,7 +34,7 @@ import {
   type ApiCall, type WorkspaceNativeAction,
 } from "@/lib/files-view";
 import {
-  WORKSPACE_PANE_MIN_WIDTH, WORKSPACE_PANE_WIDTH_KEY,
+  WORKSPACE_PANE_MIN_WIDTH, WORKSPACE_PANE_MIN_CHAT_WIDTH, WORKSPACE_PANE_WIDTH_KEY,
   activeWorkspaceTab, clampWorkspaceWidth, copyPath, documentKindForPath, fileName, probeWorkspaceRevision, readWorkspaceFile, tabIdentity, tabKey,
   workspaceApi, writeWorkspaceFile,
   type WorkspacePaneAction, type WorkspacePaneState, type WorkspaceTab,
@@ -46,7 +46,10 @@ import {
 import { createIndexedDbDraftBackend, createMarkdownDraftStore, type MarkdownDraftStore } from "@/lib/markdown-drafts";
 import { MarkdownEditor, MarkdownEditorController } from "./MarkdownEditor";
 import { ChatMarkdown } from "./ChatMarkdown";
-import { artifactPreviewHtml, openFiles } from "./Files";
+import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
+import { MemorySettings } from "./MemorySettings";
+import { LocalMedia } from "./MediaPlayer";
+import { ImageMedia } from "./ImageMedia";
 import { MEDIA_ROUTES, type MediaResolveResponse } from "../../shared/media-assets";
 import {
   WORKSPACE_FILES_ROUTES, isWorkspaceRelativePath,
@@ -66,6 +69,20 @@ const scopeKeyOf = (scope: WorkspaceScopeRef | null) => (scope ? `${scope.botId}
 
 export type WorkspacePaneDispatch = (action: WorkspacePaneAction) => void;
 
+function closeFileTab(pane: WorkspacePaneState, dispatch: WorkspacePaneDispatch, id: string, force = false) {
+  const index = pane.tabs.findIndex(tab => tab.id === id);
+  const tab = pane.tabs[index];
+  if (!tab) return;
+  const next = id !== pane.activeTabId ? pane.tabs.find(item => item.id === pane.activeTabId) : pane.tabs[index + 1] ?? pane.tabs[index - 1];
+  dispatch({ type: "close", id, force });
+  requestAnimationFrame(() => {
+    const target = tab.dirty && !force
+      ? document.querySelector<HTMLButtonElement>('[data-testid="workspace-pane-close-question"] button')
+      : document.getElementById(`workspace-file-tab-${next?.id}`) ?? document.getElementById("workspace-section-files");
+    target?.focus();
+  });
+}
+
 // ── Store-connected pane ─────────────────────────────────────────────────
 
 /** The pane for the selected conversation. Renders nothing while closed or
@@ -81,12 +98,15 @@ export function WorkspacePane({ bot }: { bot: Bot }) {
   if (desktop !== true || !pane.open) return null;
   return (
     <WorkspacePaneSurface
-      scope={{ botId: bot.id, threadId: bot.threadId }}
+      scope={{ botId: pane.filesRequest?.botId ?? bot.id, threadId: pane.filesRequest?.threadId ?? state.bots.find(item => item.id === pane.filesRequest?.botId)?.threadId ?? bot.threadId }}
       pane={pane}
       dispatch={send}
       labelForScope={labelForScope}
       drafts={drafts}
-      onOpenFiles={scope => openFiles({ botId: scope.botId, threadId: scope.threadId })}
+      savedFiles={pane.filesRequest?.artifactId || pane.filesRequest?.library ? <Files key={JSON.stringify(pane.filesRequest)} bots={state.bots} initialBotId={pane.filesRequest.botId ?? bot.id} initialThreadId={pane.filesRequest.threadId ?? state.bots.find(item => item.id === pane.filesRequest?.botId)?.threadId ?? bot.threadId} initialArtifactId={pane.filesRequest.artifactId} onOpenInPane={(scope, relativePath, mode) => send({ type: "open", scope, relativePath, mode })} onShowPane={scope => send({ type: "show", filesRequest: scope })} onNativeAction={artifactNativeAction()} /> : undefined}
+      memoryLabel={scopeLabel(state.bots, { botId: bot.id, threadId: bot.threadId })}
+      memory={<MemorySettings key={bot.id} botId={bot.id} compact onNavigate={() => send({ type: "setOpen", open: false })} />}
+      onOpenFiles={scope => send({ type: "show", filesRequest: { ...scope, library: true } })}
       onRevealFolder={reveal ? scope => reveal(scope.botId, scope.threadId) : undefined}
     />
   );
@@ -103,6 +123,9 @@ export function scopeLabel(bots: ReadonlyArray<{ id: string; name: string; threa
 // ── Surface ──────────────────────────────────────────────────────────────
 
 export interface WorkspacePaneSurfaceProps {
+  memory?: import("react").ReactNode;
+  memoryLabel?: string;
+  savedFiles?: import("react").ReactNode;
   /** The selected conversation: whose files the rail lists. */
   scope: WorkspaceScopeRef | null;
   pane: WorkspacePaneState;
@@ -126,10 +149,11 @@ interface EditorEntry {
 }
 
 export function WorkspacePaneSurface({
+  memory, memoryLabel, savedFiles,
   scope, pane, dispatch, labelForScope, api = workspaceApi, drafts = null, nativeAction = workspaceNativeAction(), onOpenFiles, onRevealFolder, narrow: narrowOverride, probeMs = WORKSPACE_PANE_PROBE_MS,
 }: WorkspacePaneSurfaceProps) {
   const viewportNarrow = useNarrowViewport();
-  const narrow = narrowOverride ?? viewportNarrow;
+  const narrow = narrowOverride ?? (viewportNarrow || pane.compact);
   const aside = useRef<HTMLElement>(null);
   const [filesShown, setFilesShown] = useState(true);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -198,6 +222,8 @@ export function WorkspacePaneSurface({
     if (!container || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       const width = container.clientWidth;
+      const compact = width > 0 && width < WORKSPACE_PANE_MIN_WIDTH + WORKSPACE_PANE_MIN_CHAT_WIDTH;
+      dispatch({ type: "setCompact", compact });
       if (width > 0 && clampWorkspaceWidth(pane.width, width) !== pane.width) dispatch({ type: "setWidth", width: pane.width, containerWidth: width });
     });
     observer.observe(container);
@@ -235,7 +261,7 @@ export function WorkspacePaneSurface({
   const wide = !narrow;
   const fills = narrow || pane.expanded;
   const closeQuestion = pane.closeRequest ? pane.tabs.find(tab => tab.id === pane.closeRequest) : undefined;
-  const scopeText = scope ? labelForScope(scope) : "";
+  const scopeText = pane.section === "memory" && memoryLabel ? memoryLabel : scope ? labelForScope(scope) : "";
   const maxWidth = containerWidth();
   return (
     <aside
@@ -251,7 +277,7 @@ export function WorkspacePaneSurface({
       className={cn(
         "relative flex h-full min-w-0 flex-col border-l border-hairline/40 bg-panel text-ink",
         fills ? "flex-1" : "shrink-0",
-        "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full max-md:border-l-0",
+        narrow && "absolute inset-0 z-40 w-full border-l-0",
       )}
       style={wide && !pane.expanded ? { width: pane.width } : undefined}
     >
@@ -302,6 +328,14 @@ export function WorkspacePaneSurface({
         </button>
       </header>
 
+      <div role="tablist" aria-label={t("workspacePane.title")} className="flex shrink-0 gap-1 border-b border-hairline/40 px-3 py-2">
+        {(["files", "memory"] as const).map(section => <button key={section} type="button" role="tab" id={`workspace-section-${section}`} tabIndex={pane.section === section ? 0 : -1} aria-controls={`workspace-section-panel-${section}`} aria-selected={pane.section === section} className={cn(button, pane.section === section && "bg-raised font-medium")} onClick={() => dispatch({ type: "show", section })} onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "files" : event.key === "End" ? "memory" : section === "files" ? "memory" : "files"; dispatch({ type: "show", section: next }); document.getElementById(`workspace-section-${next}`)?.focus(); } }}>{t(section === "files" ? "workspacePane.files" : "chatHeader.memory")}</button>)}
+      </div>
+      <div id="workspace-section-panel-memory" role="tabpanel" aria-labelledby="workspace-section-memory" hidden={pane.section !== "memory"} className="min-h-0 flex-1 overflow-y-auto p-3">{pane.section === "memory" ? memory : null}</div>
+      <div id="workspace-section-panel-files" role="tabpanel" aria-labelledby="workspace-section-files" hidden={pane.section === "memory"} className="flex min-h-0 flex-1 flex-col">
+      {savedFiles && <div className="min-h-0 flex-1 overflow-y-auto">{savedFiles}</div>}
+      <div hidden={!!savedFiles} className="flex min-h-0 flex-1 flex-col">
+
       <section aria-labelledby="workspace-pane-files" className={cn("flex shrink-0 flex-col border-b border-hairline/40", filesShown && "max-h-[45%]")}>
         <div className="flex items-center gap-1 px-2 py-1">
           <button type="button" className={cn(iconButton, "size-7")} aria-expanded={filesShown} aria-controls="workspace-pane-tree" aria-label={filesShown ? t("workspacePane.hideFiles") : t("workspacePane.showFiles")} onClick={() => setFilesShown(shown => !shown)}>
@@ -312,7 +346,7 @@ export function WorkspacePaneSurface({
             <RefreshCw size={13} />
           </button>
           {onOpenFiles && scope && (
-            <button type="button" className={cn(button, "min-h-7 px-2 py-1 text-[12px]")} onClick={() => onOpenFiles(scope)}>{t("workspacePane.openFiles")}</button>
+            <button type="button" className={cn(button, "min-h-7 px-2 py-1 text-[12px]")} onClick={() => onOpenFiles(scope)}>{t("filesWorkspace.savedTitle")}</button>
           )}
         </div>
         <div id="workspace-pane-tree" hidden={!filesShown} className="min-h-0 overflow-y-auto px-2 pb-2">
@@ -327,16 +361,18 @@ export function WorkspacePaneSurface({
           <p id="workspace-pane-close-title" className="font-medium">{t("workspacePane.closeUnsaved.title")}</p>
           <p id="workspace-pane-close-body" className="text-ink-secondary">{t("workspacePane.closeUnsaved.body", { name: fileName(closeQuestion.relativePath) })}</p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={button} onClick={() => dispatch({ type: "cancelClose" })}>{t("workspacePane.closeUnsaved.cancel")}</button>
-            <button type="button" className={button} onClick={() => dispatch({ type: "close", id: closeQuestion.id, force: true })}>{t("workspacePane.closeUnsaved.confirm")}</button>
+            <button type="button" className={button} onClick={() => { dispatch({ type: "cancelClose" }); requestAnimationFrame(() => document.getElementById(`workspace-file-tab-${closeQuestion.id}`)?.focus()); }}>{t("workspacePane.closeUnsaved.cancel")}</button>
+            <button type="button" className={button} onClick={() => closeFileTab(pane, dispatch, closeQuestion.id, true)}>{t("workspacePane.closeUnsaved.confirm")}</button>
           </div>
         </div>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {active
-          ? <WorkspaceDocument key={active.id} tab={active} api={api} dispatch={dispatch} editorFor={editorFor} editors={editors} nativeAction={nativeAction} onOpenFiles={onOpenFiles} probeMs={probeMs} />
+          ? pane.tabs.map(tab => <div key={tab.id} id={`workspace-file-panel-${tab.id}`} role="tabpanel" aria-labelledby={`workspace-file-tab-${tab.id}`} hidden={tab.id !== active.id} tabIndex={0}>{tab.id === active.id ? <WorkspaceDocument tab={tab} api={api} dispatch={dispatch} editorFor={editorFor} editors={editors} nativeAction={nativeAction} onOpenFiles={onOpenFiles} probeMs={probeMs} /> : null}</div>)
           : <p className="px-4 py-6 text-[13px] text-ink-secondary" data-testid="workspace-pane-empty">{t("workspacePane.noTabs")}</p>}
+      </div>
+      </div>
       </div>
     </aside>
   );
@@ -492,7 +528,8 @@ function TabStrip({ pane, dispatch, currentScope, labelForScope }: {
 }) {
   if (!pane.tabs.length) return null;
   return (
-    <div role="tablist" aria-label={t("workspacePane.tabs")} data-testid="workspace-pane-tabs" className="flex shrink-0 gap-1 overflow-x-auto border-b border-hairline/40 px-2 py-1.5">
+    <div data-testid="workspace-pane-tabs" className="grid shrink-0 gap-1 overflow-x-auto border-b border-hairline/40 px-2 py-1.5" style={{ gridTemplateColumns: `repeat(${pane.tabs.length}, max-content)` }}>
+      <div role="tablist" aria-label={t("workspacePane.tabs")} className="grid" style={{ gridColumn: "1 / -1", gridRow: 1, gridTemplateColumns: "subgrid" }}>
       {pane.tabs.map(tab => {
         const name = fileName(tab.relativePath);
         const activeTab = tab.id === pane.activeTabId;
@@ -503,20 +540,34 @@ function TabStrip({ pane, dispatch, currentScope, labelForScope }: {
             <button
               type="button"
               role="tab"
+              id={`workspace-file-tab-${tab.id}`}
+              aria-controls={`workspace-file-panel-${tab.id}`}
+              tabIndex={activeTab ? 0 : -1}
               aria-selected={activeTab}
               aria-label={foreign ? `${label} — ${t("workspacePane.fromConversation", { scope: labelForScope(tab.scope) })}` : label}
               title={foreign ? `${tab.relativePath} — ${t("workspacePane.fromConversation", { scope: labelForScope(tab.scope) })}` : tab.relativePath}
-              className={cn("flex min-w-0 items-center gap-1.5 px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus", tab.mode === "preview" && !tab.pinned && "italic")}
+              className={cn("flex min-w-0 items-center gap-1.5 py-1 pl-2 pr-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus", tab.mode === "preview" && !tab.pinned && "italic")}
               onClick={() => dispatch({ type: "activate", id: tab.id })}
+              onKeyDown={event => {
+                if (event.key === "Delete") { event.preventDefault(); closeFileTab(pane, dispatch, tab.id); return; }
+                const index = pane.tabs.indexOf(tab);
+                const next = event.key === "Home" ? 0 : event.key === "End" ? pane.tabs.length - 1 : event.key === "ArrowRight" ? (index + 1) % pane.tabs.length : event.key === "ArrowLeft" ? (index + pane.tabs.length - 1) % pane.tabs.length : -1;
+                if (next < 0) return;
+                event.preventDefault();
+                const target = pane.tabs[next]!;
+                dispatch({ type: "activate", id: target.id });
+                document.getElementById(`workspace-file-tab-${target.id}`)?.focus();
+              }}
             >
               {tab.mode === "edit" && <Pencil size={11} className="shrink-0" aria-hidden="true" />}
               <span className="truncate">{name}</span>
               {tab.dirty && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent" />}
             </button>
-            <button type="button" className={cn(iconButton, "size-6")} aria-label={t("workspacePane.closeTab", { name })} onClick={() => dispatch({ type: "close", id: tab.id })}><X size={12} /></button>
           </div>
         );
       })}
+      </div>
+      {pane.tabs.map((tab, index) => <button key={tab.id} type="button" className={cn(iconButton, "z-[1] mr-1 size-6 self-center justify-self-end")} style={{ gridRow: 1, gridColumn: index + 1 }} aria-label={t("workspacePane.closeTab", { name: fileName(tab.relativePath) })} onClick={() => closeFileTab(pane, dispatch, tab.id)}><X size={12} /></button>)}
     </div>
   );
 }
@@ -708,12 +759,13 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
             <button type="button" data-testid="workspace-document-edit" className={cn("min-h-8 px-2.5 text-[12.5px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus", tab.mode === "edit" ? "bg-raised text-ink" : "text-ink-secondary hover:bg-raised-hover")} aria-pressed={tab.mode === "edit"} disabled={load.status === "error" || load.status === "loading"} onClick={() => dispatch({ type: "setMode", id: tab.id, mode: "edit" })}>{t("workspacePane.edit")}</button>
           </div>
         )}
-        {!tab.pinned && tab.mode === "preview" && <button type="button" className={button} onClick={() => dispatch({ type: "pin", id: tab.id })}>{t("workspacePane.keepOpen")}</button>}
+        {(read || load.status === "editor") && <button type="button" className={button} disabled={busy} onClick={download}>{t("workspacePane.download")}</button>}
       </div>
+      <details><summary className="cursor-pointer text-[12.5px] text-ink-secondary">{t("chatHeader.more")}</summary>
       <div className="flex flex-wrap items-center gap-1.5">
+        {!tab.pinned && tab.mode === "preview" && <button type="button" className={button} onClick={() => dispatch({ type: "pin", id: tab.id })}>{t("workspacePane.keepOpen")}</button>}
         {read && <button type="button" className={button} disabled={busy || dirty || !diskRevision} title={dirty ? t("markdownEditor.status.dirty") : t("workspacePane.workingFileNote")} onClick={() => void saveVersion()}>{t("workspacePane.saveVersion")}</button>}
         {canSaveCopy && <button type="button" className={button} disabled={busy} aria-expanded={copyName !== null} onClick={() => setCopyName(current => (current === null ? copyPath(tab.relativePath) : null))}>{t("workspacePane.saveCopy")}</button>}
-        {(read || load.status === "editor") && <button type="button" className={button} disabled={busy} onClick={download}>{t("workspacePane.download")}</button>}
         {nativeAction && (load.status === "ready" || load.status === "editor" || ((load.status === "binary" || load.status === "image") && load.entry !== null)) && (
           <>
             <button type="button" data-native-action="open" className={button} disabled={busy} onClick={() => void native("open")}>{t("filesWorkspace.openInApp")}</button>
@@ -722,6 +774,7 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
         )}
         {onOpenFiles && <button type="button" className={button} onClick={() => onOpenFiles(identity.scope)}>{t("workspacePane.previewInFiles")}</button>}
       </div>
+      </details>
       {copyName !== null && (
         <form className="flex flex-wrap items-center gap-1.5" onSubmit={event => { event.preventDefault(); void saveCopy(copyName); }}>
           <label className="min-w-0 flex-1 text-[12px]">{t("workspacePane.saveCopyPrompt")}<input className={cn(field, "mt-1 w-full font-mono")} value={copyName} maxLength={2048} onChange={event => setCopyName(event.target.value)} /></label>
@@ -736,9 +789,9 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
 
       {load.status === "loading" && <p role="status" className="text-[12.5px] text-ink-secondary">{t("workspacePane.opening", { name })}</p>}
       {load.status === "error" && <p role="alert" data-testid="workspace-document-error" data-code={load.code ?? undefined} className="text-[13px] text-danger">{load.message}</p>}
-      {load.status === "binary" && <p className="text-[13px] text-ink-secondary">{t("workspacePane.binary")}</p>}
+      {load.status === "binary" && <LocalMedia scope={identity.scope} path={identity.relativePath} fallback={<p className="text-[13px] text-ink-secondary">{t("workspacePane.binary")}</p>} />}
       {load.status === "image" && (load.url
-        ? <img src={load.url} alt={t("workspacePane.imageLabel", { name })} className="max-h-[70vh] max-w-full self-start rounded-lg border border-hairline/40 bg-inset object-contain" />
+        ? <ImageMedia item={{ id: tabKey(tab), src: load.url, name, alt: t("workspacePane.imageLabel", { name }), source: "workspace", download: true }} imgClassName="max-h-[70vh] max-w-full object-contain" />
         : <p className="text-[13px] text-ink-secondary">{t("workspacePane.imageUnavailable")}</p>)}
       {load.status === "editor" && <MarkdownEditor controller={load.entry.controller} title={tab.relativePath} />}
       {load.status === "ready" && kind === "markdown" && (

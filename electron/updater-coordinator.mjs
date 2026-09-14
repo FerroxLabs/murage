@@ -4,6 +4,9 @@
 // chat app must not run dpkg itself. Everything before the install is shared.
 // It receives the staged paths and resolves with an optional state patch
 // describing what is left to do, which the card renders.
+import { updateErrorMessage } from "./update-errors.mjs";
+import { assertCandidateManifest, captureUpdateCandidate, validateUpdateCandidate } from "./updater-candidate.mjs";
+
 export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null } = {}) {
   let checkOperation = null;
   let retryAction = "check";
@@ -12,6 +15,8 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   let downloadedFiles = null;
   let downloadOperation = null;
   let installOperation = null;
+  let downloadedCandidate = null;
+  let resumeRequested = false;
   // Staged files, installation instructions and failed user actions remain
   // actionable until the user explicitly asks for a fresh check.
   let actionOwnsState = false;
@@ -19,8 +24,8 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
 
   const routeError = (manual, error) => {
     const message = installOperation?.prepared
-      ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${String(error?.message ?? error)}`
-      : String(error?.message ?? error);
+      ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${updateErrorMessage(error)}`
+      : updateErrorMessage(error);
     if (installOperation) retryAction = "install";
     else if (downloadOperation) retryAction = "download";
     actionOwnsState = manual;
@@ -169,6 +174,10 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
           if (!(await nativeStage)) return result;
           if (!operation.failed) {
             downloadedFiles = Array.isArray(result) ? result.filter((file) => typeof file === "string") : null;
+            downloadedCandidate = null;
+            // Ordinary updates remain usable when the optional backup identity
+            // cannot be built. An opted-in hook must refuse a null candidate.
+            try { downloadedCandidate = await captureUpdateCandidate(updater, { downloadedFiles }); } catch { /* optional identity */ }
           }
           if (!operation.failed && operation.downloadedInfo) {
             actionOwnsState = true;
@@ -207,8 +216,16 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     const operation = { failed: false, timer: null };
     installOperation = operation;
     setState({ status: "installing" });
-    const launch = () => {
+    const launch = (decision) => {
       if (installOperation !== operation || operation.failed) return;
+      if (decision?.status === "deferred") {
+        operation.deferred = true;
+        setState({ status: "deferred", message: decision.message ?? "The update is waiting for its pre-upgrade backup." });
+        return decision;
+      }
+      if (decision !== undefined && (!decision || decision.status !== "continue")) {
+        throw new Error("Update installation was not explicitly admitted.");
+      }
       operation.prepared = Boolean(beforeInstall);
       try { updater.quitAndInstall(true, true); }
       catch (error) { routeError(true, error); return; }
@@ -222,10 +239,67 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       }
     };
     if (beforeInstall) {
-      operation.promise = Promise.resolve().then(beforeInstall).then(launch).catch((error) => routeError(true, error));
+      operation.promise = Promise.resolve().then(async () => {
+        // Refresh actual bytes at the admission boundary, not just at download.
+        let candidate = null;
+        if (downloadedCandidate) {
+          try {
+            candidate = await captureUpdateCandidate(updater, { downloadedFiles });
+            if (candidate.candidateId !== downloadedCandidate.candidateId) candidate = null;
+          } catch { /* opted-in hook refuses unavailable identity */ }
+        }
+        return beforeInstall(candidate);
+      }).then(launch).catch((error) => routeError(true, error));
       return operation.promise;
     }
     launch();
+  }
+
+  function resumeInstall(value, { beforeInstall: admit } = {}) {
+    let candidate;
+    try {
+      candidate = validateUpdateCandidate(value);
+      if (typeof admit !== "function" || handOffInstall || nativeUpdater) throw new Error("This update cannot resume a pre-upgrade installation.");
+      if (installOperation?.candidateId === candidate.candidateId) return installOperation.promise;
+      if (resumeRequested) throw new Error("The update installation was already requested. Review its outcome.");
+      if (installOperation || downloadOperation || checkOperation) throw new Error("Another updater operation is active.");
+    } catch (error) { return Promise.reject(error); }
+    const operation = { candidateId: candidate.candidateId, failed: false, timer: null, promise: null };
+    installOperation = operation;
+    actionOwnsState = true;
+    const active = () => {
+      if (operation.failed || installOperation !== operation) throw new Error("The update continuation was interrupted.");
+    };
+    operation.promise = Promise.resolve().then(async () => {
+      const checked = await updater.checkForUpdates();
+      active();
+      if (checked?.isUpdateAvailable !== true) throw new Error("The pending update is unavailable.");
+      assertCandidateManifest(candidate, checked.updateInfo);
+      // The normal verifier may reuse its cache or transfer the same candidate
+      // once. No private state seeding, arbitrary path install or retry loop.
+      const files = await updater.downloadUpdate();
+      active();
+      if (!Array.isArray(files) || files.length < 1 || files.some((file) => typeof file !== "string")) throw new Error("The pending update download did not return verified files.");
+      const actual = await captureUpdateCandidate(updater, { downloadedFiles: files });
+      if (actual.candidateId !== candidate.candidateId) throw new Error("The selected update artifact changed.");
+      const decision = await admit(actual);
+      active();
+      if (!decision || decision.status !== "continue") throw new Error("Update continuation was not explicitly admitted.");
+      operation.prepared = true;
+      resumeRequested = true;
+      setState({ status: "installing", version: candidate.version });
+      updater.quitAndInstall(true, true);
+      active();
+      operation.timer = setTimeout(() => {
+        if (installOperation === operation) routeError(true, new Error("The update installation outcome is unknown. Review the pending installation."));
+      }, 2 * 60 * 1000);
+      operation.timer.unref?.();
+      return { status: "install-requested" };
+    }).catch((error) => {
+      if (!operation.failed) routeError(true, error);
+      throw error;
+    });
+    return operation.promise;
   }
 
   // The platform owns the install from here: a terminal opens with the
@@ -249,5 +323,5 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   const retry = () => retryAction === "download" ? download() : retryAction === "install" ? install() : check(true);
-  return { check, download, install, retry };
+  return Object.freeze({ check, download, install, retry, resumeInstall, supportsInstallContinuation: !handOffInstall && !nativeUpdater });
 }

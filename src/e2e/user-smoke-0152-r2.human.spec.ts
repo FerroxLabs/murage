@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
 import { openSidebar } from "./fixtures.ts";
+import { fakeLlamaCompletion, fakeLlamaToolStream } from "./fake-llama-completion";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
 
@@ -76,14 +77,15 @@ async function fakeLlamaServer(): Promise<{ server: Server; address: string }> {
     const body = await readBody(req);
     const messages = Array.isArray(body.messages) ? (body.messages as Array<{ role?: string }>) : [];
     const prose = body.model === FAKE_PROSE_MODEL;
+    const model = typeof body.model === "string" ? body.model : FAKE_TOOL_MODEL;
     switch (req.url) {
       case "/props": return send(res, 200, { default_generation_settings: { n_ctx: 65_536 }, model_path: "/models/qwen.gguf", total_slots: 1 });
       case "/health": return send(res, 200, { status: "ok" });
       case "/v1/models": return send(res, 200, { object: "list", data: [FAKE_TOOL_MODEL, FAKE_PROSE_MODEL].map((id) => ({ id, object: "model", owned_by: "llamacpp" })) });
       case "/v1/chat/completions":
-        if (prose || messages.some((message) => message.role === "tool")) return send(res, 200, { choices: [{ message: { role: "assistant", content: "pong — from the fake local model" } }] });
-        if (body.stream) { res.writeHead(200, { "content-type": "text/event-stream" }); res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, ...toolCall }] } }] })}\n\n`); return res.end("data: [DONE]\n\n"); }
-        return send(res, 200, { choices: [{ message: { role: "assistant", content: null, tool_calls: [toolCall] } }], usage: { prompt_tokens: 7_800 } });
+        if (prose || messages.some((message) => message.role === "tool")) return send(res, 200, fakeLlamaCompletion({ role: "assistant", content: "pong — from the fake local model" }, "stop", model));
+        if (body.stream) { res.writeHead(200, { "content-type": "text/event-stream" }); for (const chunk of fakeLlamaToolStream(toolCall, model)) res.write(`data: ${JSON.stringify(chunk)}\n\n`); return res.end("data: [DONE]\n\n"); }
+        return send(res, 200, fakeLlamaCompletion({ role: "assistant", content: null, tool_calls: [toolCall] }, "tool_calls", model, { prompt_tokens: 7_800 }));
       case "/v1/messages": return send(res, 200, { content: [{ type: "tool_use", id: "t1", name: "get_weather", input: { city: "Paris" } }] });
       case "/v1/responses": return send(res, 200, { output: [{ type: "function_call", name: "get_weather", arguments: '{"city":"Paris"}' }] });
       default: return send(res, 404, { error: "not found" });

@@ -17,6 +17,14 @@ function capture() {
 const identity = { threadId: "thread-1", driver: "grokAgent", instanceId: "grok-main", turnId: "turn-1" };
 
 describe("engine lifecycle recorder", () => {
+  it("keeps terminal and observed kinds distinct and refuses unknown diagnostic categories",()=>{
+    const {rows,sink}=capture(),recorder=createLifecycleRecorder({...identity,sink});
+    recorder.record("rpc_rejected",{rpcId:3,method:"session/prompt",rpcCode:-32603,httpStatus:402,terminalKind:"http",observedKind:"api"});
+    expect(rows[0].msg).toMatchObject({terminalKind:"http",observedKind:"api",rpcId:3,httpStatus:402});
+    recorder.record("rpc_rejected",{terminalKind:"private-canary" as never});
+    recorder.record("closed",{code:0});
+    expect(JSON.stringify(rows)).not.toContain("private-canary");expect(rows.find(row=>row.msg.event==="events_omitted")?.msg).toMatchObject({omitted:1,omittedReason:"invalid"});
+  });
   it("writes schema v1 records correlated by generation and monotonic sequence", () => {
     const { rows, sink } = capture();
     let clock = 1_000;

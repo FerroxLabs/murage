@@ -37,6 +37,7 @@ import { EngineSetup } from "./EngineSetup";
 import { ProviderErrorCard } from "./ProviderErrorCard";
 import { RuntimeErrorCard } from "./RuntimeErrorCard";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
+import type { IncidentMessageSelection } from "./DiagnosticDetails";
 import { BotAvatar } from "./Avatar";
 import { ChatHeader } from "./ChatHeader";
 import { CommAvatar } from "./CommAvatar";
@@ -107,6 +108,10 @@ import { useReplyDraft } from "@/lib/drafts";
 const USER_COLLAPSE_CHARS = 600;
 const USER_COLLAPSE_LINES = 8;
 const noop = () => {};
+
+export function ErrorBanner({message,onDismiss}:{message:string;onDismiss:()=>void}){
+  return <div className="w-full px-5"><div role="alert" className="mb-2 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger"><span className="min-w-0 flex-1">{message}</span><button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={onDismiss} className="shrink-0 rounded p-0.5 text-danger hover:bg-danger/10 focus-visible:ring-2 focus-visible:ring-danger"><X size={16}/></button></div></div>;
+}
 
 /** "Today" / "Yesterday" / "Mon, Aug 11" — real dates, not a hardcoded label. */
 function dayLabel(at: number): string {
@@ -311,15 +316,15 @@ export function MessageActionSheet({
  * Once the engine reports itself fixed the card flips back to Retry, which
  * (with the on-focus re-probe) happens by itself when the user returns from
  * the terminal. */
-export function ErrorRow({ message, details, onRetry, setupInstance, authRequired = false, providerError, onOpenProviderSettings }: {
+export function ErrorRow({ message, details, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, providerError, onOpenProviderSettings }: {
   message: string; details?: string; onRetry?: () => void; setupInstance?: InstanceInfo;
-  authRequired?: boolean; providerError?: ProviderErrorInfo; onOpenProviderSettings: () => void;
+  authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
-  if (providerError) return <ProviderErrorCard info={providerError} details={details} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
+  if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
   const forceSignIn = authRequired && !authRecovered;
   const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false));
-  return <RuntimeErrorCard message={message} details={details} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
+  return <RuntimeErrorCard message={message} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
     setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
@@ -1009,6 +1014,9 @@ const MessagesList = memo(function MessagesList({
                     authRequired={m.tool.authRequired}
                     details={m.tool.errorDetails}
                     providerError={m.tool.providerError}
+                    diagnostic={m.tool.diagnostic}
+                    turnId={m.turnId}
+                    incident={{threadId:bot.threadId,messageId:m.id}}
                     onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: bot.modelSelection.connectionId ? "models" : "engines" })}
                   />
                 );
@@ -1354,13 +1362,16 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // stays mounted but takes no width, so its scroll position, the composer
   // draft and any in-flight turn survive the round trip.
   const workspaceExpanded = state.workspacePane.open && state.workspacePane.expanded;
+  const workspaceCompact = state.workspacePane.open && state.workspacePane.compact && state.workspacePane.compactView === "workspace";
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-row bg-app">
     <div
       data-testid="chat-column"
       className="relative flex h-full min-w-0 flex-1 flex-col md:data-collapsed:invisible md:data-collapsed:w-0 md:data-collapsed:min-w-0 md:data-collapsed:flex-none md:data-collapsed:overflow-hidden"
       data-collapsed={workspaceExpanded ? "true" : undefined}
-      aria-hidden={workspaceExpanded || undefined}
+      aria-hidden={workspaceExpanded || workspaceCompact || undefined}
+      inert={workspaceCompact || undefined}
+      style={workspaceCompact ? { visibility: "hidden" } : undefined}
     >
       {/* Call mode covers the thread while the bot is on the line */}
       <CallOverlay bot={bot} />
@@ -1378,13 +1389,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       {findOpen && <ChatFindBar threadId={bot.threadId} onClose={() => setFindOpen(false)} />}
 
       {/* Error banner */}
-      {state.error && (
-        <div className="w-full px-5">
-          <div className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
-            {state.error}
-          </div>
-        </div>
-      )}
+      {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
 
       {/* Pinned message banner */}
       <PinnedBanner

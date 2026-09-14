@@ -311,7 +311,7 @@ function handle(cmd: any) {
       // record receipt so a test can prove a prompt was (or was never) sent
       if (process.env.FAKE_PI_DUMP) {
         try {
-          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ prompt: true }) + "\n");
+          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ prompt: true, action: true, pid: process.pid }) + "\n");
         } catch {
           /* never let dumping break a run */
         }
@@ -334,6 +334,8 @@ function handle(cmd: any) {
         streamTurn();
         return;
       }
+      // CR2: accepted prompt remains active until the owned fixture is stopped.
+      if (mode === "hold") return;
       if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
       else if (mode === "host-confirm") streamHostConfirmTurn();

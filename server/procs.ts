@@ -55,6 +55,21 @@ export function assertSafeCliArgv(
   throw error;
 }
 
+export const CLI_TERM_GRACE_MS = 3_000;
+export const CLI_FORCE_WAIT_MS = 1_000;
+interface CliOwnership {
+  pid: number | undefined;
+  platform: NodeJS.Platform;
+  closed: boolean;
+  stopped: boolean;
+  stopping?: Promise<boolean>;
+  observations: StopRouteObservation[];
+  observers: Set<StopRouteObserver>;
+}
+// Evidence belongs to this exact spawn/handle, never a PID recovered after a
+// server restart. A retained live session is not stopped until requested.
+const cliOwnership = new WeakMap<ChildProcess, CliOwnership>();
+
 export function spawnCli(
   cli: string,
   args: string[],
@@ -81,6 +96,14 @@ export function spawnCli(
   // is where every one of them settles the turn — so it is swallowed, not
   // logged.
   child.stdin?.on("error", () => {});
+  const ownership: CliOwnership = { pid: child.pid, platform: process.platform, closed: false, stopped: false, observations: [], observers: new Set() };
+  cliOwnership.set(child, ownership);
+  child.once("close", () => {
+    ownership.closed = true;
+    // The CLI owns its same-group helpers until its lifecycle ends. Root
+    // close does not surrender them; escaped groups are outside this scope.
+    if (ownership.platform !== "win32") void awaitCliTreeStopped(child);
+  });
   return child;
 }
 
@@ -163,7 +186,101 @@ const REAL_KILL_DEPS: KillCliTreeDeps = {
 /** Stop a CLI and every process it spawned (MCP proxies included). The
  * optional observer reports the route; it can never change or break it. */
 export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): void {
+  const ownership = cliOwnership.get(child);
+  if (ownership?.platform !== "win32" && ownership) {
+    void stopOwnedCli(child, ownership, observer);
+    return;
+  }
+  if (process.platform !== "win32" && !ownership) {
+    // Unknown handles cannot authorize a negative-PID group signal. Keep
+    // the exact-child best-effort fallback for existing auxiliary callers.
+    try { child.kill("SIGTERM"); } catch { /* no group ownership */ }
+    return;
+  }
   killCliTreeWith(child, observer, REAL_KILL_DEPS);
+}
+
+/** Request termination and confirm the owned lifecycle. POSIX requires root
+ * close AND group disappearance; Windows retains its existing root-close
+ * contract and taskkill route, not a claim about already-orphaned helpers. */
+export function awaitCliTreeStopped(child: ChildProcess): Promise<boolean> {
+  const ownership = cliOwnership.get(child);
+  if (!ownership) return Promise.resolve(false);
+  return stopOwnedCli(child, ownership);
+}
+
+function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver): Promise<boolean> {
+  if (observer && !owned.observers.has(observer)) {
+    owned.observers.add(observer);
+    for (const observation of owned.observations) {
+      try { observer(observation); } catch { /* diagnostics never affect stop */ }
+    }
+  }
+  if (owned.stopping) return owned.stopping;
+  if (owned.stopped) return Promise.resolve(true);
+  const pid = owned.pid;
+  if (pid === undefined) return Promise.resolve(true); // failed spawn
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid || child.pid !== pid) return Promise.resolve(false);
+  owned.observations = [];
+  const observe: StopRouteObserver = (observation) => {
+    owned.observations.push(observation);
+    for (const listener of owned.observers) {
+      try { listener(observation); } catch { /* diagnostics never affect stop */ }
+    }
+  };
+  const run = async () => {
+    if (owned.platform === "win32") {
+      if (owned.closed) return true;
+      return new Promise<boolean>((resolve) => {
+        const finish = (value: boolean) => { clearTimeout(timer); child.off("close", closed); resolve(value); };
+        const closed = () => finish(true);
+        const timer = setTimeout(() => finish(false), 5_000);
+        child.once("close", closed);
+        killCliTreeWith(child, observer, REAL_KILL_DEPS);
+      });
+    }
+    const settled = () => {
+      if (!owned.closed) return false;
+      try { process.kill(-pid, 0); return false; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+    };
+    const signal = (value: NodeJS.Signals) => {
+      try { process.kill(-pid, value); }
+      catch { if (!owned.closed) { try { child.kill(value); } catch { /* retain uncertainty */ } } }
+    };
+    const wait = async (ms: number) => {
+      const deadline = Date.now() + ms;
+      while (!settled()) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return false;
+        await new Promise<void>((resolve) => {
+          // Root close is an immediate observation even when a fixture has
+          // replaced/restored global timers around a provider RPC deadline.
+          const wake = () => { clearTimeout(timer); child.off("close", wake); resolve(); };
+          const timer = setTimeout(wake, Math.min(25, remaining));
+          child.once("close", wake);
+        });
+      }
+      return true;
+    };
+    if (settled()) {
+      observe({ route: "already_exited", result: "succeeded" });
+      return true;
+    }
+    // Preserve existing diagnostic route/fallback observations, including
+    // after root close (the retained group is still ours).
+    killCliTreeWith({ pid, exitCode: null, signalCode: null, kill: (value) => owned.closed ? false : child.kill(value) }, observe, REAL_KILL_DEPS);
+    if (await wait(CLI_TERM_GRACE_MS)) return true;
+    signal("SIGKILL");
+    return wait(CLI_FORCE_WAIT_MS);
+  };
+  const attempt = run().catch(() => false);
+  owned.stopping = attempt;
+  void attempt.then((stopped) => {
+    owned.stopped = stopped;
+    if (!stopped) owned.stopping = undefined; // explicit later retry may succeed
+  });
+  return attempt;
 }
 
 /** killCliTree with injectable OS seams, so route selection and fallback

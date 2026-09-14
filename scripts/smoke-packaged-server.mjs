@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { waitForExit } from "../server/testing/cleanup.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const staging = mkdtempSync(join(tmpdir(), "murage-smoke-"));
@@ -48,8 +49,8 @@ child.stderr.on("data", (chunk) => (output += chunk));
 // the kill raises EPERM; Linux runners can raise EACCES the same way. Scratch
 // cleanup must never decide whether the build is good — it failed a green run
 // on Windows once already, and see f66d30f for the same lesson on Linux.
-const cleanup = () => {
-  child.kill("SIGKILL");
+const cleanup = async () => {
+  await waitForExit(child, { signal: "SIGTERM" });
   for (const dir of [staging, home]) {
     try {
       safeWipeSync(dir, { maxRetries: 5, retryDelay: 200 });
@@ -64,8 +65,9 @@ let listening = false;
 while (Date.now() < deadline) {
   if (child.exitCode !== null) break;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
-    if (res.ok) {
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1000) });
+    const health = res.ok ? await res.json() : null;
+    if (health?.app === "murage" && health.pid === child.pid) {
       listening = true;
       break;
     }
@@ -152,8 +154,7 @@ if (listening) {
   ]);
   clearTimeout(timeout);
   if (exit.timeout) {
-    mcp.kill("SIGKILL");
-    await closed;
+    await waitForExit(mcp, { signal: "SIGTERM" });
   }
   try {
     const responses = stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
@@ -163,7 +164,7 @@ if (listening) {
   }
 }
 
-cleanup();
+await cleanup();
 
 if (!listening) {
   console.error(`the packaged server never served /api/health on port ${port}.`);
@@ -195,6 +196,6 @@ if (
 }
 
 const count = Object.keys(proxyReport.resolved).length;
-console.log(`packaged server started with no node_modules in reach (port ${port}) ✓`);
+console.log(`packaged server started with no node_modules in reach (port ${port}, owned pid ${child.pid}) ✓`);
 console.log(`all ${count} spawned proxy paths resolve inside the packaged server dir ✓`);
 console.log("packaged MCP stdio server reached the API and flushed its final frames ✓");

@@ -35,6 +35,7 @@ import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { ProjectFolderLeaseError, type ProjectFolderLeases } from "./project-folder-leases.ts";
 import { describeThrow, type ProjectTurnLeases } from "./project-turn-leases.ts";
 import type { Store } from "./store.ts";
+import { selectFileWorkspace } from "./workspace.ts";
 import { SURFACE_QUERY, SURFACE_SECRET_QUERY } from "./sse-visibility.ts";
 import {
   WORKSPACE_CURSOR_MAX_LENGTH, WORKSPACE_FILE_ERROR_STATUS, WORKSPACE_FILES_ROUTE_PREFIX, WORKSPACE_FILES_ROUTES, WORKSPACE_LIST_PAGE_SIZE,
@@ -155,30 +156,15 @@ export function resolveWorkspaceRoot(deps: WorkspaceFilesDeps, scope: WorkspaceS
   const botName = cleanLabel(bot.name) || "Workspace";
   const answer = (state: WorkspaceRootState, label = botName, managed = false): ResolvedWorkspace => ({ info: { scope, state, label, managed }, pending: false });
   const taskWorkspace = join(deps.dataDir, "workspaces", scope.botId, "threads", scope.threadId);
-  let candidate: string | undefined, direct = false;
+  let candidate: string | undefined;
   const tasks: Array<{ threadId: string; cwd?: string | null; resumeCursors?: Record<string, unknown> }> = bot.tasks ?? [{ threadId: bot.threadId, cwd: undefined, resumeCursors: bot.resumeCursors }];
   const task = tasks.find(item => item.threadId === scope.threadId);
-  if (task) {
-    direct = true;
-    if (task.cwd === null) return answer(cloudRunRecorded(deps.dataDir, scope) ? "remote" : "no-dedicated-workspace");
-    if (typeof task.cwd === "string") candidate = task.cwd;
-    // Store.pinTaskCwd: a task that already has a provider session pins to
-    // null (home) on its next turn; that is not a dedicated workspace.
-    else if (Object.keys(task.resumeCursors ?? {}).length > 0) return answer("no-dedicated-workspace");
-    else candidate = bot.cwd ?? taskWorkspace;
-  } else {
-    for (const group of deps.store.groups) {
-      if (!group.memberIds.includes(scope.botId)) continue;
-      const roomTask = (group.tasks ?? [{ threadId: group.threadId, pinnedCwd: group.pinnedCwd }]).find(item => item.threadId === scope.threadId);
-      if (!roomTask) continue;
-      const pinned = roomTask.pinnedCwd === undefined ? group.cwd : roomTask.pinnedCwd;
-      candidate = pinned ?? join(deps.dataDir, "workspaces", scope.botId);
-      break;
-    }
-    if (!candidate) fail("scope-unavailable", UNAVAILABLE);
-  }
+  const selected = selectFileWorkspace(deps.dataDir, deps.store, scope.botId, scope.threadId);
+  candidate = selected?.root;
+  if (!candidate && task) return answer(cloudRunRecorded(deps.dataDir, scope) ? "remote" : "no-dedicated-workspace");
+  if (!candidate) fail("scope-unavailable", UNAVAILABLE);
   const identity = identityOf(candidate);
-  const managed = direct && identity !== undefined && identity === identityOf(taskWorkspace);
+  const managed = selected!.managed && identity !== undefined && identity === identityOf(taskWorkspace);
   const authorized = identity !== undefined && deps.artifactScopes().some(item => item.botId === scope.botId && item.threadId === scope.threadId
     && item.threadAvailable !== false && identityOf(item.workspaceRoot) === identity);
   // Not yet dispatched: dispatch will create and pin exactly this folder.

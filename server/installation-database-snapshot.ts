@@ -8,6 +8,7 @@ import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts"
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
+import { initializeImageOperations } from "./image-operations-schema.ts";
 
 export class InstallationSnapshotError extends Error {
   readonly code: string;
@@ -38,7 +39,8 @@ function count(db: DatabaseSync, sql: string): number {
 /** Every non-memory table the harness creates in messages.db. server/database.ts
  * owns messages/thread_state (server/message-tables.ts), server/inbox.ts the
  * inbox state, server/artifacts.ts the saved-file tables (0.1.52 K0 froze that
- * schema). `optional` names the nullable columns a later in-place migration
+ * schema), and image-operations-schema.ts the startup recovery receipts.
+ * `optional` names the nullable columns a later in-place migration
  * appends, in order: an older archive may lack a suffix of them.
  * A Map, not a plain object: archive names such as "constructor" or
  * "__proto__" must never match a property every object inherits. */
@@ -48,6 +50,7 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   inbox_item_state: { required: false, optional: [] },
   artifacts: { required: false, optional: ["producer", "publication_id"] },
   output_publications: { required: false, optional: [] },
+  image_operations: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -75,6 +78,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
   const db = new DatabaseSync(":memory:");
   try {
     initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db);
+    initializeImageOperations(db);
     const objects = new Map<string, ReferenceObject>();
     for (const row of db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]) {
       if (!APP_TABLES.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
@@ -212,6 +216,7 @@ async function snapshotDatabaseWhileOwned(dataDir: string, destination: string) 
     finally { copied.close(); }
     const after = regularFile(file)!;
     if (after.ino !== identity.ino || after.dev !== identity.dev) throw new InstallationSnapshotError("SOURCE_CHANGED");
+    for (const suffix of ["-wal", "-shm"]) regularFile(file + suffix, true);
     const sha256 = digestFile(staged);
     const bytes = statSync(staged).size;
     const flush = openSync(staged, "r+"); // Windows FlushFileBuffers requires a writable handle.

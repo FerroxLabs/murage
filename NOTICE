@@ -89,6 +89,71 @@ records and summarized in docs/plans/0152-CONTRACTS.md.
 
 --------------------------------------------------------------------------
 
+Unreleased upstream adaptations in the current development branch
+--------------------------------------------------------------------------
+
+The following changes selectively adapt OpenMausBot work under Apache-2.0.
+They do not imply import of a complete upstream release.
+
+  OpenMausBot PR #1069
+    commit bac90598261115eb2f68868f1a6420e79b74d0c4
+    Parent thread/turn scoping for Codex notifications, adapted to Murage's
+    approval and cancellation lifecycle.
+    Murage: server/drivers/codex.ts
+
+  OpenMausBot PR #1070
+    commit e9840ed7e26cfdc39bd2678b39a6ce1d006536b3
+    Standalone macOS Tailscale CLI environment selection, narrowed to the
+    app-bundle executable and existing listener/status launch sites.
+    Murage: companion/src/listener.ts
+
+  OpenMausBot PR #1084
+    commit d2ada5ee477af721634baa537ec0941a954ea33e
+    Complete scrollable mention matches and keyboard active-item visibility,
+    preserving Murage's existing authorized roster filters.
+    Murage: src/components/Composer.tsx
+
+  OpenMausBot PR #1091 (update-error copy only)
+    commit 6027bcdc09ba047baf30ffb34d0b27040d84e13a
+    Actionable updater error categories, adapted with explicit integrity-code
+    precedence and separate TLS verification guidance. Update policy and
+    signature verification behavior are unchanged.
+    Murage: electron/update-errors.mjs, electron/updater-coordinator.mjs
+
+  OpenMausBot PR #1093 (owned process-group teardown adaptation)
+    commit 77b6c0e68c858272f43b7ae867467170b9ae3458
+    In-process POSIX group cleanup after provider-root exit, adapted with
+    exact spawn ownership, bounded confirmation and retained teardown state.
+    Windows close-confirmation behavior is preserved. This is not a
+    cross-crash process supervisor.
+    Murage: server/procs.ts, server/drivers/child-teardown.ts and callers
+
+  OpenMausBot PR #1095 (asynchronous CUA and stream-buffer portions)
+    commit 31777c6c1e417d487e314fad3c1353f16c5264bd
+    Nonblocking launcher/status operations, adapted with Murage-owned
+    cancellation, cleanup barriers and serialized replacement. Upstream's
+    replacement-while-stopping behaviour was not adopted.
+    Pending stream deltas also gain an animation-frame/timer fallback and
+    size-triggered flush without truncating accumulated output.
+    Murage: electron/cua.mjs, src/state/store.tsx
+
+  OpenMausBot PR #1103 (terminal diagnostics and safety classification only)
+    commit 2df5cc5186f6ba2021e0f5702affe56ed5a965dd
+    Surface Codex completion-only errors without duplicating an earlier
+    diagnostic. Recognized provider safety blocks remain terminal despite
+    transient HTTP wrappers. No permission-mode or credential-policy changes.
+    Murage: server/drivers/codex.ts, server/drivers/retry.ts,
+    shared/provider-safety.ts
+
+  OpenMausBot PR #1114 (deleted-thread continuity adaptation)
+    commit 7d6844f7572101fc72c44dd30fa9f3fd2225db71
+    Clear deleted-thread controls while awaiting the replacement transcript,
+    preserve intervening events and avoid retargeting explicit navigation.
+    Adapted to Murage's existing per-thread view and approval boundaries.
+    Murage: src/state/store.tsx, src/components/Composer.tsx
+
+--------------------------------------------------------------------------
+
 This distribution also includes third-party components under third_party/,
 each retaining its own license and notices. See the LICENSE and NOTICE files
 within those directories for details.

@@ -1,0 +1,74 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {chmodSync,existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,symlinkSync,writeFileSync} from "node:fs";
+import {tmpdir,userInfo} from "node:os";
+import path from "node:path";
+import {buildClosedBackupJob} from "./backup-closed-jobs.mjs";
+import {createNativeClosedBackupProvider,CLOSED_MAC_QUERY,selectedMacJobEnabled} from "./backup-closed-native.mjs";
+
+// Frozen native-provider checks: all commands injected; actual roots are
+// private, task-only temp directories. No OS manager/osascript invocation.
+function fixture(platform){
+  const home=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-closed-native-"))),owner={uid:userInfo().uid};
+  const descriptor={version:1,platform,requestedRoot:path.join(home,"data"),userData:path.join(home,"desktop"),installation:path.join(home,"data"),installationIdentity:"a".repeat(64),owner,executable:path.join(home,"Installed Murage"),triggerEntry:path.join(home,"trigger.mjs"),triggerSha256:"b".repeat(64)};
+  const descriptorPath=path.join(home,"stage","descriptor.json"),job={...buildClosedBackupJob(descriptor,descriptorPath,{backupSupported:true}),descriptor,descriptorPath};
+  const root=path.join(home,...(platform==="darwin"?["Library","LaunchAgents"]:[".config","systemd","user"]));
+  const calls=[],state={loaded:false,enabled:false,timerActive:false,running:false,unknown:false,pidMissing:false,overrideUnknown:false,foreign:false,dropin:false,reload:false,fail:"",race:false};
+  const run=async request=>{
+    calls.push(request);const args=request.args;
+    if(request.executable==="/usr/bin/osascript"){
+      assert.equal(args[3],CLOSED_MAC_QUERY);assert.equal(args[4],"--");assert.equal(args[5],job.jobId);const spec=JSON.parse(args[6]);assert.equal(spec.Label,job.jobId);assert.equal(spec.Program,descriptor.executable);assert.deepEqual(spec.EnvironmentVariables,{ELECTRON_RUN_AS_NODE:"1"});
+      return{code:0,stdout:JSON.stringify(state.unknown?{version:1,status:"found"}:state.foreign?{version:1,status:"foreign"}:state.loaded?{version:1,status:"found",pid:state.pidMissing?null:state.running?1234:0}:{version:1,status:"absent"})};
+    }
+    if(request.executable==="/bin/launchctl"){
+      if(args[0]==="print-disabled"){assert.deepEqual(args,["print-disabled",`gui/${owner.uid}`]);return{code:0,stdout:state.overrideUnknown?"unrecognized format":`disabled services = {\n "foreign-private-label" => disabled\n "${job.jobId}" => ${state.enabled?"enabled":"disabled"}\n}\n`};}
+      if(args[0]===state.fail)return{code:1,stdout:""};assert.ok(["enable","bootstrap","disable","bootout"].includes(args[0]));assert.equal(args[1],args[0]==="bootstrap"?`gui/${owner.uid}`:`gui/${owner.uid}/${job.jobId}`);
+      if(args[0]==="enable")state.enabled=true;if(args[0]==="bootstrap"){state.loaded=true;state.enabled=true;}if(args[0]==="disable"){state.enabled=false;if(state.race)state.running=true;}if(args[0]==="bootout"){assert.equal(state.running,false);state.loaded=false;}return{code:0,stdout:""};
+    }
+    assert.equal(request.executable,"/usr/bin/systemctl");assert.equal(args[0],"--user");
+    if(args[1]==="show"){
+      const name=args.at(-1),kind=name.endsWith(".timer")?"timer":"service";assert.equal(name,`${job.jobId}.${kind}`);const selected=args.find(arg=>arg.startsWith("--property=")).slice(11).split(",");assert.ok(args.includes("--all"));
+      const values={Id:name,LoadState:state.loaded?"loaded":"not-found",ActiveState:kind==="timer"?(state.timerActive?"active":"inactive"):(state.running?"active":"inactive"),SubState:kind==="timer"?(state.timerActive?"waiting":"dead"):(state.running?"running":"dead"),UnitFileState:kind==="timer"?(state.enabled?"enabled":"disabled"):"static",FragmentPath:state.loaded?path.join(root,name):"",DropInPaths:state.dropin?"/foreign/override.conf":"",NeedDaemonReload:state.reload?"yes":"no",MainPID:state.running?"1234":"0",Triggers:state.loaded?`${job.jobId}.service`:""};
+      if(state.foreign)values.FragmentPath="/foreign/unit";if(state.unknown)delete values.LoadState;
+      return{code:0,stdout:selected.filter(key=>values[key]!==undefined).map(key=>`${key}=${values[key]}`).join("\n")+"\n"};
+    }
+    if(args[1]===state.fail)return{code:1,stdout:""};assert.ok(["daemon-reload","enable","disable","stop"].includes(args[1]));
+    if(args[1]==="daemon-reload")state.loaded=job.files.every(file=>existsSync(path.join(root,file.name)));
+    else{assert.equal(args.at(-1),`${job.jobId}.timer`);if(args[1]==="enable"){assert.ok(args.includes("--now"));state.enabled=true;state.timerActive=true;}if(args[1]==="disable"){assert.equal(args.includes("--now"),false);state.enabled=false;if(state.race)state.running=true;}if(args[1]==="stop")state.timerActive=false;}
+    return{code:0,stdout:""};
+  };
+  const provider=createNativeClosedBackupProvider({platform,owner,home,run});
+  const stage=()=>{mkdirSync(root,{recursive:true,mode:0o700});for(const file of job.files)writeFileSync(path.join(root,file.name),file.text,{mode:0o600});};
+  return{home,owner,root,job,state,calls,provider,stage,cleanup:()=>rmSync(home,{recursive:true,force:true})};
+}
+for(const platform of ["darwin","linux"]){
+  test(`${platform}: exact owned install/readback/remove uses only injected targeted operations`,async()=>{
+    const f=fixture(platform);try{assert.equal(f.provider.supported,true);assert.equal(await f.provider.read(f.job),null);await f.provider.install(f.job,{expected:null});const current=await f.provider.read(f.job);assert.equal(current.registered,true);assert.deepEqual(current.files,f.job.files);assert.equal(current.running,false);for(const file of f.job.files)assert.equal(readFileSync(path.join(f.root,file.name),"utf8"),file.text);await f.provider.remove(f.job,{expected:current});assert.equal(await f.provider.read(f.job),null);assert.equal(f.calls.some(call=>call.args.includes("--system")||call.args.includes("--global")||call.args.includes("print")||call.args.includes("list")||call.args.includes("kickstart")),false);}finally{f.cleanup();}
+  });
+  test(`${platform}: running before or after disable never receives a killing removal`,async()=>{
+    const f=fixture(platform);try{await f.provider.install(f.job,{expected:null});f.state.running=true;let current=await f.provider.read(f.job);const before=f.calls.length;await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.slice(before).some(call=>call.args.includes("bootout")||call.args.includes("stop")||call.args.includes("disable")),false);f.state.running=false;current=await f.provider.read(f.job);f.state.race=true;const start=f.calls.length;await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.slice(start).some(call=>call.args.includes("bootout")||call.args.includes("stop")),false);assert.ok(f.job.files.every(file=>existsSync(path.join(f.root,file.name))));}finally{f.cleanup();}
+  });
+  test(`${platform}: foreign, malformed or changed registration refuses mutation`,async()=>{
+    const f=fixture(platform);try{await f.provider.install(f.job,{expected:null});const current=await f.provider.read(f.job);f.state.foreign=true;await assert.rejects(f.provider.remove(f.job,{expected:current}));f.state.foreign=false;f.state.unknown=true;await assert.rejects(f.provider.read(f.job));f.state.unknown=false;writeFileSync(path.join(f.root,f.job.files[0].name),"foreign definition",{mode:0o600});const before=f.calls.length;await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.length,before);assert.equal(readFileSync(path.join(f.root,f.job.files[0].name),"utf8"),"foreign definition");}finally{f.cleanup();}
+  });
+}
+test("Linux drop-ins and stale loaded definitions cannot borrow exact disk-file ownership",async()=>{
+ const f=fixture("linux");try{await f.provider.install(f.job,{expected:null});f.state.dropin=true;await assert.rejects(f.provider.read(f.job));f.state.dropin=false;f.state.reload=true;await assert.rejects(f.provider.read(f.job));}finally{f.cleanup();}
+});
+test("Mac omitted PID does not invalidate proven registration but blocks removal conservatively",async()=>{
+ const f=fixture("darwin");try{await f.provider.install(f.job,{expected:null});f.state.pidMissing=true;const current=await f.provider.read(f.job);assert.equal(current.registered,true);assert.equal(current.activityKnown,false);assert.equal(current.running,true);assert.equal(JSON.stringify(current).includes("foreign-private-label"),false);const before=f.calls.length;await f.provider.install(f.job,{expected:current});await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.slice(before).some(call=>["enable","disable","bootout","bootstrap"].includes(call.args[0])),false);}finally{f.cleanup();}
+});
+test("Mac external disable is not registered; enabling an owned loaded job does not bootstrap another",async()=>{
+ const f=fixture("darwin");try{await f.provider.install(f.job,{expected:null});f.state.enabled=false;const current=await f.provider.read(f.job);assert.equal(current.registered,false);const before=f.calls.length;await f.provider.install(f.job,{expected:current});assert.equal((await f.provider.read(f.job)).registered,true);assert.equal(f.calls.slice(before).filter(call=>call.args[0]==="enable").length,1);assert.equal(f.calls.slice(before).some(call=>call.args[0]==="bootstrap"),false);f.state.overrideUnknown=true;await assert.rejects(f.provider.read(f.job));}finally{f.cleanup();}
+});
+test("Mac override parsing retains only the exact label and rejects unknown or ambiguous maps",()=>{
+ const label="com.murage.backup."+"a".repeat(64);for(const [value,enabled] of [["true",false],["false",true],["disabled",false],["enabled",true]])assert.equal(selectedMacJobEnabled(`disabled services = {\n "private-other" => disabled\n "${label}" => ${value}\n}\n`,label),enabled);
+ assert.equal(selectedMacJobEnabled("disabled services = {\n}\n",label),true);
+ for(const text of ["arbitrary output",`disabled services = {\n "${label}" => maybe\n}`,`disabled services = {\n "${label}" => enabled\n "${label}" => disabled\n}`,`disabled services = {\n "private" => enabled\n trailing unknown\n}`,"x".repeat(65537)])assert.throws(()=>selectedMacJobEnabled(text,label));
+});
+test("unregistered exact files are not installed; expected-state races and failed bootstrap retain them",async()=>{
+ const f=fixture("darwin");try{f.state.loaded=true;await assert.rejects(f.provider.read(f.job));f.state.loaded=false;f.stage();const current=await f.provider.read(f.job);assert.equal(current.registered,false);await assert.rejects(f.provider.install(f.job,{expected:null}));f.state.fail="bootstrap";await assert.rejects(f.provider.install(f.job,{expected:current}));assert.equal((await f.provider.read(f.job)).registered,false);assert.ok(existsSync(path.join(f.root,f.job.files[0].name)));}finally{f.cleanup();}
+});
+test("private same-user files, known definitions and supported platform are prerequisites",async()=>{
+ const f=fixture("linux");try{const unsupported=createNativeClosedBackupProvider({platform:"win32",owner:f.owner,home:f.home,run:async()=>{assert.fail("No OS call on unsupported host");}});assert.equal(unsupported.supported,false);await assert.rejects(unsupported.read(f.job));await assert.rejects(f.provider.read({...f.job,owner:{uid:f.owner.uid+1}}));await assert.rejects(f.provider.read({...f.job,files:[{...f.job.files[0],name:"../../foreign"}]}));assert.equal(f.calls.length,0);f.stage();chmodSync(path.join(f.root,f.job.files[0].name),0o644);await assert.rejects(f.provider.read(f.job));chmodSync(path.join(f.root,f.job.files[0].name),0o600);rmSync(path.join(f.root,f.job.files[0].name));const sentinel=path.join(f.home,"sentinel");writeFileSync(sentinel,"private-canary",{mode:0o600});symlinkSync(sentinel,path.join(f.root,f.job.files[0].name));await assert.rejects(f.provider.read(f.job));assert.equal(readFileSync(sentinel,"utf8"),"private-canary");}finally{f.cleanup();}
+});

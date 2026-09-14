@@ -183,6 +183,20 @@ test("a synchronous install failure becomes a user-visible error", async () => {
   assert.deepEqual(getState(), { status: "error", version: "2.0.0", message: "install threw" });
 });
 
+test("formatted integrity errors retain the prepared-close recovery prefix", async () => {
+  const { updater, coordinator, getState } = harness({ beforeInstall: () => Promise.resolve() });
+  updater.quitAndInstall = () => {
+    throw Object.assign(new Error("checksum mismatch; ETIMEDOUT"), { code: "ERR_UPDATER_CHECKSUM_MISMATCH" });
+  };
+
+  await downloadInto({ updater, coordinator });
+  coordinator.install();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.match(getState().message, /^Murage has finished closing\. Retry the update, or quit and reopen Murage\. The update failed verification\./);
+  assert.doesNotMatch(getState().message, /connection and try again/);
+});
+
 test("an active download state survives a later background check failure", async () => {
   const { updater, coordinator, getState } = harness();
   const downloadPending = deferred();
@@ -536,7 +550,7 @@ for (const outcome of ["ready", "error"]) {
     else nativeUpdater.emit("error", new Error("signature staging failed"));
     await download;
     assert.equal(h.getState().status, outcome === "ready" ? "downloaded" : "error");
-    if (outcome === "error") assert.match(h.getState().message, /signature staging failed/);
+    if (outcome === "error") assert.match(h.getState().message, /The update failed verification/);
     assert.equal(nativeUpdater.listenerCount("update-downloaded"), 0);
     assert.equal(nativeUpdater.listenerCount("error"), 0);
   });

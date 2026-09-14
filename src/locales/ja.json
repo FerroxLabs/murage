@@ -1,4 +1,7 @@
 {
+  "providerError.payment.title": "プロバイダーでの支払いまたはアカウントアクセスの確認が必要です",
+  "providerError.payment.summary": "プロバイダーはこのリクエストを HTTP 402 で拒否しました。この応答だけでは、クレジットを使い切ったとは判断できません。",
+  "providerError.payment.resolution": "再試行する前に、プロバイダーの請求、アカウントと選択したモデルへのアクセス、自分の API キーを使用する設定（BYOK）を確認してください。",
   "claudeAccounts.added": "アカウントを追加しました。以下からご自身でサインインし、モデル選択でこのアカウントを選んでください。既存のボットの選択は変更されません。",
   "claudeAccounts.removed": "Murageから削除しました。ログイン状態と認証情報ファイルは保持されています。",
   "claudeAccounts.saved": "アカウント設定を保存しました。",

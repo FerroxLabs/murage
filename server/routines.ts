@@ -9,7 +9,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
-import { routineEventForRun, type RoutineEvent } from "../shared/routine-event.ts";
+import { channelOriginSchema, routineEventForRun, type ChannelOrigin, type RoutineEvent } from "../shared/routine-event.ts";
 import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, RoutineWatchRun, RoutineWatchSource } from "../shared/routine-watch.ts";
 import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
@@ -104,6 +104,7 @@ export interface RoutineRun {
   triggerSource?: RoutineRunTrigger;
   webhookId?: string;
   telegramConnectionId?: string;
+  channelOrigin?: ChannelOrigin;
   deliveryId?: string;
   /** Snapshot the routine's reporting destination. Execution remains on the
    * separate `threadId` so recurring work never contaminates chat context. */
@@ -195,6 +196,8 @@ function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
 }
 
 export interface RoutineManagerOptions {
+  /** New channel adapters must prove their exact binding/Chief at admission and dispatch. */
+  isChannelCurrent?: (origin: ChannelOrigin, botId: string) => boolean;
   validateWatchSource?: (ownerBotId: string, botId: string, source: RoutineWatchSource) => void;
   readWatchSource?: (ownerBotId: string, botId: string, source: RoutineWatchSource, signal: AbortSignal) => Promise<RoutineWatchObservation>;
   /** Admission only: never interrupts active work or blocks manual/channel requests. */
@@ -955,10 +958,12 @@ export class RoutineManager {
     deliveryId: string;
     receivedAt: number;
     telegramConnectionId?: string;
+    channelOrigin?: ChannelOrigin;
   }): RoutineRun {
     const existing = this.findWebhookDelivery(input.webhookId, input.deliveryId);
     if (existing) return existing;
-    if(!input.telegramConnectionId&&this.options.automaticPaused?.())throw Object.assign(new Error("Automatic work is paused. Resume automations before accepting new webhook work."),{status:409,code:"automations_paused"});
+    if (input.channelOrigin !== undefined && (!channelOriginSchema.safeParse(input.channelOrigin).success || input.telegramConnectionId || this.options.isChannelCurrent?.(input.channelOrigin, input.botId) !== true)) throw new Error("Channel binding is not current");
+    if(!input.telegramConnectionId&&!input.channelOrigin&&this.options.automaticPaused?.())throw Object.assign(new Error("Automatic work is paused. Resume automations before accepting new webhook work."),{status:409,code:"automations_paused"});
     if (this.options.botState(input.botId) === "missing") {
       throw Object.assign(new Error("The assigned EMBER no longer exists"), { status: 410 });
     }
@@ -973,8 +978,9 @@ export class RoutineManager {
       scheduledFor: input.receivedAt,
       status: "queued",
       manual: false,
-      triggerSource: input.telegramConnectionId ? "channel" : "webhook",
+      triggerSource: input.telegramConnectionId || input.channelOrigin ? "channel" : "webhook",
       ...(input.telegramConnectionId ? { telegramConnectionId: input.telegramConnectionId } : {}),
+      ...(input.channelOrigin ? { channelOrigin: { ...input.channelOrigin } } : {}),
       webhookId: input.webhookId,
       deliveryId: input.deliveryId,
       attachments: [],
@@ -1204,6 +1210,9 @@ export class RoutineManager {
 
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
+        if (run.channelOrigin !== undefined && (!channelOriginSchema.safeParse(run.channelOrigin).success || run.telegramConnectionId || this.options.isChannelCurrent?.(run.channelOrigin, run.botId) !== true)) {
+          this.failRun(run, "Channel binding changed; review it in Murage."); continue;
+        }
         const sharedChannel = run.triggerSource === "channel" && run.target === "bot" && !!this.options.channelThread;
         // Channel messages share history: dispatch the oldest queued message
         // first, even though detached routine jobs retain their existing order.

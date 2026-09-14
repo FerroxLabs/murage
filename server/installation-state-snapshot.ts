@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, rmSync, writeFileSync, writeSync, type Stats } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 
@@ -129,13 +129,20 @@ function projectComponent(name: string, value: unknown, omit: (path: string, rea
  * transcript/file content can itself contain secrets; this is private data,
  * never a shareable diagnostics bundle. External project paths are not read. */
 export async function stageInstallationState(dataDir: string, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<{ directory: string; manifest: StateSnapshotManifest }> {
-  const root = dataDirLeasePaths(dataDir).canonicalDataDir;
+  return withOfflineInstallation(dataDir, async installation => {
+    const { directory, manifest } = await stageInstallationStateWhileOwned(installation, outputParent, options);
+    return { directory, manifest };
+  });
+}
+
+/** Internal composition seam: a caller keeps fidelity and recovery in one epoch. */
+export async function stageInstallationStateWhileOwned(installation: OfflineInstallation, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<{ directory: string; manifest: StateSnapshotManifest; assertSourceUnchanged: () => void }> {
+  const root = installation.dataDir;
   const parent = dataDirLeasePaths(outputParent).canonicalDataDir;
   if (parent === root || parent.startsWith(root + sep)) fail("DESTINATION_INSIDE_INSTALLATION");
   const maxBytes = options.maxBytes ?? 20 * 1024 ** 3;
   const maxFiles = options.maxFiles ?? 100_000;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !Number.isSafeInteger(maxFiles) || maxFiles < 1) fail("INVALID_SNAPSHOT_LIMITS");
-  return withOfflineInstallation(root, async installation => {
     if (!lstatSync(root).isDirectory()) fail("INSTALLATION_MISSING");
     const stage = mkdtempSync(join(parent, ".murage-state-snapshot-"));
     let published = false;
@@ -219,6 +226,9 @@ export async function stageInstallationState(dataDir: string, outputParent: stri
     try {
       check();
       const names = readdirSync(root).sort();
+      // SQLite may create/remove these exact auxiliary files while taking its
+      // own consistent backup. All other membership and file checks remain.
+      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm");
       if (names.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
       // These bind-mounted workspaces also hold native browser profiles. The
       // installation lease does not quiesce their guests, and copying profiles
@@ -238,19 +248,22 @@ export async function stageInstallationState(dataDir: string, outputParent: stri
       if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256);
       else manifest.missing.push("messages.db");
       check();
-      if (JSON.stringify(readdirSync(root).sort()) !== JSON.stringify(names)) fail("SOURCE_CHANGED");
-      for (const [path, before] of observed) {
-        const after = lstatSync(path);
-        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) fail("SOURCE_CHANGED");
-      }
+      const assertSourceUnchanged = () => {
+        check();
+        if (JSON.stringify(rootMembership(readdirSync(root).sort())) !== JSON.stringify(rootMembership(names))) fail("SOURCE_CHANGED");
+        for (const [path, before] of observed) {
+          const after = lstatSync(path);
+          if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) fail("SOURCE_CHANGED");
+        }
+      };
+      assertSourceUnchanged();
       writeFileSync(join(stage, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600, flag: "wx", flush: true });
       // Return an owned private stage, not a published archive. This avoids
       // a directory rename-to-user-name race: portable file publication will
       // use no-replace linking when archive serialization is implemented.
       published = true;
-      return { directory: stage, manifest };
+      return { directory: stage, manifest, assertSourceUnchanged };
     } catch (error) {
       throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError("STATE_SNAPSHOT_FAILED");
     } finally { if (!published) rmSync(stage, { recursive: true, force: true }); }
-  });
 }

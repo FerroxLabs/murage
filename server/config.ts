@@ -239,6 +239,11 @@ const appConfigSchema = z.object({
   automationsPaused: z.boolean().optional(),
   modelProviders: z.object({ bank: z.string().max(200000).optional() }).strict().optional(),
   telegram: z.object({ botToken: z.string().max(256).optional(), targetBotId: z.string().max(160).optional() }).strict().optional(),
+  slack: z.object({ appToken: z.string().max(512).optional(), botToken: z.string().max(512).optional(),
+    teamId: z.string().regex(/^[A-Z][A-Z0-9]{1,79}$/).optional(), appId: z.string().regex(/^[A-Z][A-Z0-9]{1,79}$/).optional(),
+    ownerUserId: z.string().regex(/^[A-Z][A-Z0-9]{1,79}$/).optional(), targetBotId: z.string().max(180).optional() }).strict().optional(),
+  discord: z.object({ botToken: z.string().max(512).optional(), applicationId: z.string().regex(/^[1-9][0-9]{0,19}$/).optional(),
+    ownerUserId: z.string().regex(/^[1-9][0-9]{0,19}$/).optional(), targetBotId: z.string().max(180).optional() }).strict().optional(),
   notifications: notificationPreferencesSchema.optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
@@ -307,6 +312,8 @@ export interface AppConfig {
   /** Pause scheduled/webhook admission; manual owner work remains available. */
   automationsPaused?: boolean;
   telegram?: { botToken?: string; targetBotId?: string };
+  slack?: { appToken?: string; botToken?: string; teamId?: string; appId?: string; ownerUserId?: string; targetBotId?: string };
+  discord?: { botToken?: string; applicationId?: string; ownerUserId?: string; targetBotId?: string };
   notifications?: NotificationPreferences;
   engineDiscovery?: "automatic" | "explicit";
   mcpServers?: Record<string, unknown>;
@@ -535,6 +542,9 @@ export function loadConfig(): AppConfig {
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.MURAGE_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.MURAGE_OPENAI_IMAGE_KEY;
   if (process.env.MURAGE_TELEGRAM_BOT_TOKEN !== undefined) cfg.telegram = { ...cfg.telegram, botToken: process.env.MURAGE_TELEGRAM_BOT_TOKEN };
+  if (process.env.MURAGE_SLACK_APP_TOKEN !== undefined) cfg.slack = { ...cfg.slack, appToken: process.env.MURAGE_SLACK_APP_TOKEN };
+  if (process.env.MURAGE_SLACK_BOT_TOKEN !== undefined) cfg.slack = { ...cfg.slack, botToken: process.env.MURAGE_SLACK_BOT_TOKEN };
+  if (process.env.MURAGE_DISCORD_BOT_TOKEN !== undefined) cfg.discord = { ...cfg.discord, botToken: process.env.MURAGE_DISCORD_BOT_TOKEN };
   if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined || process.env.MURAGE_EXA_SEARCH_KEY !== undefined || process.env.MURAGE_FIRECRAWL_SEARCH_KEY !== undefined) {
     cfg.webSearch = { ...cfg.webSearch };
     if (process.env.MURAGE_TAVILY_SEARCH_KEY !== undefined) cfg.webSearch.tavilyApiKey = process.env.MURAGE_TAVILY_SEARCH_KEY;
@@ -565,6 +575,9 @@ export function syncCredentialEnv(patch: ConfigWritePatch): void {
     [patch.tts?.key, "MURAGE_TTS_KEY"],
     [patch.imageGen?.key, "MURAGE_OPENAI_IMAGE_KEY"],
     [patch.telegram?.botToken, "MURAGE_TELEGRAM_BOT_TOKEN"],
+    [patch.slack?.appToken, "MURAGE_SLACK_APP_TOKEN"],
+    [patch.slack?.botToken, "MURAGE_SLACK_BOT_TOKEN"],
+    [patch.discord?.botToken, "MURAGE_DISCORD_BOT_TOKEN"],
     [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
     [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
     [patch.webSearch?.firecrawlApiKey, "MURAGE_FIRECRAWL_SEARCH_KEY"],
@@ -610,6 +623,9 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_MODEL_PROVIDER_CONNECTIONS",
   "MURAGE_MODEL_PROVIDER_COMMIT_TOKEN",
   "MURAGE_TELEGRAM_BOT_TOKEN",
+  "MURAGE_DISCORD_BOT_TOKEN",
+  "MURAGE_SLACK_APP_TOKEN",
+  "MURAGE_SLACK_BOT_TOKEN",
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
   "MURAGE_FIRECRAWL_SEARCH_KEY",
@@ -717,7 +733,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

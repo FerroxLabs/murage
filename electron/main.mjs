@@ -1,6 +1,16 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { createApprovalNotifications } from "./approval-notification.mjs";
+import { BACKUP_MODE_ARGUMENT, createBackupModeController, prepareBackupRestart, verifiedBackupTool } from "./backup-mode.mjs";
+import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup-schedule-host.mjs";
+import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
+import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
+import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
+import { createRemotePasswordStore } from "./backup-remote-password.mjs";
+import { exportRemoteBackup } from "./backup-remote-export.mjs";
+import { remoteWorkDirectory,ensureRemoteControlDirectory } from "./backup-remote-runtime.mjs";
+import { trustedBackupResticExecutable } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
@@ -13,9 +23,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
-import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
+import { finishSpeech, startSpeech, stopSpeech, speechActive } from "./speech.mjs";
 import {
   recorderPermissionStatus,
+  recorderActive,
   saveSkillRecording,
   startRecorder,
   stopRecorder,
@@ -23,7 +34,8 @@ import {
 import { harnessResourceEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { attachUpdaterWindow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
-import { prepareUpdaterRestart } from "./updater-restart.mjs";
+import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
+import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 import {
   buildDiagnosticsReport,
   diagnosticsFileName,
@@ -32,6 +44,7 @@ import {
   readSafeLogTail,
 } from "./diagnostics.mjs";
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
+import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
 import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
@@ -97,6 +110,20 @@ import capabilitiesModule from "./capabilities.cjs";
 
 // Explicit fixture/profile isolation must precede credentials and the instance lock.
 // Ordinary installed launches keep Electron's default paths unchanged.
+const closedBackupRequested=process.argv.includes(CLOSED_DUE_FLAG)||process.argv.includes(CLOSED_DESCRIPTOR_FLAG);
+function writeClosedBackupResult(status){fs.writeSync(1,JSON.stringify({type:"murage:closed-backup-result",status})+"\n");}
+let closedBackupInvocation=null,closedBackupDescriptor=null;
+if(closedBackupRequested){
+  try{
+    if(!app.isPackaged)throw Error("BACKUP_CLOSED_UNAVAILABLE");
+    closedBackupInvocation=parseClosedBackupArguments(process.argv.slice(1));
+    closedBackupDescriptor=readClosedBackupDescriptor(closedBackupInvocation.descriptorPath);
+    assertClosedProfileBinding(closedBackupDescriptor);
+    Object.assign(process.env,closedProfileEnvironment(closedBackupInvocation,closedBackupDescriptor,process.env));
+  }catch{
+    writeClosedBackupResult("unavailable");process.exit(0);
+  }
+}
 applyLoginProfileArguments(process.argv,process.env);
 if (process.env.MURAGE_USER_DATA !== undefined) {
   const userData = process.env.MURAGE_USER_DATA;
@@ -182,6 +209,113 @@ const ipcMain = createOwnedMainIpc({
   },
 });
 let backgroundLifecycle=null;
+let backupScheduleHost=null;
+let backupRemoteHost=null;
+const backupRemoteOperations=new Set();
+let backupRemoteTimer=null;
+function pollAutomaticRemoteBackup(){
+  const available=()=>backupRemoteHost&&!desktopShutdownStarted&&!desktopRecoveryMode&&!backupMode.isPreparing()&&!backupScheduleHost?.isPreparing()&&!backupRemoteHost.isPending();
+  if(backupRemoteOperations.size||!available())return;
+  const operation=Promise.resolve().then(()=>{if(available())return backupRemoteHost.runAutomaticUpload();});
+  backupRemoteOperations.add(operation);
+  void operation.finally(()=>backupRemoteOperations.delete(operation)).catch(()=>{});
+}
+function stopAutomaticRemoteBackups(){if(backupRemoteTimer!==null)clearInterval(backupRemoteTimer);backupRemoteTimer=null;}
+function startAutomaticRemoteBackups(){
+  stopAutomaticRemoteBackups();
+  if(!backupRemoteHost||desktopShutdownStarted||desktopRecoveryMode)return;
+  backupRemoteTimer=setInterval(pollAutomaticRemoteBackup,60000);backupRemoteTimer.unref?.();
+  pollAutomaticRemoteBackup();
+}
+let closedBackupController=null;
+let closedBackupFinish=null;
+function finishClosedBackup(result){
+  if(closedBackupFinish)return closedBackupFinish;
+  closedBackupFinish=(async()=>{
+    try{await cleanupDesktopForExit();}
+    catch{
+      // Retain ownership if child shutdown is unconfirmed. Never claim a clean
+      // closed-job exit or surface the normal workspace/recovery UI here.
+      writeClosedBackupResult("needs-review");return;
+    }
+    const status=["disabled","not-due","busy","verified","needs-review","unavailable"].includes(result?.status)?result.status:"needs-review";
+    writeClosedBackupResult(status);app.exit(0);
+  })();return closedBackupFinish;
+}
+let desktopUpdater=null;
+function ensureDesktopUpdater(scheduleChecks=true){
+  desktopUpdater=startUpdater({scheduleChecks,beforeInstall:candidate=>prepareBackedUpInstall(candidate,{
+    backup:backupScheduleHost,
+    prepareNormal:()=>prepareUpdaterRestart({
+      environment:process.env,isClosing:()=>desktopShutdownStarted,isCleanedUp:()=>cuaCleanedUp,
+      readActivity:async()=>{
+        if(backupMode.isPreparing()||backupScheduleHost?.isPreparing()||!serverReady||!desktopSurfaceSecret)throw Error("Updater activity check unavailable");
+        const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{
+          headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000)});
+        if(!response.ok)throw Error("Updater activity check unavailable");return response.json();
+      },cleanup:cleanupDesktopForExit,
+    }),
+  })});
+  return desktopUpdater;
+}
+async function readBackupActivity(){
+  if(backupRemoteOperations.size)throw new Error("BACKUP_WORK_ACTIVE");
+  if(speechActive()||recorderActive())throw new Error("BACKUP_WORK_ACTIVE");
+  if(!serverReady||!desktopSurfaceSecret||credentialWrites.size||companionStarts.size)throw new Error("BACKUP_ACTIVITY_UNAVAILABLE");
+  const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000)});
+  if(!response.ok)throw new Error("BACKUP_ACTIVITY_UNAVAILABLE");return response.json();
+}
+async function prepareDesktopBackup(){
+  return prepareBackupRestart(async(action,token)=>{
+    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/backup-restart`,{method:"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},body:JSON.stringify({action,token}),signal:AbortSignal.timeout(5000)});
+    if(!response.ok)throw new Error(action==="prepare"?"BACKUP_WORK_ACTIVE":"BACKUP_RELEASE_UNCONFIRMED");return response.json();
+  },()=>cuaCleanedUp);
+}
+const backupMode = createBackupModeController({
+  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && verifiedBackupTool(process.resourcesPath)),
+  readActivity: readBackupActivity,
+  confirm: async () => {
+    const answer = await dialog.showMessageBox(mainWindow, { type:"question", buttons:["Cancel","Restart into Backup mode"], defaultId:0, cancelId:0, noLink:true,
+      message:"Close this workspace and restart into Backup mode?", detail:"Murage will close its idle services and reopen without starting engines, schedules or connected channels. You will choose the backup destination and independent recovery key there. No backup starts until you choose it." });
+    return answer.response === 1;
+  },
+  prepare:prepareDesktopBackup,
+  restart: async () => {
+    await cleanupDesktopForExit();
+    app.relaunch({ args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
+    app.quit();
+  },
+});
+ipcMain.handle("backup-mode:status", (_event,...args) => { if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupMode.status(); });
+ipcMain.handle("backup-mode:restart", (_event,...args) => { if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupMode.restart(); });
+ipcMain.handle("backup-schedule:status",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost?.status()??{supported:false,pending:false,enabled:false,revision:0,phase:"idle",schedule:{enabled:false,preUpgrade:false}};});
+ipcMain.handle("backup-schedule:select",(_event,...args)=>{if(args.length||!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.selectReferences();});
+ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2||!Number.isSafeInteger(args[0])||args[0]<0||!backupScheduleHost||backupMode.isPreparing())throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost.configure(args[0],args[1]);});
+for(const action of ["status","stage","install","disable"]){
+  ipcMain.handle(`backup-closed:${action}`,(_event,...args)=>{
+    if(args.length||!closedBackupController||closedBackupRequested||backupMode.isPreparing()||backupScheduleHost?.isPreparing())throw Error("BACKUP_CLOSED_UNAVAILABLE");
+    return Promise.resolve().then(()=>closedBackupController[action]()).catch(()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");});
+  });
+}
+for(const [action,arity] of [["status",0],["save",2],["selectRepositoryPassword",2],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3]]){
+  ipcMain.handle(`backup-remote:${action}`,(_event,...args)=>{
+    if(args.length!==arity)throw Error("BACKUP_REMOTE_INPUT_INVALID");
+    if(!backupRemoteHost||desktopShutdownStarted||desktopRecoveryMode||backupMode.isPreparing()||backupScheduleHost?.isPreparing()){
+      if(action==="status")return{supported:false,pending:false,configured:false,state:"unavailable"};
+      throw Error("BACKUP_REMOTE_UNAVAILABLE");
+    }
+    const operation=Promise.resolve().then(()=>backupRemoteHost[action](...args));backupRemoteOperations.add(operation);
+    void operation.finally(()=>backupRemoteOperations.delete(operation)).catch(()=>{});return operation;
+  });
+}
+const showApprovalNotification = createApprovalNotifications({ Notification, platform: process.platform, onOpen: target => {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+  win.webContents.send("approval-notification:open", target);
+} });
+ipcMain.handle("approval-notification:show", (_event, payload) => showApprovalNotification(payload));
 let unreadCount = 0;
 let unreadOverlayIcon = null;
 
@@ -286,6 +420,7 @@ if (process.platform === "linux") {
 // harness server on a fallback port and splits data dirs in two. The loser
 // exits before any child or window exists; the winner surfaces itself.
 if (!app.requestSingleInstanceLock()) {
+  if(closedBackupRequested){writeClosedBackupResult("busy");process.exit(0);}
   console.log("[desktop] Murage is already running — focusing that window");
   process.exit(0);
 }
@@ -312,6 +447,7 @@ app.on("open-url", (event, url) => {
 });
 
 app.on("second-instance", (_event, commandLine) => {
+  if(commandLine.includes(CLOSED_DUE_FLAG)||commandLine.includes(CLOSED_DESCRIPTOR_FLAG))return;
   const packageUrl = packageUrlFromCommandLine(commandLine);
   if (packageUrl) pendingPackageInstallUrl = packageUrl;
   activateExistingWindow(BrowserWindow.getAllWindows());
@@ -1872,7 +2008,9 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   serverReady = false;
   if (recoveryWindow && !recoveryWindow.isDestroyed()) { recoveryWindow.focus(); return recoveryWindow; }
   const ownership = reasonCode === "LEASE_FOREIGN_HOST" && desktopDataDir ? inspectDataDirLease(desktopDataDir) : null;
-  const reason = reasonCode === "LEASE_FOREIGN_HOST"
+  const reason = reasonCode === "BACKUP_REQUESTED"
+    ? "Backup mode was opened deliberately. This workspace is stopped; engines, schedules and connected channels have not started. Choose a private backup operation, or return to the workspace."
+    : reasonCode === "LEASE_FOREIGN_HOST"
     ? "This installation has an ownership record for a different computer name. This does not establish that your data is damaged. Reinstalling Murage will not clear this record."
     : reasonCode === "RESTORE_REVIEW_REQUIRED"
     ? "This restored installation is paused for recovery review. Your previous installation remains retained."
@@ -1881,16 +2019,21 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
       : "Murage could not finish startup. Keep the original installation while you inspect recovery options.";
   const recovery = openInstallationRecoveryWindow({
     BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,
-    context: { reason, ownership, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
+    context: { reason, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     canRestoreSeparate: canRestoreSeparateInstallation,
     canCaptureSeparate: canCaptureSeparateInstallation,
     runCaptureSeparate: runSnapshotDesktopRecovery,
     planSeparate: () => planSeparateInstallation(app.getPath("userData"), desktopRequestedDataDir, desktopDataDir),
     runSeparate: runSeparateDesktopRecovery,
+    runEncryptedSeparate: runEncryptedSeparateDesktopRecovery,
     retainedDestination: () => retainedSeparateDirectory,
     run: runDesktopRecovery,
-    retry: async () => { app.relaunch(); app.quit(); },
+    encryptedAvailable: () => Boolean(desktopDataOwner && verifiedBackupTool(process.resourcesPath)),
+    retry: async () => {
+      if(backupScheduleHost?.pendingUpgrade())await backupScheduleHost.returnUpgradeToWorkspace();
+      app.relaunch({args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}); app.quit();
+    },
     openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
     onClosed: () => { recoveryWindow = null; },
   });
@@ -1963,18 +2106,42 @@ async function runSeparateDesktopRecovery(parameters, plan, signal = null) {
   } finally { owner.release(); }
 }
 
+async function runEncryptedSeparateDesktopRecovery(parameters, plan) {
+  if (!desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !verifiedBackupTool(process.resourcesPath)) throw Object.assign(new Error("Recovery unavailable"), { code:"RECOVERY_OWNERSHIP_REQUIRED" });
+  // This allocates only the exclusive container, not its data target.
+  const allocated=allocateSeparateInstallation(plan);
+  retainedSeparateDirectory=allocated.dataDirectory;
+  const owner=acquireDataDirLease(allocated.dataDirectory);
+  try {
+    const result=await runDesktopRecovery("restore-encrypted-new",parameters,{owner,dataDirectory:allocated.dataDirectory});
+    if(desktopShutdownStarted)throw Object.assign(new Error("Recovery stopped"),{code:"RECOVERY_OWNERSHIP_REQUIRED"});
+    // Selection binds to the validated paused projection's receipt, not to raw data.
+    publishInstallationSelection(allocated,{...result,operation:"restore",sha256:result.archiveSha256});
+    return{...result,separateDataDirectory:allocated.dataDirectory,retainedOriginal:desktopDataDir};
+  }finally{owner.release();}
+}
+
 async function runDesktopRecovery(operation, parameters, separate = null) {
   const owner = separate?.owner ?? desktopDataOwner;
   const dataDirectory = separate?.dataDirectory ?? desktopDataDir;
   const archiveOnly = operation === "plan-restore" && canRestoreSeparateInstallation();
   if (!desktopRecoveryMode || desktopShutdownStarted || (!archiveOnly && (!owner || !dataDirectory))) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
-  const args = operation === "plan-restore" ? ["plan-restore", "--archive", parameters.archive]
+  const ageTool=operation.includes("encrypted")?verifiedBackupTool(process.resourcesPath):null;
+  if(operation.includes("encrypted")&&(!ageTool||typeof parameters.readIdentity!=="function"))throw Object.assign(new Error("Encrypted backup unavailable"),{code:"BACKUP_UNAVAILABLE"});
+  const args = operation === "backup-encrypted" ? ["backup-encrypted","--data-dir",dataDirectory,"--output",parameters.output,"--age-tool",ageTool,"--recipient",parameters.recipient,"--credential-policy","preserve-in-encrypted-fidelity"]
+    : operation === "inspect-encrypted" ? ["inspect-encrypted","--archive",parameters.archive,"--age-tool",ageTool]
+    : operation === "restore-encrypted-new" ? ["restore-encrypted-new","--data-dir",dataDirectory,"--archive",parameters.archive,"--sha256",parameters.sha256,"--age-tool",ageTool]
+    : operation === "plan-restore" ? ["plan-restore", "--archive", parameters.archive]
     : operation === "review" ? ["review", "--data-dir", dataDirectory]
     : operation === "activate" ? ["activate", "--data-dir", dataDirectory, "--review-hash", parameters.reviewHash]
     : operation === "backup" ? ["backup", "--data-dir", dataDirectory, "--output", parameters.output]
     : operation === "restore" ? ["restore", "--data-dir", dataDirectory, "--archive", parameters.archive, "--sha256", parameters.sha256]
     : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
+  if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
+    if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>1024**4||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
+    args.push("--max-bytes",String(parameters.maxBytes),"--max-duration-ms",String(parameters.maxDurationMs));
+  }
   await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
   await awaitOwnedWork(Promise.all([...ownedServerChildren].map(child => child.stop())), "Owned writers have not exited");
   serverProc = null;
@@ -1990,11 +2157,16 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   const env = {};
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP", "TMP"]) if (process.env[key] !== undefined) env[key] = process.env[key];
   if (operation !== "plan-restore") Object.assign(env, owner.utilityServerLeaseEnvironment());
-  return runInstallationRecoveryWorker({
+  try { return await runInstallationRecoveryWorker({
     fork: (entry, argv, options) => utilityProcess.fork(entry, argv, options),
     entry: path.join(process.resourcesPath, "server", "installation-recovery-worker.js"),
     args, env, track: trackOwnedServerChild,
-  });
+    ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
+    ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
+  }); } catch(error) {
+    if(error?.code==="AGE_PROCESS_CLOSE_UNCONFIRMED"&&typeof error.retainedDirectory==="string")retainedSeparateDirectory=error.retainedDirectory;
+    throw error;
+  }
 }
 
 function initializeBackgroundLifecycle(){
@@ -2366,28 +2538,41 @@ ipcMain.handle("desktop:pick-folder", async (event, current) => {
 // One-click bug-report bundle. Secrets are never read; the report is
 // redacted again on the way out (diagnostics.mjs). null means the user
 // cancelled the save dialog.
-ipcMain.handle("desktop:export-diagnostics", async (event) => {
+ipcMain.handle("desktop:export-diagnostics", async (event, selection, ...extra) => {
+  if(extra.length)throw new Error("Invalid diagnostics request");
   const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-  const report = await gatherDiagnostics();
-  const result = await dialog.showSaveDialog(owner, {
+  let report;
+  if(selection!==undefined){
+    const selected=validateIncidentSelection(selection);
+    const expectedOrigin=new URL(app.isPackaged?`http://127.0.0.1:${SERVER_PORT}`:DEV_URL).origin;
+    assertIncidentExportSender(event,mainWindow,{origin:expectedOrigin,ready:serverReady,secret:desktopSurfaceSecret});
+    const parserPath=app.isPackaged?path.join(process.resourcesPath,"server","incident-diagnostics.js"):path.join(__dirname,"..","dist-server","incident-diagnostics.js");
+    const {parseIncidentDiagnostics}=await import(pathToFileURL(parserPath).href);
+    report=await prepareSelectedIncidentReport(selected,{
+      parseIncident:parseIncidentDiagnostics,
+      fetchIncident:input=>fetch(`http://127.0.0.1:${SERVER_PORT}/api/diagnostics/incident?${new URLSearchParams(input)}`,{
+        headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000),redirect:"error"}),
+      appInfo:{version:app.getVersion(),platform:process.platform,arch:process.arch,electron:process.versions.electron,node:process.versions.node},
+    });
+  }else report = await gatherDiagnostics();
+  return saveDiagnosticsReport(report,{chooseFile:()=>dialog.showSaveDialog(owner, {
     title: "Export diagnostics",
     defaultPath: diagnosticsFileName(),
     filters: [{ name: "Text", extensions: ["txt"] }],
-  });
-  if (result.canceled || !result.filePath) return null;
+  }),writeFile:(filePath,content)=>{
   if (process.platform === "win32") {
-    fs.writeFileSync(result.filePath, report, { mode: 0o600 });
+    fs.writeFileSync(filePath, content, { mode: 0o600 });
   } else {
     const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW;
-    const handle = fs.openSync(result.filePath, flags, 0o600);
+    const handle = fs.openSync(filePath, flags, 0o600);
     try {
       fs.fchmodSync(handle, 0o600);
-      fs.writeFileSync(handle, report, "utf8");
+      fs.writeFileSync(handle, content, "utf8");
     } finally {
       fs.closeSync(handle);
     }
   }
-  return result.filePath;
+  }});
 });
 
 // Bots hand users files as markdown links to paths inside the Murage
@@ -2615,6 +2800,7 @@ ipcMain.handle("perm:open-settings", (_event, pane) => {
 });
 
 ipcMain.handle("speech:start", (event, options) => {
+  if(backupMode.isPreparing()||backupScheduleHost?.isPreparing())throw new Error("BACKUP_RESTART_PENDING");
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
   if (!nativeActions.appleSpeech) {
@@ -2641,6 +2827,7 @@ ipcMain.handle("speech:finish", () => {
 
 ipcMain.handle("skill-recorder:permissions", () => recorderPermissionStatus());
 ipcMain.handle("skill-recorder:start", (event) => {
+  if(backupMode.isPreparing()||backupScheduleHost?.isPreparing())throw new Error("BACKUP_RESTART_PENDING");
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) throw new Error("The recorder window is unavailable");
   return startRecorder(win);
@@ -2734,6 +2921,9 @@ const CREDENTIAL_PATCH = {
   exaSearchApiKey: (value) => ({ webSearch: { exaApiKey: value } }),
   firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
+  slackAppToken: (value) => ({ slack: { appToken: value } }),
+  slackBotToken: (value) => ({ slack: { botToken: value } }),
+  discordBotToken: (value) => ({ discord: { botToken: value } }),
 };
 
 // Private harness routes gated by the per-launch commit token that only this
@@ -2818,15 +3008,16 @@ ipcMain.handle("credential:set", async (_event, name, value) => {
   if (!patchFor || typeof value !== "string") {
     throw new Error("Unsupported credential");
   }
-  if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) {
+  const encryptedOnly = app.isPackaged || name === "slackAppToken" || name === "slackBotToken" || name === "discordBotToken";
+  if (encryptedOnly && !(await safeStorage.isAsyncEncryptionAvailable())) {
     throw new Error("The operating-system credential store is unavailable");
   }
   const secret = value.trim();
   const applyToHarness = async () => {
     // In development the server is a separately launched process, so it
     // cannot receive credentials from Electron at boot. Keep its established
-    // local config path there; production always uses the encrypted store.
-    const secretStorage = app.isPackaged ? "?secretStorage=external" : "";
+    // local config path there; Slack and production always use the encrypted store.
+    const secretStorage = encryptedOnly ? "?secretStorage=external" : "";
     if (!desktopSurfaceSecret) throw new Error("Desktop authorization is not ready. Wait and retry saving the credential.");
     const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config${secretStorage}`, {
       method: "PUT",
@@ -2841,7 +3032,7 @@ ipcMain.handle("credential:set", async (_event, name, value) => {
     if (!response.ok) throw new Error(body?.error || `Could not save credential (HTTP ${response.status})`);
     return body;
   };
-  if (!app.isPackaged) return applyToHarness();
+  if (!encryptedOnly) return applyToHarness();
 
   // Commit the encrypted value before the server makes it live. The shared
   // state rolls credentials.bin back if validation/reload fails, while also
@@ -2875,8 +3066,98 @@ setCuaStateListener((connection) => {
   });
 });
 
+async function initializeBackupRemoteHost(){
+  if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
+  const installation=ownedDesktopDataDir(),control=closedControlDirectory(installation);
+  const [{createBackupRemoteHost},{BackupRestic}]=await Promise.all([
+    import(pathToFileURL(path.join(process.resourcesPath,"server","backup-remote-host.js")).href),
+    import(pathToFileURL(path.join(process.resourcesPath,"server","backup-restic.js")).href),
+  ]);
+  const readProtected=async()=>{const document=secureCredentialState?.read()??await loadSecureCredentials();if(credentialStoreUnavailable)throw Error("BACKUP_REMOTE_UNAVAILABLE");return document;};
+  const passwords=createRemotePasswordStore({
+    excludedRoots:()=>[installation,app.getPath("userData"),ensureRemoteControlDirectory(control)],readProtected,updateProtected:updateSecureCredentialDocument,
+    chooseFile:async()=>{
+      const answer=await dialog.showOpenDialog(mainWindow,{title:"Choose independently saved repository password",properties:["openFile"]});if(answer.canceled)return null;
+      const confirmed=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use password file"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent copy of this repository password",detail:"This is separate from your age recovery key and S3 access key. Keep it outside Murage and its backup folders. Losing it prevents restoring the remote repository. Selecting it does not connect or upload."});
+      return confirmed.response===1?answer.filePaths[0]??null:null;
+    },
+  });
+  const tool=path.join(process.resourcesPath,"backup-tools",process.arch,"restic");
+  backupRemoteHost=createBackupRemoteHost({
+    supported:()=>Boolean(!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner&&!credentialStoreUnavailable&&trustedBackupResticExecutable(tool)),
+    readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),
+    latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
+    latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
+    chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},
+    exportDownloaded:async(copy,folder)=>exportRemoteBackup(copy,folder,{sourceRoot:control,excludedRoots:[installation,app.getPath("userData"),control]}),
+    createAdapter:binding=>new BackupRestic({executable:tool,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials}),
+  });
+}
+async function initializeBackupScheduleHost(){
+  if(!app.isPackaged||!desktopDataOwner)return;
+  const installation=ownedDesktopDataDir();
+  // Read-only selected-profile routing must precede the first protected backup
+  // reference read, including closed startup and existing offline returns.
+  const selectedProfile=restoredConnectionProfile(installation);
+  if(selectedProfile)CREDENTIALS_FILE=selectedProfile.credentialsFile;
+  const {BackupCoordinator}=await import(pathToFileURL(path.join(process.resourcesPath,"server","backup-coordinator.js")).href);
+  const stateDirectory=closedControlDirectory(installation);
+  const coordinator=new BackupCoordinator({stateDirectory});
+  const provider=createNativeClosedBackupProvider({home:app.getPath("home")});
+  closedBackupController=createClosedBackupController({
+    profile:()=>({version:1,platform:process.platform,owner:{uid:process.getuid?.()},requestedRoot:desktopRequestedDataDir,userData:fs.realpathSync.native(app.getPath("userData")),installation,installationIdentity:closedInstallationIdentity(installation),executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe"))}),
+    triggerSource:path.join(process.resourcesPath,"server","backup-schedule-trigger.js"),
+    backupSupported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&verifiedBackupTool(process.resourcesPath)),provider,backup:()=>backupScheduleHost,
+    confirmInstall:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Install backup job"],defaultId:0,cancelId:0,noLink:true,message:"Install an owning-user backup job?",detail:"This registers the staged job for this profile. Backups remain off until you explicitly enable closed-app backups. The job runs in your user session and does not save account passwords."});return answer.response===1;},
+  });
+  const choose=async(properties,title)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties});return answer.canceled?null:answer.filePaths[0]??null;};
+  backupScheduleHost=createBackupScheduleHost({
+    coordinator,installation:()=>installation,
+    assertUpgradeAllowed:()=>{
+      if(!app.isPackaged||hasCustomUpdaterProfile(process.env)||desktopSelectionActive||!desktopUpdater?.supportsInstallContinuation)throw Error("BACKUP_PREUPGRADE_UNAVAILABLE");
+    },
+    assertClosedAllowed:()=>closedBackupController.assertInstalled(),
+    assertClosedStartup:async()=>{
+      if(!closedBackupInvocation||!closedBackupDescriptor||!desktopDataOwner||!desktopRecoveryMode||desktopShutdownStarted||serverProc||ownedServerChildren.size||credentialWrites.size||companionStarts.size||desktopUpdater)throw Error("BACKUP_CLOSED_OWNER_UNAVAILABLE");
+      if(installation!==closedBackupDescriptor.installation||desktopRequestedDataDir!==closedBackupDescriptor.requestedRoot||fs.realpathSync.native(app.getPath("userData"))!==closedBackupDescriptor.userData)throw Error("BACKUP_CLOSED_PROFILE_CHANGED");
+      if(desktopDataOwner.ownerPid!==process.pid||desktopDataOwner.delegated)throw Error("BACKUP_CLOSED_OWNER_UNAVAILABLE");
+      // Existing method revalidates the held nonce/closing seal; discard its
+      // capability object here. Only the private worker receives delegation.
+      desktopDataOwner.utilityServerLeaseEnvironment();
+      assertClosedProfileBinding(closedBackupDescriptor);
+      await closedBackupController.assertInvocation(closedBackupDescriptor,closedBackupInvocation.descriptorPath);
+    },
+    supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&verifiedBackupTool(process.resourcesPath)),
+    readProtected:async key=>{
+      if(key!==BACKUP_SCHEDULE_BINDINGS_KEY)throw new Error("BACKUP_BINDINGS_UNAVAILABLE");
+      const document=secureCredentialState?.read()??await loadSecureCredentials();
+      if(credentialStoreUnavailable)throw new Error("BACKUP_BINDINGS_UNAVAILABLE");return document[key];
+    },
+    writeProtected:async(key,value)=>{
+      if(key!==BACKUP_SCHEDULE_BINDINGS_KEY)throw new Error("BACKUP_BINDINGS_UNAVAILABLE");
+      await updateSecureCredentialDocument(current=>({...current,[key]:value}));
+    },
+    chooseDestination:()=>choose(["openDirectory","createDirectory"],"Choose scheduled backup destination"),
+    chooseKey:()=>choose(["openFile"],"Choose independent age recovery key"),
+    confirmReferences:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Save references"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent recovery-key copy",detail:"The key must remain outside this installation and available for scheduled backups. Keep a separate safe recovery copy. Saving these references does not enable backups or authorize a restart."});return answer.response===1;},
+    prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await readBackupActivity();return prepareDesktopBackup();},
+    cleanupIdle:cleanupDesktopForExit,
+    capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
+    relaunch:async mode=>{
+      if(mode==="normal")await cleanupDesktopForExit();
+      const args=process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
+      if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);app.relaunch({args});app.quit();
+    },
+  });
+}
 const desktopStartup = app.whenReady().then(async () => {
   assertDesktopStartupActive();
+  if(closedBackupRequested){
+    acquireDesktopDataOwner();await initializeBackupScheduleHost();desktopRecoveryMode=true;
+    // The worker waits for desktopStartup; never await it from this callback.
+    void desktopStartup.then(()=>backupScheduleHost.runClosedDue()).then(finishClosedBackup).catch(()=>finishClosedBackup({status:"unavailable"}));
+    return;
+  }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
   const serverConnections = createServerConnections({ BrowserWindow, session, onError: connectionError });
   const serverMenu = Menu.buildFromTemplate([{ label: "Server", submenu: [{ label: "Connect to server…", click: () => openServerPrompt({ BrowserWindow, session, connections: serverConnections, parent: mainWindow ?? undefined, onError: connectionError }) }] }]);
@@ -2886,6 +3167,35 @@ const desktopStartup = app.whenReady().then(async () => {
     Menu.setApplicationMenu(applicationMenu);
   } else Menu.setApplicationMenu(serverMenu);
   if (app.isPackaged) acquireDesktopDataOwner();
+  await initializeBackupScheduleHost();
+  if(backupScheduleHost?.internalStatus().phase==="handoff-armed"){
+    // No normal writers or credential migrations start before this private claim.
+    desktopRecoveryMode=true;
+    void desktopStartup.then(()=>backupScheduleHost.resumeOffline()).catch(()=>{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");});
+    return;
+  }
+  const upgrade=backupScheduleHost?.pendingUpgrade();
+  if(upgrade){
+    const updater=ensureDesktopUpdater(false);
+    if(upgrade.phase==="install-requested"&&upgrade.candidate.version===app.getVersion()){
+      await backupScheduleHost.completeUpgrade(app.getVersion());
+    }else{
+      desktopRecoveryMode=true;
+      // Wait for this startup promise to settle before cleanup can await it.
+      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:cleanupDesktopForExit})).catch(()=>{
+        if(!desktopShutdownStarted){
+          showDesktopRecovery("BACKUP_REQUESTED");
+          dialog.showErrorBox("Update paused","Murage could not confirm this update continuation. No automatic retry will run. Review diagnostics; return to the workspace only when the pending update can be safely cancelled.");
+        }
+      });
+      return;
+    }
+  }
+  if(!process.argv.includes(BACKUP_MODE_ARGUMENT))backupScheduleHost?.completeReturn();
+  if (app.isPackaged && process.argv.includes(BACKUP_MODE_ARGUMENT)) {
+    showDesktopRecovery("BACKUP_REQUESTED");
+    return;
+  }
   if (app.isPackaged) {
     assertRestoreReviewed(ownedDesktopDataDir());
     // The child receives a canonical explicit override, so only this parent
@@ -3039,6 +3349,7 @@ const desktopStartup = app.whenReady().then(async () => {
     });
   }
   const background=initializeBackgroundLifecycle();
+  try{await initializeBackupRemoteHost();}catch{backupRemoteHost=null;slog("remote backup controls unavailable; normal workspace startup continues");}
   const backgroundReady=background.lifecycle.start();
   const loginLaunch=background.login.launchedAtLogin();
   if(loginLaunch)await backgroundReady;else void backgroundReady.catch(error=>slog(`background startup: ${error.message}`));
@@ -3092,26 +3403,14 @@ const desktopStartup = app.whenReady().then(async () => {
   }
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"
-  startUpdater({ beforeInstall: () => prepareUpdaterRestart({
-    environment: process.env,
-    isClosing: () => desktopShutdownStarted,
-    isCleanedUp: () => cuaCleanedUp,
-    readActivity: async () => {
-      if (!serverReady || !desktopSurfaceSecret) throw new Error("Updater activity check unavailable");
-      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`, {
-        headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!response.ok) throw new Error("Updater activity check unavailable");
-      return response.json();
-    },
-    cleanup: cleanupDesktopForExit,
-  }) });
+  ensureDesktopUpdater();
   app.on("activate", () => {
     if (!desktopShutdownStarted)backgroundLifecycle?.open();
   });
 });
+void desktopStartup.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted){backupScheduleHost?.start();startAutomaticRemoteBackups();}}).catch(()=>{});
 void desktopStartup.catch((error) => {
+  if(closedBackupRequested){void finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});return;}
   if (!desktopShutdownStarted) {
     // Lease errors are sanitized by the lease module; arbitrary child/errors
     // may carry credentials or paths and must not be echoed to diagnostics.
@@ -3162,6 +3461,8 @@ process.once("SIGINT", requestSignalQuit);
 process.once("SIGTERM", requestSignalQuit);
 
 function cleanupDesktopForExit() {
+  stopAutomaticRemoteBackups();
+  backupScheduleHost?.stopPolling();
   desktopShutdownStarted = true;
   // Optional hosted registration must not hold the credential queue open for
   // its network timeout. Cancel the request, then drain actual writes below.
@@ -3195,6 +3496,7 @@ function cleanupDesktopForExit() {
     desktopCleanupStage = "desktop startup";
     await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
     desktopCleanupStage = "credential writes";
+    await awaitOwnedWork(Promise.allSettled([...backupRemoteOperations]), "Remote backup operations have not settled");
     await awaitOwnedWork(Promise.allSettled([...credentialWrites]), "Credential writes have not settled");
     desktopCleanupStage = "companion startup";
     await awaitOwnedWork(Promise.all([...companionStarts]), "Companion startup has not settled");

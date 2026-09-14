@@ -32,8 +32,8 @@ export interface WaitForExitOptions {
  *
  * From there: resolve on `close`, escalate to SIGKILL only after `graceMs`,
  * and keep waiting for `close` even then — a SIGKILL is not an exit either,
- * it just makes one imminent. The final backstop bounds the whole thing so a
- * wedged child can never hang the suite.
+ * it just makes one imminent. The final backstop rejects an unconfirmed stop,
+ * so callers cannot proceed to deleting a still-owned fixture directory.
  *
  * A loaded CI runner loses that race; a laptop wins it every time, which is
  * why it reads as a phantom.
@@ -44,17 +44,30 @@ export function waitForExit(
 ): Promise<void> {
   const { signal, graceMs = 5_000 } = typeof options === "number" ? { graceMs: options } : options;
 
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
     // signalCode, not just exitCode: a process killed by a signal reports its
     // death in the former and leaves the latter null.
     if (!child || child.exitCode !== null || child.signalCode !== null) return resolve();
 
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const done = () => {
+    let settled = false;
+    const clear = () => {
       if (timer) clearTimeout(timer);
+      child.off("close", done);
+    };
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clear();
       resolve();
     };
-    child.on("close", done);
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clear();
+      reject(error);
+    };
+    child.once("close", done);
 
     if (signal) {
       try {
@@ -64,9 +77,19 @@ export function waitForExit(
       }
     }
 
+    if (settled) return;
     timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      timer = setTimeout(done, 2_000);
+      try {
+        child.kill("SIGKILL");
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      if (settled) return;
+      timer = setTimeout(() => fail(Object.assign(
+        new Error(`Child process ${child.pid ?? "unknown"} did not confirm exit after SIGKILL`),
+        { code: "CHILD_EXIT_UNCONFIRMED" },
+      )), 2_000);
       timer.unref?.();
     }, graceMs);
     timer.unref?.();

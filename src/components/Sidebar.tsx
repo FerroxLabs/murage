@@ -1,6 +1,7 @@
 import { track } from "@/lib/analytics";
 import { hostStoppedLabel } from "@/lib/host-stop";
 import { folderTrustLabel } from "@/lib/folder-trust";
+import { plainText } from "@/lib/plain-text";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -322,17 +323,17 @@ function UpdateButton() {
   );
 }
 
-function preview(bot: Bot): string {
+export function sidebarBotPreview(bot: Bot): string {
   if (bot.activity === "waiting-on-you") return "Waiting for you…";
   if (bot.busy) return "Working…";
   // the visible branch's tail — bot.messages holds every fork, so its last
   // entry can belong to a version the user switched away from
   const last = visibleMessages(bot).at(-1);
   if (!last) return "";
-  if (last.kind === "options" && last.card) return last.card.title;
+  if (last.kind === "options" && last.card) return plainText(last.card.title);
   if (last.kind === "activity" && last.tool) return hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? last.tool.name;
   if (last.kind === "screen") return "Screen frame";
-  return last.text ?? "";
+  return plainText(last.text ?? "");
 }
 
 interface MenuState {
@@ -341,7 +342,7 @@ interface MenuState {
   y: number;
 }
 
-function groupPreview(group: Group, bots: Bot[]): string {
+export function sidebarGroupPreview(group: Group, bots: Bot[]): string {
   if (group.busyBotId) {
     return `${bots.find((b) => b.id === group.busyBotId)?.name ?? "A bot"} is working…`;
   }
@@ -352,7 +353,7 @@ function groupPreview(group: Group, bots: Bot[]): string {
     ? hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? last.tool.name
     : last.kind === "goal.run" && last.goalRun
       ? sidebarGoalRunPreview(last.goalRun)
-      : (last.text ?? "");
+      : plainText(last.text ?? "");
   if (last.role === "user") return `You: ${text}`;
   return last.from ? `${last.from.name}: ${text}` : text;
 }
@@ -439,7 +440,7 @@ function GroupListItem({
           {selected && last && <span className="shrink-0 text-xs text-ink-secondary">{formatTime(last.at)}</span>}
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] text-ink-secondary">{groupPreview(group, state.bots)}</span>
+          <span className="truncate text-[13px] text-ink-secondary">{sidebarGroupPreview(group, state.bots)}</span>
           {group.unread && <span className="size-2 shrink-0 rounded-full bg-accent" />}
         </div>
       </div>
@@ -988,7 +989,7 @@ function BotListItem({
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
   const rowPreview = botRole(bot) === "member" || selected || bot.unread || bot.busy || bot.activity === "waiting-on-you"
-    ? preview(bot)
+    ? sidebarBotPreview(bot)
     : "";
   const rowClass = cn(
     "flex w-full items-center rounded-xl border text-left",
@@ -1351,11 +1352,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       if (desktop !== true) return;
       const detail = (event as CustomEvent<FilesOpenDetail>).detail ?? {};
       if (typeof detail !== "object" || [detail.botId, detail.threadId, detail.artifactId].some(value => value !== undefined && (typeof value !== "string" || value.length > 200))) return;
-      setFilesOpen(detail);
+      if (state.bots.some(bot => bot.id === state.selectedId)) dispatch({ type: "workspacePane", action: { type: "show", section: "files", filesRequest: detail } });
+      else setFilesOpen(detail);
     };
     window.addEventListener("murage:open-files", open);
-    return () => window.removeEventListener("murage:open-files", open);
-  }, [desktop]);
+    const memory = (event: Event) => {
+      const botId = (event as CustomEvent<{ botId: string }>).detail?.botId;
+      if (desktop !== true || !state.bots.some(bot => bot.id === botId)) return;
+      if (botId !== state.selectedId) dispatch({ type: "select", id: botId });
+      dispatch({ type: "workspacePane", action: { type: "show", section: "memory" } });
+    };
+    window.addEventListener("murage:open-memory", memory);
+    return () => { window.removeEventListener("murage:open-files", open); window.removeEventListener("murage:open-memory", memory); };
+  }, [desktop, state.bots, state.selectedId, dispatch]);
   useEffect(()=>window.muragebox?.startup?.onOpenInbox(()=>setInboxOpen(true)),[]);
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
@@ -1558,7 +1567,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         !q ||
         b.name.toLowerCase().includes(q) ||
         (b.title ?? "").toLowerCase().includes(q) ||
-        preview(b).toLowerCase().includes(q),
+        sidebarBotPreview(b).toLowerCase().includes(q),
     );
   const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
   const {

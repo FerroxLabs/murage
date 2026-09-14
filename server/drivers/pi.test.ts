@@ -329,6 +329,23 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession(threadId)).toBe(false);
   });
 
+  it("keeps a refused submission addressable with zero prompt bytes until confirmed stop", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-pi-submission-refused-"));
+    const dump = join(dir, "dump.jsonl");
+    try {
+      await create(undefined, { FAKE_PI_DUMP: dump });
+      const threadId = `t-submission-refused-${newId()}`;
+      const beforeSubmit = vi.fn(() => { throw new Error("MEMORY_CONTEXT_REVOKED"); });
+      const { turnId } = await instance.adapter.sendTurn({threadId, text:"hi", model:"openai/gpt-4o", beforeSubmit});
+      expect(beforeSubmit).toHaveBeenCalledOnce();
+      expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
+      expect(dumpRows(dump).filter(row => row.prompt)).toEqual([]);
+      expect(turnEventTypes(turnId)).not.toContain("turn.completed");
+      expect(await instance.adapter.interruptTurn(threadId)).toMatchObject({ closeConfirmed: true });
+      expect(dumpRows(dump).filter(row => row.prompt)).toEqual([]);
+    } finally { rmSync(dir, { recursive:true, force:true }); }
+  });
+
   it("fails before the prompt when set_model never answers", async () => {
     await create(undefined, { FAKE_PI_SET_MODEL: "silent" });
     const threadId = `t-model-timeout-${newId()}`;

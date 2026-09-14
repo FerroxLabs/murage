@@ -25,6 +25,12 @@ export const CUSTOM_MODELS_GROUP = "Custom models";
 export const NO_LOCAL_SERVER_ROW = "No local server detected — add one in Settings → Models";
 export const pickerKey = (s: PickerSelection): string => JSON.stringify([s.instanceId, s.connectionId ?? null, s.model]);
 export function priceBand(price: ProviderModel["pricing"]): string { const n=price?.outputPerMillion; return typeof n==="number"&&Number.isFinite(n)&&n>=0?n<5?"$":n<25?"$$":"$$$":"Price unavailable"; }
+/** Join the server's initial Flux fetch when the picker beats startup discovery.
+ * Failed catalogs wait for the existing scheduled deadline or explicit Refresh. */
+export function pickerConnectionsToRefresh(connections: readonly PublicProviderConnection[], force: boolean): PublicProviderConnection[] {
+  return connections.filter(connection => connection.enabled && connection.configured &&
+    (force || (connection.preset === "flux" && !connection.catalog.fetchedAt && connection.catalog.models.length === 0 && !connection.catalog.error)));
+}
 /** "64K context" for a 65536-token window and "200K context" for 200000: a
  *  power-of-two window is what a local server reports (`-c 65536`), and it
  *  must read the same here as on the Local models card that showed it. */

@@ -4,7 +4,7 @@ export function providerEngineProtocol(driver: string, preset: ProviderPreset, p
   if (driver === "fuigoAgent") return protocol;
   if (driver === "claudeAgent") return preset === "flux" ? "anthropic" : protocol === "anthropic" ? protocol : null;
   if (driver === "codex") return preset === "flux" || preset === "openai" ? "responses" : protocol === "responses" ? protocol : null;
-  if (["qwenAgent", "hermesAgent", "grok", "openai-compat"].includes(driver)) return protocol === "openai" ? protocol : null;
+  if (["qwenAgent", "hermesAgent", "grok", "grokAgent", "openai-compat"].includes(driver)) return protocol === "openai" ? protocol : null;
   return null;
 }
 /** Whether an engine runs tools. pi, opencode, droid, kimi and grokAgent run

@@ -1,8 +1,7 @@
 // Regression for 727db85f (Q1-T5 §3.3): a turn refused at acceptance must not
-// leak the workspace writer lease. The memory disclosure is delivered inside
-// guardTurnDispatch's acceptance hook, after the provider has accepted the
-// turn; when it is refused there (MEMORY_CONTEXT_REVOKED) the provider turn is
-// stopped and the harness rethrows. The writer lease is already marked
+// leak the workspace writer lease. Pi validates memory immediately before
+// prompt submission. A refusal returns its addressable turn without prompting;
+// guardTurnDispatch binds the lease, stops it and rethrows. The lease is marked
 // dispatched, so abandon() keeps it by design and only the stopped turn's
 // terminal event can release it — which needs the lease bound to that
 // provider turn id BEFORE the hook can throw. Unbound, every owner save in
@@ -54,6 +53,7 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     const created = await api("POST", "/api/bots", { name: "Lease fixture", modelSelection: { instanceId: "piGate", model: models[0].id } });
     expect(created.status).toBe(201);
     const bot = created.body.bot as { id: string; threadId: string };
+    const promptCountBefore = dumpRows().filter(row => row.prompt).length;
     expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
 
     // The harness has called sendTurn; the provider turn is not accepted yet.
@@ -76,8 +76,12 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     await expect.poll(async () => (await botState(bot.id)).busy, { timeout: 15000 }).toBe(false);
     await expect.poll(async () => await replies(), { timeout: 15000 }).toBe(repliesBefore + 1);
     expect((await messages(bot.threadId)).some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);
-    // The handshake was answered, so the provider had accepted before the refusal.
+    // The refused process completed setup but received no prompt/action.
     expect(dumpRows().some(row => row.setModel !== undefined || row.prompt !== undefined || row.thinkingLevel !== undefined)).toBe(true);
+    expect(dumpRows().filter(row => row.prompt)).toHaveLength(promptCountBefore + 1);
+    expect(dumpRows().filter(row => row.action)).toHaveLength(promptCountBefore + 1);
+    const refusedPid = Number(readFileSync(`${gate}.waiting`, "utf8"));
+    expect(dumpRows().filter(row => row.pid === refusedPid && (row.prompt || row.action))).toEqual([]);
 
     // The owner's save over an existing file in that bot's workspace is
     // admitted: the refused turn released its writer lease through its
@@ -111,6 +115,7 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
   // re-prepares the memory context under the new policy revision and
   // dispatches the same user message once.
   it("runs a user turn whose sibling task was created inside the dispatch window, on fresh memory context", async () => {
+    const promptCountBefore = dumpRows().filter(row => row.prompt).length;
     const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "piGate").models.options;
     const created = await api("POST", "/api/bots", { name: "Sibling task fixture", modelSelection: { instanceId: "piGate", model: models[0].id } });
     expect(created.status).toBe(201);
@@ -150,6 +155,10 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       const thread = await messages(bot.threadId);
       expect(thread.filter(message => message.role === "user" && message.kind === "text").map(message => message.text)).toEqual(["sibling turn held in its dispatch window"]);
       expect((await replies()).at(-1)?.text).toBe("Hello from pi");
+      expect(dumpRows().filter(row => row.prompt)).toHaveLength(promptCountBefore + 1);
+      expect(dumpRows().filter(row => row.action)).toHaveLength(promptCountBefore + 1);
+      const refusedPid = Number(readFileSync(`${gate}.waiting`, "utf8"));
+      expect(dumpRows().filter(row => row.pid === refusedPid && (row.prompt || row.action))).toEqual([]);
       expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:"))).toBe(false);
       expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);
       // The reply ran on a disclosure prepared and delivered under the new
@@ -173,6 +182,7 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
   // revision and dispatches the member turn once more, with no error chip and
   // exactly one member reply.
   it("runs a room member turn whose task was created inside the dispatch window, on fresh memory context", async () => {
+    const promptCountBefore = dumpRows().filter(row => row.prompt).length;
     const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "piGate").models.options;
     const bot = async (name: string) => {
       const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "piGate", model: models[0].id } });
@@ -227,6 +237,10 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       expect(thread.filter(message => message.role === "user" && message.kind === "text").map(message => message.text)).toEqual(["room turn held in its dispatch window"]);
       const reply = (await replies())[0];
       expect(reply.text).toBe("Hello from pi");
+      expect(dumpRows().filter(row => row.prompt)).toHaveLength(promptCountBefore + 1);
+      expect(dumpRows().filter(row => row.action)).toHaveLength(promptCountBefore + 1);
+      const refusedPid = Number(readFileSync(`${gate}.waiting`, "utf8"));
+      expect(dumpRows().filter(row => row.pid === refusedPid && (row.prompt || row.action))).toEqual([]);
       expect(reply.from.botId).toBe(member.id);
       expect(chips(thread)).toEqual([]);
       expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);

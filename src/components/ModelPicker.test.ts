@@ -10,9 +10,11 @@
 // driven directly and the notices are rendered to static markup.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { ModelPickerNotices, refreshModelPickerCatalog } from "./ModelPicker";
+import { ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
 
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
   id, label: id, enabled: true, catalog: { models: [], ...catalog },
@@ -23,6 +25,26 @@ const connection = (id: string, catalog: Partial<PublicProviderConnection["catal
 // (FOLLOW7; the wording claudeAccounts.fleetRefreshError already uses).
 const fleetLine = "The engine list could not refresh; the engines shown are the last known ones. Switch to another window and back to probe the engines again.";
 const partialLine = "Some model lists could not refresh. Their last saved models are preserved; check Models settings for details.";
+const pickerSource = readFileSync(fileURLToPath(new URL("./ModelPicker.tsx", import.meta.url)), "utf8");
+
+describe("model picker viewport placement", () => {
+  it.each([
+    { viewport:390, width:366, anchor:150, left:12 },
+    { viewport:820, width:390, anchor:590, left:200 },
+    { viewport:1440, width:390, anchor:1440, left:1038 },
+    { viewport:390, width:366, anchor:390, left:12 },
+  ])("keeps the entire menu inside both gutters at $viewport", ({viewport,width,anchor,left}) => {
+    const placed=anchor-width+modelPickerViewportOffset(anchor,width,viewport);
+    expect(placed).toBe(left);
+    expect(placed).toBeGreaterThanOrEqual(12);
+    expect(placed+width).toBeLessThanOrEqual(viewport-12);
+  });
+
+  it("recalculates for a resized viewport and relocated header anchor", () => {
+    expect(modelPickerViewportOffset(900,390,1440)).toBe(0);
+    expect(modelPickerViewportOffset(150,366,390)).toBe(228);
+  });
+});
 
 describe("refreshModelPickerCatalog", () => {
   it("draws the catalog and no notice when both sources answer", async () => {
@@ -93,5 +115,28 @@ describe("ModelPickerNotices", () => {
     expect(status).toBeGreaterThan(alert);
     expect(markup).toContain("HTTP 502");
     expect(markup).toContain(fleetLine);
+  });
+});
+
+describe("B14 busy-thread inspection", () => {
+  it("allows inspection but fences every thread model mutation while the turn is busy", () => {
+    expect(isThreadModelMutationLocked("thread-1", true)).toBe(true);
+    expect(isThreadModelMutationLocked("thread-1", false)).toBe(false);
+    expect(isThreadModelMutationLocked(undefined, true)).toBe(false);
+  });
+
+  it("renders the wait-or-stop explanation only while the mutation fence is active", () => {
+    expect(renderToStaticMarkup(createElement(ModelPickerBusyNotice, { locked: false }))).toBe("");
+    const markup = renderToStaticMarkup(createElement(ModelPickerBusyNotice, { locked: true }));
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("inspect models");
+    expect(markup).toContain("wait for it to finish or stop this turn");
+  });
+
+  it("keeps opening available while guarding both model and effort callbacks", () => {
+    expect(pickerSource).not.toContain("if(threadId&&bot.busy)return;const show=");
+    expect(pickerSource).toMatch(/const pick=.*if\(threadModelMutationLocked\)return/);
+    expect(pickerSource).toMatch(/data-model-choice disabled=\{threadModelMutationLocked\}/);
+    expect(pickerSource).toMatch(/Thread effort<select[\s\S]{0,500}disabled=\{threadModelMutationLocked\}[\s\S]{0,500}if\(threadModelMutationLocked\)return/);
   });
 });

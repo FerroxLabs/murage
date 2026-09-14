@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { ProjectFolderLeaseError, ProjectFolderLeases, type ProjectFolderLease } from "./project-folder-leases.ts";
 
 export const PROJECT_TURN_TOMBSTONE_LIMIT = 4096;
@@ -12,6 +13,7 @@ interface TurnLease {
   threadId: string;
   dispatched: boolean;
   providerKey?: string;
+  outputOwnerId?: string;
   /** The host asked the engine to stop this turn and no longer counts it as
    * busy. The writer lease stays until the engine's terminal event: a stop
    * is "requested, not observed" (contracts.ts) and the child may still be
@@ -57,11 +59,27 @@ export class ProjectTurnLeases {
     return lease;
   }
 
+  /** One separate output desk may accompany the engine's retained CWD. */
+  acquireOutput(threadId: string, generation: string, root: string): ProjectFolderLease {
+    const owner = this.owners.get(generation);
+    if (!owner || owner.threadId !== threadId || owner.dispatched) throw new Error("Output workspace requires an undispatched project turn");
+    const outputOwnerId = owner.outputOwnerId ?? `output:${randomUUID()}`;
+    try {
+      const lease = this.folders.acquireWriter(outputOwnerId, root);
+      owner.outputOwnerId = outputOwnerId;
+      return lease;
+    } catch (error) {
+      this.abandon(generation);
+      throw error;
+    }
+  }
+
   /** Call immediately before invoking sendTurn, including its async setup. */
   markDispatched(generation: string): void {
     const owner = this.owners.get(generation);
     if (owner) {
       this.folders.assertCurrent(generation);
+      if (owner.outputOwnerId) this.folders.assertCurrent(owner.outputOwnerId);
       owner.dispatched = true;
     }
   }
@@ -138,7 +156,8 @@ export class ProjectTurnLeases {
       catch (error) { return error instanceof ProjectFolderLeaseError ? { ok: false, reason: "conflict", code: error.code } : unexpected("conflict listing", error); }
       // Released between the refusal and this check: acquire on the next pass.
       if (blockers.length === 0) continue;
-      if (!blockers.every(lease => lease.mode === "writer" && this.owners.get(lease.ownerId)?.stopRequested === true)) {
+      if (!blockers.every(lease => lease.mode === "writer" && (this.owners.get(lease.ownerId)
+        ?? [...this.owners.values()].find(owner => owner.outputOwnerId === lease.ownerId))?.stopRequested === true)) {
         return { ok: false, reason: "conflict", code: "conflict" };
       }
       const remaining = deadline - Date.now();
@@ -169,6 +188,7 @@ export class ProjectTurnLeases {
     if (owner.providerKey && this.providers.get(owner.providerKey) === generation) this.providers.delete(owner.providerKey);
     this.owners.delete(generation);
     this.folders.release(generation);
+    if (owner.outputOwnerId) this.folders.release(owner.outputOwnerId);
     for (const waiter of [...this.releaseWaiters]) waiter();
   }
 }

@@ -17,6 +17,23 @@ test("rejects foreign frames and renderer-supplied paths before any host action"
   await assert.rejects(f.controller.handle(f.event, { action: "restore", archive: "/arbitrary" }), /INVALID_RECOVERY_REQUEST/);
   assert.equal(f.calls.length, 0);
 });
+test("encrypted choices retain private input in host closures and bind only opaque selection IDs",async()=>{
+  let restarted=0,restored=0;const key={recipient:"age1public",readIdentity:async()=>"PRIVATE-KEY-CANARY"};
+  const f=fixture({encryptedAvailable:()=>true,chooseEncryptedBackup:async()=>({path:"/chosen.age",name:"Encrypted"}),chooseRecoveryIdentity:async()=>key,planSeparate:()=>({dataDirectory:"/new/data"}),
+    run:async(operation)=>({ok:true,operation,sha256:"a".repeat(64),snapshotId:"snapshot",activationAvailable:false,coverage:{scope:"application-data",fullInstallation:false,includedCount:3,excludedCount:2}}),
+    runEncryptedSeparate:async(params,plan)=>{assert.equal(params.archive,"/chosen.age");assert.equal(params.readIdentity,key.readIdentity);assert.equal(plan.dataDirectory,"/new/data");restored++;return{status:"restored-review-required",activationAvailable:false};},retry:async()=>{restarted++;}});
+  const selected=await f.controller.handle(f.event,{action:"choose-encrypted-backup"});
+  assert.equal(JSON.stringify(selected).includes("PRIVATE-KEY-CANARY"),false);assert.equal(selected.selection.path,undefined);
+  await assert.rejects(f.controller.handle(f.event,{action:"restore-encrypted-new",selectionId:selected.selection.id,identity:"forged"}),/INVALID_RECOVERY_REQUEST/);
+  assert.equal((await f.controller.handle(f.event,{action:"restore",selectionId:selected.selection.id})).error,"RECOVERY_SELECTION_EXPIRED");
+  await f.controller.handle(f.event,{action:"restore-encrypted-new",selectionId:selected.selection.id});assert.equal(restored,1);assert.equal(restarted,1);
+});
+test("encrypted destination/key/confirmation cancellations never start capture",async()=>{
+  for(const cancelled of ["destination","key","confirm"]){
+    const f=fixture({encryptedAvailable:()=>true,chooseEncryptedDestination:async()=>cancelled==="destination"?null:"/new.age",chooseRecoveryIdentity:async()=>cancelled==="key"?null:{recipient:"age1public",readIdentity:async()=>"private"},confirm:async()=>cancelled!=="confirm"});
+    await f.controller.handle(f.event,{action:"backup-encrypted"});assert.equal(f.calls.length,0);
+  }
+});
 test("binds native confirmation to the main-owned selection and inspected hash", async () => {
   const f = fixture();
   const state = await f.controller.handle(f.event, { action: "choose-backup" });

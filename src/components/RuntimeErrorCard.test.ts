@@ -12,6 +12,20 @@ const render = (props: { message: string; details?: string; setup?: string; onRe
   renderToStaticMarkup(createElement(RuntimeErrorCard, { ...props, onOpenProviderSettings: () => {} }));
 
 describe("runtime error recovery", () => {
+  it("explains provider safety blocks without retry or provider-switch actions", () => {
+    for (const props of [
+      { message: "429 request blocked by our safety systems" },
+      { message: "Internal error", details: "safety_policy_violation" },
+    ]) {
+      const markup = render({ ...props, onRetry: () => {} });
+      expect(markup).toContain("The provider blocked this request");
+      expect(markup).toContain("Changing Murage permissions will not remove");
+      expect(markup).toContain("Technical details");
+      expect(markup).not.toContain("<button");
+      expect(markup).not.toContain("choose another configured model");
+    }
+    expect(render({ message: "Discuss safety systems", onRetry: () => {} })).toContain("Retry");
+  });
   it("gives every local resource conflict wait and retry guidance without provider or account advice", () => {
     const titles = new Set<string>();
     for (const message of LOCAL_RESOURCE_BUSY_MESSAGES.keys()) {

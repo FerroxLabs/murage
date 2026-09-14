@@ -1,7 +1,19 @@
+/** Only a trusted callback refusal proves an invoked adapter did not submit. */
+export class TurnSubmissionBoundary {
+  private state: "not-started" | "unknown" | "refused" = "not-started";
+  private refusal: unknown;
+  started() { this.state = "unknown"; }
+  beforeSubmit(validate: () => void) {
+    try { validate(); }
+    catch (error) { this.state = "refused"; this.refusal = error; throw error; }
+  }
+  assertNotRefused() { if (this.state === "refused") throw this.refusal; }
+  get canRetry() { return this.state !== "unknown"; }
+}
+
 /** Close the Stop-vs-provider-handshake race shared by direct and room turns.
- * An adapter may not publish its active process until sendTurn resolves, so
- * an interrupt during that await can be an honest no-op. Re-check once setup
- * completes and issue a second interrupt only when cancellation won. */
+ * An interrupt before the adapter publishes its active process may be a no-op;
+ * recheck cancellation after setup and await exact-turn cleanup. */
 export async function guardTurnDispatch<T>(
   started: Promise<T>,
   cancelled: () => boolean,

@@ -654,7 +654,13 @@ function messageNeedsInput(message: Record<string, any>): boolean {
 }
 
 function dispatchFailedAfterLatestUser(messages: Array<Record<string, any>>): boolean {
-  const lastUser = messages.findLastIndex((message) => message.role === "user");
+  let lastUser = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]!.role === "user") {
+      lastUser = index;
+      break;
+    }
+  }
   const turnMessages = messages.slice(lastUser + 1);
   if (turnMessages.some((message) => message.role === "bot" && message.kind === "text" && message.text?.trim())) {
     return false;

@@ -103,6 +103,12 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
             const entry = { turnId, interrupted: false };
             active.set(turn.threadId, entry);
             emit({ type: "turn.started", threadId: turn.threadId, turnId });
+            if (input.environment.FAKE_LATE_UNKNOWN_ACTION === "1" && dump) {
+              // A real local fixture side effect before sendTurn resolves.
+              appendFileSync(dump, `${JSON.stringify({ prompt: true, action: true, turnId, threadId: turn.threadId })}\n`);
+            } else {
+              try { turn.beforeSubmit?.(); } catch { return { turnId }; }
+            }
             // The reply follows acceptance on a later tick, so a stop issued
             // inside the acceptance hook is seen before anything is said.
             setTimeout(() => {

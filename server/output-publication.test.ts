@@ -242,6 +242,78 @@ it("keeps a failed receipt and says so when Files cannot save an output", async 
   expect(readFileSync(report, "utf8")).toBe("<p>kept</p>");
 });
 
+function recoverShell(f: ReturnType<typeof fixture>) {
+  const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
+  const publisher = createOutputPublisher({ dataDir: DATA_DIR, database, store, artifactScopes: () => [f.taskScope, f.imageScope] });
+  publisher.resumePending();
+  publisher.resumePending();
+  return store.messagesFor(f.bot.threadId).filter(message => message.artifactIds?.length);
+}
+
+it("recovers registered shell cards after transcript failure with the same HTML, MD and TXT saved identities", async () => {
+  const f = fixture(); f.dispatch();
+  for (const extension of ["html", "md", "txt"]) f.write(`outputs/report.${extension}`, `verified ${extension}`);
+  const append = vi.spyOn(f.store, "appendMessage").mockImplementationOnce(() => { throw new Error("transcript unavailable"); });
+  await f.complete(); append.mockRestore();
+  expect(f.cards()).toEqual([]);
+  const receipts = f.receipts();
+  expect(receipts).toHaveLength(3);
+  expect(receipts.every(receipt => receipt.stage === "registered" && receipt.errorCategory === "transcript")).toBe(true);
+  const cards = recoverShell(f);
+  expect(cards).toHaveLength(1);
+  expect(cards[0]!.artifactIds!.slice().sort()).toEqual(receipts.map(receipt => receipt.artifactId!).sort());
+  for (const receipt of f.receipts()) {
+    expect(receipt.messageId).toBe(cards[0]!.id);
+    expect(previewArtifact(database(), storage(), receipt.artifactId!, f.access).content).toBe(`verified ${receipt.pathToken.split(".").at(-1)}`);
+  }
+  expect(listArtifacts(database(), storage(), {}, f.access).total).toBe(3);
+});
+
+it("reconciles a shell card committed before its acknowledgement was lost without adding another card", async () => {
+  const f = fixture(); f.dispatch(); f.write("outputs/report.txt", "verified");
+  const original = f.store.appendMessage.bind(f.store);
+  const append = vi.spyOn(f.store, "appendMessage").mockImplementationOnce((...args) => { original(...args); throw new Error("lost acknowledgement"); });
+  await f.complete(); append.mockRestore();
+  const [card] = f.cards();
+  expect(f.receipts()[0]!.messageId).toBeUndefined();
+  expect(recoverShell(f).map(message => message.id)).toEqual([card!.id]);
+  expect(f.receipts()[0]!.messageId).toBe(card!.id);
+});
+it.each([false,true])("registered room output recovery respects current membership (removed=%s)",async removed=>{
+  const f=fixture(),other=f.store.createBot(),room=f.store.createGroup("Output room",[f.bot.id,other.id]);
+  f.store.admitLocalOutputs(f.bot.id,room.threadId);
+  const root=ensureTaskWorkspace(f.bot.id,room.threadId),scope={...f.taskScope,threadId:room.threadId,workspaceRoot:root},runId=randomUUID();
+  const publisher=createOutputPublisher({dataDir:DATA_DIR,database,store:f.store,artifactScopes:()=>[scope]});
+  expect(publisher.beforeDispatch({botId:f.bot.id,threadId:room.threadId,runId,workspaceRoot:realpathSync(root),managed:true})).toBe(true);
+  mkdirSync(join(root,"outputs"),{recursive:true});writeFileSync(join(root,"outputs","report.md"),"verified room report");
+  const append=vi.spyOn(f.store,"appendMessage").mockImplementationOnce(()=>{throw Error("transcript unavailable");});
+  await publisher.publishTerminalOutputs({type:"turn.completed",ok:true,threadId:room.threadId,eventId:randomUUID()} as never);append.mockRestore();
+  const receipts=outputReceiptsForRun(database(),"shell-output",f.bot.id,room.threadId,runId);expect(receipts).toHaveLength(1);expect(receipts[0]).toMatchObject({stage:"registered",errorCategory:"transcript"});
+  if(removed)f.store.patchGroup(room.id,{memberIds:[other.id]});
+  const reopened=new Store(()=>({instanceId:"fixture",model:"fixture"})),recovery=createOutputPublisher({dataDir:DATA_DIR,database,store:reopened,artifactScopes:()=>[scope]});recovery.resumePending();recovery.resumePending();
+  const cards=reopened.messagesFor(room.threadId).filter(message=>message.artifactIds?.length);expect(cards).toHaveLength(removed?0:1);if(!removed)expect(cards[0]!.artifactIds).toEqual([receipts[0]!.artifactId]);
+  expect(readFileSync(join(root,"outputs","report.md"),"utf8")).toBe("verified room report");
+});
+
+it.each(["source", "saved", "scope", "conversation"])("does not recover registered shell output with changed %s", async change => {
+  const f = fixture(); f.dispatch(); f.write("outputs/report.txt", "verified");
+  const append = vi.spyOn(f.store, "appendMessage").mockImplementationOnce(() => { throw new Error("transcript unavailable"); });
+  await f.complete(); append.mockRestore();
+  if (change === "source") f.write("outputs/report.txt", "modified");
+  if (change === "saved") writeFileSync(join(storage(), `${sha("verified")}.txt`), "modified");
+  if (change === "scope") f.taskScope.workspaceRoot = join(DATA_DIR, "outside");
+  if (change === "conversation") f.taskScope.threadAvailable = false;
+  expect(recoverShell(f)).toEqual([]);
+  expect(f.receipts()[0]!.messageId).toBeUndefined();
+});
+
+it.each(["failed", "cancelled", "unmanaged"])("does not recover %s shell output", async outcome => {
+  const f = fixture(); f.dispatch(outcome !== "unmanaged"); f.write("outputs/report.txt", "partial");
+  await f.complete(outcome !== "failed", outcome === "cancelled" ? "cancelled" : undefined);
+  expect(recoverShell(f)).toEqual([]);
+  expect(listArtifacts(database(), storage(), {}, f.access).total).toBe(0);
+});
+
 it("receipts a native assistant image before attachment and saves it to Files once through the managed root", () => {
   const f = fixture(), db = database();
   const saved = publishAssistantImage({ db, dataDir: DATA_DIR, store: f.store }, { botId: f.bot.id, threadId: f.bot.threadId, runId: "turn-1", bytes: png, mime: "image/png" });

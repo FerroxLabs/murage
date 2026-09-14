@@ -87,9 +87,11 @@ it("the actual main createWindow and activate wiring retargets the process updat
     if (ts.isVariableStatement(statement)) return statement.declarationList.declarations.some((declaration) =>
       declaration.initializer && ts.isCallExpression(declaration.initializer) && declaration.initializer.expression.getText(file) === "createWindow");
     if (ts.isIfStatement(statement)) return [statement.thenStatement, statement.elseStatement].some((branch) => branch && calls(branch, ["createWindow"]));
-    return calls(statement, ["createWindow", "startUpdater"]);
+    return calls(statement, ["createWindow", "ensureDesktopUpdater"]);
   });
-  expect(startup.map((node) => node.getText(file).split("(")[0])).toEqual(["if", "startUpdater"]);
+  expect(startup.map((node) => node.getText(file).split("(")[0])).toEqual(["if", "ensureDesktopUpdater"]);
+  const updaterFactory = nodes.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "ensureDesktopUpdater");
+  expect(updaterFactory).toBeDefined();
   // The real `openWindow` callback main.mjs hands the lifecycle, so "activate"
   // reaches the real createWindow through the real background-lifecycle
   // module rather than a stand-in that agrees with it by construction.
@@ -119,7 +121,7 @@ it("the actual main createWindow and activate wiring retargets the process updat
   const bindings = Object.fromEntries(updaterImport.importClause.namedBindings.elements.map((entry) =>
     [entry.name.text, api[entry.propertyName?.text ?? entry.name.text]]));
   const context = vm.createContext({
-    ...bindings, BrowserWindow: Window, mainWindow: null, persistedSkin: null,
+    ...bindings, BrowserWindow: Window, mainWindow: null, persistedSkin: null, desktopUpdater: null,
     screen: { getPrimaryDisplay: () => ({ id: 1, workArea: {} }), getAllDisplays: () => [] },
     resolveWindowState: () => ({ bounds: {}, maximized: false }), readWindowState: () => null,
     readPersistedSkin: () => null, nativeTheme: { shouldUseDarkColors: true },
@@ -134,6 +136,7 @@ it("the actual main createWindow and activate wiring retargets the process updat
     console: { warn: vi.fn(), error: vi.fn(), log: vi.fn() },
   });
   vm.runInContext(windowFactory.getText(file), context);
+  vm.runInContext(updaterFactory.getText(file), context);
   context.backgroundLifecycle = createBackgroundLifecycle({
     platform: "darwin", loadPreferences: () => ({}), window: () => context.mainWindow, isQuitting: () => context.desktopShutdownStarted,
     login: { read: () => ({ supported: false, openAtLogin: false }) }, openWindow: vm.runInContext(`(${openWindow.initializer.getText(file)})`, context),

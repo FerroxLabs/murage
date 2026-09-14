@@ -29,6 +29,9 @@ export interface Notification {
   avatarUrl?: string;
   /** Content and identifying artwork were removed by the privacy policy. */
   privatePreview?: true;
+  requestId?: string;
+  messageId?: string;
+  requestTurnId?: string;
 }
 
 /** One line, short enough for a lock screen, with the newlines and code
@@ -54,7 +57,7 @@ export function buildNotification(
   bot: NotifyBot,
   threadId: string,
   detail: string,
-  extra?: { avatarUrl?: string },
+  extra?: { avatarUrl?: string; requestId?: string; messageId?: string; requestTurnId?: string },
 ): Notification | null {
   // The toggle means what it says: off is off, including for approvals.
   // A bot whose notifications you turned off can still block waiting for
