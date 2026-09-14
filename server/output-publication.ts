@@ -24,7 +24,7 @@ import {
 } from "../shared/output-publication.ts";
 import { OUTPUT_NAMESPACE, WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES } from "../shared/workspace-files.ts";
 import type { Artifact } from "../shared/artifacts.ts";
-import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, ArtifactError, artifactWorkspaceIdentity, registerArtifact, type ArtifactScope } from "./artifacts.ts";
+import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, ArtifactError, artifactWorkspaceIdentity, readArtifact, registerArtifact, verifiedArtifactSource, type ArtifactScope } from "./artifacts.ts";
 import { IMAGE_MAX_BYTES, saveImage, type SavedAttachment } from "./attachments.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
@@ -39,7 +39,7 @@ export interface DispatchOutputContext {
   threadId: string;
   /** Dispatch claim id for this turn (the run id receipts record). */
   runId: string;
-  /** Canonical working folder of this turn, when it has one. */
+  /** Canonical file workspace; may differ from a retained engine CWD. */
   workspaceRoot: string | undefined;
   /** True only for the Murage-managed dedicated task workspace (U-02). */
   managed: boolean;
@@ -55,14 +55,26 @@ export interface OutputPublicationDeps {
 export interface OutputPublisher {
   /** Called synchronously at dispatch. Must not throw or block. Takes the
    * U-02 `outputs/` snapshot for a managed task workspace. */
-  beforeDispatch(context: DispatchOutputContext): void;
+  beforeDispatch(context: DispatchOutputContext): boolean;
   /** Called once per turn.completed from the main event fold, outside the
    * direct-run lease release. Failures are recorded as receipts; the
    * returned promise does not reject. */
   publishTerminalOutputs(event: TerminalTurnEvent): Promise<void>;
-  /** Startup reconciliation of known pending assistant-image receipts only.
-   * Shell outputs are never auto-registered outside a successful turn. */
+  /** Startup reconciliation of pending assistant images and already registered
+   * successful shell outputs. Shell recovery only repairs their missing cards. */
   resumePending(): void;
+}
+
+/** Host facts only. Prose directs creation but never authorizes publication. */
+export function outputDestinationInstructions(context: Pick<DispatchOutputContext, "workspaceRoot" | "managed"> | undefined, snapshotAdmitted: boolean, canRegister: boolean): string {
+  if (!context?.workspaceRoot) return "";
+  const destination = context.managed ? join(context.workspaceRoot, OUTPUT_NAMESPACE) : context.workspaceRoot;
+  return `\n\nFile deliverables for this turn: save completed HTML, Markdown, text and other requested files in this server-selected folder, even when the request does not name a folder. This replaces earlier scratch-folder advice.\nMurage file destination: ${JSON.stringify(destination)}\n`
+    + (context.managed && snapshotAdmitted
+      ? "Create real files there. After successful completion Murage checks new or changed files for publication to Files and conversation cards; writing a path in prose is not proof that a file was saved."
+      : canRegister
+        ? "After creating each file, call register_artifact with its path relative to the file workspace; wait for its verified result before saying it is saved to Files."
+        : "Automatic publication is unavailable for this turn and no registration tool is mounted. Report the actual file location without claiming a Files card was created.");
 }
 
 // ---------------------------------------------------------------------------
@@ -322,20 +334,22 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
   return {
     beforeDispatch(context) {
       snapshots.delete(context.threadId);
-      if (!context.managed || !context.workspaceRoot) return;
+      if (!context.managed || !context.workspaceRoot) return false;
       try {
         const root = realpathSync.native(context.workspaceRoot);
         const rootStat = lstatSync(root);
-        if (!rootStat.isDirectory()) return;
+        if (!rootStat.isDirectory()) return false;
         try { mkdirSync(join(root, OUTPUT_NAMESPACE), { mode: 0o700 }); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") return; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false; }
         const listing = listOutputs(root);
-        if (!listing) return;
+        if (!listing || listing.incomplete) return false;
         if (snapshots.size >= MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value!);
         snapshots.set(context.threadId, { botId: context.botId, threadId: context.threadId, runId: context.runId, root, directory: listing.directory,
           entries: new Map([...listing.entries].map(([path, stat]) => [path, entryKey(stat)])), incomplete: listing.incomplete });
+        return true;
       } catch {
         snapshots.delete(context.threadId);
+        return false;
       }
     },
     async publishTerminalOutputs(event) {
@@ -349,8 +363,51 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
     resumePending() {
       try { resumePendingAssistantImages({ db: deps.database(), dataDir: deps.dataDir, store: deps.store }); }
       catch (error) { log(`pending image recovery stopped (${outputErrorCategory(error, "database")})`); }
+      try { resumeRegisteredShellCards(deps); }
+      catch (error) { log(`pending shell card recovery stopped (${outputErrorCategory(error, "database")})`); }
     },
   };
+}
+
+/** Only registered shell receipts prove the successful terminal gate was
+ * crossed. Retained/failed receipts cannot establish that after a restart.
+ * Read recorded identities only, and never register or dispatch anything. */
+function resumeRegisteredShellCards(deps: OutputPublicationDeps): void {
+  const db = deps.database();
+  const runs = db.prepare(`SELECT bot_id,thread_id,run_id FROM output_publications
+    WHERE producer='shell-output' AND stage='registered' AND message_id IS NULL AND artifact_id IS NOT NULL
+    GROUP BY bot_id,thread_id,run_id ORDER BY MIN(created_at),run_id LIMIT 50`).all() as unknown as Array<{ bot_id: string; thread_id: string; run_id: string }>;
+  for (const run of runs) {
+    try {
+      const scope = deps.artifactScopes().find(item => item.botId === run.bot_id && item.threadId === run.thread_id && item.threadAvailable !== false && item.managedOutput !== true);
+      const owner = deps.store.botByThread(run.thread_id)?.id === run.bot_id
+        || Boolean(deps.store.groupByThread(run.thread_id)?.memberIds.includes(run.bot_id));
+      if (!scope || !owner) continue;
+      const receipts = outputReceiptsForRun(db, "shell-output", run.bot_id, run.thread_id, run.run_id).filter(item => item.stage === "registered" && !item.messageId && item.artifactId);
+      if (!receipts.length || receipts.length > OUTPUT_PUBLICATION_LIMITS.maxFilesPerTurn) continue;
+      const root = artifactWorkspaceIdentity(scope.workspaceRoot);
+      const verified = receipts.map(receipt => {
+        const { artifact } = readArtifact(db, join(deps.dataDir, "artifact-files"), receipt.artifactId!, { owner: true, scopes: [scope] });
+        if (!receipt.pathToken.startsWith(`${OUTPUT_NAMESPACE}/`) || privateOutputPath(receipt.pathToken)
+          || artifact.botId !== receipt.botId || artifact.threadId !== receipt.threadId || artifact.relativePath !== receipt.pathToken
+          || artifact.sha256 !== receipt.sha256 || artifact.bytes !== receipt.bytes || artifact.sourceState !== "current") {
+          throw new OutputPublicationError("verification", "The saved output identity changed.");
+        }
+        const source = verifiedArtifactSource(root, receipt.pathToken);
+        const bytes = readStableFile(source.path, OUTPUT_PUBLICATION_LIMITS.maxFileBytes, source.stat);
+        if (bytes.length !== receipt.bytes || sha256(bytes) !== receipt.sha256) throw new OutputPublicationError("verification", "The original output changed.");
+        return { receipt, artifact };
+      });
+      const messages = deps.store.messagesFor(run.thread_id);
+      const missing = verified.filter(item => !messages.some(message => message.artifactIds?.includes(item.artifact.id)));
+      const fresh = missing.filter((item, index) => missing.findIndex(other => other.artifact.id === item.artifact.id) === index);
+      const card = fresh.length ? deps.store.appendMessage(run.thread_id, { role: "bot", kind: "text", text: outputCardText(fresh.map(item => item.artifact.name), 0), artifactIds: fresh.map(item => item.artifact.id) }) : undefined;
+      for (const item of verified) {
+        const message = messages.find(message => message.artifactIds?.includes(item.artifact.id)) ?? card;
+        if (message) updateOutputReceipt(db, item.receipt.id, { messageId: message.id, errorCategory: null });
+      }
+    } catch { /* The existing receipt stays pending; no producer is replayed. */ }
+  }
 }
 
 // ---------------------------------------------------------------------------

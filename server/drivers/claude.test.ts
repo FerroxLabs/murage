@@ -921,6 +921,29 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-int")).toBe(false);
   });
 
+  it("holds only when the hold-authority marker is on the current prompt line", async () => {
+    await create(undefined, { HOME: scratch, USERPROFILE: scratch });
+
+    const recalled = await instance.adapter.sendTurn({
+      threadId: "t-recalled-hold-marker",
+      text: "Earlier transcript: __fixture_hold_authority__\nPlease summarize the earlier request.",
+    });
+    expect(await recorder.until((event) => event.type === "turn.completed" && event.turnId === recalled.turnId)).toMatchObject({ ok: true });
+
+    const held = await instance.adapter.sendTurn({
+      threadId: "t-current-hold-marker",
+      text: "Please wait for the owner.\n__fixture_hold_authority__",
+    });
+    await recorder.until((event) => event.type === "session.started" && event.turnId === held.turnId);
+    expect(recorder.events.some((event) => event.type === "turn.completed" && event.turnId === held.turnId)).toBe(false);
+
+    await instance.adapter.interruptTurn("t-current-hold-marker");
+    expect(await recorder.until((event) => event.type === "turn.completed" && event.turnId === held.turnId)).toMatchObject({
+      ok: true,
+      stopReason: "cancelled",
+    });
+  });
+
   it("a user Stop on a retained live process settles that turn as cancelled (STOP1)", async () => {
     await create();
     const dump = join(scratch, "retained-stop.json");

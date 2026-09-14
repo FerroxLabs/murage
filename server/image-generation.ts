@@ -9,7 +9,7 @@ export interface ImageReference { bytes: Buffer; mime: "image/png" | "image/jpeg
 export const imageGenerationRequestSchema = z.object({
   connectionId: z.string().min(1).max(160), model: z.string().min(1).max(180).optional(),
   operation: z.enum(["generate", "edit"]).default("generate"), prompt: z.string().trim().min(1).max(4000),
-  quality: z.enum(["low", "medium", "high"]).optional(),
+  quality: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
   size: z.enum(["1024x1024", "1536x1024", "1024x1536"]).optional(),
 }).strict();
 export type ImageGenerationRequest = z.infer<typeof imageGenerationRequestSchema>;
@@ -48,8 +48,10 @@ export interface ImageGenerationHooks<T> {
 export class ImageGenerationError extends Error {
   readonly code: string;
   readonly outcome: ImageAttemptOutcome;
-  constructor(code: string, message: string, outcome: ImageAttemptOutcome = "not-dispatched") { super(message); this.code = code; this.outcome = outcome; }
+  readonly correctablePreflight: boolean;
+  constructor(code: string, message: string, outcome: ImageAttemptOutcome = "not-dispatched", correctablePreflight = false) { super(message); this.code = code; this.outcome = outcome; this.correctablePreflight = correctablePreflight; }
 }
+const LOCAL_PREFLIGHT_CODES = new Set(["invalid-request", "invalid-references", "model-required", "unsupported-model", "unsupported-edit", "unsupported-quality", "unsupported-size"]);
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
 const TIMEOUT_MS = 180_000;
@@ -57,10 +59,21 @@ const ENDPOINT_TIMEOUT_MS = 15_000;
 const REFERENCE_MIMES: readonly string[] = ["image/png", "image/jpeg", "image/webp"];
 const OPENAI_MODELS = ["gpt-image-2", "gpt-image-2-2026-04-21", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"];
 const FLUX_MODELS = [
+  { id: "flux-image", quality: "high", size: "1024x1024" },
+  { id: "flux-image-gpt25-high", quality: "high", size: "1024x1024" },
+  { id: "flux-image-gpt25-low", quality: "low", size: "1024x1024" },
+  { id: "flux-image-gpt25", quality: "medium", size: "1024x1024" },
+  { id: "flux-image-gpt25-xhigh", quality: "xhigh", size: "1024x1024" },
+  { id: "flux-image-gpt25-max", quality: "max", size: "1024x1024" },
+  { id: "flux-image-gpt25-xl", quality: "high", size: "1536x1024" },
+  { id: "flux-image-gpt25-max-xl", quality: "max", size: "1536x1024" },
+  { id: "flux-image-gpt25-sunburst-low", quality: "low", size: "1024x1024" },
+  { id: "flux-image-gpt25-sunburst-med", quality: "medium", size: "1024x1024" },
+  { id: "flux-image-gpt25-sunburst", quality: "high", size: "1024x1024" },
+  { id: "flux-image-gpt25-sunburst-xhigh", quality: "xhigh", size: "1024x1024" },
+  { id: "flux-image-gpt25-sunburst-xl", quality: "high", size: "1536x1024" },
   { id: "flux-image-gpt2", quality: "medium", size: "1024x1024" },
   { id: "flux-image-gpt2-low", quality: "low", size: "1024x1024" },
-  { id: "flux-image-gpt2-high", quality: "high", size: "1024x1024" },
-  { id: "flux-image-gpt2-xl", quality: "high", size: "1536x1024" },
 ];
 /** The only origin each provider's key may be sent to. */
 const PROVIDER_ORIGINS: Record<ImageProvider, string> = {
@@ -70,13 +83,13 @@ const URLS: Record<ImageProvider, string> = {
   openai: "https://api.openai.com/v1/images/generations", flux: "https://api.fluxrouter.ai/v1/images/generations",
   openrouter: "https://openrouter.ai/api/v1/images", xai: "https://api.x.ai/v1/images/generations",
 };
-/** Providers with an implemented reference-edit transport. Flux has no edit contract. */
+/** Providers with an implemented reference-edit transport. */
 const EDIT_URLS: Partial<Record<ImageProvider, string>> = {
   openai: "https://api.openai.com/v1/images/edits", xai: "https://api.x.ai/v1/images/edits", openrouter: "https://openrouter.ai/api/v1/images",
+  flux: "https://api.fluxrouter.ai/v1/images/edits",
 };
 /** OpenRouter models admitted for reference edits, each pinned to one upstream endpoint. */
 const OPENROUTER_EDIT_ENDPOINTS: Readonly<Record<string, string>> = { "openai/gpt-image-2": "openai" };
-const FLUX_EDIT_REASON = "Flux Router offers image generation only. It has no reference-edit contract.";
 const OPENROUTER_EDIT_REASON = "Reference editing is not enabled for this OpenRouter model.";
 const OPENROUTER_EDIT_UNVERIFIED = "Reference editing could not be verified on this model's pinned endpoint.";
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -166,7 +179,7 @@ export function parseOpenRouterImageCatalog(payload: unknown): ImageModelOption[
 function staticCatalog(connection: ImageConnection): ImageCatalog {
   const base = { connectionId: connection.id, provider: connection.provider };
   if (connection.provider === "openai") return { ...base, defaultModel: "gpt-image-2", models: OPENAI_MODELS.map(id => ({ id, label: id, generate: true, edit: true, maxReferences: IMAGE_REFERENCE_LIMITS.maxCount, availability: "unverified", qualities: ["low", "medium", "high"], sizes: ["1024x1024", "1536x1024", "1024x1536"], outputFormat: "png" })) };
-  if (connection.provider === "flux") return { ...base, defaultModel: "flux-image-gpt2", models: FLUX_MODELS.map(model => ({ id: model.id, label: model.id, generate: true, edit: false, maxReferences: 0, editUnavailableReason: FLUX_EDIT_REASON, availability: "unverified", qualities: [model.quality], sizes: [model.size], outputFormat: "png" })) };
+  if (connection.provider === "flux") return { ...base, defaultModel: "flux-image", models: FLUX_MODELS.map(model => ({ id: model.id, label: model.id, generate: true, edit: true, maxReferences: IMAGE_REFERENCE_LIMITS.maxCount, availability: "unverified", qualities: [model.quality], sizes: [model.size], outputFormat: "png" })) };
   if (connection.provider === "xai") return { ...base, defaultModel: null, models: [{ id: "grok-imagine-image-2.0", label: "Grok Imagine Image 2.0", generate: true, edit: true, maxReferences: IMAGE_REFERENCE_LIMITS.maxCount, availability: "unverified", qualities: ["low", "medium"], editQualities: [], sizes: [] }] };
   return { ...base, defaultModel: "openai/gpt-image-2", models: [] };
 }
@@ -180,7 +193,7 @@ function serializeImageRequest(provider: ImageProvider, operation: "generate" | 
   if (operation === "generate") return { url: URLS[provider], body: JSON.stringify(payload), headers: { "content-type": "application/json" } };
   const url = EDIT_URLS[provider];
   if (!url) return fail("unsupported-edit", "Editing is not supported on this image connection.");
-  if (provider === "openai") {
+  if (provider === "openai" || provider === "flux") {
     const form = new FormData(); for (const [key, value] of Object.entries(payload)) form.append(key, String(value));
     for (let index = 0; index < references.length; index++) { const reference = references[index]!; form.append("image[]", new Blob([new Uint8Array(reference.bytes)], { type: reference.mime }), `reference-${index}.${reference.mime === "image/jpeg" ? "jpg" : reference.mime.slice(6)}`); }
     return { url, body: form, headers: {} };
@@ -250,10 +263,11 @@ export class ImageGenerationService {
   }
   async generate<T>(raw: unknown, hooks: ImageGenerationHooks<T>, references: readonly ImageReference[] = []): Promise<{ artifact: T; metadata: GeneratedImageMetadata }> {
     const parsed = imageGenerationRequestSchema.safeParse(raw);
-    if (!parsed.success) fail("invalid-request", "Choose a connection, supported model and prompt of at most 4,000 characters. URLs and keys are not accepted.");
+    if (!parsed.success) throw new ImageGenerationError("invalid-request", "Choose a connection, supported model and prompt of at most 4,000 characters. URLs and keys are not accepted.", "not-dispatched", true);
     const request = parsed.data!; const connection = this.connection(request.connectionId);
     let signal = hooks.signal ? AbortSignal.any([hooks.signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS);
     let outcome: ImageAttemptOutcome = "not-dispatched"; let reservation: Awaited<ReturnType<ImageGenerationHooks<T>["reserve"]>> | undefined;
+    let reservationStarted = false, externalReadStarted = false;
     const active = () => {
       if (signal.aborted) fail("cancelled", "Image generation was cancelled. No automatic retry was attempted.", outcome);
       try { hooks.assertActive(); } catch { fail("not-authorized", "This image request is no longer authorized.", outcome); }
@@ -265,13 +279,16 @@ export class ImageGenerationService {
       if (references.length > IMAGE_REFERENCE_LIMITS.maxCount || references.reduce((sum, item) => sum + item.bytes.length, 0) > IMAGE_REFERENCE_LIMITS.maxTotalBytes) fail("invalid-references", "Use at most four reference images, each up to 10 MiB and 20 MiB in total.");
       for (const reference of references) {
         if (!Buffer.isBuffer(reference.bytes) || !reference.bytes.length || reference.bytes.length > IMAGE_REFERENCE_LIMITS.maxBytesEach || !REFERENCE_MIMES.includes(reference.mime)) fail("invalid-references", "Reference images must be bounded PNG, JPEG or WebP files.");
-        if (decodeGeneratedImage(reference.bytes.toString("base64")).mime !== reference.mime) fail("invalid-references", "A reference image has an invalid format.");
+        try { if (decodeGeneratedImage(reference.bytes.toString("base64")).mime !== reference.mime) throw new Error("format mismatch"); }
+        catch { fail("invalid-references", "A reference image has an invalid format."); }
       }
       const edit = request.operation === "edit";
       if (edit !== (references.length > 0)) fail("invalid-references", "Edits require reference images; generation cannot silently ignore them.");
       // OpenRouter edit capability is refreshed on the pinned endpoint just before approval below.
+      externalReadStarted = connection.provider === "openrouter";
       const catalog = await this.getCatalog(connection.id, { signal, discoverEdits: false }); active();
       const modelId = request.model ?? catalog.defaultModel;
+      if (connection.provider === "flux" && ["flux-image-gpt2-high", "flux-image-gpt2-xl"].includes(modelId ?? "")) fail("unsupported-model", "This Flux GPT Image 2 alias is unavailable. Choose flux-image-gpt25-xhigh or flux-image-gpt25-xl explicitly; your selection was not changed.");
       if (!modelId) fail("model-required", "This connection does not offer GPT Image 2. Explicitly choose an available image model.");
       const model = catalog.models.find(item => item.id === modelId);
       if (!model?.generate) fail("unsupported-model", "This model is not available for supported raster image generation.");
@@ -304,15 +321,28 @@ export class ImageGenerationService {
         }
         Object.assign(payload, { output_format: model!.outputFormat, provider: { only: [endpointTag], allow_fallbacks: false }, ...(quality ? { quality } : {}), ...(size ? { size } : {}) });
       } else if (connection.provider === "openai") Object.assign(payload, { quality, size, output_format: "png" });
-      else if (connection.provider === "flux") Object.assign(payload, { size, response_format: "b64_json" });
+      else if (connection.provider === "flux") { Object.assign(payload, { size, response_format: "b64_json" }); if (edit) delete payload.n; }
       else Object.assign(payload, { ...(quality ? { quality } : {}), response_format: "b64_json" });
       const details: ImageOperationDetails = { connectionId: connection.id, provider: connection.provider, model: modelId!, operation: request.operation, count: 1, referenceCount: references.length, ...(quality ? { quality } : {}), ...(size ? { size } : {}), ...(endpointTag ? { endpointTag } : {}) };
       const outbound = serializeImageRequest(connection.provider, request.operation, payload, references);
       assertCredentialOrigin(connection.provider, outbound.url);
       active();
+      reservationStarted = true;
       try { reservation = await hooks.reserve(details); } catch { fail("permission-denied", "Image generation was not approved."); }
       // The provider deadline starts after the separately bounded owner review.
       signal = hooks.signal ? AbortSignal.any([hooks.signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS);
+      active();
+      if (connection.provider === "openrouter") {
+        const fresh = (await this.getCatalog(connection.id, { signal, discoverEdits: false })).models.find(item => item.id === modelId);
+        active();
+        if (!fresh?.generate || fresh.outputFormat !== model!.outputFormat || (quality && !fresh.qualities.includes(quality)) || (size && !fresh.sizes.includes(size))) fail("capability-changed", "The approved image model capabilities changed. No image request was sent.");
+        const info = await this.openRouterEndpoints(modelId!, signal); active();
+        const match: EndpointMatch = { modelId: modelId!, outputFormat: fresh!.outputFormat, quality, size };
+        const capability = edit ? pinnedEditCapability(info, match) : undefined;
+        const compatible = edit ? capability != null && capability.tag === endpointTag && references.length >= capability.minReferences && references.length <= capability.maxReferences
+          : endpointRows(info).some(row => row.tag === endpointTag && rasterCompatible(row.parameters, match));
+        if (!compatible) fail("capability-changed", "The approved image endpoint capabilities changed. No image request was sent.");
+      }
       active();
       outcome = "uncertain";
       const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, authorization: `Bearer ${connection.apiKey}` }, body: outbound.body, signal, redirect: "error" });
@@ -325,11 +355,20 @@ export class ImageGenerationService {
       if (!record(result) || !Array.isArray(result.data) || result.data.length !== 1 || !record(result.data[0]) || typeof result.data[0].b64_json !== "string") fail("invalid-image", "The image provider did not return one supported image.", outcome);
       let image: DecodedGeneratedImage;
       try { image = decodeGeneratedImage(result.data[0].b64_json); } catch { return fail("invalid-image", "The image provider returned invalid or oversized raster bytes.", outcome); }
+      if (connection.provider === "flux" && edit && image.mime !== "image/png") fail("invalid-image", "Flux did not return the PNG required by its edit contract.", outcome);
       const metadata: GeneratedImageMetadata = { ...details, ...(typeof result.model === "string" && result.model.length <= 180 ? { reportedModel: result.model } : {}), ...(endpointTag ? { upstreamProvider: endpointTag } : {}), ...(safeUsage(result) ? { usage: safeUsage(result) } : {}) };
       active(); const artifact = await hooks.publish(image, metadata); outcome = "published";
       return { artifact, metadata };
     } catch (error) {
-      if (error instanceof ImageGenerationError) throw error;
+      if (error instanceof ImageGenerationError) {
+        // Only deterministic local validation, before any external read or
+        // approval, can release the turn slot. Unknown failures stay fenced.
+        if (!reservationStarted && !externalReadStarted && LOCAL_PREFLIGHT_CODES.has(error.code)) {
+          active();
+          throw new ImageGenerationError(error.code, error.message, error.outcome, true);
+        }
+        throw error;
+      }
       throw new ImageGenerationError("request-failed", "Image generation could not complete. No fallback or automatic retry was attempted.", outcome);
     } finally {
       if (reservation) {

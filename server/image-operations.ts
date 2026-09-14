@@ -3,9 +3,11 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, join, relative, isAbsolute, sep } from "node:path";
 import type { Store } from "./store.ts";
 import { database } from "./database.ts";
+import { initializeImageOperations } from "./image-operations-schema.ts";
 import { ATTACHMENTS_DIR, IMAGE_MAX_BYTES } from "./attachments.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ImageOperationDetails, ImageAttemptOutcome, ImageReference, GeneratedImageMetadata } from "./image-generation.ts";
+import { ImageGenerationError } from "./image-generation.ts";
 import type { DecodedGeneratedImage } from "./generated-image.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import type { LocalOutputReceipt } from "../shared/output-publication.ts";
@@ -101,7 +103,7 @@ export class ImageOperations {
   }
   private db() {
     const db = database();
-    db.exec("CREATE TABLE IF NOT EXISTS image_operations(id TEXT PRIMARY KEY, generation TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, state TEXT NOT NULL, result TEXT, updated_at INTEGER NOT NULL)");
+    initializeImageOperations(db);
     return db;
   }
   private receiptFor(actor: ImageActor, id: string) {
@@ -121,12 +123,14 @@ export class ImageOperations {
     if (this.db().prepare("SELECT id FROM image_operations WHERE generation=?").get(actor.generation)) throw error(429, "One image attempt is allowed per turn. Start a new task or turn for another image.");
     this.db().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id, actor.generation, requestHash, Date.now());
     this.workspaces.add(actor.botId);
+    let approvalStarted = false;
     // A pending publication record survives outcome receipts, so a received
     // image stays resumable even when its attempt is recorded as uncertain.
     const record = (state: string, result: unknown = null) => { this.db().prepare("UPDATE image_operations SET state=?,result=COALESCE(?,result),updated_at=? WHERE id=?").run(state, result === null ? null : JSON.stringify(result), Date.now(), id); };
     const publish: PublishOperationImage = async (image, metadata) => publishImage(this.store, actor, image, metadata, { operationId: id,
       onRetained: receipt => record("running", { pending: { receiptId: receipt.id, metadata } }) });
     const job = Promise.resolve().then(() => work(async details => {
+      approvalStarted = true;
       actor.assertActive();
       const approved = await this.approve(actor, details, request);
       actor.assertActive();
@@ -134,6 +138,13 @@ export class ImageOperations {
       record("running");
       return { finish: (outcome: ImageAttemptOutcome) => record(outcome) };
     }, publish)).then(result => { record("published", result); return result; }).catch(e => {
+      if (!approvalStarted && e instanceof ImageGenerationError && e.correctablePreflight && !actor.signal.aborted) {
+        // Synchronous identity-checked deletion under the existing job and
+        // workspace lock. Crashes, denial and unknown failures retain the row.
+        actor.assertActive();
+        this.db().prepare("DELETE FROM image_operations WHERE id=? AND request_hash=? AND state='awaiting' AND result IS NULL").run(id, requestHash);
+        throw e;
+      }
       const row = this.db().prepare("SELECT state,result FROM image_operations WHERE id=?").get(id) as { state: string; result: string | null };
       if (row.state === "awaiting") record("not-dispatched"); else if (row.state === "running") record("uncertain");
       const receipt = parsePending(row.result) ? this.receiptFor(actor, id) : undefined;

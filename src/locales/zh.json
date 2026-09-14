@@ -1,4 +1,7 @@
 {
+  "providerError.payment.title": "需要检查提供商付款或账户访问权限",
+  "providerError.payment.summary": "提供商以 HTTP 402 拒绝了此请求。此响应并不能证明额度已耗尽。",
+  "providerError.payment.resolution": "重试前，请检查提供商的账单、账户和所选模型的访问权限，包括自带 API 密钥（BYOK）设置。",
   "claudeAccounts.added": "账户已添加。请在下方自行登录，然后在模型选择器中选择此账户。现有机器人的选择保持不变。",
   "claudeAccounts.removed": "已从 Murage 移除。登录状态和凭据文件已保留。",
   "claudeAccounts.saved": "账户设置已保存。",

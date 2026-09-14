@@ -9,12 +9,14 @@ import { formatTelegramHtml } from "./telegram-format.ts";
 import { TelegramApprovals, type TelegramApprovalActions } from "./telegram-approvals.ts";
 
 const identity = z.string().regex(/^[1-9]\d{0,15}$/).refine(value => Number.isSafeInteger(Number(value)));
-const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1), deliveryId: z.string(), prompt: z.string().max(5000), runId: z.string().max(200).optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "cancelled"]), response: z.string().max(4096).optional() }).strict();
+const deliveryError = z.enum(["auth", "forbidden", "conflict", "rate-limit", "unavailable", "offline", "timeout", "invalid-request"]);
+const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1), deliveryId: z.string(), prompt: z.string().max(5000), runId: z.string().max(200).optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "rejected", "cancelled"]), response: z.string().max(4096).optional(), sendAttempts: z.number().int().nonnegative().max(3).optional(), retryAt: z.number().finite().optional(), deliveryError: deliveryError.optional() }).strict();
 const schema = z.object({ version: z.literal(1), botIdentityId: identity, targetBotId: z.string().min(1).max(180).optional(), enabled: z.boolean(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), binding: z.object({ senderId: identity, chatId: identity }).strict().nullable(), pairing: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite() }).strict().nullable(), records: z.array(recordSchema).max(200) }).strict();
 type State = z.infer<typeof schema>;
 interface Options {
   file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage" | "editQuestionMessage">>; botIdentityId: string; targetBotId: string;
   approvals?: TelegramApprovalActions;
+  isCurrentTarget?: () => boolean;
   enqueue: (input: { deliveryId: string; prompt: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
   now?: () => number;
@@ -29,7 +31,10 @@ export class TelegramChannel {
   private stopped = false;
   private controller?: AbortController;
   private polling?: Promise<void>;
-  private error: string | null = null;
+  private pollError: string | null = null;
+  private pollRetryAt: number | null = null;
+  private pollFailures = 0;
+  private deliveryFailure = false;
   private approvals?: TelegramApprovals;
   private expiryNoticeSent = false;
   constructor(options: Options) {
@@ -79,10 +84,15 @@ export class TelegramChannel {
     return this.state.binding ? "paired" : "pending";
   }
   status() {
+    const delivery = [...this.state.records].reverse().find(record => record.deliveryError !== undefined);
+    const deliveryRetryAt = this.state.records.reduce<number | null>((earliest, record) => record.retryAt === undefined ? earliest : earliest === null ? record.retryAt : Math.min(earliest, record.retryAt), null);
+    const providerRetryAt = this.state.records.reduce<number | null>((earliest, record) => record.deliveryError !== "rate-limit" || record.retryAt === undefined ? earliest : earliest === null ? record.retryAt : Math.min(earliest, record.retryAt), null);
     return { enabled: this.state.enabled && !this.stopped, paired: Boolean(this.state.binding), pairingExpiresAt: this.state.pairing?.expiresAt ?? null,
       pairingExpired: Boolean(this.state.pairing && (this.options.now?.() ?? Date.now()) >= this.state.pairing.expiresAt),
       pending: this.state.records.filter(record => ["accepted", "queued", "sending"].includes(record.state)).length,
-      uncertain: this.state.records.filter(record => record.state === "uncertain").length, error: this.error };
+      uncertain: this.state.records.filter(record => record.state === "uncertain").length, rejected: this.state.records.filter(record => record.state === "rejected").length,
+      error: this.pollError, deliveryError: delivery?.deliveryError ?? null, deliveryRetryAt,
+      nextRetryAt: this.pollRetryAt ?? providerRetryAt };
   }
   revoke() {
     this.approvals?.clear();
@@ -94,13 +104,22 @@ export class TelegramChannel {
     if (this.polling) return this.polling;
     if (this.stopped || !this.state.enabled || this.state.targetBotId !== this.options.targetBotId) return Promise.resolve();
     const generation = this.generation, controller = new AbortController(); this.controller = controller;
-    const active = () => !this.stopped && this.state.enabled && generation === this.generation && !controller.signal.aborted;
-    this.polling = this.poll(active, controller.signal).catch(error => {
-      this.error = error instanceof TelegramTransportError ? error.code : "channel-operation-failed";
+    const active = () => !this.stopped && this.state.enabled && generation === this.generation && !controller.signal.aborted && this.options.isCurrentTarget?.() !== false;
+    this.deliveryFailure = false;
+    this.polling = this.poll(active, controller.signal).then(completed => {
+      if (active() && completed !== false) { this.pollError = null; this.pollRetryAt = null; this.pollFailures = 0; }
+    }).catch(error => {
+      if (!active() || this.deliveryFailure) return;
+      this.pollError = error instanceof TelegramTransportError ? error.code : "channel-operation-failed";
+      if (error instanceof TelegramTransportError && ["offline", "timeout", "unavailable", "rate-limit"].includes(error.code)) {
+        const failures = ++this.pollFailures;
+        const seconds = error.code === "rate-limit" && error.retryAfterSeconds !== undefined ? error.retryAfterSeconds : Math.min(30, 1.5 * 2 ** Math.min(failures - 1, 4));
+        this.pollRetryAt = (this.options.now?.() ?? Date.now()) + seconds * 1000;
+      }
     }).finally(() => { this.polling = undefined; if (this.controller === controller) this.controller = undefined; });
     return this.polling;
   }
-  private async poll(active: () => boolean, signal: AbortSignal) {
+  private async poll(active: () => boolean, signal: AbortSignal): Promise<void | false> {
     await this.drain(active, signal);
     if (!active()) return;
     const updates = await this.options.transport.getUpdates({ offset: this.state.offset, limit: 100, timeoutSeconds: 0, signal });
@@ -128,7 +147,13 @@ export class TelegramChannel {
         continue;
       }
       if (message && !this.state.binding && this.state.pairing && (this.options.now?.() ?? Date.now()) < this.state.pairing.expiresAt && /^\/pair [a-f0-9]{64}$/.test(message.text) && digest(message.text.slice(6)) === this.state.pairing.hash) {
-        this.mutate(state => { state.binding = { senderId: message.senderId, chatId: message.chatId }; state.pairing = null; state.offset = update.updateId + 1; });
+        const records = this.state.records.filter(record => !["sent", "cancelled"].includes(record.state));
+        if (records.length >= 200) { this.pollError = "pending-limit"; return false; }
+        this.mutate(state => {
+          state.binding = { senderId: message.senderId, chatId: message.chatId }; state.pairing = null; state.offset = update.updateId + 1;
+          state.records = records;
+          state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: "", state: "accepted", response: "Telegram is paired with Murage. Send a message here to chat with your Chief." });
+        });
         continue;
       }
       if (message && this.state.binding?.senderId === message.senderId && this.state.binding.chatId === message.chatId && !this.state.records.some(record => record.updateId === update.updateId)) {
@@ -140,7 +165,7 @@ export class TelegramChannel {
           continue;
         }
         const records = this.state.records.filter(record => !["sent", "cancelled"].includes(record.state));
-        if (records.length >= 200) { this.error = "pending-limit"; return; }
+        if (records.length >= 200) { this.pollError = "pending-limit"; return false; }
         const approval = /^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(message.text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(message.text.trim());
         this.mutate(state => { state.records = records; state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: approval ? "" : `[UNTRUSTED TELEGRAM CHANNEL MESSAGE]\n${message.text}\n[/UNTRUSTED TELEGRAM CHANNEL MESSAGE]`, state: "accepted", ...(approval ? { response: "Review approvals in the Murage app. Telegram messages cannot approve actions." } : {}) }); });
       }
@@ -159,7 +184,7 @@ export class TelegramChannel {
         this.mutate(state => { const item = state.records.find(item => item.updateId === record.updateId)!; item.runId = run.id; item.state = "queued"; });
         record = this.state.records.find(item => item.updateId === record.updateId)!;
       }
-      if (record.state === "queued") {
+      if (record.state === "queued" && !record.response) {
         const result = this.options.runResult(record.runId!);
         if (!active()) return;
         if (!result || !["completed", "failed", "cancelled", "blocked", "stopped"].includes(result.status)) continue;
@@ -167,15 +192,29 @@ export class TelegramChannel {
         this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.response = response; });
         record = this.state.records.find(item => item.updateId === record.updateId)!;
       }
-      if (!record.response || !["accepted", "queued"].includes(record.state) || !active()) continue;
+      if (!record.response || !["accepted", "queued"].includes(record.state) || !active() || (record.retryAt !== undefined && (this.options.now?.() ?? Date.now()) < record.retryAt)) continue;
       const chatId = this.state.binding.chatId;
       this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.state = "sending"; });
       try {
         await this.options.transport.sendMessage({ chatId, text: formatTelegramHtml(record.response), parseMode: "HTML", signal });
         if (!active()) return;
-        this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.state = "sent"; });
+        this.mutate(state => { const item = state.records.find(item => item.updateId === record.updateId)!; item.state = "sent"; delete item.retryAt; delete item.deliveryError; });
       } catch (error) {
-        if (active()) this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.state = "uncertain"; });
+        if (active()) this.mutate(state => {
+          const item = state.records.find(item => item.updateId === record.updateId)!;
+          const attempts = (item.sendAttempts ?? 0) + 1;
+          if (error instanceof TelegramTransportError && !error.uncertain && attempts < 3 && ["rate-limit", "unavailable", "offline", "timeout"].includes(error.code)) {
+            item.state = "queued"; item.sendAttempts = attempts;
+            const known = deliveryError.safeParse(error.code); item.deliveryError = known.success ? known.data : "invalid-request";
+            const seconds = error.code === "rate-limit" && error.retryAfterSeconds !== undefined ? error.retryAfterSeconds : Math.min(30, 1.5 * 2 ** (attempts - 1));
+            item.retryAt = (this.options.now?.() ?? Date.now()) + seconds * 1000;
+          } else if (error instanceof TelegramTransportError && !error.uncertain) {
+            item.state = "rejected"; item.sendAttempts = attempts;
+            const known = deliveryError.safeParse(error.code); item.deliveryError = known.success ? known.data : "invalid-request";
+            delete item.retryAt;
+          } else item.state = "uncertain";
+        });
+        if (active()) this.deliveryFailure = true;
         throw error;
       }
     }

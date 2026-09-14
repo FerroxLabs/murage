@@ -49,6 +49,7 @@ const proof = "workspace-pane-fixture-proof";
 const scope = { botId: "research", threadId: "task" };
 const REPORT = "# Weekly report\n\nThree updates this week.\n";
 const NOTES = "line one\nline two\n";
+const SAVED = { id: "saved-old", botId: "research", threadId: "task", botName: "Research bot", name: "Saved report", filename: "report.md", relativePath: "report.md", kind: "text", bytes: 22, createdAt: 1, sha256: "a".repeat(64), savedState: "available", sourceState: "changed", sourceConversationAvailable: true };
 
 const file = (relative: string) => join(workspace, ...relative.split("/"));
 const disk = (relative: string) => readFileSync(file(relative), "utf8");
@@ -73,17 +74,31 @@ test.beforeAll(async () => {
     server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [react(), tailwindcss(), {
       name: "workspace-pane-fixture",
-      resolveId(id) { if (id === "/__pane.js") return "\0pane-fixture"; },
+      enforce: "pre",
+      resolveId(id) { if (id.endsWith("/src/state/store") || id === "@/state/store") return "\0pane-store"; if (id === "/__pane.js") return "\0pane-fixture"; },
       load(id) {
+        if (id === "\0pane-store") return `export * from '/src/state/store.tsx?original';import {useSyncExternalStore} from 'react';export function useStore(){return useSyncExternalStore(window.subscribeFixture,()=>window.fixtureStore);}`;
         if (id !== "\0pane-fixture") return;
         // The real surface, the real reducer, a stand-in chat column. The
         // reducer's state and dispatch are exposed so a test can do what
         // Files "Open beside chat" and the chat header do.
         return `import React, {useReducer, useEffect} from 'react';import {createRoot} from 'react-dom/client';
-import {WorkspacePaneSurface} from '/src/components/WorkspacePane.tsx';
+import {WorkspacePane,WorkspacePaneSurface} from '/src/components/WorkspacePane.tsx';
+import {Sidebar} from '/src/components/Sidebar.tsx';
+import {ChatHeader} from '/src/components/ChatHeader.tsx';
+import {ArtifactCard,openFiles} from '/src/components/Files.tsx';
+import {initialState} from '/src/state/store.tsx?original';
 import {initialWorkspacePaneState, workspacePaneReducer} from '/src/lib/workspace-pane.ts';
 import '/src/styles.css';
 const scope=${JSON.stringify(scope)};
+const joined=new URLSearchParams(location.search).has('joined');
+const base={color:'blue',messages:[],description:'',autoApprove:false,tasks:[],modelSelection:{instanceId:'fixture',model:'test'}};
+const bots=[{...base,id:'research',name:'Research bot',threadId:'task',tasks:[{threadId:'task',title:'Weekly report'}]},{...base,id:'other',name:'Other bot',threadId:'other-task'}];
+const state={...initialState,bots,selectedId:'research',config:{features:{},box:{configured:false}},instances:[]};
+const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
+function dispatch(action){if(action.type==='workspacePane')state.workspacePane=workspacePaneReducer(state.workspacePane,action.action);if(action.type==='select')state.selectedId=action.id;publish();}
+function publish(){window.fixtureStore={state:{...state},dispatch,refreshInstances:async()=>{}};listeners.forEach(fn=>fn());}publish();
+function Joined(){const [,force]=useReducer(n=>n+1,0);useEffect(()=>window.subscribeFixture(force),[]);const bot=state.bots.find(bot=>bot.id===state.selectedId);const compact=state.workspacePane.open&&state.workspacePane.compact&&state.workspacePane.compactView==='workspace';return React.createElement('div',{style:{display:'flex',height:'100vh'}},React.createElement(Sidebar,{open:false,onClose:()=>{}}),React.createElement('main',{style:{display:'flex',position:'relative',flex:1,minWidth:0}},React.createElement('div',{'data-testid':'joined-chat-column',style:{flex:1,minWidth:0,visibility:compact?'hidden':undefined},inert:compact||undefined,hidden:state.workspacePane.open&&state.workspacePane.expanded},React.createElement(ChatHeader,{bot,messages:[],mascotMotion:null,findOpen:false,onToggleFind:()=>{}}),React.createElement(ArtifactCard,{artifact:window.savedFixture,onPreview:()=>openFiles({botId:'research',threadId:'task',artifactId:'saved-old'}),onDownload:()=>{}})),React.createElement(WorkspacePane,{bot})));}
 function Harness(){
   const [pane, dispatch]=useReducer(workspacePaneReducer,{...initialWorkspacePaneState, open:true, compactView:'workspace'});
   useEffect(()=>{window.__pane={dispatch, state:pane};},[pane]);
@@ -91,7 +106,7 @@ function Harness(){
     React.createElement('div',{'data-testid':'chat',style:{flex:1,minWidth:0,padding:16},hidden:pane.expanded||undefined},'Chat column'),
     React.createElement(WorkspacePaneSurface,{scope,pane,dispatch,labelForScope:()=>'Research bot · Weekly report',drafts:null,probeMs:250,onOpenFiles:()=>{window.__filesOpened=(window.__filesOpened||0)+1;}}));
 }
-createRoot(document.getElementById('root')).render(React.createElement(Harness));`;
+createRoot(document.getElementById('root')).render(React.createElement(joined?Joined:Harness));`;
       },
       configureServer(vite) {
         vite.middlewares.use(async (req, res, next) => {
@@ -155,6 +170,110 @@ async function editInSource(page: Page) {
   await expect(sourceBox(page)).toHaveValue(REPORT);
 }
 
+for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test(`joined Files Memory panel ${width} ${skin}`, async ({ page }, info) => {
+  const errors: string[] = [], actions: Array<Record<string, unknown>> = [];
+  const accessibility: unknown[] = [];
+  const audit = async () => {
+    if (!process.env.MURAGE_AXE_SCRIPT) { accessibility.push({ unavailable: "MURAGE_AXE_SCRIPT was not supplied" }); return; }
+    await page.addScriptTag({ path: process.env.MURAGE_AXE_SCRIPT });
+    const result = await page.evaluate(async () => (window as any).axe.run(document.querySelector('[data-testid="workspace-pane"]'), { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } }));
+    accessibility.push(result.violations);
+    writeFileSync(info.outputPath(`axe-${accessibility.length}.json`), JSON.stringify(result, null, 2));
+    expect(result.violations.filter((violation: { impact: string }) => ["serious", "critical"].includes(violation.impact))).toEqual([]);
+  };
+  let releaseOld: (() => void) | undefined;
+  page.on("pageerror", error => errors.push(error.message));
+  await page.setViewportSize({ width, height: 900 });
+  await page.addInitScript(saved => { (window as any).muragebox = {}; (window as any).savedFixture = saved; }, SAVED);
+  const mode = width === 390 ? "off" : width === 820 ? "paused" : "active";
+  const record = (botId: string) => ({ id: `memory-${botId}`, version: 1, scopeId: botId, text: `Private note for ${botId}`, state: "active", assertion: "owner-statement", validFrom: 1, ownerPinned: true });
+  await page.route("**/api/config", route => route.fulfill({ json: { features: {}, box: { configured: false } } }));
+  await page.route("**/api/memory/status", route => route.fulfill({ json: { mode, configuration: { excludedThreadIds: [], extractorInstanceId: null }, scopes: [{ id: "research", kind: "bot", ownerKey: "research", label: "Research bot" }, { id: "other", kind: "bot", ownerKey: "other", label: "Other bot" }], model: { state: "missing" }, records: { active: 2 }, backlog: {}, cost: {}, deletion: {}, extractors: [], workerError: null } }));
+  await page.route("**/api/memory/action", async route => {
+    const body = route.request().postDataJSON(); actions.push(body);
+    if (body.action === "list" && body.query === "delayed") await new Promise<void>(resolve => { releaseOld = resolve; });
+    if (body.action === "list") return route.fulfill({ json: { records: [record(body.botId)], scopeIds: [body.botId] } });
+    if (body.action === "import-review-list") return route.fulfill({ json: { links: [] } });
+    if (body.action === "inspect") return route.fulfill({ json: { record: record(String(body.id).replace("memory-", "")), evidence: [], lineage: [] } });
+    return route.fulfill({ status: 400, json: { error: "Unexpected memory mutation" } });
+  });
+  await page.route("**/api/artifacts?*", route => route.fulfill({ json: { items: [SAVED], total: 1, pageSize: 25 } }));
+  await page.route("**/api/artifacts/saved-old/preview", route => route.fulfill({ json: { artifact: SAVED, mode: "text", content: "Historical saved bytes" } }));
+  await page.goto(`${origin}/__pane?joined=1`);
+  await page.evaluate(value => { document.documentElement.dataset.skin = value; }, skin);
+  const folder = page.locator('[data-header-labelled="folder"]');
+  if (await folder.isVisible()) await folder.click();
+  else { await page.getByRole("button", { name: "More actions", exact: true }).click(); await page.getByRole("menuitem", { name: /Open files/i }).click(); }
+  await expect(page.getByTestId("workspace-pane")).toBeVisible();
+  await page.getByRole("button", { name: "Open notes.txt", exact: true }).click();
+  await expect(page.getByTestId("workspace-text-preview")).toBeVisible();
+  await page.getByRole("tab", { name: /^notes\.txt/ }).focus(); await page.keyboard.press("Delete");
+  await expect(page.getByRole("tab", { name: "Files", exact: true })).toBeFocused();
+  await editInSource(page);
+  await sourceBox(page).fill("# Unsaved owner draft");
+  await page.getByRole("tab", { name: "Memory", exact: true }).click();
+  await expect(page.getByTestId("memory-settings")).toHaveAttribute("data-compact", "true");
+  await expect(page.getByText(`Private note for research`, { exact: true })).toBeVisible();
+  await expect(page.getByTestId("memory-settings")).toContainText(mode === "active" ? "Capture and recall are on." : mode === "off" ? "Memory is off." : "Memory is paused.");
+  for (const view of ["Important", "Recent", "Needs review"]) { await page.getByRole("button", { name: view, exact: true }).click(); await expect(page.getByRole("button", { name: view, exact: true })).toBeEnabled(); }
+  await page.getByRole("button", { name: "Inspect memory", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Confirm forgetting this memory" }).check();
+  await page.getByRole("button", { name: "Close details", exact: true }).click();
+  expect(actions.every(action => ["list", "inspect", "import-review-list"].includes(String(action.action)))).toBe(true);
+  await page.getByRole("tab", { name: "Memory", exact: true }).focus(); await page.keyboard.press("Home");
+  await expect(page.getByRole("tab", { name: "Files", exact: true })).toBeFocused();
+  await expect(sourceBox(page)).toHaveValue("# Unsaved owner draft");
+  const fileTabs = page.getByRole("tablist", { name: "Open files", exact: true });
+  await expect(fileTabs.getByRole("button")).toHaveCount(0);
+  await page.getByRole("button", { name: "Close report.md", exact: true }).click();
+  await expect(page.getByTestId("workspace-pane-close-question")).toBeVisible();
+  await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+  await page.getByRole("button", { name: "Open notes.txt", exact: true }).click();
+  await page.getByRole("tab", { name: /^notes\.txt/ }).focus(); await page.keyboard.press("Delete");
+  await expect(fileTabs.getByRole("tab")).toBeFocused();
+  await expect(sourceBox(page)).toHaveValue("# Unsaved owner draft");
+  await fileTabs.getByRole("tab").focus(); await page.keyboard.press("Delete");
+  await expect(page.getByTestId("workspace-pane-close-question")).toBeVisible();
+  await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+  const compactLayout = await page.getByTestId("workspace-pane").getAttribute("data-layout") === "compact";
+  const chat = page.getByTestId("joined-chat-column");
+  if (compactLayout) { await expect(chat).toHaveAttribute("inert", ""); await expect(chat).toBeHidden(); }
+  else expect((await chat.boundingBox())!.width).toBeGreaterThanOrEqual(360);
+  await audit();
+  await page.screenshot({ path: info.outputPath(`joined-files-${width}-${skin}.png`) });
+  if (!compactLayout) { await page.getByTestId("workspace-pane-expand").click(); await expect(page.getByTestId("workspace-pane")).toHaveAttribute("data-layout", "expanded"); await page.getByTestId("workspace-pane-expand").click(); }
+  else { await page.getByTestId("workspace-pane-back").click(); await expect(page.getByTestId("workspace-pane")).toBeHidden(); }
+  await expect(chat).toBeVisible();
+  expect((await chat.boundingBox())!.width).toBeGreaterThanOrEqual(360);
+  await page.locator('article[data-artifact-id="saved-old"]').getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(page.getByRole("region", { name: "File preview", exact: true })).toContainText("Historical saved bytes");
+  const savedText = page.getByText("Historical saved bytes", { exact: true });
+  await expect(savedText).toBeVisible();
+  const savedBounds = (await savedText.boundingBox())!;
+  expect(savedBounds.y).toBeGreaterThanOrEqual(0);
+  expect(savedBounds.y + savedBounds.height).toBeLessThanOrEqual(900);
+  await audit();
+  await page.screenshot({ path: info.outputPath(`joined-saved-${width}-${skin}.png`) });
+  await page.getByRole("button", { name: "Close preview", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Saved versions", exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Memory", exact: true }).click();
+  await page.getByLabel("Search memory", { exact: true }).fill("delayed");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  try {
+    await expect.poll(() => Boolean(releaseOld)).toBe(true);
+    await page.evaluate(() => (window as any).fixtureStore.dispatch({ type: "select", id: "other" }));
+    await expect(page.getByTestId("workspace-pane-scope")).toContainText("Other bot");
+    await expect(page.getByText("Private note for other", { exact: true })).toBeVisible();
+  } finally { releaseOld?.(); }
+  await expect(page.getByText("Private note for research", { exact: true })).toHaveCount(0);
+  await audit();
+  await page.screenshot({ path: info.outputPath(`joined-memory-${width}-${skin}.png`) });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  expect(errors).toEqual([]);
+  await info.attach("joined-panel-observations", { body: JSON.stringify({ width, skin, mode, errors, actions, accessibility }, null, 2), contentType: "application/json" });
+  writeFileSync(info.outputPath("joined-panel-observations.json"), JSON.stringify({ width, skin, mode, errors, actions, accessibility }, null, 2));
+});
+
 test("a single click previews a file and the next click reuses the tab; Keep open and Edit make tabs stay", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Open report.md" }).click();
@@ -171,6 +290,7 @@ test("a single click previews a file and the next click reuses the tab; Keep ope
   await expect(page.getByRole("tab", { name: /^notes\.txt/ })).toBeVisible();
   await expect(page.getByTestId("workspace-text-preview")).toHaveText(NOTES.trimEnd());
 
+  await page.getByTestId("workspace-document").locator("summary").click();
   await page.getByRole("button", { name: "Keep open", exact: true }).click();
   await expect(tabs(page).first()).not.toHaveAttribute("data-preview", "true");
   await page.getByRole("button", { name: "Open report.md" }).click();
@@ -215,6 +335,7 @@ test("Save writes the bytes; typing during a held save leaves the newer text uns
 test("switching tabs during a held save settles only the saving tab, and the draft survives the switch", async ({ page, request }) => {
   await open(page);
   await page.getByRole("button", { name: "Open notes.txt" }).click();
+  await page.getByTestId("workspace-document").locator("summary").click();
   await page.getByRole("button", { name: "Keep open", exact: true }).click();
   await editInSource(page);
   await request.get(`${origin}/__control/hold`);
@@ -393,6 +514,6 @@ test("an HTML report previews inside the protected frame and lets nothing out", 
   // The folder crumb leads back to the root; Open Files hands off to Files.
   await page.getByRole("navigation", { name: "Workspace folders" }).getByRole("button", { name: "workspace", exact: true }).click();
   await expect(page.getByRole("button", { name: "Open report.md" })).toBeVisible();
-  await page.getByRole("button", { name: "Open Files", exact: true }).click();
+  await page.getByRole("button", { name: "Saved versions", exact: true }).click();
   expect(await page.evaluate(() => (window as unknown as { __filesOpened?: number }).__filesOpened)).toBe(1);
 });

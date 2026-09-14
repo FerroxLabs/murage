@@ -7,6 +7,7 @@ import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
 import {
   draftRevision,
+  appendComposerDraftAttachments,
   forgetFailedComposerSend,
   markDraftEdited,
   recoverFailedComposerSend,
@@ -36,13 +37,13 @@ import {
   clipboardHasImages,
   clipboardImageFiles,
   composeMessage,
-  imageAttachmentFromFile,
   intakeFiles,
   isLongPaste,
   pasteAttachment,
   type Attachment,
   type PasteAttachment,
 } from "@/lib/composer-attachments";
+import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
 import { normalizeState } from "@/lib/mascot";
 import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
@@ -192,7 +193,7 @@ export function Composer({
   onClearReply,
   onConsumeReply,
   onRestoreReply,
-  locked = false,
+  locked: setupLocked = false,
 }: {
   bot?: Bot;
   group?: Group;
@@ -205,6 +206,7 @@ export function Composer({
   /** New rooms keep the composer inert until their setup is saved or skipped. */
   locked?: boolean;
 }) {
+  const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot);
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
@@ -284,6 +286,10 @@ export function Composer({
     (next: Attachment[]) => editAttachments((prev) => [...prev, ...next]),
     [editAttachments],
   );
+  // Captured draft identity also handles uploads finishing after navigation.
+  const addUploadedAttachments = useCallback((next: Attachment[]) => {
+    appendComposerDraftAttachments(draftId, next);
+  }, [draftId]);
   const removeAttachment = useCallback(
     (id: string) => editAttachments((prev) => prev.filter((a) => a.id !== id)),
     [editAttachments],
@@ -312,6 +318,7 @@ export function Composer({
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
   const [dismissedSlashAt, setDismissedSlashAt] = useState<number | null>(null); // Esc'd this /
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const mentionListRef = useRef<HTMLDivElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
 
@@ -383,7 +390,7 @@ export function Composer({
     // "@Scout " — the full name plus a space — is a COMPLETED tag, not a
     // search: keep the picker closed so Enter sends instead of re-picking
     if (mention.query.endsWith(" ") && pool.some((b) => b.name.toLowerCase() === q)) return [];
-    return pool.filter((b) => !q || b.name.toLowerCase().includes(q)).slice(0, 6);
+    return pool.filter((b) => !q || b.name.toLowerCase().includes(q));
   }, [mention, dismissedAt, state.bots, bot?.id, group, members]);
   const mentionPickerOpen = candidates.length > 0;
 
@@ -391,6 +398,13 @@ export function Composer({
     () => setHighlight(0),
     [mention?.start, mention?.query, slash?.start, slash?.query],
   );
+
+  useEffect(() => {
+    if (!mentionPickerOpen) return;
+    mentionListRef.current
+      ?.querySelector<HTMLElement>(`[data-mention-index="${highlight}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlight, mentionPickerOpen]);
 
   // one line at rest, then grow with the draft — hard cap at six lines
   useEffect(() => {
@@ -460,10 +474,10 @@ export function Composer({
     const { attachments: added, notice } = await intakeFiles(Array.from(picked), {
       allowImages: engineSupportsImages,
       getPath: pathForFile,
-      uploadImage: imageAttachmentFromFile,
+      uploadImage: file => imageAttachmentFromFile(file, threadId),
       queueAudio: queueAudioFile,
     });
-    if (added.length) addAttachments(added);
+    if (added.length) addUploadedAttachments(added);
     // Keep file-specific failures beside the attachments. A successful
     // overlapping intake must not erase an earlier failure before it is read.
     if (notice) setAttachmentNotice(notice);
@@ -739,13 +753,15 @@ export function Composer({
         )}
         {mentionPickerOpen && (
           <div
+            ref={mentionListRef}
             role="listbox"
             aria-label="Tag a bot"
-            className="absolute bottom-full left-2 z-20 mb-2 w-72 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
+            className="absolute bottom-full left-2 z-20 mb-2 max-h-72 w-72 overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-hairline/40 bg-raised shadow-lg"
           >
             {candidates.map((peer, i) => (
               <button
                 key={peer.id}
+                data-mention-index={i}
                 role="option"
                 aria-selected={i === highlight}
                 onClick={() => pickMention(peer)}
@@ -796,7 +812,8 @@ export function Composer({
         )}
         <ComposerAttachments
           items={attachments}
-          onAdd={addAttachments}
+          onAdd={addUploadedAttachments}
+          threadId={threadId}
           onRemove={removeAttachment}
           onDisplayInChatBox={displayPasteInChatBox}
           allowImages={engineSupportsImages}
@@ -874,8 +891,8 @@ export function Composer({
               void (async () => {
                 for (const file of imageFiles) {
                   try {
-                    const attachment = await imageAttachmentFromFile(file);
-                    if (attachment) editAttachments((prev) => [...prev, attachment]);
+                    const attachment = await imageAttachmentFromFile(file, threadId);
+                    if (attachment) addUploadedAttachments([attachment]);
                   } catch (err) {
                     dispatch({
                       type: "error",
@@ -955,8 +972,11 @@ export function Composer({
             if (e.key === "Escape" && recording) setRecording(false);
           }}
           disabled={Boolean(approval) || locked}
+          aria-busy={bot?.awaitingThreadSnapshot || undefined}
           placeholder={
-            locked
+            bot?.awaitingThreadSnapshot
+              ? "Loading replacement conversation…"
+              : setupLocked
               ? "Finish room setup to start chatting"
               : approval
               ? "Answer the approval above to continue"

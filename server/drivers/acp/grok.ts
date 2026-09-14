@@ -269,13 +269,18 @@ const support: AcpSupport = {
   // billing from the subscription to pay-as-you-go.
   transformEnv: (env) => {
     delete env.XAI_API_KEY;
+    delete env.GROK_CODE_XAI_API_KEY;
+    delete env.GROK_API_KEY;
+    delete env.MURAGE_GROK_PROVIDER_API_KEY;
+    delete env.GROK_MODELS_BASE_URL;
+    delete env.GROK_MODELS_LIST_URL;
   },
 
   // Bind the grok.com subscription login. No API-key fallback by design —
   // an unauthenticated CLI is a user action, not something to paper over.
   pickAuthMethod: (methods) => (methods.some((m) => m.id === "cached_token") ? "cached_token" : null),
   authFailure: "fail",
-  isAuthenticated: () => existsSync(join(homedir(), ".grok", "auth.json")),
+  isAuthenticated: (env) => existsSync(join(grokHome(env), "auth.json")),
 
   // `--append-system-prompt`/`--rules` are accepted by the CLI but do NOT
   // reach the agent-stdio system prompt (verified against 1.0.0), so the

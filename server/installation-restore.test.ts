@@ -42,6 +42,15 @@ it("binds restore to the inspected hash and leaves original bytes intact on mism
   originalIntact(f);
 });
 
+it("requires a new target when requested, preserving default restore behavior", async () => {
+  const f = await fixture();
+  await expect(restoreInstallation(f.target, f.archive, f.sha, { requireNew: true })).rejects.toMatchObject({ code: "RESTORE_NEW_TARGET_REQUIRED" });
+  originalIntact(f);
+  const result = await restoreInstallation(join(f.root,"new-target"), f.archive, f.sha, { requireNew: true });
+  expect(result.previousDataDir).toBeNull();
+  expect(result.activationAvailable).toBe(false);
+});
+
 it("refuses a live installation owner before replacing its state", async () => {
   const f = await fixture(), lease = acquireDataDirLease(f.target);
   try { await expect(restoreInstallation(f.target, f.archive, f.sha)).rejects.toThrow(); originalIntact(f); }

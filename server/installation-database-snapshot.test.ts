@@ -7,6 +7,7 @@ import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
+import { initializeImageOperations } from "./image-operations-schema.ts";
 import { snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 
 const roots: string[] = [];
@@ -65,6 +66,9 @@ it("accepts the inbox and saved-file tables the harness creates, and an older ar
 
 it.each([
   ["an unknown table", "CREATE TABLE plugins(id TEXT PRIMARY KEY)"],
+  ["an image operation trigger", "CREATE TRIGGER hostile_image AFTER UPDATE ON image_operations BEGIN DELETE FROM thread_state; END"],
+  ["an image operation column", "ALTER TABLE image_operations ADD COLUMN extra TEXT"],
+  ["an image operation index", "CREATE INDEX hostile_image ON image_operations(state)"],
   ["an unknown index on a known table", "CREATE INDEX hostile ON artifacts(name)"],
   ["a known table with a foreign column", "ALTER TABLE inbox_item_state ADD COLUMN extra TEXT"],
   ["a migrated column out of order", "ALTER TABLE artifacts DROP COLUMN producer"],
@@ -79,6 +83,7 @@ it.each([
 ])("still refuses %s", async (_name, sql) => {
   const f = fixture();
   initializeInbox(f.db); initializeArtifacts(f.db);
+  initializeImageOperations(f.db);
   f.db.exec(sql);
   await expect(snapshotInstallationDatabase(f.data, f.target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
   expect(existsSync(f.target)).toBe(false);

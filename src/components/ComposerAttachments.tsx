@@ -9,11 +9,11 @@ import {
   attachmentImageUrl,
   intakeFiles,
   formatSize,
-  imageAttachmentFromFile,
   pasteSummary,
   type Attachment,
   type PasteAttachment,
 } from "@/lib/composer-attachments";
+import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
 import { AttachmentPreviewDialog, previewImage, type PreviewImage } from "./AttachmentPreview";
 
 /** Electron 32 removed File.path — only the preload can name a file. */
@@ -31,6 +31,7 @@ export function ComposerAttachments({
   notice,
   onNotice,
   onAudioFile,
+  threadId,
 }: {
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
@@ -40,6 +41,7 @@ export function ComposerAttachments({
   notice: string | null;
   onNotice: (notice: string | null) => void;
   onAudioFile?: (file: File) => void;
+  threadId?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<PreviewImage | null>(null);
@@ -77,11 +79,11 @@ export function ComposerAttachments({
       const { attachments, notice: message } = await intakeFiles(files, {
         allowImages,
         getPath: pathForFile,
-        uploadImage: imageAttachmentFromFile,
+        uploadImage: file => imageAttachmentFromFile(file, threadId),
         queueAudio: onAudioFile,
       });
-      if (!active) return;
       if (attachments.length) onAdd(attachments);
+      if (!active) return;
       // Only a failure changes the notice. This keeps a concurrent successful
       // intake from clearing an error before the user can read it.
       if (message) onNotice(message);
@@ -98,7 +100,7 @@ export function ComposerAttachments({
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onAdd, allowImages, onNotice, onAudioFile]);
+  }, [onAdd, allowImages, onNotice, onAudioFile, threadId]);
 
   return (
     <>

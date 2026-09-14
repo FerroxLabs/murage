@@ -9334,6 +9334,27 @@ describe("new-bot setup conversation", () => {
     expect((await openCardOf(firm.threadId)).intake!.step).toBe("confirm");
   });
 
+  it("resolves the one clarifier from the combined intent, with an explicit correction taking priority", async () => {
+    const continued = await makeBot("Carry The Opening Intent");
+    await say(continued, THIN_ANSWER);
+    expect((await openCardOf(continued.threadId)).intake!.step).toBe("narrow");
+    await say(continued, "chasing them");
+    // "chasing them" alone has no invoice subject. The opening answer is the
+    // missing context, so this must take the same firm profile branch as
+    // "chasing invoices" without asking a duplicated third question.
+    expect((await openCardOf(continued.threadId)).intake).toMatchObject({
+      step: "confirm", outcome: "profile", asked: 2,
+    });
+
+    const corrected = await makeBot("Correction Wins");
+    await say(corrected, "trading");
+    const beforeCorrection = (await openCardOf(corrected.threadId)).intake!.candidate!;
+    await say(corrected, "Actually, I mean chasing invoices");
+    const afterCorrection = (await openCardOf(corrected.threadId)).intake!;
+    expect(afterCorrection).toMatchObject({ step: "confirm", outcome: "profile", asked: 2 });
+    expect(afterCorrection.candidate!.slug).not.toBe(beforeCorrection.slug);
+  });
+
   it("never asks a third question, whatever the second answer is", async () => {
     const bot = await makeBot("Nothing To Say");
     expect((await say(bot, EMPTY_ANSWER)).response.status).toBe(202);
@@ -9512,5 +9533,57 @@ describe("new-bot setup conversation", () => {
     expect((await api("POST", "/api/bots/not-a-bot/intake", { messageId, text: "x" })).status).toBe(404);
     // and none of that spent the question
     expect((await openCardOf(bot.threadId)).intake!.step).toBe("open");
+  });
+
+  it("offers the shipped Home Planner playbook through ordinary conversational discovery", async () => {
+    const bot = await makeBot("Household helper");
+    expect((await say(bot, "Home Planner for household tasks and appointments")).response.status).toBe(202);
+    const card = await openCardOf(bot.threadId);
+    const candidates = [card.intake?.candidate, ...(card.intake?.choices ?? [])];
+    const offered = candidates.find(candidate => candidate?.slug === "starter-personal-home");
+    expect(offered).toMatchObject({ slug: "starter-personal-home", profileReviewHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id);
+    expect(current).toMatchObject({ id: bot.id, name: "Household helper", threadId: bot.threadId });
+    expect(current.playbooks ?? []).toEqual([]);
+  });
+
+  it.each(["cowork", "starter-personal-home"])("adapts a reviewed one-bot playbook package without flattening a team: %s", async (slug) => {
+    const bot = await makeBot("Keep this name");
+    const before = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!;
+    const catalog = await api("GET", "/api/team-library/catalog");
+    const cowork = catalog.body.teams.find((entry: { slug: string }) => entry.slug === slug);
+    expect(cowork).toMatchObject({ members: 1, adaptable: true, playbooks: expect.any(Array) });
+    expect(cowork.profileReviewHash).toMatch(/^[a-f0-9]{64}$/);
+
+    const legacy = await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, { slug, rename: false });
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.playbooks).toEqual([]);
+    expect((await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!.playbooks)
+      .toEqual(before.playbooks);
+
+    const applied = await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, {
+      slug, rename: false, profileReviewHash: cowork.profileReviewHash,
+    });
+    expect(applied.status).toBe(200);
+    expect(applied.body.bot).toMatchObject({ id: bot.id, name: "Keep this name" });
+    expect(applied.body.playbooks.length).toBeGreaterThan(0);
+    const after = (await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!;
+    expect(after).toMatchObject({ id: before.id, name: before.name, threadId: before.threadId });
+    expect(after.chiefOfStaff).toBe(before.chiefOfStaff);
+    expect(after.playbooks).toMatchObject(applied.body.playbooks);
+
+    const repeated = await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, {
+      slug, rename: false, profileReviewHash: cowork.profileReviewHash,
+    });
+    expect(repeated.status).toBe(200);
+    expect((await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)!.playbooks)
+      .toEqual(after.playbooks);
+
+    expect((await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, {
+      slug, rename: false, profileReviewHash: "0".repeat(64),
+    })).status).toBe(409);
+    expect((await desktopApi("POST", `/api/bots/${bot.id}/assistant-profile`, {
+      slug: "starter-business-team", rename: false,
+    })).status).toBe(422);
   });
 }, 120_000);

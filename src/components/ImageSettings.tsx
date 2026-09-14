@@ -110,7 +110,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
 
   return <section aria-labelledby="image-settings-heading" className="min-w-0 rounded-xl border border-hairline/40 p-4">
     <h3 id="image-settings-heading" className="text-[14px] font-medium text-ink">Image generation</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Let bots create images using an existing connection. GPT Image 2 is the default where supported.</p>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Let bots create or edit images using an existing connection. Flux defaults to GPT Image 2.5 Flare high.</p>
     <label className="mt-3 flex min-h-11 items-center gap-3 text-[13px] text-ink">
       <input type="checkbox" checked={snapshot?.enabled ?? false} disabled={!snapshot || Boolean(busy) || (!snapshot.enabled && !usable)}
         onChange={event => onChange({ enabled: event.target.checked })} className={`size-4 shrink-0 accent-accent ${focus}`} />

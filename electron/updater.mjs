@@ -1,5 +1,5 @@
 // In-app auto-updater (electron-updater). Downloads are user-driven; macOS
-// stages the downloaded ZIP immediately and the explicit restart applies it.
+// retains the downloaded ZIP until the explicit install starts native staging.
 // One state object is broadcast on every transition.
 //
 // Only runs in the packaged, signed+notarized app (mac auto-update requires
@@ -18,7 +18,6 @@ import {
 } from "./package-install-command.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
-import { hasCustomUpdaterProfile } from "./updater-restart.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -27,6 +26,7 @@ let win = null;
 // status: idle | checking | available | downloading | downloaded | installing | error
 let state = { status: "idle" };
 let updaterCoordinator = null;
+let checksScheduled = false;
 
 function updaterLogger() {
   const directory = app.getPath("logs");
@@ -93,8 +93,17 @@ export function attachUpdaterWindow(mainWindow) {
   win = mainWindow;
 }
 
-export function startUpdater({ beforeInstall = null } = {}) {
-  if (updaterCoordinator) return;
+export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {}) {
+  const enableChecks = () => {
+    if (!scheduleChecks || checksScheduled) return;
+    checksScheduled = true;
+    setTimeout(() => void updaterCoordinator?.check(), 15_000).unref?.();
+    setInterval(() => void updaterCoordinator?.check(), 60 * 60 * 1000).unref?.();
+  };
+  if (updaterCoordinator) {
+    enableChecks();
+    return updaterCoordinator;
+  }
   // dev / unsigned builds can't auto-update — leave the banner dormant
   if (!app.isPackaged) {
     updaterCoordinator = null;
@@ -109,10 +118,11 @@ export function startUpdater({ beforeInstall = null } = {}) {
     return;
   }
   autoUpdater.autoDownload = false; // button-driven download
-  // Squirrel.Mac has a second, native staging pass after the ZIP download.
-  // Start it immediately so "Restart to update" never has to begin that slow
-  // pass and wait indefinitely. Windows keeps the explicit installer click.
-  autoUpdater.autoInstallOnAppQuit = process.platform === "darwin" && !hasCustomUpdaterProfile(process.env);
+  // Squirrel.Mac installs a native-staged update on ordinary termination too.
+  // Set this before any download: backup-mode quits must not arm an update.
+  // The existing explicit quitAndInstall path starts native staging later.
+  // This is prevention, not cancellation of an already-staged native update.
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = updaterLogger();
 
   // Broadcast the install flavour before the first check so the banner never
@@ -129,6 +139,6 @@ export function startUpdater({ beforeInstall = null } = {}) {
   // first check ~15s after launch (let the app settle), then hourly — both
   // silent on failure, hence the arrow: a bare `check` would receive the
   // timer's argument as `manual` and start reporting errors again.
-  setTimeout(() => void updaterCoordinator?.check(), 15_000).unref?.();
-  setInterval(() => void updaterCoordinator?.check(), 60 * 60 * 1000).unref?.();
+  enableChecks();
+  return updaterCoordinator;
 }

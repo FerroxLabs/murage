@@ -1,4 +1,7 @@
 {
+  "providerError.payment.title": "Provider payment or account access required",
+  "providerError.payment.summary": "The provider rejected this request with HTTP 402. This response does not establish that credits are exhausted.",
+  "providerError.payment.resolution": "Check the provider's billing, account and selected-model access, including bring-your-own-key (BYOK) settings, before retrying.",
   "claudeAccounts.added": "Account added. Sign in explicitly below, then select this account in a model picker. Existing bot choices are unchanged.",
   "claudeAccounts.removed": "Removed from Murage. Login and credential files were retained.",
   "claudeAccounts.saved": "Account settings saved.",

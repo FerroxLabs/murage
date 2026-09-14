@@ -443,7 +443,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             </div>
           )}
           <SettingsSection id="overview" active={section}>
-          <details open={section === undefined ? true : undefined} className="rounded-xl bg-card p-3">
+          <details open={section === undefined || section === "overview" ? true : undefined} className="rounded-xl bg-card p-3">
             <summary className="cursor-pointer text-[13px] font-medium">Appearance</summary>
           <BotProfileAvatarCard
             bot={bot}

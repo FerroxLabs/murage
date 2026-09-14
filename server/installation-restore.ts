@@ -84,7 +84,7 @@ function assertCandidate(path: string, id: string) {
 /** Commit an explicitly hash-bound archive into a stopped installation.
  * Both old and restored directories are retained on failure; an active
  * journal blocks startup until rollback. Never activates agents. */
-export async function restoreInstallation(dataDir: string, archive: string, expectedSha256: string, options: { checkpoint?: (phase: Phase) => void | Promise<void> } = {}) {
+export async function restoreInstallation(dataDir: string, archive: string, expectedSha256: string, options: { checkpoint?: (phase: Phase) => void | Promise<void>; requireNew?: boolean; preparationParent?: string } = {}) {
   if (!/^[a-f0-9]{64}$/.test(expectedSha256)) fail("ARCHIVE_HASH_REQUIRED");
   const paths = rootPaths(dataDir);
   const lease = acquireDataDirLeaseForProcess(paths.root);
@@ -92,12 +92,17 @@ export async function restoreInstallation(dataDir: string, archive: string, expe
   let journalCreated = false;
   let candidate: string | undefined;
   try {
+    if (options.requireNew && entry(paths.root)) fail("RESTORE_NEW_TARGET_REQUIRED");
     if (entry(paths.journal)) fail("INTERRUPTED_RESTORE_REQUIRES_ROLLBACK");
     if (entry(join(paths.root, RESTORE_REVIEW_FILE))) {
       if (readRestoreReview(paths.root)?.status !== "reviewed") fail("RESTORE_ALREADY_REQUIRES_REVIEW");
       assertRestoreReviewed(paths.root);
     }
-    const prepared = await prepareInstallationRestore(archive, dirname(paths.root));
+    // Internal encrypted-Windows join: extract beneath its native private root,
+    // then retain that candidate's ACL through existing same-volume moves.
+    const preparationParent = options.preparationParent === undefined ? dirname(paths.root) : dataDirLeasePaths(options.preparationParent).canonicalDataDir;
+    if (options.preparationParent !== undefined && (!options.requireNew || preparationParent !== dataDirLeasePaths(dirname(archive)).canonicalDataDir || dirname(preparationParent) !== dirname(paths.root))) fail("INVALID_PRIVATE_RESTORE_PARENT");
+    const prepared = await prepareInstallationRestore(archive, preparationParent);
     inspection = prepared.directory;
     if (prepared.sha256 !== expectedSha256) fail("ARCHIVE_HASH_CHANGED");
     const id = randomUUID();
@@ -109,6 +114,7 @@ export async function restoreInstallation(dataDir: string, archive: string, expe
     marker.modifications.push({component:"messages.db",action:`Memory restore: ${memoryRestore.history}; ${memoryRestore.merged} destination tombstones retained`});
     writeFileAtomic(markerPath, JSON.stringify({ ...marker, transactionId: id }) + "\n", { mode: 0o600 });
     move(prepared.stateDirectory, tx.candidate);
+    if (options.requireNew && entry(paths.root)) fail("RESTORE_NEW_TARGET_REQUIRED");
     const originalIdentity = entry(paths.root) ? directoryIdentity(paths.root) : null;
     const journal: Journal = { version: 1, id, archiveSha256: expectedSha256, snapshotId: prepared.manifest.snapshotId, hadOriginal: originalIdentity !== null, originalIdentity, phase: "prepared" };
     publishJournal(paths.journal, journal);

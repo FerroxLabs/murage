@@ -4,10 +4,43 @@ import {
   PendingTurnCancellations,
   RetiredTurnRegistry,
   guardTurnDispatch,
+  TurnSubmissionBoundary,
   isTurnEventQuarantined,
 } from "./turn-dispatch-guard.ts";
 
 describe("turn dispatch cancellation boundary", () => {
+  it("retries only before adapter invocation or after a trusted refusal", () => {
+    const boundary = new TurnSubmissionBoundary();
+    expect(boundary.canRetry).toBe(true);
+    boundary.started();
+    expect(boundary.canRetry).toBe(false);
+    const error = new Error("MEMORY_CONTEXT_REVOKED");
+    expect(() => boundary.beforeSubmit(() => { throw error; })).toThrow(error);
+    expect(boundary.canRetry).toBe(true);
+    expect(() => boundary.assertNotRefused()).toThrow(error);
+  });
+
+  it("keeps successful callback and ignored callback submissions unknown", () => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    boundary.beforeSubmit(() => {});
+    expect(boundary.canRetry).toBe(false);
+    expect(() => boundary.assertNotRefused()).not.toThrow();
+    const ignored = new TurnSubmissionBoundary();
+    ignored.started();
+    expect(ignored.canRetry).toBe(false);
+  });
+
+  it("propagates cleanup failure instead of making a refused turn retryable", async () => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    const refusal = new Error("MEMORY_CONTEXT_REVOKED");
+    expect(() => boundary.beforeSubmit(() => { throw refusal; })).toThrow(refusal);
+    const cleanupFailure = new Error("provider termination is unconfirmed");
+    await expect(guardTurnDispatch(Promise.resolve({turnId:"refused"}), () => false,
+      async () => { throw cleanupFailure; }, () => boundary.assertNotRefused(),
+    )).rejects.toBe(cleanupFailure);
+  });
   it("interrupts again after a provider setup that was cancelled while pending", async () => {
     let finishSetup!: (value: { turnId: string }) => void;
     const started = new Promise<{ turnId: string }>((resolve) => {

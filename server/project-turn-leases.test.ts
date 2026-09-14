@@ -14,6 +14,38 @@ function fixture() {
   return { cwd, leases, owners };
 }
 
+it("keeps the separate output writer until terminal evidence and releases both roots", async () => {
+  const f = fixture(), output = fixture().cwd;
+  f.leases.acquire("thread", "run", f.cwd);
+  f.leases.acquireOutput("thread", "run", output);
+  f.leases.markDispatched("run"); f.leases.bind("thread", "run", "turn");
+  f.leases.abandon("run");
+  expect(f.leases.folders.conflicts(output, "restore")).toHaveLength(1);
+  f.leases.markStopRequested("run");
+  const restore = f.leases.acquireRestoreWhenStopped("restore", output, { timeoutMs: 1000 });
+  f.leases.complete("thread", "turn");
+  expect(await restore).toMatchObject({ ok: true });
+  expect(f.owners()).toEqual([]);
+  f.leases.folders.release("restore");
+  expect(f.leases.folders.conflicts(output, "restore")).toEqual([]);
+});
+
+it("rolls back output acquisition failures and releases output owners on abandon/disposal", () => {
+  const f = fixture(), output = fixture().cwd;
+  f.leases.folders.acquireRestore("restore", output);
+  f.leases.acquire("thread", "failed", f.cwd);
+  expect(() => f.leases.acquireOutput("thread", "failed", output)).toThrow("conflict");
+  expect(f.owners()).toEqual([]);
+  f.leases.folders.release("restore");
+  for (const dispatched of [false, true]) {
+    f.leases.acquire("thread", "run", f.cwd); f.leases.acquireOutput("thread", "run", output);
+    if (dispatched) { f.leases.markDispatched("run"); f.leases.disposed(["run"]); }
+    else f.leases.abandon("run");
+    expect(f.owners()).toEqual([]);
+    expect(f.leases.folders.conflicts(output, "restore")).toEqual([]);
+  }
+});
+
 it("releases a terminal-before-bind generation without touching another writer", () => {
   const { cwd, leases, owners } = fixture();
   leases.acquire("thread", "generation", cwd);

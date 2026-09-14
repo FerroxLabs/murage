@@ -7,6 +7,7 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   path: RegExp;
   purpose: string;
 }> = [
+  { methods: ["GET"], path: /^\/api\/diagnostics\/incident$/, purpose: "owner-selected privacy-safe incident export" },
   { methods: ["GET", "POST", "PATCH", "DELETE"], path: new RegExp("^/api/claude-accounts(?:/|$)"), purpose: "named native Claude account configuration" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/automation-admission$"), purpose: "pause or resume automatic work" },
   { methods: ["GET", "POST"], path: new RegExp("^/api/artifacts(?:/|$)"), purpose: "verified private workspace deliverables" },
@@ -30,6 +31,8 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["POST"], path: /^\/api\/packages\/export$/, purpose: "review and export selected local skill files" },
   { methods: ["POST"], path: /^\/api\/starter-profiles$/, purpose: "review and install a local starter profile" },
   { methods: ["GET", "POST"], path: /^\/api\/telegram\/(status|pair|resume|revoke)$/, purpose: "pair and revoke the Telegram owner channel" },
+  { methods: ["GET", "POST", "PATCH", "PUT", "DELETE"], path: /^\/api\/slack(?:\/|$)/, purpose: "private Slack owner-channel configuration and lifecycle" },
+  { methods: ["GET", "POST", "PATCH", "PUT", "DELETE"], path: /^\/api\/discord(?:\/|$)/, purpose: "private Discord owner-channel configuration and lifecycle" },
   { methods: ["POST"], path: /^\/api\/team-library\/github$/, purpose: "download team packages to disk" },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/(assistant-profile|skills(?:\/library)?)$/, purpose: "install executable instructions" },
   { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+\/skills\/[^/]+$/, purpose: "enable, change or delete installed skills" },

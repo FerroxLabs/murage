@@ -102,48 +102,23 @@ export const FLUX_IMAGE_URL = `${FLUX_OPENAI_BASE}/images/generations`;
 /**
  * The Flux image alias to ask for, and why it is this one.
  *
- * READ `flux-router/src/capability_image.py:89` (_IMAGE_ALIAS_TO_PROVIDER) with
- * `capability_resolver.py:41` (IMAGE_CATEGORY_CANONICAL) before changing this.
- *
- * THE TRAP: `flux-image` looks like the obvious id and is NOT an alias. It is a
- * BILLING TIER name (customer_pricing.py:117, model_names.py:76). Sent as
- * `model`, `image_alias_to_arm` returns None, the resolver falls through to the
- * Standard category canonical, and Standard is pinned to `together-flux` —
- * Together FLUX.1-schnell, the cheapest of the seven arms. It answers 200 with
- * a picture, so nothing anywhere says the request was quietly served by the
- * bottom arm. Wayland ships that id today.
- *
- * A NAMED alias cannot degrade that way: `resolve_capability_provider` returns
- * None when an explicit pick has no live priced arm, and the route answers 400
- * rather than substituting a different-looking model (the LOCKED "no silent
- * cross-model fallback" invariant). Explicit is the fail-loud option, which is
- * why 400 is deliberately absent from CAPABILITY_DENIED below: an unroutable
- * arm must surface, not silently move the bill to the user's OpenAI account.
- *
- * THE PICK: `flux-image-gpt` resolves to the `gpt-image-med` arm — OpenAI
- * gpt-image-1.5 at quality "medium", 1024x1024 (_GPT_IMAGE_ARMS,
- * capability_image.py:78). The path it replaces is gpt-image-2 at quality
- * "low". Same vendor family, one tier ABOVE the tier it replaces, so no avatar
- * gets worse. `flux-image-flux` is roughly a tenth of the price, and it is a
- * four-step distilled model: it may well be fine at 28px, but "may well be" is
- * not a basis for silently lowering the quality of every avatar the app draws.
- *
- * THE COST, said plainly rather than buried: gpt-image-med bills live per output
- * token at 32 microcents each, about $0.034 of cost and so about $0.05 charged
- * at Flux's cost-plus rate, against roughly $0.01 for gpt-image-2 at low. An
- * avatar is generated a handful of times per bot, once, so this is cents per
- * workspace and not a running cost.
+ * `flux-router/src/capability_image.py` maps `flux-image-gpt25-high` to
+ * `gpt-image-25-high`: GPT Image 2.5 Flare, high quality, 1024x1024.
+ * This explicit alias matches Murage's Flux image-generation default and
+ * preserves the selected model even if Flux's generic default changes.
+ * An unroutable explicit pick returns 400, which remains deliberately absent
+ * from CAPABILITY_DENIED: it must surface rather than move the bill to OpenAI.
  */
-export const FLUX_IMAGE_MODEL = "flux-image-gpt";
+export const FLUX_IMAGE_MODEL = "flux-image-gpt25-high";
 
 /** The arm `FLUX_IMAGE_MODEL` resolves to inside the router, recorded here so
  *  the generated result can carry it and a future silent swap is a diff rather
  *  than a mystery. Flux echoes no provider field in its response body, so this
  *  is what "which arm drew this" is anchored to. */
-export const FLUX_IMAGE_ARM = "gpt-image-med";
+export const FLUX_IMAGE_ARM = "gpt-image-25-high";
 
-/** The tier name that is NOT an alias. Named so a test can assert we never
- *  send it. See the trap above. */
+/** Legacy constant name for the generic Flux image id. Tests ensure avatars
+ *  keep using the explicit model alias instead of a moving default. */
 export const FLUX_IMAGE_TIER_NOT_AN_ALIAS = "flux-image";
 
 const OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations";

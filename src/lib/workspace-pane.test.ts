@@ -150,6 +150,27 @@ describe("closing tabs", () => {
 });
 
 describe("layout state", () => {
+  it("keeps document state when an insufficient parent makes the pane compact", () => {
+    const edited = run([{ type: "open", scope: scopeA, relativePath: "a.md", id: "edit", mode: "edit" }, { type: "setDirty", id: "edit", dirty: true }]);
+    const compact = workspacePaneReducer(edited, { type: "setCompact", compact: true });
+    expect(compact.tabs).toBe(edited.tabs);
+    expect(compact.compact).toBe(true);
+    const back = workspacePaneReducer(compact, { type: "setCompactView", view: "chat" });
+    expect(back.tabs[0]?.dirty).toBe(true);
+    expect(workspacePaneReducer(back, { type: "setCompact", compact: false }).compact).toBe(false);
+  });
+  it("keeps unsaved file identity and saved version selection across Memory", () => {
+    const edited = run([{ type: "open", scope: scopeA, relativePath: "a.md", id: "edit", mode: "edit" }, { type: "setDirty", id: "edit", dirty: true }]);
+    const saved = workspacePaneReducer(edited, { type: "show", filesRequest: { botId: "other", threadId: "task", artifactId: "saved-version" } });
+    const memory = workspacePaneReducer(saved, { type: "show", section: "memory" });
+    expect(memory.tabs).toBe(edited.tabs);
+    expect(memory.filesRequest?.artifactId).toBe("saved-version");
+    expect(memory.section).toBe("memory");
+    const files = workspacePaneReducer(memory, { type: "show", section: "files" });
+    expect(files.tabs[0]).toMatchObject({ dirty: true, scope: scopeA });
+    expect(files.filesRequest?.artifactId).toBe("saved-version");
+    expect(workspacePaneReducer(files, { type: "open", scope: scopeA, relativePath: "b.md" }).filesRequest).toBeUndefined();
+  });
   it("keeps the rail wide enough and the chat usable", () => {
     expect(clampWorkspaceWidth(100)).toBe(WORKSPACE_PANE_MIN_WIDTH);
     expect(clampWorkspaceWidth(Number.NaN)).toBe(WORKSPACE_PANE_DEFAULT_WIDTH);

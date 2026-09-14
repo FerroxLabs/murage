@@ -15,6 +15,7 @@ import {
 } from "react";
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
+import type { RuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
 import { hostStoppedReason } from "../../shared/host-stop";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
@@ -154,7 +155,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo };
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** Provider turn that produced this message. */
@@ -346,6 +347,10 @@ export interface Bot {
    * bot's own session (null is how a clear travels over PATCH). */
   browserProfile?: string | null;
   messages: Message[];
+  /** Renderer-only deletion transition; never expose the removed transcript. */
+  awaitingThreadSnapshot?: boolean;
+  deletedThreadId?: string;
+  pendingThreadEvents?: Array<Extract<Action, { type: "messageAdded" | "messagePatched" | "threadActive" }>>;
   /** leaf of the visible conversation branch (see visibleMessages) */
   activeLeafId?: string | null;
 }
@@ -901,7 +906,29 @@ function dismissOnboardingCard(state: AppState, botId: string): AppState {
   return quiz ? patchCard(state, botId, quiz.id, { dismissed: true }) : state;
 }
 
+/** Guard stale callbacks while a removed conversation awaits its replacement. */
+export function pendingThreadActionBlocked(state: AppState, action: Action): boolean {
+  switch (action.type) {
+    case "send":
+    case "editMessage":
+    case "switchBranch":
+    case "answerCard":
+    case "dismissCard":
+      return state.bots.some(bot => bot.id === action.botId && bot.awaitingThreadSnapshot);
+    case "decideRequest":
+    case "answerQuestion":
+    case "sendQuestionAsMessage":
+      return state.bots.some(bot => bot.awaitingThreadSnapshot && (bot.threadId === action.threadId || bot.deletedThreadId === action.threadId));
+    default:
+      return false;
+  }
+}
+
 export function reducer(state: AppState, action: Action): AppState {
+  if (action.type === "messageAdded" || action.type === "messagePatched" || action.type === "threadActive") {
+    const waiting = state.bots.find(bot => bot.awaitingThreadSnapshot && bot.threadId === action.threadId);
+    if (waiting) return updateBot(state, waiting.id, bot => ({ ...bot, pendingThreadEvents: [...(bot.pendingThreadEvents ?? []), action] }));
+  }
   switch (action.type) {
     case "hydrate": {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
@@ -1164,23 +1191,28 @@ export function reducer(state: AppState, action: Action): AppState {
           }
         : animated;
       const switchedThread =
-        typeof action.bot.threadId === "string" && action.bot.threadId !== before.threadId;
+        typeof action.bot.threadId === "string" && action.bot.threadId !== before.threadId &&
+        (!Array.isArray(action.bot.tasks) || !action.bot.tasks.some(task => task.threadId === before.threadId));
+      const deletedSelection = switchedThread && Array.isArray(action.bot.tasks);
+      if (Array.isArray(action.bot.messages) &&
+          (switchedThread || (before.awaitingThreadSnapshot && action.bot.threadId === before.threadId))) {
+        return reducer(next, { type: "taskSwitched", bot: { ...before, ...action.bot, messages: action.bot.messages } });
+      }
       const patched = updateBot(next, action.bot.id, (b) => ({
         ...b,
         ...action.bot,
-        ...(!Array.isArray(action.bot.messages)?{threadId:b.threadId,activeLeafId:b.activeLeafId}:{}),
+        threadId: deletedSelection ? action.bot.threadId : b.threadId,
+        activeLeafId: deletedSelection ? null : b.activeLeafId,
+        awaitingThreadSnapshot: deletedSelection || b.awaitingThreadSnapshot,
+        deletedThreadId: deletedSelection ? b.threadId : b.deletedThreadId,
+        pendingThreadEvents: deletedSelection ? [] : b.pendingThreadEvents,
         // Ordinary bot patches omit messages and must preserve the current
         // transcript. A task switch is different: its full bot event carries
         // the new transcript, which must replace the previous task before the
         // webhook's streamed messages begin arriving.
-        messages:
-          switchedThread && Array.isArray(action.bot.messages)
-            ? action.bot.messages
-            : b.messages,
+        messages: deletedSelection ? [] : b.messages,
       }));
-      return switchedThread && Array.isArray(action.bot.messages)
-        ? reconcileSnapshotQueues(patched, [action.bot])
-        : patched;
+      return patched;
     }
     case "messageAdded": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -1516,12 +1548,17 @@ export function reducer(state: AppState, action: Action): AppState {
         ),
       };
     case "taskSwitched": {
+      const before = state.bots.find(bot => bot.id === action.bot.id);
+      const pending = before?.awaitingThreadSnapshot && before.threadId === action.bot.threadId ? before.pendingThreadEvents ?? [] : [];
       const switched = updateBot(state, action.bot.id, (bot) => ({
         ...bot,
         ...action.bot,
         messages: action.bot.messages ?? [],
+        awaitingThreadSnapshot: false,
+        deletedThreadId: undefined,
+        pendingThreadEvents: undefined,
       }));
-      return reconcileSnapshotQueues(switched, [action.bot]);
+      return pending.reduce(reducer, reconcileSnapshotQueues(switched, [action.bot]));
     }
     case "newBot":
     case "duplicateBot":
@@ -1667,6 +1704,65 @@ interface StreamState {
 const EMPTY_STREAM: StreamState = { streaming: {}, reasoning: {} };
 const StreamContext = createContext<StreamState>(EMPTY_STREAM);
 
+export type PendingStreamDelta = { text: string; reasoning: string };
+
+/**
+ * Paint once per frame, but keep draining when a hidden renderer pauses rAF.
+ * The 64 Ki UTF-16 limit applies only to pending deltas: accumulated output is
+ * deliberately neither capped nor truncated.
+ *
+ * Adapted narrowly from OpenMausBot 31777c6c1e417d487e314fad3c1353f16c5264bd.
+ */
+export function createStreamDeltaBuffer(
+  onFlush: (entries: Array<[string, PendingStreamDelta]>) => void,
+) {
+  const buffer = new Map<string, PendingStreamDelta>();
+  let frame: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let characters = 0;
+  const cancel = () => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  const flush = () => {
+    cancel();
+    if (!buffer.size) return;
+    const entries = [...buffer];
+    buffer.clear();
+    characters = 0;
+    onFlush(entries);
+  };
+  return {
+    push(threadId: string, kind: string, delta: string) {
+      if (kind !== "assistant_text" && kind !== "reasoning_text") return;
+      const entry = buffer.get(threadId) ?? { text: "", reasoning: "" };
+      if (kind === "assistant_text") entry.text += delta;
+      else entry.reasoning += delta;
+      buffer.set(threadId, entry);
+      characters += delta.length;
+      if (characters >= 64 * 1024) flush();
+      else if (frame === null) {
+        frame = requestAnimationFrame(flush);
+        timer = setTimeout(flush, 100);
+      }
+    },
+    clear(threadId: string) {
+      const entry = buffer.get(threadId);
+      if (entry) characters -= entry.text.length + entry.reasoning.length;
+      buffer.delete(threadId);
+      if (!buffer.size) cancel();
+    },
+    flush,
+    dispose() {
+      cancel();
+      buffer.clear();
+      characters = 0;
+    },
+  };
+}
+
 export function useStreaming() {
   return useContext(StreamContext);
 }
@@ -1688,8 +1784,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // state is intentionally OUTSIDE the reducer so token frames re-render
   // only StreamContext consumers
   const [stream, setStream] = useState<StreamState>(EMPTY_STREAM);
-  const deltaBuffer = useRef(new Map<string, { text: string; reasoning: string }>());
-  const deltaFlush = useRef<number | null>(null);
+  const deltaBuffer = useMemo(
+    () =>
+      createStreamDeltaBuffer((entries) => {
+        setStream((prev) => {
+          const streaming = { ...prev.streaming };
+          const reasoning = { ...prev.reasoning };
+          for (const [threadId, delta] of entries) {
+            if (delta.text) streaming[threadId] = (streaming[threadId] ?? "") + delta.text;
+            if (delta.reasoning) reasoning[threadId] = (reasoning[threadId] ?? "") + delta.reasoning;
+          }
+          return { streaming, reasoning };
+        });
+      }),
+    [],
+  );
+  const flushDeltas = deltaBuffer.flush;
   const clearStream = (threadId: string) => {
     // Drop the thread's un-flushed deltas too: the settled message that
     // triggered this clear already contains them. Without this, the pending
@@ -1698,7 +1808,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // card looks glued to the top), keeps the caret blinking while the bot
     // is actually waiting, and the next block's deltas append onto the
     // duplicated tail instead of starting a fresh bubble.
-    deltaBuffer.current.delete(threadId);
+    deltaBuffer.clear(threadId);
     setStream((prev) => {
       if (!(threadId in prev.streaming) && !(threadId in prev.reasoning)) return prev;
       const { [threadId]: _s, ...streaming } = prev.streaming;
@@ -1706,26 +1816,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return { streaming, reasoning };
     });
   };
-  const flushDeltas = () => {
-    if (deltaFlush.current !== null) {
-      cancelAnimationFrame(deltaFlush.current);
-      deltaFlush.current = null;
-    }
-    const buf = deltaBuffer.current;
-    if (buf.size === 0) return;
-    const entries = [...buf];
-    buf.clear();
-    setStream((prev) => {
-      const streaming = { ...prev.streaming };
-      const reasoning = { ...prev.reasoning };
-      for (const [threadId, d] of entries) {
-        if (d.text) streaming[threadId] = (streaming[threadId] ?? "") + d.text;
-        if (d.reasoning) reasoning[threadId] = (reasoning[threadId] ?? "") + d.reasoning;
-      }
-      return { streaming, reasoning };
-    });
-  };
-
   const botPatchQueue = useMemo(
     () =>
       createBotPatchQueue({
@@ -1790,6 +1880,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
 
     const wrapped: React.Dispatch<Action> = (action) => {
+      if (pendingThreadActionBlocked(stateRef.current, action)) {
+        const error = new Error("The replacement conversation is still loading. Wait for its transcript before sending or responding.");
+        showError(error);
+        if (action.type === "send") action.onError?.(error);
+        else if (action.type === "decideRequest" || action.type === "answerQuestion" || action.type === "sendQuestionAsMessage") action.onError?.(error.message);
+        return;
+      }
       const botBeforeUpdate =
         action.type === "updateBot"
           ? stateRef.current.bots.find((candidate) => candidate.id === action.botId)
@@ -2161,7 +2258,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
-            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
+            .then((r: any) => {
+              const current = stateRef.current.bots.find(bot => bot.id === action.botId);
+              if (r?.bot && current && (current.threadId === action.threadId || current.awaitingThreadSnapshot)) {
+                dispatch({ type: "botPatched", bot: r.bot });
+              }
+            })
             .catch(showError);
           break;
         // Channel tasks mirror bot tasks, but hydrate the whole channel so
@@ -2347,8 +2449,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let hydrated = false;
     let hydrationPromise: Promise<boolean> | null = null;
     let rehydrateRequested = false;
-    const pendingFrames: any[] = [];
-    let handleFrame: (frame: any) => void;
+    const pendingFrames: Array<{ frame: any; replayed: boolean }> = [];
+    let handleFrame: (frame: any, replayed?: boolean) => void;
     const hydrate = (): Promise<boolean> => {
       if (hydrationPromise) {
         // A second non-resumable hello means this snapshot may have started
@@ -2365,7 +2467,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         } while (alive && rehydrateRequested);
         if (!alive || !loaded) return false;
         hydrated = true;
-        for (const frame of pendingFrames.splice(0)) handleFrame(frame);
+        for (const pending of pendingFrames.splice(0)) handleFrame(pending.frame, pending.replayed);
         return true;
       })().finally(() => {
         hydrationPromise = null;
@@ -2380,7 +2482,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // The hydrate decision belongs to the hello frame, not to onopen: the
     // server replays what we missed when it can, and re-downloading every
     // transcript on a reconnect it already covered is pure waste.
-    handleFrame = (frame) => {
+    handleFrame = (frame, replayed = false) => {
       if (frame.kind === "config") bumpPeripheralVersion("config", "instances");
       else if (frame.kind === "routine" || frame.kind === "routine.deleted" || frame.kind === "routine.run") {
         bumpPeripheralVersion("routines");
@@ -2458,6 +2560,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // the harness decided this was worth interrupting for; the toggle
         // in each bot's settings is what gates it, server-side
         case "notify":
+          if (frame.notification?.kind === "approval" && replayed) break;
           // the wrapped dispatch, not rawDispatch: `select` clears the badge
           // in local state either way, but only the wrapper PATCHes
           // unread:false back. Opening a bot from its own notification and
@@ -2497,17 +2600,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // Batch token deltas per animation frame (t3code-style): a fast
             // stream dispatches once per frame instead of once per token, so
             // the app tree re-renders at most ~60x/s while streaming.
-            const buf = deltaBuffer.current;
-            const entry = buf.get(event.threadId) ?? { text: "", reasoning: "" };
-            if (event.streamKind === "assistant_text") entry.text += event.delta;
-            else if (event.streamKind === "reasoning_text") entry.reasoning += event.delta;
-            buf.set(event.threadId, entry);
-            if (deltaFlush.current === null) {
-              deltaFlush.current = requestAnimationFrame(() => {
-                deltaFlush.current = null;
-                flushDeltas();
-              });
-            }
+            deltaBuffer.push(event.threadId, event.streamKind, event.delta);
           } else if (event.type === "turn.completed") {
             // flush any buffered tail before clearing so no tokens are lost
             flushDeltas();
@@ -2576,20 +2669,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           pendingFrames.splice(0);
           return hydrate();
         },
-        onFrame: (frame) => {
-          if (hydrated) handleFrame(frame);
-          else pendingFrames.push(frame);
+        onFrame: (frame, delivery) => {
+          if (hydrated) handleFrame(frame, delivery?.replayed);
+          else pendingFrames.push({ frame, replayed: delivery?.replayed === true });
         },
       });
+    });
+    const stopApprovalClicks = window.muragebox?.approvalNotifications?.onOpen(target => {
+      openNotificationTarget(dispatch, target, stateRef.current);
     });
     return () => {
       alive = false;
       liveClosed = true;
+      deltaBuffer.dispose();
       clearTimeout(hydrationFallback);
       for (const refresh of peripheralRefresh.values()) {
         if (refresh.timer) clearTimeout(refresh.timer);
       }
       stopLive?.();
+      stopApprovalClicks?.();
     };
   }, []);
 

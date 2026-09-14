@@ -20,6 +20,7 @@ import { constants as osConstants } from "node:os";
 import type { StopRoute, StopRouteObservation, StopRouteResult } from "../procs.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { appendNative } from "./native.ts";
+import { DIAGNOSTIC_RPC_METHODS, diagnosticFailureKind, type DiagnosticFailureKind } from "../../shared/error-diagnostic.ts";
 
 export const LIFECYCLE_TYPE = "engine_lifecycle";
 export const LIFECYCLE_SCHEMA = 1;
@@ -47,10 +48,7 @@ const STOP_ROUTES = [
 const STOP_ROUTE_RESULTS = ["requested", "succeeded", "failed", "fallback"] as const satisfies readonly StopRouteResult[];
 
 /** The existing safe ACP diagnostic set; anything else is `other`. */
-export const LIFECYCLE_RPC_METHODS = [
-  "initialize", "authenticate", "session/new", "session/load", "session/prompt",
-  "session/set_mode", "session/set_model", "session/set_config_option",
-] as const;
+export const LIFECYCLE_RPC_METHODS = DIAGNOSTIC_RPC_METHODS;
 const RPC_METHODS: ReadonlySet<string> = new Set(LIFECYCLE_RPC_METHODS);
 
 const ERRNO_CATEGORIES: ReadonlySet<string> = new Set([
@@ -71,6 +69,8 @@ export interface LifecycleFields {
   method?: string;
   rpcCode?: number;
   httpStatus?: number;
+  terminalKind?: DiagnosticFailureKind;
+  observedKind?: DiagnosticFailureKind;
   pendingMethods?: readonly string[];
   pendingCount?: number;
   reason?: LifecycleStopReason;
@@ -252,6 +252,10 @@ export function createLifecycleRecorder(options: LifecycleRecorderOptions): Life
     if (fields.httpStatus !== undefined) {
       if (!Number.isInteger(fields.httpStatus) || fields.httpStatus < 100 || fields.httpStatus > 599) return null;
       msg.httpStatus = fields.httpStatus;
+    }
+    for(const key of ["terminalKind","observedKind"] as const){
+      if(fields[key]===undefined)continue;
+      const kind=diagnosticFailureKind(fields[key]);if(!kind)return null;msg[key]=kind;
     }
     if (fields.pendingMethods !== undefined) {
       if (!Array.isArray(fields.pendingMethods) || fields.pendingMethods.some((m) => typeof m !== "string")) return null;

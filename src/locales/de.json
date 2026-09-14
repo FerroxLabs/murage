@@ -1,4 +1,7 @@
 {
+  "providerError.payment.title": "Zahlung oder Kontozugriff beim Anbieter erforderlich",
+  "providerError.payment.summary": "Der Anbieter hat diese Anfrage mit HTTP 402 abgelehnt. Diese Antwort belegt nicht, dass das Guthaben aufgebraucht ist.",
+  "providerError.payment.resolution": "Prüfe vor einem erneuten Versuch die Abrechnung sowie den Konto- und Modellzugriff beim Anbieter, einschließlich der Einstellungen für deinen eigenen API-Schlüssel (BYOK).",
   "claudeAccounts.added": "Konto hinzugefügt. Melde dich unten ausdrücklich an und wähle dieses Konto anschließend in der Modellauswahl. Bestehende Bot-Einstellungen bleiben unverändert.",
   "claudeAccounts.removed": "Aus Murage entfernt. Anmeldung und Zugangsdaten-Dateien bleiben erhalten.",
   "claudeAccounts.saved": "Kontoeinstellungen gespeichert.",

@@ -126,13 +126,14 @@ export function clipboardHasImages(data: ClipboardData): boolean {
 /** Persist a pasted image server-side and return the attachment chip data.
  * The server writes ~/.murage/attachments/<uuid>.<ext> and answers
  * with the path; the prompt references that path so every CLI can open it. */
-export async function imageAttachmentFromFile(file: File): Promise<ImageAttachment | null> {
+export async function imageAttachmentFromFile(file: File, threadId?: string, surfaceHeaders: Record<string, string> = {}): Promise<ImageAttachment | null> {
   if (!isImageFile(file)) return null;
   if (file.size > IMAGE_MAX_BYTES) throw Object.assign(new Error(`${file.name} exceeds 10 MB`), { status: 413 });
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const response = await fetch("/api/attachments", {
+  const headers: Record<string, string> = { ...surfaceHeaders, "content-type": file.type };
+  const response = await fetch(`/api/attachments${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`, {
     method: "POST",
-    headers: { "content-type": file.type },
+    headers,
     body: bytes,
   });
   if (!response.ok) {

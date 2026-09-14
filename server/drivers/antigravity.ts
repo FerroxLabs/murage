@@ -16,7 +16,7 @@
 // before each spawn — see ensureAntigravityMcpServers below. Full-auto
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
-import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -456,26 +456,22 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     // hang AFTER emitting `result` (so it's already removed from `active`), and
     // dispose()/stopAll() must still be able to reap it. Removed on process exit.
     const children = new Set<ChildProcess>();
+    const closeFinalizers = new Map<ChildProcess, () => void>();
 
     const emit = (event: RuntimeEvent) => {
       for (const l of [...listeners]) l(event);
     };
 
-    // Reap every tracked child's tree (mirrors the per-turn stop()) — POSIX
-    // process group on mac/linux, taskkill /T on Windows. When escalate is
-    // set a SIGKILL follows after a grace for anything that ignored the term;
-    // on Windows killCliTree is already a force kill, so the retry is a no-op.
-    const reapChildren = (escalate: boolean) => {
-      for (const child of children) {
+    // The shared stop owns POSIX escalation; retain finalizers until its
+    // group confirmation. Windows keeps taskkill plus root-close semantics.
+    const reapChildren = async () => {
+      const stopped = await Promise.all([...children].map(async (child) => {
         killCliTree(child);
-        if (escalate && process.platform !== "win32") {
-          setTimeout(() => {
-            try {
-              process.kill(-child.pid!, "SIGKILL");
-            } catch {}
-          }, 2000).unref?.();
-        }
-      }
+        const confirmed = await awaitCliTreeStopped(child);
+        if (confirmed) closeFinalizers.get(child)?.();
+        return confirmed;
+      }));
+      if (stopped.includes(false)) throw new Error("Antigravity shutdown is still pending; its processes remain owned");
     };
     const base = (threadId: string, turnId: string) => ({
       eventId: newEventId(),
@@ -638,7 +634,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
 
       let childClosed = false;
       let postSettleReaper: ReturnType<typeof setTimeout> | undefined;
-      let terminationEscalation: ReturnType<typeof setTimeout> | undefined;
+      let windowsStopRetry: ReturnType<typeof setTimeout> | undefined;
       let mcpFinalized = false;
       const finalizeMcp = () => {
         if (mcpFinalized) return;
@@ -655,29 +651,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           releaseMcpLease();
         }
       };
-      const armTerminationEscalation = () => {
-        if (childClosed || terminationEscalation) return;
-        terminationEscalation = setTimeout(() => {
-          if (childClosed) return;
-          if (process.platform === "win32") {
-            killCliTree(child); // taskkill /T /F is already forceful
-            return;
-          }
-          try {
-            const pid = child.pid;
-            if (pid) process.kill(-pid, "SIGKILL");
-            else child.kill("SIGKILL");
-          } catch {
-            try {
-              child.kill("SIGKILL");
-            } catch {}
-          }
-        }, 3_000);
-        terminationEscalation.unref?.();
-      };
       const stop = () => {
         killCliTree(child); // process groups are POSIX-only
-        armTerminationEscalation();
+        if (process.platform === "win32" && !childClosed && !windowsStopRetry) {
+          windowsStopRetry = setTimeout(() => { if (!childClosed) killCliTree(child); }, 3_000);
+          windowsStopRetry.unref?.();
+        }
+        void awaitCliTreeStopped(child).then((stopped) => {
+          if (stopped) closeFinalizers.get(child)?.();
+        });
       };
       // Set when Murage stopped this turn (interruptTurn, stopAll). The
       // child's exit is then the user's Stop, not a crash (STOP1).
@@ -740,6 +722,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             break;
           }
           case "result": {
+            if (stopRequested) return; // root/group close owns cancellation
             // agy delivers the assistant text in result.response (not streamed)
             const response = typeof payload.response === "string" ? payload.response : "";
             if (response) {
@@ -812,24 +795,35 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       });
 
       child.on("close", (code) => {
-        childClosed = true;
-        children.delete(child); // close is the true process-exit signal
-        clearTimeout(postSettleReaper);
-        clearTimeout(terminationEscalation);
-        finalizeMcp();
-        if (!settled && stopRequested) {
+        let finalized = false;
+        const finalize = () => {
+          if (finalized) return;
+          finalized = true;
+          childClosed = true;
+          children.delete(child);
+          closeFinalizers.delete(child);
+          clearTimeout(postSettleReaper);
+          clearTimeout(windowsStopRetry);
+          finalizeMcp();
+          if (!settled && stopRequested) {
           // The process ended because Murage stopped the turn: settle as
           // cancelled like the ACP, Pi, Claude and Codex drivers, with no
           // runtime error card and no Retry (STOP1).
           settle(true, "cancelled");
-        } else if (!settled) {
+          } else if (!settled) {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
             message: `agy exited ${code} before result${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
           });
-          settle(false, "exit_before_result");
-        }
+            settle(false, "exit_before_result");
+          }
+        };
+        closeFinalizers.set(child, finalize);
+        void awaitCliTreeStopped(child).then((stopped) => {
+          if (stopped) finalize();
+          else emit({ ...base(threadId, turnId), type: "runtime.error", message: "Antigravity shutdown is still pending; its process group and MCP lease remain owned" });
+        });
       });
 
       active.set(threadId, { stop: requestStop, turnId });
@@ -1009,7 +1003,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
           for (const { stop } of active.values()) stop();
-          reapChildren(false); // also reap children that hung post-result
+          await reapChildren(); // also reap children that hung post-result
         },
         onEvent: (listener) => {
           listeners.add(listener);
@@ -1020,7 +1014,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       dispose: async () => {
         disposed = true;
         for (const { stop } of active.values()) stop();
-        reapChildren(true); // escalate to SIGKILL — disposal must reap every child
+        await reapChildren(); // retain listeners and MCP lease on uncertainty
         listeners.clear();
       },
     };

@@ -15559,7 +15559,6 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
     exports2.verifySignature = verifySignature;
     var builder_util_runtime_1 = require_out();
     var child_process_1 = require("child_process");
-    var os = require("os");
     var path2 = require("path");
     function preparePowerShellExec(command, timeout) {
       const executable = `set "PSModulePath=" & chcp 65001 >NUL & powershell.exe`;
@@ -15575,11 +15574,9 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
         const tempUpdateFile = unescapedTempUpdateFile.replace(/'/g, "''");
         logger.info(`Verifying signature ${tempUpdateFile}`);
         (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 20 * 1e3), (error, stdout, stderr) => {
-          var _a;
           try {
             if (error != null || stderr) {
               handleError(logger, error, stderr, reject);
-              resolve(null);
               return;
             }
             const data = parseOut(stdout);
@@ -15590,11 +15587,11 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
                 logger.info(`LiteralPath: ${normlaizedUpdateFilePath}. Update Path: ${normalizedTempUpdateFile}`);
                 if (normlaizedUpdateFilePath !== normalizedTempUpdateFile) {
                   handleError(logger, new Error(`LiteralPath of ${normlaizedUpdateFilePath} is different than ${normalizedTempUpdateFile}`), stderr, reject);
-                  resolve(null);
                   return;
                 }
               } catch (error2) {
-                logger.warn(`Unable to verify LiteralPath of update asset due to missing data.Path. Skipping this step of validation. Message: ${(_a = error2.message) !== null && _a !== void 0 ? _a : error2.stack}`);
+                handleError(logger, error2, null, reject);
+                return;
               }
               const subject = (0, builder_util_runtime_1.parseDn)(data.SignerCertificate.Subject);
               let match = false;
@@ -15620,7 +15617,6 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
             resolve(result);
           } catch (e) {
             handleError(logger, e, null, reject);
-            resolve(null);
             return;
           }
         });
@@ -15642,26 +15638,10 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
       return data;
     }
     function handleError(logger, error, stderr, reject) {
-      if (isOldWin6()) {
-        logger.warn(`Cannot execute Get-AuthenticodeSignature: ${error || stderr}. Ignoring signature validation due to unsupported powershell version. Please upgrade to powershell 3 or higher.`);
-        return;
-      }
-      try {
-        (0, child_process_1.execFileSync)(...preparePowerShellExec("ConvertTo-Json test", 10 * 1e3));
-      } catch (testError) {
-        logger.warn(`Cannot execute ConvertTo-Json: ${testError.message}. Ignoring signature validation due to unsupported powershell version. Please upgrade to powershell 3 or higher.`);
-        return;
-      }
-      if (error != null) {
-        reject(error);
-      }
-      if (stderr) {
-        reject(new Error(`Cannot execute Get-AuthenticodeSignature, stderr: ${stderr}. Failing signature validation due to unknown stderr.`));
-      }
-    }
-    function isOldWin6() {
-      const winVersion = os.release();
-      return winVersion.startsWith("6.") && !winVersion.startsWith("6.3");
+      const detail = error instanceof Error ? error.message : error || stderr || "Missing signature evidence";
+      const failure = (0, builder_util_runtime_1.newError)(`Windows signature verification unavailable: ${detail}`, "ERR_UPDATER_INVALID_SIGNATURE");
+      logger.warn(failure.message);
+      reject(failure);
     }
   }
 });

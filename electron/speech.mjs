@@ -39,6 +39,7 @@ const BIN = app.isPackaged
 // The one owned recognizer session. It stays set while a requested stop is
 // pending and is cleared only when the helper's exit is observed (B5).
 let child = null;
+export function speechActive() { return child !== null; }
 // Bumped by every Start and every explicit Stop, so a Start that had to wait
 // for an earlier helper cannot launch after a newer Start or Stop.
 let startGeneration = 0;

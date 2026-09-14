@@ -1,13 +1,14 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInstallationRecoveryController } from "./installation-recovery-controller.mjs";
+import { readBackupIdentity } from "./backup-mode.mjs";
 
 const CHANNEL = "installation-recovery:action";
-export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog, baseDir, context, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, retainedDestination, run, retry, openDiagnostics, onClosed }) {
+export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog, baseDir, context, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run, retry, openDiagnostics, onClosed }) {
   const page = path.join(baseDir, "recovery", "index.html");
   const pageUrl = pathToFileURL(page).href;
   const win = new BrowserWindow({
-    width: 760, height: 690, minWidth: 460, minHeight: 520, title: "Murage recovery",
+    width: 760, height: 690, minWidth: 390, minHeight: 520, title: context.backupMode ? "Murage Backup mode" : "Murage recovery",
     backgroundColor: context.skin === "light" ? "#f7f7f7" : "#0a0a0a",
     autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false, preload: path.join(baseDir, "recovery", "preload.cjs") },
@@ -15,7 +16,21 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
   const trusted = event => !win.isDestroyed() && event.sender === win.webContents &&
     event.senderFrame === win.webContents.mainFrame && event.senderFrame?.url === pageUrl;
   const controller = createInstallationRecoveryController({
-    isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, retainedDestination, run, retry, openDiagnostics,
+    isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run, retry, openDiagnostics,
+    chooseEncryptedBackup: async () => {
+      const picked=await dialog.showOpenDialog(win,{title:"Choose an encrypted application-data backup",properties:["openFile"],filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
+      return picked.canceled||picked.filePaths.length!==1?null:{path:picked.filePaths[0],name:path.basename(picked.filePaths[0])};
+    },
+    chooseEncryptedDestination: async () => {
+      const picked=await dialog.showSaveDialog(win,{title:"Save an encrypted application-data backup",defaultPath:"murage-application-backup.age",filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
+      return picked.canceled?null:picked.filePath??null;
+    },
+    chooseRecoveryIdentity: async () => {
+      const picked=await dialog.showOpenDialog(win,{title:"Choose an independent age recovery key file",properties:["openFile"]});
+      if(picked.canceled||picked.filePaths.length!==1)return null;
+      const file=picked.filePaths[0],recipient=readBackupIdentity(file,context.dataDirectory).recipient;
+      return{recipient,readIdentity:async()=>readBackupIdentity(file,context.dataDirectory).identity};
+    },
     chooseBackup: async () => {
       const picked = await dialog.showOpenDialog(win, { title: "Choose a Murage installation backup", properties: ["openFile"], filters: [{ name: "Murage backup", extensions: ["zip"] }] });
       if (picked.canceled || picked.filePaths.length !== 1) return null;
@@ -26,6 +41,13 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
       return picked.canceled ? null : picked.filePath ?? null;
     },
     confirm: async (_event, action, name, destination, installation) => {
+      if(action==="backup-encrypted"||action==="restore-encrypted-new"){
+        const restore=action==="restore-encrypted-new";
+        const answer=await dialog.showMessageBox(win,{type:"warning",buttons:["Cancel",restore?"Restore separately and restart for review":"Create encrypted backup"],defaultId:0,cancelId:0,noLink:true,
+          message:restore?`Restore ${name} into a new paused installation?`:"Preserve application data in an encrypted backup?",
+          detail:restore?`Original retained unchanged: ${context.dataDirectory}\nNew installation: ${destination}\n\nThe original fidelity data remains in the encrypted backup. The new installation uses a safe paused projection: credentials, native sessions and channel bindings are not reactivated. Murage restarts for review only after successful restore.`:`Destination: ${destination}\n\nOriginal settings may include credentials. They are preserved only inside encrypted fidelity data. Native sessions, VM homes and external folders are excluded. Channel history is retained, but re-pairing is required after restore. Keep an independent recovery key copy; losing it prevents recovery.`});
+        return answer.response===1;
+      }
       if (action === "capture-separate") {
         const answer = await dialog.showMessageBox(win, {
           type: "warning", buttons: ["Cancel", "Create separate recovery copy"], defaultId: 0, cancelId: 0, noLink: true,

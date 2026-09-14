@@ -7,20 +7,47 @@ import { describe, expect, it } from "vitest";
 
 import { ChildTeardown, PROVIDER_CLOSE_DEADLINE_MS, providerCloseDeadlineMs, TurnTeardowns } from "./child-teardown.ts";
 
-const fakeChild = (pid: number | null = 4242) =>
-  Object.assign(new EventEmitter(), { pid: pid ?? undefined }) as unknown as ChildProcess;
+const closedFakes = new WeakSet<ChildProcess>();
+const fakeChild = (pid: number | null = 4242) => {
+  const child = Object.assign(new EventEmitter(), { pid: pid ?? undefined }) as unknown as ChildProcess;
+  child.once("close", () => closedFakes.add(child));
+  return child;
+};
+// Explicit unit-only observation seam; production refuses unknown handles.
+const confirmFake = (child: ChildProcess): Promise<boolean> => closedFakes.has(child)
+  ? Promise.resolve(true) : new Promise(resolve => child.once("close", () => resolve(true)));
 const budget = { closeMs: 40, maxMs: 400 };
 
 describe("ChildTeardown", () => {
+  it("retains root-close ownership after uncertain group proof and retries on a later wait", async () => {
+    const child = fakeChild();
+    let confirmed = false;
+    const teardown = new ChildTeardown(child, async () => confirmed);
+    teardown.markStopRequested();
+    child.emit("close", 0, null);
+    await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
+    expect(teardown.closed).toBe(false);
+    confirmed = true;
+    await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: true });
+  });
+
+  it("production confirmation refuses an unknown POSIX handle", async () => {
+    if (process.platform === "win32") return;
+    const child = fakeChild();
+    const teardown = new ChildTeardown(child);
+    teardown.markStopRequested();
+    child.emit("close", 0, null);
+    await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
+  });
   it("treats a spawn that produced no process as already closed", async () => {
-    const teardown = new ChildTeardown(fakeChild(null));
+    const teardown = new ChildTeardown(fakeChild(null), confirmFake);
     expect(teardown.closed).toBe(true);
     await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: true });
   });
 
   it("does not confirm a stop request, only an observed close", async () => {
     const child = fakeChild();
-    const teardown = new ChildTeardown(child);
+    const teardown = new ChildTeardown(child, confirmFake);
     const waiting = teardown.wait({ closeMs: 1_000, maxMs: 2_000 });
     teardown.markStopRequested();
     let settled = false;
@@ -34,7 +61,7 @@ describe("ChildTeardown", () => {
 
   it("reports timeout once termination was requested, then observes a late close", async () => {
     const child = fakeChild();
-    const teardown = new ChildTeardown(child);
+    const teardown = new ChildTeardown(child, confirmFake);
     teardown.markStopRequested();
     await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
     expect(teardown.closed).toBe(false);
@@ -44,14 +71,14 @@ describe("ChildTeardown", () => {
   });
 
   it("caps a wait whose termination is never requested", async () => {
-    const teardown = new ChildTeardown(fakeChild());
+    const teardown = new ChildTeardown(fakeChild(), confirmFake);
     await expect(teardown.wait({ closeMs: 10, maxMs: 60 })).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
   });
 });
 
 describe("TurnTeardowns", () => {
   it("scopes waits to the exact turn and forgets a child once it closed", async () => {
-    const teardowns = new TurnTeardowns();
+    const teardowns = new TurnTeardowns(confirmFake);
     const old = fakeChild(1), current = fakeChild(2), other = fakeChild(3);
     teardowns.track("thread", "old-turn", old).markStopRequested();
     teardowns.track("thread", "new-turn", current);
@@ -67,7 +94,7 @@ describe("TurnTeardowns", () => {
   });
 
   it("is unconfirmed while any tracked child outlives the budget", async () => {
-    const teardowns = new TurnTeardowns();
+    const teardowns = new TurnTeardowns(confirmFake);
     const closing = fakeChild(1), stuck = fakeChild(2);
     teardowns.track("a", "one", closing).markStopRequested();
     teardowns.track("b", "two", stuck).markStopRequested();

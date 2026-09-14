@@ -26,3 +26,8 @@ it("keeps 0.1.52 workspace-file and media routes desktop-only, except capability
 it("requires desktop owner authority for Telegram reconnect retries", () => {
   expect(requiresDesktopAuthority("POST", "/api/telegram/resume")).toBe(true);
 });
+it("guards the Slack channel namespace without granting adjacent or internal routes", () => {
+  for (const method of ["GET", "POST", "PATCH", "PUT", "DELETE"]) for (const path of ["/api/slack", "/api/slack/status", "/api/slack/pair", "/api/slack/resume", "/api/slack/revoke"])
+    expect(requiresDesktopAuthority(method, path)).toBe(true);
+  expect(requiresDesktopAuthority("GET", "/api/slack-other")).toBe(false);
+});

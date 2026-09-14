@@ -34,6 +34,7 @@ test.beforeAll(async () => {
   origin = "http://127.0.0.1:" + address.port;
 });
 test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
+test.beforeEach(async ({page}) => { await page.route("**/*",route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort()); });
 const profiles = [
   { id: "starter-personal-home", name: "Personal and home", summary: "Organize tasks using your own notes.", outcomes: ["Prioritize your next actions"], members: 2, agents: [{ key: "planner", name: "Planner" }, { key: "helper", name: "Helper" }], routines: [{ key: "review", name: "Weekly review" }], connectionsRequired: false },
   { id: "starter-solo-business", name: "Solo business", summary: "Plan your work using information you provide.", outcomes: ["Choose a practical next step"], members: 1, agents: [{ key: "operator", name: "Operator" }], routines: [], connectionsRequired: false },

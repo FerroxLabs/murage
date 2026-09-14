@@ -12,9 +12,11 @@
 export type IntakeStep = "open" | "narrow" | "confirm";
 
 export interface IntakeCandidate {
-  /** Library catalogue slug. The ONLY thing the confirm button sends anywhere. */
+  /** Library catalogue slug. */
   slug: string;
   name: string;
+  /** Binds a reviewed single-bot package card to its effective source. */
+  profileReviewHash?: string;
   /** Names only, for the subtitle. Never ids, never installed by this payload. */
   skillNames: string[];
 }

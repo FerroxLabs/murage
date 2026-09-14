@@ -10,6 +10,9 @@
 export const WORKSPACE_CREDENTIALS = [
   { section: "modelProviders", field: "bank", name: "modelProviderConnections", env: "MURAGE_MODEL_PROVIDER_CONNECTIONS" },
   { section: "telegram", field: "botToken", name: "telegramBotToken", env: "MURAGE_TELEGRAM_BOT_TOKEN" },
+  { section: "slack", field: "appToken", name: "slackAppToken", env: "MURAGE_SLACK_APP_TOKEN" },
+  { section: "slack", field: "botToken", name: "slackBotToken", env: "MURAGE_SLACK_BOT_TOKEN" },
+  { section: "discord", field: "botToken", name: "discordBotToken", env: "MURAGE_DISCORD_BOT_TOKEN" },
   { section: "xai", field: "key", name: "xaiApiKey", env: "XAI_API_KEY" },
   { section: "box", field: "token", name: "boxToken", env: "BOX_TOKEN" },
   { section: "tts", field: "key", name: "ttsKey", env: "MURAGE_TTS_KEY" },

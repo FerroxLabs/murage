@@ -2,17 +2,35 @@ import { installationRecoveryCommand } from "../server/installation-recovery-com
 import { recoveryDesktopSummary } from "../electron/installation-recovery-protocol.mjs";
 import { randomUUID } from "node:crypto";
 
+const parentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data?: unknown }) => void): void; removeListener(event: string, listener: (event: { data?: unknown }) => void): void; postMessage(value: unknown): void } }).parentPort;
+let inputUsed=false;
+async function privateIdentity():Promise<string>{
+  if(!parentPort||inputUsed)throw Object.assign(new Error("INVALID_RECOVERY_INPUT"),{code:"INVALID_RECOVERY_INPUT"});
+  inputUsed=true;const nonce=randomUUID();
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>{parentPort.removeListener("message",receive);reject(Object.assign(new Error("RECOVERY_INPUT_TIMEOUT"),{code:"RECOVERY_INPUT_TIMEOUT"}));},30000);
+    const receive=(event:{data?:unknown})=>{
+      const message=event.data as {type?:unknown;nonce?:unknown;identity?:unknown}|undefined;
+      if(message?.type!=="murage:recovery-input")return;
+      clearTimeout(timer);parentPort.removeListener("message",receive);
+      if(message.nonce!==nonce||typeof message.identity!=="string"||Buffer.byteLength(message.identity)>4096){reject(Object.assign(new Error("INVALID_RECOVERY_INPUT"),{code:"INVALID_RECOVERY_INPUT"}));return;}
+      resolve(message.identity);
+    };
+    parentPort.on("message",receive);parentPort.postMessage({type:"murage:recovery-input-ready",nonce});
+  });
+}
+
 let reply: Record<string, unknown>;
 let exitCode = 0;
 try {
-  reply = recoveryDesktopSummary(await installationRecoveryCommand(process.argv.slice(2)));
+  reply = recoveryDesktopSummary(await installationRecoveryCommand(process.argv.slice(2),parentPort?{readIdentity:privateIdentity}:{}));
 } catch (error) {
   const candidate = error && typeof error === "object" && "code" in error ? error.code : undefined;
   const code = typeof candidate === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(candidate) ? candidate : "RECOVERY_OPERATION_FAILED";
-  reply = { ok: false, error: code };
+  const retainedDirectory=(process.platform==="win32"||code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&error&&typeof error==="object"&&"retainedDirectory"in error&&typeof error.retainedDirectory==="string"&&error.retainedDirectory.length<=8192?error.retainedDirectory:undefined;
+  reply = { ok: false, error: code, ...(retainedDirectory?{retainedDirectory}:{}) };
   exitCode = 1;
 }
-const parentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data?: unknown }) => void): void; postMessage(value: unknown): void } }).parentPort;
 if (parentPort) {
   // Electron's stdout stream need not emit end after utility exit. Send a
   // bounded result on the private channel and wait for its exact ACK before

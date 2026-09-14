@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 
 import { DATA_DIR } from "./config.ts";
+import { artifactWorkspaceIdentity } from "./artifacts.ts";
+import type { Store } from "./store.ts";
 
 export const WORKSPACES_DIR = join(DATA_DIR, "workspaces");
 
@@ -48,9 +50,40 @@ export function workspaceDir(botId: string): string {
 
 /** New threads have separate default desks; existing pinned task cwd stays put. */
 export function ensureTaskWorkspace(botId:string,threadId:string):string {
-  if(!/^[\w-]+$/.test(botId)||!/^[\w-]+$/.test(threadId))throw new Error("Invalid task workspace");
-  const dir=join(ensureWorkspace(botId),"threads",threadId);
+  const dir=taskWorkspacePath(DATA_DIR,botId,threadId);
+  ensureWorkspace(botId);
   mkdirSync(dir,{recursive:true,mode:0o700});return dir;
+}
+
+export function taskWorkspacePath(dataDir: string, botId: string, threadId: string): string {
+  if (!/^[\w-]+$/.test(botId) || !/^[\w-]+$/.test(threadId)) throw new Error("Invalid task workspace");
+  return join(dataDir, "workspaces", botId, "threads", threadId);
+}
+
+export interface FileWorkspaceSelection { root: string; managed: boolean }
+/** Selection only: never creates or authorizes a path from engine text. The
+ * dispatch-only flag predicts admission; readers require the persisted fact. */
+export function selectFileWorkspace(dataDir: string, store: Pick<Store, "bots" | "groups">, botId: string, threadId: string, admitLocal = false): FileWorkspaceSelection | undefined {
+  const bot = store.bots.find(item => item.id === botId);
+  if (!bot) return undefined;
+  const managedRoot = taskWorkspacePath(dataDir, botId, threadId);
+  const selection = (root: string): FileWorkspaceSelection => ({ root, managed: artifactWorkspaceIdentity(root) === artifactWorkspaceIdentity(managedRoot) });
+  const tasks: Array<{ threadId: string; cwd?: string | null; resumeCursors?: Record<string, unknown>; localOutputs?: true }> = bot.tasks ?? [{ threadId: bot.threadId, resumeCursors: bot.resumeCursors }];
+  const task = tasks.find(item => item.threadId === threadId);
+  if (task) {
+    if (typeof task.cwd === "string") return selection(task.cwd);
+    if (task.localOutputs === true || admitLocal && (task.cwd === null || Object.keys(task.resumeCursors ?? {}).length > 0)) return { root: managedRoot, managed: true };
+    if (task.cwd === null || Object.keys(task.resumeCursors ?? {}).length > 0) return undefined;
+    return selection(bot.cwd ?? managedRoot);
+  }
+  const group = store.groups.find(item => item.memberIds.includes(botId) && (item.tasks ?? [{ threadId: item.threadId }]).some(task => task.threadId === threadId));
+  if (!group) return undefined;
+  const roomTask = group.tasks?.find(item => item.threadId === threadId);
+  const pinned = roomTask ? roomTask.pinnedCwd : group.pinnedCwd;
+  const custom = pinned === undefined ? group.cwd : pinned;
+  if (custom) return selection(custom);
+  if (admitLocal || (roomTask?.localOutputBotIds ?? group.localOutputBotIds)?.includes(botId)) return { root: managedRoot, managed: true };
+  return selection(join(dataDir, "workspaces", botId));
 }
 
 /** MEMORY.md under the load budget: first MEMORY_MAX_LINES lines or

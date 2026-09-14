@@ -22,7 +22,7 @@ import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 
 import type {
   DriverCreateInput,
@@ -778,6 +778,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       idleTimer: ReturnType<typeof setTimeout> | null;
       closing: boolean;
       stderr: string;
+      finishClose?: () => Promise<void>;
     }
     const sessions = new Map<string, Session>();
     const configuredIdleMinimum = Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS);
@@ -786,6 +787,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       : 10_000;
     const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS) || 10 * 60_000);
 
+    const stopSession = (session: Session) => {
+      killCliTree(session.child);
+      void awaitCliTreeStopped(session.child).then((stopped) => {
+        if (stopped) void session.finishClose?.();
+      });
+    };
     const closeSession = (threadId: string, why: string) => {
       const s = sessions.get(threadId);
       if (!s || s.closing) return;
@@ -803,7 +810,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         s.child.stdin.end();
       } catch {}
       const kill = setTimeout(() => {
-        if (s.child.exitCode === null) killCliTree(s.child);
+        stopSession(s);
       }, 5_000);
       kill.unref?.();
     };
@@ -1064,7 +1071,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         live.turn = liveTurn;
         active.set(threadId, activeTurn(turnId, live.broker, () => {
           liveTurn.stopRequested = true;
-          killCliTree(live.child);
+          stopSession(live);
         }, () => liveTurn.stopRequested === true));
         emit({ ...base(threadId, turnId), type: "turn.started" });
         liveTurn.submission = writeUser(live, threadId, turn.text, liveTurn.boundary);
@@ -1356,6 +1363,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // reports its own interruption before exiting) is the Stop, not
             // an engine failure: same cancelled state as the close path.
             const stoppedResult = o.is_error === true && session.turn?.stopRequested === true && !session.turn.authFailed;
+            // Stop owns the whole group; a result emitted while stopping is
+            // not permission to release this turn before close finalization.
+            if (session.turn?.stopRequested) return;
             if (stoppedResult) retryState.delete(threadId);
             settle(
               stoppedResult || (o.is_error !== true && !session.turn?.authFailed),
@@ -1527,29 +1537,34 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         removePrivateTempDir(session.systemPromptPath);
         if (sessions.get(threadId) === session) sessions.delete(threadId);
       };
+      let closeFinalized = false;
       child.on("close", (code) => {
         // A user-message write still in flight when the process died has an
         // unknown outcome until its callback reports. Node destroys stdin on
         // exit, so it reports promptly; decide only after it has, so the
         // guard never guesses whether the message was delivered.
-        const closingTurn = session.turn;
-        if (
-          closingTurn &&
-          !closingTurn.settled &&
-          closingTurn.boundary.submission === "in-flight" &&
-          closingTurn.submission
-        ) {
-          void closingTurn.submission.then(() => onChildClose(code));
-          return;
-        }
-        onChildClose(code);
+        session.finishClose = async () => {
+          if (closeFinalized) return;
+          const closingTurn = session.turn;
+          if (closingTurn && !closingTurn.settled && closingTurn.boundary.submission === "in-flight" && closingTurn.submission) {
+            await closingTurn.submission;
+          }
+          if (!(await awaitCliTreeStopped(child))) {
+            emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: "Claude shutdown is still pending; its process group remains owned" });
+            return;
+          }
+          if (closeFinalized) return;
+          closeFinalized = true;
+          onChildClose(code);
+        };
+        void session.finishClose();
       });
 
       const stop = () => {
         launchTurn.stopRequested = true;
         retry.cancelled = true;
         retryAbort.abort();
-        killCliTree(child);
+        stopSession(session);
       };
       active.set(threadId, activeTurn(turnId, broker, stop, () => launchTurn.stopRequested === true || retry.cancelled));
       emit({ ...base(threadId, turnId), type: "turn.started" });
@@ -1694,7 +1709,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               session.child.off("close", closed);
               reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
             }, 10_000);
-            const closed = () => { clearTimeout(timeout); resolve(); };
+            const closed = () => {
+              void awaitCliTreeStopped(session.child).then((stopped) => {
+                clearTimeout(timeout);
+                if (stopped) resolve();
+                else reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
+              });
+            };
             session.child.once("close", closed);
             closeSession(threadId, "memory context reset");
           });

@@ -149,6 +149,19 @@ const searchPath = (): string =>
     .filter(Boolean)
     .join(delimiter);
 
+/** A macOS app bundle uses its executable for both the GUI and CLI. A
+ * Finder-launched companion has none of the shell hints that select CLI mode,
+ * so make the request explicit only for that child. Package-manager and
+ * Windows executables keep their inherited environment unchanged.
+ * https://tailscale.com/docs/reference/tailscale-cli?tab=macos */
+const tailscaleChildEnvironment = (cli: string): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: searchPath() };
+  if (/(?:^|\/)Tailscale\.app\/Contents\/MacOS\/Tailscale$/.test(cli)) {
+    env.TAILSCALE_BE_CLI = "1";
+  }
+  return env;
+};
+
 /** Ask the Tailscale CLI where it thinks we are.
  *
  * Every failure is survivable — not installed, not logged in, not running all
@@ -206,7 +219,7 @@ async function refreshTailnetNameOnce(
           // Generous, and still a bound: the alternative is a subprocess
           // deciding how much memory this process uses.
           maxBuffer: 16 * 1024 * 1024,
-          env: { ...process.env, PATH: searchPath() },
+          env: tailscaleChildEnvironment(cli),
         },
         (error, stdout) => {
           if (error) {
@@ -330,7 +343,7 @@ export async function refreshBrowserServe(port: number, options: {
     const result = await new Promise<{error: ExecFileException | null; output: string}>(resolve=>{
       run(cli,["serve","status","--json"],{
         timeout:Math.max(1,left),killSignal:"SIGKILL",maxBuffer:1024*1024,
-        env:{...process.env,PATH:searchPath()},
+        env:tailscaleChildEnvironment(cli),
       },(error,stdout)=>resolve({error,output:String(stdout ?? "")}));
     });
     if (!result.error) return inspectBrowserServe(result.output,port);

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accountDirectory, assertSeparateClaudeAccount, claudeAccountEnvironment, claudeSignInCommand, newClaudeAccount } from "./claude-accounts.ts";
 import { persistableClaudeInstances, replaceClaudeAccountInstances, restoreClaudeAccountInstances } from "./claude-account-config.ts";
 import type { AppConfig } from "./config.ts";
+import * as processes from "./procs.ts";
 
 let scratch:string;
 beforeEach(()=>{scratch=mkdtempSync(join(tmpdir(),"murage-accounts-"));vi.stubEnv("HOME",scratch);vi.stubEnv("USERPROFILE",scratch);vi.stubEnv("CLAUDE_CONFIG_DIR","");});
@@ -36,10 +37,17 @@ describe("native Claude account boundaries",()=>{
     const result=JSON.parse(execFileSync("/bin/sh",["-c",command],{env:{HOME:scratch,CLAUDE_CODE_OAUTH_TOKEN:"synthetic-only"},encoding:"utf8"}));
     expect(result).toEqual({args:["auth","login"],dir,home:scratch});expect(command).not.toContain("synthetic-only");
   });
-  it("PowerShell recipe quotes paths and restores process environment in finally",()=>{
+  it.each(["claude", "C:\\Program Files\\Claude's app\\claude.exe"])("PowerShell recipe quotes paths and restores process environment: %s",(executable)=>{
+    const resolver=vi.spyOn(processes,"resolveCli").mockImplementation((_cli,args=[])=>({command:executable,args}));
+    try {
     const command=claudeSignInCommand("claude","C:\\Account's root","win32");
     expect(command).toContain("C:\\Account''s root");expect(command).toContain("finally");expect(command).toContain("$murageAccountSaved[$key]");
-    expect(claudeSignInCommand("claude","","win32")).toBe("& 'claude'");
+    const quoted=`'${executable.replaceAll("'","''")}'`;
+    expect(command).toContain(`& ${quoted} 'auth' 'login'`);
+    expect(claudeSignInCommand("claude","","win32")).toBe(`& ${quoted}`);
+    expect(resolver).toHaveBeenCalledWith("claude",["auth","login"]);
+    expect(resolver).toHaveBeenLastCalledWith("claude",[]);
+    } finally { resolver.mockRestore(); }
   });
 });
 describe("account-only persistence",()=>{

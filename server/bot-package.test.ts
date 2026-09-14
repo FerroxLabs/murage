@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { packageAgentAsMember, parseBotPackage, renderBotPackageMarkdown } from "./bot-package.ts";
+import { packageAgentAsMember, packageAgentPlaybooks, packageAgentProfileReviewHash, parseBotPackage, renderBotPackageMarkdown } from "./bot-package.ts";
 
 const validPackage: any = {
   format: "murage.package",
@@ -62,6 +62,16 @@ describe("bot packages", () => {
       description: "Own the brief.",
       appearance: { color: "purple" },
     });
+  });
+
+  it("binds an agent review only to its assigned playbooks", () => {
+    const parsed = parseBotPackage(validPackage);
+    const agent = parsed.package.agents[0]!;
+    expect(packageAgentPlaybooks(parsed.package, agent).map(playbook => playbook.key)).toEqual(["source-check"]);
+    const original = packageAgentProfileReviewHash(parsed.package, agent);
+    const changed = structuredClone(parsed.package);
+    changed.playbooks![0]!.instructions = "Changed after review.";
+    expect(packageAgentProfileReviewHash(changed, changed.agents[0]!)).not.toBe(original);
   });
 
   it("round-trips one Chief-of-Staff-readable Markdown playbook", () => {

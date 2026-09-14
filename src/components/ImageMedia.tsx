@@ -32,7 +32,7 @@ import { UseAsReferenceButton } from "./UseAsReferenceButton";
 /** Where an enlarged image came from. `MediaAssetSource` from the frozen media
  * contract, plus `inline-data`: raster bytes embedded in the message text
  * itself, which exist nowhere else and are therefore not an asset. */
-export type ImageMediaSource = Extract<MediaAssetSource, "attachment" | "artifact" | "screen-frame" | "external-link"> | "inline-data";
+export type ImageMediaSource = Extract<MediaAssetSource, "attachment" | "artifact" | "screen-frame" | "external-link" | "workspace"> | "inline-data";
 
 export interface ImageMediaItem {
   /** Identity inside the set being shown. Load, failure and focus state reset
@@ -76,6 +76,7 @@ export function imageSourceLabel(source: ImageMediaSource): string {
     case "screen-frame": return t("media.source.screenFrame");
     case "external-link": return t("media.source.external");
     case "inline-data": return t("media.source.inline");
+    case "workspace": return t("media.source.workspace");
   }
 }
 

@@ -10,6 +10,12 @@ const errors = {
   RESTORE_REVIEW_REQUIRED: "The restored installation is paused for recovery review.",
   NO_RESTORE_TO_ROLL_BACK: "No retained restore transaction was found for this installation.",
   RECOVERY_BUSY: "A recovery operation is already in progress.",
+  BACKUP_UNAVAILABLE: "The verified encrypted-backup tool is unavailable in this app build.",
+  BACKUP_IDENTITY_HEADER_REQUIRED: "Choose the original age-keygen recovery file with its public-key header to create a backup.",
+  BACKUP_IDENTITY_MUST_BE_INDEPENDENT: "Keep and select the recovery key outside the installation being backed up.",
+  BACKUP_IDENTITY_INVALID: "Choose a valid native age recovery key file.",
+  AGE_PROCESS_FAILED: "The encrypted operation could not be verified. Check the selected recovery key and backup; original data was preserved.",
+  AGE_PROCESS_CLOSE_UNCONFIRMED: "The backup tool has not confirmed it stopped. Preserve the retained private files and check diagnostics before another attempt.",
   RECOVERY_CAPTURE_CANCELLED: "Recovery was cancelled. The original installation and startup selection remain unchanged.",
   RECOVERY_CAPTURE_UNAVAILABLE: "Windows recovery capture is unavailable in this installation. Keep the original and use an existing backup or contact support.",
   RECOVERY_CAPTURE_FAILED: "The local recovery copy could not be completed safely. Keep the original and any retained recovery files, then check diagnostics.",
@@ -21,6 +27,8 @@ const errors = {
 function render(state) {
   current = state;
   document.documentElement.dataset.skin = state.context?.skin === "light" ? "light" : "dark";
+  byId("page-heading").textContent=state.context?.backupMode?"Backup mode":"Recover this installation";
+  byId("encrypted-backup").hidden=!state.encryptedAvailable;
   byId("reason").textContent = state.context?.reason || "Startup needs attention. Your installation data remains preserved.";
   byId("location").textContent = state.context?.dataDirectory || "Installation ownership is unavailable.";
   const ownership = state.context?.ownership;
@@ -42,25 +50,28 @@ function render(state) {
   byId("retained-destination").textContent = state.retainedDataDirectory ? "Separate recovery files retained at: " + state.retainedDataDirectory : "";
   byId("separate-destination").hidden = !state.selection?.separate;
   byId("separate-destination").textContent = state.selection?.separate ? "New installation: " + state.selection.destination + ". The original remains unchanged. Murage will restart here for paused review." : "";
-  byId("restore").hidden = !!state.selection?.separate;
-  byId("restore-separate").hidden = !state.selection?.separate;
+  byId("restore").hidden = !!state.selection?.separate||!!state.selection?.encrypted;
+  byId("restore-separate").hidden = !state.selection?.separate||!!state.selection?.encrypted;
+  byId("restore-encrypted-new").hidden=!state.selection?.encrypted;
   byId("activation-review").hidden = !state.review;
   if (state.review) byId("activation-summary").textContent = "Reviewed " + state.review.files + " files. Engines are disabled, schedules are paused, and connections use fresh storage.";
   if (state.selection) {
     byId("backup-name").textContent = state.selection.name;
-    byId("backup-summary").textContent = "Excluded entries: " + (state.selection.omittedCount ?? 0) + ". Components absent from this snapshot: " + (state.selection.missingCount ?? 0) + ". Connections will need review.";
+    byId("backup-summary").textContent = state.selection.encrypted?"Encrypted application-data snapshot. Included components: "+(state.selection.coverage?.includedCount??0)+". Excluded or absent: "+(state.selection.coverage?.excludedCount??0)+". This is not a full installation copy. Native sessions are excluded, and channels require re-pairing.":"Excluded entries: " + (state.selection.omittedCount ?? 0) + ". Components absent from this snapshot: " + (state.selection.missingCount ?? 0) + ". Connections will need review.";
     byId("snapshot").textContent = state.selection.snapshotId;
     byId("hash").textContent = state.selection.sha256;
   }
   for (const button of buttons) {
     const action = button.dataset.action;
+    if(action==="retry")button.textContent=state.context?.backupMode?"Return to workspace":"Retry startup";
     const separate = ["choose-separate-backup", "restore-separate"].includes(action);
     button.disabled = pending || state.busy || (action === "capture-separate" ? !state.captureAvailable : separate ? !state.separateAvailable : !state.available && !["retry","diagnostics"].includes(action)) ||
+      (action.includes("encrypted")&&!state.encryptedAvailable)||(action==="restore-encrypted-new"&&!state.selection?.encrypted)||
       (action === "restore" && (!state.selection || state.selection.separate)) || (action === "restore-separate" && !state.selection?.separate) || (action === "activate" && !state.review);
   }
   if (pending || state.busy) byId("status").textContent = "Working on the selected operation. Large backups may take several minutes.";
   else if (error) byId("status").textContent = "";
-  else if (state.result?.ok) byId("status").textContent = state.result.status === "reviewed-engines-disabled" ? "Review approved. Restarting with engines and schedules disabled." : state.result.status === "restored-review-required" ? "Restore completed and remains paused. Previous data: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Previous installation restored. Candidate retained at: " + (state.result.retainedCandidate || "see receipt") : "Backup saved: " + state.result.path;
+  else if (state.result?.ok) byId("status").textContent = state.result.operation==="backup-encrypted"?"Encrypted application-data backup saved and verified: "+state.result.path:state.result.operation==="restore-encrypted-new"?"Separate restore completed. Restarting for paused review; the original is retained.":state.result.status === "reviewed-engines-disabled" ? "Review approved. Restarting with engines and schedules disabled." : state.result.status === "restored-review-required" ? "Restore completed and remains paused. Previous data: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Previous installation restored. Candidate retained at: " + (state.result.retainedCandidate || "see receipt") : "Backup saved: " + state.result.path;
   else byId("status").textContent = state.selection ? "Backup inspected. No installation data has been changed." : "";
 }
 async function action(name) {
@@ -68,7 +79,7 @@ async function action(name) {
   pending = true;
   if (current) render(current);
   try {
-    const state = await window.murageRecovery.action(name, ["restore", "restore-separate"].includes(name) ? current?.selection?.id : name === "activate" ? current?.review?.id : undefined);
+    const state = await window.murageRecovery.action(name, ["restore", "restore-separate", "restore-encrypted-new"].includes(name) ? current?.selection?.id : name === "activate" ? current?.review?.id : undefined);
     pending = false; render(state);
   } catch {
     pending = false;

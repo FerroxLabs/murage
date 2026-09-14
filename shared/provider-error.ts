@@ -1,6 +1,6 @@
 /** Safe structured facts about a provider rejection. No request/response text. */
 export interface ProviderErrorInfo {
-  kind: "credits" | "authentication" | "permission" | "rate-limit" | "unavailable";
+  kind: "credits" | "payment" | "authentication" | "permission" | "rate-limit" | "unavailable";
   provider?: "flux-router";
   httpStatus: number;
 }
@@ -23,10 +23,10 @@ export function classifyProviderError(error: unknown): ProviderErrorInfo | undef
   const { http_status: status, message: detail } = data as { http_status?: unknown; message?: unknown };
   const message = typeof detail === "string" ? detail.slice(0, 4096) : "";
   const kind: ProviderErrorInfo["kind"] | undefined = status === 402 && /credit balance is exhausted/i.test(message) ? "credits"
-    : status === 401 ? "authentication" : status === 403 ? "permission"
+    : status === 402 ? "payment" : status === 401 ? "authentication" : status === 403 ? "permission"
       : status === 429 ? "rate-limit" : status === 503 ? "unavailable" : undefined;
   if (!kind || typeof status !== "number") return undefined;
-  return { kind, httpStatus: status, ...(fluxRouterSource(message) ? { provider: "flux-router" as const } : {}) };
+  return { kind, httpStatus: status, ...(kind !== "payment" && fluxRouterSource(message) ? { provider: "flux-router" as const } : {}) };
 }
 
 /** Which local lease another thread holds. Contention between this device's own
@@ -57,6 +57,11 @@ export function classifyLocalResourceConflict(message: unknown, details?: unknow
 export function providerErrorPresentation(info: ProviderErrorInfo): { title: string; summary: string; resolution: string; billingUrl?: string } {
   const provider = info?.provider === "flux-router" ? "Flux Router" : "Your model provider";
   switch (info?.kind) {
+    case "payment": return {
+      title: "Provider payment or account access required",
+      summary: "The provider rejected this request with HTTP 402. This response does not establish that credits are exhausted.",
+      resolution: "Check the provider's billing, account and selected-model access, including bring-your-own-key (BYOK) settings, before retrying.",
+    };
     case "credits": return {
       title: `${provider} needs credits`,
       summary: "The provider reported that its available credit balance was exhausted. The model could not complete this request.",

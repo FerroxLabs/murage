@@ -326,9 +326,9 @@ const support: AcpSupport = {
   driverKind: DRIVER_KIND,
   displayName: "Fuigo",
 
-  // `initialize` answers `promptCapabilities.image: false` (verified live,
-  // 1.0.2), so a referenced image would be dropped silently rather than read.
-  images: false,
+  // Bundled 1.0.13 accepts inline ACP images despite omitting the handshake
+  // flag. Murage resolves authorized bytes; the transport fixture pins them.
+  images: true,
 
   models: STATIC_FUIGO_MODELS,
   resolveModels,

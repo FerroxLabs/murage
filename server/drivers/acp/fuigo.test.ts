@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ensureDirs } from "../../config.ts";
+import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 import { resetPathCacheForTests } from "../../env-path.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
@@ -107,6 +107,7 @@ process.stdin.on("data", (d) => {
       ok({ sessionId: SID });
     }
     else if (m.method === "session/prompt") {
+      if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompt.json"), JSON.stringify(m.params));
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } } });
       ok({ stopReason: "end_turn" });
@@ -128,7 +129,7 @@ function dump(kind: "models" | "version" | "agent"): { argv: string[]; env: Reco
 
 /** Run one turn and hand back exactly what the CLI was spawned with. */
 async function runTurn(
-  options: { model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string>; integrations?: SendTurnInput["integrations"] } = {},
+  options: { images?: Array<{ mimeType: string; data: string }>; model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string>; integrations?: SendTurnInput["integrations"] } = {},
 ): Promise<EventRecorder> {
   instance = await FuigoAgentDriver.create({
     instanceId: "fuigo-test",
@@ -141,6 +142,7 @@ async function runTurn(
   await instance.adapter.sendTurn({
     threadId: "t-fuigo",
     text: "hi",
+    ...("images" in options ? { images: options.images } : {}),
     ...(options.model ? { model: options.model } : {}),
     ...(options.effort ? { effort: options.effort } : {}),
     ...(options.integrations ? { integrations: options.integrations } : {}),
@@ -173,6 +175,18 @@ afterEach(async () => {
   instance = undefined;
   recorder = undefined;
   await removeTempDir(root);
+});
+
+describe("incoming image transport", () => {
+  it("delivers exact inline images to ACP and excludes bytes from native logs", async () => {
+    const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";
+    await runTurn({ images: [{ mimeType: "image/png", data }] });
+    expect(JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt).toEqual([
+      { type: "text", text: "hi" }, { type: "image", mimeType: "image/png", data },
+    ]);
+    expect(readFileSync(join(NATIVE_DIR, "t-fuigo.ndjson"), "utf8")).not.toContain(data);
+    expect(instance!.adapter.capabilities.images).toBe(true);
+  });
 });
 
 describe("parseFuigoModels", () => {

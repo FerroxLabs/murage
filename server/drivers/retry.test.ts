@@ -61,6 +61,30 @@ describe("attempt boundary (A1, U-17)", () => {
 });
 
 describe("classifyError", () => {
+  it.each([
+    "503 blocked by our safety systems",
+    "429 blocked by the provider's safety systems",
+    "503 blocked by the provider’s safety systems",
+    "429 safety monitoring has paused this task",
+    "503 safety monitoring ended this task",
+    "503 safety monitoring blocked this task",
+    "429 safety_check_failed",
+    "503 safety_policy_violation",
+  ])("does not retry a recognized provider block: %s", (message) => {
+    for (const error of [new Error(message), { text: message }, { exitCode: 1, stderr: message }]) {
+      expect(classifyError(error)).toEqual({ transient: false, reason: "provider_safety" });
+    }
+  });
+
+  it("preserves interrupt precedence and ordinary safety discussion", () => {
+    expect(classifyError({ exitCode: -1, stderr: "503 safety_check_failed" })).toEqual({ transient: false, reason: "interrupted" });
+    for (const text of ["Discuss safety practices", "The safety review is complete", "The safety monitor is healthy", "safety_check_failed_extra"]) {
+      expect(classifyError({ text })).toEqual({ transient: false, reason: "unknown" });
+      expect(classifyError({ text: `503 service unavailable; ${text}` })).toEqual({ transient: true, reason: "server_error" });
+    }
+    expect(classifyError({ text: "401 Unauthorized: safety documentation unavailable" })).toEqual({ transient: false, reason: "auth" });
+  });
+
   it("calls provider rate limits transient", () => {
     expect(classifyError(new Error("xAI HTTP 429: Too Many Requests"))).toEqual({
       transient: true,

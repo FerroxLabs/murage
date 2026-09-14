@@ -7,6 +7,9 @@ import { buildNotification, summarize } from "./notify.ts";
 const bot = { id: "bot-1", name: "Scout", threadId: "thread-1" };
 
 describe("buildNotification", () => {
+  it("carries exact approval request and card identity without deriving it from copy", () => {
+    expect(buildNotification("approval", bot, "detached", "same text", { requestId: "request-1", messageId: "card-1", requestTurnId: "turn-1" })).toMatchObject({ threadId: "detached", requestId: "request-1", messageId: "card-1", requestTurnId: "turn-1" });
+  });
   it("names the bot and carries the detail, per kind", () => {
     expect(buildNotification("approval", bot, "thread-1", "rm -rf ./build")).toMatchObject({
       kind: "approval",

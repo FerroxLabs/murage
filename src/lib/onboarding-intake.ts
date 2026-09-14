@@ -44,6 +44,30 @@ export function intakeQuery(answer: string): string {
   return answer.replace(/\s+/g, " ").trim().slice(0, INTAKE_ANSWER_MAX);
 }
 
+/** Join the one permitted clarifier to the opening answer without letting a
+ * long first turn crowd out the newer detail. The transcript remains the
+ * source of both turns; this returns a search query only and stores nothing.
+ *
+ * A person who says "actually"/"instead", or starts by correcting a named
+ * subject ("not charts, invoices"), has supplied a correction rather than a
+ * second requirement. In that case the newer answer is authoritative. */
+export function intakeClarifiedQuery(opening: string, clarifier: string): string {
+  const first = intakeQuery(opening);
+  const second = intakeQuery(clarifier);
+  if (!first) return second;
+  if (!second) return first;
+
+  const withoutCorrectionLead = second
+    .replace(/^(?:actually|instead)\b[,:;\s]*(?:i\s+mean\s+)?/i, "")
+    .replace(/^(?:no[,:;\s]+)?not\s+[^,.;:!?]+[,.;:!?]\s*/i, "")
+    .trim();
+  if (withoutCorrectionLead !== second) return intakeQuery(withoutCorrectionLead || second);
+  if (/\b(?:actually|instead|rather than)\b/i.test(second)) return second;
+
+  const roomForFirst = Math.max(0, INTAKE_ANSWER_MAX - second.length - 1);
+  return intakeQuery(`${first.slice(0, roomForFirst)} ${second}`);
+}
+
 /** Words that carry no topic.
  *
  *  The FTS5 layer already sanitises (server/skill-search.ts `toMatchExpression`
@@ -321,6 +345,7 @@ export function chooseIntakeProfile<Entry extends IntakeCatalogEntry, Skill>(
   ranked: readonly Entry[],
   resolveSkills: (entry: Entry) => Skill[],
   describeSkill: (skill: Skill) => string = () => "",
+  isReady: (entry: Entry, skills: Skill[]) => boolean = (_entry, skills) => skills.length > 0,
 ): { entry: Entry; skills: Skill[] } | null {
   const tokens = intakeTopicTokens(query);
   if (tokens.length === 0) return null;
@@ -328,7 +353,7 @@ export function chooseIntakeProfile<Entry extends IntakeCatalogEntry, Skill>(
     // Skills first: they decide BOTH whether this profile is worth offering
     // and, through their own words, whether it is about the right thing.
     const skills = resolveSkills(entry);
-    if (skills.length === 0) continue;
+    if (!isReady(entry, skills)) continue;
     if (!intakeProfileMatches(entry, tokens, skills.map(describeSkill))) continue;
     return { entry, skills };
   }
@@ -368,6 +393,10 @@ export interface IntakeProfile {
   category: string;
   outcome: string | null;
   skills: IntakeSkill[];
+  /** Reviewable package guidance. It grants no executable capability. */
+  playbooks?: Array<{ key: string; name: string; summary: string }>;
+  /** Supplied only by a reviewed single-bot package card. */
+  profileReviewHash?: string;
   /** True when this is the front door rather than a match. The card has to
    * say so: offering Concierge as though the catalogue had found it would be
    * the confident wrong answer that returning null exists to prevent. */
@@ -417,11 +446,15 @@ export async function applyProfileToBot(
   botId: string,
   slug: string,
   request: IntakeRequest,
-  options: { rename?: boolean } = {},
+  options: { rename?: boolean; profileReviewHash?: string } = {},
 ): Promise<AppliedProfile> {
   const response = (await request(`/api/bots/${botId}/assistant-profile`, {
     method: "POST",
-    body: JSON.stringify({ slug, ...(options.rename === false ? { rename: false } : {}) }),
+    body: JSON.stringify({
+      slug,
+      ...(options.rename === false ? { rename: false } : {}),
+      ...(options.profileReviewHash ? { profileReviewHash: options.profileReviewHash } : {}),
+    }),
   })) as AppliedProfile;
   return {
     bot: response.bot,
@@ -598,13 +631,14 @@ export async function confirmIntakeProfile(
   botId: string,
   messageId: string,
   slug: string,
+  profileReviewHash: string | undefined,
   deps: {
     request: IntakeRequest;
     announceBot: (bot: AppliedProfile["bot"]) => void;
     publishSkillCount: (botId: string, count: number) => void;
   },
 ): Promise<AppliedProfile> {
-  const applied = await applyProfileToBot(botId, slug, deps.request, { rename: false });
+  const applied = await applyProfileToBot(botId, slug, deps.request, { rename: false, profileReviewHash });
   deps.announceBot(applied.bot);
   deps.publishSkillCount(botId, Math.max(applied.installed.length, 1));
   await closeIntakeCard(botId, messageId, "profile", deps.request);
@@ -624,7 +658,7 @@ export async function confirmIntakeProfile(
  *  mechanically: from the profile card it is one press away, and it installs
  *  nothing, asks nothing further, and needs no third question to reach. */
 export type IntakeChipAction =
-  | { kind: "apply"; slug: string }
+  | { kind: "apply"; slug: string; profileReviewHash?: string }
   | { kind: "close"; outcome: "general" | "library" }
   | { kind: "reply"; text: string };
 
@@ -639,7 +673,7 @@ export function intakeChipAction(
   if (intake.outcome === "profile") {
     if (index !== 0) return { kind: "close", outcome: "general" };
     const slug = intake.candidate?.slug ?? "";
-    return slug ? { kind: "apply", slug } : null;
+    return slug ? { kind: "apply", slug, profileReviewHash: intake.candidate?.profileReviewHash } : null;
   }
   return { kind: "close", outcome: index === 0 ? "general" : "library" };
 }

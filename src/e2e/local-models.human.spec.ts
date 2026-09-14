@@ -23,6 +23,7 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { fakeLlamaCompletion, fakeLlamaToolStream } from "./fake-llama-completion";
 
 interface Fixture { info: { url: string; dataDir: string }; close(): Promise<void> }
 type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<Fixture>;
@@ -53,20 +54,21 @@ async function fakeLlamaServer(): Promise<{ server: Server; address: string }> {
     const body = await readBody(req);
     const messages = Array.isArray(body.messages) ? (body.messages as Array<{ role?: string }>) : [];
     const prose = body.model === PROSE_MODEL;
+    const model = typeof body.model === "string" ? body.model : TOOL_MODEL;
     switch (req.url) {
       case "/props": return send(res, 200, { default_generation_settings: { n_ctx: 65_536 }, model_path: "D:/models/qwen.gguf", total_slots: 1 });
       case "/health": return send(res, 200, { status: "ok" });
       case "/v1/models": return send(res, 200, { object: "list", data: [TOOL_MODEL, PROSE_MODEL].map((id) => ({ id, object: "model", owned_by: "llamacpp" })) });
       case "/v1/chat/completions":
         if (prose || messages.some((message) => message.role === "tool")) {
-          return send(res, 200, { choices: [{ message: { role: "assistant", content: "It is 17°C and raining lightly in Paris." } }] });
+          return send(res, 200, fakeLlamaCompletion({ role: "assistant", content: "It is 17°C and raining lightly in Paris." }, "stop", model));
         }
         if (body.stream) {
           res.writeHead(200, { "content-type": "text/event-stream" });
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, ...call }] } }] })}\n\n`);
+          for (const chunk of fakeLlamaToolStream(call, model)) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
           return res.end("data: [DONE]\n\n");
         }
-        return send(res, 200, { choices: [{ message: { role: "assistant", content: null, tool_calls: [call] } }], usage: { prompt_tokens: 7_800 } });
+        return send(res, 200, fakeLlamaCompletion({ role: "assistant", content: null, tool_calls: [call] }, "tool_calls", model, { prompt_tokens: 7_800 }));
       // Both models answer the Anthropic surface with a tool_use, so both are
       // offered to the fixture's Claude-driver engine (spec E3) — that is what
       // puts the prose model, and its warning, in the picker at all.

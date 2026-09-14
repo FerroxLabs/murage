@@ -11,6 +11,21 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const finite = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 const MEDIA = /(?:image|imagen|video|veo|embedding|embed-|whisper|transcrib|tts|audio|speech|realtime|moderation|dall-e|ocr)/i;
+// Direct DeepSeek contract checked 2026-09-12: these legacy IDs now alias
+// vision-capable Flash. Do not apply this inference to other providers.
+const DEEPSEEK_FLASH_VISION = new Set(["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]);
+function documentedVision(preset: string, id: string): true | undefined {
+ return preset === "deepseek" && DEEPSEEK_FLASH_VISION.has(id) ? true : undefined;
+}
+function currentCachedModel(model: ProviderModel): ProviderModel {
+ if (model.preset !== "deepseek") return model;
+ // Old sparse catalogue rows lost their original payload; repair only the
+ // exact unknown-output fallback, never override explicit media output.
+ const repairChat = model.id === "deepseek-flash" && model.outputModalities.length === 1 && model.outputModalities[0] === "unknown";
+ const vision = model.capabilities.vision ?? documentedVision(model.preset, model.id);
+ return { ...model, ...(repairChat ? { chatEligible: true, outputModalities: ["text"] } : {}),
+  capabilities: { ...model.capabilities, ...(repairChat ? { chat: true } : {}), ...(vision === undefined ? {} : { vision }) } };
+}
 class CatalogFailure extends Error { readonly code: ProviderCatalogError; constructor(code: ProviderCatalogError) { super(code); this.code=code; } }
 const messages: Record<ProviderCatalogError, string> = {
  unauthorized: "The provider rejected this key. Update the saved key.", forbidden: "This key cannot access the provider catalog.",
@@ -22,7 +37,7 @@ function knownChat(preset: ProviderPreset, id: string, capabilities: Record<stri
  if (MEDIA.test(id)) return false;
  if (preset === "anthropic") return /^claude-/.test(id);
  if (preset === "openai") return /^(gpt-[3456]|o[134](?:-|$)|chatgpt-)/.test(id);
- if (preset === "deepseek") return /^deepseek-(chat|reasoner|v\d)/.test(id);
+ if (preset === "deepseek") return id === "deepseek-flash" || /^deepseek-(chat|reasoner|v\d)/.test(id);
  if (preset === "mistral") return capabilities.completion_chat === true;
  if (preset === "xai") return /^grok-/.test(id);
  if (preset === "groq") return /(?:^|\/)(llama|gemma|qwen|deepseek|gpt-oss|compound)/.test(id);
@@ -37,11 +52,16 @@ export function normalizeProviderModels(connection: ProviderConnectionRecord, pa
   if ([row.id,row.name,row.display_name].some(value=>typeof value==="string"&&value.includes(connection.key)))throw new CatalogFailure("invalid-catalog");
   seen.add(row.id);const capabilities=object(row.capabilities)?row.capabilities:{};
   const architecture=object(row.architecture)?row.architecture:{};
-  const output=strings(architecture.output_modalities ?? row.output_modalities).filter(kind=>["text","image","video","audio","embedding"].includes(kind));
-  const chat=!MEDIA.test(row.id) && (output.length ? output.includes("text") && !output.some(kind=>["image","video","audio","embedding"].includes(kind)) : knownChat(connection.preset,row.id,capabilities));
+  const declaredOutput=strings(architecture.output_modalities ?? row.output_modalities).filter(kind=>["text","image","video","audio","embedding"].includes(kind));
+  // Flux's per-key catalog declares capability independently of alias spelling.
+  // Retain sparse legacy fallback only when that metadata is absent.
+  const fluxCapability=connection.preset==="flux"&&typeof row.capability==="string"?row.capability:undefined;
+  const output=declaredOutput.length?declaredOutput:fluxCapability==="chat"?["text"]:fluxCapability==="image"||fluxCapability==="audio"?[fluxCapability]:[];
+  const textOnly=output.includes("text")&&!output.some(kind=>["image","video","audio","embedding"].includes(kind));
+  const chat=fluxCapability!==undefined?fluxCapability==="chat"&&textOnly:!MEDIA.test(row.id)&&(output.length?textOnly:knownChat(connection.preset,row.id,capabilities));
   const params=strings(row.supported_parameters), input=strings(architecture.input_modalities);
   const tools=typeof capabilities.function_calling==="boolean"?capabilities.function_calling:params.includes("tools")?true:undefined;
-  const vision=typeof capabilities.vision==="boolean"?capabilities.vision:input.length?input.includes("image"):undefined;
+  const vision=typeof capabilities.vision==="boolean"?capabilities.vision:input.length?input.includes("image"):documentedVision(connection.preset,row.id);
   const reasoning=typeof capabilities.reasoning==="boolean"?capabilities.reasoning:params.includes("reasoning")?true:undefined;
   const model: ProviderModel={connectionId:connection.id,preset:connection.preset,id:row.id,label:typeof row.name==="string"?row.name.slice(0,160):typeof row.display_name==="string"?row.display_name.slice(0,160):row.id,enabled:row.active!==false,chatEligible:chat,capabilities:{chat,...(tools===undefined?{}:{tools}),...(vision===undefined?{}:{vision}),...(reasoning===undefined?{}:{reasoning})},outputModalities:output.length?output:chat?["text"]:["unknown"]};
   const context=finite(row.context_length ?? row.context_window ?? row.max_context_length ?? row.max_input_tokens);if(context && context<=10_000_000)model.contextWindow=context;
@@ -82,14 +102,14 @@ export class ProviderConnectionsService {
     if(parsed.data.revision===connection.revision&&parsed.data.catalog.connectionId===connection.id&&parsed.data.catalog.models.every(model=>model.connectionId===connection.id&&model.preset===connection.preset))this.cache.set(connection.id,parsed.data as Cached);
   }catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")this.cache.set(connection.id,{revision:connection.revision,catalog:{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"invalid-catalog",message:"The saved catalog is unreadable. Refresh this provider; its key is preserved."}}});}
   const cached=this.cache.get(connection.id);if(!cached||cached.revision!==connection.revision)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only"};
-  return{...cached.catalog,stale:cached.catalog.stale||!cached.catalog.fetchedAt||this.now()-cached.catalog.fetchedAt>CACHE_TTL};
+  return{...cached.catalog,models:cached.catalog.models.map(currentCachedModel),stale:cached.catalog.stale||!cached.catalog.fetchedAt||this.now()-cached.catalog.fetchedAt>CACHE_TTL};
  }
  getCatalog(id:string):ProviderCatalog {const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});if(this.options.resolveAlias?.(id)){const catalog=this.getCatalog("legacy-flux");return{...catalog,connectionId:id,models:catalog.models.map(model=>({...model,connectionId:id}))};}return this.readCache(connection);}
  list():PublicProviderConnection[]{return this.records().map(connection=>{const preset=PROVIDER_PRESETS[connection.preset],catalog=this.readCache(connection);return{id:connection.id,preset:connection.preset,label:connection.label,enabled:connection.enabled,revision:connection.revision,baseUrl:preset.baseUrl,protocol:preset.protocol,configured:true,...("legacy" in connection?{legacy:true,managedIn:connection.managedIn}:{}),state:catalog.error?"needs-attention":catalog.fetchedAt?"catalog-ready":"saved",catalog};});}
  async refreshDue(signal?:AbortSignal):Promise<void>{
   for(const connection of this.records()){
    if(signal?.aborted)return;
-   if(!connection.enabled||connection.preset==="flux")continue;
+   if(!connection.enabled||("legacyError" in connection&&connection.legacyError))continue;
    const catalog=this.readCache(connection),attempt=this.attempted.get(connection.id);
    const attemptedAt=attempt?.revision===connection.revision?attempt.at:-Infinity;
    if(this.now()-Math.max(catalog.fetchedAt??-Infinity,attemptedAt)<MODEL_CATALOG_REFRESH_MS)continue;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { memoryListAction } from "./MemorySettings";
+import { memoryListAction, memoryModeDescription } from "./MemorySettings";
 
 describe("owner memory audience requests", () => {
   it("retains the bot boundary through search, audience changes and pagination", () => {
@@ -13,5 +13,16 @@ describe("owner memory audience requests", () => {
   });
   it("carries view and cursor without dropping the selected bot", () => {
     expect(memoryListAction("", "", "", "bot-one", "page-two", "important")).toEqual({action:"list",botId:"bot-one",cursor:"page-two",view:"important"});
+  });
+});
+
+describe("compact memory state", () => {
+  it.each(["off", "paused"] as const)("never claims recall is running when %s", mode => {
+    expect(memoryModeDescription(mode)).toContain("Capture and recall are off.");
+    expect(memoryModeDescription(mode)).not.toContain("recall are on");
+  });
+  it("distinguishes capture-only from active recall", () => {
+    expect(memoryModeDescription("capture")).toBe("Capture is on. Recall is off.");
+    expect(memoryModeDescription("active")).toBe("Capture and recall are on.");
   });
 });

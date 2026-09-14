@@ -14,6 +14,27 @@ function fixture(provider:ImageProvider="openai",apiKey="FAKE_CREDENTIAL_CANARY"
 it("lists connections and defaults without revealing credentials or probing paid endpoints",()=>{
  const f=fixture();expect(f.service.listConnections()).toEqual([{id:"openai",provider:"openai",defaultModel:"gpt-image-2"}]);expect(JSON.stringify(f.service.listConnections())).not.toContain("CANARY");expect(f.fetcher).not.toHaveBeenCalled();
 });
+it("B15 refreshes the approved endpoint capability before dispatch and fails closed if it changed",async()=>{
+ const f=fixture("openrouter");let approved=false;
+ f.reserve.mockImplementation(async()=>{approved=true;return{finish:f.finish};});
+ f.fetcher.mockImplementation(async input=>String(input).endsWith("/images/models")?new Response(JSON.stringify({data:[{id:"openai/gpt-image-2",architecture:{output_modalities:["image"]},supported_parameters:parameters}]})):String(input).endsWith("/endpoints")?new Response(JSON.stringify({endpoints:approved?[]:[{provider_tag:"openai",supported_parameters:parameters}]})):image());
+ await expect(f.service.generate(f.request,f.hooks)).rejects.toMatchObject({code:"capability-changed",outcome:"not-dispatched"});
+ expect(f.fetcher.mock.calls.filter(([,init])=>init?.method==="POST")).toHaveLength(0);expect(f.finish).toHaveBeenCalledWith("not-dispatched");
+});
+it("B15 marks only local deterministic failures as correctable and rechecks cancellation",async()=>{
+ const local=fixture("flux");await expect(local.service.generate({...local.request,size:"1536x1024"},local.hooks)).rejects.toMatchObject({correctablePreflight:true});
+ const remote=fixture("openrouter");await expect(remote.service.generate({...remote.request,model:"unknown/model"},remote.hooks)).rejects.toMatchObject({correctablePreflight:false});
+ const down=fixture("openrouter");down.fetcher.mockRejectedValueOnce(Error("catalog unavailable"));await expect(down.service.generate(down.request,down.hooks)).rejects.toMatchObject({correctablePreflight:false});
+ const denied=fixture();denied.reserve.mockRejectedValueOnce(Error("denied"));await expect(denied.service.generate(denied.request,denied.hooks)).rejects.toMatchObject({correctablePreflight:false});
+ const cancelled=fixture("flux"),controller=new AbortController();cancelled.assertActive.mockImplementationOnce(()=>controller.abort());
+ await expect(cancelled.service.generate({...cancelled.request,operation:"edit"},{...cancelled.hooks,signal:controller.signal})).rejects.toMatchObject({code:"cancelled",correctablePreflight:false});
+});
+it("B15 rechecks authority after post-approval capability reads",async()=>{
+ const f=fixture("openrouter");let approved=false;const original=f.fetcher.getMockImplementation()!;
+ f.reserve.mockImplementation(async()=>{approved=true;return{finish:f.finish};});
+ f.fetcher.mockImplementation(async(input,init)=>{if(approved&&String(input).endsWith("/endpoints"))f.assertActive.mockImplementation(()=>{throw Error("revoked");});return original(input,init);});
+ await expect(f.service.generate(f.request,f.hooks)).rejects.toMatchObject({code:"not-authorized",correctablePreflight:false});expect(f.fetcher.mock.calls.filter(([,init])=>init?.method==="POST")).toHaveLength(0);
+});
 it("posts one OpenAI GPT Image 2 generation after reservation and returns decoded artifact metadata",async()=>{
  const f=fixture();const result=await f.service.generate(f.request,f.hooks);
  expect(f.fetcher).toHaveBeenCalledOnce();const[url,init]=f.fetcher.mock.calls[0]!;expect(url).toBe("https://api.openai.com/v1/images/generations");expect(init?.redirect).toBe("error");
@@ -29,9 +50,12 @@ it("uses multipart OpenAI edits containing every approved reference and never se
  const form=init!.body as FormData;expect(form.getAll("image[]")).toHaveLength(2);expect(form.get("model")).toBe("gpt-image-2");expect(form.has("input_fidelity")).toBe(false);expect(form.has("response_format")).toBe(false);
  expect(init?.headers).not.toHaveProperty("content-type");
 });
-it("uses the explicit Flux GPT2 alias without downgrading to GPT1.5 or forwarding unsupported edits",async()=>{
- const f=fixture("flux");await f.service.generate(f.request,f.hooks);expect(JSON.parse(String(f.fetcher.mock.calls[0]![1]?.body))).toMatchObject({model:"flux-image-gpt2",size:"1024x1024",response_format:"b64_json"});
- const edit=fixture("flux");await expect(edit.service.generate({...edit.request,operation:"edit"},edit.hooks,[{bytes:Buffer.from(PNG,"base64"),mime:"image/png"}])).rejects.toThrow("Editing is not supported");expect(edit.fetcher).not.toHaveBeenCalled();expect(edit.reserve).not.toHaveBeenCalled();
+it("defaults Flux to flux-image GPT2.5 Flare high after approval",async()=>{
+ const f=fixture("flux");const catalog=await f.service.getCatalog("flux");expect(catalog.defaultModel).toBe("flux-image");expect(catalog.models.find(model=>model.id===catalog.defaultModel)).toMatchObject({qualities:["high"],sizes:["1024x1024"],edit:true,maxReferences:4});expect(f.fetcher).not.toHaveBeenCalled();
+ const result=await f.service.generate(f.request,f.hooks);const[url,init]=f.fetcher.mock.calls[0]!;expect(url).toBe("https://api.fluxrouter.ai/v1/images/generations");expect(JSON.parse(String(init?.body))).toEqual({model:"flux-image",prompt:f.request.prompt,n:1,size:"1024x1024",response_format:"b64_json"});expect(new Headers(init?.headers).get("authorization")).toBe("Bearer FAKE_CREDENTIAL_CANARY");expect(f.reserve.mock.invocationCallOrder[0]).toBeLessThan(f.fetcher.mock.invocationCallOrder[0]!);expect(JSON.stringify(f.reserve.mock.calls)).not.toContain("CANARY");expect(result.metadata).toMatchObject({model:"flux-image",quality:"high",size:"1024x1024"});
+});
+it("preserves the supported explicit Flux GPT2 aliases and their quality and size",async()=>{
+ for(const[model,quality,size] of [["flux-image-gpt2","medium","1024x1024"],["flux-image-gpt2-low","low","1024x1024"]]){const f=fixture("flux");const result=await f.service.generate({...f.request,model},f.hooks);expect(JSON.parse(String(f.fetcher.mock.calls[0]![1]?.body))).toMatchObject({model,size});expect(result.metadata).toMatchObject({model,quality,size});}
 });
 it("requires explicit Imagine selection for xAI rather than silently substituting for GPT2",async()=>{
  const f=fixture("xai");await expect(f.service.generate(f.request,f.hooks)).rejects.toThrow("Explicitly choose");expect(f.fetcher).not.toHaveBeenCalled();
@@ -39,9 +63,9 @@ it("requires explicit Imagine selection for xAI rather than silently substitutin
 });
 it("discovers OpenRouter raster models and pins a compatible endpoint without fallback",async()=>{
  const f=fixture("openrouter");await f.service.generate(f.request,f.hooks);
- expect(f.fetcher.mock.calls.map(call=>call[0])).toEqual(["https://openrouter.ai/api/v1/images/models","https://openrouter.ai/api/v1/images/models/openai/gpt-image-2/endpoints","https://openrouter.ai/api/v1/images"]);
+ expect(f.fetcher.mock.calls.map(call=>call[0])).toEqual(["https://openrouter.ai/api/v1/images/models","https://openrouter.ai/api/v1/images/models/openai/gpt-image-2/endpoints","https://openrouter.ai/api/v1/images/models","https://openrouter.ai/api/v1/images/models/openai/gpt-image-2/endpoints","https://openrouter.ai/api/v1/images"]);
  expect(f.fetcher.mock.calls[0]![1]?.headers).toBeUndefined();expect(f.fetcher.mock.calls[1]![1]?.headers).toBeUndefined();
- expect(JSON.parse(String(f.fetcher.mock.calls[2]![1]?.body))).toEqual({model:"openai/gpt-image-2",prompt:f.request.prompt,n:1,output_format:"png",provider:{only:["openai"],allow_fallbacks:false}});
+ expect(JSON.parse(String(f.fetcher.mock.calls[4]![1]?.body))).toEqual({model:"openai/gpt-image-2",prompt:f.request.prompt,n:1,output_format:"png",provider:{only:["openai"],allow_fallbacks:false}});
 });
 it("marks vector-only and unknown-format OpenRouter models unavailable and excludes untrusted model paths",()=>{
  const rows=parseOpenRouterImageCatalog({data:[
@@ -146,9 +170,8 @@ it("F1-T1 refuses a key for any URL outside its provider's exact https origin",(
 });
 it("F1-T1 publishes bounded reference capability fields per model; Flux stays generation-only",async()=>{
  const openai=(await fixture("openai").service.getCatalog("openai")).models;expect(openai.every(model=>model.edit&&model.maxReferences===4)).toBe(true);
- const flux=(await fixture("flux").service.getCatalog("flux")).models;expect(flux.every(model=>model.generate&&!model.edit&&model.maxReferences===0&&/generation only/.test(model.editUnavailableReason??""))).toBe(true);
+ const flux=(await fixture("flux").service.getCatalog("flux")).models;expect(flux.every(model=>model.generate&&model.edit&&model.maxReferences===4&&!model.editUnavailableReason)).toBe(true);
  expect((await fixture("xai").service.getCatalog("xai")).models).toEqual([expect.objectContaining({id:"grok-imagine-image-2.0",generate:true,edit:true,maxReferences:4,editQualities:[]})]);
- const f=fixture("flux");await expect(f.service.generate({connectionId:"flux",prompt:"Edit",operation:"edit"},f.hooks,[ref(PNG)])).rejects.toMatchObject({code:"unsupported-edit",message:expect.stringContaining("generation only")});expect(f.fetcher).not.toHaveBeenCalled();expect(f.reserve).not.toHaveBeenCalled();
 });
 it("F1-T2 sends xAI JSON edits: image for one input, images for two to four, exact bytes, b64_json and no quality",async()=>{
  const one=strict("xai");await one.service.generate(xaiEdit,one.hooks,[ref(PNG)]);
@@ -179,7 +202,7 @@ it("F1-T3 pins the openai endpoint for OpenRouter input_references, refreshes it
  f.fetcher.mockImplementation(async(input,init)=>{if(String(input).endsWith("/endpoints"))endpointTimeout=timeouts.mock.calls.at(-1)?.[0];return inner(input,init);});
  try{
   const result=await f.service.generate(openRouterEdit,f.hooks,[ref(PNG),ref(PNG_B)]);
-  expect(f.fetcher.mock.calls.map(call=>call[0])).toEqual(["https://openrouter.ai/api/v1/images/models","https://openrouter.ai/api/v1/images/models/openai/gpt-image-2/endpoints","https://openrouter.ai/api/v1/images"]);
+  expect(f.fetcher.mock.calls.map(call=>call[0])).toEqual(["https://openrouter.ai/api/v1/images/models","https://openrouter.ai/api/v1/images/models/openai/gpt-image-2/endpoints","https://openrouter.ai/api/v1/images/models","https://openrouter.ai/api/v1/images/models/openai/gpt-image-2/endpoints","https://openrouter.ai/api/v1/images"]);
   expect(endpointTimeout).toBe(15_000);
   expect(f.fetcher.mock.invocationCallOrder[1]).toBeLessThan(f.reserve.mock.invocationCallOrder[0]!);expect(f.reserve.mock.invocationCallOrder[0]).toBeLessThan(f.fetcher.mock.invocationCallOrder[2]!);
   expect(JSON.parse(String(f.posts()[0]![1]?.body))).toEqual({model:"openai/gpt-image-2",prompt:"Edit the fixture",n:1,output_format:"png",provider:{only:["openai"],allow_fallbacks:false},
@@ -213,7 +236,7 @@ it("F1-T3 catalog shows OpenRouter GPT2 editing only after the pinned endpoint c
  const down=strict("openrouter");const inner=down.fetcher.getMockImplementation()!;down.fetcher.mockImplementation(async(input,init)=>String(input).endsWith("/endpoints")?new Response("no",{status:500}):inner(input,init));
  expect((await down.service.getCatalog("openrouter")).models[0]).toMatchObject({generate:true,edit:false,maxReferences:0,editUnavailableReason:expect.stringContaining("could not be verified")});
  const f=strict("openrouter");await f.service.generate({connectionId:"openrouter",prompt:"A watercolor mountain"},f.hooks);
- expect(f.fetcher.mock.calls.filter(call=>String(call[0]).endsWith("/endpoints"))).toHaveLength(1);
+ expect(f.fetcher.mock.calls.filter(call=>String(call[0]).endsWith("/endpoints"))).toHaveLength(2);
 });
 it("F1 xAI and OpenRouter edits keep denial, connection-change and single-attempt behavior",async()=>{
  for(const[provider,request] of [["xai",xaiEdit],["openrouter",openRouterEdit]] as const){

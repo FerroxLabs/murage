@@ -40,6 +40,12 @@ const yamlEsmPlugin = {
 
 // Every file run as its own process. Keep in sync with the spawn sites above.
 const ENTRY_POINTS = [
+  "incident-diagnostics.ts",
+  "backup-coordinator.ts",
+  "backup-remote-host.ts",
+  "backup-restic.ts",
+  "windows-backup-resources.ts",
+  "installation-windows-backup-transport.ts",
   "memory/worker.ts",
   "drivers/memory-proxy.ts",
   "index.ts",
@@ -102,7 +108,7 @@ await build({
 // Offline installation backup/inspection must remain usable when the harness
 // cannot boot. ZIP libraries are CommonJS and use built-in Node requires.
 await build({
-  entryPoints: [join(root, "scripts", "installation-recovery.ts"), join(root, "scripts", "installation-recovery-worker.ts")],
+  entryPoints: [join(root, "scripts", "installation-recovery.ts"), join(root, "scripts", "installation-recovery-worker.ts"), join(root,"scripts","backup-schedule-trigger.ts")],
   bundle: true,
   platform: "node",
   target: "node24",

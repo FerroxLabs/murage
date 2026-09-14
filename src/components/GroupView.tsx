@@ -1154,7 +1154,7 @@ export function GroupView({ group }: { group: Group }) {
       {/* Header: static member embers; a ring + dot marks the working bot. */}
       <div
         className={cn(
-          "flex items-center justify-between px-5 py-3",
+          "flex flex-wrap items-center justify-between gap-2 px-5 py-3",
           // Room for the drawer button, which overlays this corner below md.
           "pl-11 md:pl-5",
           // Same status-bar inset as ChatView's header; calc() so the desktop
@@ -1162,11 +1162,11 @@ export function GroupView({ group }: { group: Group }) {
           "pt-[calc(0.75rem+env(safe-area-inset-top))]",
         )}
       >
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 basis-full items-center gap-2 md:basis-auto md:flex-1 md:min-w-[12rem]">
           <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
-          {!setupPending && !group.dm && <GroupTaskPicker group={group} />}
+          {!setupPending && !group.dm && <div className="min-w-0 max-w-[45%] shrink-0"><GroupTaskPicker group={group} /></div>}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setFindOpen((open) => !open)}
@@ -1194,7 +1194,7 @@ export function GroupView({ group }: { group: Group }) {
               onClick={() => setMembersOpen(true)}
               title="Manage members"
               aria-label={`Manage members — ${members.length} ${members.length === 1 ? "bot" : "bots"} in this channel`}
-              className="flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-1.5 hover:bg-raised/60"
+              className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 rounded-full py-0.5 pl-1 pr-1.5 hover:bg-raised/60"
             >
               {memberEmbers}
               <span className="flex size-[18px] items-center justify-center rounded-full border border-dashed border-hairline/70 text-ink-secondary">

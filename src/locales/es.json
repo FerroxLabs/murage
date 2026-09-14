@@ -1,4 +1,7 @@
 {
+  "providerError.payment.title": "Se requiere pago o acceso a la cuenta del proveedor",
+  "providerError.payment.summary": "El proveedor rechazó esta solicitud con HTTP 402. Esta respuesta no demuestra que se haya agotado el saldo.",
+  "providerError.payment.resolution": "Antes de reintentar, revisa la facturación y el acceso a la cuenta y al modelo seleccionado del proveedor, incluida la configuración de tu propia clave (BYOK).",
   "claudeAccounts.added": "Cuenta añadida. Inicia sesión explícitamente a continuación y selecciona esta cuenta en el selector de modelos. Las selecciones actuales de los bots no cambian.",
   "claudeAccounts.removed": "Eliminada de Murage. Se conservaron el inicio de sesión y los archivos de credenciales.",
   "claudeAccounts.saved": "Configuración de la cuenta guardada.",

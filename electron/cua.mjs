@@ -15,7 +15,10 @@
 // <userData>/cua-connection.json for the harness server to hand to drivers.
 
 import { app, ipcMain as electronIpcMain } from "electron";
-import { spawnSync } from "node:child_process";
+// Modified for Murage: async subprocess adaptation informed by OpenMausBot
+// PR1095, 31777c6c1e417d487e314fad3c1353f16c5264bd (Apache-2.0).
+import { execFile } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import net from "node:net";
@@ -46,6 +49,13 @@ const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" };
 process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
 
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
+let startup = null;
+let startupAbort = null;
+let stopping = null;
+let lifecycleGeneration = 0;
+let macRetry = null;
+let cleanupFailure = null;
+const commands = new Map();
 let linuxRuntime = null;
 let linuxBundleStage = null;
 let stateListener = () => {};
@@ -120,17 +130,49 @@ export function resolveDriverBinary() {
   return null;
 }
 
-function socketAlive(sockPath) {
+function socketAlive(sockPath, signal) {
+  signal?.throwIfAborted();
   return new Promise((resolve) => {
     if (!fs.existsSync(sockPath)) return resolve(false);
     const s = net.createConnection(sockPath);
+    let timer;
+    const abort = () => done(false);
     const done = (ok) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       s.destroy();
       resolve(ok);
     };
     s.once("connect", () => done(true));
     s.once("error", () => done(false));
-    setTimeout(() => done(false), 1500).unref();
+    timer = setTimeout(() => done(false), 1500);
+    timer.unref();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
+
+function runCommand(command, args, options, signal) {
+  signal?.throwIfAborted();
+  let child;
+  let cancel;
+  let cancelled = false;
+  const operation = new Promise((resolve) => {
+    child = execFile(command, args, { ...options, killSignal: "SIGKILL" }, (error, stdout) => {
+      resolve({ error, stdout });
+    });
+    cancel = () => {
+      if (cancelled) return;
+      cancelled = true;
+      child.kill("SIGKILL");
+    };
+  });
+  commands.set(operation, cancel);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  return operation.finally(() => {
+    commands.delete(operation);
+    signal?.removeEventListener("abort", cancel);
   });
 }
 
@@ -151,20 +193,23 @@ async function loadEmbeddedSdk() {
   return import(pathToFileURL(path.join(process.resourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
 }
 
-async function attachStandalone() {
+async function attachStandalone(signal) {
   const driver = fs.existsSync(INSTALLED_DRIVER) ? INSTALLED_DRIVER : null;
   if (!driver) return null;
-  if (!(await socketAlive(STANDALONE_SOCKET))) {
+  if (!(await socketAlive(STANDALONE_SOCKET, signal))) {
     // Launch CuaDriver.app through LaunchServices so Accessibility /
     // Screen Recording stay on com.trycua.driver — the identity this
     // machine already granted — instead of the freshly signed Murage.
-    spawnSync("open", ["-a", "CuaDriver"], { timeout: 8000 });
+    await runCommand("/usr/bin/open", ["-a", "CuaDriver"], {
+      timeout: 8000, maxBuffer: 8192,
+    }, signal);
     for (let i = 0; i < 25; i++) {
-      if (await socketAlive(STANDALONE_SOCKET)) break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      signal.throwIfAborted();
+      if (await socketAlive(STANDALONE_SOCKET, signal)) break;
+      await delay(200, undefined, { signal });
     }
   }
-  if (!(await socketAlive(STANDALONE_SOCKET))) return null;
+  if (!(await socketAlive(STANDALONE_SOCKET, signal))) return null;
   return {
     mode: "standalone",
     socketPath: STANDALONE_SOCKET,
@@ -174,10 +219,11 @@ async function attachStandalone() {
   };
 }
 
-async function startEmbedded(binary) {
+async function startEmbedded(binary, signal) {
   // Import from the staged Resources tree in production. The app intentionally
   // excludes general node_modules, so a bare package import only works in dev.
   const sdk = await loadEmbeddedSdk();
+  signal.throwIfAborted();
   // CUA's embedding contract requires grants before the child daemon starts;
   // these SDK calls execute in Electron main so macOS attributes them to
   // Murage rather than to a terminal or helper process.
@@ -190,9 +236,10 @@ async function startEmbedded(binary) {
     throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart Murage`);
   }
   const host = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
+  embeddedHost = host;
   try {
-    const conn = await host.start();
-    embeddedHost = host;
+    const conn = await host.start({ signal });
+    signal.throwIfAborted();
     return {
       mode: "embedded",
       socketPath: conn.socketPath,
@@ -203,16 +250,36 @@ async function startEmbedded(binary) {
   } catch (err) {
     try {
       await host.stop();
-    } catch {
-      // startup already failed; stop is best-effort before destroy
+      host.uniffiDestroy?.();
+    } catch (error) {
+      cleanupFailure = error;
+      throw error;
     }
-    host.uniffiDestroy?.();
+    embeddedHost = null;
     throw err;
   }
 }
 
 export async function startCua() {
   if (process.platform === "linux") return ensureLinuxRuntime().initialize();
+  if (stopping) await stopping;
+  if (cleanupFailure) throw cleanupFailure;
+  if (startup) return startup;
+  if (embeddedHost) return connectionStore.get();
+  lifecycleGeneration++;
+  startupAbort = new AbortController();
+  const operation = initializeMacCua(startupAbort.signal);
+  startup = operation;
+  try { return await operation; }
+  finally {
+    if (startup === operation) {
+      startup = null;
+      startupAbort = null;
+    }
+  }
+}
+
+async function initializeMacCua(signal) {
   const binary = resolveDriverBinary();
   if (!binary) {
     return persistAndNotify({
@@ -227,9 +294,12 @@ export async function startCua() {
 
   if (wantEmbedded) {
     try {
-      nextConnection = await startEmbedded(binary);
+      nextConnection = await startEmbedded(binary, signal);
     } catch (err) {
-      nextConnection = await attachStandalone();
+      signal.throwIfAborted();
+      // A failed SDK cleanup still owns a host: no fallback or replacement.
+      if (embeddedHost) throw err;
+      nextConnection = await attachStandalone(signal);
       if (!nextConnection) {
         nextConnection = {
           mode: "unavailable",
@@ -237,7 +307,7 @@ export async function startCua() {
         };
       }
     }
-  } else if (await socketAlive(STANDALONE_SOCKET)) {
+  } else if (await socketAlive(STANDALONE_SOCKET, signal)) {
     // Dev machine with CuaDriver.app's daemon already running.
     nextConnection = {
       mode: "standalone",
@@ -254,15 +324,18 @@ export async function startCua() {
     };
   }
 
+  signal.throwIfAborted();
   return persistAndNotify(nextConnection);
 }
 
-export function cuaPermissionsStatus() {
+export async function cuaPermissionsStatus() {
+  if (stopping) await stopping;
   const binary = resolveDriverBinary();
   if (!binary) return { available: false };
-  const out = spawnSync(binary, ["permissions", "status", "--json"], {
+  const out = await runCommand(binary, ["permissions", "status", "--json"], {
     encoding: "utf8",
     timeout: 5000,
+    maxBuffer: 65536,
     env: { ...process.env, ...CUA_ENV },
   });
   try {
@@ -281,18 +354,27 @@ export async function stopCua() {
     }
     return;
   }
-  if (embeddedHost) {
-    try {
+  lifecycleGeneration++;
+  startupAbort?.abort();
+  for (const cancel of commands.values()) cancel();
+  if (stopping) return stopping;
+  const operation = (async () => {
+    await Promise.all([...commands.keys()]);
+    await startup?.catch(() => {});
+    if (cleanupFailure) throw cleanupFailure;
+    if (embeddedHost) {
       await embeddedHost.stop();
       embeddedHost.uniffiDestroy?.();
-    } catch {
-      // daemon holds a parent-liveness pipe; host death closes it anyway
+      embeddedHost = null;
     }
-    embeddedHost = null;
-  }
-  if (connectionStore.get()) {
-    persistAndNotify({ mode: "unavailable", reason: "desktop-host-stopped" });
-  }
+    if (connectionStore.get()) {
+      persistAndNotify({ mode: "unavailable", reason: "desktop-host-stopped" });
+    }
+  })();
+  stopping = operation;
+  // Keep a rejected barrier: ownership is unresolved and replacement is unsafe.
+  operation.then(() => { if (stopping === operation) stopping = null; }, () => {});
+  return operation;
 }
 
 // main.mjs passes its owned-main-window gate (main-ipc-trust.mjs, B6).
@@ -328,8 +410,13 @@ export function registerCuaIpc(ipcMain = electronIpcMain) {
   });
   ipcMain.handle("cua:linux-retry", async () => {
     if (process.platform === "darwin") {
+      if (macRetry) return macRetry;
+      macRetry = (async () => {
       try {
-        await stopCua();
+        const stopped = stopCua();
+        const generation = lifecycleGeneration;
+        await stopped;
+        if (generation !== lifecycleGeneration) throw new Error("Computer use restart cancelled");
         const connection = await startCua();
         const ready = connection?.mode === "embedded" || connection?.mode === "standalone";
         return {
@@ -347,6 +434,8 @@ export function registerCuaIpc(ipcMain = electronIpcMain) {
           message: error instanceof Error ? error.message : String(error),
         };
       }
+      })().finally(() => { macRetry = null; });
+      return macRetry;
     }
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };

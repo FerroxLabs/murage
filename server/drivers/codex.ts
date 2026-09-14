@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { isHarnessOwnedMcpEnvName } from "../mcp-registry.ts";
-import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
 import type {
@@ -291,6 +291,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
 
       const asks = new Map<string, AskFinish>();
+      let codexThreadId: string | null = null;
+      let codexTurnId: string | null = null;
+      let awaitingTurnStart = false;
+      let earlyNotificationBytes = 0;
+      const earlyNotifications: any[] = [];
       let nextId = 1;
       const rpcPending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
@@ -300,7 +305,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         } catch {}
         appendNative(threadId, { dir: "out", source: "codex.app-server", msg: obj });
       };
-      const request = (method: string, params: unknown, timeoutMs = 60_000) =>
+      const request = (method: string, params: unknown, timeoutMs = 60_000, onResult?: (v: any) => void) =>
         new Promise<any>((resolve, reject) => {
           const id = nextId++;
           // a wedged app-server can accept stdin and never reply; without this
@@ -312,6 +317,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           rpcPending.set(id, {
             resolve: (v) => {
               clearTimeout(timer);
+              // The line splitter may process the ACK and notifications in
+              // one read. Bind native identity before resolving the Promise;
+              // an await continuation would run after those notifications.
+              try {
+                onResult?.(v);
+              } catch (e) {
+                reject(e);
+                return;
+              }
               resolve(v);
             },
             reject: (e) => {
@@ -323,31 +337,27 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         });
 
       let stopping: Promise<boolean> | undefined;
-      const terminate = () => stopping ??= new Promise<boolean>((resolve) => {
-        if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
-          resolve(true);
-          return;
-        }
-        const closed = () => {
-          clearTimeout(timer);
-          resolve(true);
-        };
-        const timer = setTimeout(() => {
-          child.off("close", closed);
-          resolve(false);
-        }, 5_000);
-        timer.unref?.();
-        child.once("close", closed);
+      const terminate = () => stopping ??= (() => {
         killCliTree(child);
-      });
-      const stop = () => {
+        return awaitCliTreeStopped(child).then((stopped) => {
+          if (!stopped) stopping = undefined;
+          return stopped;
+        });
+      })();
+      let completeStoppedTurn: (() => void) | undefined;
+      let lastProviderError: string | undefined;
+      const stop = async () => {
         stopRequested = true;
-        return terminate();
+        const stopped = await terminate();
+        if (stopped) completeStoppedTurn?.();
+        return stopped;
       };
 
       const settle = async (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;
         state.settled = true;
+        earlyNotifications.length = 0;
+        earlyNotificationBytes = 0;
         for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
@@ -356,11 +366,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           active.delete(threadId);
           emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(state.usage ? { usage: state.usage } : {}) });
         };
-        if (await stop()) complete();
-        else {
+        completeStoppedTurn = complete;
+        if (!(await stop())) {
           emit({ ...base(threadId, turnId), type: "runtime.error", message: "codex did not shut down after termination was requested" });
-          if (child.exitCode !== null || child.signalCode !== null) complete();
-          else child.once("close", complete);
         }
       };
 
@@ -499,6 +507,34 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
       const handleNotification = (msg: any) => {
         const p = msg.params ?? {};
+        // Server requests are dispatched separately and retain approval
+        // handling, including requests from helpers. Only unscoped errors
+        // are connection diagnostics; scoped errors belong to their turn.
+        const connectionError = msg.method === "error" && p.threadId === undefined && p.turnId === undefined;
+        if (!connectionError) {
+          const scopedMethods = [
+            "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta",
+            "item/started", "item/completed", "thread/tokenUsage/updated", "turn/completed", "error",
+          ];
+          if (!scopedMethods.includes(msg.method)) return;
+          const eventTurnId = msg.method === "turn/completed" ? p.turn?.id : p.turnId;
+          if (!codexThreadId || p.threadId !== codexThreadId || typeof eventTurnId !== "string" || !eventTurnId) return;
+          if (!codexTurnId) {
+            if (!awaitingTurnStart) return;
+            // Ordering is not promised by the protocol. Retain only bounded,
+            // identified candidates until the ACK establishes the parent.
+            const bytes = Buffer.byteLength(JSON.stringify(msg));
+            if (earlyNotifications.length >= 256 || earlyNotificationBytes + bytes > 32 * 1024 * 1024) {
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: "codex notifications before turn/start acknowledgement exceeded the buffer limit" });
+              void settle(false, "early_notification_overflow");
+              return;
+            }
+            earlyNotifications.push(msg);
+            earlyNotificationBytes += bytes;
+            return;
+          }
+          if (eventTurnId !== codexTurnId) return;
+        }
         switch (msg.method) {
           // token-level chat text; the item/completed frame follows with the
           // whole message, so its delta is only a fallback when none streamed
@@ -604,6 +640,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           case "turn/completed": {
             const t = p.turn ?? {};
+            const terminalMessage = typeof t.error?.message === "string" ? t.error.message.slice(0, 400) : undefined;
+            if (t.status === "failed" && terminalMessage && terminalMessage !== lastProviderError) {
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: terminalMessage });
+            }
             settle(t.status === "completed", t.status === "completed" ? null : (t.error?.message ?? t.status ?? "failed"));
             break;
           }
@@ -612,7 +652,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // {error:{message}} — surface either (agentcal armor)
             {
               const message = p.message ?? p.error?.message;
-              if (message) emit({ ...base(threadId, turnId), type: "runtime.error", message: String(message).slice(0, 400) });
+              if (message) {
+                lastProviderError = String(message).slice(0, 400);
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: lastProviderError });
+              }
             }
             break;
         }
@@ -689,6 +732,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       });
       child.on("close", (code) => {
         if (abandoned) return;
+        if (state.settled) { void stop(); return; }
         if (!state.settled && stopRequested) {
           // Murage killed the app-server to stop this turn: a cancellation,
           // not an engine crash — no runtime error card, same terminal state
@@ -718,7 +762,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         await request("initialize", { clientInfo: { name: "murage", version: "1" } });
         send({ jsonrpc: "2.0", method: "initialized", params: {} });
         const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
-        let codexThreadId: string | null = null;
         let startedModel: string | null = null;
         if (cursor) {
           try {
@@ -741,7 +784,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           codexThreadId = started?.thread?.id ?? null;
           startedModel = started?.model ?? null;
         }
+        if (typeof codexThreadId !== "string" || !codexThreadId) throw new Error("codex did not return a thread identity");
         emit({ ...base(threadId, turnId), type: "session.started", sessionId: codexThreadId, model: startedModel ?? turn.model ?? null });
+        awaitingTurnStart = true;
         await request("turn/start", {
           threadId: codexThreadId,
           input: [{ type: "text", text: turn.system ? `${turn.system}\n\n${turn.text}` : turn.text }],
@@ -755,6 +800,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // sent another, and choosing Default lands on the bot's next new
           // thread rather than the current one.
           ...(turn.effort ? { effort: turn.effort } : {}),
+        }, 60_000, (result) => {
+          awaitingTurnStart = false;
+          if (typeof result?.turn?.id !== "string" || !result.turn.id) {
+            earlyNotifications.length = 0;
+            earlyNotificationBytes = 0;
+            throw new Error("codex turn/start did not return a turn identity");
+          }
+          codexTurnId = result.turn.id;
+          const buffered = earlyNotifications.splice(0);
+          earlyNotificationBytes = 0;
+          for (const notification of buffered) {
+            if (abandoned || state.settled) break;
+            handleNotification(notification);
+          }
         });
       } catch (e) {
         const failure = e instanceof Error ? e : { text: String(e) };

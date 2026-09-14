@@ -10,6 +10,7 @@
 import type { ChildProcess } from "node:child_process";
 
 import type { ProviderStopResult } from "../contracts.ts";
+import { awaitCliTreeStopped } from "../procs.ts";
 
 /** Wait for `close` after termination was requested. Same bound codex uses. */
 export const PROVIDER_CLOSE_DEADLINE_MS = 5_000;
@@ -56,15 +57,21 @@ interface Waiter {
 /** Observation of one child process's lifetime. */
 export class ChildTeardown {
   #closed: boolean;
+  #rootClosed = false;
+  #confirming = false;
   #stopRequested = false;
   readonly #waiters = new Set<Waiter>();
   readonly #onClosed: Array<() => void> = [];
+  private readonly child: ChildProcess;
+  private readonly confirm: (child: ChildProcess) => Promise<boolean>;
 
-  constructor(child: ChildProcess) {
+  constructor(child: ChildProcess, confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped) {
+    this.child = child;
+    this.confirm = confirm;
     // spawn() assigns the pid synchronously on success. No pid means the OS
     // never created a process (ENOENT, EACCES): there is nothing to close.
     this.#closed = child.pid === undefined;
-    child.once("close", () => this.#markClosed());
+    child.once("close", () => { this.#rootClosed = true; this.#confirm(); });
   }
 
   get closed(): boolean {
@@ -85,6 +92,7 @@ export class ChildTeardown {
 
   wait({ closeMs, maxMs }: TeardownWait): Promise<ProviderStopResult> {
     if (this.#closed) return Promise.resolve(CONFIRMED);
+    if (this.#rootClosed || this.#stopRequested) this.#confirm();
     return new Promise((resolve) => {
       const waiter: Waiter = {
         closeMs,
@@ -96,6 +104,15 @@ export class ChildTeardown {
       this.#waiters.add(waiter);
       if (this.#stopRequested) this.#armClose(waiter);
     });
+  }
+
+  #confirm(): void {
+    if (this.#closed || this.#confirming) return;
+    this.#confirming = true;
+    void this.confirm(this.child).then((stopped) => {
+      this.#confirming = false;
+      if (stopped) this.#markClosed();
+    }, () => { this.#confirming = false; });
   }
 
   #armClose(waiter: Waiter): void {
@@ -132,9 +149,14 @@ export class ChildTeardown {
 /** Every not-yet-closed child a driver instance has spawned, by provider turn. */
 export class TurnTeardowns {
   readonly #byTurn = new Map<string, { threadId: string; teardown: ChildTeardown }>();
+  private readonly confirm: (child: ChildProcess) => Promise<boolean>;
+
+  constructor(confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped) {
+    this.confirm = confirm;
+  }
 
   track(threadId: string, turnId: string, child: ChildProcess): ChildTeardown {
-    const teardown = new ChildTeardown(child);
+    const teardown = new ChildTeardown(child, this.confirm);
     if (!teardown.closed) {
       const entry = { threadId, teardown };
       this.#byTurn.set(turnId, entry);

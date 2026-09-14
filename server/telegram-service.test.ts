@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { TelegramService } from "./telegram-service.ts";
 import * as atomic from "./atomic.ts";
 import type { TelegramTransport } from "./telegram-transport.ts";
+import { TelegramTransportError } from "./telegram-transport.ts";
 
 it("verifies identity before polling and stops admissions on revoke", async () => {
   vi.useFakeTimers();
@@ -89,10 +90,25 @@ it("preserves corrupt selector and channel bytes and never starts polling them",
  const selector=join(f.root,"telegram","connection.json");writeFileSync(selector,"CORRUPT_SELECTOR_CANARY");
  const corruptSelector=f.make();expect(await corruptSelector.resume("fake","chief")).toBe(false);expect(readFileSync(selector,"utf8")).toBe("CORRUPT_SELECTOR_CANARY");await vi.advanceTimersByTimeAsync(3000);expect(f.transport.getUpdates).toHaveBeenCalledTimes(before);
 });
-it("keeps pairing for a transient identity-check failure and reconnects on explicit retry",async()=>{
+it("keeps pairing for a transient identity-check failure and reconnects automatically without UI retry",async()=>{
  const f=restartFixture(),original=await f.pair();original.stop();f.transport.getMe.mockRejectedValueOnce(new Error("offline fixture"));
  const restarted=f.make();expect(await restarted.resume("fake","chief")).toBe(false);expect(restarted.status()).toMatchObject({resumeState:"retry",requiresRevoke:true,paired:false});
- expect(await restarted.resume("fake","chief")).toBe(true);expect(restarted.status().paired).toBe(true);
+ expect(restarted.status().nextRetryAt).toBeGreaterThan(Date.now());await vi.advanceTimersByTimeAsync(1499);expect(f.transport.getMe).toHaveBeenCalledTimes(2);
+ await vi.advanceTimersByTimeAsync(1);expect(restarted.status()).toMatchObject({resumeState:"active",paired:true});
+ f.setUpdates([f.update(2,"after automatic reconnect")]);await vi.advanceTimersByTimeAsync(1500);expect(f.enqueue).toHaveBeenCalledExactlyOnceWith("123","chief",expect.objectContaining({deliveryId:"telegram:123:2"}));
+});
+it("honours an initial provider retry_after longer than the local backoff cap",async()=>{
+ const f=restartFixture(),original=await f.pair();original.stop();f.transport.getMe.mockRejectedValueOnce(new TelegramTransportError("rate-limit",{retryAfterSeconds:120}));
+ const restarted=f.make();expect(await restarted.resume("fake","chief")).toBe(false);expect(restarted.status().nextRetryAt).toBe(Date.now()+120000);
+ await vi.advanceTimersByTimeAsync(119999);expect(f.transport.getMe).toHaveBeenCalledTimes(2);await vi.advanceTimersByTimeAsync(1);expect(restarted.status()).toMatchObject({resumeState:"active",paired:true});
+});
+it("honours polling retry_after and pauses terminal receiver conflicts without clearing the saved pairing",async()=>{
+ const f=restartFixture(),service=await f.pair();f.transport.getUpdates.mockRejectedValueOnce(new TelegramTransportError("rate-limit",{retryAfterSeconds:12}));
+ await vi.advanceTimersByTimeAsync(1500);expect(service.status()).toMatchObject({resumeState:"active",error:"rate-limit",deliveryError:null,nextRetryAt:Date.now()+12000});const calls=f.transport.getUpdates.mock.calls.length;
+ await vi.advanceTimersByTimeAsync(11999);expect(f.transport.getUpdates).toHaveBeenCalledTimes(calls);await vi.advanceTimersByTimeAsync(1);expect(f.transport.getUpdates).toHaveBeenCalledTimes(calls+1);
+ f.transport.getUpdates.mockRejectedValueOnce(new TelegramTransportError("conflict"));await vi.advanceTimersByTimeAsync(1500);expect(service.status()).toMatchObject({resumeState:"blocked",error:"conflict",paired:false,requiresRevoke:true});
+ const terminalCalls=f.transport.getUpdates.mock.calls.length;await vi.advanceTimersByTimeAsync(30000);expect(f.transport.getUpdates).toHaveBeenCalledTimes(terminalCalls);
+ expect(JSON.parse(readFileSync(join(f.root,"telegram","connection.json"),"utf8")).enabled).toBe(true);
 });
 for(const action of ["stop","revoke"] as const)it(`${action} fences a late identity-check response during restart`,async()=>{
  const f=restartFixture(),original=await f.pair();original.stop();let resolve!:(value:{id:string;username:string})=>void;
@@ -108,7 +124,7 @@ it("rechecks the exact target after asynchronous identity verification",async()=
 });
 it("does not replay uncertain sends when the pairing resumes",async()=>{
  const f=restartFixture(),original=await f.pair();f.transport.sendMessage.mockRejectedValueOnce(new Error("uncertain fixture"));f.setUpdates([f.update(2,"work")]);await vi.advanceTimersByTimeAsync(1500);expect(original.status().uncertain).toBe(1);original.stop();
- const restarted=f.make();expect(await restarted.resume("fake","chief")).toBe(true);await vi.advanceTimersByTimeAsync(1500);expect(restarted.status().uncertain).toBe(1);expect(f.transport.sendMessage).toHaveBeenCalledTimes(1);expect(f.enqueue).toHaveBeenCalledTimes(1);
+ const restarted=f.make();expect(await restarted.resume("fake","chief")).toBe(true);await vi.advanceTimersByTimeAsync(1500);expect(restarted.status().uncertain).toBe(1);expect(f.transport.sendMessage).toHaveBeenCalledTimes(2);expect(f.enqueue).toHaveBeenCalledTimes(1); // pairing confirmation + uncertain reply
 });
 it("fences revoke even if selector writing fails and the durable channel revoke prevents restart",async()=>{
  const f=restartFixture(),original=await f.pair();vi.spyOn(atomic,"writeFileAtomic").mockImplementationOnce(()=>{throw new Error("fixture selector write failure");});

@@ -608,6 +608,31 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode.startsWith("fuigo-diagnostic:")) {
+        const variant = mode.slice("fuigo-diagnostic:".length);
+        const params: any = {
+          sessionId: msg.params.sessionId,
+          update: { sessionUpdate: "retry_state", type: "failed", error_type: "api", message: "fake-secret-canary", reason: "fake-private-reason", url: "https://billing.invalid/?key=fake-secret-canary", promptUsage: "fake-private-prompt" },
+          _meta: { eventId: "fixture-event-1", agentTimestampMs: Date.now() },
+        };
+        if (variant === "foreign") params.sessionId = "foreign-session";
+        if (variant === "replay") params._meta.isReplay = true;
+        if (variant === "old") params._meta.agentTimestampMs = 1;
+        if (variant === "missing-time") delete params._meta.agentTimestampMs;
+        if (variant === "future") params._meta.agentTimestampMs += 60_000;
+        if (variant === "malformed") params.update = [params.update];
+        if (variant === "unbounded") params.update.message = "x".repeat(9000);
+        if (variant === "unknown") params.update.error_type = "fake-secret-canary";
+        if (variant === "retry") params.update.type = "retrying";
+        out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params });
+        if (variant === "success" || variant === "unmatched") {
+          if (variant === "unmatched") out({ jsonrpc: "2.0", id: -999, error: { code: -32603, message: "Internal error" } });
+          result(msg.id, { stopReason: "end_turn" });
+        } else {
+          out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { http_status: 404, message: "fake-secret-canary",...(variant==="terminal"?{error_kind:"max_tokens_truncation"}:{}) } } });
+        }
+        return;
+      }
       if (mode === "cancel-ack") {
         pendingCancelAckPrompt = msg.id;
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
@@ -635,6 +660,12 @@ function handle(msg: any) {
           http_status: 402,
           message: "API error (status 402 Payment Required): Your credit balance is exhausted. https://billing.invalid/?token=fake-secret-canary",
         } } });
+        return;
+      }
+      if (["payment-required:missing","payment-required:private","payment-required:flux-url"].includes(mode)) {
+        out({ jsonrpc:"2.0", id:msg.id, error:{code:-32603,message:"Internal error",data:{http_status:402,
+          ...(mode==="payment-required:missing"?{}:{message:mode==="payment-required:flux-url"?"Account access unavailable. https://fluxrouter.ai/home/billing?token=fake-secret-canary":"private response fake-secret-canary https://billing.invalid/private"}),
+        }} });
         return;
       }
       if (mode === "hang") {

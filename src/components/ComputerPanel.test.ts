@@ -7,6 +7,16 @@ import { transitionComputerControlLease } from "../lib/computer-control";
 // this suite runs in node. A bare object is the honest answer: no shell.
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { planComputerDestinationChange } = await import("./ComputerPanel");
+const { initialState, reducer } = await import("../state/store");
+
+it("opening settings from Computer closes the panel and preserves the selected bot", () => {
+  const selected = { ...initialState, selectedId: "computer-bot", computerOpen: true };
+  const settings = reducer(selected, { type: "toggleSettings", open: true });
+  expect(settings).toMatchObject({ selectedId: "computer-bot", settingsOpen: true, computerOpen: false });
+  const closed = reducer(settings, { type: "toggleSettings", open: false });
+  const reopened = reducer(closed, { type: "toggleComputer", open: true });
+  expect(reopened).toMatchObject({ selectedId: "computer-bot", settingsOpen: false, computerOpen: true });
+});
 
 const snap = (held: boolean) => ({ held, helpReason: null });
 

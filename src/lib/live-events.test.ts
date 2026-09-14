@@ -98,6 +98,26 @@ function harness(options?: { online?: boolean; visible?: boolean; now?: number }
 }
 
 beforeEach(() => vi.useFakeTimers());
+
+it("marks replay delivery from hello high-water without dropping any data frame", () => {
+  const fixture = harness();
+  const onFrame = vi.fn();
+  const stop = openLiveEvents({ onFrame, onSnapshotRequired: async () => true }, fixture.platform);
+  const stream = fixture.sources[0];
+  stream.message({ kind: "hello", cursor: "server:9", resumed: true });
+  stream.message({ kind: "notify", seq: 5 }, "server:5");
+  stream.message({ kind: "message", seq: 9 }, "server:9");
+  stream.message({ kind: "notify", seq: 10, replayed: true }, "server:10");
+  expect(onFrame.mock.calls).toEqual([
+    [{ kind: "notify", seq: 5 }, { replayed: true }],
+    [{ kind: "message", seq: 9 }, { replayed: true }],
+    [{ kind: "notify", seq: 10, replayed: true }, { replayed: false }],
+  ]);
+  stream.message({ kind: "hello", cursor: "new-server:2", resumed: false });
+  stream.message({ kind: "message", seq: 3 }, "new-server:3");
+  expect(onFrame).toHaveBeenLastCalledWith({ kind: "message", seq: 3 }, { replayed: false });
+  stop();
+});
 afterEach(() => vi.useRealTimers());
 
 describe("live events URL", () => {
@@ -236,7 +256,7 @@ describe("live events supervisor", () => {
     test.sources[1].message({ kind: "message", value: "current" }, "new:1");
 
     expect(onFrame).toHaveBeenCalledOnce();
-    expect(onFrame).toHaveBeenCalledWith({ kind: "message", value: "current" });
+    expect(onFrame).toHaveBeenCalledWith({ kind: "message", value: "current" }, { replayed: false });
     stop();
   });
 

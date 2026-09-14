@@ -42,6 +42,7 @@ const BINARY = app.isPackaged
 // The one owned recorder session. It stays set while a requested stop is
 // pending and is cleared only when the helper's exit is observed (B5).
 let active = null;
+export function recorderActive() { return active !== null; }
 // Bumped by every Start and every explicit Stop, so a Start that had to wait
 // for an earlier helper cannot launch after a newer Start or Stop.
 let startGeneration = 0;

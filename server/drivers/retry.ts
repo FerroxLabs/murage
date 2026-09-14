@@ -4,6 +4,7 @@
 // (429/5xx/overloaded/reset) gets up to MAX_ATTEMPTS tries, an auth or
 // request-shape problem never does.
 import type { ProviderErrorCode } from "../contracts.ts";
+import { isProviderSafetyBlock } from "../../shared/provider-safety.ts";
 
 export const RETRY_MAX_ATTEMPTS = 3;
 
@@ -26,6 +27,7 @@ export type TerminalReason =
   | ProviderErrorCode
   | "terminal_exit"
   | "interrupted"
+  | "provider_safety"
   | "unknown";
 
 export interface ErrorClassification {
@@ -91,9 +93,13 @@ const messageOf = (err: FailureInput): string => {
  */
 export function classifyError(err: FailureInput): ErrorClassification {
   const text = messageOf(err);
+  // Preserve an explicit process interruption, even with prior safety text.
+  if (err && "exitCode" in err && err.exitCode !== null && err.exitCode < 0) {
+    return { transient: false, reason: "interrupted" };
+  }
+  // HTTP wrappers cannot make a provider's explicit safety block retryable.
+  if (isProviderSafetyBlock(text)) return { transient: false, reason: "provider_safety" };
   if (err && "exitCode" in err) {
-    const { exitCode: code } = err;
-    if (code !== null && code < 0) return { transient: false, reason: "interrupted" };
     for (const { pattern, reason } of TRANSIENT_PATTERNS) {
       if (pattern.test(text)) return { transient: true, reason };
     }

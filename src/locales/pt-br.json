@@ -1,4 +1,7 @@
 {
+  "providerError.payment.title": "Pagamento ou acesso à conta do provedor necessário",
+  "providerError.payment.summary": "O provedor rejeitou esta solicitação com HTTP 402. Essa resposta não comprova que os créditos se esgotaram.",
+  "providerError.payment.resolution": "Antes de tentar novamente, verifique o faturamento e o acesso à conta e ao modelo selecionado do provedor, incluindo as configurações da sua própria chave (BYOK).",
   "claudeAccounts.added": "Conta adicionada. Entre explicitamente abaixo e selecione esta conta no seletor de modelos. As escolhas atuais dos bots não mudaram.",
   "claudeAccounts.removed": "Removida do Murage. O login e os arquivos de credenciais foram mantidos.",
   "claudeAccounts.saved": "Configurações da conta salvas.",

@@ -28,6 +28,14 @@ describe("credential env parity with server/config.ts", () => {
     expect(match).not.toBeNull();
     const names = [...match[1].matchAll(/"([A-Z0-9_]+)"/g)].map((m) => m[1]);
     expect(CREDENTIAL_ENV_NAMES).toEqual(names);
+    for (const key of ["MURAGE_DISCORD_BOT_TOKEN","MURAGE_SLACK_APP_TOKEN","MURAGE_SLACK_BOT_TOKEN"]) {
+      for (const value of ["channel-private-canary",'"channel private canary"']) {
+        const masked=redactSecretsInLine(`${key}=${value}`);
+        expect(masked).toContain("redacted");
+        expect(masked).not.toContain("channel-private-canary");
+        expect(masked).not.toContain("channel private canary");
+      }
+    }
   });
 });
 

@@ -38,7 +38,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseBotPackage } from "../server/bot-package.ts";
+import { packageAgentPlaybooks, packageAgentProfileReviewHash, parseBotPackage } from "../server/bot-package.ts";
 import { checkLibrarySkill } from "../server/skills.ts";
 import { TEAM_LIBRARY_REPOSITORY, parseTeamCatalog } from "../server/team-library.ts";
 
@@ -131,6 +131,12 @@ export function buildLocalCatalog(repoRoot = REPO_ROOT) {
     const declared = [...new Set(pkg.agents.flatMap((agent) => agent.skills ?? []))];
     for (const id of declared) if (!installable.has(id)) dangling.push(`${pkg.id} → ${id}`);
     const skills = declared.filter((id) => installable.has(id));
+    const assignedPlaybooks = new Set(pkg.agents.flatMap((agent) => packageAgentPlaybooks(pkg, agent).map((playbook) => playbook.key)));
+    const playbooks = (pkg.playbooks ?? [])
+      .filter((playbook) => assignedPlaybooks.has(playbook.key))
+      .map(({ key, name, summary }) => ({ key, name, summary }));
+    const adaptable = pkg.agents.length === 1;
+    const profileReviewHash = adaptable ? packageAgentProfileReviewHash(pkg, pkg.agents[0]) : undefined;
 
     teams.push({
       slug: pkg.id,
@@ -147,6 +153,8 @@ export function buildLocalCatalog(repoRoot = REPO_ROOT) {
       // so a profile reads as "1 bots" against a team's four.
       members: pkg.agents.length,
       skills: skills.map((id) => `teams/${pkg.id}/skills/${id}/SKILL.md`),
+      playbooks,
+      ...(adaptable ? { adaptable: true, profileReviewHash } : { adaptable: false }),
       requires: { apps: pkg.requirements.apps.map((app) => clamp(app.label, 100)).slice(0, 30) },
     });
   }

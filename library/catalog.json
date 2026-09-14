@@ -25,6 +25,15 @@
         "teams/beacon/skills/go-to-market-strategy/SKILL.md",
         "teams/beacon/skills/community-led-growth/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "beacon-playbook",
+          "name": "Channels playbook",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "5511dd224a9cf5ca783ae9cd4b86f8100da237a80c94587e5aa13adbb2716fa1",
       "requires": {
         "apps": []
       }
@@ -52,6 +61,15 @@
         "teams/coin/skills/finance-payroll-prep/SKILL.md",
         "teams/coin/skills/finance-sales-tax/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "coin-playbook",
+          "name": "Numbers playbook",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "8a0e8af95327b5edd918aeaffb1de673e455a3e1593c11af0a2449f93c1d7529",
       "requires": {
         "apps": []
       }
@@ -73,6 +91,15 @@
         "teams/copy/skills/content-about-page/SKILL.md",
         "teams/copy/skills/content-haro-reply/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "copy-playbook",
+          "name": "Copy playbook",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "3cd8ab153b63bab213cd195cad5f69c75d555510c1881665802e2762b7637c92",
       "requires": {
         "apps": []
       }
@@ -96,6 +123,15 @@
         "teams/forge/skills/pricing-strategy-audit/SKILL.md",
         "teams/forge/skills/sales-proposal/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "forge-playbook",
+          "name": "Offer playbook",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "bcd0478e0ce67b884a36896dddae45a26a34b0c8c2091f6bb21fe5700eb3bf01",
       "requires": {
         "apps": []
       }
@@ -122,6 +158,15 @@
         "teams/helm/skills/okr-builder/SKILL.md",
         "teams/helm/skills/scenario-planning/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "helm-playbook",
+          "name": "Coach playbook",
+          "summary": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "9ae8e103b1bf637bff715d6a5f0614b45476d93521eb58744261f9f24a05a831",
       "requires": {
         "apps": []
       }
@@ -146,6 +191,15 @@
         "teams/humanizer/skills/tone-adjustment/SKILL.md",
         "teams/humanizer/skills/audience-analysis/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "humanizer-playbook",
+          "name": "Humanizer playbook",
+          "summary": "Catches AI-tells in your drafts and rewrites them to read human. Diagnose first, then rewrite for rhythm and vocabulary. Plugs into your Voiceprint file so the result sounds like you, not a model."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "f3416df4c9bc9dc560fce43439799e7de47fddfbd3b6cacf64628ea57cdd869b",
       "requires": {
         "apps": []
       }
@@ -172,6 +226,15 @@
         "teams/lens/skills/saas-metrics-analyst/SKILL.md",
         "teams/lens/skills/conversion-rate-optimizer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "lens-playbook",
+          "name": "Analyst playbook",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "51a4c482f99b517e886e994c659c1cf0780d84b3369b525b5788f22bd980399c",
       "requires": {
         "apps": []
       }
@@ -196,6 +259,15 @@
         "teams/mend/skills/process-mapping/SKILL.md",
         "teams/mend/skills/sop-creation/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mend-playbook",
+          "name": "Support playbook",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "38194860bb1e428aa8d7b433aad0953430a2b01e339755d74609451c4ff95b86",
       "requires": {
         "apps": []
       }
@@ -218,6 +290,15 @@
         "teams/mira/skills/market-audit/SKILL.md",
         "teams/mira/skills/market-landing/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mira-playbook",
+          "name": "Brand playbook",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "3dec1a38cadf214e5fe5459fd02d05d4320d8233807a865fe906862d70c4df37",
       "requires": {
         "apps": []
       }
@@ -225,9 +306,9 @@
     {
       "slug": "patch",
       "name": "Ops",
-      "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline.",
+      "summary": "Ops helps coordinate projects, operating rhythms, CRM reviews and short SOPs from supplied notes. Plans distinguish confirmed commitments from proposals, keep unknown owners unassigned and need no team or external connection to start.",
       "category": "Run",
-      "outcome": "Install a weekly operating rhythm for a 5-person team.",
+      "outcome": "Project plan with owners, dependencies and next actions",
       "setupMinutes": 5,
       "manifest": "teams/patch/patch.emberteam.json",
       "readme": "teams/patch/README.md",
@@ -242,6 +323,15 @@
         "teams/patch/skills/cold-outreach-sequence/SKILL.md",
         "teams/patch/skills/follow-up-sequences/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "patch-playbook",
+          "name": "Ops playbook",
+          "summary": "Turn project notes into owners, dependencies and next actions"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "68c75993e66d83201dc45337d41f6b2e7c2cc7013b44e291bf91ae82781a51f4",
       "requires": {
         "apps": []
       }
@@ -265,6 +355,15 @@
         "teams/probe/skills/research-question/SKILL.md",
         "teams/probe/skills/rubric-creation/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "probe-playbook",
+          "name": "Validator playbook",
+          "summary": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "4a2be56997f2eaab03e76690a8d33d87c44fbfeb9033bd1cac8f1140e1f71447",
       "requires": {
         "apps": []
       }
@@ -291,6 +390,15 @@
         "teams/quiet-money-career-strategist/skills/career-change-resume/SKILL.md",
         "teams/quiet-money-career-strategist/skills/career-pivot-advisor/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-career-strategist-playbook",
+          "name": "Career Strategist playbook",
+          "summary": "Layer C specialist - trajectory check, market value calibration, skill stack, switching cost, negotiation reps. Salary as the highest-leverage financial instrument."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "32039e5f5ae245b640f4841bce94160ba46963f3a5affc7aa6f78b937f0f4416",
       "requires": {
         "apps": []
       }
@@ -315,6 +423,15 @@
         "teams/quiet-money-generational-planner/skills/spending-analysis/SKILL.md",
         "teams/quiet-money-generational-planner/skills/estate-planning-architect/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-generational-planner-playbook",
+          "name": "Generational Planner playbook",
+          "summary": "Layer G specialist - term life + will + guardians + education vehicle + beneficiaries + disability. The will-and-guardian decision is non-deferrable."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "ee6d0bfb682ecfb2164fb4b3bae9c5489773c287a87fd76f5d0941bce4a58b4a",
       "requires": {
         "apps": []
       }
@@ -341,6 +458,15 @@
         "teams/quiet-money-position-auditor/skills/savings-planner/SKILL.md",
         "teams/quiet-money-position-auditor/skills/insurance-needs-assessment/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-position-auditor-playbook",
+          "name": "Position Auditor playbook",
+          "summary": "Layer 1 specialist - extracts complete financial snapshot (income, spend, savings, debt, equity, insurance, jurisdiction) into quiet-money/position.md."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "1a9896dcbac646b7fd6a13257a8b391b8c023c8eec2d358252631798ed2b3568",
       "requires": {
         "apps": []
       }
@@ -367,6 +493,15 @@
         "teams/quiet-money-spending-auditor/skills/gift-budget-calculator/SKILL.md",
         "teams/quiet-money-spending-auditor/skills/major-purchase-decision/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-spending-auditor-playbook",
+          "name": "Spending Auditor playbook",
+          "summary": "Layer S specialist - 3-bucket spending (Foundations/Joy/Signal), lifestyle ratchet defense, annual Spending Audit, no-one-knows test."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "b5256d28233ce4318ae99946b4b21229d53a2750972c3d9faa9ad4bfb9e5a296",
       "requires": {
         "apps": []
       }
@@ -392,6 +527,15 @@
         "teams/quiet-money-time-coach/skills/net-worth-tracker/SKILL.md",
         "teams/quiet-money-time-coach/skills/retirement-savings-calculator/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-time-coach-playbook",
+          "name": "Time Coach playbook",
+          "summary": "Layer T specialist - hourly cost, conversion test, weekly Friday question, annual deathbed audit. Wealth is time you control."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "3215a10b946b6e155ccbb70d43d104e89c8a4fe24bfd84743692e64fcaa790ea",
       "requires": {
         "apps": []
       }
@@ -418,6 +562,15 @@
         "teams/quiet-money-windfall-navigator/skills/variable-income-budget/SKILL.md",
         "teams/quiet-money-windfall-navigator/skills/expense-analyzer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-windfall-navigator-playbook",
+          "name": "Windfall Navigator playbook",
+          "summary": "Layer W specialist - 5 protocols for sudden money, income shock, divorce, health shock, sudden expense. The 12-month rule for windfalls."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "a42f929d33356cb7a4c853452b07d6e46a9c4833d649c6b5a20bfcdbab8394a6",
       "requires": {
         "apps": []
       }
@@ -442,6 +595,15 @@
         "teams/quiet-money/skills/financial-kpis/SKILL.md",
         "teams/quiet-money/skills/compensation-benchmarking/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-playbook",
+          "name": "Quiet Money playbook",
+          "summary": "Personal wealth coach - builds real durable wealth via the boring path. Anti-guru, anti-urgency, pro-math. Educational only; not financial advice."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "a38f4bb2f7ec8bd1208cd3067867b7f286c7a49a167e0618b04f547d6f12fe1f",
       "requires": {
         "apps": []
       }
@@ -467,6 +629,15 @@
         "teams/research/skills/customer-persona/SKILL.md",
         "teams/research/skills/competitive-analysis/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research-playbook",
+          "name": "Research playbook",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "2fdd14445038ef7a1f0f18565d8c5476c8c5f8dfb370bf0387cf39b160cc3745",
       "requires": {
         "apps": []
       }
@@ -490,6 +661,15 @@
         "teams/sales/skills/sales-contacts/SKILL.md",
         "teams/sales/skills/sales-icp/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sales-playbook",
+          "name": "Sales playbook",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "f5fac20e06e30c3b691e1b051155c0083e20506bc2757df6918bf67303a6f9ec",
       "requires": {
         "apps": []
       }
@@ -515,6 +695,15 @@
         "teams/sentry/skills/legal-gdpr/SKILL.md",
         "teams/sentry/skills/legal-contractor/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sentry-playbook",
+          "name": "Counsel playbook",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "e53e357887d2b140d94440083dad41bc19a9b6890953902067a9b92542307276",
       "requires": {
         "apps": []
       }
@@ -541,6 +730,15 @@
         "teams/slate/skills/hr-leave-of-absence/SKILL.md",
         "teams/slate/skills/hr-accommodation-request/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "slate-playbook",
+          "name": "Talent playbook",
+          "summary": "Hiring specialist - role design, structured candidate evaluation, contractor-vs-employee structuring via Claire Hughes Johnson's Scaling People."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "4e877be15983cbd3f6987b26e5fb5e4c315f8a747d0c017ec00fb9078a12fe02",
       "requires": {
         "apps": []
       }
@@ -566,6 +764,15 @@
         "teams/smith/skills/scalability-architect/SKILL.md",
         "teams/smith/skills/search-system-architect/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "smith-playbook",
+          "name": "Code playbook",
+          "summary": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "803b5032387f2ec4549996fa7a2aa7e80b37890514d58300bb94416dbbb42674",
       "requires": {
         "apps": []
       }
@@ -590,6 +797,15 @@
         "teams/spark/skills/online-academy-builder/SKILL.md",
         "teams/spark/skills/curriculum-designer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "spark-playbook",
+          "name": "Build playbook",
+          "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "e2730a7f0c2d30fe4ef07fe5e8e06c4001f0be734ccf0bd98e7917b34a5ca0b5",
       "requires": {
         "apps": []
       }
@@ -615,6 +831,15 @@
         "teams/stage/skills/business-plan/SKILL.md",
         "teams/stage/skills/brand-storytelling/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "stage-playbook",
+          "name": "Pitch playbook",
+          "summary": "Pitch specialist - investor decks, strategic narrative, and demo-day craft via Sequoia + Andy Raskin's shift framing."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "3a5251b926d85ea95de7ea512e68171d9443464701d32d000f32050d172701f1",
       "requires": {
         "apps": []
       }
@@ -639,6 +864,15 @@
         "teams/vault/skills/conversion-rate-optimizer/SKILL.md",
         "teams/vault/skills/digital-product-launcher/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "vault-playbook",
+          "name": "Storefront playbook",
+          "summary": "Storefront specialist - DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "91467b36662f51c9fd7e12d3ea9a208874131516a10e4a42c0bfeea030e3d39f",
       "requires": {
         "apps": []
       }
@@ -662,6 +896,15 @@
         "teams/verdict/skills/proofreading/SKILL.md",
         "teams/verdict/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "verdict-playbook",
+          "name": "Quality Gate playbook",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "000607db99dfb94fa52523bb9e1c9833bdf0ab57727bea41b92198fe24dd2a87",
       "requires": {
         "apps": []
       }
@@ -687,6 +930,15 @@
         "teams/voiceprint/skills/audience-analysis/SKILL.md",
         "teams/voiceprint/skills/voiceover-script/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "voiceprint-playbook",
+          "name": "Voiceprint playbook",
+          "summary": "Voice-profile builder - captures how you write so any AI can write as you. Samples beat self-report."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "2ec6c2296a0a1275547f60537eeec46ff6f31e7e0bc99d22070bc48c6821ecf5",
       "requires": {
         "apps": []
       }
@@ -707,6 +959,15 @@
         "teams/academic-paper/skills/citation-management/SKILL.md",
         "teams/academic-paper/skills/citation-reference/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "academic-paper",
+          "name": "Academic Paper Creator",
+          "summary": "Publication-ready academic papers with real Word TOC fields and OMML equations"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "41a21a88d175a4fe2d02c0dd8dc163c471af1c4544278d1e0c8e02b17fd4f0e6",
       "requires": {
         "apps": []
       }
@@ -734,6 +995,15 @@
         "teams/advisor/skills/habit-architect/SKILL.md",
         "teams/advisor/skills/weekly-review/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "advisor",
+          "name": "Advisor",
+          "summary": "A sounding board for decisions, plans, and the admin of life"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "4bb2ef2f8ebd62df0c86dc2da95b92341da45cfcc3ac5b6249fc9172b776e8c8",
       "requires": {
         "apps": []
       }
@@ -751,6 +1021,15 @@
       "skills": [
         "teams/beautiful-mermaid/skills/diagram-architect/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "beautiful-mermaid",
+          "name": "Beautiful Mermaid",
+          "summary": "Flowcharts, sequence, state, class and ER diagrams rendered as clean SVG or ASCII"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "d137d3a5e1c7cc00ca4a66c4b3f136474e41d824449786d104b3acc784094c8b",
       "requires": {
         "apps": []
       }
@@ -770,6 +1049,15 @@
         "teams/book-copy-editor/skills/line-editor/SKILL.md",
         "teams/book-copy-editor/skills/proofreading/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "book-copy-editor",
+          "name": "The Copy Editor",
+          "summary": "Line-level correctness and consistency across a whole manuscript"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "97bdb7246885741e624e4a69318f389f77b8b59be9715e30c53c07405049bfc9",
       "requires": {
         "apps": []
       }
@@ -788,6 +1076,15 @@
         "teams/book-developmental-editor/skills/developmental-editor/SKILL.md",
         "teams/book-developmental-editor/skills/structural-editing/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "book-developmental-editor",
+          "name": "The Developmental Editor",
+          "summary": "Structural editing that says exactly what is wrong and where"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "ca95b94fb2a92ca824e2a533319d29c65557a53edc332a2efde7d6ca2333437f",
       "requires": {
         "apps": []
       }
@@ -808,6 +1105,15 @@
         "teams/book-nonfiction-architect/skills/creative-nonfiction/SKILL.md",
         "teams/book-nonfiction-architect/skills/book-outliner/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "book-nonfiction-architect",
+          "name": "Non-Fiction Architect",
+          "summary": "Owns the argument, chapter plan and drafts of a non-fiction book"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "5be8092aed2ac4f127fa17b461e4078329599cb7ea8708e38b93fae5bef6dcf1",
       "requires": {
         "apps": []
       }
@@ -825,6 +1131,15 @@
       "skills": [
         "teams/book-production/skills/self-publishing-guide/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "book-production",
+          "name": "Production and Publishing",
+          "summary": "Turns a copy-clean manuscript into the package a store will accept"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "997c53a183d83ead285a6723c8737e3cde43c93144944c6d0e63c78937625cab",
       "requires": {
         "apps": []
       }
@@ -844,6 +1159,15 @@
         "teams/book-publisher/skills/write-technical-book/SKILL.md",
         "teams/book-publisher/skills/traditional-publishing/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "book-publisher",
+          "name": "The Publisher",
+          "summary": "The on-ramp for a book: scopes the brief, then stands up the right team"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "fb64806b75f54c308c24a300f8173ce3f8cbda541a05289df50bc1fe763a9708",
       "requires": {
         "apps": []
       }
@@ -866,6 +1190,15 @@
         "teams/book-story-architect/skills/story-pitch/SKILL.md",
         "teams/book-story-architect/skills/story-writer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "book-story-architect",
+          "name": "Story Architect",
+          "summary": "Fiction planning and drafting lead: outline, story bible and chapters"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "3b9de87ef84cb41a66f541cdb0a8ed19277bb436d01e7bc9c34ed3601e3db398",
       "requires": {
         "apps": []
       }
@@ -895,6 +1228,15 @@
         "teams/builder/skills/prompt-engineering/SKILL.md",
         "teams/builder/skills/ai-prompt-crafter/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "builder",
+          "name": "Builder",
+          "summary": "Code, scripts and automations — including the bots and skills you build next"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "145028e793abaf69de9b68d2707ed23277016680817031887958c88fa066248b",
       "requires": {
         "apps": []
       }
@@ -910,6 +1252,15 @@
       "readme": "teams/cli-setup/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "cli-setup",
+          "name": "CLI Setup Expert",
+          "summary": "Installs, authenticates and connects coding-agent CLIs as backends"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "1e45ed2b819bcec43af4c26c016366deaef4a438fdfe34fba49e3c8e358903ab",
       "requires": {
         "apps": []
       }
@@ -917,9 +1268,9 @@
     {
       "slug": "concierge",
       "name": "Concierge",
-      "summary": "You are **Concierge**, the bot someone talks to when they do not want to pick a bot. You work out what the person actually needs, answer it yourself when it is small, and hand it to the right specialist when it is not.",
+      "summary": "Concierge is a Murage Guide: explain product setup and navigation using current, visible facts. Preserve the existing Chief and owner control; a guide is not an automatic coordinator or permission to change settings.",
       "category": "Everyday",
-      "outcome": "One place to start, instead of a gallery of bots nobody reads",
+      "outcome": "Clear steps for the user's Murage version and surface",
       "setupMinutes": 2,
       "manifest": "teams/concierge/concierge.emberteam.json",
       "readme": "teams/concierge/README.md",
@@ -929,8 +1280,18 @@
         "teams/concierge/skills/task-delegation-system/SKILL.md",
         "teams/concierge/skills/task-prioritization/SKILL.md",
         "teams/concierge/skills/critical-thinker/SKILL.md",
-        "teams/concierge/skills/creative-problem-solver/SKILL.md"
+        "teams/concierge/skills/creative-problem-solver/SKILL.md",
+        "teams/concierge/skills/concierge/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "concierge",
+          "name": "Concierge",
+          "summary": "Murage product help grounded in the version and surface you are using"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "d813d9e967e146168d3f4edd6daeb1c502c37ad0add58ac96705777da2d423c8",
       "requires": {
         "apps": []
       }
@@ -946,6 +1307,15 @@
       "readme": "teams/cowork/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "cowork",
+          "name": "Cowork",
+          "summary": "Outcome-oriented knowledge work: useful, editable, verifiable output"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "c9a6fb195cc40f48d4a563ae5f63f413593cfdb18ea9bcb64b44c1ae8e42ae43",
       "requires": {
         "apps": []
       }
@@ -972,6 +1342,15 @@
         "teams/creator/skills/instagram-caption/SKILL.md",
         "teams/creator/skills/logo-design-brief/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "creator",
+          "name": "Creator",
+          "summary": "Images, video and social content — from the prompt to the finished post"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "a8ee5f241b9f28fa332cfbc0b7d3d37ade537d00b356a6f69317aa4b672ffb1b",
       "requires": {
         "apps": []
       }
@@ -992,6 +1371,15 @@
         "teams/dashboard-creator/skills/bi-dashboard-spec/SKILL.md",
         "teams/dashboard-creator/skills/csv-transformer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "dashboard-creator",
+          "name": "Dashboard Creator",
+          "summary": "Turns CSVs and tabular data into formula-driven Excel dashboards"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "096ffbd995b0da6d88714b14fdb8180bb6b9ade05cd4f6c5ed35320432ece429",
       "requires": {
         "apps": []
       }
@@ -999,9 +1387,9 @@
     {
       "slug": "excel-creator",
       "name": "Excel Creator",
-      "summary": "You are **Excel Creator** - an AI assistant that creates, edits, and analyzes professional Excel spreadsheets using officecli.",
+      "summary": "Turn supplied rows into a cleaned table, formula plan or checked workbook. Native Excel output depends on available file, calculation and rendering tools; pasted-data work needs no account connection.",
       "category": "Spreadsheets",
-      "outcome": "A professional .xlsx workbook",
+      "outcome": "Cleaned table with assumptions and reconciliation checks",
       "setupMinutes": 3,
       "manifest": "teams/excel-creator/excel-creator.emberteam.json",
       "readme": "teams/excel-creator/README.md",
@@ -1012,6 +1400,15 @@
         "teams/excel-creator/skills/conditional-formatting-rules/SKILL.md",
         "teams/excel-creator/skills/data-validation-setup/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "excel-creator",
+          "name": "Excel Creator",
+          "summary": "Clean supplied data, explain calculations and build checked spreadsheets"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "8f3fc65276c60bb70d2d805d0dd3d54e306cd56ddcd4abbac0184def5eeb5a3d",
       "requires": {
         "apps": []
       }
@@ -1040,6 +1437,15 @@
         "teams/explainer/skills/how-to-guide/SKILL.md",
         "teams/explainer/skills/homework-help-strategies/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "explainer",
+          "name": "Explainer",
+          "summary": "Explains things properly — like you're smart but new, not like you're twelve"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "5e8f1b3811fe00e4e4a812d1f543ef037d86d1f041349c3a88acc3020c5140da",
       "requires": {
         "apps": []
       }
@@ -1060,6 +1466,15 @@
         "teams/financial-model-creator/skills/excel-lookup-formulas/SKILL.md",
         "teams/financial-model-creator/skills/spreadsheet-model-audit/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "financial-model-creator",
+          "name": "Financial Model Creator",
+          "summary": "Builds formula-driven, multi-sheet financial models from your assumptions"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "545ea492543189615a1d841672280d8d8970d05d5a4f1913676aca92538d3aa1",
       "requires": {
         "apps": []
       }
@@ -1075,6 +1490,15 @@
       "readme": "teams/game-3d/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "game-3d",
+          "name": "3D Star Adventure",
+          "summary": "Generates a complete, runnable Three.js 3D platformer in one HTML file"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "242afcbfecdbbb21f10868c3980a9fdbfe9cdc2a3b172770be4e49acf42ff4de",
       "requires": {
         "apps": []
       }
@@ -1092,6 +1516,15 @@
       "skills": [
         "teams/human-3-coach/skills/life-coach/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "human-3-coach",
+          "name": "HUMAN 3.0 Development Coach",
+          "summary": "Holistic development coaching across Mind, Body, Spirit and Vocation"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "3e8f1102db965b89e97ad64f1922b4ada7f1df2e9574313d45788651d8e6138f",
       "requires": {
         "apps": []
       }
@@ -1119,6 +1552,15 @@
         "teams/ignition/skills/landing-page-copy/SKILL.md",
         "teams/ignition/skills/paid-ad-copy/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "ignition",
+          "name": "IGNITION",
+          "summary": "Takes a total beginner from blank page to one live income asset in 7 days"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "bd58f157c02bc001223cff5c875fc8767944fc5d012f4053b5c60bcd8cb2090a",
       "requires": {
         "apps": []
       }
@@ -1134,6 +1576,15 @@
       "readme": "teams/moltbook-skills/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "moltbook-skills",
+          "name": "Moltbook Skills",
+          "summary": "Posts, comments, upvotes and communities on the Moltbook agent network"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "090f71935460c29252252706aa26a26c9efcf3fb1d26ca21776560ab43f9a249",
       "requires": {
         "apps": []
       }
@@ -1149,6 +1600,15 @@
       "readme": "teams/moltbook/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "moltbook",
+          "name": "Moltbook Assistant",
+          "summary": "Registers and runs an AI agent on the Moltbook social network"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "93a28c352df1d5a78412baa0cefa2576866347f64481c678f367edf178fc0d7b",
       "requires": {
         "apps": []
       }
@@ -1164,6 +1624,15 @@
       "readme": "teams/morph-ppt-3d/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "morph-ppt-3d",
+          "name": "3D Morph PPT",
+          "summary": "Turns GLB 3D models into cinematic Morph-transition presentations"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "8003c429404f4be60e06451f70bd6c71eeb23fa2dcb6084632c2e6a879472d44",
       "requires": {
         "apps": []
       }
@@ -1179,6 +1648,15 @@
       "readme": "teams/morph-ppt/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "morph-ppt",
+          "name": "Morph PPT",
+          "summary": "Creates Morph-animated presentations that actually look designed"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "f70c605d80d51422721d0164f029c7472a37a9f5fbe523ac391e64229d884003",
       "requires": {
         "apps": []
       }
@@ -1201,6 +1679,15 @@
         "teams/pitch-deck-creator/skills/slide-deck-structure/SKILL.md",
         "teams/pitch-deck-creator/skills/startup-pitch-narrative/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "pitch-deck-creator",
+          "name": "Pitch Deck Creator",
+          "summary": "Builds a professional pitch deck from scratch"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "a873e09482c70c5080f5685d717e9cabc7680a611197fe33b587553bb55b0887",
       "requires": {
         "apps": []
       }
@@ -1216,6 +1703,15 @@
       "readme": "teams/planning-with-files/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "planning-with-files",
+          "name": "Planning with Files",
+          "summary": "File-based planning: persistent markdown as working memory on disk"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "6b98d383bca237edf04b33a136190d4f081b8e5251534411d85450c697c714be",
       "requires": {
         "apps": []
       }
@@ -1231,6 +1727,15 @@
       "readme": "teams/ppt-creator/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "ppt-creator",
+          "name": "PPT Creator",
+          "summary": "Creates, edits and analyzes professional PowerPoint presentations"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "a5fb6fd59205a8a79de43f483fc1bd7a7aa805dd84b870e15ffb76f95eb377b8",
       "requires": {
         "apps": []
       }
@@ -1259,6 +1764,15 @@
         "teams/researcher/skills/competitive-intelligence/SKILL.md",
         "teams/researcher/skills/industry-research-framework/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "researcher",
+          "name": "Researcher",
+          "summary": "Finds the real answer and shows you where it came from"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "b3551d58f6925a8a7bcd1e497fb3dabc24020dbeb7b550cbb2341ebb5b09df84",
       "requires": {
         "apps": [
           "Tavily"
@@ -1288,6 +1802,15 @@
         "teams/smart-trader/skills/porting-pine-versions/SKILL.md",
         "teams/smart-trader/skills/rebuild-from-screenshot/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "smart-trader",
+          "name": "Smart Trader",
+          "summary": "Reads your own charts and runs a pre-open watchlist brief — never trades"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "3e7ffe9eb92a8aee853d5128881af372821bc384e5ba96e7127c556fb3dbf43d",
       "requires": {
         "apps": []
       }
@@ -1303,6 +1826,15 @@
       "readme": "teams/star-office-helper/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "star-office-helper",
+          "name": "Star Office Helper",
+          "summary": "Installs and connects a local visualization companion to the preview panel"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "0a7760721e0907c1db1c7377608616a3719c5af51410080c6b27eb00eab33238",
       "requires": {
         "apps": []
       }
@@ -1322,6 +1854,15 @@
         "teams/story-roleplay/skills/world-building/SKILL.md",
         "teams/story-roleplay/skills/dialogue-writing/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "story-roleplay",
+          "name": "Story Roleplay",
+          "summary": "Immersive roleplay, compatible with SillyTavern character cards and world info"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "59aa0d0e12b23e9d992dfe634c94b84129cb09c6f434ace9465a7e624161f68b",
       "requires": {
         "apps": []
       }
@@ -1337,6 +1878,15 @@
       "readme": "teams/ui-ux-pro-max/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "ui-ux-pro-max",
+          "name": "UI/UX Pro Max",
+          "summary": "Design intelligence: styles, palettes, font pairings and UX guidelines on tap"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "8b632f807856f5eb337e60b10425f01acbe985550894c4f8e7e97f91616f0cca",
       "requires": {
         "apps": []
       }
@@ -1352,6 +1902,15 @@
       "readme": "teams/word-creator/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "word-creator",
+          "name": "Word Creator",
+          "summary": "Creates, edits and analyzes professional Word documents"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "4dc708c2d4e6348a6d90fcecc4847634d187a86e5aaae965f4e09e1d30f626dd",
       "requires": {
         "apps": []
       }
@@ -1367,6 +1926,15 @@
       "readme": "teams/word-form-creator/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "word-form-creator",
+          "name": "Word Form Creator",
+          "summary": "Builds fillable Word forms with real content controls and protection"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "f8d7b5445056da462a02bd27931fe3058550dd5ad122abb1f560c1343b0dbec9",
       "requires": {
         "apps": []
       }
@@ -1394,6 +1962,15 @@
         "teams/writer/skills/blog-post-writing/SKILL.md",
         "teams/writer/skills/newsletter-writing/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "writer",
+          "name": "Writer",
+          "summary": "Fixes the thing you already wrote — and drafts the thing you have not"
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "c3cd043f473ba6a1728a3fb8a7659b19db62b1bf97a4c8ae022e8a57c6c3cd72",
       "requires": {
         "apps": []
       }
@@ -1411,6 +1988,24 @@
       "readme": "teams/100x-marketing/README.md",
       "members": 4,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "positioning-brief",
+          "name": "Positioning Brief",
+          "summary": "Create a sharp, evidence-aware position for one audience and buying situation."
+        },
+        {
+          "key": "campaign-sprint",
+          "name": "Campaign Sprint",
+          "summary": "Turn one growth bet into a focused campaign with assets, distribution, ownership, and measurement."
+        },
+        {
+          "key": "experiment-review",
+          "name": "Experiment Review",
+          "summary": "Review a growth experiment and make an evidence-based stop, iterate, or scale decision."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": [
           "Google Sheets",
@@ -1460,6 +2055,29 @@
         "teams/ad-account-mechanic/skills/go-to-market-strategy/SKILL.md",
         "teams/ad-account-mechanic/skills/community-led-growth/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1508,6 +2126,29 @@
         "teams/affiliate-site-engine/skills/saas-metrics-analyst/SKILL.md",
         "teams/affiliate-site-engine/skills/conversion-rate-optimizer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1551,6 +2192,29 @@
         "teams/back-office-crew/skills/coin-unit-economics/SKILL.md",
         "teams/back-office-crew/skills/coin-pricing-math/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1590,6 +2254,29 @@
         "teams/bootstrap-profit/skills/sales-objection-handling/SKILL.md",
         "teams/bootstrap-profit/skills/sales-close-and-next-step/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1624,6 +2311,29 @@
         "teams/caption-carousel-studio/skills/customer-persona/SKILL.md",
         "teams/caption-carousel-studio/skills/competitive-analysis/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1671,6 +2381,29 @@
         "teams/cohort-ops-control-tower/skills/saas-metrics-analyst/SKILL.md",
         "teams/cohort-ops-control-tower/skills/conversion-rate-optimizer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1702,6 +2435,24 @@
         "teams/cold-outbound/skills/sales-objection-handling/SKILL.md",
         "teams/cold-outbound/skills/sales-close-and-next-step/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1736,6 +2487,29 @@
         "teams/cold-pitch-bench/skills/copy-awareness-stages/SKILL.md",
         "teams/cold-pitch-bench/skills/copy-hook-craft/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1780,6 +2554,29 @@
         "teams/comparison-roundup-builder/skills/scalability-architect/SKILL.md",
         "teams/comparison-roundup-builder/skills/search-system-architect/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        },
+        {
+          "key": "smith",
+          "name": "Code",
+          "summary": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1797,6 +2594,19 @@
       "readme": "teams/competitor-watch/README.md",
       "members": 2,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "change-detection",
+          "name": "Material Change Detection",
+          "summary": "Record only meaningful public changes with dated evidence and confidence."
+        },
+        {
+          "key": "decision-brief",
+          "name": "Competitive Decision Brief",
+          "summary": "Turn verified changes into a calm watch, investigate, respond, or ignore decision."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": [
           "Google Sheets"
@@ -1844,6 +2654,29 @@
         "teams/content-refresh-crew/skills/proofreading/SKILL.md",
         "teams/content-refresh-crew/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1883,6 +2716,29 @@
         "teams/content-studio/skills/proofreading/SKILL.md",
         "teams/content-studio/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1923,6 +2779,29 @@
         "teams/creator-studio/skills/online-academy-builder/SKILL.md",
         "teams/creator-studio/skills/curriculum-designer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "spark",
+          "name": "Build",
+          "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -1967,6 +2846,29 @@
         "teams/customer-success-org/skills/cold-outreach-sequence/SKILL.md",
         "teams/customer-success-org/skills/follow-up-sequences/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2002,6 +2904,29 @@
         "teams/daily-briefing/skills/sales-objection-handling/SKILL.md",
         "teams/daily-briefing/skills/sales-close-and-next-step/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "helm",
+          "name": "Coach",
+          "summary": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2036,6 +2961,29 @@
         "teams/damage-control/skills/mira-visual-system/SKILL.md",
         "teams/damage-control/skills/mira-presentation-design/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2080,6 +3028,29 @@
         "teams/dev-shop/skills/sentry-contracts-and-terms/SKILL.md",
         "teams/dev-shop/skills/sentry-ip-and-compliance/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "smith",
+          "name": "Code",
+          "summary": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        },
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2126,6 +3097,34 @@
         "teams/ecommerce-engine/skills/process-mapping/SKILL.md",
         "teams/ecommerce-engine/skills/sop-creation/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "vault",
+          "name": "Storefront",
+          "summary": "Storefront specialist - DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2178,6 +3177,34 @@
         "teams/editorial-newsroom/skills/saas-metrics-analyst/SKILL.md",
         "teams/editorial-newsroom/skills/conversion-rate-optimizer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2226,6 +3253,29 @@
         "teams/email-lifecycle-crew/skills/customer-persona/SKILL.md",
         "teams/email-lifecycle-crew/skills/competitive-analysis/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2243,6 +3293,24 @@
       "readme": "teams/engineering/README.md",
       "members": 4,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "architecture-decision",
+          "name": "Architecture Decision",
+          "summary": "Record a focused technical decision with context, alternatives, tradeoffs, and follow-up."
+        },
+        {
+          "key": "implementation-plan",
+          "name": "Implementation Plan",
+          "summary": "Convert a requested outcome into sequenced engineering work with ownership and verification."
+        },
+        {
+          "key": "release-readiness",
+          "name": "Release Readiness",
+          "summary": "Decide whether a change is ready to ship using evidence, risk, rollback, and communication."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": [
           "GitHub"
@@ -2273,6 +3341,29 @@
         "teams/fine-print-guard/skills/copy-awareness-stages/SKILL.md",
         "teams/fine-print-guard/skills/copy-hook-craft/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2314,6 +3405,29 @@
         "teams/first-customers/skills/go-to-market-strategy/SKILL.md",
         "teams/first-customers/skills/community-led-growth/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2347,6 +3461,29 @@
         "teams/founder-setup/skills/cold-outreach-sequence/SKILL.md",
         "teams/founder-setup/skills/follow-up-sequences/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2381,6 +3518,29 @@
         "teams/fundraise/skills/copy-awareness-stages/SKILL.md",
         "teams/fundraise/skills/copy-hook-craft/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "stage",
+          "name": "Pitch",
+          "summary": "Pitch specialist - investor decks, strategic narrative, and demo-day craft via Sequoia + Andy Raskin's shift framing."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2426,6 +3586,24 @@
         "teams/growth-loop/skills/go-to-market-strategy/SKILL.md",
         "teams/growth-loop/skills/community-led-growth/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2464,6 +3642,29 @@
         "teams/hook-lab/skills/mira-visual-system/SKILL.md",
         "teams/hook-lab/skills/mira-presentation-design/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2481,6 +3682,19 @@
       "readme": "teams/inbox-follow-up/README.md",
       "members": 2,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "follow-up-triage",
+          "name": "Follow-up Triage",
+          "summary": "Identify only the conversations where your team genuinely owes the next step."
+        },
+        {
+          "key": "specific-follow-up",
+          "name": "Specific Follow-up",
+          "summary": "Draft a concise follow-up that preserves the real context and offers an easy next step."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": [
           "Gmail",
@@ -2524,6 +3738,29 @@
         "teams/info-product-launch/skills/go-to-market-strategy/SKILL.md",
         "teams/info-product-launch/skills/community-led-growth/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "spark",
+          "name": "Build",
+          "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2562,6 +3799,29 @@
         "teams/lead-gen-outbound/skills/process-mapping/SKILL.md",
         "teams/lead-gen-outbound/skills/sop-creation/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2603,6 +3863,29 @@
         "teams/lead-magnet-forge/skills/go-to-market-strategy/SKILL.md",
         "teams/lead-magnet-forge/skills/community-led-growth/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2648,6 +3931,29 @@
         "teams/lesson-scripting-crew/skills/tone-adjustment/SKILL.md",
         "teams/lesson-scripting-crew/skills/audience-analysis/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "spark",
+          "name": "Build",
+          "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "helm",
+          "name": "Coach",
+          "summary": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition."
+        },
+        {
+          "key": "humanizer",
+          "name": "Humanizer",
+          "summary": "Catches AI-tells in your drafts and rewrites them to read human. Diagnose first, then rewrite for rhythm and vocabulary. Plugs into your Voiceprint file so the result sounds like you, not a model."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2693,6 +3999,29 @@
         "teams/link-disclosure-custodian/skills/scalability-architect/SKILL.md",
         "teams/link-disclosure-custodian/skills/search-system-architect/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        },
+        {
+          "key": "smith",
+          "name": "Code",
+          "summary": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2735,6 +4064,29 @@
         "teams/listing-forge/skills/proofreading/SKILL.md",
         "teams/listing-forge/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "vault",
+          "name": "Storefront",
+          "summary": "Storefront specialist - DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2780,6 +4132,29 @@
         "teams/local-seo-reviews/skills/process-mapping/SKILL.md",
         "teams/local-seo-reviews/skills/sop-creation/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2832,6 +4207,34 @@
         "teams/marketing-agency/skills/saas-metrics-analyst/SKILL.md",
         "teams/marketing-agency/skills/conversion-rate-optimizer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2900,6 +4303,49 @@
         "teams/marketing-strategy/skills/proofreading/SKILL.md",
         "teams/marketing-strategy/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2942,6 +4388,29 @@
         "teams/offer-vetting-desk/skills/proofreading/SKILL.md",
         "teams/offer-vetting-desk/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -2988,6 +4457,29 @@
         "teams/paid-ads-war-room/skills/go-to-market-strategy/SKILL.md",
         "teams/paid-ads-war-room/skills/community-led-growth/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3032,6 +4524,34 @@
         "teams/pre-mortem-room/skills/copy-awareness-stages/SKILL.md",
         "teams/pre-mortem-room/skills/copy-hook-craft/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3064,6 +4584,29 @@
         "teams/pricing-tribunal/skills/mira-visual-system/SKILL.md",
         "teams/pricing-tribunal/skills/mira-presentation-design/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3108,6 +4651,34 @@
         "teams/product-launch/skills/sales-objection-handling/SKILL.md",
         "teams/product-launch/skills/sales-close-and-next-step/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3154,6 +4725,29 @@
         "teams/promo-calendar-war-room/skills/cold-outreach-sequence/SKILL.md",
         "teams/promo-calendar-war-room/skills/follow-up-sequences/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3206,6 +4800,39 @@
         "teams/quiet-money-council/skills/investment-fee-analyzer/SKILL.md",
         "teams/quiet-money-council/skills/retirement-savings-calculator/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money-position-auditor",
+          "name": "Position Auditor",
+          "summary": "Layer 1 specialist - extracts complete financial snapshot (income, spend, savings, debt, equity, insurance, jurisdiction) into quiet-money/position.md."
+        },
+        {
+          "key": "quiet-money-career-strategist",
+          "name": "Career Strategist",
+          "summary": "Layer C specialist - trajectory check, market value calibration, skill stack, switching cost, negotiation reps. Salary as the highest-leverage financial instrument."
+        },
+        {
+          "key": "quiet-money-spending-auditor",
+          "name": "Spending Auditor",
+          "summary": "Layer S specialist - 3-bucket spending (Foundations/Joy/Signal), lifestyle ratchet defense, annual Spending Audit, no-one-knows test."
+        },
+        {
+          "key": "quiet-money-windfall-navigator",
+          "name": "Windfall Navigator",
+          "summary": "Layer W specialist - 5 protocols for sudden money, income shock, divorce, health shock, sudden expense. The 12-month rule for windfalls."
+        },
+        {
+          "key": "quiet-money-generational-planner",
+          "name": "Generational Planner",
+          "summary": "Layer G specialist - term life + will + guardians + education vehicle + beneficiaries + disability. The will-and-guardian decision is non-deferrable."
+        },
+        {
+          "key": "quiet-money-time-coach",
+          "name": "Time Coach",
+          "summary": "Layer T specialist - hourly cost, conversion test, weekly Friday question, annual deathbed audit. Wealth is time you control."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3230,6 +4857,15 @@
         "teams/quiet-money-standing/skills/financial-kpis/SKILL.md",
         "teams/quiet-money-standing/skills/compensation-benchmarking/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "quiet-money",
+          "name": "Quiet Money",
+          "summary": "Personal wealth coach - builds real durable wealth via the boring path. Anti-guru, anti-urgency, pro-math. Educational only; not financial advice."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "cedd8f7a58ac5a591511c7a4817e74a292a5f0d75ec20fe8205c3c5dbc4e0f39",
       "requires": {
         "apps": []
       }
@@ -3247,6 +4883,19 @@
       "readme": "teams/reddit-lead-miner/README.md",
       "members": 2,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "lead-qualification",
+          "name": "Evidence-Based Lead Qualification",
+          "summary": "Score public conversations by ICP fit, problem strength, intent, timing, and confidence."
+        },
+        {
+          "key": "safe-outreach",
+          "name": "Context-First Outreach",
+          "summary": "Draft a helpful reply or follow-up without spam, deception, or automatic sending."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": [
           "Reddit",
@@ -3288,6 +4937,29 @@
         "teams/reply-desk/skills/customer-persona/SKILL.md",
         "teams/reply-desk/skills/competitive-analysis/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3334,6 +5006,29 @@
         "teams/repurpose-engine/skills/tone-adjustment/SKILL.md",
         "teams/repurpose-engine/skills/audience-analysis/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "humanizer",
+          "name": "Humanizer",
+          "summary": "Catches AI-tells in your drafts and rewrites them to read human. Diagnose first, then rewrite for rhythm and vocabulary. Plugs into your Voiceprint file so the result sounds like you, not a model."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3372,6 +5067,29 @@
         "teams/review-article-factory/skills/sentry-contracts-and-terms/SKILL.md",
         "teams/review-article-factory/skills/sentry-ip-and-compliance/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        },
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3415,6 +5133,29 @@
         "teams/review-engine/skills/proofreading/SKILL.md",
         "teams/review-engine/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3453,6 +5194,29 @@
         "teams/saas-mvp-sprint/skills/mira-visual-system/SKILL.md",
         "teams/saas-mvp-sprint/skills/mira-presentation-design/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "smith",
+          "name": "Code",
+          "summary": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent."
+        },
+        {
+          "key": "probe",
+          "name": "Validator",
+          "summary": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3499,6 +5263,29 @@
         "teams/sales-org/skills/saas-metrics-analyst/SKILL.md",
         "teams/sales-org/skills/conversion-rate-optimizer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3534,6 +5321,24 @@
         "teams/sales-pipeline/skills/pricing-strategy-audit/SKILL.md",
         "teams/sales-pipeline/skills/sales-proposal/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3584,6 +5389,29 @@
         "teams/seo-content-engine/skills/proofreading/SKILL.md",
         "teams/seo-content-engine/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "spark",
+          "name": "Build",
+          "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3601,6 +5429,24 @@
       "readme": "teams/seo-growth/README.md",
       "members": 4,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "keyword-opportunity-map",
+          "name": "Keyword Opportunity Map",
+          "summary": "Build an evidence-based map of search topics, intent, gaps, and priorities."
+        },
+        {
+          "key": "technical-seo-triage",
+          "name": "Technical SEO Triage",
+          "summary": "Turn crawl and indexing evidence into reproducible, severity-ranked findings."
+        },
+        {
+          "key": "content-brief",
+          "name": "Content Brief",
+          "summary": "Create a search-informed content brief that is useful to readers and specific to the business."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": [
           "Google Sheets"
@@ -3646,6 +5492,29 @@
         "teams/service-studio/skills/cold-outreach-sequence/SKILL.md",
         "teams/service-studio/skills/follow-up-sequences/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3661,6 +5530,24 @@
       "readme": "teams/starter-business-team/README.md",
       "members": 3,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "team-brief",
+          "name": "Turn notes into a brief",
+          "summary": "Define a shared outcome without assuming access to team systems."
+        },
+        {
+          "key": "team-delivery",
+          "name": "Build the first draft",
+          "summary": "Create one bounded deliverable from the agreed brief."
+        },
+        {
+          "key": "team-review",
+          "name": "Review against the brief",
+          "summary": "Check requirements and evidence before handoff."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3668,7 +5555,7 @@
     {
       "slug": "starter-personal-home",
       "name": "Personal / Home",
-      "summary": "A small starting setup for household tasks, appointments and personal projects. Start with pasted notes; connected apps are optional. Home Planner is a suggested coordinator, never permission to replace an existing Chief or act on your behalf.",
+      "summary": "A personal assistant starting setup for household tasks, appointments and personal projects. Start with pasted commitments and notes; connected apps are optional. Home Planner is a suggested coordinator, never permission to replace an existing Chief or act on your behalf.",
       "category": "Starter",
       "outcome": "A prioritized plan from your notes",
       "setupMinutes": 2,
@@ -3676,6 +5563,15 @@
       "readme": "teams/starter-personal-home/README.md",
       "members": 1,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "home-plan",
+          "name": "Plan from my notes",
+          "summary": "Make a useful household plan from user-provided information."
+        }
+      ],
+      "adaptable": true,
+      "profileReviewHash": "c59e5047f7ad7986dc125b79dc4dff2fa8fc8bbbcd2806cb60795e5a6113a7d7",
       "requires": {
         "apps": []
       }
@@ -3691,6 +5587,19 @@
       "readme": "teams/starter-solo-business/README.md",
       "members": 2,
       "skills": [],
+      "playbooks": [
+        {
+          "key": "business-next-step",
+          "name": "Choose the next deliverable",
+          "summary": "Prioritize from a supplied goal, task list and available time."
+        },
+        {
+          "key": "business-draft",
+          "name": "Draft from supplied facts",
+          "summary": "Create a reviewable draft without publishing it."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3740,6 +5649,29 @@
         "teams/student-support-desk/skills/okr-builder/SKILL.md",
         "teams/student-support-desk/skills/scenario-planning/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        },
+        {
+          "key": "helm",
+          "name": "Coach",
+          "summary": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3773,6 +5705,24 @@
         "teams/support-stack/skills/copy-awareness-stages/SKILL.md",
         "teams/support-stack/skills/copy-hook-craft/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "mend",
+          "name": "Support",
+          "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework."
+        },
+        {
+          "key": "patch",
+          "name": "Ops",
+          "summary": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3806,6 +5756,29 @@
         "teams/template-factory/skills/sales-objection-handling/SKILL.md",
         "teams/template-factory/skills/sales-close-and-next-step/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "spark",
+          "name": "Build",
+          "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3844,6 +5817,29 @@
         "teams/trend-desk/skills/proofreading/SKILL.md",
         "teams/trend-desk/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "mira",
+          "name": "Brand",
+          "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3883,6 +5879,24 @@
         "teams/validate-before-build/skills/pricing-strategy-audit/SKILL.md",
         "teams/validate-before-build/skills/sales-proposal/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "probe",
+          "name": "Validator",
+          "summary": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "forge",
+          "name": "Offer",
+          "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3928,6 +5942,29 @@
         "teams/validation-cell/skills/saas-metrics-analyst/SKILL.md",
         "teams/validation-cell/skills/conversion-rate-optimizer/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "probe",
+          "name": "Validator",
+          "summary": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn."
+        },
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "copy",
+          "name": "Copy",
+          "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -3973,6 +6010,34 @@
         "teams/war-room/skills/sales-objection-handling/SKILL.md",
         "teams/war-room/skills/sales-close-and-next-step/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "helm",
+          "name": "Coach",
+          "summary": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "beacon",
+          "name": "Channels",
+          "summary": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework."
+        },
+        {
+          "key": "sentry",
+          "name": "Counsel",
+          "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one."
+        },
+        {
+          "key": "sales",
+          "name": "Sales",
+          "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }
@@ -4018,6 +6083,29 @@
         "teams/winning-product-war-room/skills/proofreading/SKILL.md",
         "teams/winning-product-war-room/skills/weighted-decision-matrix/SKILL.md"
       ],
+      "playbooks": [
+        {
+          "key": "research",
+          "name": "Research",
+          "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method."
+        },
+        {
+          "key": "lens",
+          "name": "Analyst",
+          "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor."
+        },
+        {
+          "key": "coin",
+          "name": "Numbers",
+          "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame."
+        },
+        {
+          "key": "verdict",
+          "name": "Quality Gate",
+          "summary": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite."
+        }
+      ],
+      "adaptable": false,
       "requires": {
         "apps": []
       }

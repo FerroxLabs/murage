@@ -1,4 +1,7 @@
 {
+  "providerError.payment.title": "Paiement ou accès au compte du fournisseur requis",
+  "providerError.payment.summary": "Le fournisseur a rejeté cette requête avec le code HTTP 402. Cette réponse ne prouve pas que les crédits sont épuisés.",
+  "providerError.payment.resolution": "Avant de réessayer, vérifiez la facturation et les accès au compte et au modèle sélectionné du fournisseur, y compris les paramètres de votre propre clé API (BYOK).",
   "claudeAccounts.added": "Compte ajouté. Connectez-vous explicitement ci-dessous, puis sélectionnez ce compte dans le sélecteur de modèles. Les choix actuels des bots restent inchangés.",
   "claudeAccounts.removed": "Retiré de Murage. La connexion et les fichiers d’identifiants ont été conservés.",
   "claudeAccounts.saved": "Paramètres du compte enregistrés.",

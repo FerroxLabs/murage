@@ -75,6 +75,13 @@ export interface TeamCatalogEntry {
   readme: string;
   members: number;
   skills: string[];
+  /** Reviewed, package-authored guidance assigned to agents. This is not an
+   * executable skill, connection, permission, or schedule. */
+  playbooks: Array<{ key: string; name: string; summary: string }>;
+  /** False means this catalogue entry needs the reviewed add-team flow. */
+  adaptable?: boolean;
+  /** Hash of the effective single-agent source shown to an intake card. */
+  profileReviewHash?: string;
   requires: { apps: string[] };
 }
 
@@ -114,6 +121,19 @@ function relativeFile(value: unknown, field: string, suffix: string, prefix: str
 function stringList(value: unknown, field: string, maxItems: number): string[] {
   if (!Array.isArray(value) || value.length > maxItems) throw new Error(`${field} is invalid`);
   return value.map((item, index) => text(item, `${field}[${index}]`, 100));
+}
+
+function catalogPlaybooks(value: unknown, field: string): Array<{ key: string; name: string; summary: string }> {
+  if (!Array.isArray(value) || value.length > 80) throw new Error(`${field} is invalid`);
+  const keys = new Set<string>();
+  return value.map((raw, index) => {
+    const item = `${field}[${index}]`;
+    if (!isRecord(raw)) throw new Error(`${item} is invalid`);
+    const key = text(raw.key, `${item}.key`, 80);
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(key) || keys.has(key)) throw new Error(`${item}.key is invalid`);
+    keys.add(key);
+    return { key, name: text(raw.name, `${item}.name`, 100), summary: text(raw.summary, `${item}.summary`, 300) };
+  });
 }
 
 /** Validate the remotely maintained index before any of it reaches the renderer. */
@@ -159,6 +179,11 @@ export function parseTeamCatalog(value: unknown): TeamCatalog {
             relativeFile(skill, `${field}.skills[${skillIndex}]`, "SKILL.md", `${prefix}skills/`),
           )
         : (() => { throw new Error(`${field}.skills is invalid`); })(),
+      playbooks: catalogPlaybooks(raw.playbooks ?? [], `${field}.playbooks`),
+      ...(typeof raw.adaptable === "boolean" ? { adaptable: raw.adaptable } : {}),
+      ...(typeof raw.profileReviewHash === "string" && /^[a-f0-9]{64}$/.test(raw.profileReviewHash)
+        ? { profileReviewHash: raw.profileReviewHash }
+        : {}),
       requires: { apps: stringList(requires.apps ?? [], `${field}.requires.apps`, 30) },
     };
   });

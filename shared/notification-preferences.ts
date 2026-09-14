@@ -23,6 +23,9 @@ export interface PreferenceNotification {
   botName?: string;
   avatarUrl?: string;
   privatePreview?: boolean;
+  requestId?: string;
+  messageId?: string;
+  requestTurnId?: string;
 }
 const minutes = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
 /** A pure delivery filter: suppression does not queue work, replay alerts,
@@ -43,6 +46,9 @@ export function applyNotificationPreferences<T extends PreferenceNotification>(n
   // Construct an allowlisted frame instead of spreading unknown presentation
   // fields that could carry private details in a future notification version.
   return { kind: notification.kind, botId: notification.botId, threadId: notification.threadId,
+    ...(notification.requestId ? { requestId: notification.requestId } : {}),
+    ...(notification.messageId ? { messageId: notification.messageId } : {}),
+    ...(notification.requestTurnId ? { requestTurnId: notification.requestTurnId } : {}),
     botName: "", title: "Murage", body: category === "attention" ? "Your attention is needed."
       : category === "completion" ? "A task has finished." : "A task needs review after a failure.",
     privatePreview: true } as T;

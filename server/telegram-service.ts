@@ -17,7 +17,7 @@ interface TelegramServiceOptions {
   approvals?: (targetBotId: string) => TelegramApprovalActions;
   isCurrentTarget?: (targetBotId: string) => boolean;
 }
-const connectionSchema = z.object({ version: z.literal(1), botIdentityId: z.string().regex(/^[1-9]\d{0,15}$/), targetBotId: z.string().min(1).max(180), enabled: z.boolean() }).strict();
+const connectionSchema = z.object({ version: z.literal(1), botIdentityId: z.string().regex(/^[1-9]\d{0,15}$/), targetBotId: z.string().min(1).max(180), enabled: z.boolean(), paused: z.boolean().optional() }).strict();
 type Connection = z.infer<typeof connectionSchema>;
 type ResumeState = "idle" | "verifying" | "active" | "retry" | "pair-required" | "blocked";
 export class TelegramService {
@@ -28,8 +28,11 @@ export class TelegramService {
   private generation = 0;
   private identity?: string;
   private connection?: Connection;
+  private verifyingTarget?: string;
   private resumeState: ResumeState = "idle";
   private resumeMessage: string | null = null;
+  private resumeFailures = 0;
+  private nextRetryAt: number | null = null;
   private readonly options: TelegramServiceOptions;
   constructor(options: TelegramServiceOptions) { this.options = options; }
   private connectionFile() { return join(this.options.dataDir, "telegram", "connection.json"); }
@@ -51,19 +54,20 @@ export class TelegramService {
   private makeChannel(connection: Connection, transport: TelegramTransport) {
     return new TelegramChannel({ file: join(this.options.dataDir, "telegram", connection.botIdentityId + ".json"),
       botIdentityId: connection.botIdentityId, targetBotId: connection.targetBotId, transport,
+      isCurrentTarget: () => this.options.isCurrentTarget?.(connection.targetBotId) !== false,
       approvals: this.options.approvals?.(connection.targetBotId),
       enqueue: input => this.options.enqueue(connection.botIdentityId, connection.targetBotId, input), runResult: this.options.runResult });
   }
   status() {
-    const status = this.channel?.status() ?? { enabled: false, paired: false, pending: 0, uncertain: 0, error: null };
+    const status = this.channel?.status() ?? { enabled: false, paired: false, pending: 0, uncertain: 0, error: null, nextRetryAt: null };
     const active = this.resumeState === "active";
     return { ...status, connecting: this.connecting, enabled: active && status.enabled, paired: active && status.paired,
-      pending: active ? status.pending : 0, resumeState: this.resumeState, resumeMessage: this.resumeMessage,
+      pending: active ? status.pending : 0, resumeState: this.resumeState, resumeMessage: this.resumeMessage, nextRetryAt: active ? status.nextRetryAt : this.nextRetryAt,
       requiresRevoke: Boolean(this.connection?.enabled && this.resumeState !== "pair-required") };
   }
   /** Resume a previously authorized binding, never infer a replacement target. */
   async resume(token: string, targetBotId: string) {
-    if (this.connecting || this.resumeState === "active") return false;
+    if (this.connecting || this.resumeState === "active" || this.connection?.paused) return false;
     this.connecting = true; this.resumeState = "verifying"; this.resumeMessage = null;
     const generation = ++this.generation, controller = new AbortController(); this.controller = controller;
     let verifying = false;
@@ -72,14 +76,16 @@ export class TelegramService {
       if (!connection) { this.resumeState = "pair-required"; this.resumeMessage = "Pair once to reconnect this saved token. Pairings from older Murage versions need this one-time step."; return false; }
       this.identity = connection.botIdentityId;
       if (!connection.enabled) { this.resumeState = "idle"; return false; }
+      if (connection.paused) { this.resumeState = "blocked"; this.resumeMessage = "The paired Chief changed. Revoke this connection, then pair the current workspace Chief."; return false; }
       if (connection.targetBotId !== targetBotId || this.options.isCurrentTarget?.(targetBotId) === false) {
-        this.resumeState = "blocked"; this.resumeMessage = "The paired Murage bot changed or is unavailable. Revoke this connection, then pair the intended bot."; return false;
+        this.resumeState = "blocked"; this.resumeMessage = "The paired Murage bot changed or is unavailable. Revoke this connection, then pair the intended bot.";
+        await this.revalidateTarget(); return false;
       }
       const transport = this.options.transport?.(token) ?? new TelegramTransport({ token });
       verifying = true; const bot = await transport.getMe(controller.signal); verifying = false;
       if (generation !== this.generation) return false;
       if (bot.id !== connection.botIdentityId) { this.resumeState = "blocked"; this.resumeMessage = "This token belongs to a different Telegram bot. Revoke the old connection before pairing it."; return false; }
-      if (this.options.isCurrentTarget?.(targetBotId) === false) { this.resumeState = "blocked"; this.resumeMessage = "The paired Murage bot changed during reconnection. Revoke this connection and pair again."; return false; }
+      if (this.options.isCurrentTarget?.(targetBotId) === false) { await this.revalidateTarget(); return false; }
       const channel = this.makeChannel(connection, transport); this.channel = channel;
       const disposition = channel.resumeDisposition();
       if (disposition !== "paired") {
@@ -87,53 +93,96 @@ export class TelegramService {
         this.resumeMessage = disposition === "revoked" ? null : disposition === "pending" ? "Pairing was not completed. Create a new pairing code." : "Pair once to confirm the Murage bot for this saved connection. Older pairings need this one-time step.";
         return false;
       }
-      this.resumeState = "active"; this.schedule(generation); return true;
+      this.resumeFailures = 0; this.nextRetryAt = null; this.resumeState = "active"; this.schedule(generation); return true;
     } catch (error) {
       if (generation !== this.generation) return false;
       const retry = verifying && (!(error instanceof TelegramTransportError) || ["offline", "timeout", "unavailable", "rate-limit"].includes(error.code));
       this.resumeState = retry ? "retry" : "blocked";
       this.resumeMessage = retry ? "Could not reconnect to Telegram. Your pairing is saved; retry when your connection is available."
         : "Telegram could not verify the saved connection. Check the token or restore the connection data before pairing again.";
+      if (retry) this.scheduleResume(generation, token, targetBotId, error instanceof TelegramTransportError && error.code === "rate-limit" ? error.retryAfterSeconds : undefined);
       return false;
     } finally { if (generation === this.generation) { this.connecting = false; this.controller = undefined; } }
   }
   async pair(token: string, targetBotId: string) {
     if (this.connecting || this.resumeState === "active" || this.status().requiresRevoke) throw new Error("Revoke the current Telegram connection before pairing again.");
+    if (this.options.isCurrentTarget?.(targetBotId) === false) throw new Error("Pair the current workspace Chief.");
+    this.verifyingTarget = targetBotId;
     this.connecting = true; this.resumeMessage = null;
     const generation = ++this.generation, controller = new AbortController(); this.controller = controller;
     try {
       const transport = this.options.transport?.(token) ?? new TelegramTransport({ token });
       const bot = await transport.getMe(controller.signal);
       if (generation !== this.generation) throw new Error("Telegram connection was cancelled.");
+      if (this.options.isCurrentTarget?.(targetBotId) === false) throw new Error("The workspace Chief changed during pairing. Pair again.");
       this.identity = bot.id;
       const connection: Connection = { version: 1, botIdentityId: bot.id, targetBotId, enabled: true };
       this.channel = this.makeChannel(connection, transport);
       // Explicit re-pairing cancels old authority; restarting never does this.
       if (this.channel.status().paired) { this.channel.revoke(); await this.options.revokeRuns(bot.id); }
       if (generation !== this.generation) throw new Error("Telegram connection was cancelled.");
+      if (this.options.isCurrentTarget?.(targetBotId) === false) throw new Error("The workspace Chief changed during pairing. Pair again.");
       const pairing = this.channel.beginPairing();
       try { this.saveConnection(connection); } catch (error) { this.channel.revoke(); throw error; }
-      this.resumeState = "active"; this.schedule(generation);
+      this.resumeFailures = 0; this.nextRetryAt = null; this.resumeState = "active"; this.schedule(generation);
       return { ...pairing, username: bot.username, botIdentityId: bot.id };
-    } finally { if (generation === this.generation) { this.connecting = false; this.controller = undefined; } }
+    } finally { if (generation === this.generation) { this.connecting = false; this.controller = undefined; this.verifyingTarget = undefined; } }
+  }
+  /** A roster change removes authority immediately and never chooses a replacement. */
+  async revalidateTarget() {
+    const target = this.verifyingTarget ?? (this.connection?.enabled ? this.connection.targetBotId : undefined);
+    if (!target || this.options.isCurrentTarget?.(target) !== false || this.connection?.paused) return;
+    this.stop(); this.verifyingTarget = undefined;
+    this.resumeState = "blocked";
+    this.resumeMessage = "The paired Chief changed or is unavailable. Revoke this connection, then pair the current workspace Chief.";
+    try {
+      if (this.connection?.enabled) {
+        this.connection = { ...this.connection, paused: true };
+        this.saveConnection(this.connection);
+      }
+    } catch (error) {
+      this.resumeMessage = "Telegram is stopped, but the Chief-change pause could not be saved. Restore write access, then revoke before restarting Murage.";
+      throw error;
+    } finally {
+      if (this.identity) await this.options.revokeRuns(this.identity);
+    }
+  }
+  private retryDelay(seconds?: number) {
+    const delay = seconds === undefined ? Math.min(30, 1.5 * 2 ** Math.min(this.resumeFailures++, 4)) : seconds;
+    this.nextRetryAt = Date.now() + delay * 1000;
+    return delay * 1000;
+  }
+  private scheduleResume(generation: number, token: string, targetBotId: string, retryAfterSeconds?: number) {
+    const delay = this.retryDelay(retryAfterSeconds);
+    this.timer = setTimeout(() => { if (generation === this.generation) void this.resume(token, targetBotId); }, delay);
+    this.timer.unref();
   }
   private schedule(generation: number) {
+    const status = this.channel?.status();
+    const delay = status?.nextRetryAt === null || status?.nextRetryAt === undefined ? 1500 : Math.max(0, status.nextRetryAt - Date.now());
     this.timer = setTimeout(async () => {
       if (generation !== this.generation) return;
       await this.channel?.pollOnce();
-      if (generation === this.generation && this.channel?.status().enabled) this.schedule(generation);
-    }, 1500);
+      const current = this.channel?.status();
+      if (generation !== this.generation || !current?.enabled) return;
+      if (["auth", "forbidden", "conflict"].includes(current.error ?? "")) {
+        this.resumeState = "blocked";
+        this.resumeMessage = current.error === "conflict" ? "Telegram receiver conflict paused polling. Stop the other receiver, then use Retry." : "Telegram rejected this connection. Check access or revoke before pairing again.";
+        return;
+      }
+      this.schedule(generation);
+    }, delay);
     this.timer.unref();
   }
   async revoke() {
     ++this.generation; this.connecting = false; this.controller?.abort(); this.controller = undefined;
     if (this.timer) clearTimeout(this.timer);
-    this.resumeState = "idle"; this.resumeMessage = null;
+    this.resumeState = "idle"; this.resumeMessage = null; this.nextRetryAt = null;
     let failed = false;
-    try { const connection = this.connection ?? this.readConnection(); if (connection) { this.identity = connection.botIdentityId; this.saveConnection({ ...connection, enabled: false }); } } catch { failed = true; }
+    try { const connection = this.connection ?? this.readConnection(); if (connection) { this.identity = connection.botIdentityId; this.saveConnection({ ...connection, enabled: false, paused: false }); } } catch { failed = true; }
     try { this.channel?.revoke(); } catch { failed = true; this.channel?.stop(); }
     if (this.identity) await this.options.revokeRuns(this.identity);
     if (failed) { this.resumeState = "blocked"; this.resumeMessage = "Telegram stopped, but its saved connection could not be fully revoked. Restore access to the saved data and try Revoke again."; throw new Error(this.resumeMessage); }
   }
-  stop() { ++this.generation; this.connecting = false; this.controller?.abort(); if (this.timer) clearTimeout(this.timer); this.channel?.stop(); this.resumeState = "idle"; }
+  stop() { ++this.generation; this.connecting = false; this.controller?.abort(); if (this.timer) clearTimeout(this.timer); this.channel?.stop(); this.resumeState = "idle"; this.nextRetryAt = null; }
 }
