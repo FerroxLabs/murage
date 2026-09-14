@@ -1,0 +1,117 @@
+# Artifact consumer only. A push to this task branch requires explicit runtime authority.
+name: Mac installed backup qualification
+on:
+  push:
+    branches: [qualification/mac-runtime-20260914]
+  workflow_dispatch: {}
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: mac-installed-backup-qualification
+  cancel-in-progress: false
+jobs:
+  installed:
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      ARTIFACT_SOURCE_SHA: 19947871a964547f0dcf59feac5d9395bd0b2631
+      FIXTURE_SOURCE_SHA: ${{ github.sha }}
+      ARTIFACT_RUN_ID: "34834712522"
+      ARTIFACT_RUN_ATTEMPT: "2"
+      MURAGE_MAC_INSTALLED_CONFIRM: packaged-backup-ephemeral-runner
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.FIXTURE_SOURCE_SHA }}
+          persist-credentials: false
+      # The fixture source is separate from the signed application's source.
+      - name: Admit exact source and runner session
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FIXTURE_SOURCE_SHA"
+          test "$(uname -m)" = arm64
+          test -f scripts/mac-installed-backup-qualification.mjs
+          test "$(id -un)" = runner
+          ROOT="$RUNNER_TEMP/murage-installed-qual"
+          mkdir -m 700 "$ROOT" "$ROOT/evidence" "$ROOT/artifact" "$ROOT/tools"
+          echo "MURAGE_QUAL_EVIDENCE_DIR=$ROOT/evidence" >> "$GITHUB_ENV"
+          echo "MURAGE_BACKUP_TEST_AGE_DIR=$ROOT/tools" >> "$GITHUB_ENV"
+          { sw_vers; git rev-parse HEAD; launchctl managername; } > "$ROOT/evidence/runner.txt"
+      - name: Require the exact successful artifact producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID" > "$MURAGE_QUAL_EVIDENCE_DIR/producer-run.json"
+          python3 - <<'PYTHON'
+          import json, os, pathlib
+          p = pathlib.Path(os.environ['MURAGE_QUAL_EVIDENCE_DIR']) / 'producer-run.json'
+          run = json.loads(p.read_text())
+          assert run['status'] == 'completed' and run['conclusion'] == 'success'
+          assert run['head_sha'] == os.environ['ARTIFACT_SOURCE_SHA']
+          assert run['run_attempt'] == int(os.environ['ARTIFACT_RUN_ATTEMPT'])
+          PYTHON
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pinned age v1.3.2 keygen for the independent synthetic key
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o age.tar.gz https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-darwin-arm64.tar.gz
+          echo "e2020b073c44f692685a24d6abc378817eb81ffaaf49fd0531ef8565f767f2f5  age.tar.gz" | shasum -a 256 -c -
+          tar -xzf age.tar.gz age/age age/age-keygen
+          echo "4012dfc2725883beafb710894af4f599b7a94f8c8e0f51f02cc96ab8df33915e  age/age" | shasum -a 256 -c -
+          echo "c16e229245123d0ad27442317461d63915416cad0294395cd19ca93feb3211ea  age/age-keygen" | shasum -a 256 -c -
+          install -m 755 age/age age/age-keygen "$MURAGE_BACKUP_TEST_AGE_DIR/"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mac-qualification-arm64-${{ env.ARTIFACT_SOURCE_SHA }}
+          run-id: ${{ env.ARTIFACT_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/murage-installed-qual/artifact
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mac-qualification-evidence-34834712522-2
+          run-id: ${{ env.ARTIFACT_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/murage-installed-qual/artifact/evidence
+      - name: Verify artifact receipt source
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import json, os, pathlib
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP']) / 'murage-installed-qual/artifact/evidence'
+          assert (evidence / 'source-sha.txt').read_text().strip() == os.environ['ARTIFACT_SOURCE_SHA']
+          assert json.loads((evidence / 'final-package-gates.json').read_text())['sourceSha'] == os.environ['ARTIFACT_SOURCE_SHA']
+          assert (evidence / 'cleanup.txt').read_text().strip() == 'PASS'
+          PYTHON
+      - name: admit
+        run: |
+          A="$RUNNER_TEMP/murage-installed-qual/artifact"
+          node scripts/mac-installed-backup-qualification.mjs admit "$A/Murage-0.1.53-arm64.zip" "$A/evidence/final-package-gates.json" "$A/evidence/SHA256SUMS"
+      - run: node scripts/mac-installed-backup-qualification.mjs prepare
+      - run: node scripts/mac-installed-backup-qualification.mjs probe
+      - run: node scripts/mac-installed-backup-qualification.mjs launch-configure
+      - run: node scripts/mac-installed-backup-qualification.mjs await-scheduled
+      - run: node scripts/mac-installed-backup-qualification.mjs no-replay
+      - run: node scripts/mac-installed-backup-qualification.mjs busy
+      - run: node scripts/mac-installed-backup-qualification.mjs remove
+      - run: node scripts/mac-installed-backup-qualification.mjs restore
+      - name: cleanup-verify
+        if: always()
+        run: node scripts/mac-installed-backup-qualification.mjs cleanup-verify
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mac-installed-backup-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/murage-installed-qual/evidence/
+          if-no-files-found: warn
+          retention-days: 7
