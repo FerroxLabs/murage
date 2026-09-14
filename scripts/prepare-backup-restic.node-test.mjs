@@ -18,7 +18,7 @@ test("unsupported or corrupt archive never stages an executable",async t=>{
 });
 test("signed policy requires exact payload, owning app and same Apple team",{skip:!archive},async t=>{
  const root=fixture(t),raw=await stageBackupRestic({root,target:"darwin-arm64",archive}),bytes=readFileSync(raw),app=path.join(root,"Fixture.app"),directory=path.join(app,"Contents","Resources","backup-tools","arm64"),exe=path.join(app,"Contents","MacOS","Murage"),tool=path.join(directory,"restic");mkdirSync(directory,{recursive:true});mkdirSync(path.dirname(exe));writeFileSync(exe,"fixture");copyFileSync(raw,tool);
- const calls=[];const run=args=>{calls.push(args);return{status:0,stderr:"TeamIdentifier=ABCDEFGHIJ\n"};};assert.equal(signedResticOwnedByCurrentApp(tool,bytes,{currentExecutable:exe,run}),true);assert.equal(calls.length,4);
+ const calls=[];const run=args=>{calls.push(args);return{status:args.includes("-R")&&!args[args.indexOf("-R")+1].startsWith("=anchor apple generic")?1:0,stderr:"TeamIdentifier=ABCDEFGHIJ\n"};};assert.equal(signedResticOwnedByCurrentApp(tool,bytes,{currentExecutable:exe,run}),true);assert.equal(calls.length,4);
  assert.equal(signedResticOwnedByCurrentApp(tool,bytes,{currentExecutable:raw,run}),false);
  assert.equal(signedResticOwnedByCurrentApp(tool,bytes,{currentExecutable:exe,run:args=>({status:0,stderr:`TeamIdentifier=${args.at(-1)===tool?"ZZZZZZZZZZ":"ABCDEFGHIJ"}\n`})}),false);
  assert.equal(signedResticOwnedByCurrentApp(tool,bytes,{currentExecutable:exe,run:()=>({status:1})}),false);
