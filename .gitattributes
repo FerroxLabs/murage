@@ -5,3 +5,7 @@
 
 # This reviewed vendor patch is verified against its exact pinned SHA-256.
 /third_party/browser/agent-browser-windows-stdio.patch text eol=lf
+
+# Backup tooling validates these upstream license bytes by exact SHA-256.
+/third_party/age/LICENSE -text
+/third_party/restic/LICENSE -text
