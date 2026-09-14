@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {chmodSync,existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,symlinkSync,writeFileSync} from "node:fs";
 import {tmpdir,userInfo} from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import {buildClosedBackupJob} from "./backup-closed-jobs.mjs";
 import {createNativeClosedBackupProvider,CLOSED_MAC_QUERY,selectedMacJobEnabled} from "./backup-closed-native.mjs";
 
@@ -17,7 +18,7 @@ function fixture(platform){
   const run=async request=>{
     calls.push(request);const args=request.args;
     if(request.executable==="/usr/bin/osascript"){
-      assert.equal(args[3],CLOSED_MAC_QUERY);assert.equal(args[4],"--");assert.equal(args[5],job.jobId);const spec=JSON.parse(args[6]);assert.equal(spec.Label,job.jobId);assert.equal(spec.Program,descriptor.executable);assert.deepEqual(spec.EnvironmentVariables,{ELECTRON_RUN_AS_NODE:"1"});
+      assert.equal(args[3],CLOSED_MAC_QUERY);assert.equal(args[4],"--");assert.equal(args[5],job.jobId);const spec=JSON.parse(args[6]);assert.equal(spec.Label,job.jobId);assert.equal(spec.Program,descriptor.executable);assert.deepEqual(Object.keys(spec).sort(),["Label","LimitLoadToSessionType","OnDemand","Program","ProgramArguments"]);assert.equal(spec.OnDemand,true);assert.match(job.files[0].text,/<key>ELECTRON_RUN_AS_NODE<\/key><string>1<\/string>/);
       return{code:0,stdout:JSON.stringify(state.unknown?{version:1,status:"found"}:state.foreign?{version:1,status:"foreign"}:state.loaded?{version:1,status:"found",pid:state.pidMissing?null:state.running?1234:0}:{version:1,status:"absent"})};
     }
     if(request.executable==="/bin/launchctl"){
@@ -55,7 +56,7 @@ for(const platform of ["darwin","linux"]){
 test("Linux drop-ins and stale loaded definitions cannot borrow exact disk-file ownership",async()=>{
  const f=fixture("linux");try{await f.provider.install(f.job,{expected:null});f.state.dropin=true;await assert.rejects(f.provider.read(f.job));f.state.dropin=false;f.state.reload=true;await assert.rejects(f.provider.read(f.job));}finally{f.cleanup();}
 });
-test("Mac omitted PID does not invalidate proven registration but blocks removal conservatively",async()=>{
+test("Mac explicit unknown PID does not invalidate proven registration but blocks removal conservatively",async()=>{
  const f=fixture("darwin");try{await f.provider.install(f.job,{expected:null});f.state.pidMissing=true;const current=await f.provider.read(f.job);assert.equal(current.registered,true);assert.equal(current.activityKnown,false);assert.equal(current.running,true);assert.equal(JSON.stringify(current).includes("foreign-private-label"),false);const before=f.calls.length;await f.provider.install(f.job,{expected:current});await assert.rejects(f.provider.remove(f.job,{expected:current}));assert.equal(f.calls.slice(before).some(call=>["enable","disable","bootout","bootstrap"].includes(call.args[0])),false);}finally{f.cleanup();}
 });
 test("Mac external disable is not registered; enabling an owned loaded job does not bootstrap another",async()=>{
@@ -71,4 +72,24 @@ test("unregistered exact files are not installed; expected-state races and faile
 });
 test("private same-user files, known definitions and supported platform are prerequisites",async()=>{
  const f=fixture("linux");try{const unsupported=createNativeClosedBackupProvider({platform:"win32",owner:f.owner,home:f.home,run:async()=>{assert.fail("No OS call on unsupported host");}});assert.equal(unsupported.supported,false);await assert.rejects(unsupported.read(f.job));await assert.rejects(f.provider.read({...f.job,owner:{uid:f.owner.uid+1}}));await assert.rejects(f.provider.read({...f.job,files:[{...f.job.files[0],name:"../../foreign"}]}));assert.equal(f.calls.length,0);f.stage();chmodSync(path.join(f.root,f.job.files[0].name),0o644);await assert.rejects(f.provider.read(f.job));chmodSync(path.join(f.root,f.job.files[0].name),0o600);rmSync(path.join(f.root,f.job.files[0].name));const sentinel=path.join(f.home,"sentinel");writeFileSync(sentinel,"private-canary",{mode:0o600});symlinkSync(sentinel,path.join(f.root,f.job.files[0].name));await assert.rejects(f.provider.read(f.job));assert.equal(readFileSync(sentinel,"utf8"),"private-canary");}finally{f.cleanup();}
+});
+test("Mac query treats a nil copied Ref as absent and compares only launchd's exposed job view",()=>{
+  const spec={Label:"com.murage.backup."+"a".repeat(64),Program:"/Applications/Murage.app/Contents/MacOS/Murage",ProgramArguments:["/Applications/Murage.app/Contents/MacOS/Murage","/private/trigger.mjs","--murage-backup-descriptor","/private/descriptor.json"],LimitLoadToSessionType:"Aqua",OnDemand:true};
+  const released=[];
+  const query=job=>{
+    // Bridge shape observed natively: SMJobCopyDictionary returns a Ref even for a missing job.
+    const bridge=new Proxy(function(value){return value;},{get:(_target,name)=>name==="SMJobCopyDictionary"?()=>({ref:job}):name==="CFRelease"?value=>{released.push(value);throw Error("nil release stalls");}:name==="kSMDomainUserLaunchd"?"user":undefined});
+    const context=vm.createContext({JSON,Object,Error,Number,$:bridge,ObjC:{import(){},castRefToObject:ref=>({isNil:()=>ref.ref===null,value:ref.ref}),deepUnwrap:object=>structuredClone(object.value)}});
+    vm.runInContext(CLOSED_MAC_QUERY,context);return JSON.parse(context.run([spec.Label,JSON.stringify(spec)]));
+  };
+  assert.deepEqual(query(null),{version:1,status:"absent"});
+  // Exact key set of a loaded job observed from launchd (plus the owned values).
+  const loaded={...spec,PID:4321,LastExitStatus:0};
+  assert.deepEqual(query(loaded),{version:1,status:"found",pid:4321});
+  const {PID,...idle}=loaded;assert.equal(PID,4321);assert.deepEqual(query(idle),{version:1,status:"found",pid:0});
+  assert.deepEqual(query({...loaded,ProgramArguments:[...spec.ProgramArguments,"--extra"]}),{version:1,status:"foreign"});
+  assert.deepEqual(query({...loaded,OnDemand:false}),{version:1,status:"foreign"});
+  const {LimitLoadToSessionType,...missing}=loaded;assert.equal(LimitLoadToSessionType,"Aqua");assert.deepEqual(query(missing),{version:1,status:"unavailable"});
+  assert.deepEqual(query({...loaded,PID:-1}),{version:1,status:"unavailable"});
+  assert.deepEqual(released,[]);
 });

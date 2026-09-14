@@ -11,13 +11,16 @@ const LIMIT=65536;
 /** No launchctl print/list parsing. Query exactly one user-domain label and
  * compare inside the helper so foreign arguments/environment never leave it.
  * SMJobCopyDictionary is deprecated and its shape is not stable: missing facts
- * are unavailable, never a guessed idle/registered result. */
+ * are unavailable, never a guessed idle/registered result. Native macOS 26.3:
+ * a missing job still bridges as a non-null Ref (only its cast object is nil),
+ * and CFRelease of that nil Ref stalls osascript. The one copied dictionary is
+ * left to this short-lived helper's exit. */
 export const CLOSED_MAC_QUERY=String.raw`ObjC.import('Foundation');ObjC.import('ServiceManagement');
 function run(argv){try{if(argv.length!==2)throw Error();var expected=JSON.parse(argv[1]);var raw=$.SMJobCopyDictionary($.kSMDomainUserLaunchd,$(argv[0]));
-if(raw===null||raw===undefined||(typeof raw.isNil==='function'&&raw.isNil()))return JSON.stringify({version:1,status:'absent'});
-var d;try{d=ObjC.deepUnwrap(raw);}finally{$.CFRelease(raw);}
+if(raw===null||raw===undefined)return JSON.stringify({version:1,status:'absent'});var job=ObjC.castRefToObject(raw);
+if(job.isNil())return JSON.stringify({version:1,status:'absent'});var d=ObjC.deepUnwrap(job);
 if(!d||typeof d!=='object')throw Error();var keys=Object.keys(expected);for(var i=0;i<keys.length;i++){var key=keys[i];if(!Object.prototype.hasOwnProperty.call(d,key))throw Error();if(JSON.stringify(d[key])!==JSON.stringify(expected[key]))return JSON.stringify({version:1,status:'foreign'});}
-var pid=null;if(Object.prototype.hasOwnProperty.call(d,'PID')){if(typeof d.PID!=='number'||!Number.isSafeInteger(d.PID)||d.PID<0)throw Error();pid=d.PID;}return JSON.stringify({version:1,status:'found',pid:pid});
+var pid=0;if(Object.prototype.hasOwnProperty.call(d,'PID')){if(typeof d.PID!=='number'||!Number.isSafeInteger(d.PID)||d.PID<0)throw Error();pid=d.PID;}return JSON.stringify({version:1,status:'found',pid:pid});
 }catch(_){return JSON.stringify({version:1,status:'unavailable'});}}`;
 
 /** One bounded current-user override map is necessary: the public command has
@@ -79,7 +82,13 @@ export function createNativeClosedBackupProvider({platform=process.platform,owne
     if(!result||!Number.isInteger(result.code)||typeof result.stdout!=="string"||Buffer.byteLength(result.stdout)>LIMIT)fail("CLOSED_NATIVE_UNAVAILABLE");return result;
   }
   async function mutate(executable,args){if((await command(executable,args)).code!==0)fail("CLOSED_NATIVE_UNAVAILABLE");}
-  function macSpec(job){const invoke=closedInvocation(job.descriptor,job.descriptorPath,{mode:"trigger"});return{Label:job.jobId,Program:invoke.executable,ProgramArguments:[invoke.executable,...invoke.args],EnvironmentVariables:{ELECTRON_RUN_AS_NODE:"1"},StartInterval:60,RunAtLoad:true,LimitLoadToSessionType:"Aqua",ProcessType:"Background",KeepAlive:false};}
+  // launchd's legacy job view exposes only Label, Program, ProgramArguments,
+  // LimitLoadToSessionType, OnDemand (KeepAlive false), PID and LastExitStatus.
+  // Environment, interval, RunAtLoad and ProcessType are bound by the exact
+  // owned plist bytes that read() requires beside this loaded-job comparison.
+  // After those identity checks, an omitted PID is launchd's idle-job shape.
+  // Explicit null/malformed helper output still cannot establish idle state.
+  function macSpec(job){const invoke=closedInvocation(job.descriptor,job.descriptorPath,{mode:"trigger"});return{Label:job.jobId,Program:invoke.executable,ProgramArguments:[invoke.executable,...invoke.args],LimitLoadToSessionType:"Aqua",OnDemand:true};}
   async function native(job){
     if(platform==="darwin"){
       const result=await command("/usr/bin/osascript",["-l","JavaScript","-e",CLOSED_MAC_QUERY,"--",job.jobId,JSON.stringify(macSpec(job))]);if(result.code!==0)fail("CLOSED_NATIVE_UNAVAILABLE");
