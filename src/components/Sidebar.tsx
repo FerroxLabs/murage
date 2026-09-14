@@ -992,34 +992,30 @@ function BotListItem({
     ? sidebarBotPreview(bot)
     : "";
   const rowClass = cn(
-    "flex w-full items-center rounded-xl border text-left",
+    "relative flex w-full items-center rounded-xl border text-left",
     iconOnly
       ? "justify-center px-1 py-1.5"
       : density === "compact"
         ? "gap-2 px-2 py-1.5"
         : "gap-2 px-3 py-2.5",
     !iconOnly && "group-hover:pr-[5.25rem] group-focus-within:pr-[5.25rem] max-md:pr-[5.25rem] [@media(hover:none)]:pr-[5.25rem]",
-    // ONLY the Chief of Staff, not every bot that leads something.
-    //
-    // This read `bot.chiefOfStaff`, which is true for a team leader too, so
-    // the two wore the same accent row and were indistinguishable — the badge
-    // below already said "Team lead" in a different colour and the row shouted
-    // over it.
-    //
-    // A leader is not given a second hue. There is one accent in this app and
-    // exactly one row in the sidebar should carry it, or it stops meaning
-    // anything; the leader is marked by its badge and its Users icon, which is
-    // the distinction the eye actually reads at 13px.
+    // Role colour is independent of selection: Chief stays orange, leaders
+    // get a blue outline, and selected non-Chief rows keep the raised fill.
     botRole(bot) === "chief"
       ? selected
         ? "border-accent/40 bg-accent/15"
         : "border-accent/25 bg-accent/5 hover:bg-accent/10"
+      : botRole(bot) === "leader"
+        ? selected
+          ? "border-team-lead/45 bg-raised"
+          : "border-team-lead/30 hover:bg-raised/50"
       : selected
         ? "border-transparent bg-raised"
         : "border-transparent hover:bg-raised/50",
   );
   const body = (
     <>
+      <span className="pointer-events-none relative z-10 shrink-0">
       <BotAvatar
         bot={bot}
         state={stateForBot({ ...bot, messages: visible })}
@@ -1032,7 +1028,8 @@ function BotListItem({
         // decorative; busy/unread/motion are the real signals).
         animated={Boolean(bot.busy) || Boolean(bot.unread) || (mascotMotion?.kind ?? "none") !== "none"}
       />
-      <div className={cn("min-w-0 flex-1", iconOnly && "hidden")}>
+      </span>
+      <div className={cn("pointer-events-none relative z-10 min-w-0 flex-1", iconOnly && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
             {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
@@ -1042,8 +1039,8 @@ function BotListItem({
               value={bot.name}
               onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
               onEditingChange={setRenaming}
-              className="truncate"
-              inputClassName="w-full rounded bg-inset px-1 py-0.5 text-[15px] font-semibold"
+              className="pointer-events-auto min-h-6 min-w-6 truncate"
+              inputClassName="pointer-events-auto w-full rounded bg-inset px-1 py-0.5 text-[15px] font-semibold"
             />
           </span>
           {/* The two controls to the right are absolutely positioned over this
@@ -1067,7 +1064,7 @@ function BotListItem({
               <span
                 className={cn(
                   "flex shrink-0 items-center gap-1 text-[11.5px] font-medium",
-                  botRole(bot) === "chief" ? "text-accent" : "text-ink-secondary",
+                  botRole(bot) === "chief" ? "text-accent" : botRole(bot) === "leader" ? "text-team-lead" : "text-ink-secondary",
                 )}
               >
                 <RoleIcon bot={bot} size={11} decorative /> {BOT_ROLE_BADGE[botRole(bot)]}
@@ -1105,16 +1102,13 @@ function BotListItem({
   };
 
   // Keep the same tree while editing so RenameTitle is not remounted and
-  // reset. Omit the row's button role while its accessible input is present.
+  // reset. Selection and Rename are sibling controls, never nested buttons.
   // The rename field owns its own clicks; the avatar, body and right edge
   // still open the bot while the name is being edited.
   const showInlineArchive = inlineArchiveAvailable({ role: botRole(bot), archiveDisabled, renaming, iconOnly });
   return (
     <div className="group relative" title={iconOnly ? bot.name : undefined}>
       <div
-        role={renaming ? undefined : "button"}
-        tabIndex={renaming ? undefined : 0}
-        aria-label={!renaming && iconOnly ? bot.name : undefined}
         data-sidebar-bot-row={bot.id}
         onMouseDown={(event) => {
           pressSelected.current = false;
@@ -1144,6 +1138,13 @@ function BotListItem({
         onContextMenu={onContextMenu}
         className={rowClass}
       >
+        {!renaming && <button
+          type="button"
+          data-sidebar-select={bot.id}
+          aria-label={iconOnly ? bot.name : [bot.name, botRole(bot) !== "member" ? BOT_ROLE_BADGE[botRole(bot)] : "", rowPreview].filter(Boolean).join(" · ")}
+          aria-pressed={selected}
+          className="absolute inset-0 z-0 rounded-xl bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        />}
         {body}
       </div>
       {iconOnly && bot.unread && (
