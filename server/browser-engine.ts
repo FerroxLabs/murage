@@ -7,6 +7,7 @@ import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, open
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
+import { verifyPackagedMacBrowser } from "./browser-macos-identity.ts";
 import { DATA_DIR } from "./config.ts";
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseVersion, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset, type AgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 
@@ -55,10 +56,12 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
       const target = `${platform}-${options.arch ?? process.arch}`;
       const bundle = browserBundlePaths(join(resources, "browser-engine"), target);
       const pin = browserBundleSpec(target);
-      if (!matchesPin(bundle.engine, options) || !executable(bundle.chrome, platform)
-        || createHash("sha256").update(readFileSync(bundle.chrome)).digest("hex") !== pin.chrome.executableSha256
-        || !lstatSync(bundle.manifest).isFile() || !lstatSync(bundle.licenses).isDirectory()) return null;
-      return bundle.engine;
+      const raw = matchesPin(bundle.engine, options) && executable(bundle.chrome, platform)
+        && createHash("sha256").update(readFileSync(bundle.chrome)).digest("hex") === pin.chrome.executableSha256
+        && lstatSync(bundle.manifest).isFile() && lstatSync(bundle.licenses).isDirectory();
+      if (raw) return bundle.engine;
+      return target === "darwin-arm64" && executable(bundle.engine, platform) && executable(bundle.chrome, platform)
+        && verifyPackagedMacBrowser(resources) ? bundle.engine : null;
     } catch { return null; }
   }
   const pinned = pinnedBinaryPath(options.dataDir, platform);
@@ -74,7 +77,9 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
 }
 export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngineStatus {
   const binaryPath = resolveAgentBrowserBinary(options);
-  if (binaryPath) return { kind: "ready", binaryPath, version: matchesPin(binaryPath, options) ? agentBrowserReleaseVersion(resolveAgentBrowserReleaseAsset(options.platform ?? process.platform, options.arch ?? process.arch)) : null, runtimeVerified: false };
+  const env = options.env ?? process.env;
+  const packaged = !env.MURAGE_AGENT_BROWSER_PATH?.trim() && !!(env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH);
+  if (binaryPath) return { kind: "ready", binaryPath, version: packaged || matchesPin(binaryPath, options) ? agentBrowserReleaseVersion(resolveAgentBrowserReleaseAsset(options.platform ?? process.platform, options.arch ?? process.arch)) : null, runtimeVerified: false };
   const platform = options.platform ?? process.platform;
   const asset = resolveAgentBrowserReleaseAsset(platform, options.arch ?? process.arch, options.musl ?? isMusl(platform));
   return { kind: "unavailable", reason: (options.env ?? process.env).MURAGE_AGENT_BROWSER_PATH
