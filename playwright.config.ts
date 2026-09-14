@@ -8,6 +8,9 @@ import { APP_URL, HARNESS_PORT, HARNESS_URL, SCRATCH_DATA_DIR, UI_PORT } from ".
 // rather than borrowing the developer's 8799/5199.
 export default defineConfig({
   testDir: "./src/e2e",
+  // Live engine/credential/spend admission belongs to the dedicated B08 config.
+  // It must not become an automatic provider run or 36 NOT RUN failures in CI.
+  testIgnore: ["**/b08-template-behavior.human.spec.ts"],
   // Screenshots, traces and reports land under MURAGE_E2E_DATA_DIR, the same
   // place the per-spec configs put theirs, never Playwright's default
   // test-results/ inside the checkout (CLAC3 verifier). Set the variable to
