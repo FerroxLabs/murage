@@ -18,7 +18,7 @@ const PHASES=["plan","admit","prepare","probe","launch-configure","await-schedul
 const ASSERTIONS={
   admit:"zip sha in SHA256SUMS; ditto extract, no quarantine, no AppTranslocation; codesign strict, spctl exec accepted, stapler valid, TeamIdentifier and Murage/age sha equal final-package-gates; app.asar package.json name; fuse RunAsNode enabled; codesign/spctl evidence read from real stderr; task keychain (original default+search list persisted before first mutation, each step persisted) default+sole search list; '<name> Safe Storage' absent; launchctl managername Aqua",
   prepare:"synthetic installation + authority files, independent pinned-keygen key outside installation, digest map, expected label/plist/control dir, manifest frozen (wx) before launch",
-  probe:"owned app PID; AXManualAccessibility; bounded AX tree + screenshot retained; settings entry admitted only as exactly one AXButton named 'App settings' (Sidebar.tsx:2135-2136,2153), never guessed; app quits and bundle processes exit",
+  probe:"owned app PID; AXManualAccessibility diagnostic; actual bounded AX tree + screenshot retained; settings entry admitted only as exactly one AXButton named 'App settings' (Sidebar.tsx:2135-2136,2153), never guessed; app quits and bundle processes exit",
   "launch-configure":"requires admitted probe label; owned app PID; real UI select→Save references→Prepare→Register→Install backup job→UTC time/consents→Enable; exact label loaded + plist exists; credentials.bin + Safe Storage item exist (metadata only); Cmd+Q; all bundle processes exit",
   "await-scheduled":"exact-label launchd runs delta >=1 (durable trigger invocation); coordinator lastClosedResult verified written by packaged main; lastVerified sha/bytes = single archive; originals under sidecar rule; closed spawns sampled at 1 s and reported, not required",
   "no-replay":"≥2 further launchd runs; no due spawn; archive count and lastVerified unchanged",
@@ -33,7 +33,7 @@ const UI={
   // Admitted only by the probe phase from the captured AX tree; never supplied by env or guessed.
   settingsEntry:{roles:["AXButton"],label:null,src:"src/components/Sidebar.tsx:2135-2136,2153",probe:"PROBE-REQUIRED: admitted by probe phase only when exactly one AXButton is named 'App settings'"},
   onboarding:{probe:"PROBE-REQUIRED: fresh userData may show the chat-led first-run flow before Settings (evidence screenshot only)"},
-  manualAccessibility:{probe:"PROBE-REQUIRED: Chromium renderer AX tree needs AXManualAccessibility set by the assistive client"},
+  manualAccessibility:{probe:"Attempt AXManualAccessibility and retain its result; admission requires the actual renderer AX tree, not optional setter support"},
   general:{roles:["AXButton"],label:"General",src:"src/components/SettingsModal.tsx:49"},
   chooseRefs:{roles:["AXButton"],label:"Choose destination and recovery key",src:"src/components/BackupSettings.tsx:102"},
   panelOpen:{roles:["AXButton"],label:"Open",probe:"PROBE-REQUIRED: NSOpenPanel default button title (electron/main.mjs:3153-3158, installation-recovery-window.mjs:26,34)"},
@@ -179,7 +179,9 @@ async function launch(s,label){
   closeSync(log);const exit=new Promise(resolve=>child.once("exit",(code,signal)=>resolve({code,signal})));
   record({step:`launch-${label}`,pid:child.pid});
   await until(()=>ax(s,{op:"count",pid:child.pid,roles:["AXWindow"],label:"__none__"}).windows>0,120000,`window-${label}`);
-  const accessibility=ax(s,{op:"manualAX",pid:child.pid});record({step:"manual-accessibility",result:accessibility});check(accessibility.ok&&accessibility.code===0,"manual-accessibility");
+  // Electron may expose its tree without supporting this optional setter (-25200).
+  // Record the hint's result; the actual UI tree and exact selector remain the gate.
+  const accessibility=ax(s,{op:"manualAX",pid:child.pid});record({step:"manual-accessibility",result:accessibility});
   return{pid:child.pid,exit};
 }
 async function quit(s,handle,label){
@@ -251,8 +253,9 @@ async function probe(){
   const s=loadState();check(s.manifest&&!s.settingsEntry&&!s.installed,"prepared-not-probed");const app=await launch(s,"probe");let admission;
   try{
     run("/usr/sbin/screencapture",["-x",path.join(E,"probe-launch.png")]);
-    const tree=ax(s,{op:"tree",pid:app.pid,limit:AX_TREE_LIMIT});check(tree.ok&&Array.isArray(tree.elements),"ax-tree");
-    writeAtomic(path.join(E,"probe-ax-tree.json"),JSON.stringify({pid:app.pid,count:tree.count,truncated:tree.truncated,elements:tree.elements},null,1));
+    const tree=ax(s,{op:"tree",pid:app.pid,limit:AX_TREE_LIMIT});
+    writeAtomic(path.join(E,"probe-ax-tree.json"),JSON.stringify({pid:app.pid,...tree},null,1));
+    check(tree.ok&&Array.isArray(tree.elements),"ax-tree");
     admission=admitSettingsEntry(tree.elements);
     record({step:"probe-settings-entry",admission,treeCount:tree.count,truncated:tree.truncated,treeFile:"probe-ax-tree.json",screenshot:"probe-launch.png",remainingProbes:Object.entries(UI).filter(([key,value])=>value.probe&&key!=="settingsEntry").map(([key])=>key)});
   }finally{await quit(s,app,"probe");}
