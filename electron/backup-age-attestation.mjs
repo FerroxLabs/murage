@@ -73,11 +73,11 @@ export function signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable=process
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents);
     const executable=realpathSync(currentExecutable);
     if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools","arm64","age")||!executable.startsWith(app+path.sep))return false;
-    const verified=run(["--verify","--strict","-R","anchor apple generic",app]);if(verified.status!==0||verified.error)return false;
+    const verified=run(["--verify","--strict","-R","=anchor apple generic",app]);if(verified.status!==0||verified.error)return false;
     const info=run(["--display","--verbose=4",app]);if(info.status!==0||info.error)return false;
     const team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
     const toolInfo=run(["--display","--verbose=4",resolved]);if(toolInfo.status!==0||toolInfo.error||/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
-    const toolVerified=run(["--verify","--strict","-R",`anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);
+    const toolVerified=run(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);
     return toolVerified.status===0&&!toolVerified.error;
   }catch{return false;}
 }

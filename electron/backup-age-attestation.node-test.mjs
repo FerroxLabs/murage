@@ -18,7 +18,7 @@ test("actual ad-hoc resign keeps the pinned payload but is not production trust"
     assert.equal(normalizedAgePayloadHash(original()),AGE_PAYLOAD_SHA256);
     assert.equal(normalizedAgePayloadHash(readFileSync(signed)),AGE_PAYLOAD_SHA256);
     assert.equal(trustedBackupAgeExecutable(signed),false);
-    assert.throws(()=>execFileSync("/usr/bin/codesign",["--verify","--strict","-R","anchor apple generic",signed],{stdio:"pipe",timeout:10000}));
+    assert.throws(()=>execFileSync("/usr/bin/codesign",["--verify","--strict","-R","=anchor apple generic",signed],{stdio:"pipe",timeout:10000}));
   }finally{rmSync(root,{recursive:true,force:true});}
 });
 test("code tampering, load-command bounds, overlapping segments and undeclared tail fail",{skip:!qualified},()=>{
@@ -35,7 +35,7 @@ test("mock Developer-ID verification also requires current app, same team and pa
   try{
     const app=path.join(root,"Murage.app"),resource=path.join(app,"Contents","Resources","backup-tools","arm64"),macos=path.join(app,"Contents","MacOS");mkdirSync(resource,{recursive:true});mkdirSync(macos,{recursive:true});
     const file=path.join(resource,"age"),currentExecutable=path.join(macos,"Murage");writeFileSync(file,original());writeFileSync(currentExecutable,"mock app executable, never run");
-    const run=args=>({status:0,stderr:args.includes("--display")?"TeamIdentifier=ABCDEFGHIJ\n":""});
+    const run=args=>({status:args.includes("-R")&&!args[args.indexOf("-R")+1].startsWith("=anchor apple generic")?1:0,stderr:args.includes("--display")?"TeamIdentifier=ABCDEFGHIJ\n":""});
     assert.equal(signedAgeOwnedByCurrentApp(file,original(),{currentExecutable,run}),true);
     assert.equal(signedAgeOwnedByCurrentApp(file,original(),{currentExecutable,run:args=>args.at(-1)===realpathSync(file)?{status:0,stderr:"TeamIdentifier=OTHERTEAM1\n"}:run(args)}),false);
     assert.equal(signedAgeOwnedByCurrentApp(file,original(),{currentExecutable,run:()=>({status:1,stderr:"untrusted"})}),false);

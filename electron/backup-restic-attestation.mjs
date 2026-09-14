@@ -10,10 +10,10 @@ export function signedResticOwnedByCurrentApp(file,bytes,{currentExecutable=proc
  try{
   const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
   if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools","arm64","restic")||!executable.startsWith(app+path.sep))return false;
-  const valid=run(["--verify","--strict","-R","anchor apple generic",app]);if(valid.status!==0||valid.error)return false;
+  const valid=run(["--verify","--strict","-R","=anchor apple generic",app]);if(valid.status!==0||valid.error)return false;
   const info=run(["--display","--verbose=4",app]);if(info.status!==0||info.error)return false;const team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
   const tool=run(["--display","--verbose=4",resolved]);if(tool.status!==0||tool.error||/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(tool.stderr))?.[1]!==team)return false;
-  const check=run(["--verify","--strict","-R",`anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);return check.status===0&&!check.error;
+  const check=run(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);return check.status===0&&!check.error;
  }catch{return false;}
 }
 export function trustedBackupResticExecutable(file){
