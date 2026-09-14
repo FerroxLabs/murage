@@ -92,7 +92,7 @@ export function TelegramSettings() {
       {username && <a href={`https://t.me/${username}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-accent hover:underline">Open Telegram bot</a>}
     </div>}
     {status?.resumeMessage && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{status.resumeMessage}</p>}
-    {status?.resumeState === "retry" && <button type="button" disabled={Boolean(busy)} onClick={() => void run("resume", async version => { await api("/api/telegram/resume", { method: "POST", body: "{}" }); await refresh(version); })} className="mt-3 rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink disabled:opacity-50">{busy === "resume" ? "Reconnecting…" : "Retry now"}</button>}
+    {status?.canResume && <button type="button" disabled={Boolean(busy)} onClick={() => void run("resume", async version => { await api("/api/telegram/resume", { method: "POST", body: "{}" }); await refresh(version); })} className="mt-3 rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink disabled:opacity-50">{busy === "resume" ? "Reconnecting…" : "Retry now"}</button>}
     {status?.paired && <p className="mt-3 text-[12px] text-success">Connected. Send your bot a message in Telegram to talk to your Chief. Use owner-only buttons to allow once or deny pending actions. Other reviews stay in Murage.</p>}
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-2 text-[12px] text-ink-secondary">Telegram work is pending. A confirmed delivery will not be sent twice.</p>}
     {(status?.uncertain ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A message delivery is uncertain. Check Telegram before sending it again.</p>}

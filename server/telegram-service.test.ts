@@ -109,9 +109,21 @@ it("honours polling retry_after and pauses terminal receiver conflicts without c
  f.transport.getUpdates.mockRejectedValueOnce(new TelegramTransportError("conflict"));await vi.advanceTimersByTimeAsync(1500);expect(service.status()).toMatchObject({resumeState:"blocked",error:"conflict",paired:false,requiresRevoke:true});
  const terminalCalls=f.transport.getUpdates.mock.calls.length;await vi.advanceTimersByTimeAsync(30000);expect(f.transport.getUpdates).toHaveBeenCalledTimes(terminalCalls);
  expect(JSON.parse(readFileSync(join(f.root,"telegram","connection.json"),"utf8")).enabled).toBe(true);
- // The pause copy names an action that exists today: the resume route admits only "retry", while a restart resumes the saved pairing.
- const message=service.status().resumeMessage??"";expect(message).not.toMatch(/retry/i);expect(message).toContain("restart Murage");expect(message).not.toContain("Chief");
- service.stop();const restarted=f.make();expect(await restarted.resume("fake","chief")).toBe(true);expect(restarted.status()).toMatchObject({resumeState:"active",paired:true,error:null});
+ const bindingBefore=readFileSync(join(f.root,"telegram","123.json"),"utf8");
+ expect(service.status().canResume).toBe(true);expect(service.status().resumeMessage).toContain("Retry now");
+ expect(await service.resume("fake","chief")).toBe(true);expect(service.status()).toMatchObject({resumeState:"active",paired:true,error:null,canResume:false});
+ expect(readFileSync(join(f.root,"telegram","123.json"),"utf8")).toBe(bindingBefore);
+ expect(await service.resume("fake","chief")).toBe(false);
+});
+it.each(["auth","forbidden"] as const)("does not offer conflict Retry for %s",async(code)=>{
+ const f=restartFixture(),service=await f.pair();f.transport.getUpdates.mockRejectedValueOnce(new TelegramTransportError(code));
+ await vi.advanceTimersByTimeAsync(1500);expect(service.status()).toMatchObject({resumeState:"blocked",canResume:false});
+});
+it("clears conflict Retry when fresh identity verification rejects a different bot",async()=>{
+ const f=restartFixture(),service=await f.pair();f.transport.getUpdates.mockRejectedValueOnce(new TelegramTransportError("conflict"));await vi.advanceTimersByTimeAsync(1500);
+ f.transport.getMe.mockResolvedValueOnce({id:"456",username:"other_bot"});expect(await service.resume("fake","chief")).toBe(false);
+ expect(service.status()).toMatchObject({resumeState:"blocked",canResume:false});const polls=f.transport.getUpdates.mock.calls.length;
+ await vi.advanceTimersByTimeAsync(3000);expect(f.transport.getUpdates).toHaveBeenCalledTimes(polls);
 });
 for(const action of ["stop","revoke"] as const)it(`${action} fences a late identity-check response during restart`,async()=>{
  const f=restartFixture(),original=await f.pair();original.stop();let resolve!:(value:{id:string;username:string})=>void;
