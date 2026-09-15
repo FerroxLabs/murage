@@ -127,6 +127,9 @@ jobs:
           rm "release/Murage-$v-arm64.zip"
           ditto -c -k --sequesterRsrc --keepParent "$app" "release/Murage-$v-arm64.zip"
           shasum -a 256 "release/Murage-$v-arm64.dmg" "release/Murage-$v-arm64.zip" > qualification-evidence/SHA256SUMS
+      - name: Preserve sanitized GEPA stage evidence
+        if: always()
+        run: node scripts/collect-gepa-build-evidence.mjs "$RUNNER_TEMP/gepa-mac-build" "$PWD/qualification-evidence"
       - name: Remove task-owned signing material and restore keychain search list
         if: always()
         run: |
