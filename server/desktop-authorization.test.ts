@@ -18,6 +18,7 @@ const administration: Array<[string, string]> = [
   ["POST", "/api/teams/import"], ["POST", "/api/teams/export"], ["POST", "/api/team-library/github"],
   ["POST", "/api/bots/{bot}/assistant-profile"], ["POST", "/api/bots/{bot}/skills"], ["POST", "/api/bots/{bot}/skills/library"],
   ["PATCH", "/api/bots/{bot}/skills/example"], ["DELETE", "/api/bots/{bot}/skills/example"],
+  ["GET", "/api/bots/{bot}/skills/example/history"], ["POST", "/api/bots/{bot}/skills/example/rollback"],
   ["PUT", "/api/section-context?section="], ["PUT", "/api/bots/{bot}/memory"], ["POST", "/api/bots/{bot}/checkpoints/restore"],
   ...["pull", "run", "start", "stop", "remove", "interrupt", "screenshot"].map((action): [string, string] => ["POST", `/api/local-computer/${action}`]),
   ...["run", "stop", "remove", "screenshot"].map((action): [string, string] => ["POST", `/api/bots/{bot}/local-computer/${action}`]),
@@ -26,6 +27,7 @@ const administration: Array<[string, string]> = [
   ["POST", "/api/mcp/servers"], ["POST", "/api/mcp/servers/example/test"],
   ["PUT", "/api/mcp/servers/example"], ["PATCH", "/api/mcp/servers/example"], ["DELETE", "/api/mcp/servers/example"],
   ["POST", "/api/routines"], ["PATCH", "/api/routines/example"], ["DELETE", "/api/routines/example"],
+  ["POST", "/api/routines/example/instructions/rollback"],
   ["POST", "/api/calendar-calls"], ["PATCH", "/api/calendar-calls/example"], ["DELETE", "/api/calendar-calls/example"],
   ["POST", "/api/webhooks"], ["POST", "/api/webhooks/example/rotate"], ["POST", "/api/webhooks/example/test"],
   ["PATCH", "/api/webhooks/example"], ["DELETE", "/api/webhooks/example"],
@@ -82,11 +84,12 @@ describe("desktop authority at the actual harness boundary", () => {
 
   it.each(administration)("denies %s %s before parsing or performing side effects", async (method, template) => {
     const path = template.replace("{bot}", botId).replace("{group}", groupId);
-    // Malformed input proves the authority check runs before body validation.
+    // For writes, malformed input proves authority precedes body validation.
+    // Read-only endpoints have no request body and must refuse disclosure.
     // The fixture has no provider credentials and an empty PATH; it cannot
     // accidentally provision a real host while exercising rejected routes.
     const response = await fetch(`${fixture.info.url}${path}`, {
-      method, headers: { "content-type": "application/json", ...remote }, body: "{",
+      method, headers: { "content-type": "application/json", ...remote }, ...(method === "GET" || method === "HEAD" ? {} : { body: "{" }),
     });
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "no such route" });

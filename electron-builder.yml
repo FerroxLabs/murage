@@ -134,8 +134,14 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # This exact worker tree is pre-signed and pinned before packaging. Preserve
+  # its inner signatures; the normal outer app signing/seal remains enabled.
+  signIgnore:
+    - '/Contents/Resources/gepa-worker(?:/|$)'
   # the dictation helper is a signed background app — Windows and Linux never see it
   extraResources:
+    - from: dist-native/gepa/darwin-${arch}
+      to: gepa-worker
     - from: dist-native/backup-age
       to: backup-tools
       filter:
@@ -190,6 +196,15 @@ win:
       arch: x64
   icon: build/icon.ico
   extraResources:
+    # Preserve the pre-signed worker executable using the existing single-file
+    # copy path. The rest of onedir contains no additional EXEs (validated).
+    - from: dist-native/gepa/win32-x64
+      to: gepa-worker
+      filter:
+        - "**/*"
+        - "!gepa-worker.exe"
+    - from: dist-native/gepa/win32-x64/gepa-worker.exe
+      to: gepa-worker/gepa-worker.exe
     - from: dist-native/recovery/win32-x64/murage-recovery.exe
       to: murage-recovery.exe
     # Individual copies bypass the directory signing transformer. afterPack
@@ -270,6 +285,8 @@ linux:
   # The reviewed x64 CLI runtime is staged before packaging and remains
   # outside ASAR so executable modes and adjacent sidecars are preserved.
   extraResources:
+    - from: dist-native/gepa/linux-x64
+      to: gepa-worker
     - from: dist-native/cua-linux-x64
       to: cua-linux-x64
     - from: dist-native/backup-age-linux

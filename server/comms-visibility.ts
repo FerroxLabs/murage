@@ -1,3 +1,4 @@
+import { threadHumanPrincipal, assertHumanPrincipal, bindHumanThread, humanTask } from "./human-principals.ts";
 // Bot⇄bot comms visibility: channel creation, message mirroring, and
 // per-thread chips. Extracted from /api/internal/ask-bot so delegations
 // (delegate_bot) and any future peer flow reuse the same UX without a copy.
@@ -19,15 +20,18 @@ export interface CommsBus {
 /** Find or create the bot⇄bot channel for the pair. The channel keeps
  * the pair's full exchange, lives in the sidebar like any room, and the
  * user can open it to chip in. */
-export function getOrCreateChannel(store: Store, from: BotRecord, target: BotRecord): GroupRecord {
-  const existing = store.dmGroup(from.id, target.id);
+export function getOrCreateChannel(store: Store, from: BotRecord, target: BotRecord, sourceThreadId=from.threadId): GroupRecord {
+  const principal=threadHumanPrincipal(sourceThreadId);assertHumanPrincipal(principal);
+  const existing = store.groups.find(group=>group.dm&&group.memberIds.length===2&&group.memberIds.includes(from.id)&&group.memberIds.includes(target.id)&&JSON.stringify(threadHumanPrincipal(group.threadId))===JSON.stringify(principal));
   if (existing) {
     if (sectionKey(existing.section) !== sectionKey(from.section)) {
       return store.patchGroup(existing.id, { section: from.section }) ?? existing;
     }
     return existing;
   }
-  return store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true, from.section);
+  const group=store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true, from.section);
+  bindHumanThread(group.threadId,principal);
+  return group;
 }
 
 /** Mirror `from`'s outgoing message into the channel, drop chips into
@@ -63,7 +67,9 @@ export function mirrorExchange(
       ? { groupId: channel.id, withBotId: target.id, withName: target.name, withColor: target.color }
       : undefined,
   });
-  note(target.threadId, {
+  const targetTask=humanTask(bus.store,target.id,threadHumanPrincipal(sourceThreadId));
+  if(!targetTask)throw new Error("HUMAN_TASK_UNAVAILABLE");
+  note(targetTask.threadId, {
     role: "bot",
     kind: "activity",
     tool: { name: `Message from @${from.name}` },

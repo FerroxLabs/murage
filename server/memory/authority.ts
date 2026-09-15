@@ -3,14 +3,25 @@ import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "../database.ts";
 import { redactSecretsInText } from "../redact.ts";
 import type { MemoryEvidenceHandle } from "../../shared/memory.ts";
+import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
+import { readMemoryLearning } from "./learning-policy.ts";
+import { activateGroundedMemory, type MemoryClaimType } from "./automatic-learning.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
+import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 
 const ownerTickets = new WeakSet<object>();
 /** Mint only after the HTTP desktop-authority check; not exposed as an agent tool. */
 export function ownerMemoryTicket() { const ticket = Object.freeze({}); ownerTickets.add(ticket); return ticket; }
 export function requireMemoryOwner(ticket: object) { if (!ownerTickets.has(ticket)) throw new Error("MEMORY_OWNER_REQUIRED"); }
 
-export function saveMemoryCandidate(text: string, evidence: MemoryEvidenceHandle[], key: string, access: MemoryAccess) {
+/** Identity writes have their own bounded imprint/reveal contract. Generic
+ * corrections and audience promotion must not silently change that contract. */
+export function assertGenericMemoryTarget(db:DatabaseSync,id:string,version:number){
+  if(db.prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND record_version=? AND partition='identity'").get(id,version))throw new Error("MEMORY_IDENTITY_WRITE_REQUIRED");
+}
+
+
+export function saveMemoryCandidate(text: string, evidence: MemoryEvidenceHandle[], key: string, access: MemoryAccess, claimType?: MemoryClaimType) {
   assertMemoryAccess(access);
   if (!text.trim() || text.length > 4096 || !evidence.length || evidence.length > 20 || !/^[\w-]{1,160}$/.test(key)) throw new Error("INVALID_MEMORY_CANDIDATE");
   return transaction(db => {
@@ -31,12 +42,48 @@ export function saveMemoryCandidate(text: string, evidence: MemoryEvidenceHandle
     if (existing) {
       const saved=db.prepare("SELECT source_id,source_revision,start_byte,end_byte FROM memory_evidence WHERE record_id=? AND record_version=1").all(id);
       const canonical=(rows:unknown[][])=>JSON.stringify(rows.map(row=>JSON.stringify(row)).sort());
-      if(existing.text!==safeText || existing.state!=="candidate" || existing.scope_id!==scope ||
+      if(existing.text!==safeText || !["candidate","active"].includes(String(existing.state)) || existing.scope_id!==scope ||
         canonical(saved.map(h=>[h.source_id,h.source_revision,h.start_byte,h.end_byte]))!==canonical(evidence.map(h=>[h.sourceId,h.revision,h.startByte,h.endByte])))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
       return id;
     }
     db.prepare("INSERT INTO memory_records VALUES(?,1,?,'fact',?,'assistant-inference','candidate',0,?,NULL,NULL,?)").run(id,scope,safeText,Date.now(),Date.now());
     for (const h of evidence) db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,h.sourceId,h.revision,h.startByte,h.endByte);
+    activateGroundedMemory(db,id,claimType);
+    return id;
+  });
+}
+
+/** Ground through the configured isolated text-only evaluator. The durable
+ * candidate exists before optional synthesis; a changed audience/source/config
+ * fences activation, while unavailable synthesis remains honestly provisional. */
+export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHandle[],key:string,access:MemoryAccess,claimType:MemoryClaimType|undefined,extractor:TextOnlyExtractor|null,ownerInvitation?:MemoryEvidenceHandle){
+  const id=saveMemoryCandidate(text,ownerInvitation?[...evidence,ownerInvitation]:evidence,key,access);
+  if(!claimType||database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(id)?.state==="active")return id;
+  const db=database(),learningRevision=readMemoryLearning(db).revision;
+  if(evidence.length!==1)return id;
+  const h=evidence[0],source=db.prepare("SELECT s.*,v.payload FROM memory_sources s JOIN memory_source_versions v ON s.id=v.source_id AND s.revision=v.revision WHERE s.id=?").get(h.sourceId)!;
+  const quote=Buffer.from(JSON.parse(String(source.payload)).text).subarray(h.startByte,h.endByte).toString("utf8");
+  let invitation:string|undefined;
+  if(ownerInvitation){
+    const invited=db.prepare("SELECT s.*,v.payload FROM memory_sources s JOIN memory_source_versions v ON s.id=v.source_id AND s.revision=v.revision WHERE s.id=? AND s.revision=? AND s.state='active' AND s.speaker='owner'").get(ownerInvitation.sourceId,ownerInvitation.revision);
+    if(!invited||invited.scope_id!==source.scope_id)throw new Error("MEMORY_INVITATION_UNAVAILABLE");
+    assertMemoryAccess(access,String(invited.scope_id));
+    const bytes=Buffer.from(JSON.parse(String(invited.payload)).text);
+    if(ownerInvitation.startByte<0||ownerInvitation.endByte>bytes.length||ownerInvitation.endByte<=ownerInvitation.startByte)throw new Error("INVALID_MEMORY_SPAN");
+    invitation=bytes.subarray(ownerInvitation.startByte,ownerInvitation.endByte).toString("utf8");
+  }
+  const needsGrounding=text!==quote||claimType==="character-canon"&&source.speaker!=="owner";
+  const support=needsGrounding?await groundMemoryClaim({text,quote,claimType,speaker:String(source.speaker),outcome:String(source.outcome),ownerInvitation:invitation},extractor,new AbortController().signal):undefined;
+  return transaction(()=>{
+    assertMemoryAccess(access,String(source.scope_id));assertEvidenceCurrent(db,id,1);
+    if(readMemoryLearning(db).revision!==learningRevision)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    if(ownerInvitation){
+      const current=db.prepare("SELECT 1 FROM memory_sources WHERE id=? AND revision=? AND state='active' AND speaker='owner'").get(ownerInvitation.sourceId,ownerInvitation.revision);
+      if(!current||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(ownerInvitation.sourceId,ownerInvitation.revision))throw new Error("MEMORY_INVITATION_UNAVAILABLE");
+    }
+    const activated=activateGroundedMemory(db,id,claimType,support?{...support,ownerInvitation:invitation,ownerInvitationSourceId:ownerInvitation?.sourceId}:undefined);
+    if(activated&&ownerInvitation)db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,ownerInvitation.sourceId,ownerInvitation.revision,ownerInvitation.startByte,ownerInvitation.endByte);
+    if(!activated&&support)db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1 AND claim_status='provisional'").run(support.reason,id);
     return id;
   });
 }
@@ -96,6 +143,7 @@ function approveCorrection(db: DatabaseSync, record: Record<string, unknown>, re
   if (!review.target || review.status === "unavailable") throw new Error("MEMORY_CORRECTION_TARGET_UNAVAILABLE");
   if (review.status === "changed") throw new Error("MEMORY_CORRECTION_TARGET_CHANGED");
   const target = review.target;
+  assertGenericMemoryTarget(db,target.id,target.version);
   if (target.scopeId !== record.scope_id) throw new Error("MEMORY_CORRECTION_SCOPE_MISMATCH");
   assertEvidenceCurrent(db,String(record.id),Number(record.version));
   if (target.ownerPinned && options.correctionPin === undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_REQUIRED");
@@ -108,6 +156,7 @@ function approveCorrection(db: DatabaseSync, record: Record<string, unknown>, re
   if (activated.changes !== 1) throw new Error("MEMORY_VERSION_CONFLICT");
   db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
   db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
+  enqueueProcedureCorrectionReview(db,String(record.id),Number(record.version));
   return String(record.id);
 }
 
@@ -121,6 +170,7 @@ export function approveMemory(ticket: object, id: string, version: number, optio
     if (options.correctionPin !== undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_INVALID");
     db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
     if (options.scopeId && options.scopeId !== record.scope_id) {
+      assertGenericMemoryTarget(db,id,version);
       if (!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(options.scopeId)) throw new Error("MEMORY_SCOPE_UNKNOWN");
       const copy = randomUUID();
       db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'owner-statement','active',?,?,NULL,NULL,?)").run(copy,options.scopeId,record.kind,record.text,options.pin?1:0,Date.now(),Date.now());
@@ -138,12 +188,14 @@ export function correctMemory(ticket: object, id: string, version: number, text:
   return transaction(db => {
     const row = db.prepare("SELECT * FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(id);
     if (!row || row.version !== version || row.state === "deleted") throw new Error("MEMORY_VERSION_CONFLICT");
+    assertGenericMemoryTarget(db,id,version);
     db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(Date.now(),id,version);
     db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'owner-statement','active',?,?,NULL,?,?)")
       .run(id,version+1,row.scope_id,row.kind,redactSecretsInText(text),row.owner_pinned,Date.now(),id,Date.now());
     db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(id,version,id,version+1);
     db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
     db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
+    enqueueProcedureCorrectionReview(db,id,version+1);
     return version+1;
   });
 }

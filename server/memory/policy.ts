@@ -1,3 +1,4 @@
+import { threadHumanPrincipal, assertHumanPrincipal, isWorkspaceOwner, sameHumanAudience, type HumanPrincipal } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
 import type { InternalCapability, InternalCapabilities } from "../internal-capabilities.ts";
@@ -11,6 +12,7 @@ export interface MemoryRoster {
 export interface MemoryAccess {
   botId: string; threadId: string; generation: string; policyRevision: number; deletionEpoch: number;
   scopeIds: readonly string[];
+  humanPrincipal: HumanPrincipal;
 }
 const contexts = new WeakMap<MemoryAccess, {claim: InternalCapability; registry: InternalCapabilities; roster: () => MemoryRoster}>();
 const POLICY_ID = "memory-roster-policy";
@@ -72,6 +74,38 @@ function onlyAddsIndependentRoomThreads(intent: string, roster: MemoryRoster): b
     return added;
   } catch { return false; }
 }
+/** A single fresh owner task on an existing bot adds no authority to any
+ * existing thread. Do not exempt imports, bound-person contexts, aliases,
+ * removals, or a combined roster/membership edit. */
+function onlyAddsIndependentOwnerTask(intent:string,roster:MemoryRoster):boolean {
+  try {
+    const previous=JSON.parse(intent) as {hash:string;snapshot?:ReturnType<typeof rosterSnapshot>};
+    const old=previous.snapshot,next=rosterSnapshot(roster);
+    if(!old||!Array.isArray(old.bots)||!Array.isArray(old.groups)||snapshotHash(old)!==previous.hash||JSON.stringify(old.groups)!==JSON.stringify(next.groups)||old.bots.length!==next.bots.length)return false;
+    const bots=new Map(next.bots.map(bot=>[bot.id,bot]));
+    if(bots.size!==next.bots.length||new Set(old.bots.map(bot=>bot.id)).size!==old.bots.length)return false;
+    const occupied=new Set([...old.bots,...old.groups].flatMap(item=>item.threads));
+    let additions=0;
+    for(const bot of old.bots){
+      const candidate=bots.get(bot.id);
+      if(!candidate||candidate.section!==bot.section||bot.threads.some(thread=>!candidate.threads.includes(thread)))return false;
+      for(const thread of candidate.threads){
+        if(bot.threads.includes(thread))continue;
+        if(occupied.has(thread)||++additions>1)return false;
+        const principal=threadHumanPrincipal(thread);assertHumanPrincipal(principal);
+        if(!isWorkspaceOwner(principal))return false;
+        // Fresh factory-generated IDs cannot reuse an orphaned transcript or
+        // previously registered scope that happens to be absent from roster.
+        const db=database();
+        if(db.prepare("SELECT 1 FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(thread)
+          ||db.prepare("SELECT 1 FROM messages WHERE thread_id=? LIMIT 1").get(thread)
+          ||db.prepare("SELECT 1 FROM memory_sources WHERE thread_id=? LIMIT 1").get(thread))return false;
+        occupied.add(thread);
+      }
+    }
+    return additions===1;
+  }catch{return false;}
+}
 function policyRow() { return database().prepare("SELECT state,intent FROM memory_scope_bindings WHERE id=?").get(POLICY_ID); }
 
 /** Restriction is durable BEFORE the roster file changes. Failure leaves it closed. */
@@ -79,7 +113,7 @@ export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
   const hash = fingerprint(roster);
   const previous = policyRow();
   if (previous?.state === "granted" && JSON.parse(String(previous.intent)).hash === hash) { persist(); return; }
-  if (previous?.state === "granted" && onlyAddsIndependentRoomThreads(String(previous.intent), roster)) {
+  if (previous?.state === "granted" && (onlyAddsIndependentRoomThreads(String(previous.intent), roster)||onlyAddsIndependentOwnerTask(String(previous.intent),roster))) {
     persist();
     reconcileMemoryRoster(roster);
     return;
@@ -100,7 +134,7 @@ export function reconcileMemoryRoster(roster: MemoryRoster) {
   transaction(db => {
     const prior = policyRow();
     if (prior && JSON.parse(String(prior.intent)).hash !== fingerprint(roster)
-      && !(prior.state === "granted" && onlyAddsIndependentRoomThreads(String(prior.intent), roster))) {
+      && !(prior.state === "granted" && (onlyAddsIndependentRoomThreads(String(prior.intent), roster)||onlyAddsIndependentOwnerTask(String(prior.intent),roster)))) {
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
       db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
     }
@@ -125,27 +159,73 @@ function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster): 
   if (group && !group.memberIds.includes(botId)) return [];
   if (!group && bot.threadId !== threadId && !bot.tasks?.some(t => t.threadId === threadId)) return [];
   const db = database();
+  const principal=threadHumanPrincipal(threadId);
+  assertHumanPrincipal(principal);
   const scopes: string[] = [];
   const add = (kind: string, owner: string) => {
     const row = db.prepare("SELECT id FROM memory_scopes WHERE kind=? AND owner_key=?").get(kind,owner);
     if (row) scopes.push(String(row.id));
   };
+  // Private continuity belongs to the bot's owned direct tasks, not its current
+  // model/session. Never infer a private grant from an aliased room/other bot.
+  const foreignThreads = new Set([
+    ...roster.bots.filter(other => other.id !== botId).flatMap(other => [other.threadId,...(other.tasks??[]).map(task=>task.threadId)]),
+    ...roster.groups.flatMap(room => [room.threadId,...(room.tasks??[]).map(task=>task.threadId)]),
+  ]);
+  if (!group && foreignThreads.has(threadId)) return [];
   add("conversation",threadId);
   if (group) add("room",group.id);
-  else { add("bot",botId); add("team",bot.section?.trim() || ""); }
-  const subjectType = group ? "room" : "bot", subjectId = group?.id ?? botId;
+  else {
+    if(isWorkspaceOwner(principal)){add("bot",botId); add("team",bot.section?.trim() || "");}
+    add("preferences","person:"+principal.personId);
+    const excluded = new Set(db.prepare("SELECT e.value FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'").all().map(row=>String(row.value)));
+    for (const owned of new Set([bot.threadId,...(bot.tasks??[]).map(task=>task.threadId)])) {
+      if (!foreignThreads.has(owned) && !excluded.has(owned) && sameHumanAudience(principal,threadHumanPrincipal(owned))) add("conversation",owned);
+    }
+  }
+  const subjectType = isWorkspaceOwner(principal) ? (group ? "room" : "bot") : "person", subjectId = isWorkspaceOwner(principal) ? (group?.id ?? botId) : principal.personId;
   for (const row of db.prepare("SELECT scope_id FROM memory_scope_bindings WHERE subject_type=? AND subject_id=? AND state='granted'").all(subjectType,subjectId)) scopes.push(String(row.scope_id));
   return [...new Set(scopes)];
 }
 
 export function memoryAccess(registry: InternalCapabilities, claim: InternalCapability, roster: () => MemoryRoster): MemoryAccess {
   if (claim.kind !== "memory" || !registry.isActive(claim)) throw new Error("MEMORY_UNAUTHORIZED");
+  const principal=threadHumanPrincipal(claim.threadId);
+  assertHumanPrincipal(principal);
+  if(claim.humanPrincipal && JSON.stringify(claim.humanPrincipal)!==JSON.stringify(principal))throw new Error("MEMORY_UNAUTHORIZED");
+  if(!claim.humanPrincipal && !isWorkspaceOwner(principal))throw new Error("MEMORY_UNAUTHORIZED");
   const state = memoryState();
   if (policyRow()?.state !== "granted") throw new Error("MEMORY_POLICY_PENDING");
   const scopeIds = eligibleScopes(claim.botId,claim.threadId,roster());
   if (!scopeIds.length) throw new Error("MEMORY_UNAUTHORIZED");
-  const access = Object.freeze({botId:claim.botId,threadId:claim.threadId,generation:claim.generation,policyRevision:state.policyRevision,deletionEpoch:state.deletionEpoch,scopeIds:Object.freeze(scopeIds)});
+  const access = Object.freeze({botId:claim.botId,threadId:claim.threadId,generation:claim.generation,policyRevision:state.policyRevision,deletionEpoch:state.deletionEpoch,humanPrincipal:principal,scopeIds:Object.freeze(scopeIds)});
   contexts.set(access,{claim,registry,roster}); return access;
+}
+
+/** Host background processing reuses current audience policy without minting a
+ * tool capability or an owner ticket. This is not a dispatch/disclosure grant. */
+export function backgroundMemoryScopes(botId: string, threadId: string, roster: MemoryRoster): readonly string[] {
+  const state = memoryState();
+  if (!["active", "capture"].includes(state.mode) || policyRow()?.state !== "granted") return [];
+  const excluded = database().prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=?").get(threadId);
+  if (excluded) return [];
+  return Object.freeze(eligibleScopes(botId, threadId, roster));
+}
+
+export function backgroundMemoryAudience(botId: string, threadId: string, roster: MemoryRoster) {
+  const scopeIds = backgroundMemoryScopes(botId, threadId, roster);
+  if (!scopeIds.length) return null;
+  const principal = threadHumanPrincipal(threadId);
+  assertHumanPrincipal(principal);
+  const room = roster.groups.find(group => group.threadId === threadId || group.tasks?.some(task => task.threadId === threadId));
+  const owner = isWorkspaceOwner(principal);
+  const kind = room ? "room" : owner ? "bot" : "preferences";
+  const key = room ? room.id : owner ? botId : "person:" + principal.personId;
+  const scope = database().prepare("SELECT id FROM memory_scopes WHERE kind=? AND owner_key=?").get(kind, key);
+  if (!scope || !scopeIds.includes(String(scope.id))) return null;
+  return Object.freeze({ botId, threadId, scopeId: String(scope.id), scopeIds,
+    audienceKey: room ? `room:${room.id}:bot:${botId}` : owner ? `bot:${botId}:owner` : `bot:${botId}:person:${principal.personId}`,
+    humanPrincipal: principal });
 }
 
 export function assertMemoryAccess(access: MemoryAccess, scope?: string) {

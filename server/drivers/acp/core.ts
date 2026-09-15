@@ -15,6 +15,7 @@
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
+import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
 import {
   fromElicitationForm,
   fromElicitationUrl,
@@ -52,6 +53,10 @@ import {
 
 /** Lifecycle facts of a JSON-RPC error: validated numbers only, and a method
  * only when the response matched a pending request (R1-T8). */
+function reasoningOnlyData(data: unknown): boolean {
+  const text = typeof data === "string" ? data : data && typeof data === "object" && !Array.isArray(data) ? (data as {message?: unknown}).message : undefined;
+  return typeof text === "string" && text.trim().toLowerCase() === "empty response from model (reasoning_only)";
+}
 function lifecycleRejection(error: unknown, rpcId: unknown, method?: string): LifecycleFields {
   const fields: LifecycleFields = {};
   if (typeof rpcId === "number" && Number.isSafeInteger(rpcId) && rpcId >= 0) fields.rpcId = rpcId;
@@ -60,7 +65,7 @@ function lifecycleRejection(error: unknown, rpcId: unknown, method?: string): Li
   if (typeof code === "number" && Number.isSafeInteger(code)) fields.rpcCode = code;
   const status = data && typeof data === "object" && !Array.isArray(data) ? (data as { http_status?: unknown }).http_status : undefined;
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) fields.httpStatus = status;
-  const terminalKind=data&&typeof data==="object"&&!Array.isArray(data)?failureKind((data as {error_kind?:unknown}).error_kind):undefined;
+  const terminalKind=(data&&typeof data==="object"&&!Array.isArray(data)?failureKind((data as {error_kind?:unknown}).error_kind):undefined) ?? (reasoningOnlyData(data)?"empty_response":undefined);
   if(terminalKind)fields.terminalKind=terminalKind;
   return fields;
 }
@@ -87,6 +92,7 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
     }
     return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
   }
+  if (reasoningOnlyData(error.data)) return "The model returned reasoning without a visible answer. No reply was produced.";
   return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
 }
 
@@ -102,8 +108,8 @@ export function acpRpcErrorDetails(error: unknown): string | undefined {
   if (typeof acpMethod === "string" && ACP_DIAGNOSTIC_METHODS.has(acpMethod)) facts.push(`ACP request: ${acpMethod}`);
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) facts.push(`Provider response: HTTP ${status}`);
   if (typeof code === "number" && Number.isSafeInteger(code)) facts.push(`Engine error code: ${code}`);
-  const kind = data && typeof data === "object" && !Array.isArray(data)
-    ? failureKind((data as { error_kind?: unknown }).error_kind) : undefined;
+  const kind = (data && typeof data === "object" && !Array.isArray(data)
+    ? failureKind((data as { error_kind?: unknown }).error_kind) : undefined) ?? (reasoningOnlyData(data) ? "empty_response" : undefined);
   if (kind) facts.push(`Engine failure category: ${kind}`);
   return facts.length ? facts.join("\n") : undefined;
 }
@@ -282,7 +288,7 @@ const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
  * question (Fuigo's ask_user_question, an ACP elicitation) takes `answer`
  * with the owner's validated picks, or a deny that is an explicit skip
  * (0.1.52 ASK3). */
-type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", answers?: QuestionAnswer[]) => void;
+type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", answers?: QuestionAnswer[]) => boolean | void;
 
 /** Fuigo's ACP extension request for its AskUserQuestion tool. The ACP wire
  * prefixes extension methods with `_`; the leader gateway may nest the real
@@ -443,7 +449,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // supports (mcpCapabilities.http/.sse only add EXTRA transports), so
       // an injected stdio proxy — e.g. the peer-agent comms tool — attaches
       // fine here. env is the ACP {name,value}[] shape.
-      const acpMcpServers = (turn: SendTurnInput) => {
+      const acpMcpServers = (turn: SendTurnInput, memoryName = "murage-memory") => {
         const servers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> = [];
         const acpEnv = (env: Record<string, string>) =>
           Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
@@ -453,7 +459,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
         const memory = turn.integrations?.memory;
         if (memory) {
-          servers.push({ name: "murage-memory", command: memory.command, args: memory.args, env: acpEnv(memory.env) });
+          servers.push({ name: memoryName, command: memory.command, args: memory.args, env: acpEnv(memory.env) });
         }
         const composio = turn.integrations?.composio;
         if (composio) {
@@ -492,7 +498,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // collision keeps the built-in (reserved names are filtered at the
         // config boundary; this is defense in depth).
         for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
-          if (name === "murage-memory") continue;
+          if (name === "murage-memory" || name === memoryName) continue;
           if (servers.some((existing) => existing.name === name)) continue;
           if (Object.keys(server.env).some(isHarnessOwnedMcpEnvName)) continue;
           servers.push({ name, command: server.command, args: server.args, env: acpEnv(server.env) });
@@ -527,7 +533,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           return { turnId };
         }
         if (turn.providerRoute) validateProviderTurnRoute(support.driverKind, turn.providerRoute);
-        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute, { threadId }) : null;
+        const providerBinding = turn.providerRoute ? applyProviderRoute(support.driverKind, env, turn.providerRoute, { threadId, memoryTools: Boolean(turn.integrations?.memory) }) : null;
         const grokBinding = support.driverKind === "grokAgent" ? grokResumeBinding(threadId, providerBinding?.identity ?? null, turn.resumeCursor) : null;
         if (grokBinding?.replay && !turn.transcript) throw new Error("Grok provider binding changed. Reload the conversation before continuing.");
         const replayGrokTurn = () => ({ ...turn, text: ["[The provider session binding changed. Continue from this authorised conversation history:]", "",
@@ -539,7 +545,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           resolvedModel !== undefined && resolvedModel !== turn.model
             ? { ...turn, model: resolvedModel }
             : turn;
-        const mcpServers = acpMcpServers(turn);
+        const ownedMemoryAlias = support.driverKind === "fuigoAgent" && turn.integrations?.memory && !providerBinding
+          ? newFuigoMemoryAlias() : null;
+        const mcpServers = acpMcpServers(turn, ownedMemoryAlias ?? "murage-memory");
 
         // R1-T8: one bounded, allowlisted lifecycle trace per child generation.
         const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId });
@@ -845,19 +853,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const params = msg.params ?? {};
           flushAssistantText();
           const options: Array<{ optionId?: string; kind?: string }> = Array.isArray(params.options) ? params.options : [];
-          // ONE-TIME first, then any other option of that polarity. Murage's
-          // card answers one request: "Yes" is allow-once, and any "always"
-          // memory lives in Murage's own grants, which re-answer the NEXT
-          // request. Taking the first `allow*` option instead would hand the
-          // engine a standing grant Murage never sees again — Fuigo lists its
-          // `allow_always` "allow all edits during this session" row BEFORE
-          // `allow_once` on every edit prompt (fuigo-workspace prompter.rs,
-          // read off the 1.0.12 wire), so that ordering is real, not
-          // hypothetical. The fallback keeps agents that offer only
-          // `allow_always` / `reject_always` answerable rather than cancelled.
-          const optionFor = (want: "allow" | "reject") => {
+          // A card answers only this request. Never widen it to an engine's
+          // standing grant when the matching one-time option is unavailable.
+          // Explicit fullAuto retains its existing broader fallback.
+          const optionFor = (want: "allow" | "reject", allowStanding = false) => {
             const usable = options.filter((o) => typeof o.optionId === "string" && String(o.kind ?? "").startsWith(want));
-            return (usable.find((o) => o.kind === `${want}_once`) ?? usable[0])?.optionId ?? null;
+            return (usable.find((o) => o.kind === `${want}_once`) ?? (allowStanding ? usable[0] : undefined))?.optionId ?? null;
           };
           const cancelled = { outcome: { outcome: "cancelled" } };
           const missing = (want: string) =>
@@ -876,8 +877,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // the tool's own name so its policy recognizes it too.
           const title = String(toolCall.title ?? "");
           const questionTool = isQuestionTool(title) ? title : isQuestionTool(kind) ? kind : undefined;
+          if (ownedMemoryAlias && !config.fullAuto && !questionTool && state.promptSent &&
+            sessionId && params.sessionId === sessionId && !state.settled && !state.cancelRequested &&
+            Array.from(rpcPending.values()).some(pending => pending.method === "session/prompt")) {
+            const allow = fuigoMemoryAllowOnce(toolCall, options, ownedMemoryAlias);
+            if (allow) return send({ jsonrpc: "2.0", id: msg.id,
+              result: { outcome: { outcome: "selected", optionId: allow } } });
+          }
           if (config.fullAuto && !questionTool) {
-            const allow = optionFor("allow");
+            const allow = optionFor("allow", true);
             if (!allow) missing("allow");
             return send({
               jsonrpc: "2.0",
@@ -897,7 +905,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({
               jsonrpc: "2.0",
               id: msg.id,
-              result: optionId ? { outcome: { outcome: "selected", optionId } } : cancelled,
+              result: optionId ? {
+                outcome: { outcome: "selected", optionId },
+                // Fuigo 1.0.13 treats a bare reject_once as turn cancellation.
+                // Its response-level feedback extension keeps the tool denied
+                // while allowing a safe explanation in this same native turn.
+                ...(support.driverKind === "fuigoAgent" && !config.fullAuto && !questionTool &&
+                  behavior === "deny" && source === "user" &&
+                  options.some(option => option.optionId === optionId && option.kind === "reject_once")
+                  ? { _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
+                  : {}),
+              } : cancelled,
             });
             emit({
               ...base(threadId, turnId),
@@ -907,6 +925,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               source: optionId ? source : "system",
               approvalScope: controlsHost ? "local-computer" : undefined,
             });
+            return Boolean(optionId);
           };
           const timer = setTimeout(() => {
             emit({ ...base(threadId, turnId), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
@@ -1041,10 +1060,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
-        let stderr = "";
+        let stderr = "", stderrDiagnostic = "", stderrDiagnosticTruncated = false;
+        const STDERR_DIAGNOSTIC_CHARS = 256 * 1024;
         const attachChild = (proc: NonNullable<typeof child>) => {
         proc.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
         proc.stderr.on("data", (c) => {
+          const text = String(c), remaining = STDERR_DIAGNOSTIC_CHARS - stderrDiagnostic.length;
+          stderrDiagnostic += text.slice(0, Math.max(0, remaining));
+          if (text.length > remaining) stderrDiagnosticTruncated = true;
           stderr += c;
           if (stderr.length > 8192) stderr = stderr.slice(-8192);
         });
@@ -1054,6 +1077,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           settle(false, "spawn_error");
         });
         proc.on("close", (code, signal) => {
+          // Redact before splitting records, so a credential crossing a chunk
+          // boundary is not exposed. A capped partial final line is omitted.
+          const captured = stderrDiagnosticTruncated ? stderrDiagnostic.slice(0, Math.max(0, stderrDiagnostic.lastIndexOf("\n"))) : stderrDiagnostic;
+          const diagnostic = redactSecretsInText(stripVTControlCharacters(captured));
+          for (let offset = 0; offset < diagnostic.length; offset += 4096) appendNative(threadId, { dir: "in", source: `${SOURCE}.stderr`, msg: { type: "engine_stderr", turnId, processGeneration: lifecycle.generation, text: diagnostic.slice(offset, offset + 4096) } });
+          if (stderrDiagnosticTruncated) appendNative(threadId, { dir: "in", source: `${SOURCE}.stderr`, msg: { type: "engine_stderr_truncated", turnId, limitChars: STDERR_DIAGNOSTIC_CHARS } });
+          stderrDiagnostic = "";
           // Observed before settle() clears pending RPC state. A close with no
           // earlier stop_requested is unsolicited; its initiator stays unknown.
           lifecycle.record("closed", {
@@ -1315,6 +1345,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
           } catch (e) {
             if (!state.settled) {
+              if (state.cancelRequested) { settle(true, "cancelled"); return; }
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
               const providerError = classifyProviderError(e);
@@ -1443,7 +1474,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               finish("answer", "user", decision.answers);
               return "answered";
             }
-            finish(decision.behavior === "allow" ? "allow" : "deny", "user");
+            const delivered = finish(decision.behavior === "allow" ? "allow" : "deny", "user");
+            if (delivered === false) return "unavailable";
             return decision.behavior === "allow" ? "allowed-once" : "rejected";
           },
           hasSession: (threadId) => active.has(threadId),

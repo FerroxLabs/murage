@@ -1,3 +1,5 @@
+import { SkillVersionHistory } from "./ProcedureVersionHistory";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { BookOpen, ChevronLeft, Plus, RotateCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api, useStore, type Bot } from "@/state/store";
@@ -622,6 +624,7 @@ export function SkillsBody(props: SkillsBodyProps) {
 export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => void }) {
   const { state } = useStore();
   const authoringEnabled = skillRecorderEnabled(state.config);
+  const canEditHistory = useDesktopSurface() === true;
   const [query, setQuery] = useState("");
   const [visible, setVisible] = useState(SKILL_PAGE_SIZE);
 
@@ -686,6 +689,11 @@ export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => v
         // and it arrives switched on" — and the row says so on the control.
         onRemove={(skill) => void store.remove(skill)}
       />
+      {snapshot.viewing&&<SkillVersionHistory botId={bot.id} name={snapshot.viewing.name} threadId={bot.threadId} canEdit={canEditHistory} onRestored={()=>{
+        void store.load({silent:true});
+        const selected=snapshot.skills.find(skill=>skill.name===snapshot.viewing?.name);
+        if(selected)void store.open(selected);
+      }}/>}
     </div>
   );
 }

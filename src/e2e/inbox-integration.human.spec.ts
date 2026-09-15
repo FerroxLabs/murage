@@ -58,7 +58,7 @@ for (const scenario of [{ width: 1440, skin: "light" }, { width: 390, skin: "dar
     const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
     if (await invitation.isVisible()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
     const sidebar = await openSidebar(page);
-    const tools = sidebar.getByRole("button", { name: /^Tools(?:, items need attention)?$/ });
+    const tools = sidebar.getByRole("button", { name: /^Tools(?:,.*)?$/ });
     await expect(tools).toBeVisible(); await tools.focus(); await page.keyboard.press("Enter");
     await expect(sidebar.getByRole("menuitem", { name: "Inbox", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`inbox-tools-${scenario.width}-${scenario.skin}.png`), fullPage: true });

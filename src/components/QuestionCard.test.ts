@@ -190,8 +190,8 @@ describe("the markup", () => {
     expect(markup).toContain('role="group"');
     expect(markup).toContain('role="radio"');
     expect(markup).toContain('role="checkbox"');
-    // every option row states whether it is chosen, for a screen reader
-    expect(markup.match(/aria-checked="false"/g)?.length).toBe(5);
+    // Every option, including Other, exposes its selection to a screen reader.
+    expect(markup.match(/aria-checked="false"/g)?.length).toBe(7);
     // each group names its own question
     expect(markup).toContain("aria-labelledby=");
   });

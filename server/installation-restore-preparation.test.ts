@@ -26,7 +26,7 @@ async function fixture() {
   mkdirSync(data);
   const put = (path: string, value: unknown) => { mkdirSync(dirname(join(data, path)), { recursive: true }); writeFileSync(join(data, path), JSON.stringify(value)); };
   put("config.json", { instances: { fake: { driver: "claudeAgent", enabled: true, config: { cli: "must-not-run" } } }, features: { browser: true, skillRecorder: true } });
-  put("bots.json", [{ id: "bot", threadId: "thread", name: "Preserved bot", autoApprove: true, autoReview: "enforce", alwaysAllow: ["Bash:sh"], computer: "cloud", autoStartVps: true, browser: true, composio: true, busy: true, tasks: [{ threadId: "thread", title: "Keep me", resumeCursors: { old: "cursor" } }] }]);
+  put("bots.json", [{ id: "bot", threadId: "thread", name: "Preserved bot", autoApprove: true, autoReview: "enforce", alwaysAllow: ["Bash:sh"], computer: "cloud", autoStartVps: true, browser: true, composio: true, busy: true, tasks: [{ threadId: "thread", title: "Keep me", autoApprove: true, alwaysAllow: ["Bash:sh"], resumeCursors: { old: "cursor" } }] }]);
   put("groups.json", [{ id: "room", threadId: "room-thread", name: "Room", memberIds: ["bot"], working: true, busyBotId: "bot" }]);
   const run = { routineId: "routine", routineName: "Routine", botId: "bot", target: "bot", runOn: "ember", scheduledFor: 1, manual: true, createdAt: 1 };
   put("routines.json", { version: 1, routines: [{ id: "routine", name: "Routine", prompt: "Task", botId: "bot", target: "bot", runOn: "ember", enabled: true, schedule: { type: "once", at: 1 }, durationMinutes: 30, nextRunAt: 1, createdAt: 1, updatedAt: 1 }], runs: [{ ...run, id: "done", status: "completed", result: "immutable receipt" }, { ...run, id: "queued", status: "queued" }], routineRequestReceipts: [{ requestId: "terminal-id", messageId: "terminal", botId: "bot", threadId: "thread", action: "create", fingerprintVersion: 1, fingerprint: "a".repeat(64), resultId: "routine", appliedAt: 1 }] });
@@ -65,6 +65,7 @@ it("prepares a blocked candidate preserving terminal identities and suspending c
   expect(existsSync(profile!.directory)).toBe(false);
   expect(read("bots.json")[0]).toMatchObject({ id: "bot", threadId: "thread", busy: false, autoApprove: false, autoReview: "off", alwaysAllow: [], computer: "off", autoStartVps: false, browser: false, composio: false, resumeCursors: {} });
   expect(read("groups.json")[0]).toMatchObject({ working: false, busyBotId: null });
+  expect(read("bots.json")[0].tasks).toEqual([{ threadId: "thread", title: "Keep me", autoApprove: false, alwaysAllow: [], resumeCursors: {} }]);
   expect(read("routines.json").runs[0]).toMatchObject({ id: "done", status: "completed", result: "immutable receipt" });
   expect(read("routines.json").runs[1].status).toBe("cancelled");
   expect(read("routines.json").routineRequestReceipts[0].requestId).toBe("terminal-id");

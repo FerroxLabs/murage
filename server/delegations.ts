@@ -638,7 +638,7 @@ async function processOne(
   // Capacity waits are not failed attempts against a busy teammate. The
   // server redrains pending queues when an active handoff releases its slot.
   if (bus.canDispatch && !bus.canDispatch()) return "requeued";
-  const channel = getOrCreateChannel(bus.store, sender, target);
+  const channel = getOrCreateChannel(bus.store, sender, target,sourceThreadId);
   mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
   const prefixed = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;

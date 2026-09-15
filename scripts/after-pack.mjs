@@ -12,6 +12,18 @@ import { verifyBrowserBundle } from "./prepare-browser.mjs";
 import { browserBundlePaths } from "../server/browser-bundle-release.ts";
 import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
 import { verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
+import { verifyGepaBundle } from "../server/gepa-resource.ts";
+
+/** Read-only required-resource gate; final signed-tree pins come from build metadata. */
+export function validatePackagedGepa(resources, context) {
+  if (!context.packager) return; // Existing partial hook fixtures are not packages.
+  const arch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
+  const target = `${context.electronPlatformName}-${arch}`;
+  const expected = context.packager.config?.extraMetadata?.murageGepaManifests?.[target];
+  if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected)) throw new Error("GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED");
+  try { return verifyGepaBundle(path.join(resources, "gepa-worker"), target, expected); }
+  catch (error) { if (error?.code === "ENOENT") throw new Error("GEPA_RESOURCE_UNAVAILABLE"); throw error; }
+}
 
 async function requireRealDirectory(directory, mode = 0o755) {
   const details = await lstat(directory);
@@ -180,6 +192,7 @@ export default async function afterPack(context) {
       ? path.join(context.appOutDir, "Murage.app", "Contents", "Resources")
       : path.join(context.appOutDir, "resources")
   );
+  validatePackagedGepa(resources, context);
   await validateCloudflared(resources, context.electronPlatformName, Boolean(context.packager));
   await validateFuigo(resources, context.electronPlatformName, Boolean(context.packager));
   const fuigoProbe = await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));

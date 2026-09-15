@@ -34,7 +34,13 @@ export type RoutineRunStatus =
   | "cancelled"
   | "missed";
 
+export interface RoutineInstructionRevision {
+  id:string;prompt:string;parentId?:string;author:"owner"|"learned"|"rollback";createdAt:number;
+  evaluationReceiptId?:string;rollbackOf?:string;
+}
 export interface Routine {
+  instructionRevision?:string;
+  instructionHistory?:RoutineInstructionRevision[];
   watch?: import("../../shared/routine-watch").RoutineWatchBinding;
   id: string;
   name: string;

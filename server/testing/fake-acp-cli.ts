@@ -608,6 +608,15 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode === "reasoning-only:string" || mode === "reasoning-only:object") {
+        const message = "empty response from model (reasoning_only)";
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: mode.endsWith(":string") ? message : { message, error_kind: "empty_response" } } });
+        return;
+      }
+      if (mode === "exit-with-stderr-history") {
+        process.stderr.write("STDERR_EARLY_CANARY\nsk-test-" + "SYNTHETICKEYCANARY".repeat(24) + "\n" + ("x".repeat(4000) + "\n").repeat(4) + "STDERR_VISIBLE_END\n", () => process.exit(4));
+        return;
+      }
       if (mode.startsWith("fuigo-diagnostic:")) {
         const variant = mode.slice("fuigo-diagnostic:".length);
         const params: any = {
@@ -633,7 +642,7 @@ function handle(msg: any) {
         }
         return;
       }
-      if (mode === "cancel-ack") {
+      if (mode === "cancel-ack" || mode === "cancel-rpc-error") {
         pendingCancelAckPrompt = msg.id;
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
         setInterval(() => {}, 1_000);
@@ -1054,6 +1063,11 @@ function handle(msg: any) {
       break;
     }
     case "session/cancel":
+      if (mode === "cancel-rpc-error" && pendingCancelAckPrompt !== null) {
+        out({ jsonrpc: "2.0", id: pendingCancelAckPrompt, error: { code: -32603, message: "Internal error", data: "empty response from model (reasoning_only)" } });
+        pendingCancelAckPrompt = null;
+        break;
+      }
       if (mode === "cancel-ack" && pendingCancelAckPrompt !== null) {
         // A cooperative agent acknowledges promptly but only exits when the
         // client terminates it — the gap close-confirmed stop must cover.

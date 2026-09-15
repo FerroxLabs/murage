@@ -20,6 +20,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { acpErrorDiagnostic, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
+import { FuigoAgentDriver } from "./fuigo.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
@@ -663,6 +664,117 @@ describe("ACP turns (fake CLI)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "reject-once" } });
   });
 
+  it.each(["allow", "deny", "full-auto"] as const)("never widens a one-request answer to always-only options: %s", async (behavior) => {
+    const dump = join(scratch, "always-only.json"), cli = join(scratch, "always-only.mjs");
+    // A scripted ACP child offers only standing decisions and records the real
+    // response. It executes no tools and has no model or network connection.
+    writeFileSync(cli, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
+const send = message => process.stdout.write(JSON.stringify(message) + "\\n");
+let promptId;
+createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.id === "always-only" && message.result) {
+    writeFileSync(${JSON.stringify(dump)}, JSON.stringify(message.result));
+    send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
+  } else if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "synthetic" } });
+  else if (message.method === "session/prompt") {
+    promptId = message.id;
+    send({ jsonrpc: "2.0", id: "always-only", method: "session/request_permission", params: {
+      toolCall: { kind: "execute", title: "synthetic action" },
+      options: [{ optionId: "allow-standing", kind: "allow_always" }, { optionId: "reject-standing", kind: "reject_always" }]
+    } });
+  }
+});
+`);
+    chmodSync(cli, 0o755);
+    instance = await SelectModelDriver.create({ instanceId: "always-only", displayName: "Always only", environment: {}, enabled: true,
+      config: { cli, fullAuto: behavior === "full-auto" } });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "always-only", text: "go" });
+    if (behavior !== "full-auto") {
+      const opened = await recorder.until(event => event.type === "request.opened");
+      expect(await instance.adapter.respondToRequest("always-only", (opened as any).requestId, { behavior })).toBe("unavailable");
+      expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
+      expect(recorder.events.some(event => event.type === "runtime.error" && event.message.includes("cancelling the request"))).toBe(true);
+    }
+    await recorder.until(event => event.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8"))).toEqual(behavior === "full-auto"
+      ? { outcome: { outcome: "selected", optionId: "allow-standing" } }
+      : { outcome: { outcome: "cancelled" } });
+  });
+
+  it.each(["deny", "allow", "cancel", "timeout", "teardown", "other-engine", "question", "reject-always", "full-auto"] as const)(
+    "Fuigo denial continuation wire boundary: %s", async (scenario) => {
+      const dump = join(scratch, "fuigo-denial.json");
+      const cli = join(scratch, "denial-cli.mjs");
+      // One scripted permission request, no tool execution or model call.
+      // The dump captures the actual response and prompt count on the wire.
+      writeFileSync(cli, `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
+const send = message => process.stdout.write(JSON.stringify(message) + "\\n");
+let promptId, prompts = 0;
+createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.id === "permission" && message.result) {
+    writeFileSync(${JSON.stringify(dump)}, JSON.stringify({ decision: message.result, prompts }));
+    send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
+  } else if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "synthetic" } });
+  else if (message.method === "session/prompt") {
+    promptId = message.id; prompts++;
+    send({ jsonrpc: "2.0", id: "permission", method: "session/request_permission", params: {
+      toolCall: { kind: "execute", title: ${JSON.stringify(scenario === "question" ? "AskUserQuestion" : "synthetic write")} },
+      options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: ${JSON.stringify(scenario === "reject-always" ? "reject_always" : "reject_once")} }]
+    } });
+  }
+});
+`);
+      chmodSync(cli, 0o755);
+      const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT,
+        driverKind: scenario === "other-engine" ? "other-test" : FuigoAgentDriver.driverKind,
+        selectModel: undefined,
+      });
+      instance = await driver.create({ instanceId: "denial-test", displayName: "Denial Test", environment: {}, enabled: true,
+        config: { cli, fullAuto: scenario === "full-auto" } });
+      recorder = recordEvents(instance.adapter);
+      // Shorten only this exact production permission deadline; real child I/O
+      // and every other timer keep their ordinary behavior.
+      const originalTimeout = globalThis.setTimeout;
+      const timerSpy = scenario === "timeout" ? vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
+        originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args)) as typeof setTimeout) : null;
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "denial-wire", text: "go" });
+        if (scenario !== "full-auto") {
+          const opened = await recorder.until(event => event.type === "request.opened");
+          if (scenario === "cancel") await instance.adapter.interruptTurn("denial-wire", turnId);
+          else if (scenario === "teardown") await instance.dispose();
+          else if (scenario !== "timeout") await instance.adapter.respondToRequest("denial-wire", (opened as any).requestId,
+            { behavior: scenario === "allow" ? "allow" : "deny" });
+        }
+        await recorder.until(event => event.type === "turn.completed");
+        // settle may kill the child immediately after cancelling its pending ask;
+        // wait for its dump only when the response reached the scripted child.
+        if (scenario === "cancel" || scenario === "teardown") {
+          const native = readFileSync(join(NATIVE_DIR, "denial-wire.ndjson"), "utf8").split("\n").filter(Boolean)
+            .map(line => JSON.parse(line)).filter(entry => entry.dir === "out" && entry.msg?.id === "permission");
+          expect(native.at(-1)?.msg.result).toEqual({ outcome: { outcome: "cancelled" } });
+          return;
+        }
+        const observed = JSON.parse(readFileSync(dump, "utf8"));
+        expect(observed.prompts).toBe(1);
+        const expected = { outcome: { outcome: "selected", optionId: scenario === "allow" || scenario === "full-auto" ? "allow-once" : "reject-once" } };
+        if (scenario === "deny") {
+          expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } });
+          expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
+        } else expect(observed.decision).toEqual(scenario === "reject-always" ? { outcome: { outcome: "cancelled" } } : expected);
+      } finally { timerSpy?.mockRestore(); }
+    },
+  );
+
   it("never lets fullAuto answer a question tool routed through request_permission (ASK1)", async () => {
     process.env.FAKE_ACP_MODE = "question-tool";
     instance = await GrokAgentDriver.create({
@@ -1182,6 +1294,48 @@ describe("ACP turns (fake CLI)", () => {
     }
   });
 
+  it.each(["string", "object"])("terminal compatibility: reasoning-only %s data is visible and classified without invented HTTP status", async shape => {
+    await create(GrokAgentDriver, `reasoning-only:${shape}`);
+    const threadId = `t-reasoning-${shape}`, { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    expect(error).toMatchObject({ message: "The model returned reasoning without a visible answer. No reply was produced.", details: expect.stringContaining("Engine failure category: empty_response"), diagnostic: { terminalKind: "empty_response" } });
+    expect(error?.type === "runtime.error" ? error.details : "").not.toContain("HTTP");
+    await instance.adapter.awaitTurnTeardown!(threadId, turnId);
+  });
+
+  it("terminal compatibility: unknown nested text stays private", () => {
+    for (const data of ["private request fake-secret-canary", {message:"private request fake-secret-canary"}]) {
+      expect(acpRpcErrorMessage({message:"Internal error",data})).toBe("Internal error");
+      expect(acpRpcErrorDetails({code:-32603,data})).toBe("Engine error code: -32603");
+    }
+  });
+
+  it("terminal compatibility: requested cancel wins a late prompt RPC rejection", async () => {
+    await create(GrokAgentDriver, "cancel-rpc-error");
+    const threadId = "t-cancel-rpc-error";
+    await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ok:true,stopReason:"cancelled"});
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+  });
+
+  it("terminal compatibility: stderr before the 8KiB tail survives in redacted native diagnostics", async () => {
+    await create(GrokAgentDriver, "exit-with-stderr-history");
+    const threadId = "t-stderr-history", {turnId} = await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    await recorder.until(event => event.type === "turn.completed");
+    await instance.adapter.awaitTurnTeardown!(threadId,turnId);
+    const records=readFileSync(join(NATIVE_DIR,`${threadId}.ndjson`),"utf8").trim().split("\n").map(line=>JSON.parse(line));
+    const stderr=records.filter(row=>row.msg?.type==="engine_stderr").map(row=>row.msg.text).join("");
+    expect(stderr).toContain("STDERR_EARLY_CANARY");expect(stderr).toContain("STDERR_VISIBLE_END");
+    expect(stderr.length).toBeGreaterThan(8192);expect(stderr).not.toContain("SYNTHETICKEYCANARY");
+    expect(stderr.length).toBeLessThanOrEqual(256*1024);
+  });
+
   it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {
     await create(GrokAgentDriver, "exit-on-prompt");
     await instance.adapter.sendTurn({ threadId: "t-unsolicited-close", text: "fixture only" });
@@ -1404,6 +1558,7 @@ describe("ACP turns (fake CLI)", () => {
       threadId: "t-resume-null",
       text: "go",
       resumeCursor: "gone-cursor",
+      transcript: [{ role: "user", text: "Authorized prior history" }],
     });
 
     const started = await recorder.until((e) => e.type === "session.started");

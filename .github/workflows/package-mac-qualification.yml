@@ -84,10 +84,14 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN" login.keychain
           rm "$RUNNER_TEMP/mac-qualification-cert.p12"
+      - name: Build pinned GEPA worker and freeze signed resource metadata
+        run: |
+          set -euo pipefail
+          python3 native/gepa/build-mac.py "$RUNNER_TEMP/gepa-mac-build" "$RUNNER_TEMP/mac-qualification.keychain-db"
       - name: Package arm64 with unchanged signing and afterPack guards
         env:
           CSC_KEYCHAIN: ${{ runner.temp }}/mac-qualification.keychain-db
-        run: pnpm exec electron-builder --mac dmg zip --arm64 --publish never
+        run: pnpm exec electron-builder --mac --arm64 --publish never --config.extraMetadata.murageGepaManifests.darwin-arm64="$(node -p 'require("./qualification-evidence/gepa-package-metadata.json").extraMetadata.murageGepaManifests["darwin-arm64"]')"
       - name: Strict packaged app, helper, resource and server gates
         run: |
           set -euo pipefail

@@ -11,17 +11,20 @@
 //   MURAGE_B08_KEEP_DATA=1   optional: keep the harness data dir after the run
 //
 // Without them every case FAILS as NOT RUN and one NOT-RUN receipt names the
-// missing inputs. Nothing is skipped, no fake engine stands in, no answer is
-// scripted and no turn is resent. Positive Cowork permissions wait for the
-// owner in the isolated app; all deliberate-denial cases are denied.
+// missing inputs. Any case that claims no engine dispatch is labelled NOT RUN
+// from that evidence, whatever stopped it. Nothing is skipped, no fake engine stands in, no answer is
+// scripted and no turn is resent. Every approval card waits for the owner's
+// one-time decision in the isolated app, except the cards a denial scenario's
+// controlled state itself denies (the per-case rule is recorded in receipts).
 // A case that runs is "ran — automated checks only; human assessment pending":
 // its hard checks are product state, its rubric only screens reply text.
 //
-// Not a serial suite on purpose: a serial failure would mark every later case
-// "did not run". Each case fails on its own; after a failure Playwright starts
+// Not a serial suite on purpose: a serial failure would leave every later case
+// unexecuted. Each case fails on its own; after a failure Playwright starts
 // a fresh worker, whose beforeAll admits a fresh isolated harness, while the
-// run-scoped evidence dir and dispatch budget (MURAGE_B08_RUN_STAMP, set by the
-// config) carry across workers. A case that needs an earlier case's thread
+// run-scoped evidence dir (MURAGE_B08_RUN_STAMP, set by the config) carries
+// across workers, and the engine dispatch ledger beside the root-owned
+// descriptor carries across workers, runs and evidence directories. A case that needs an earlier case's thread
 // fails as NOT RUN when that state is gone rather than guessing it.
 import { chromium, test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
@@ -30,24 +33,23 @@ import tailwindcss from "@tailwindcss/vite";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { denyReason } from "../../companion/src/routes.ts";
 import { openSidebar } from "./fixtures.ts";
 import { laneDataDir } from "./lane-data-dir";
 import {
-  B08_CASES, B08_ENV, B08_TEMPLATES, CALENDAR_MCP_SOURCE, admitEngineDescriptor, assertRealEngineIdentity, caseFileName, evaluateRubric,
-  fileSize, listFiles, liveInputGaps, publicDescriptor, readCalendarReceipt, readCredential, startIsolatedHarness, writeReceipt,
-  approvalPolicy, boundedClose, claimRunDispatch, inside, pidAlive, retainArtifact, runEvidenceDir, taskIdentityProblems,
-  type B08Case, type B08EngineDescriptor, type B08Harness, type B08Template, type DescribedInstance,
+  B08_CASES, B08_ENV, B08_TEMPLATES, CALENDAR_MCP_SOURCE, admitEngineDescriptor, assertRealEngineIdentity, caseFileName, caseStatus, denialVerdictHint, endedByEngineAfterDenial, evaluateRubric,
+  exportNativeLogs, fileSize, listFiles, liveInputGaps, nativeStops, publicDescriptor, readCalendarReceipt, readCredential, startIsolatedHarness, unexecutedStatus, writeReceipt,
+  approvalPolicy, approvalRule, boundedClose, claimEngineDispatch, dispatchHeadroom, dispatchLedgerPath, inside, pidAlive, retainArtifact, runEvidenceDir, taskIdentityProblems,
+  type B08Case, type B08EngineDescriptor, type B08Harness, type B08Template, type DescribedInstance, type EngineStop,
 } from "./b08-template-behavior-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const OWNER_EDIT = "Owner note (added by the person, not the bot): keep this brief internal.";
 const CANARY = "B08-C4 canary: pilot budget ceiling 4,200 credits.";
 const MEMORY_REVOKED = "error: MEMORY_CONTEXT_REVOKED";
-const DONE = "ran — automated checks only; human assessment pending";
 
 interface Bot { id: string; name: string; threadId: string }
 interface Msg { id: string; role?: string; kind?: string; text?: string; turnId?: string; artifactIds?: string[]; tool?: { name?: string; ok?: boolean }; card?: { requestId?: string; tool?: string; title?: string; subtitle?: string; answered?: string; expired?: boolean; dismissed?: boolean; intake?: unknown; questions?: unknown[] } }
@@ -56,17 +58,33 @@ interface TurnRecord {
   text: string; threadId: string; surface: "desktop" | "companion"; sendStatus: number; startedAt: number; endedAt: number; interrupted: boolean;
   replies: Array<{ id: string; turnId?: string; text: string }>; activity: Array<{ name?: string; ok?: boolean }>;
   approvals: Ask[]; questions: Ask[]; artifactMessages: Array<{ id: string; text?: string; artifactIds: string[] }>; newMessageIds: string[];
+  /** A denied card was followed by no non-empty reply (not an interrupt): the engine ended the turn after the denial. */
+  endedAfterDenial: boolean;
+  /** Engine stop reasons in this turn's window, from the harness's native ACP log (empty for engines without one). */
+  engineStops: EngineStop[];
+  /** Owner approval cards still undecided when the turn timed out. */
+  awaitingOwner: string[];
+  /** Owner approval cards that expired or were dismissed before any decision. */
+  ownerCardsExpired: string[];
 }
-interface CaseRun { item: B08Case; threads: string[]; turns: TurnRecord[]; controlledState: Record<string, unknown>; hard: Array<{ check: string; ok: boolean; detail?: unknown }>; rubric?: ReturnType<typeof evaluateRubric>; fileRubric?: ReturnType<typeof evaluateRubric>; status: string; startedAt: number }
-interface Live { harness: B08Harness; descriptor: B08EngineDescriptor; bots: Record<B08Template, Bot>; chief: Bot; seeded: Bot; vite: ViteDevServer; origin: string; dispatches: number; restarts: number; usedThreads: Set<string> }
-/** Dispatches are counted per run in the evidence dir, so a restarted worker cannot reset the budget. */
-function claimDispatch(max: number): number {
-  return claimRunDispatch(evidence, max);
+interface CaseRun { item: B08Case; threads: string[]; turns: TurnRecord[]; dispatches: number; controlledState: Record<string, unknown>; hard: Array<{ check: string; ok: boolean; detail?: unknown }>; rubric?: ReturnType<typeof evaluateRubric>; fileRubric?: ReturnType<typeof evaluateRubric>; status: string; startedAt: number }
+interface Live { harness: B08Harness; descriptor: B08EngineDescriptor; ledger: string; bots: Record<B08Template, Bot>; chief: Bot; seeded: Bot; vite: ViteDevServer; origin: string; dispatches: number; restarts: number; usedThreads: Set<string> }
+/** Dispatches are counted in one ledger per admitted engine beside its root-owned descriptor, so neither a restarted worker, a later run nor a fresh evidence directory resets the budget. */
+function claimDispatch(): number {
+  const state = need();
+  return claimEngineDispatch(state.ledger, state.descriptor);
+}
+/** Adds what the runner observed to a pending-approval receipt, keeping the card as first recorded. */
+function recordOwnerOutcome(requestId: string, observed: Record<string, unknown>) {
+  const path = join(evidence, "pending-approvals", `${encodeURIComponent(requestId)}.json`);
+  const prior = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+  writeReceipt(path, { ...prior, observed: { ...observed, at: new Date().toISOString() } });
 }
 
 let evidence = "";
 let notRun: string[] = ["B08 admission has not run"];
 let live: Live | undefined;
+let nativeExportFailure: string | undefined;
 const outcomes = new Map<string, string>();
 /** Cross-case state within one template (second turn continues the first). */
 const carried = new Map<string, { threadId: string; artifactId?: string; relativePath?: string; sha?: string }>();
@@ -130,16 +148,17 @@ async function runTurn(run: CaseRun, bot: Bot, threadId: string, text: string, o
   const timeoutMs = options.timeoutMs ?? (Number(process.env[B08_ENV.turnTimeout]) || 600_000);
   const beforeTask = diskBots().find((b) => b.id === bot.id)?.tasks?.find((t: any) => t.threadId === threadId);
   hard(run, "task pins admitted model and Ask permissions before dispatch", taskIdentityProblems(beforeTask, state.descriptor, false).length === 0, taskIdentityProblems(beforeTask, state.descriptor, false));
-  claimDispatch(state.descriptor.maxDispatches);
+  claimDispatch();
   state.dispatches += 1;
+  run.dispatches += 1;
   const startedAt = Date.now();
   const sent = await call(`/api/bots/${bot.id}/messages`, "POST", { text, threadId, sendId: randomUUID() }, surface === "companion" ? { "x-murage-companion": "1" } : undefined);
-  const record: TurnRecord = { text, threadId, surface, sendStatus: sent.status, startedAt, endedAt: 0, interrupted: false, replies: [], activity: [], approvals: [], questions: [], artifactMessages: [], newMessageIds: [] };
+  const record: TurnRecord = { text, threadId, surface, sendStatus: sent.status, startedAt, endedAt: 0, interrupted: false, replies: [], activity: [], approvals: [], questions: [], artifactMessages: [], newMessageIds: [], endedAfterDenial: false, engineStops: [], awaitingOwner: [], ownerCardsExpired: [] };
   run.turns.push(record);
   if (sent.status !== 200 && sent.status !== 202) throw new Error(`send refused: ${sent.status} ${(await sent.text()).slice(0, 300)}`);
   const handled = new Set<string>();
   const pendingOwner = new Set<string>();
-  run.controlledState.permissionPolicy = approvalPolicy(run.item.id);
+  run.controlledState.permissionPolicy = approvalRule(run.item.id);
   let started = false, idle = 0;
   for (;;) {
     const [current, messages] = await Promise.all([botRecord(bot.id), threadMessages(threadId)]);
@@ -151,10 +170,16 @@ async function runTurn(run: CaseRun, bot: Bot, threadId: string, text: string, o
         record.approvals.push({ requestId: card.requestId, tool: card.tool, title: card.title, subtitle: card.subtitle, behavior: card.answered as "allow" | "deny", outcome: "observed persisted owner decision; HTTP response not observed", by: "owner in isolated app" });
         pendingOwner.delete(card.requestId);
         handled.add(card.requestId);
+        recordOwnerOutcome(card.requestId, { decision: card.answered });
+      } else if (card?.requestId && pendingOwner.has(card.requestId) && (card.expired || card.dismissed)) {
+        record.ownerCardsExpired.push(card.requestId);
+        pendingOwner.delete(card.requestId);
+        handled.add(card.requestId);
+        recordOwnerOutcome(card.requestId, { decision: "none", expired: Boolean(card.expired), dismissed: Boolean(card.dismissed) });
       }
       if (card?.requestId && !card.answered && !card.expired && !card.dismissed && !handled.has(card.requestId)) {
         const question = Array.isArray(card.questions) && card.questions.length > 0;
-        if (!question && approvalPolicy(run.item.id) === "owner-once") {
+        if (!question && approvalPolicy(run.item.id, card) === "owner-once") {
           if (!pendingOwner.has(card.requestId)) {
             pendingOwner.add(card.requestId);
             writeReceipt(join(evidence, "pending-approvals", `${encodeURIComponent(card.requestId)}.json`), { case: run.item.id, threadId, botId: bot.id, card, origin: state.origin, instruction: "Owner: inspect this action in the isolated app and choose Allow once or Deny. Do not use Auto or Always allow. Runner does not infer authorization from tool names or summaries." });
@@ -184,6 +209,10 @@ async function runTurn(run: CaseRun, bot: Bot, threadId: string, text: string, o
     if (!started && Date.now() - startedAt > 120_000) throw new Error("the turn never started");
     if (Date.now() - startedAt > timeoutMs) {
       await call(`/api/bots/${bot.id}/interrupt`, "POST", { threadId }).catch(() => undefined);
+      record.awaitingOwner = [...pendingOwner];
+      for (const requestId of pendingOwner) recordOwnerOutcome(requestId, { decision: "none", turnInterruptedAfterMs: timeoutMs });
+      // A missing owner decision leaves the case unassessable; it is not evidence about the product or template.
+      if (pendingOwner.size) throw new Error(`NOT ESTABLISHED: no owner decision arrived for ${pendingOwner.size} approval card(s) (${[...pendingOwner].join(", ")}) within ${timeoutMs} ms; turn interrupted, not resent`);
       throw new Error(`turn exceeded ${timeoutMs} ms; interrupted and failed, not resent`);
     }
     await sleep(1_000);
@@ -197,7 +226,12 @@ async function runTurn(run: CaseRun, bot: Bot, threadId: string, text: string, o
   // Identity: this thread was dispatched on the admitted instance, and the bot still pins it.
   const task = diskBots().find((b) => b.id === bot.id)?.tasks?.find((t: any) => t.threadId === threadId);
   hard(run, "turn retains admitted task identity and Ask permissions", taskIdentityProblems(task, state.descriptor).length === 0, taskIdentityProblems(task, state.descriptor));
-  hard(run, "only explicit owner one-time approvals in positive cases", record.approvals.every((a) => a.behavior === "deny" || (approvalPolicy(run.item.id) === "owner-once" && a.by === "owner in isolated app")), record.approvals);
+  hard(run, "runner never grants; the owner decides every card the scenario does not itself deny", record.approvals.every((a) => a.by === "runner" ? a.behavior === "deny" && approvalPolicy(run.item.id, a) === "deny" : a.by === "owner in isolated app" && approvalPolicy(run.item.id, a) === "owner-once"), record.approvals);
+  record.engineStops = nativeStops(state.harness.dataDir, startedAt - 1_000, Date.now() + 1_000);
+  const denied = new Set(record.approvals.filter((a) => a.behavior === "deny").map((a) => a.requestId));
+  const lastDenial = fresh.reduce((last, m, index) => (m.card?.requestId && denied.has(m.card.requestId) ? index : last), -1);
+  record.endedAfterDenial = !record.interrupted && lastDenial >= 0
+    && !fresh.slice(lastDenial + 1).some((m) => m.role === "bot" && m.kind === "text" && !m.artifactIds?.length && String(m.text ?? "").trim());
   return record;
 }
 const replyText = (turn: TurnRecord) => turn.replies.map((r) => r.text).join("\n\n");
@@ -243,25 +277,42 @@ async function identitySnapshot() {
 }
 function beginCase(item: B08Case): CaseRun {
   if (!live) { outcomes.set(item.id, `NOT RUN: ${notRun.join("; ")}`); throw new Error(`NOT RUN — ${item.id}: ${notRun.join("; ")}`); }
-  return { item, threads: [], turns: [], controlledState: { description: item.controlledState }, hard: [], status: "running", startedAt: Date.now() };
+  return { item, threads: [], turns: [], dispatches: 0, controlledState: { description: item.controlledState }, hard: [], status: "running", startedAt: Date.now() };
 }
 async function finishCase(run: CaseRun, error?: unknown) {
   const flagged = [run.rubric, run.fileRubric].filter((rubric) => rubric && !rubric.screened).length;
-  run.status = error ? `failed: ${message(error)}` : flagged ? `${DONE}; ${flagged} heuristic screen(s) flagged for assessment` : DONE;
+  const afterDenial = run.turns.filter(endedByEngineAfterDenial).length;
+  const verdictHint = denialVerdictHint(afterDenial);
+  run.status = caseStatus({ dispatches: run.dispatches, error: error === undefined ? undefined : message(error), flagged, endedAfterDenial: afterDenial });
   outcomes.set(run.item.id, run.status);
   let identity: unknown;
   try { identity = await identitySnapshot(); } catch (snapshotError) { identity = `unavailable: ${message(snapshotError)}`; }
+  // Native engine logs live in the harness data dir, removed after the run unless kept: export this case's copy first.
+  let nativeLogs: unknown = "no dispatch in this case";
+  if (run.dispatches) {
+    try { nativeLogs = exportNativeLogs(need().harness.dataDir, evidence, run.item.id, run.startedAt); }
+    catch (exportError) {
+      nativeExportFailure ??= `native log export failed for ${run.item.id}: ${message(exportError)}`;
+      nativeLogs = { error: message(exportError), retainedSource: need().harness.dataDir };
+    }
+  }
   writeReceipt(join(evidence, "cases", caseFileName(run.item.id)), {
     case: { id: run.item.id, template: B08_TEMPLATES[run.item.template].name, scenario: run.item.scenario, fictionalInput: run.item.fictionalInput, authoredExpectation: run.item.expected },
-    status: run.status, engine: publicDescriptor(need().descriptor), identity, threads: run.threads, controlledState: run.controlledState,
-    turns: run.turns, hardChecks: run.hard, rubric: run.rubric, fileRubric: run.fileRubric, durationMs: Date.now() - run.startedAt,
+    status: run.status, engine: publicDescriptor(need().descriptor), identity, threads: run.threads, dispatches: run.dispatches, controlledState: run.controlledState,
+    turns: run.turns, hardChecks: run.hard, rubric: run.rubric, fileRubric: run.fileRubric, verdictHint, nativeLogs, durationMs: Date.now() - run.startedAt,
     note: "Hard checks are product state. Rubric results are automated heuristics over reply text; behavioural acceptance needs human assessment.",
   });
 }
 function caseTest(item: B08Case, body: (run: CaseRun) => Promise<void>) {
   test(item.id, async () => {
     const run = beginCase(item);
-    try { await body(run); await workspaceInvariants(run); await finishCase(run); }
+    try {
+      // A case starts only when the ledger can pay for all of its turns, so no case is half-spent.
+      const headroom = dispatchHeadroom(need().ledger, need().descriptor);
+      run.controlledState.dispatchLedger = headroom;
+      if (headroom.remaining < item.turns.length) throw new Error(`NOT RUN: this case needs ${item.turns.length} dispatch(es) and the engine ledger has ${headroom.remaining} left (${headroom.used}/${headroom.max} used across runs); no partial case is started`);
+      await body(run); await workspaceInvariants(run); await finishCase(run);
+    }
     catch (error) { await finishCase(run, error); throw error; }
   });
 }
@@ -303,9 +354,12 @@ async function verifyCardDownload(bot: Bot, artifactId: string): Promise<string>
   try {
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
+  // A manually launched browser has no action timeout; bound every wait so a stuck UI step fails instead of hanging the case.
+  page.setDefaultTimeout(60_000);
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
   await page.goto(state.origin, { waitUntil: "domcontentloaded" });
-  await (await openSidebar(page)).getByRole("button", { name: new RegExp(`^${bot.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first().click();
+  // The row's select button is an overlay whose centre sits under the sibling Rename button, so a pointer click never becomes actionable.
+  await (await openSidebar(page)).getByRole("button", { name: new RegExp(`^${bot.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first().dispatchEvent("click");
   const card = page.locator(`[data-artifact-id="${artifactId}"]`).first();
   await expect(card).toBeVisible({ timeout: 30_000 });
   const download = page.waitForEvent("download");
@@ -360,6 +414,14 @@ test.beforeAll(async ({}, testInfo) => {
   const admitted = admitEngineDescriptor(raw, { repoRoot: ROOT, home: homedir() });
   if (!admitted.ok) return refuse(admitted.refusals.map((r) => `descriptor refused: ${r}`));
   const descriptor = admitted.descriptor;
+  const engineFile = resolve(process.env[B08_ENV.engineFile]!);
+  if (inside(engineFile, ROOT)) return refuse([`${B08_ENV.engineFile} lives inside the checkout; the descriptor and its dispatch ledger stay outside Git`]);
+  const ledger = dispatchLedgerPath(engineFile, descriptor);
+  // Before any credential read or harness start, so an exhausted or undeclared dispatch history costs nothing.
+  try {
+    const headroom = dispatchHeadroom(ledger, descriptor);
+    if (headroom.remaining < 1) return refuse([`engine dispatch ledger ${ledger} has no remaining allocation (${headroom.used}/${headroom.max} used across runs); a new allocation must be issued in the engine descriptor`]);
+  } catch (error) { return refuse([`dispatch ledger refused: ${message(error).replace(/^NOT RUN:\s*/, "")}`]); }
   const credential = readCredential(descriptor, { repoRoot: ROOT, home: homedir() });
   if (!credential.ok) return refuse([`credential refused: ${credential.refusal}`]);
 
@@ -381,7 +443,7 @@ test.beforeAll(async ({}, testInfo) => {
       if (!problems.length) break;
     }
     if (problems.length) throw new Error(`real-engine identity refused: ${problems.join("; ")}`);
-    live = { harness, descriptor, bots: {} as Record<B08Template, Bot>, chief: undefined as unknown as Bot, seeded: undefined as unknown as Bot, vite: undefined as unknown as ViteDevServer, origin: "", dispatches: 0, restarts: 0, usedThreads: new Set() };
+    live = { harness, descriptor, ledger, bots: {} as Record<B08Template, Bot>, chief: undefined as unknown as Bot, seeded: undefined as unknown as Bot, vite: undefined as unknown as ViteDevServer, origin: "", dispatches: 0, restarts: 0, usedThreads: new Set() };
     const pinned = { instanceId: descriptor.instanceId, model: descriptor.model };
     const safety = { computer: "off", browser: false, composio: false };
 
@@ -448,8 +510,10 @@ test.afterAll(async () => {
     const state = live;
     try { await boundedClose(() => state.vite.close()); }
     catch (error) { cleanupFailure = message(error); }
-    const harnessCleanup = await state.harness.close(Boolean(cleanupFailure)).catch((error) => ({ error: message(error) }));
-    cleanup = { viteError: cleanupFailure, harness: harnessCleanup };
+    const harnessCleanup = await state.harness.close(Boolean(cleanupFailure || nativeExportFailure)).catch((error) => ({ error: message(error) }));
+    cleanup = { viteError: cleanupFailure, harness: harnessCleanup,
+      ...(nativeExportFailure ? { nativeExportFailure, retainedSource: state.harness.dataDir } : {}) };
+    cleanupFailure ??= nativeExportFailure;
     if (!("pidsGone" in harnessCleanup) || !harnessCleanup.pidsGone) cleanupFailure ??= "owned harness/child exit was not confirmed; data retained";
   }
   if (!evidence) return;
@@ -460,8 +524,8 @@ test.afterAll(async () => {
   writeReceipt(path, {
     realModelExecution: live || previous.realModelExecution === "attempted with the admitted engine" ? "attempted with the admitted engine" : "NOT RUN",
     workers: [...(previous.workers ?? []), { pid: process.pid, admitted: Boolean(live), notRunReasons: live ? undefined : notRun, dispatches: live?.dispatches ?? 0, restarts: live?.restarts ?? 0, cleanup }],
-    dispatchBudget: existsSync(join(evidence, "dispatch-budget.json")) ? JSON.parse(readFileSync(join(evidence, "dispatch-budget.json"), "utf8")) : { used: 0 },
-    cases: B08_CASES.map((c) => ({ id: c.id, status: outcomes.get(c.id) ?? prior.get(c.id) ?? "did not run" })),
+    dispatchLedger: live && existsSync(live.ledger) ? { path: live.ledger, ...JSON.parse(readFileSync(live.ledger, "utf8")) } : previous.dispatchLedger ?? "no dispatch claimed by an admitted worker",
+    cases: B08_CASES.map((c) => ({ id: c.id, status: outcomes.get(c.id) ?? prior.get(c.id) ?? unexecutedStatus() })),
     at: new Date().toISOString(),
     note: "No case is a behavioural pass until its outputs are human-assessed.",
   });
@@ -507,6 +571,11 @@ const SCENARIOS: Record<B08Case["id"], (run: CaseRun) => Promise<void>> = {
     const added = await call("/api/mcp/servers", "POST", { name: "calendar", command: process.execPath, args: [script], env: { B08_CALENDAR_RECEIPT: receipt }, enabled: true });
     hard(run, "calendar fixture added through the normal MCP settings route", added.status === 201, added.status);
     try {
+      // A server added through this route is saved disabled until the owner enables it (server/mcp-registry.ts).
+      const enabled = await call("/api/mcp/servers/calendar", "PATCH", { enabled: true });
+      const listing = enabled.ok ? (((await enabled.json()) as { servers?: Array<{ name: string; enabled: boolean }> }).servers ?? []) : [];
+      run.controlledState.enable = { status: enabled.status, listing };
+      hard(run, "calendar fixture explicitly enabled through the normal MCP settings route", enabled.status === 200 && listing.some((s) => s.name === "calendar" && s.enabled === true), { status: enabled.status, listing });
       const threadId = await newTask(run, bot, "B08 personal denied calendar");
       const first = await runTurn(run, bot, threadId, run.item.turns[0]!);
       const afterFirst = readCalendarReceipt(receipt);

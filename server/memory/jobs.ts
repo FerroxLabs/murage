@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { database, transaction } from "../database.ts";
 import { resultSchema, type MemoryWork, type MemoryWorkResult } from "./worker-protocol.ts";
+import { recordMemoryProcessing } from "./health.ts";
 
 let lastScope = "";
-export function claimMemoryJob(worker: string, now = Date.now()): MemoryWork | null {
+export function claimMemoryJob(worker: string, now = Date.now(), recentScopes?: readonly string[]): MemoryWork | null {
   return transaction(db => {
     const meta = db.prepare("SELECT * FROM memory_meta WHERE id=1").get()!;
     if (!["capture","active"].includes(String(meta.mode))) return null;
@@ -14,9 +15,11 @@ export function claimMemoryJob(worker: string, now = Date.now()): MemoryWork | n
       JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision
       WHERE s.state='active' AND s.outcome!='working' AND j.attempts<3 AND j.retry_at<=?
       AND (j.status IN ('pending','partial','deferred') OR (j.status='leased' AND j.lease_until<?))
-      ORDER BY CASE WHEN s.scope_id>? THEN 0 ELSE 1 END,s.scope_id,j.rowid LIMIT 1`).get(now,now,lastScope);
+      AND (? IS NULL OR (j.stage='capture' AND s.scope_id IN (SELECT value FROM json_each(?))))
+      ORDER BY ${recentScopes ? "j.rowid DESC" : "CASE WHEN s.scope_id>? THEN 0 ELSE 1 END,s.scope_id,j.rowid"} LIMIT 1`)
+      .get(...[now,now,recentScopes?JSON.stringify(recentScopes):null,recentScopes?JSON.stringify(recentScopes):null,...recentScopes?[]:[lastScope]]);
     if (!row) return null;
-    lastScope=String(row.scope_id);
+    if(!recentScopes)lastScope=String(row.scope_id);
     const cursor=Number(row.cursor), totalBytes=Number(row.total_bytes);
     const payload = db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),?,65536) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(cursor+1,row.source_id,row.source_revision)!.bytes as Uint8Array;
     let end=payload.length, text="";
@@ -118,5 +121,6 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
     if(result.chunks.length)db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
     db.prepare("UPDATE memory_jobs SET status=?,cursor=?,coverage=?,lease_owner=NULL,lease_until=0,error=NULL WHERE id=?")
       .run(result.status,result.nextCursor,JSON.stringify({throughByte:result.nextCursor,totalBytes:work.totalBytes}),work.id);
+    if(result.status==="complete")recordMemoryProcessing(now);
   });
 }

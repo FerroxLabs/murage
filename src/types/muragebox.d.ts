@@ -165,6 +165,10 @@ type SkillRecordingPayload = {
         listBackups(remoteRef:string,revision:number):Promise<{repositoryId:string;backups:{snapshotId:string;jobId:string;createdAt:number;verified:false}[];ignored:number}>;
         downloadBackup(remoteRef:string,revision:number,snapshotId:string):Promise<{cancelled?:boolean;saved?:boolean;archivePath?:string;directory?:string}>;
         setAutomaticUpload(remoteRef:string,revision:number,enabled:boolean):Promise<{saved:boolean}>;
+        saveMaintenanceCredentials?(remoteRef:string,revision:number,credentials:{accessKeyId:string;secretAccessKey:string;sessionToken?:string}):Promise<{saved:boolean}>;
+        previewRetention?(remoteRef:string,revision:number,policy:{keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number;keepYearly?:number}):Promise<{previewId:string;remove:string[];keep:number;lockRelease?:"unconfirmed"}>;
+        applyRetention?(remoteRef:string,revision:number,policy:{keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number;keepYearly?:number},previewId:string):Promise<{state:"nothing-to-remove"|"complete"|"needs-review";previewId:string;removed:number;error?:"repository-locked"|"forget-failed"|"prune-failed"|"operation-failed";lockRelease?:"unconfirmed"}>;
+        clearRetentionReview?(remoteRef:string,revision:number,previewId:string):Promise<{cleared:boolean}>;
       };
       approvalNotifications?: {
         show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string }): Promise<{ accepted: boolean }>;

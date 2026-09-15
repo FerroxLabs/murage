@@ -1,8 +1,12 @@
+import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
-import { extractCandidates, memoryExtractionMessages, type TextOnlyExtractor } from "./extract.ts";
+import { extractCandidates, groundMemoryClaim, memoryExtractionMessages, type TextOnlyExtractor } from "./extract.ts";
 import { redactSecretsInText } from "../redact.ts";
-import { threadCheckpointId } from "./checkpoints.ts";
+import { activateGroundedMemory } from "./automatic-learning.ts";
+import { readMemoryLearning } from "./learning-policy.ts";
+import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
+import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
@@ -23,12 +27,8 @@ function checkpointEvidence(handle:Handle,scopeId:string){
     AND EXISTS(SELECT 1 FROM memory_jobs j WHERE j.source_id=s.id AND j.source_revision=s.revision AND j.stage='capture' AND j.status='complete'
       AND j.cursor=length(CAST(json_extract(v.payload,'$.text') AS BLOB)))`).get(handle.startByte+1,handle.endByte-handle.startByte,handle.sourceId,handle.revision,scopeId);
   if(!source||source.kind==="turn"||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(handle.sourceId,handle.revision))return null;
-  // A cancelled intention is not a completed effect. Preserve an independently
-  // observed successful tool result, even if the surrounding turn was cancelled.
-  if(source.turn_id && source.speaker!=="owner" && !(source.speaker==="tool"&&source.outcome==="completed")){
-    const settlement=db.prepare("SELECT outcome FROM memory_sources WHERE thread_id=? AND turn_id=? AND kind='turn' AND state='active' LIMIT 1").get(source.thread_id,source.turn_id);
-    if(settlement&&settlement.outcome!=="completed")return null;
-  }
+  // A cancelled intention is not a completed effect; the same rule governs current recall.
+  if(unsettledIntention(db,source))return null;
   const bytes=source.excerpt as Uint8Array;
   if(bytes.length!==handle.endByte-handle.startByte||bytes.length===0)return null;
   let text:string;try{text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}catch{return null;}
@@ -83,6 +83,7 @@ export function refreshMemoryCheckpoint(completedJobId:string){
 
 const CONSOLIDATION_CHUNK_BYTES=16*1024;
 interface ConsolidationIntent {
+  evolutionPolicyRevision?:string;
   jobId:string;sourceId:string;revision:number;cursor:number;totalBytes:number;
   status:"running"|"partial"|"deferred"|"complete";candidateIds:string[];candidateCount:number;
   generation?:string;expiresAt?:number;retryAfter?:number|null;reason?:string;updatedAt:number;
@@ -108,13 +109,13 @@ export function pendingMemoryConsolidationJobs(limit=4):string[]{
   return found;
 }
 let consolidationScanCursor=0;
-function retryAfter(reason:string,text:string):number {
+function retryAfter(reason:string,text:string,policy:MemoryEvolutionPolicy):number {
   const now=Date.now();
   if(reason!=="budget-exhausted")return now+(reason==="extractor-busy"?1000:60000);
   const day=new Date(now).toISOString().slice(0,10),row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(`extract-budget:${day}`);
   const budget=row?JSON.parse(String(row.intent)):{input:0,output:0};
-  const input=Buffer.byteLength(JSON.stringify(memoryExtractionMessages(text)));
-  return budget.input+input>100000||budget.output+2000>20000?Date.parse(`${day}T00:00:00Z`)+86400000:(Math.floor(now/60000)+1)*60000;
+  const input=Buffer.byteLength(JSON.stringify(memoryExtractionMessages(text,policy)));
+  return budget.input+input>readMemoryLearning(database()).inputLimit||budget.output+Math.min(2000,readMemoryLearning(database()).outputLimit)>readMemoryLearning(database()).outputLimit?Date.parse(`${day}T00:00:00Z`)+86400000:(Math.floor(now/60000)+1)*60000;
 }
 
 /** One <=16KiB UTF-8 slice per invocation. Candidates and the absolute cursor
@@ -127,13 +128,13 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
   const claim=transaction(()=>{
     const source=completedSource(completedJobId),prior=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
     const saved=prior?JSON.parse(String(prior.intent)):null;
-    const state:ConsolidationIntent={jobId:completedJobId,sourceId:String(source.id),revision:Number(source.revision),cursor:saved?.cursor??0,totalBytes:Number(source.bytes),status:saved?.status??"partial",candidateIds:saved?.candidateIds??[],candidateCount:saved?.candidateCount??saved?.candidateIds?.length??0,updatedAt:Date.now()};
+    const state:ConsolidationIntent={evolutionPolicyRevision:saved?.evolutionPolicyRevision??readMemoryEvolutionPolicy().revision,jobId:completedJobId,sourceId:String(source.id),revision:Number(source.revision),cursor:saved?.cursor??0,totalBytes:Number(source.bytes),status:saved?.status??"partial",candidateIds:saved?.candidateIds??[],candidateCount:saved?.candidateCount??saved?.candidateIds?.length??0,updatedAt:Date.now()};
     if(saved?.status==="complete")return {done:{status:"unchanged" as const,candidateIds:state.candidateIds,cursor:state.totalBytes,candidateCount:state.candidateCount}};
     if(!Number.isSafeInteger(state.cursor)||state.cursor<0||state.cursor>state.totalBytes)throw new Error("MEMORY_CONSOLIDATION_CURSOR_INVALID");
     if(saved?.status==="running"&&saved.expiresAt>Date.now())return {done:{status:"deferred" as const,reason:"extraction-already-running",candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:saved.expiresAt as number}};
     if(!extractor||source.kind==="turn"||signal.aborted){
       const reason=signal.aborted?"extraction-incomplete":!extractor?"extractor-unavailable":"settlement-is-not-a-fact";
-      const nextRetry=source.kind==="turn"?null:retryAfter(reason,"");
+      const nextRetry=source.kind==="turn"?null:retryAfter(reason,"",readMemoryEvolutionPolicy(state.evolutionPolicyRevision));
       persist(source.scope_id,{...state,status:"deferred",reason,retryAfter:nextRetry});
       return {done:{status:"deferred" as const,reason,candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:nextRetry}};
     }
@@ -143,19 +144,33 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     if(text===undefined||!length&&state.cursor<state.totalBytes)throw new Error("MEMORY_CONSOLIDATION_UTF8_INVALID");
     const generation=randomUUID(),meta=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     persist(source.scope_id,{...state,status:"running",generation,expiresAt:Date.now()+65000});
-    return {source,state,generation,meta,text,length};
+    return {source,state,generation,meta,text,length,learningRevision:readMemoryLearning(db).revision};
   });
   if(claim.done)return claim.done;
-  const {source,state,generation,meta,text,length}=claim;
-  const result=text!.trim()?await extractCandidates(text!,extractor,signal):{status:"complete" as const,candidates:[]};
+  const {source,state,generation,meta,text,length,learningRevision}=claim;
+  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision)):{status:"complete" as const,candidates:[]};
+  const corrections=new Map<object,{id:string;version:number}>();
+  const support=new Map<object,{supported:boolean;reason:string}>();
+  if(result.status==="complete")for(const candidate of result.candidates){
+    if(candidate.subject&&candidate.predicate&&candidate.update&&source!.speaker==="owner"){
+      const prior=db.prepare(`SELECT r.id,r.version,r.text FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
+        WHERE r.scope_id=? AND r.state='active' AND r.owner_pinned=0 AND d.entities=? AND r.kind='fact' AND d.partition!='identity' ORDER BY r.created_at DESC LIMIT 2`).all(source!.scope_id,JSON.stringify([candidate.subject,candidate.predicate]));
+      if(prior.length===1&&prior[0].text!==candidate.text){
+        const checked=await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType??"owner-statement",speaker:String(source!.speaker),outcome:String(source!.outcome),previousClaim:String(prior[0].text)},extractor,signal);
+        if(checked.supported){corrections.set(candidate,{id:String(prior[0].id),version:Number(prior[0].version)});support.set(candidate,checked);}
+      }
+    }
+    if(!support.has(candidate)&&candidate.claimType && candidate.claimType!=="inference" && candidate.text!==candidate.quote)
+      support.set(candidate,await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType,speaker:String(source!.speaker),outcome:String(source!.outcome)},extractor,signal));
+  }
   return transaction(()=>{
     const current=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     completedSource(completedJobId);
     const intent=JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
-    if(intent.generation!==generation||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     if(result.status!=="complete"||signal.aborted){
       const reason=result.status!=="complete"?result.reason:"extraction-incomplete";
-      const nextRetry=retryAfter(reason,text!);
+      const nextRetry=retryAfter(reason,text!,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision));
       persist(source!.scope_id,{...state!,status:"deferred",reason,retryAfter:nextRetry,updatedAt:Date.now()});
       return {status:"deferred" as const,reason,candidateIds:[],cursor:state!.cursor,candidateCount:state!.candidateCount,retryAfter:nextRetry};
     }
@@ -166,6 +181,24 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
       const inserted=db.prepare("INSERT OR IGNORE INTO memory_records VALUES(?,1,?,'fact',?,'assistant-inference','candidate',0,?,NULL,NULL,?)").run(candidateId,source!.scope_id,redactSecretsInText(candidate.text),Date.now(),Date.now());
       added+=Number(inserted.changes);
       db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(candidateId,source!.id,source!.revision,absolute.startByte,absolute.endByte);
+      if(inserted.changes){
+        const active=activateGroundedMemory(db,candidateId,candidate.claimType,support.get(candidate));
+        if(candidate.subject&&candidate.predicate)db.prepare("UPDATE memory_record_details SET entities=? WHERE record_id=? AND record_version=1").run(JSON.stringify([candidate.subject,candidate.predicate]),candidateId);
+        const prior=corrections.get(candidate);
+        if(active&&prior){
+          const retired=db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=? AND state='active' AND owner_pinned=0").run(Date.now(),prior.id,prior.version);
+          if(retired.changes!==1)throw new Error("MEMORY_CORRECTION_TARGET_CHANGED");
+          db.prepare("UPDATE memory_records SET supersedes_id=? WHERE id=? AND version=1").run(prior.id,candidateId);
+          db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(prior.id,prior.version,candidateId);
+          db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=?").run(prior.id,prior.version);
+          db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
+          enqueueProcedureCorrectionReview(db,candidateId,1);
+        }else if(active&&candidate.subject&&candidate.predicate){
+          const conflict=db.prepare(`SELECT r.id FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.scope_id=? AND r.state='active' AND r.id!=? AND r.text!=? AND d.entities=? LIMIT 1`).get(source!.scope_id,candidateId,candidate.text,JSON.stringify([candidate.subject,candidate.predicate]));
+          if(conflict)db.prepare("UPDATE memory_record_details SET claim_status='disputed' WHERE record_id=? AND record_version=1").run(candidateId);
+        }
+        if(!active&&support.has(candidate))db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1").run(support.get(candidate)!.reason,candidateId);
+      }
     }
     const cursor=state!.cursor+length!,status=cursor===state!.totalBytes?"complete" as const:"partial" as const,candidateCount=state!.candidateCount+added;
     persist(source!.scope_id,{...state!,status,cursor,candidateIds,candidateCount,retryAfter:status==="partial"?Date.now():null,updatedAt:Date.now()});

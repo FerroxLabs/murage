@@ -103,4 +103,34 @@ describe("bounded Telegram transport", () => {
     expect(error).toMatchObject({ code: "offline", uncertain: true }); expect(error.message).not.toContain(token);
     expect(fetcher).toHaveBeenCalledTimes(1); expect(fetcher.mock.calls[0][1]?.redirect).toBe("error");
   });
+  it("classifies only an initial ENOTFOUND/getaddrinfo fetch rejection as definite offline", async () => {
+    const cause = Object.assign(new Error(token), { code: "ENOTFOUND", syscall: "getaddrinfo" });
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("fetch failed", { cause }));
+    const error = await new TelegramTransport({ token, fetch: fetcher }).sendMessage({ chatId: "1", text: "fixture" }).catch(error => error);
+    expect(error).toMatchObject({ code: "offline", uncertain: false });
+    expect(error.message + JSON.stringify(error)).not.toContain(token);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][1]?.redirect).toBe("error");
+  });
+  it.each([
+    new TypeError("fetch failed", { cause: { code: "ENOTFOUND", syscall: "getaddrinfo" } }),
+    new TypeError("fetch failed", { cause: Object.assign(new Error(), { code: "ENOTFOUND" }) }),
+    new TypeError("fetch failed", { cause: Object.assign(new Error(), { code: "ENOTFOUND", syscall: "connect" }) }),
+    new Error("fetch failed", { cause: Object.assign(new Error(), { code: "ENOTFOUND", syscall: "getaddrinfo" }) }),
+    ...["EAI_AGAIN", "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].map(code =>
+      new TypeError("fetch failed", { cause: Object.assign(new Error(), { code, syscall: "getaddrinfo" }) })),
+    new TypeError("fetch failed", { cause: new Error("wrapper", { cause: Object.assign(new Error(), { code: "ENOTFOUND", syscall: "getaddrinfo" }) }) }),
+  ])("keeps other fetch failure shapes uncertain (%#)", async failure => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(failure);
+    await expect(new TelegramTransport({ token, fetch: fetcher }).sendMessage({ chatId: "1", text: "fixture" })).rejects.toMatchObject({ code: "offline", uncertain: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("does not classify response-body or aborted DNS-shaped failures as safe to retry", async () => {
+    const failure = new TypeError("fetch failed", { cause: Object.assign(new Error(), { code: "ENOTFOUND", syscall: "getaddrinfo" }) });
+    const body = new ReadableStream<Uint8Array>({ start(controller) { controller.error(failure); } });
+    await expect(new TelegramTransport({ token, fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response(body)) }).sendMessage({ chatId: "1", text: "fixture" })).rejects.toMatchObject({ code: "invalid-response", uncertain: true });
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => { controller.abort(); throw failure; });
+    await expect(new TelegramTransport({ token, fetch: fetcher }).sendMessage({ chatId: "1", text: "fixture", signal: controller.signal })).rejects.toMatchObject({ code: "cancel", uncertain: true });
+  });
 });

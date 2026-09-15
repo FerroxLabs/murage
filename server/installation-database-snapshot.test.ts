@@ -9,6 +9,9 @@ import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
 import { snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
+import { migrateMemorySchema } from "./memory/schema.ts";
+import { pauseRestoredMemory } from "./memory/restore.ts";
+import { readMemoryLearning, updateMemoryLearning } from "./memory/learning-policy.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -30,6 +33,25 @@ function fixture(transcriptDdl?: string) {
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+it("copies v2 memory classification and learning controls into a separate paused database", async () => {
+  const f=fixture();migrateMemorySchema(f.db,"active");
+  f.db.exec("INSERT INTO memory_scopes VALUES('bot-scope','bot','bot','[]',0);");
+  f.db.exec("INSERT INTO memory_records VALUES('fact',1,'bot-scope','fact','A preserved fact','owner-statement','active',1,1,NULL,NULL,1);");
+  f.db.exec("UPDATE memory_record_details SET entities='[\"project\"]',confidence=.9,confidence_basis='owner confirmed',observed_at=42;");
+  updateMemoryLearning(f.db,{reviewMode:true,dailyCostUsd:2},0);
+  const original=f.db.prepare("SELECT * FROM memory_record_details").all(),settings=readMemoryLearning(f.db);
+  expect(await snapshotInstallationDatabase(f.data,f.target)).toMatchObject({status:"copied"});
+  const restored=new DatabaseSync(f.target);
+  try{
+    expect(restored.prepare("SELECT * FROM memory_record_details").all()).toEqual(original);
+    expect(readMemoryLearning(restored)).toEqual(settings);
+    restored.exec("BEGIN IMMEDIATE");expect(pauseRestoredMemory(restored)).toBe(true);restored.exec("COMMIT");
+    expect(restored.prepare("SELECT mode FROM memory_meta").get()?.mode).toBe("paused");
+  }finally{restored.close();}
+  expect(f.db.prepare("SELECT mode FROM memory_meta").get()?.mode).toBe("active");
+  expect(f.db.prepare("SELECT * FROM memory_record_details").all()).toEqual(original);
 });
 
 it.each([

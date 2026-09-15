@@ -38,6 +38,7 @@ export function questionCardState(card: OptionCardData): QuestionCardState {
 export interface Draft {
   selected: string[];
   other: string;
+  otherSelected?: boolean;
 }
 export type Drafts = Record<string, Draft>;
 
@@ -69,7 +70,7 @@ export function toggleOption(drafts: Drafts, question: QuestionSpec, label: stri
 export function setOther(drafts: Drafts, question: QuestionSpec, text: string): Drafts {
   const draft = drafts[question.id] ?? emptyDraft;
   const selected = !question.multiSelect && text.trim() ? [] : draft.selected;
-  return { ...drafts, [question.id]: { selected, other: text } };
+  return { ...drafts, [question.id]: { ...draft, selected, other: text } };
 }
 
 export function draftAnswers(questions: readonly QuestionSpec[], drafts: Drafts): QuestionAnswer[] {
@@ -214,7 +215,7 @@ export function QuestionCardView({
         {questions.map((question, questionIndex) => {
           const draft = drafts[question.id] ?? emptyDraft;
           const labelId = `${baseId}-q${questionIndex}`;
-          const otherOn = draft.other.trim() !== "";
+          const otherOn = Boolean(draft.otherSelected) || draft.other.trim() !== "";
           return (
             // No outline-none here: the app's :focus-visible outline (2px
             // accent, 2px offset) lands outside this sub-card's border, so a
@@ -277,14 +278,34 @@ export function QuestionCardView({
                 })}
                 {question.allowOther && (editable || otherOn) && (
                   <label
+                    htmlFor={`${labelId}-other`}
+                    onClick={(event) => {
+                      if (!editable) return;
+                      setDrafts((current) => {
+                        const own = current[question.id] ?? emptyDraft;
+                        return { ...current, [question.id]: { ...own, selected: question.multiSelect ? own.selected : [], otherSelected: true } };
+                      });
+                      event.currentTarget.querySelector("input")?.focus();
+                    }}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-[10px] border px-3 py-2 transition-colors",
                       otherOn ? "border-accent-border bg-accent/10" : "border-hairline/40 bg-card",
                     )}
                   >
-                    <Indicator multi={question.multiSelect} checked={otherOn} inline />
+                    <button
+                      type="button"
+                      role={question.multiSelect ? "checkbox" : "radio"}
+                      aria-label={t("questions.other")}
+                      aria-checked={otherOn}
+                      tabIndex={-1}
+                      disabled={!editable}
+                      className="shrink-0"
+                    >
+                      <Indicator multi={question.multiSelect} checked={otherOn} inline />
+                    </button>
                     <span className="shrink-0 text-[14px] font-medium text-ink">{t("questions.other")}</span>
                     <input
+                      id={`${labelId}-other`}
                       type={question.secret ? "password" : "text"}
                       value={draft.other}
                       disabled={!editable}

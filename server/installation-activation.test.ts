@@ -18,7 +18,7 @@ async function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-activation-")); roots.push(root);
   const source = join(root, "source"), target = join(root, "target"); mkdirSync(source); mkdirSync(target);
   writeFileSync(join(source, "config.json"), "{}");
-  writeFileSync(join(source, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "History bot" }]));
+  writeFileSync(join(source, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "History bot", tasks: [{ threadId: "thread", autoApprove: true, alwaysAllow: ["Bash:sh"], resumeCursors: {} }] }]));
   writeFileSync(join(source, "groups.json"), "[]");
   writeFileSync(join(target, "original.txt"), "retained-original");
   const archive = join(root, "backup.zip"), saved = await writeInstallationArchive(source, archive);
@@ -34,6 +34,15 @@ it("requires explicit hash-bound review and retains the permanent startup decisi
   expect(result.status).toBe("reviewed-engines-disabled");
   expect(() => assertRestoreReviewed(f.target)).not.toThrow();
   expect(JSON.parse(readFileSync(join(f.target, RESTORE_REVIEW_FILE), "utf8")).reviewedTreeHash).toBe(review.reviewHash);
+});
+it.each(["autoApprove", "alwaysAllow"])("task %s authority refuses review even when bot defaults are paused", async field => {
+  const f = await fixture();
+  const path = join(f.target, "bots.json"), bots = JSON.parse(readFileSync(path, "utf8"));
+  expect(bots[0].tasks[0]).toMatchObject({ autoApprove: false, alwaysAllow: [] });
+  bots[0].tasks[0][field] = field === "autoApprove" ? true : ["Bash:sh"];
+  writeFileSync(path, JSON.stringify(bots));
+  expect(() => reviewInstallation(f.target)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
+  expect(() => assertRestoreReviewed(f.target)).toThrow();
 });
 it("changed data invalidates approval without unlocking startup", async () => {
   const f = await fixture(), review = reviewInstallation(f.target);

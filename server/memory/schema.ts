@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { DEFAULT_MEMORY_LEARNING, memoryLearningSchema } from "./learning-policy.ts";
 
 /** Ordinary authoritative tables only. Search indexes are rebuilt separately. */
-export const MEMORY_SCHEMA = `
+export const MEMORY_SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS memory_meta (
  id INTEGER PRIMARY KEY CHECK(id=1), schema_version INTEGER NOT NULL CHECK(schema_version=1),
  installation_id TEXT NOT NULL, policy_revision INTEGER NOT NULL DEFAULT 0 CHECK(policy_revision>=0),
@@ -74,15 +75,51 @@ CREATE INDEX IF NOT EXISTS memory_disclosures_thread ON memory_disclosures(threa
 CREATE INDEX IF NOT EXISTS memory_derivations_child ON memory_derivations(child_id,child_version);
 `;
 
+const LEARNING_SCHEMA = `
+CREATE TABLE IF NOT EXISTS memory_record_details (
+ record_id TEXT NOT NULL, record_version INTEGER NOT NULL,
+ partition TEXT NOT NULL CHECK(partition IN ('working','episodic','semantic','procedural','identity')),
+ attention TEXT NOT NULL CHECK(attention IN ('current','useful','historical')),
+ claim_status TEXT NOT NULL CHECK(claim_status IN ('provisional','current','disputed')),
+ entities TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(entities) AND json_type(entities)='array'),
+ confidence REAL CHECK(confidence IS NULL OR (confidence>=0 AND confidence<=1)),
+ confidence_basis TEXT, observed_at INTEGER CHECK(observed_at IS NULL OR observed_at>=0),
+ PRIMARY KEY(record_id,record_version), FOREIGN KEY(record_id,record_version) REFERENCES memory_records(id,version) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS memory_learning_config (
+ id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>=0),
+ settings TEXT NOT NULL CHECK(json_valid(settings) AND json_type(settings)='object'));
+CREATE TRIGGER IF NOT EXISTS memory_record_details_insert AFTER INSERT ON memory_records BEGIN
+ INSERT INTO memory_record_details(record_id,record_version,partition,attention,claim_status,observed_at)
+ VALUES(NEW.id,NEW.version,CASE NEW.kind WHEN 'source' THEN 'episodic' WHEN 'checkpoint' THEN 'working'
+ WHEN 'procedure' THEN 'procedural' WHEN 'identity' THEN 'identity' ELSE 'semantic' END,
+ CASE WHEN NEW.state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,
+ CASE WHEN NEW.state='candidate' THEN 'provisional' ELSE 'current' END,NULL);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_record_details_state AFTER UPDATE OF state ON memory_records BEGIN
+ UPDATE memory_record_details SET
+ attention=CASE WHEN NEW.state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,
+ claim_status=CASE WHEN NEW.state='candidate' THEN 'provisional' WHEN OLD.state='candidate' AND NEW.state='active' THEN 'current' ELSE claim_status END,
+ entities=CASE WHEN NEW.state='deleted' THEN '[]' ELSE entities END,
+ confidence=CASE WHEN NEW.state='deleted' THEN NULL ELSE confidence END,
+ confidence_basis=CASE WHEN NEW.state='deleted' THEN NULL ELSE confidence_basis END,
+ observed_at=CASE WHEN NEW.state='deleted' THEN NULL ELSE observed_at END
+ WHERE record_id=NEW.id AND record_version=NEW.version;
+END;
+`;
+export const MEMORY_SCHEMA_VERSION = 2;
+export const MEMORY_SCHEMA = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=2)") + LEARNING_SCHEMA;
+
 type SchemaRow = {type: string; name: string; tbl_name: string; sql: string | null};
-let expected: Map<string, SchemaRow> | undefined;
-function expectedSchema() {
-  if (expected) return expected;
+const expected = new Map<number, Map<string, SchemaRow>>();
+function expectedSchema(version: number) {
+  const cached = expected.get(version);
+  if (cached) return cached;
   const db = new DatabaseSync(":memory:");
   try {
-    db.exec(MEMORY_SCHEMA);
-    expected = new Map((db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]).map(row => [row.name,row]));
-    return expected;
+    db.exec(version === 1 ? MEMORY_SCHEMA_V1 : MEMORY_SCHEMA);
+    const schema = new Map((db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]).map(row => [row.name,row]));
+    expected.set(version, schema);
+    return schema;
   } finally { db.close(); }
 }
 
@@ -91,14 +128,18 @@ export function validateMemorySchema(db: DatabaseSync): Set<string> {
   const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
   const memoryRows = rows.filter(row => row.name.startsWith("memory_") || row.tbl_name.startsWith("memory_"));
   if (!memoryRows.length) return new Set(); // private.7 legacy archive
-  const schema = expectedSchema();
+  // Recognize only an exact known meta table before reading its version field.
+  const metaSchema = memoryRows.find(row => row.name === "memory_meta");
+  const version = [1, 2].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
+  if (!version) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
+  const schema = expectedSchema(version);
   if (memoryRows.length !== schema.size) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   for (const row of memoryRows) {
     const wanted = schema.get(row.name);
     if (!wanted || row.type !== wanted.type || row.tbl_name !== wanted.tbl_name || row.sql !== wanted.sql) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   }
   const meta = db.prepare("SELECT * FROM memory_meta").all();
-  if (meta.length !== 1 || meta[0].schema_version !== 1 || !/^[a-f0-9-]{36}$/.test(String(meta[0].installation_id))) throw new Error("INVALID_MEMORY_META");
+  if (meta.length !== 1 || meta[0].schema_version !== version || !/^[a-f0-9-]{36}$/.test(String(meta[0].installation_id))) throw new Error("INVALID_MEMORY_META");
   if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("INVALID_MEMORY_REFERENCE");
   for (const [table,column,kind] of [
     ["memory_scopes","audience","array"], ["memory_scope_bindings","intent","object"],
@@ -108,16 +149,37 @@ export function validateMemorySchema(db: DatabaseSync): Set<string> {
     if (db.prepare(`SELECT 1 FROM ${table} WHERE json_type(${column})!=? LIMIT 1`).get(kind)) throw new Error("INVALID_MEMORY_JSON_SHAPE");
   }
   if (db.prepare("SELECT 1 FROM memory_records WHERE assertion NOT IN ('owner-statement','tool-observation','assistant-inference','unverified-import') LIMIT 1").get()) throw new Error("INVALID_MEMORY_ASSERTION");
+  if (version === 2) {
+    const settings = db.prepare("SELECT settings FROM memory_learning_config WHERE id=1").get();
+    if (!settings || !memoryLearningSchema.safeParse(JSON.parse(String(settings.settings))).success) throw new Error("INVALID_MEMORY_LEARNING_CONFIG");
+    if (db.prepare("SELECT 1 FROM memory_records r LEFT JOIN memory_record_details d ON r.id=d.record_id AND r.version=d.record_version WHERE d.record_id IS NULL LIMIT 1").get()) throw new Error("INVALID_MEMORY_RECORD_DETAILS");
+  }
   return new Set(memoryRows.map(row => row.name));
 }
 
 export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "active" = "off") {
   const exists = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get();
-  if (exists) { validateMemorySchema(db); return; }
+  if (exists) {
+    validateMemorySchema(db);
+    if (db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version === MEMORY_SCHEMA_VERSION) return;
+  }
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.exec(MEMORY_SCHEMA);
-    db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,1,?,?)").run(randomUUID(),initialMode);
+    if (exists) {
+      db.exec("ALTER TABLE memory_meta RENAME TO memory_meta_v1;");
+      db.exec(MEMORY_SCHEMA);
+      db.exec(`INSERT INTO memory_meta SELECT id,2,installation_id,policy_revision,deletion_epoch,data_revision,mode FROM memory_meta_v1;
+        DROP TABLE memory_meta_v1;
+        INSERT INTO memory_record_details(record_id,record_version,partition,attention,claim_status,observed_at)
+        SELECT id,version,CASE kind WHEN 'source' THEN 'episodic' WHEN 'checkpoint' THEN 'working' WHEN 'procedure' THEN 'procedural' WHEN 'identity' THEN 'identity' ELSE 'semantic' END,
+          CASE WHEN state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,
+          CASE WHEN state='candidate' THEN 'provisional' ELSE 'current' END,NULL FROM memory_records;`);
+    } else {
+      db.exec(MEMORY_SCHEMA);
+      db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,2,?,?)").run(randomUUID(),initialMode);
+    }
+    db.prepare("INSERT INTO memory_learning_config VALUES(1,0,?)").run(JSON.stringify(DEFAULT_MEMORY_LEARNING));
+    validateMemorySchema(db);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }

@@ -98,7 +98,7 @@ function item(row: Row, access: InboxAccess): InboxItem {
 }
 function queryValues(query: InboxQuery) {
   const view = query.view ?? "needs-you", page = query.page ?? 0, pageSize = query.pageSize ?? 25;
-  if (!["needs-you", "results", "all"].includes(view) || !Number.isInteger(page) || page < 0 || page > 100_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
+  if (!["needs-you", "results", "all", "approvals"].includes(view) || !Number.isInteger(page) || page < 0 || page > 100_000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
     || (query.query !== undefined && (typeof query.query !== "string" || query.query.length > 200))
     || (query.includeSnoozed !== undefined && typeof query.includeSnoozed !== "boolean")) reject(400, "Invalid Inbox query.");
   return { view, page, pageSize, search: (query.query ?? "").trim().toLowerCase() };
@@ -106,11 +106,13 @@ function queryValues(query: InboxQuery) {
 
 export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now = Date.now()): InboxPage {
   const allowed = scope(access), { view, page, pageSize, search } = queryValues(query);
-  const predicate = `(?='all' OR (?='needs-you' AND needs_you=1) OR (?='results' AND needs_you=0 AND kind IN ('routine.run','goal.run','text')))
+  const approvals = view === "approvals";
+  const predicate = `${approvals ? "kind='options' AND status='pending' AND COALESCE(json_extract(json,'$.card.expired'),0)=0 AND" : ""}
+    (?='all' OR (?='needs-you' AND needs_you=1) OR (?='results' AND needs_you=0 AND kind IN ('routine.run','goal.run','text')))
     AND (?=1 OR snoozed_until IS NULL OR snoozed_until<=?)
     AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0
       OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))`;
-  const params = [allowed, view, view, view, query.includeSnoozed ? 1 : 0, now, search, search,
+  const params = [allowed, approvals ? "all" : view, view, view, approvals || query.includeSnoozed ? 1 : 0, now, search, search,
     JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))), search];
   const total = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS total FROM items WHERE ${predicate}`).get(...params)?.total ?? 0);
   const rows = db.prepare(SOURCE + `SELECT * FROM items WHERE ${predicate} ORDER BY at DESC,source_key LIMIT ? OFFSET ?`).all(...params, pageSize, page * pageSize) as unknown as Row[];

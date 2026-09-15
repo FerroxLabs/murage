@@ -48,7 +48,7 @@ function validatePaused(root: string) {
     if (bot.busy !== false || bot.autoApprove !== false || bot.autoReview !== "off" || bot.approvePeerComms !== true ||
         bot.computer !== "off" || bot.autoStartVps !== false || bot.browser !== false || bot.composio !== false ||
         bot.speakReplies !== false || !Array.isArray(bot.alwaysAllow) || bot.alwaysAllow.length || !empty(bot.resumeCursors) || bot.lastInstanceId !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
-    for (const task of records(bot.tasks)) if (!empty(task.resumeCursors) || task.lastInstanceId !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
+    for (const task of records(bot.tasks)) if (task.autoApprove !== false || !Array.isArray(task.alwaysAllow) || task.alwaysAllow.length || !empty(task.resumeCursors) || task.lastInstanceId !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
   }
   for (const group of records(json(join(root, "groups.json")))) if (group.working !== false || group.busyBotId !== null) fail("RESTORE_WORK_NOT_PAUSED");
   for (const name of ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json"]) {

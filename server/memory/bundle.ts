@@ -1,17 +1,20 @@
+import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
+import { humanMayReadRecord } from "../human-principals.ts";
 import { randomUUID } from "node:crypto";
 import { database } from "../database.ts";
 import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
-import { threadCheckpointId } from "./checkpoints.ts";
+import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
 
 export interface BundleRecord {
   id: string; version: number; scopeId: string; text: string; assertion: string;
-  pinned: boolean; kind: string; evidence: MemoryEvidenceHandle[];
+  pinned: boolean; kind: string; identityBasis?: string; sourceOutcome?: "failed"; evidence: MemoryEvidenceHandle[];
 }
 export interface BoundedMemoryBundle extends MemoryBundle {
-  pinned: BundleRecord[]; checkpoint: BundleRecord[]; evidence: BundleRecord[];
+  evolutionPolicyRevision:string;
+  pinned: BundleRecord[]; identity: BundleRecord[]; checkpoint: BundleRecord[]; evidence: BundleRecord[];
 }
 const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]}>();
 
@@ -62,6 +65,13 @@ function hydrate(id: string, version: number, access: MemoryAccess, allowSuperse
     : "SELECT * FROM memory_records WHERE id=? AND version=? AND state='active'").get(id,version);
   if (!row || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(id,version)) throw new Error("MEMORY_RECORD_UNAVAILABLE");
   assertMemoryAccess(access,String(row.scope_id));
+  if(!humanMayReadRecord(db,id,version,access.humanPrincipal))throw new Error("MEMORY_SCOPE_DENIED");
+  const details=db.prepare("SELECT partition,confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(id,version);
+  if(details?.partition==="identity"){
+    const own=db.prepare("SELECT 1 FROM memory_scopes WHERE id=? AND ((kind='bot' AND owner_key=?) OR kind='conversation')").get(row.scope_id,access.botId);
+    const room=db.prepare("SELECT 1 FROM memory_scopes WHERE kind='room' AND id IN (SELECT value FROM json_each(?))").get(JSON.stringify(access.scopeIds));
+    if(!own||room)throw new Error("MEMORY_SCOPE_DENIED");
+  }
   const evidence = db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,version) as unknown as MemoryEvidenceHandle[];
   if (!evidence.length && row.assertion !== "owner-statement") throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
   for (const handle of evidence) {
@@ -71,7 +81,15 @@ function hydrate(id: string, version: number, access: MemoryAccess, allowSuperse
     const text = JSON.parse(String(source.payload)).text;
     if (typeof text !== "string" || !Number.isSafeInteger(handle.startByte) || !Number.isSafeInteger(handle.endByte) || handle.startByte < 0 || handle.endByte <= handle.startByte || handle.endByte > Buffer.byteLength(text)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
   }
-  return {id,version,scopeId:String(row.scope_id),text:String(row.text),assertion:String(row.assertion),pinned:row.owner_pinned===1,kind:String(row.kind),evidence};
+  // A captured chunk keeps its source's settlement (checkpoints.ts): an unsettled
+  // intention is not current evidence; a failed tool output is only a failure.
+  let sourceOutcome: "failed" | undefined;
+  if (row.kind === "source") {
+    const sources = db.prepare("SELECT s.speaker,s.outcome,s.turn_id,s.thread_id FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=?").all(id,version);
+    if (!allowSuperseded && row.owner_pinned !== 1 && sources.some(source => unsettledIntention(db,source))) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+    if (sources.some(source => source.speaker === "tool" && source.outcome === "failed")) sourceOutcome = "failed";
+  }
+  return {id,version,scopeId:String(row.scope_id),text:String(row.text),assertion:String(row.assertion),pinned:row.owner_pinned===1,kind:String(row.kind),...(details?.partition==="identity"?{identityBasis:String(details.confidence_basis??"Unverified identity context")}:{ }),...(sourceOutcome?{sourceOutcome}:{}),evidence};
 }
 
 /** Engine-facing rendering: attributed remembered words only. Record ids, scopes
@@ -86,7 +104,7 @@ const ASSERTION_LABELS: Record<string, string> = {
   "unverified-import": "imported, unverified",
 };
 function referenceLine(record: BundleRecord, position: number): string {
-  const attribution = ASSERTION_LABELS[record.assertion] ?? "unattributed";
+  const attribution = record.kind==="character-canon" ? "fictional character canon; not model autobiography or world truth" : record.identityBasis?.includes("fictional") ? "owner-authored fictional continuity; not world truth" : record.sourceOutcome==="failed" ? "a tool reported a failed action" : ASSERTION_LABELS[record.assertion] ?? "unattributed";
   const kind = /^[a-z][a-z-]{0,31}$/.test(record.kind) ? record.kind : "note";
   // One JSON string literal per line: stored text cannot introduce a newline,
   // the closing tag or the current-request boundary. Angle brackets are
@@ -111,7 +129,8 @@ export function memoryHandleRecord(bundle: MemoryBundle, handle: unknown): {id: 
 function tokens(text: string) { return Buffer.byteLength(memoryRequestPrefix(text),"utf8"); }
 
 /** No tokenizer dependency: UTF-8 bytes conservatively bound tokens, including metadata. */
-export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]} = {}): Promise<BoundedMemoryBundle> {
+export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]; evolutionPolicy?:MemoryEvolutionPolicy} = {}): Promise<BoundedMemoryBundle> {
+  const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   assertMemoryAccess(access);
   options.signal?.throwIfAborted();
   const available = options.availableContextTokens ?? 20480;
@@ -127,12 +146,25 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     catch { assertMemoryAccess(access); throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch"); }
   });
   if (tokens(render(pinned)) > budget) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
-  const selected = [...pinned], checkpoint: BundleRecord[] = [], evidence: BundleRecord[] = [];
+  const selected = [...pinned], identity: BundleRecord[] = [], checkpoint: BundleRecord[] = [], evidence: BundleRecord[] = [];
   let degradedReason: string | undefined;
   const add = (record: BundleRecord, target: BundleRecord[]) => {
-    if (selected.some(r => r.id===record.id && r.version===record.version)) return;
+    if (selected.length>=MEMORY_HANDLE_LIMIT || selected.some(r => r.id===record.id && r.version===record.version)) return;
     if (tokens(render([...selected,record])) <= budget) { selected.push(record); target.push(record); }
   };
+  // Compact private continuity is engine-independent and precedes optional
+  // general recall. Long canon remains searchable instead of filling every turn.
+  const identityRows=db.prepare(`SELECT r.id,r.version FROM memory_records r
+    JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
+    JOIN memory_scopes s ON s.id=r.scope_id
+    WHERE r.state='active' AND r.owner_pinned=0 AND d.partition='identity'
+    AND s.kind='bot' AND s.owner_key=? AND s.id IN (SELECT value FROM json_each(?))
+    AND r.kind IN ('continuity-brief','reveal-state')
+    ORDER BY CASE r.kind WHEN 'continuity-brief' THEN 0 ELSE 1 END,r.created_at DESC,r.id`).all(access.botId,JSON.stringify(access.scopeIds));
+  for(const row of identityRows){
+    try { add(hydrateMemoryRecord(String(row.id),Number(row.version),access),identity); }
+    catch { assertMemoryAccess(access); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
+  }
   // Reserve recall space while letting checkpoints use the unused pin share.
   // Measure the same framed representation as final delivery, including evidence
   // metadata. A second pass may use recall space left empty after retrieval.
@@ -155,7 +187,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     // checkpoint is one record summarising the whole thread).
     const ownSources = ownMessageSources(db,access.threadId,options.excludeMessageIds);
     try {
-      const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal});
+      const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal,evolutionPolicy});
       degradedReason = result.degradedReason ?? degradedReason;
       for (const hit of result.hits) {
         try {
@@ -182,19 +214,19 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       assertMemoryAccess(access);
       if (record.pinned) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
       selected.splice(selected.indexOf(record),1);
-      for (const list of [checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
+      for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
       degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
     }
   }
   const text = render(selected);
   const sourceVersions = [...new Map(selected.flatMap(r=>r.evidence).map(e=>[JSON.stringify([e.sourceId,e.revision]),{id:e.sourceId,revision:e.revision}])).values()];
-  const bundle: BoundedMemoryBundle = {bundleId:randomUUID(),text,policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,tokenCount:tokens(text),recordVersions:selected.map(r=>({id:r.id,version:r.version})),sourceVersions,pinned,checkpoint,evidence,...degradedReason?{degradedReason}:{}};
+  const bundle: BoundedMemoryBundle = {evolutionPolicyRevision:evolutionPolicy.revision,bundleId:randomUUID(),text,policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,tokenCount:tokens(text),recordVersions:selected.map(r=>({id:r.id,version:r.version})),sourceVersions,pinned,identity,checkpoint,evidence,...degradedReason?{degradedReason}:{}};
   // Keep an immutable original across async transport and prevent caller-forged bundles.
   for (const record of selected) { for (const handle of record.evidence) Object.freeze(handle); Object.freeze(record.evidence); Object.freeze(record); }
   for (const row of bundle.recordVersions) Object.freeze(row);
   for (const row of bundle.sourceVersions) Object.freeze(row);
   Object.freeze(bundle.recordVersions); Object.freeze(bundle.sourceVersions);
-  Object.freeze(pinned); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
+  Object.freeze(pinned); Object.freeze(identity); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
   bundles.set(bundle,{access,records:selected});
   return bundle;
 }

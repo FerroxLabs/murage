@@ -17,7 +17,8 @@ interface Options {
   file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage" | "editQuestionMessage">>; botIdentityId: string; targetBotId: string;
   approvals?: TelegramApprovalActions;
   isCurrentTarget?: () => boolean;
-  enqueue: (input: { deliveryId: string; prompt: string }) => { id: string };
+  onVerifiedSender?: (senderId:string)=>void;
+  enqueue: (input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
   now?: () => number;
 }
@@ -60,6 +61,7 @@ export class TelegramChannel {
       }
       if (this.state.records.some(record => record.state === "sending")) this.mutate(state => { for (const record of state.records) if (record.state === "sending") record.state = "uncertain"; });
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") fail(); }
+    if(this.state.binding)this.options.onVerifiedSender?.(this.state.binding.senderId);
   }
   private deliveryId(id: number) { return `telegram:${this.options.botIdentityId}:${id}`; }
   private mutate(update: (state: State) => void) {
@@ -152,8 +154,9 @@ export class TelegramChannel {
         this.mutate(state => {
           state.binding = { senderId: message.senderId, chatId: message.chatId }; state.pairing = null; state.offset = update.updateId + 1;
           state.records = records;
-          state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: "", state: "accepted", response: "Telegram is paired with Murage. Send a message here to chat with your Chief." });
+          state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: "", state: "accepted", response: "Telegram is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." });
         });
+        this.options.onVerifiedSender?.(message.senderId);
         continue;
       }
       if (message && this.state.binding?.senderId === message.senderId && this.state.binding.chatId === message.chatId && !this.state.records.some(record => record.updateId === update.updateId)) {
@@ -179,7 +182,13 @@ export class TelegramChannel {
       if (!active() || !this.state.binding) return;
       let record = this.state.records.find(item => item.updateId === original.updateId)!;
       if (record.state === "accepted" && !record.response) {
-        const run = this.options.enqueue({ deliveryId: record.deliveryId, prompt: record.prompt });
+        let run:{id:string};
+        try{run=this.options.enqueue({ deliveryId: record.deliveryId, prompt: record.prompt, senderId:this.state.binding.senderId });}
+        catch(error){
+          if(!(error instanceof Error)||!/^HUMAN_(?:LINK_REQUIRED|BINDING_REVOKED)/.test(error.message))throw error;
+          this.mutate(state=>{state.records.find(item=>item.updateId===record.updateId)!.response="Link this channel account to yourself or another person in Murage Memory settings, then send your message again.";});
+          continue;
+        }
         if (!active()) return;
         this.mutate(state => { const item = state.records.find(item => item.updateId === record.updateId)!; item.runId = run.id; item.state = "queued"; });
         record = this.state.records.find(item => item.updateId === record.updateId)!;
@@ -212,7 +221,14 @@ export class TelegramChannel {
             item.state = "rejected"; item.sendAttempts = attempts;
             const known = deliveryError.safeParse(error.code); item.deliveryError = known.success ? known.data : "invalid-request";
             delete item.retryAt;
-          } else item.state = "uncertain";
+          } else {
+            item.state = "uncertain";
+            delete item.deliveryError;
+            if (error instanceof TelegramTransportError) {
+              const known = deliveryError.safeParse(error.code);
+              if (known.success) item.deliveryError = known.data;
+            }
+          }
         });
         if (active()) this.deliveryFailure = true;
         throw error;

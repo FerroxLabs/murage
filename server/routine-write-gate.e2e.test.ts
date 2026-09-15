@@ -123,6 +123,22 @@ afterAll(async () => {
 });
 
 describe("routine write routes are desktop-only", () => {
+  it("restores retained instructions only for the owner and rejects stale rollback", async () => {
+    const bot = (await desktop("POST", "/api/bots")).body.bot;
+    const routine = (await desktop("POST", "/api/routines", { ...intervalRoutine("Rollback fixture", bot.id), enabled: false })).body.routine;
+    try {
+      const edited = (await desktop("PATCH", `/api/routines/${routine.id}`, { prompt: "Owner changed instruction" })).body.routine;
+      const body = { expectedRevision: edited.instructionRevision, expectedUpdatedAt: edited.updatedAt, targetRevision: routine.instructionRevision };
+      const path = `/api/routines/${routine.id}/instructions/rollback`;
+      for (const [, headers] of REMOTE_SURFACES) expect((await api("POST", path, body, headers)).status).toBe(404);
+      const result = await desktop("POST", path, body);
+      expect(result.status).toBe(200);
+      expect(result.body.routine).toMatchObject({ prompt: routine.prompt, schedule: routine.schedule, enabled: false, botId: routine.botId, nextRunAt: routine.nextRunAt });
+      expect(result.body.routine.instructionHistory.at(-1)).toMatchObject({ author: "rollback", rollbackOf: routine.instructionRevision });
+      expect((await desktop("POST", path, body)).status).toBe(409);
+    } finally { await desktop("DELETE", `/api/routines/${routine.id}`); }
+  });
+
   it("lets the desktop create, update and delete an interval routine", async () => {
     const bot = (await desktop("POST", "/api/bots")).body.bot;
     const created = await desktop("POST", "/api/routines", intervalRoutine("Desktop interval", bot.id));

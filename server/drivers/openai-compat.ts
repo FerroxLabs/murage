@@ -3,7 +3,7 @@
 import { assertProviderKey } from "../../electron/provider-connections.mjs";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
-import { requestMemoryExtraction } from "../memory/extract.ts";
+import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding } from "../memory/extract.ts";
 import { classifyLocalHostname } from "../../shared/local-models.ts";
 
 const DRIVER_KIND = "openai-compat";
@@ -184,8 +184,13 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
     });
     let usable=false;
     try{const url=new URL(config.url);usable=Boolean(apiKey&&input.enabled&&["http:","https:"].includes(url.protocol)&&!url.username&&!url.password);}catch{/* invalid configured endpoint */}
-    if(usable)runtime.extractMemory=(text,maximumOutputTokens,signal)=>requestMemoryExtraction({url:config.url,apiKey,model:catalog.default,
-      ...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})},text,maximumOutputTokens,signal);
+    if(usable)runtime.extractMemory=(text,maximumOutputTokens,signal,dispatch)=>{
+      const extractionConfig={url:config.url,apiKey,model:catalog.default,...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})};
+      return dispatch?.purpose?requestMemoryInference(extractionConfig,text,maximumOutputTokens,signal,dispatch)
+        :requestMemoryExtraction(extractionConfig,text,maximumOutputTokens,signal,dispatch?.messages);
+    };
+    if(usable)runtime.groundMemory=(claim,maximumOutputTokens,signal)=>requestMemoryGrounding({url:config.url,apiKey,model:catalog.default,
+      ...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})},claim,maximumOutputTokens,signal);
     return runtime;
   },
 };

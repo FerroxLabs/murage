@@ -2,7 +2,7 @@ import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, renameSync, rm
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { loadSecrets, ManifestError, validateManifest } from "./channel-live-inputs.ts";
+import { loadEngine, loadSecrets, ManifestError, validateManifest } from "./channel-live-inputs.ts";
 
 const TELEGRAM_TOKEN = "4242:qualification_secret_not_real_ABCDEFGH";
 const TELEGRAM_OTHER = "4242:qualification_secret_other_ABCDEFGHIJ";
@@ -138,4 +138,58 @@ it("refuses budgets above the cap or below the planned message sequence", () => 
   expect(refusal(() => validateManifest({ ...f.telegram(), limits: { maxOperatorMessages: 11, maxOutboundMessages: 6, maxMinutes: 30 } }, f.context)).message).toContain("maxOperatorMessages");
   expect(refusal(() => validateManifest({ ...f.telegram(), limits: { maxOperatorMessages: 6, maxOutboundMessages: 6, maxMinutes: 90 } }, f.context)).message).toContain("maxMinutes");
   expect(refusal(() => validateManifest({ ...f.telegram(), limits: { maxOperatorMessages: 2, maxOutboundMessages: 6, maxMinutes: 30 } }, f.context)).message).toContain("planned operator messages");
+});
+
+// ── Optional real engine (B08 descriptor admission; synthetic descriptor and credential only) ──
+const ENGINE_CREDENTIAL = "synthetic-flux-credential-value-not-real-0123456789";
+let engineFixtures = 0;
+function engineFixture(f, overrides = {}, credentialMode = 0o600) {
+  const n = ++engineFixtures; // each call gets its own descriptor and credential file
+  const home = join(f.root, "home"); mkdirSync(home, { recursive: true });
+  const credentialDir = join(f.root, "engine-secrets"); mkdirSync(credentialDir, { recursive: true, mode: 0o700 });
+  const credentialFile = join(credentialDir, `engine-${n}.key`); writeFileSync(credentialFile, ENGINE_CREDENTIAL + "\n"); chmodSync(credentialFile, credentialMode);
+  const descriptor = { instanceId: "qual-engine", driver: "fuigoAgent", displayName: "Qualification engine", model: "synthetic-model", account: "dedicated synthetic account",
+    config: { cli: join(f.root, "bin", "engine-cli"), fullAuto: false }, credential: { env: "FLUX_API_KEY", file: credentialFile },
+    spend: { paid: true, authority: "synthetic authority record", capUsd: 1 }, ...overrides };
+  const descriptorFile = join(f.root, `engine-${n}.json`); writeFileSync(descriptorFile, JSON.stringify(descriptor));
+  return { home, descriptorFile, credentialFile, context: { ...f.context, home } };
+}
+const noEngineSecret = (value) => expect(String(value)).not.toContain(ENGINE_CREDENTIAL);
+it("uses the two-turn channel minimum without inheriting B08's 22-turn allocation", () => {
+  const f = fixture();
+  for (const maxDispatches of [2, 6]) {
+    const e = engineFixture(f, { maxDispatches });
+    const result = validateManifest({ ...f.telegram(), engine: { descriptorFile: e.descriptorFile } }, e.context);
+    expect(loadEngine(result.manifest, e.context).descriptor.maxDispatches).toBe(maxDispatches);
+  }
+  const e = engineFixture(f, { maxDispatches: 1 });
+  expect(refusal(() => validateManifest({ ...f.telegram(), engine: { descriptorFile: e.descriptorFile } }, e.context)).message).toContain("at least 2");
+});
+
+it("admits an optional real engine through the B08 descriptor rules and keeps its credential out of the plan", () => {
+  const f = fixture(), e = engineFixture(f);
+  const result = validateManifest({ ...f.telegram(), engine: { descriptorFile: e.descriptorFile } }, e.context);
+  expect(result.plan.engine).toEqual({ instanceId: "qual-engine", driver: "fuigoAgent", displayName: "Qualification engine", model: "synthetic-model",
+    account: "dedicated synthetic account", spend: { paid: true, authority: "synthetic authority record", capUsd: 1 }, credentialEnv: "FLUX_API_KEY", plannedModelRuns: 2 });
+  noEngineSecret(JSON.stringify(result.plan));
+  expect(loadEngine(result.manifest, e.context)).toMatchObject({ descriptor: { instanceId: "qual-engine" }, env: { FLUX_API_KEY: ENGINE_CREDENTIAL } });
+  expect(validateManifest(f.telegram(), f.context).plan.engine).toBe("fake Claude CLI");
+});
+
+it("refuses a fake engine, a secret in config, an unreadable descriptor and unsafe engine credentials without echoing them", () => {
+  const f = fixture();
+  const cases = [
+    [engineFixture(f, { config: { cli: join(f.root, "bin", "fake-claude-cli.ts") } }), "fake"],
+    [engineFixture(f, { config: { cli: join(f.root, "bin", "engine-cli"), apiKey: "inline" } }), "looks like a secret"],
+    [engineFixture(f, { credential: { env: "FLUX_API_KEY", file: join(f.repo, "engine.key") } }), "inside the repository"],
+    [engineFixture(f, {}, 0o644), "0600"],
+    [engineFixture(f, { spend: undefined }), "spend is required"],
+  ];
+  for (const [e, expected] of cases) {
+    const error = refusal(() => validateManifest({ ...f.telegram(), engine: { descriptorFile: e.descriptorFile } }, e.context));
+    expect(error.message).toContain(expected); noSecrets(error); noEngineSecret(error.message);
+  }
+  const unreadable = refusal(() => validateManifest({ ...f.telegram(), engine: { descriptorFile: join(f.root, "missing.json") } }, f.context));
+  expect(unreadable.message).toContain("engine.descriptorFile is not readable JSON");
+  expect(refusal(() => validateManifest({ ...f.telegram(), engine: { descriptorFile: "relative.json" } }, f.context)).message).toContain("absolute path");
 });

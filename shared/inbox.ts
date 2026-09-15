@@ -1,4 +1,4 @@
-export type InboxView = "needs-you" | "results" | "all";
+export type InboxView = "needs-you" | "results" | "all" | "approvals";
 export interface InboxLink { threadId: string; messageId: string; runId?: string; artifactId?: string }
 export interface InboxItem {
   id: string;

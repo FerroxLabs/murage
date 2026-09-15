@@ -100,7 +100,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
           record.tasks = value.tasks.map(task => {
             if (!object(task) || !id(task.threadId) || seen.has(task.threadId)) fail("INVALID_RESTORE_ROSTER");
             seen.add(task.threadId); claim(task.threadId);
-            const copy = { ...task, resumeCursors: {} };
+            const copy = { ...task, autoApprove: false, alwaysAllow: [], resumeCursors: {} };
             delete (copy as RecordValue).lastInstanceId;
             return copy;
           });

@@ -65,3 +65,49 @@ it("admits only one extraction globally and reserves framed input plus bounded o
   expect(budget.input).toBeGreaterThan(Buffer.byteLength("source"));expect(budget.output).toBe(2000);expect(budget.calls).toBe(1);
   release();expect((await first).status).toBe("complete");
 });
+
+it("grounds through the admitted OpenAI compatible route with an independent tool-free prompt",async()=>{
+  let body:Record<string,unknown>|undefined;
+  const url=await local((request,response)=>{
+    if(request.method==="GET"){response.end(JSON.stringify({data:[{id:"fixture-model"}]}));return;}
+    let raw="";request.on("data",chunk=>{raw+=chunk;});request.on("end",()=>{body=JSON.parse(raw);result(response,JSON.stringify({supported:true}));});
+  });
+  const instance=await OpenAICompatDriver.create({instanceId:"ground",displayName:"Fixture",environment:{},enabled:true,config:{url,key:"fixture-key",apiKeyEnv:"P09_UNUSED_KEY",model:"fixture-model"}});
+  try{
+    expect(await instance.groundMemory!({text:"Prefers brevity",quote:"Please keep answers concise",claimType:"owner-statement",speaker:"owner",outcome:"recorded"},500,new AbortController().signal)).toBe('{"supported":true}');
+    expect(body).toMatchObject({model:"fixture-model",max_tokens:500,stream:false});
+    expect(body).not.toHaveProperty("tools");expect(JSON.stringify(body)).toContain("Independently judge");
+    expect(JSON.stringify(body)).toContain("Please keep answers concise");
+  }finally{await instance.dispose();}
+});
+
+it("the configured extraction transport sends the caller's frozen classification messages",async()=>{
+  let body:any;
+  const url=await local((request,response)=>{
+    if(request.method==="GET"){response.end(JSON.stringify({data:[{id:"fixture-model"}]}));return;}
+    let raw="";request.on("data",chunk=>raw+=chunk);request.on("end",()=>{body=JSON.parse(raw);result(response);});
+  });
+  const instance=await OpenAICompatDriver.create({instanceId:"frozen-extract",displayName:"Fixture",environment:{},enabled:true,config:{url,apiKeyEnv:"P09_UNUSED_KEY",key:"fixture-key",model:"fixture-model"}});
+  const messages=Object.freeze([Object.freeze({role:"system",content:"Immutable contract plus retained classification guidance"}),Object.freeze({role:"user",content:JSON.stringify({source:"A source statement"})})]);
+  try{
+    await instance.extractMemory!("A source statement",2000,new AbortController().signal,{policyRevision:"retained-version",messages});
+    expect(body.messages).toEqual(messages);expect(body.max_tokens).toBe(2000);expect(body).not.toHaveProperty("tools");
+  }finally{await instance.dispose();}
+});
+
+it("the host reflection purpose permits 8,000 tokens without widening ordinary extraction",async()=>{
+  let calls=0,body:any;
+  const url=await local((request,response)=>{
+    if(request.method==="GET"){response.end(JSON.stringify({data:[{id:"fixture-model"}]}));return;}
+    calls++;let raw="";request.on("data",chunk=>raw+=chunk);request.on("end",()=>{body=JSON.parse(raw);result(response,"reflection");});
+  });
+  const instance=await OpenAICompatDriver.create({instanceId:"reflection",displayName:"Fixture",environment:{},enabled:true,config:{url,apiKeyEnv:"P09_UNUSED_KEY",key:"fixture-key",model:"fixture-model"}});
+  const dispatch={policyRevision:"host-cycle",purpose:"reflection" as const,messages:[{role:"system",content:"Reflect on the admitted synthetic examples"},{role:"user",content:"Fixture"}]};
+  try{
+    await expect(instance.extractMemory!("Fixture",8000,new AbortController().signal)).rejects.toThrow("MEMORY_EXTRACTION_LIMIT");
+    await expect(instance.extractMemory!("Fixture",8001,new AbortController().signal,dispatch)).rejects.toThrow("MEMORY_EXTRACTION_LIMIT");
+    expect(calls).toBe(0);
+    expect(await instance.extractMemory!("Fixture",8000,new AbortController().signal,dispatch)).toBe("reflection");
+    expect(body.max_tokens).toBe(8000);expect(body.messages).toEqual(dispatch.messages);expect(calls).toBe(1);
+  }finally{await instance.dispose();}
+});

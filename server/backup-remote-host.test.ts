@@ -114,3 +114,44 @@ it("automatic store shares the operation lock and a durable pause is visible bef
  expect(await f.rebuild().runAutomaticUpload()).toEqual({state:"needs-review"});release();expect(await run).toMatchObject({state:"needs-review"});
  expect(await f.host.runAutomaticUpload()).toEqual({state:"needs-review"});expect(f.store).toHaveBeenCalledTimes(1);
 });
+it("unconfirmed provider lock release passes through upload, automatic upload and status only as a fixed value",async()=>{
+ const f=fixture(),ref=await configured(f);await f.host.connect(ref,2);
+ for(const result of [{state:"verified",snapshotId:"e".repeat(64),lockRelease:"unconfirmed",private:"PRIVATE_PROVIDER_TEXT"},{state:"verified",snapshotId:"e".repeat(64),lockRelease:"unconfirmed"},{state:"verified",snapshotId:"e".repeat(64),lockRelease:"forged"}])f.store.mockResolvedValueOnce(result as never);
+ const uploaded=await f.host.uploadLatest(ref,2,receipt.jobId);
+ expect(uploaded).toMatchObject({state:"verified",jobId:receipt.jobId,lockRelease:"unconfirmed"});expect(JSON.stringify(uploaded)).not.toContain("PRIVATE_PROVIDER_TEXT");
+ await f.host.setAutomaticUpload(ref,2,true);f.setReceipt({...receipt,jobId:"f".repeat(64),verifiedAt:11});
+ expect(await f.host.runAutomaticUpload()).toEqual({state:"verified",jobId:"f".repeat(64),lockRelease:"unconfirmed"});
+ f.setReceipt({...receipt,jobId:"9".repeat(64),verifiedAt:12});
+ expect(await f.host.runAutomaticUpload()).toEqual({state:"verified",jobId:"9".repeat(64)});
+ const statusHost=createBackupRemoteHost({supported:()=>true,readProtected:async()=>structuredClone(f.document()),updateProtected:async()=>{},selectPassword:async()=>null,latestVerified:async()=>null,latestReceipt:()=>receipt,
+  createAdapter:()=>({connectionStatus:()=>({state:"connected",repositoryId:"d".repeat(64)}),connect:async()=>{throw Error("unused");},store:async()=>{throw Error("unused");},storedBackupStatus:current=>({state:"verified",jobId:current.jobId,lockRelease:"unconfirmed"})})});
+ expect((await statusHost.status()).lastUpload).toEqual({state:"verified",jobId:receipt.jobId,lockRelease:"unconfirmed"});
+});
+it("maintenance credentials are separate, protected, dropped on destination change and required for retention",async()=>{
+ const f=fixture(),ref=await configured(f);
+ await expect(f.host.previewRetention(ref,2,{keepLast:1})).rejects.toThrow("MAINTENANCE_REQUIRED");
+ await expect(f.host.saveMaintenanceCredentials(ref,2,input.credentials)).rejects.toThrow("INPUT_INVALID");
+ await expect(f.host.saveMaintenanceCredentials(ref,2,{accessKeyId:"FAKE_MAINTENANCE"})).rejects.toThrow("INPUT_INVALID");
+ await expect(f.host.saveMaintenanceCredentials(ref,1,{accessKeyId:"FAKE_MAINTENANCE",secretAccessKey:"FAKE_MAINTENANCE_SECRET"})).rejects.toThrow("CHANGED");
+ await f.host.saveMaintenanceCredentials(ref,2,{accessKeyId:"FAKE_MAINTENANCE",secretAccessKey:"FAKE_MAINTENANCE_SECRET"});
+ const status=await f.host.status();expect(status).toMatchObject({maintenanceSelected:true,revision:2});expect(JSON.stringify(status)).not.toMatch(/FAKE_/);
+ expect(String(f.document()[BACKUP_REMOTE_BINDING_KEY])).toContain("FAKE_MAINTENANCE_SECRET");
+ await f.host.save(2,input);expect(await f.host.status()).toMatchObject({maintenanceSelected:false,revision:3});
+ expect(String(f.document()[BACKUP_REMOTE_BINDING_KEY])).not.toContain("FAKE_MAINTENANCE");
+});
+it("retention preview and approval bind the latest verified receipt and project only safe fields",async()=>{
+ const f=fixture(),ref=await configured(f);await f.host.saveMaintenanceCredentials(ref,2,{accessKeyId:"FAKE_MAINTENANCE",secretAccessKey:"FAKE_MAINTENANCE_SECRET"});
+ let document=structuredClone(f.document()),seen:unknown,captured:unknown;
+ const preview=vi.fn(async(_policy:unknown,value:unknown)=>{captured=value;return{previewId:"1".repeat(64),repositoryId:"d".repeat(64),remove:["2".repeat(64)],keep:1,lockRelease:"unconfirmed",private:"PRIVATE_PROVIDER_TEXT"};});
+ const apply=vi.fn(async(_policy:unknown,_value:unknown,id:string)=>({state:"complete",previewId:id,removed:1,error:"PRIVATE_PROVIDER_TEXT"}));
+ const host=createBackupRemoteHost({supported:()=>true,readProtected:async()=>structuredClone(document),updateProtected:async derive=>{document=derive(document);},selectPassword:async()=>null,latestVerified:async()=>null,latestReceipt:()=>receipt,
+  createAdapter:binding=>{seen=binding;return{connectionStatus:()=>({state:"connected",repositoryId:"d".repeat(64)}),connect:async()=>{throw Error("unused");},store:async()=>{throw Error("unused");},previewRetention:preview,applyRetention:apply,retentionStatus:()=>({state:"complete",removed:1,previewId:"1".repeat(64),error:"PRIVATE_PROVIDER_TEXT"})};}});
+ expect(await host.previewRetention(ref,2,{keepLast:1})).toEqual({previewId:"1".repeat(64),remove:["2".repeat(64)],keep:1,lockRelease:"unconfirmed"});
+ expect(captured).toEqual({installationRef:receipt.installationRef,protectedJobId:receipt.jobId});expect(seen).toMatchObject({maintenanceCredentials:{accessKeyId:"FAKE_MAINTENANCE"}});
+ expect(await host.applyRetention(ref,2,{keepLast:1},"1".repeat(64))).toEqual({state:"complete",previewId:"1".repeat(64),removed:1});
+ await expect(host.applyRetention(ref,2,{keepLast:1},"not-a-hash")).rejects.toThrow("BACKUP_REMOTE_RETENTION_CHANGED");
+ apply.mockRejectedValueOnce(Error("RESTIC_RETENTION_PREVIEW_CHANGED"));await expect(host.applyRetention(ref,2,{keepLast:1},"1".repeat(64))).rejects.toThrow("BACKUP_REMOTE_RETENTION_CHANGED");
+ apply.mockRejectedValueOnce(Error("PRIVATE_PROVIDER_TEXT"));await expect(host.applyRetention(ref,2,{keepLast:1},"1".repeat(64))).rejects.toThrow("BACKUP_REMOTE_REVIEW_REQUIRED");
+ const status=await host.status();expect(status.retention).toEqual({state:"complete",removed:1,previewId:"1".repeat(64)});expect(JSON.stringify(status)).not.toMatch(/PRIVATE_|FAKE_/);
+ expect(apply).toHaveBeenCalledTimes(3);
+});

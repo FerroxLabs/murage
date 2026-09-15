@@ -4,10 +4,17 @@
 // holds a credential itself. Validation checks the files without returning or
 // printing their contents, and loadSecrets reads them only when a qualification
 // server is about to launch. Nothing here touches the network.
+//
+// An optional engine.descriptorFile selects one real model engine for the live
+// run. It is admitted by the same rules as the B08 behaviour runner (named
+// non-fake engine, recorded spend authority, owner-only credential file outside
+// the repository and personal stores); without it the run uses the fake Claude
+// fixture engine and cannot qualify model behaviour.
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync, type Stats } from "node:fs";
-import { hostname as osHostname } from "node:os";
+import { homedir, hostname as osHostname } from "node:os";
 import { dirname, isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
+import { admitEngineDescriptor, readCredential, type B08EngineDescriptor } from "../src/e2e/b08-template-behavior-fixture.ts";
 
 export type Platform = "telegram" | "slack" | "discord";
 
@@ -28,6 +35,7 @@ const common = {
   testHostname: text,
   limits,
   denylistIdentityIds: z.array(z.string().min(1).max(100)).max(50).optional(),
+  engine: z.object({ descriptorFile: secretPath }).strict().optional(),
 };
 
 const manifestSchema = z.discriminatedUnion("platform", [
@@ -51,6 +59,8 @@ export const LIVE_BUDGET: Record<Platform, { operator: number; outbound: number 
   slack: { operator: 5, outbound: 4 },
   discord: { operator: 5, outbound: 4 },
 };
+/** Model turns a live run dispatches on every platform: request one and request two. */
+export const LIVE_MODEL_RUNS = 2;
 
 const TOKEN_SHAPES = {
   telegram: /^\d{1,20}:[A-Za-z0-9_-]{20,200}$/,
@@ -65,6 +75,8 @@ export interface InputContext {
   repoRoot: string;
   hostname?: string;
   uid?: number | null;
+  /** The person's HOME for engine descriptor admission (personal stores are refused). */
+  home?: string;
   /** Test seam only: runs after the path checks and before the file is opened. */
   afterPathCheck?: (path: string) => void;
 }
@@ -173,6 +185,26 @@ function checkSecrets(manifest: Manifest, context: InputContext, issues: string[
   return env;
 }
 
+export interface AdmittedEngine { descriptor: B08EngineDescriptor; env: Record<string, string> }
+
+/** Admits the optional real engine through the B08 descriptor rules; the credential value stays in `env` only. */
+function checkEngine(manifest: Manifest, context: InputContext, issues: string[]): AdmittedEngine | undefined {
+  if (!manifest.engine) return undefined;
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(manifest.engine.descriptorFile, "utf8")); } catch { issues.push("engine.descriptorFile is not readable JSON"); return undefined; }
+  const ctx = { repoRoot: context.repoRoot, home: context.home ?? homedir() };
+  const admitted = admitEngineDescriptor(raw, ctx, LIVE_MODEL_RUNS);
+  if (!admitted.ok) { issues.push(...admitted.refusals.map(refusal => `engine descriptor refused: ${refusal}`)); return undefined; }
+  const credential = readCredential(admitted.descriptor, ctx);
+  if (!credential.ok) { issues.push(`engine credential refused: ${credential.refusal}`); return undefined; }
+  return { descriptor: admitted.descriptor, env: credential.env ? { [credential.env]: credential.value } : {} };
+}
+
+export interface RedactedEngine {
+  instanceId: string; driver: string; displayName: string; model: string; account: string; protocol?: string;
+  spend: B08EngineDescriptor["spend"]; credentialEnv?: string; plannedModelRuns: number;
+}
+
 export interface RedactedPlan {
   platform: Platform;
   authorityReference: string;
@@ -180,9 +212,17 @@ export interface RedactedPlan {
   identities: Record<string, string>;
   credentialFiles: Record<string, "validated">;
   budget: { operatorMessages: number; outboundMessages: number; maxMinutes: number; plannedOperator: number; plannedOutbound: number };
+  /** The admitted real engine, or "fake Claude CLI" (model behaviour not qualified). */
+  engine: RedactedEngine | "fake Claude CLI";
 }
 
 const mask = (value: string) => value.length <= 4 ? "*".repeat(value.length) : `${value.slice(0, 2)}${"*".repeat(Math.max(1, value.length - 4))}${value.slice(-2)}`;
+
+export function redactEngine(engine: AdmittedEngine): RedactedEngine {
+  const d = engine.descriptor;
+  return { instanceId: d.instanceId, driver: d.driver, displayName: d.displayName, model: d.model, account: d.account, ...(d.protocol ? { protocol: d.protocol } : {}),
+    spend: d.spend, ...(d.credential ? { credentialEnv: d.credential.env } : {}), plannedModelRuns: LIVE_MODEL_RUNS };
+}
 
 /** Validate a parsed manifest and its credential files; returns a plan with no secret bytes. */
 export function validateManifest(raw: unknown, context: InputContext): { manifest: Manifest; plan: RedactedPlan } {
@@ -196,6 +236,7 @@ export function validateManifest(raw: unknown, context: InputContext): { manifes
   if (manifest.limits.maxOperatorMessages < planned.operator) issues.push(`limits.maxOperatorMessages must allow the ${planned.operator} planned operator messages`);
   if (manifest.limits.maxOutboundMessages < planned.outbound) issues.push(`limits.maxOutboundMessages must allow the ${planned.outbound} planned bot replies`);
   checkSecrets(manifest, context, issues);
+  const engine = checkEngine(manifest, context, issues);
   if (issues.length) throw new ManifestError(issues);
   const section = manifest.platform === "telegram" ? manifest.telegram : manifest.platform === "slack" ? manifest.slack : manifest.discord;
   const identities: Record<string, string> = {};
@@ -205,6 +246,7 @@ export function validateManifest(raw: unknown, context: InputContext): { manifes
     credentialFiles: Object.fromEntries(secretSpecs(manifest).map(spec => [spec.label, "validated" as const])),
     budget: { operatorMessages: manifest.limits.maxOperatorMessages, outboundMessages: manifest.limits.maxOutboundMessages, maxMinutes: manifest.limits.maxMinutes,
       plannedOperator: planned.operator, plannedOutbound: planned.outbound },
+    engine: engine ? redactEngine(engine) : "fake Claude CLI",
   } };
 }
 
@@ -220,4 +262,12 @@ export function loadSecrets(manifest: Manifest, context: InputContext): Record<s
   const env = checkSecrets(manifest, context, issues);
   if (issues.length) throw new ManifestError(issues);
   return env;
+}
+
+/** Re-admit the optional real engine at launch time; undefined means the fake fixture engine. */
+export function loadEngine(manifest: Manifest, context: InputContext): AdmittedEngine | undefined {
+  const issues: string[] = [];
+  const engine = checkEngine(manifest, context, issues);
+  if (issues.length) throw new ManifestError(issues);
+  return engine;
 }

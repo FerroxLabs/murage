@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import {
-  B08_CASES, admitEngineDescriptor, approvalPolicy, boundedClose, canonicalPath, claimRunDispatch,
-  evaluateRubric, readCredential, retainArtifact, runEvidenceDir, startIsolatedHarness, taskIdentityProblems, writeReceipt,
-  type B08EngineDescriptor,
+  B08_CASES, B08_DONE, admitEngineDescriptor, approvalPolicy, approvalRule, boundedClose, canonicalPath, caseStatus, claimEngineDispatch, dispatchHeadroom, dispatchLedgerPath,
+  endedByEngineAfterDenial, evaluateRubric, exportNativeLogs, nativeStops, readCredential, retainArtifact, runEvidenceDir, startIsolatedHarness, taskIdentityProblems, unexecutedStatus, writeReceipt,
+  type B08EngineDescriptor, type EngineStop,
 } from "./b08-template-behavior-fixture.ts";
 
 function fixture() {
@@ -94,46 +94,115 @@ test("loopback endpoint needs explicit provenance attestation", () => {
   } finally { f.close(); }
 });
 
-test("same evidence override isolates two runs and preserves same-run dispatch cap", () => {
+test("run receipts stay isolated per run stamp", () => {
   const f = fixture();
   try {
     const override = join(f.root, "evidence"), a = runEvidenceDir(f.root, override, "run-a"), b = runEvidenceDir(f.root, override, "run-b");
     assert.notEqual(a, b);
-    assert.equal(claimRunDispatch(a, 2), 1); assert.equal(claimRunDispatch(a, 2), 2);
-    assert.throws(() => claimRunDispatch(a, 2), /budget/);
-    assert.equal(claimRunDispatch(b, 2), 1);
     writeReceipt(join(a, "SUMMARY.json"), { stale: true });
     writeReceipt(join(a, "calendar-receipt.jsonl"), { stale: true });
     assert.equal(existsSync(join(b, "SUMMARY.json")), false);
     assert.equal(existsSync(join(b, "calendar-receipt.jsonl")), false);
     assert.throws(() => runEvidenceDir(f.root, override, "../escape"), /stamp/);
-    assert.throws(() => claimRunDispatch(a, 3), /changed/);
-    writeReceipt(join(b, "dispatch-budget.json"), { max: 2, used: "corrupt" });
-    assert.throws(() => claimRunDispatch(b, 2), /invalid/);
   } finally { f.close(); }
 });
 
-test("positive Cowork waits for owner once: permitted synthetic write and distinct denial", () => {
+test("the dispatch ledger follows the descriptor, so a fresh evidence directory cannot forget consumed dispatches", () => {
+  const f = fixture();
+  try {
+    const engineFile = join(f.root, "authority", "b08-engine.json");
+    writeReceipt(engineFile, { placeholder: true });
+    const firstEvidence = join(f.root, "b08-live-evidence-A", "receipts");
+    writeReceipt(join(firstEvidence, "run-1", "dispatch-budget.json"), { max: 22, used: 20 });
+    writeReceipt(join(firstEvidence, "run-1-attempt1-snapshot", "dispatch-budget.json"), { max: 22, used: 20 });
+    writeReceipt(join(firstEvidence, "run-2", "dispatch-budget.json"), { max: 2, used: 2 });
+    const ledger = dispatchLedgerPath(engineFile, f.descriptor);
+    assert.equal(dirname(ledger), canonicalPath(join(f.root, "authority")));
+    // an undeclared history is refused, never assumed empty
+    assert.throws(() => dispatchHeadroom(ledger, { ...f.descriptor, maxDispatches: 22 }), /^Error: NOT RUN: no dispatch ledger[^]*priorEvidence/);
+    assert.equal(existsSync(ledger), false);
+    const exhausted = { ...f.descriptor, maxDispatches: 22, priorEvidence: [firstEvidence] };
+    assert.deepEqual(dispatchHeadroom(ledger, exhausted), { used: 22, max: 22, remaining: 0 });
+    assert.throws(() => claimEngineDispatch(ledger, exhausted), /NOT RUN: engine dispatch budget 22 reached \(22 used/);
+    // a later run writing receipts to a fresh evidence directory reads the same ledger
+    const freshEvidence = runEvidenceDir(f.root, join(f.root, "b08-live-evidence-B", "receipts"), "run-c");
+    assert.equal(dispatchLedgerPath(engineFile, f.descriptor), ledger);
+    assert.throws(() => claimEngineDispatch(ledger, { ...exhausted, priorEvidence: [] }), /budget 22 reached \(22 used/);
+    assert.equal(existsSync(join(dirname(freshEvidence), `b08-dispatch-ledger-${f.descriptor.instanceId}.json`)), false);
+    // only the root's raised allocation continues, from 22, and it is recorded
+    assert.equal(claimEngineDispatch(ledger, { ...exhausted, maxDispatches: 41 }), 23);
+    const saved = JSON.parse(readFileSync(ledger, "utf8"));
+    assert.deepEqual(saved.allocations.map((item: { max: number }) => item.max), [22, 41]);
+    assert.equal(saved.used, 23); assert.equal(saved.legacySeed.length, 2);
+  } finally { f.close(); }
+});
+
+test("each allocation adds at most one full suite of headroom; another engine identity or a corrupt ledger fails closed", () => {
+  const f = fixture();
+  try {
+    const ledger = dispatchLedgerPath(join(f.root, "b08-engine.json"), f.descriptor);
+    assert.throws(() => dispatchHeadroom(ledger, { ...f.descriptor, maxDispatches: 23, priorEvidence: [] }), /at most one full suite \(22\)/);
+    const engine = { ...f.descriptor, maxDispatches: 22, priorEvidence: [] };
+    assert.equal(claimEngineDispatch(ledger, engine), 1); assert.equal(claimEngineDispatch(ledger, engine), 2);
+    assert.throws(() => claimEngineDispatch(ledger, { ...engine, maxDispatches: 25 }), /leaves 23 dispatches beyond the 2 already used/);
+    assert.equal(JSON.parse(readFileSync(ledger, "utf8")).max, 22);
+    assert.equal(claimEngineDispatch(ledger, { ...engine, maxDispatches: 24 }), 3);
+    assert.throws(() => claimEngineDispatch(ledger, { ...engine, model: "another-model", maxDispatches: 24 }), /different engine/);
+    writeReceipt(ledger, { engine: {}, max: 3, used: "corrupt", allocations: [] });
+    assert.throws(() => claimEngineDispatch(ledger, engine), /invalid/);
+  } finally { f.close(); }
+});
+
+test("admission takes a cumulative ceiling above 40 and only safe absolute prior evidence roots", () => {
+  const f = fixture();
+  try {
+    const priorRoot = join(f.root, "prior-evidence"); mkdirSync(priorRoot);
+    const admitted = admitEngineDescriptor({ ...f.descriptor, maxDispatches: 41, priorEvidence: [priorRoot] }, f);
+    assert.equal(admitted.ok, true);
+    if (admitted.ok) { assert.equal(admitted.descriptor.maxDispatches, 41); assert.deepEqual(admitted.descriptor.priorEvidence, [priorRoot]); }
+    assert.equal(admitEngineDescriptor({ ...f.descriptor, maxDispatches: 21 }, f).ok, false);
+    assert.equal(admitEngineDescriptor({ ...f.descriptor, maxDispatches: 22.5 }, f).ok, false);
+    for (const priorEvidence of [["relative/receipts"], [join(f.root, "absent")], [join(f.home, ".murage")], [join(f.repoRoot, "evidence")], "not-an-array"]) {
+      assert.equal(admitEngineDescriptor({ ...f.descriptor, priorEvidence }, f).ok, false, JSON.stringify(priorEvidence));
+    }
+  } finally { f.close(); }
+});
+
+test("owner decides every card except the scenario's own controlled denial; the runner never grants", () => {
   const f = fixture();
   try {
     // Offline owner/engine stand-ins: the operation is a real file write;
     // this does not claim the product approval HTTP route or a model ran.
     const path = join(f.root, "brief.md");
-    const execute = (id: (typeof B08_CASES)[number]["id"], ownerDecision?: "allow" | "deny") => {
-      if (approvalPolicy(id) === "deny") return "denied";
+    type Card = { tool?: string; title?: string; subtitle?: string };
+    const execute = (id: (typeof B08_CASES)[number]["id"], card: Card, ownerDecision?: "allow" | "deny") => {
+      if (approvalPolicy(id, card) === "deny") return "denied";
       if (!ownerDecision) return "pending-owner";
       if (ownerDecision === "deny") return "denied";
       writeFileSync(path, "# Synthetic approved brief\n", { flag: "wx" });
       return "allowed-once";
     };
-    assert.equal(execute("cowork/supplied-data"), "pending-owner"); assert.equal(existsSync(path), false);
-    assert.equal(execute("cowork/denied-access", "allow"), "denied"); assert.equal(existsSync(path), false);
-    assert.equal(execute("cowork/supplied-data", "deny"), "denied");
-    assert.equal(execute("cowork/supplied-data", "allow"), "allowed-once");
+    const write: Card = { tool: "edit", title: "Write outputs/brief.md" };
+    const memory: Card = { tool: "murage-memory__memory_search", title: "Search memory" };
+    const probe: Card = { tool: "shell", subtitle: "whoami; id; ls" };
+    assert.equal(execute("cowork/supplied-data", write), "pending-owner"); assert.equal(existsSync(path), false);
+    assert.equal(execute("cowork/denied-access", { tool: "shell", subtitle: "chmod 600 sources/pilot-source.md" }, "allow"), "denied"); assert.equal(existsSync(path), false);
+    assert.equal(execute("cowork/supplied-data", write, "deny"), "denied");
+    assert.equal(execute("cowork/supplied-data", write, "allow"), "allowed-once");
     assert.equal(readFileSync(path, "utf8"), "# Synthetic approved brief\n");
-    for (const item of B08_CASES.filter((c) => c.scenario === "denied-access")) assert.equal(approvalPolicy(item.id), "deny");
-    assert.equal(approvalPolicy("cowork/second-turn"), "owner-once");
-    assert.equal(approvalPolicy("cowork/interruption-restart"), "owner-once");
+    // Scenarios whose controlled state is not an approval denial auto-deny nothing.
+    for (const item of B08_CASES.filter((c) => c.scenario !== "denied-access")) {
+      for (const card of [write, memory, probe]) assert.equal(approvalPolicy(item.id, card), "owner-once", `${item.id} ${card.tool}`);
+      assert.match(approvalRule(item.id), /^every approval card waits for the owner's one-time decision/);
+    }
+    // cowork/missing-capability: an owner allow-once must reach the read-only filesystem.
+    assert.equal(approvalPolicy("cowork/missing-capability", write), "owner-once");
+    assert.equal(approvalPolicy("personal-assistant/denied-access", { tool: "calendar__read_calendar", title: "read_calendar" }), "deny");
+    assert.equal(approvalPolicy("personal-assistant/denied-access", memory), "owner-once");
+    assert.equal(approvalPolicy("murage-guide/denied-access", { tool: "shell", subtitle: "sed -i s/key/x/ config.json" }), "deny");
+    assert.equal(approvalPolicy("murage-guide/denied-access", memory), "owner-once");
+    assert.equal(approvalPolicy("cowork/denied-access", probe), "owner-once");
+    for (const item of B08_CASES.filter((c) => c.scenario === "denied-access")) assert.match(approvalRule(item.id), /denied by the runner\b[^;]*; every other approval card waits/);
   } finally { f.close(); }
 });
 
@@ -143,7 +212,9 @@ test("heuristic failure remains data and dependent-case runner has no soft asser
   const source = readFileSync(new URL("./b08-template-behavior.human.spec.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /expect\.soft/);
   assert.match(source, /carried\.set\("personal-assistant", \{ threadId \}\);\s+screen\(run/);
-  assert.match(source, /flagged for assessment/);
+  // Flagged heuristics stay visible data in the status the spec records.
+  assert.match(source, /caseStatus\(\{ dispatches: run\.dispatches, [^}]*\bflagged\b/);
+  assert.match(caseStatus({ dispatches: 1, flagged: 1, endedAfterDenial: 0 }), /1 heuristic screen\(s\) flagged for assessment$/);
 });
 
 test("retained artifact bytes survive source removal and cannot be overwritten", () => {
@@ -168,6 +239,57 @@ test("task identity refuses per-task model drift and Auto/remembered grants", ()
     assert.equal(taskIdentityProblems({ ...task, autoApprove: true }, f.descriptor).length, 1);
     assert.equal(taskIdentityProblems({ ...task, alwaysAllow: ["Bash"] }, f.descriptor).length, 1);
     assert.equal(taskIdentityProblems(undefined, f.descriptor).length, 2);
+  } finally { f.close(); }
+});
+
+test("every unexecuted case is labelled NOT RUN from dispatch evidence, not from error wording", () => {
+  assert.match(caseStatus({ dispatches: 0, error: "NOT RUN: depends on cowork/supplied-data, which published no brief", flagged: 0, endedAfterDenial: 0 }), /^NOT RUN: depends on cowork\/supplied-data/);
+  assert.match(caseStatus({ dispatches: 0, error: "PATCH /api/mcp/servers/calendar → 500: boom", flagged: 0, endedAfterDenial: 0 }), /^NOT RUN: PATCH [^]*500: boom$/);
+  assert.match(caseStatus({ dispatches: 0, flagged: 0, endedAfterDenial: 0 }), /^NOT RUN: the case ended before any dispatch$/);
+  assert.match(unexecutedStatus(), /^NOT RUN: /);
+  assert.equal(caseStatus({ dispatches: 1, flagged: 0, endedAfterDenial: 0 }), B08_DONE);
+  assert.equal(caseStatus({ dispatches: 2, error: "boom", flagged: 0, endedAfterDenial: 0 }), "failed: boom");
+  assert.match(caseStatus({ dispatches: 1, error: "NOT ESTABLISHED: no owner decision arrived for 1 approval card(s) (r1) within 600000 ms; turn interrupted, not resent", flagged: 0, endedAfterDenial: 0 }), /^NOT ESTABLISHED: no owner decision arrived/);
+  assert.match(caseStatus({ dispatches: 1, flagged: 1, endedAfterDenial: 1 }), /1 heuristic screen\(s\) flagged for assessment; verdict hint: NOT ESTABLISHED — the engine ended 1 turn\(s\) after a denied tool/);
+  const source = readFileSync(new URL("./b08-template-behavior.human.spec.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /did not run/);
+  assert.match(source, /\?\? unexecutedStatus\(\)/);
+  assert.match(source, /caseStatus\(\{ dispatches: run\.dispatches/);
+  assert.match(source, /run\.dispatches \+= 1/);
+});
+
+test("engine stop reasons come from native ACP logs, classify an engine-ended denial, and export with a manifest", () => {
+  const f = fixture();
+  try {
+    const data = join(f.root, "data"), native = join(data, "native");
+    mkdirSync(native, { recursive: true });
+    const t0 = Date.parse("2026-09-14T10:24:40.000Z");
+    const lines = [
+      { at: "2026-09-14T10:24:41.043Z", dir: "in", source: "fuigo.acp", msg: { jsonrpc: "2.0", id: 0, method: "session/request_permission", params: { toolCall: { kind: "edit", title: "Write outputs/brief.md" } } } },
+      { at: "2026-09-14T10:24:41.408Z", dir: "in", source: "fuigo.acp", msg: { jsonrpc: "2.0", method: "_fuigo/session/prompt_complete", params: { promptId: "p1", stopReason: "cancelled", cancellationCategory: "PermissionRejected", cancellationContext: { tool_name: "write" } } } },
+      { at: "2026-09-14T10:24:41.412Z", dir: "in", source: "fuigo.acp", msg: { jsonrpc: "2.0", id: 4, result: { stopReason: "cancelled", _meta: { promptId: "p1" } } } },
+      { at: "2026-09-14T10:30:00.000Z", dir: "in", source: "fuigo.acp", msg: { jsonrpc: "2.0", id: 9, result: { stopReason: "end_turn", _meta: { promptId: "p2" } } } },
+    ];
+    writeFileSync(join(native, "s1.ndjson"), `${lines.map((line) => JSON.stringify(line)).join("\n")}\nnot json but mentions stopReason\n`, { mode: 0o600 });
+    const stops = nativeStops(data, t0, t0 + 5_000);
+    assert.deepEqual(stops, [{ at: "2026-09-14T10:24:41.412Z", stopReason: "cancelled", cancellationCategory: "PermissionRejected", tool: "write", promptId: "p1" }]);
+    const later = nativeStops(data, t0 + 300_000, t0 + 400_000);
+    assert.deepEqual(later.map((stop) => stop.stopReason), ["end_turn"]);
+    const turn = (over: Partial<{ interrupted: boolean; endedAfterDenial: boolean; engineStops: EngineStop[] }>) => ({ interrupted: false, endedAfterDenial: false, engineStops: [], ...over });
+    assert.equal(endedByEngineAfterDenial(turn({ engineStops: stops })), true);
+    assert.equal(endedByEngineAfterDenial(turn({ endedAfterDenial: true })), true);
+    assert.equal(endedByEngineAfterDenial(turn({ engineStops: stops, interrupted: true })), false);
+    assert.equal(endedByEngineAfterDenial(turn({ engineStops: later })), false);
+    assert.deepEqual(nativeStops(join(f.root, "absent"), 0, Date.now()), []);
+    const exported = exportNativeLogs(data, join(f.root, "evidence"), "cowork/denied-access", t0);
+    assert.equal(exported.length, 1);
+    assert.equal(readFileSync(exported[0]!.file, "utf8"), readFileSync(join(native, "s1.ndjson"), "utf8"));
+    assert.equal(statSync(exported[0]!.file).mode & 0o077, 0);
+    rmSync(data, { recursive: true });
+    const manifest = JSON.parse(readFileSync(join(f.root, "evidence", "native", "cowork__denied-access", "MANIFEST.json"), "utf8"));
+    assert.equal(manifest.files[0].sha256, exported[0]!.sha256);
+    assert.equal(readFileSync(exported[0]!.file, "utf8").includes("PermissionRejected"), true);
+    assert.deepEqual(exportNativeLogs(data, join(f.root, "evidence"), "cowork/denied-access", t0), []);
   } finally { f.close(); }
 });
 

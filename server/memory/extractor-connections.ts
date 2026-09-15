@@ -1,7 +1,7 @@
 import type { ProviderInstance } from "../contracts.ts";
 import { fluxKey } from "../flux-config.ts";
 import { FLUX_OPENAI_BASE } from "../flux-routing.ts";
-import { requestMemoryExtraction, type TextOnlyExtractor } from "./extract.ts";
+import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding, type TextOnlyExtractor } from "./extract.ts";
 
 const FLUX_EXTRACTORS = [
   { instanceId: "@murage/flux-fast", model: "flux-fast", label: "Flux Router · Fast" },
@@ -30,13 +30,23 @@ export function resolveMemoryExtractor(
   const flux = FLUX_EXTRACTORS.find(item => item.instanceId === selected);
   if (flux) {
     if (!readKey()) return null;
-    return (text, maximumOutputTokens, signal) => {
+    const extract:TextOnlyExtractor = (text, maximumOutputTokens, signal, dispatch) => {
       // Resolve again at dispatch so a revoked/replaced key never survives in a closure.
       const key = readKey();
       if (!key) throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
-      return requestMemoryExtraction({ url: FLUX_OPENAI_BASE, apiKey: key, model: flux.model }, text, maximumOutputTokens, signal);
+      const config={url:FLUX_OPENAI_BASE,apiKey:key,model:flux.model};
+      return dispatch?.purpose ? requestMemoryInference(config,text,maximumOutputTokens,signal,dispatch)
+        : requestMemoryExtraction(config,text,maximumOutputTokens,signal,dispatch?.messages);
     };
+    extract.ground=(input,maximumOutputTokens,signal)=>{
+      const key=readKey();if(!key)throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
+      return requestMemoryGrounding({url:FLUX_OPENAI_BASE,apiKey:key,model:flux.model},input,maximumOutputTokens,signal);
+    };
+    return extract;
   }
   const instance = instances.find(item => item.enabled && item.instanceId === selected);
-  return instance?.extractMemory?.bind(instance) ?? null;
+  if(!instance?.extractMemory)return null;
+  const extract:TextOnlyExtractor=instance.extractMemory.bind(instance);
+  if(instance.groundMemory)extract.ground=instance.groundMemory.bind(instance);
+  return extract;
 }

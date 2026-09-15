@@ -94,6 +94,10 @@ contextBridge.exposeInMainWorld("muragebox", {
     reconcileLatest: (remoteRef, revision, jobId) => ipcRenderer.invoke("backup-remote:reconcileLatest", remoteRef, revision, jobId),
     listBackups: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:listBackups", remoteRef, revision),
     downloadBackup: (remoteRef, revision, snapshotId) => ipcRenderer.invoke("backup-remote:downloadBackup", remoteRef, revision, snapshotId),
+    saveMaintenanceCredentials: (remoteRef, revision, credentials) => ipcRenderer.invoke("backup-remote:saveMaintenanceCredentials", remoteRef, revision, credentials),
+    previewRetention: (remoteRef, revision, policy) => ipcRenderer.invoke("backup-remote:previewRetention", remoteRef, revision, policy),
+    applyRetention: (remoteRef, revision, policy, previewId) => ipcRenderer.invoke("backup-remote:applyRetention", remoteRef, revision, policy, previewId),
+    clearRetentionReview: (remoteRef, revision, previewId) => ipcRenderer.invoke("backup-remote:clearRetentionReview", remoteRef, revision, previewId),
   },
   approvalNotifications: {
     show: payload => ipcRenderer.invoke("approval-notification:show", payload),

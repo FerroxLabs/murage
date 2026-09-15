@@ -1,3 +1,5 @@
+import { humanBindingStatus, linkHumanBinding, shareHumanScope } from "../human-principals.ts";
+import { identityReadSchema, identityWriteSchema, readBotIdentity, writeBotIdentity } from "./identity.ts";
 import { supportsNativeMemoryModel } from "./embeddings.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -17,11 +19,18 @@ import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memo
 import { ownerMemoryList } from "./owner-list.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
+import { memoryLearningPatchSchema, readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
+import type { MemoryEvolutionRuntime } from "./evolution-runtime.ts";
+import type { ProcedureEvaluatorBridge } from "./procedure-evaluator.ts";
+import { memoryHealth } from "./health.ts";
 
 const SETTINGS="memory-owner-settings";
 type Configuration={excludedThreadIds:string[];extractorInstanceId:string|null};
 interface Extractor {instanceId:string;label:string;eligible:boolean;reason?:string}
 export interface MemoryOwnerOptions {
+  evolution?:MemoryEvolutionRuntime;
+  procedureEvolution?:ProcedureEvaluatorBridge;
+  humanBindingChanged?:(bindingId:string)=>Promise<void>;
   extractors?:()=>Extractor[];
   runtimeStatus?:()=>{running?:boolean;ready?:boolean;indexing?:boolean;queryCount?:number;error?:string|null};
   onModelReady?:()=>Promise<void>;
@@ -30,6 +39,18 @@ export interface MemoryOwnerOptions {
 const id=z.string().min(1).max(180),version=z.number().int().positive();
 const subject={subjectType:z.enum(["bot","room"]),subjectId:id};
 const actions=z.discriminatedUnion("action",[
+  z.object({action:z.literal("evolution-authorize")}).strict(),
+  z.object({action:z.literal("evolution-authorize-classification")}).strict(),
+  z.object({action:z.literal("procedure-evaluation-preview"),reviewId:id}).strict(),
+  z.object({action:z.literal("procedure-evaluation-authorize"),previewId:id}).strict(),
+  z.object({action:z.literal("procedure-evaluation-retry"),reviewId:id}).strict(),
+  z.object({action:z.literal("evolution-retry"),jobId:id}).strict(),
+  z.object({action:z.literal("evolution-history")}).strict(),
+  z.object({action:z.literal("evolution-rollback"),expectedRevision:id,targetRevision:id}).strict(),
+  identityReadSchema, identityWriteSchema,
+  z.object({action:z.literal("humans")}).strict(),
+  z.object({action:z.literal("human-share"),personId:id,scopeId:id,granted:z.boolean()}).strict(),
+  z.object({action:z.literal("human-link"),bindingId:id,expectedRevision:z.number().int().positive(),as:z.enum(["owner","person","unlink"]),personId:id.optional()}).strict(),
   z.object({action:z.literal("list"),query:z.string().max(4096).optional(),scopeId:id.optional(),botId:id.optional(),state:z.enum(["candidate","active","archived","superseded","deleted"]).optional(),cursor:z.string().max(512).optional(),view:z.enum(["search","important","recent","review"]).optional()}).strict(),
   z.object({action:z.literal("inspect"),id,version}).strict(),
   z.object({action:z.literal("review-as-skill"),id,version,botId:id}).strict(),
@@ -44,7 +65,7 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional()}).strict(),
   z.object({action:z.literal("bind"),scopeId:id,...subject}).strict(),
   z.object({action:z.literal("project"),path:z.string().min(1).max(4096),...subject}).strict(),
-  z.object({action:z.literal("configure"),mode:z.enum(["off","capture","active","paused"]).optional(),excludedThreadIds:z.array(id).max(1000).optional(),extractorInstanceId:id.nullable().optional()}).strict(),
+  z.object({action:z.literal("configure"),mode:z.enum(["off","capture","active","paused"]).optional(),excludedThreadIds:z.array(id).max(1000).optional(),extractorInstanceId:id.nullable().optional(),learning:memoryLearningPatchSchema.optional(),learningRevision:z.number().int().nonnegative().optional()}).strict(),
   z.object({action:z.literal("import-preview"),selections:z.array(z.discriminatedUnion("kind",[
     z.object({kind:z.literal("bot"),botId:id,topic:z.string().max(220).optional()}).strict(),
     z.object({kind:z.literal("section"),section:z.string().max(60)}).strict(),
@@ -138,8 +159,9 @@ export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:Memo
   const oldest=db.prepare("SELECT min(v.created_at) AS at FROM memory_jobs j JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision WHERE j.status IN ('pending','partial','leased','deferred','failed')").get();backlog.oldestQueuedAt=oldest?.at===null?null:Number(oldest?.at??0);
   const day=new Date().toISOString().slice(0,10),budgetRow=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(`extract-budget:${day}`),budget=budgetRow?JSON.parse(String(budgetRow.intent)):{};
   const runtime=options.runtimeStatus?.();
-  return {...memoryState(),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster),records:counts,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
-    cost:{day,inputReserved:budget.input??0,outputReserved:budget.output??0,callsThisMinute:budget.minute===Math.floor(Date.now()/60000)?budget.calls??0:0,inputLimit:100000,outputLimit:20000,callsPerMinuteLimit:6},deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null};
+  const learning=readMemoryLearning(db);
+  return {...memoryState(),learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster),records:counts,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
+    cost:{day,inputReserved:budget.input??0,outputReserved:budget.output??0,callsThisMinute:budget.minute===Math.floor(Date.now()/60000)?budget.calls??0:0,inputLimit:learning.inputLimit,outputLimit:learning.outputLimit,callsPerMinuteLimit:learning.callsPerMinute},deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null};
 }
 
 export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
@@ -148,6 +170,32 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(path!=="/api/memory/action")throw Object.assign(new Error("MEMORY_ROUTE_UNAVAILABLE"),{status:404});
   const parsed=actions.safeParse(body);if(!parsed.success)throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
   const input=parsed.data,db=database();
+  if(input.action.startsWith("evolution-")){
+    if(!options.evolution)throw Error("MEMORY_EVOLUTION_RUNTIME_UNAVAILABLE");
+    if(input.action==="evolution-authorize")return options.evolution.authorize(ticket);
+    if(input.action==="evolution-authorize-classification")return options.evolution.authorize(ticket,"classification");
+    if(input.action==="evolution-retry")return options.evolution.retry(ticket,input.jobId);
+    if(input.action==="evolution-history")return options.evolution.history(ticket);
+    if(input.action==="evolution-rollback"){
+      try{return options.evolution.rollback(ticket,input.expectedRevision,input.targetRevision);}
+      catch(error){if(error instanceof Error&&error.message==="MEMORY_EVOLUTION_CONFLICT")throw Object.assign(error,{status:409});throw error;}
+    }
+  }
+  if(input.action.startsWith("procedure-evaluation-")){
+    if(!options.procedureEvolution)throw Error("PROCEDURE_EVALUATOR_UNAVAILABLE");
+    if(input.action==="procedure-evaluation-preview")return options.procedureEvolution.preview(ticket,input.reviewId);
+    if(input.action==="procedure-evaluation-authorize")return options.procedureEvolution.authorize(ticket,input.previewId);
+    if(input.action==="procedure-evaluation-retry")return options.procedureEvolution.retry(ticket,input.reviewId);
+  }
+  if(input.action==="humans")return humanBindingStatus(ticket);
+  if(input.action==="human-share")return shareHumanScope(ticket,input);
+  if(input.action==="human-link"){const result=linkHumanBinding(ticket,input);await options.humanBindingChanged?.(input.bindingId);return result;}
+  if(input.action==="correct"||input.action==="promote"){
+    const details=db.prepare("SELECT partition FROM memory_record_details WHERE record_id=? AND record_version=?").get(input.id,input.version);
+    if(details?.partition==="identity")throw new Error("MEMORY_IDENTITY_WRITE_REQUIRED");
+  }
+  if(input.action==="identity-read")return readBotIdentity(ticket,input.botId,roster,input.cursor);
+  if(input.action==="identity-write")return writeBotIdentity(ticket,input,roster);
   if(input.action==="list"){
     const {rows,...result}=ownerMemoryList(input,roster);
     return {...result,records:rows.map(record)};
@@ -197,6 +245,7 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
     if(input.extractorInstanceId && !options.extractors?.().some(engine=>engine.instanceId===input.extractorInstanceId&&engine.eligible))throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
     if(input.excludedThreadIds){const threads=new Set([...roster.bots.flatMap(bot=>[bot.threadId,...(bot.tasks??[]).map(task=>task.threadId)]),...roster.groups.flatMap(group=>[group.threadId,...(group.tasks??[]).map(task=>task.threadId)])]);if(input.excludedThreadIds.some(thread=>!threads.has(thread)))throw new Error("MEMORY_THREAD_UNKNOWN");}
     transaction(()=>{const updated={excludedThreadIds:input.excludedThreadIds??current.excludedThreadIds,extractorInstanceId:input.extractorInstanceId===undefined?current.extractorInstanceId:input.extractorInstanceId};const scope=ensureScope("workspace",memoryState().installationId);
+      if(input.learning)updateMemoryLearning(db,input.learning,input.learningRevision);
       db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','owner-settings',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(SETTINGS,scope,JSON.stringify(updated));
       if(input.mode)db.prepare("UPDATE memory_meta SET mode=?").run(input.mode);
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1,data_revision=data_revision+1");db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();

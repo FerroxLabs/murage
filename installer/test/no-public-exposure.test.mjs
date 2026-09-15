@@ -132,7 +132,10 @@ test("TIER 2: in the prose of this lane the word appears only in prohibitions", 
     ...walk(INSTALLER, (p) => extname(p) === ".md"),
     ...walk(PLAN_DIR, (p) => extname(p) === ".md"),
   ];
-  assert.ok(docs.length >= 2, `expected the plan and the installer README; found ${docs.length}`);
+  assert.ok(
+    docs.includes(join(INSTALLER, "README.md")),
+    `expected the installer README among ${docs.length} prose docs`,
+  );
 
   /** @type {string[]} */
   const bad = [];

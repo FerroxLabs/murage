@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, statSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { TelegramService } from "./telegram-service.ts";
+import { TelegramService, TelegramTokenRefusal } from "./telegram-service.ts";
 import * as atomic from "./atomic.ts";
 import type { TelegramTransport } from "./telegram-transport.ts";
 import { TelegramTransportError } from "./telegram-transport.ts";
@@ -45,10 +45,14 @@ function restartFixture() {
  let updates:any[]=[];
  const transport={getMe:vi.fn(async(_signal?:AbortSignal)=>({id:"123",username:"fixture_bot"})),getUpdates:vi.fn(async()=>updates),sendMessage:vi.fn(async()=>({chatId:"7",messageId:1}))};
  const enqueue=vi.fn(()=>({id:"run"})),revokeRuns=vi.fn(async()=>{});
- const make=(isCurrentTarget?: (id:string)=>boolean)=>{const service=new TelegramService({dataDir:root,transport:()=>transport as unknown as TelegramTransport,enqueue,revokeRuns,runResult:()=>({status:"completed",output:"Done"}),isCurrentTarget});services.push(service);return service;};
+ // Per-token transports (B17 token replacement): unknown tokens use the default fixture bot.
+ const tokens:Record<string,unknown>={};
+ const botTransport=(id:string)=>({getMe:vi.fn(async(_signal?:AbortSignal)=>({id,username:"fixture_bot"})),getUpdates:vi.fn(async()=>updates),sendMessage:vi.fn(async()=>({chatId:"7",messageId:1}))});
+ const useToken=<T,>(token:string,value:T)=>{tokens[token]=value;return value;};
+ const make=(isCurrentTarget?: (id:string)=>boolean)=>{const service=new TelegramService({dataDir:root,transport:token=>(tokens[token]??transport) as unknown as TelegramTransport,enqueue,revokeRuns,runResult:()=>({status:"completed",output:"Done"}),isCurrentTarget});services.push(service);return service;};
  const update=(id:number,text:string)=>({update_id:id,message:{message_id:id,date:1,from:{id:7,is_bot:false},chat:{id:7,type:"private"},text}});
- const pair=async()=>{const service=make();const result=await service.pair("FAKE_TOKEN_NOT_REAL","chief");updates=[update(1,"/pair "+result.code)];await vi.advanceTimersByTimeAsync(1500);expect(service.status().paired).toBe(true);updates=[];return service;};
- return{root,transport,enqueue,revokeRuns,make,pair,update,setUpdates:(value:any[])=>{updates=value;}};
+ const pair=async(isCurrentTarget?: (id:string)=>boolean)=>{const service=make(isCurrentTarget);const result=await service.pair("FAKE_TOKEN_NOT_REAL","chief");updates=[update(1,"/pair "+result.code)];await vi.advanceTimersByTimeAsync(1500);expect(service.status().paired).toBe(true);updates=[];return service;};
+ return{root,transport,enqueue,revokeRuns,make,pair,update,botTransport,useToken,setUpdates:(value:any[])=>{updates=value;}};
 }
 it("restores the exact paired Telegram identity and Murage target after restart without a new code",async()=>{
  const f=restartFixture(),original=await f.pair();original.stop();
@@ -145,4 +149,97 @@ it("fences revoke even if selector writing fails and the durable channel revoke 
  const f=restartFixture(),original=await f.pair();vi.spyOn(atomic,"writeFileAtomic").mockImplementationOnce(()=>{throw new Error("fixture selector write failure");});
  await expect(original.revoke()).rejects.toThrow("could not be fully revoked");expect(original.status().paired).toBe(false);
  expect(await f.make().resume("fake","chief")).toBe(false);
+});
+
+// B17 T1: a token Telegram rejected (401) is replaced only by a token getMe proves belongs to the SAME bot.
+const connectionBytes=(root:string)=>readFileSync(join(root,"telegram","connection.json"),"utf8");
+const channelState=(root:string)=>JSON.parse(readFileSync(join(root,"telegram","123.json"),"utf8"));
+async function rejectedToken(f:ReturnType<typeof restartFixture>,isCurrentTarget?:(id:string)=>boolean){
+ const service=await f.pair(isCurrentTarget);f.transport.getUpdates.mockRejectedValueOnce(new TelegramTransportError("auth"));await vi.advanceTimersByTimeAsync(1500);return service;
+}
+it("replaces a rejected token with a same-bot token and resumes the saved pairing without revoking (T1.same-bot-resume)",async()=>{
+ const f=restartFixture(),service=await rejectedToken(f);
+ expect(service.status()).toMatchObject({resumeState:"blocked",error:"auth",canResume:false,canReplaceToken:true,requiresRevoke:true,paired:false});
+ expect(service.status().resumeMessage).toContain("Paste a new token for this same bot");
+ const selector=connectionBytes(f.root),before=channelState(f.root),oldPolls=f.transport.getUpdates.mock.calls.length;
+ const fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123")),commit=vi.fn();
+ expect(await service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit)).toBe(true);
+ expect(commit).toHaveBeenCalledOnce();expect(fresh.getMe.mock.invocationCallOrder[0]).toBeLessThan(commit.mock.invocationCallOrder[0]);expect(fresh.getMe).toHaveBeenCalledTimes(2);
+ expect(service.status()).toMatchObject({resumeState:"active",paired:true,error:null,canResume:false,canReplaceToken:false});
+ const after=channelState(f.root);expect(connectionBytes(f.root)).toBe(selector);expect(after.binding).toEqual(before.binding);expect(after.offset).toBe(before.offset);expect(after.targetBotId).toBe("chief");
+ expect(f.revokeRuns).not.toHaveBeenCalled();
+ f.setUpdates([f.update(2,"after token replacement")]);await vi.advanceTimersByTimeAsync(1500);
+ expect(f.enqueue).toHaveBeenCalledExactlyOnceWith("123","chief",expect.objectContaining({deliveryId:"telegram:123:2"}));
+ expect(fresh.getUpdates).toHaveBeenCalled();expect(f.transport.getUpdates).toHaveBeenCalledTimes(oldPolls);
+});
+it("refuses a token for a different bot before commit and keeps the connection replaceable (T1.wrong-bot-refused)",async()=>{
+ const f=restartFixture(),service=await rejectedToken(f),selector=connectionBytes(f.root),channelBytes=readFileSync(join(f.root,"telegram","123.json"),"utf8"),polls=f.transport.getUpdates.mock.calls.length;
+ const other=f.useToken("OTHER_BOT_TOKEN_NOT_REAL",f.botTransport("456")),commit=vi.fn();
+ const error=await service.replaceToken("OTHER_BOT_TOKEN_NOT_REAL","chief",commit).catch((value:unknown)=>value);
+ expect(error).toBeInstanceOf(TelegramTokenRefusal);expect((error as TelegramTokenRefusal).status).toBe(409);expect((error as Error).message).toContain("different Telegram bot");
+ expect(commit).not.toHaveBeenCalled();expect(other.getMe).toHaveBeenCalledOnce();
+ expect(service.status()).toMatchObject({resumeState:"blocked",connecting:false,canReplaceToken:true,canResume:false,paired:false});expect(service.status().resumeMessage).toContain("different Telegram bot");
+ await vi.advanceTimersByTimeAsync(3000);expect(other.getUpdates).not.toHaveBeenCalled();expect(f.transport.getUpdates).toHaveBeenCalledTimes(polls);
+ expect(connectionBytes(f.root)).toBe(selector);expect(readFileSync(join(f.root,"telegram","123.json"),"utf8")).toBe(channelBytes);expect(f.revokeRuns).not.toHaveBeenCalled();
+});
+it.each([["auth",new TelegramTransportError("auth"),"rejected the new token too"],["offline",new Error("offline fixture"),"Could not check the new token"],["invalid-config",new TelegramTransportError("invalid-config"),"not a Telegram bot token"]] as const)("refuses a replacement whose verification fails (%s) without saving, then accepts a verified retry (T1.replacement-failures)",async(_code,failure,message)=>{
+ const f=restartFixture(),service=await rejectedToken(f),fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123")),commit=vi.fn();
+ fresh.getMe.mockRejectedValueOnce(failure);
+ const error=await service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit).catch((value:unknown)=>value);
+ expect(error).toBeInstanceOf(TelegramTokenRefusal);expect((error as Error).message).toContain(message);expect(commit).not.toHaveBeenCalled();
+ expect(service.status()).toMatchObject({resumeState:"blocked",connecting:false,canReplaceToken:true,canResume:false});expect(service.status().resumeMessage).toContain(message);
+ await vi.advanceTimersByTimeAsync(3000);expect(fresh.getUpdates).not.toHaveBeenCalled();
+ expect(await service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit)).toBe(true);expect(commit).toHaveBeenCalledOnce();expect(service.status()).toMatchObject({resumeState:"active",paired:true});
+});
+it.each(["forbidden","conflict"] as const)("does not offer token replacement for %s (T1.not-for-forbidden-or-conflict)",async(code)=>{
+ const f=restartFixture(),service=await f.pair();f.transport.getUpdates.mockRejectedValueOnce(new TelegramTransportError(code));await vi.advanceTimersByTimeAsync(1500);
+ expect(service.status()).toMatchObject({resumeState:"blocked",error:code,canReplaceToken:false,canResume:code==="conflict"});
+ const fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123")),commit=vi.fn();
+ await expect(service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit)).rejects.toThrow("Revoke Telegram before changing its token or target.");
+ expect(fresh.getMe).not.toHaveBeenCalled();expect(commit).not.toHaveBeenCalled();expect(service.status()).toMatchObject({resumeState:"blocked",canReplaceToken:false});
+});
+it("makes a saved token rejected at startup replaceable and resumes the same pairing (T1.boot-401-replaceable)",async()=>{
+ const f=restartFixture(),original=await f.pair();original.stop();const polls=f.transport.getUpdates.mock.calls.length,selector=connectionBytes(f.root),binding=channelState(f.root).binding;
+ f.transport.getMe.mockRejectedValueOnce(new TelegramTransportError("auth"));
+ const restarted=f.make();expect(await restarted.resume("FAKE_TOKEN_NOT_REAL","chief")).toBe(false);
+ expect(restarted.status()).toMatchObject({resumeState:"blocked",canReplaceToken:true,canResume:false,requiresRevoke:true,paired:false});expect(restarted.status().resumeMessage).toContain("Paste a new token");
+ await vi.advanceTimersByTimeAsync(3000);expect(f.transport.getUpdates).toHaveBeenCalledTimes(polls);
+ const fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123")),commit=vi.fn();
+ expect(await restarted.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit)).toBe(true);expect(commit).toHaveBeenCalledOnce();expect(fresh.getMe).toHaveBeenCalledTimes(2);
+ expect(restarted.status()).toMatchObject({resumeState:"active",paired:true,canReplaceToken:false});expect(connectionBytes(f.root)).toBe(selector);expect(channelState(f.root).binding).toEqual(binding);expect(f.revokeRuns).not.toHaveBeenCalled();
+});
+it.each([true,false])("refuses replacement without contacting Telegram once the paired Chief changed (revalidated first: %s) (T1.chief-fence before verify)",async(revalidated)=>{
+ let valid=true;const f=restartFixture(),service=await rejectedToken(f,()=>valid);expect(service.status().canReplaceToken).toBe(true);
+ valid=false;if(revalidated){await service.revalidateTarget();expect(service.status()).toMatchObject({resumeState:"blocked",canReplaceToken:false});}
+ const fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123")),commit=vi.fn();
+ const error=await service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit).catch((value:unknown)=>value);
+ expect(error).toBeInstanceOf(TelegramTokenRefusal);expect((error as Error).message).toContain(revalidated?"Revoke Telegram before changing":"Chief changed");
+ expect(fresh.getMe).not.toHaveBeenCalled();expect(commit).not.toHaveBeenCalled();
+ expect(JSON.parse(connectionBytes(f.root)).paused).toBe(true);expect(service.status()).toMatchObject({resumeState:"blocked",canReplaceToken:false,canResume:false});
+});
+it("fences a Chief change during replacement verification (T1.chief-fence during verify)",async()=>{
+ let valid=true;const f=restartFixture(),service=await rejectedToken(f,()=>valid);let resolve!:(value:{id:string;username:string})=>void;
+ const fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123")),commit=vi.fn();fresh.getMe.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));
+ const replacing=service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit).catch((value:unknown)=>value);
+ expect(service.status()).toMatchObject({connecting:true,resumeState:"verifying",canReplaceToken:false});
+ valid=false;await service.revalidateTarget();resolve({id:"123",username:"fixture_bot"});
+ const error=await replacing;expect(error).toBeInstanceOf(TelegramTokenRefusal);expect((error as Error).message).toContain("changed while the new token was being checked");
+ expect(commit).not.toHaveBeenCalled();expect(JSON.parse(connectionBytes(f.root)).paused).toBe(true);expect(service.status()).toMatchObject({resumeState:"blocked",canReplaceToken:false});
+ await vi.advanceTimersByTimeAsync(3000);expect(fresh.getUpdates).not.toHaveBeenCalled();
+});
+it("fences revoke during replacement verification (T1.revoke-during-verify)",async()=>{
+ const f=restartFixture(),service=await rejectedToken(f);let resolve!:(value:{id:string;username:string})=>void;
+ const fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123")),commit=vi.fn();fresh.getMe.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));
+ const replacing=service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit).catch((value:unknown)=>value);
+ await service.revoke();resolve({id:"123",username:"fixture_bot"});
+ const error=await replacing;expect(error).toBeInstanceOf(TelegramTokenRefusal);expect((error as Error).message).toContain("changed while the new token was being checked");
+ expect(commit).not.toHaveBeenCalled();expect(service.status()).toMatchObject({resumeState:"idle",canReplaceToken:false,paired:false});
+ await vi.advanceTimersByTimeAsync(3000);expect(fresh.getUpdates).not.toHaveBeenCalled();expect(await f.make().resume("NEW_TOKEN_NOT_REAL","chief")).toBe(false);
+});
+it("keeps the rejected connection replaceable when saving the verified token fails (T1.commit-failure)",async()=>{
+ const f=restartFixture(),service=await rejectedToken(f),fresh=f.useToken("NEW_TOKEN_NOT_REAL",f.botTransport("123"));
+ const commit=vi.fn(()=>{throw new Error("fixture config write failure");});
+ await expect(service.replaceToken("NEW_TOKEN_NOT_REAL","chief",commit)).rejects.toThrow("fixture config write failure");
+ expect(service.status()).toMatchObject({resumeState:"blocked",connecting:false,canReplaceToken:true,canResume:false});
+ await vi.advanceTimersByTimeAsync(3000);expect(fresh.getMe).toHaveBeenCalledOnce();expect(fresh.getUpdates).not.toHaveBeenCalled();expect(f.revokeRuns).not.toHaveBeenCalled();
 });

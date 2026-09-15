@@ -83,7 +83,7 @@ export function validateProviderTurnRoute(driver: string, route: ProviderTurnRou
   const url = new URL(route.baseUrl);
   if ((url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) || url.username || url.password || url.search || url.hash) throw new Error("Selected provider endpoint is invalid");
 }
-export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route: ProviderTurnRoute, context?: { threadId: string }): ProviderRouteBinding {
+export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route: ProviderTurnRoute, context?: { threadId: string; memoryTools?: boolean }): ProviderRouteBinding {
   validateProviderTurnRoute(driver, route);
   for (const name of ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_API_KEY", "FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY"]) delete env[name];
   const result = { model: route.model, args: [] as string[], cleanup: () => {} };
@@ -122,6 +122,13 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       env.FUIGO_MODELS_BASE_URL = routeEndpoint(driver, route);
       writeFileSync(join(home, "config.toml"), `[cli]\nuse_leader = false\n[models]\ndefault = "murage_selected"\nsession_summary = "murage_selected"\nprompt_suggestion = "murage_selected"\nweb_search = "murage_selected"\nimage_description = "murage_selected"\nallowed_models = ["murage_selected"]\n[model_providers.${name}]\nbase_url = ${JSON.stringify(routeEndpoint(driver, route))}\nenv_key = "MURAGE_PROVIDER_API_KEY"\napi_backend = "${protocol}"\nauth_scheme = "${route.protocol === "anthropic" ? "x_api_key" : "bearer"}"\n[model.murage_selected]\nmodel = ${JSON.stringify(route.model)}\nmodel_provider = "${name}"\n`, { mode: 0o600 });
       result.model = "murage_selected";
+      if (context?.memoryTools) {
+        // This config belongs solely to the task-created routed FUIGO_HOME.
+        // Native policy matches actual registered MCP IDs, never display titles.
+        const rules = ["memory_search","memory_get","memory_save","memory_propose_correction"]
+          .map(tool => `{ action = "allow", tool = "mcp", pattern = "murage-memory__${tool}" }`).join(",\n");
+        writeFileSync(join(home,"config.toml"),`\n[permission]\nrules = [\n${rules}\n]\n`,{flag:"a",mode:0o600});
+      }
     }
     return result;
   }
