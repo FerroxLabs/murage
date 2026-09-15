@@ -1,6 +1,158 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {runCommand,setupKeychain,cleanupKeychain,admitSettingsEntry,KEYCHAIN_OWNER,KEYCHAIN_STEPS,SECURITY} from "./mac-installed-backup-qualification-lib.mjs";
+import {readFileSync} from "node:fs";
+import {createHash} from "node:crypto";
+import {runInNewContext} from "node:vm";
+import {classifyQualificationSetup,freezeQualificationOperation} from "./mac-installed-backup-qualification-lib.mjs";
+
+test("setup classification permits exact startup writers but no arbitrary descendants or removals",()=>{
+  const original={"messages.db":"a".repeat(64),"bots.json":"b".repeat(64)};
+  const current={...original,"messages.db":"c".repeat(64),"attachments/":"dir","skill-index.db":"d".repeat(64)};
+  assert.equal(classifyQualificationSetup(original,current).ok,true);
+  assert.equal(classifyQualificationSetup(original,{...current,"attachments/unexpected.txt":"e".repeat(64)}).ok,false);
+  assert.equal(classifyQualificationSetup(original,{...current,"bots.json":"e".repeat(64)}).ok,false);
+  assert.equal(classifyQualificationSetup(original,{"messages.db":"c".repeat(64)}).ok,false);
+});
+
+test("operation baseline is one-time, requires stopped pre-operation state and retains original bytes",()=>{
+  const original={"messages.db":"a".repeat(64)},state={original},current={"messages.db":"b".repeat(64)};
+  assert.throws(()=>freezeQualificationOperation(state,"preScheduled",current,{closed:false,notStarted:true}),/PRECONDITION/);
+  assert.throws(()=>freezeQualificationOperation(state,"preScheduled",current,{closed:true,notStarted:false}),/PRECONDITION/);
+  freezeQualificationOperation(state,"preScheduled",current,{closed:true,notStarted:true});
+  assert.deepEqual(state.original,original);
+  current["messages.db"]="c".repeat(64);
+  assert.equal(state.preScheduled["messages.db"],"b".repeat(64));
+  assert.throws(()=>freezeQualificationOperation(state,"preScheduled",current,{closed:true,notStarted:true}),/ALREADY_SET/);
+});
+
+test("operation checks reject a startup-writer mutation after the baseline freezes",()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const functionText=/function sidecarRule\(before,after\)\{[\s\S]*?\n\}/.exec(source)?.[0];
+  assert.ok(functionText,"exercise the actual unchanged operation comparator");
+  const compare=runInNewContext(`(${functionText})`,{Buffer,sha:bytes=>createHash("sha256").update(bytes).digest("hex")});
+  const initial={"messages.db":"a".repeat(64)},prepared={"messages.db":"b".repeat(64)},state={original:initial};
+  freezeQualificationOperation(state,"preScheduled",prepared,{closed:true,notStarted:true});
+  assert.equal(compare(state.preScheduled,prepared).ok,true);
+  assert.equal(compare(state.preScheduled,{"messages.db":"c".repeat(64)}).ok,false);
+  assert.equal(compare(state.preScheduled,{}).ok,false);
+  assert.equal(compare(state.preScheduled,{...prepared,"attachments/unexpected":"d".repeat(64)}).ok,false);
+});
+import {runCommand,setupKeychain,cleanupKeychain,admitSettingsEntry,guiBackupFixtureBot,guiBackupFixtureRoutines,guiSeedStartupFindings,GUI_SEED_WINDOW_MS,KEYCHAIN_OWNER,KEYCHAIN_STEPS,SECURITY} from "./mac-installed-backup-qualification-lib.mjs";
+
+test("GUI routine seed stays enabled but idle beyond the bounded qualification window",()=>{
+  const now=1800000000000,seed=guiBackupFixtureRoutines(now);
+  assert.equal(seed.routines[0].enabled,true);
+  assert.ok(seed.routines[0].nextRunAt>now+60*60*1000);
+  assert.equal(seed.runs[0].status,"cancelled");assert.equal(seed.runs[0].finishedAt,1);
+  assert.throws(()=>guiBackupFixtureRoutines(NaN),/INVALID_FIXTURE_TIME/);
+});
+
+test("GUI backup seed supplies required bot/task fields without losing authority canaries",()=>{
+  const input={id:"bot",threadId:"thread",name:"Fixture",resumeCursors:{fixture:"native-cursor"},autoApprove:true,notifications:true};
+  const before=structuredClone(input),bot=guiBackupFixtureBot(input);
+  assert.deepEqual(input,before);
+  assert.equal(bot.modelSelection.instanceId,"fixture");assert.equal(bot.modelSelection.model,"fixture-model");
+  assert.equal(bot.title,"");assert.equal(bot.description,"");assert.equal(bot.color,"orange");
+  assert.equal(bot.unread,false);assert.equal(bot.createdAt,1);assert.equal(bot.autoApprove,true);
+  assert.deepEqual(bot.resumeCursors,input.resumeCursors);assert.equal(bot.tasks.length,1);
+  assert.equal(bot.tasks[0].threadId,bot.threadId);assert.deepEqual(bot.tasks[0].modelSelection,bot.modelSelection);
+  assert.deepEqual(bot.tasks[0].resumeCursors,input.resumeCursors);
+  assert.throws(()=>guiBackupFixtureBot({...input,id:"other"}),/UNEXPECTED_BACKUP_FIXTURE_BOT/);
+});
+
+// GUI seed validity against signed source 19947871: cited predicates only, no
+// app, server, engine or filesystem. Bot literal: server/testing/backup-fixture.ts:25.
+const SIGNED_FIXTURE_BOT={id:"bot",threadId:"thread",name:"Fixture",resumeCursors:{fixture:"native-cursor"},autoApprove:true,notifications:true};
+const GUI_NOW=1800000000000;
+const fixtureBot=()=>structuredClone(SIGNED_FIXTURE_BOT);
+const seededBot=()=>guiBackupFixtureBot(fixtureBot());
+const seedCodes=(bots,routines=guiBackupFixtureRoutines(GUI_NOW),now=GUI_NOW)=>guiSeedStartupFindings({bots,routines,now}).map(finding=>finding.code);
+
+test("GUI seed: bot helper supplies every required BotRecord/TaskRecord field and keeps the signed fixture bot as an exact subset",()=>{
+  const input=fixtureBot(),bot=guiBackupFixtureBot(input);
+  assert.deepEqual(input,SIGNED_FIXTURE_BOT);
+  for(const [key,value] of Object.entries(SIGNED_FIXTURE_BOT))assert.deepEqual(bot[key],value,key);
+  // store.ts:479-607 required BotRecord keys; store.ts:275-308 TaskRecord plus the adoption fields of store.ts:987-990.
+  for(const key of ["id","threadId","name","title","description","notifications","color","unread","modelSelection","resumeCursors","createdAt"])assert.ok(Object.hasOwn(bot,key),key);
+  assert.equal(bot.tasks.length,1);
+  for(const key of ["threadId","title","createdAt","resumeCursors","modelSelection","autoApprove","alwaysAllow","unread"])assert.ok(Object.hasOwn(bot.tasks[0],key),key);
+  // instances.fixture is configured by server/testing/backup-fixture.ts:24; no synthetic instance is invented.
+  assert.deepEqual(bot.modelSelection,{instanceId:"fixture",model:"fixture-model"});
+  assert.notEqual(bot.tasks[0].modelSelection,bot.modelSelection);assert.notEqual(bot.tasks[0].resumeCursors,bot.resumeCursors);
+  assert.deepEqual(JSON.parse(JSON.stringify([bot])),[bot]);
+  assert.deepEqual(guiSeedStartupFindings({bots:[bot],routines:guiBackupFixtureRoutines(GUI_NOW),now:GUI_NOW}),[]);
+});
+
+test("GUI seed: task authority equals Store task adoption so the effective autoApprove canary stays armed",()=>{
+  const bot=seededBot();
+  assert.equal(bot.autoApprove,true);assert.equal(bot.tasks[0].autoApprove,true);assert.deepEqual(bot.tasks[0].alwaysAllow,[]);
+  assert.equal(guiBackupFixtureBot({...fixtureBot(),autoApprove:false}).tasks[0].autoApprove,false);
+  const disarmed=structuredClone(bot);disarmed.tasks[0].autoApprove=false;
+  assert.deepEqual(seedCodes([disarmed]),["task-authority-canary"]);
+});
+
+test("GUI seed: validator flags the original fixture bot and each cited load migration or render dereference",()=>{
+  const original=seedCodes([fixtureBot()]);
+  for(const code of ["bot-title","bot-description","bot-unread","bot-createdAt","bot-color","bot-model-selection","task-adoption-save"])assert.ok(original.includes(code),code);
+  for(const [mutate,code] of [
+    [bot=>{delete bot.tasks[0].modelSelection;},"task-adoption-save"],
+    [bot=>{delete bot.tasks[0].autoApprove;},"task-adoption-save"],
+    [bot=>{delete bot.tasks[0].alwaysAllow;},"task-adoption-save"],
+    [bot=>{delete bot.tasks[0].unread;},"task-adoption-save"],
+    [bot=>{bot.busy=true;},"busy-reset-save"],
+    [bot=>{bot.activity="working";},"busy-reset-save"],
+    [bot=>{bot.persona="  ";},"load-normalization-persona"],
+    [bot=>{bot.autoStartVps="yes";},"load-normalization-autoStartVps"],
+    [bot=>{bot.alwaysAllow=["ask_bot:@Fixture"];},"load-normalization-alwaysAllow"],
+    [bot=>{bot.tasks[0].threadId="other";},"active-task"],
+    [bot=>{bot.tasks.push(structuredClone(bot.tasks[0]));},"task-thread-duplicate"],
+    [bot=>{bot.color="magenta";},"bot-color"],
+    [bot=>{bot.modelSelection={instanceId:"",model:"fixture-model"};},"bot-model-selection"],
+    [bot=>{bot.tasks[0].modelSelection={model:"fixture-model"};},"task-model-selection"],
+    [bot=>{bot.unread=true;},"unread-projection"],
+  ]){const bot=seededBot();mutate(bot);assert.ok(seedCodes([bot]).includes(code),code);}
+  assert.ok(seedCodes([seededBot(),seededBot()]).includes("single-bot"));assert.ok(seedCodes(null).includes("single-bot"));
+});
+
+test("GUI seed: routine seed is enabled, beyond the job window and terminal-only so RoutineManager neither recovers nor ticks it",()=>{
+  const seed=guiBackupFixtureRoutines(GUI_NOW);
+  assert.deepEqual(guiSeedStartupFindings({bots:[seededBot()],routines:seed,now:GUI_NOW}),[]);
+  assert.equal(seed.routines[0].nextRunAt,GUI_NOW+86400000);assert.ok(seed.routines[0].nextRunAt>GUI_NOW+GUI_SEED_WINDOW_MS);
+  assert.ok(seed.runs.every(run=>["completed","failed","cancelled","missed"].includes(run.status)&&Number.isFinite(run.finishedAt)&&run.watch===undefined));
+  assert.equal(seed.routines[0].watch,undefined);assert.deepEqual(JSON.parse(JSON.stringify(seed)),seed);
+  // The committed HEAD seed: recovered to failed at construction (routines.ts:606-625) and ticked as missed (routines.ts:1170-1208).
+  const head={version:1,routines:[{...seed.routines[0],nextRunAt:1}],runs:[{id:"run",routineId:"routine",routineName:"Fixture routine",botId:"bot",scheduledFor:1,status:"running",manual:false,createdAt:1,startedAt:1}]};
+  const headCodes=seedCodes([seededBot()],head);
+  for(const code of ["run-startup-recovery","routine-due-within-window","terminal-history-missing"])assert.ok(headCodes.includes(code),code);
+  for(const [mutate,code] of [
+    [value=>{value.runs[0].status="waiting";},"run-startup-recovery"],
+    [value=>{value.runs[0].status="queued";},"run-queued-dispatch"],
+    [value=>{value.routines[0].nextRunAt=GUI_NOW+30*60*1000;},"routine-due-within-window"],
+    [value=>{value.routines[0].nextRunAt=null;},"routine-due-within-window"],
+    [value=>{value.routines[0].enabled=false;},"routine-not-enabled"],
+    [value=>{value.routines[0].watch={};},"routine-watch"],
+    [value=>{value.runs[0].watch={};},"run-watch"],
+    [value=>{value.routines[0].schedule.time="9:00";},"routine-schedule"],
+    [value=>{value.routines[0].schedule.weekdays=[];},"routine-schedule"],
+    [value=>{value.runs=[];},"terminal-history-missing"],
+    [value=>{value.runs[0].status="done";},"run-record"],
+    [value=>{value.runs.push(structuredClone(value.runs[0]));},"duplicate-id"],
+    [value=>{value.runs[0].routineId="other";},"run-orphan"],
+    [value=>{value.version=2;},"routines-shape"],
+  ]){const value=structuredClone(seed);mutate(value);assert.ok(seedCodes([seededBot()],value).includes(code),code);}
+  // Wall-clock bound only: a job still running at nextRunAt would queue and save.
+  assert.ok(seedCodes([seededBot()],seed,seed.routines[0].nextRunAt).includes("routine-due-within-window"));
+});
+
+test("GUI seed: helpers refuse fixture drift and unsafe time instead of overwriting canaries",()=>{
+  const missing=fixtureBot();delete missing.notifications;
+  for(const bad of [null,[],"bot",missing,{...fixtureBot(),id:"other"},{...fixtureBot(),threadId:"other"},{...fixtureBot(),name:1},
+    {...fixtureBot(),modelSelection:{instanceId:"x",model:"y"}},{...fixtureBot(),tasks:[]},{...fixtureBot(),title:"kept"},{...fixtureBot(),busy:true},
+    {...fixtureBot(),resumeCursors:null},{...fixtureBot(),resumeCursors:[]},{...fixtureBot(),autoApprove:"true"},{...fixtureBot(),notifications:undefined}])
+    assert.throws(()=>guiBackupFixtureBot(bad),/UNEXPECTED_BACKUP_FIXTURE_BOT/);
+  for(const bad of [NaN,-1,1.5,Infinity,"1800000000000",Number.MAX_SAFE_INTEGER])assert.throws(()=>guiBackupFixtureRoutines(bad),/INVALID_FIXTURE_TIME/);
+  assert.throws(()=>guiSeedStartupFindings({bots:[seededBot()],routines:guiBackupFixtureRoutines(GUI_NOW),now:NaN}),/INVALID_FIXTURE_TIME/);
+});
 
 // Synthetic only: no runner, Keychain, launchd or packaged app. Every security
 // invocation goes to the injected fake below.

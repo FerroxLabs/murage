@@ -18,10 +18,10 @@ jobs:
       run:
         shell: bash
     env:
-      ARTIFACT_SOURCE_SHA: 19947871a964547f0dcf59feac5d9395bd0b2631
+      ARTIFACT_SOURCE_SHA: 2b787890ce71c9c0af8890debb6b8ea682320abe
       FIXTURE_SOURCE_SHA: ${{ github.sha }}
-      ARTIFACT_RUN_ID: "34834712522"
-      ARTIFACT_RUN_ATTEMPT: "2"
+      ARTIFACT_RUN_ID: "34987462311"
+      ARTIFACT_RUN_ATTEMPT: "1"
       MURAGE_MAC_INSTALLED_CONFIRM: packaged-backup-ephemeral-runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,7 +79,7 @@ jobs:
           path: ${{ runner.temp }}/murage-installed-qual/artifact
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: mac-qualification-evidence-34834712522-2
+          name: mac-qualification-evidence-34987462311-1
           run-id: ${{ env.ARTIFACT_RUN_ID }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/murage-installed-qual/artifact/evidence
