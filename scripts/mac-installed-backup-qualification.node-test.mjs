@@ -1,5 +1,6 @@
 import test from "node:test";
 import {spawnSync} from "node:child_process";
+import {stripTypeScriptTypes} from "node:module";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {createHash} from "node:crypto";
@@ -314,4 +315,66 @@ test("registration UI gate accepts only exact unique unchecked enabled AX consen
   }
   assert.match(source,/await waitInstalled\(s,app.pid\);\s*const job=await step\("label-loaded"/);
   assert.match(source,/check\(value&&exists\(s.plist\),"exact-label-and-plist"\)/);
+});
+
+test("configureDue supplies both inherited budgets accepted by current enabledSchedule/schema",async()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const fn=/async function configureDue\(s,pid,minutes\)\{[\s\S]*?\n\}/.exec(source)?.[0];assert.ok(fn);
+  const budgets=runInNewContext(/const GUI_SCHEDULE_BUDGETS=(.*);/.exec(source)[1]);
+  const inherited=readFileSync(new URL("./b21-mac-closed-native.mjs",import.meta.url),"utf8");
+  assert.match(inherited,new RegExp(`maxBytes:${budgets.maxBytes},maxDurationMs:${budgets.maxDurationMs}`));
+  const entries={},order=[];
+  const configure=runInNewContext(`(${fn})`,{GUI_SCHEDULE_BUDGETS:budgets,selector:()=>{},typeInto:async(_s,_pid,key,value)=>{entries[key]=value;order.push(key);},ensureChecked:async(_s,_pid,key)=>order.push(key),press:async()=>{},waitText:async()=>{}});
+  await configure({},123,5);
+  assert.ok(order.indexOf("sizeBudget")<order.indexOf("closedConsent"));assert.ok(order.indexOf("durationBudget")<order.indexOf("closedConsent"));
+  const ui=readFileSync(new URL("../src/components/BackupSettings.tsx",import.meta.url),"utf8");
+  for(const [key,label] of [["sizeBudget","Maximum backup size (GiB)"],["durationBudget","Maximum run duration (minutes)"]]){
+    assert.ok(ui.includes(label+'<input type="number"'));assert.ok(source.includes(`${key}:{roles:["AXTextField","AXIncrementor"],label:"${label}"`));
+  }
+  const schema=await import("../shared/backup-schedule.ts");
+  const helper=readFileSync(new URL("../src/components/backup-schedule-ui.ts",import.meta.url),"utf8").replace(/^import .*;\n/,"").replaceAll("export ","");
+  const {scheduleDraft,enabledSchedule}=runInNewContext(stripTypeScriptTypes(helper)+";({scheduleDraft,enabledSchedule})",schema);
+  const status={enabled:false,supported:true,closedAppSupported:true,pending:false,phase:"idle",schedule:{enabled:false,preUpgrade:false},refs:{installationRef:"installation-fixture",destinationRef:"destination-fixture",recoveryRef:"recovery-fixture"}};
+  const initial=scheduleDraft(status.schedule);assert.equal(initial.size,"");assert.equal(initial.duration,"");
+  // Native time keystrokes are not simulated/proven; use the documented form value.
+  const draft={...initial,time:"12:34",timezone:entries.timezone,catchup:entries.catchup,size:entries.sizeBudget,duration:entries.durationBudget,closedApp:true};
+  const enabled=enabledSchedule(draft,status,true);assert.ok(enabled);assert.equal(enabled.maxBytes,budgets.maxBytes);assert.equal(enabled.maxDurationMs,budgets.maxDurationMs);assert.equal(schema.backupScheduleSchema.safeParse(enabled).success,true);
+  for(const missing of ["size","duration"])assert.equal(enabledSchedule({...draft,[missing]:""},status,true),null);
+  assert.match(source,/scheduleBudgets:GUI_SCHEDULE_BUDGETS/);
+});
+
+test("native time segments preserve 12/24-hour values and refuse uncertain controls",()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const jxa=/const JXA=String.raw`([\s\S]*?)`;/.exec(source)[1];
+  const field=(role,title,more={})=>({AXRole:role,AXTitle:title,AXChildren:[],...more});
+  for(const sample of [{text:"16:37"},{text:"00:05"},{text:"23:59"},{text:"16:37",twelve:true},{text:"00:05",twelve:true},{text:"12:00",twelve:true},...['missing','duplicate','range','focus','stuck','unreadable'].map(error=>({text:"16:37",error}))]){
+    const hour=field('AXIncrementor','Hours Daily time',{AXMinValue:sample.twelve?1:0,AXMaxValue:sample.error==='range'?24:sample.twelve?12:23,AXValue:0,AXValueDescription:''});
+    const minute=field('AXIncrementor','Minutes Daily time',{AXMinValue:0,AXMaxValue:59,AXValue:0,AXValueDescription:''});
+    const period=field('AXIncrementor','AM/PM Daily time',{AXMinValue:0,AXMaxValue:1,AXValue:0,AXValueDescription:''});
+    const input=field('AXTimeField','Daily time',{AXChildren:sample.twelve?[hour,minute,period]:[hour,minute]});
+    const window=field('AXWindow','Owned',{AXChildren:sample.error==='missing'?[]:sample.error==='duplicate'?[input,input]:[input]});
+    const app={AXWindows:[window]},events=[];let focused;
+    const dollar=value=>value;Object.assign(dollar,{AXUIElementCreateApplication:pid=>{assert.equal(pid,123);return app;},AXUIElementCopyAttributeValue:(element,name,ref)=>{if(!Object.hasOwn(element,name))return -1;ref[0]=element[name];return 0;},AXUIElementSetAttributeValue:(element,name,value)=>{assert.equal(name,'AXFocused');assert.equal(value,true);if(sample.error==='focus')return -25200;focused=element;return 0;}});
+    const se={processes:{whose:()=>[{}]},keystroke:text=>{events.push(text);if(sample.error==='stuck')return;focused.AXValue=focused===period?(text==='P'?1:0):Number(text);focused.AXValueDescription=sample.error==='unreadable'?'':text;},keyCode:key=>assert.equal(key,48)};
+    const run=runInNewContext(jxa+';run',{Application:()=>se,ObjC:{import:()=>{},bindFunction:()=>{},deepUnwrap:value=>value},$:dollar,Ref:()=>[],delay:()=>{}});
+    const result=JSON.parse(run([JSON.stringify({op:'time',pid:123,label:'Daily time',text:sample.text})]));
+    assert.equal(result.ok,!sample.error,JSON.stringify(sample));
+    if(!sample.error){assert.equal(result.requested,sample.text);assert.equal(result.format,sample.twelve?'12-hour':'24-hour');assert.ok(result.values.every(value=>value.value===value.expected));}
+    if(['missing','duplicate','range'].includes(sample.error))assert.equal(events.length,0);
+  }
+});
+
+test("configureDue preserves five-minute lead after slow form entry and renews idle consent after time",async()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const fn=/async function configureDue\(s,pid,minutes\)\{[\s\S]*?\n\}/.exec(source)[0];
+  const budgets=runInNewContext(/const GUI_SCHEDULE_BUDGETS=(.*);/.exec(source)[1]);
+  let clock=1800000000000,computedAt,consent=false;const order=[];
+  class ClockDate extends Date{static now(){computedAt=clock;return clock;}}
+  const configure=runInNewContext(`(${fn})`,{Date:ClockDate,GUI_SCHEDULE_BUDGETS:budgets,selector:()=>{},typeInto:async(_s,_pid,key)=>{order.push(key);consent=false;clock+=key==='dailyTime'?2000:30000;},ensureChecked:async(_s,_pid,key)=>{order.push(key);clock+=60000;consent=key==='idleConsent';},press:async(_s,_pid,key)=>{order.push(key);assert.equal(consent,true);clock+=40000;},waitText:async()=>{clock+=64000;}});
+  const due=await configure({},123,5);
+  assert.deepEqual(order,['timezone','catchup','sizeBudget','durationBudget','closedConsent','dailyTime','idleConsent','enable']);
+  assert.equal(computedAt,1800000000000+180000);assert.equal(due,Math.ceil((computedAt+5*60000)/60000)*60000);
+  assert.ok(clock<due-60000,'original preScheduled one-minute margin remains under observed slow-call progression');
+  const ui=readFileSync(new URL('../src/components/BackupSettings.tsx',import.meta.url),'utf8');assert.match(ui,/const edit=.*setConsent\(false\)/);
+  assert.match(source,/Date.now\(\)<s.dueAt-60000/);
 });

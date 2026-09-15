@@ -44,9 +44,11 @@ const UI={
   staged:{pattern:"Job prepared, not registered",src:"src/components/backup-schedule-ui.ts:63"},
   registerJob:{roles:["AXButton"],label:"Register prepared job",src:"src/components/BackupSettings.tsx:111"},
   installJob:{roles:["AXButton"],label:"Install backup job",src:"electron/main.mjs:3127"},
-  dailyTime:{roles:["AXTextField","AXDateTimeArea","AXGroup"],label:"Daily time",src:"src/components/BackupSettings.tsx:122",probe:"PROBE-REQUIRED: type=time AX role and 12h segment keystrokes"},
+  dailyTime:{roles:["AXTimeField"],label:"Daily time",src:"src/components/BackupSettings.tsx:122",probe:"Native AXTimeField; named hour/minute and optional AM/PM segments require observed ranges/readback"},
   timezone:{roles:["AXTextField"],label:"Timezone",src:"src/components/BackupSettings.tsx:123"},
   catchup:{roles:["AXTextField","AXIncrementor"],label:"Catch-up window (hours)",src:"src/components/BackupSettings.tsx:126",probe:"PROBE-REQUIRED: number input AX role"},
+  sizeBudget:{roles:["AXTextField","AXIncrementor"],label:"Maximum backup size (GiB)",src:"src/components/BackupSettings.tsx:128"},
+  durationBudget:{roles:["AXTextField","AXIncrementor"],label:"Maximum run duration (minutes)",src:"src/components/BackupSettings.tsx:129"},
   closedConsent:{roles:["AXCheckBox"],label:"Allow scheduled backups while Murage is closed, while I am signed in.",src:"src/components/BackupSettings.tsx:136"},
   idleConsent:{roles:["AXCheckBox"],label:"Allow Murage to close an idle workspace for this backup and reopen it afterward.",src:"src/components/BackupSettings.tsx:141"},
   enable:{roles:["AXButton"],label:"Enable scheduled backups",src:"src/components/BackupSettings.tsx:149"},
@@ -98,6 +100,8 @@ const loadState=()=>JSON.parse(readFileSync(stateFile,"utf8"));
 const saveState=s=>writeAtomic(stateFile,JSON.stringify(s,null,1));
 const BASE_ENV={HOME:process.env.HOME,PATH:"/usr/bin:/bin:/usr/sbin:/sbin",LANG:"en_US.UTF-8"};
 const AX_TREE_LIMIT=4000;
+// Existing Mac closed-native qualification caps (b21-mac-closed-native.mjs:144).
+const GUI_SCHEDULE_BUDGETS=Object.freeze({maxBytes:100000000,maxDurationMs:600000});
 const SPAWN_SAMPLING="closed-main spawns are sampled from ps every 1000 ms and can miss short-lived processes; durable evidence is the exact-label launchd runs delta plus coordinator receipts";
 /** Bounded non-throwing runner keeping stdout, stderr and status. Secrets travel only on stdin. */
 const run=(command,argv,options={})=>runCommand(command,argv,{timeout:120000,env:BASE_ENV,...options});
@@ -181,6 +185,36 @@ if(cmd.op==='manualAX'){
  return JSON.stringify({ok:code===0,code:code,valueType:valueType,booleanType:booleanType});
 }
 if(ps.length!==1)return JSON.stringify({ok:false,error:'process',count:ps.length});var p=ps[0];
+// System Events cannot resolve Chromium AXTimeField descendants. Use the
+// public AX API for this exact control; input still comes from real key events.
+if(cmd.op==='time'){
+ if(!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(cmd.text))return JSON.stringify({ok:false,error:'time-format'});
+ ObjC.import('ApplicationServices');
+ ObjC.bindFunction('AXUIElementCreateApplication',['id',['int']]);
+ ObjC.bindFunction('AXUIElementCopyAttributeValue',['int',['id','id','id *']]);
+ ObjC.bindFunction('AXUIElementSetAttributeValue',['int',['id','id','id']]);
+ function read(e,k){var r=Ref();return $.AXUIElementCopyAttributeValue(e,$(k),r)===0?ObjC.deepUnwrap(r[0]):null;}
+ var visited=0,overflow=false;
+ function walk(e,predicate,out,depth){if(depth>64||++visited>4000){overflow=true;return;}if(predicate(e))out.push(e);var children=read(e,'AXChildren')||[];for(var i=0;i<children.length;i++)walk(children[i],predicate,out,depth+1);}
+ var app=$.AXUIElementCreateApplication(cmd.pid),windows=read(app,'AXWindows')||[],fields=[];
+ for(var w=0;w<windows.length;w++)walk(windows[w],function(e){return read(e,'AXRole')==='AXTimeField'&&read(e,'AXTitle')===cmd.label;},fields,0);
+ if(overflow||fields.length!==1)return JSON.stringify({ok:false,error:'time-field',count:fields.length,overflow:overflow});
+ var segments=[];visited=0;walk(fields[0],function(e){return read(e,'AXRole')==='AXIncrementor';},segments,0);
+ var observed=segments.map(function(e){return{title:read(e,'AXTitle'),min:read(e,'AXMinValue'),max:read(e,'AXMaxValue')};});
+ function named(name){return segments.filter(function(e){return read(e,'AXTitle')===name+' '+cmd.label;});}
+ var hour=named('Hours'),minute=named('Minutes'),period=named('AM/PM');
+ if(overflow||hour.length!==1||minute.length!==1||period.length>1||segments.length!==2+period.length)return JSON.stringify({ok:false,error:'time-segments',observed:observed});
+ var low=read(hour[0],'AXMinValue'),high=read(hour[0],'AXMaxValue'),twelve=period.length===1;
+ if((twelve?low!==1||high!==12:low!==0||high!==23)||read(minute[0],'AXMinValue')!==0||read(minute[0],'AXMaxValue')!==59||(twelve&&(read(period[0],'AXMinValue')!==0||read(period[0],'AXMaxValue')!==1)))return JSON.stringify({ok:false,error:'time-ranges',observed:observed});
+ var h=Number(cmd.text.slice(0,2)),m=Number(cmd.text.slice(3)),expectedHour=twelve?(h%12||12):h;
+ var parts=[{e:hour[0],text:String(expectedHour),value:expectedHour},{e:minute[0],text:String(m),value:m}];if(twelve)parts.push({e:period[0],text:h<12?'A':'P',value:h<12?0:1});
+ p.frontmost=true;
+ for(var j=0;j<parts.length;j++){var focus=$.AXUIElementSetAttributeValue(parts[j].e,$('AXFocused'),$(true));if(focus!==0)return JSON.stringify({ok:false,error:'time-focus',code:focus,observed:observed});delay(0.2);se.keystroke(parts[j].text);delay(0.2);}
+ se.keyCode(48);delay(0.2);
+ var values=parts.map(function(part){return{title:read(part.e,'AXTitle'),value:read(part.e,'AXValue'),description:read(part.e,'AXValueDescription'),expected:part.value};});
+ var verified=values.every(function(v){return v.value===v.expected&&typeof v.description==='string'&&v.description.length>0;});
+ return JSON.stringify({ok:verified,error:verified?null:'time-readback',format:twelve?'12-hour':'24-hour',requested:cmd.text,observed:observed,values:values});
+}
 function names(e){var v=[];['name','title','description'].forEach(function(k){try{var x=e[k]();if(typeof x==='string'&&x)v.push(x);}catch(_){}});return v;}
 function role(e){try{return e.role();}catch(_){return '';}}
 function all(){var out=[],ws=p.windows();for(var i=0;i<ws.length;i++){var roots=cmd.sheet?ws[i].sheets():[ws[i]];for(var r=0;r<roots.length;r++){out.push(roots[r]);var c=roots[r].entireContents();for(var j=0;j<c.length;j++)out.push(c[j]);}}return out;}
@@ -206,7 +240,7 @@ const selector=(key,s)=>{const entry=key==="settingsEntry"&&s?.settingsEntry?{..
 const press=(s,pid,key,ms=30000)=>step(`press-${key}`,async()=>{const {roles,label,sheet}=selector(key,s);await until(()=>ax(s,{op:"count",pid,roles,label,sheet}).count===1,ms,`present-${key}`);const r=ax(s,{op:"press",pid,roles,label,sheet});check(r.ok,`press-${key}`);});
 // Set-state, not toggle: saved closedApp survives a disabled schedule (BackupSettings.tsx:40,135).
 const ensureChecked=(s,pid,key)=>step(`checked-${key}`,async()=>{const {roles,label}=selector(key,s);const before=ax(s,{op:"value",pid,roles,label});check(before.ok,`value-${key}`);if(Number(before.value)!==1)check(ax(s,{op:"press",pid,roles,label}).ok,`press-${key}`);const after=ax(s,{op:"value",pid,roles,label});check(after.ok&&Number(after.value)===1,`checked-${key}`);return{before:before.value};});
-const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label}=selector(key,s);const r=ax(s,{op:"focusType",pid,roles,label,text});check(r.ok,`type-${key}`);});
+const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label}=selector(key,s);const r=ax(s,{op:key==="dailyTime"?"time":"focusType",pid,roles,label,text});record({step:`type-observation-${key}`,result:r});check(r.ok,`type-${key}`);});
 async function waitText(s,pid,key,ms=60000){
   let lastResult=null,queries=0;
   return step(`wait-${key}`,async()=>{
@@ -250,9 +284,14 @@ async function quit(s,handle,label){
 }
 async function openBackupSettings(s,pid){await step("launch-state",()=>{const shot=path.join(E,`${phase}-launch-state-${pid}.png`);run("/usr/sbin/screencapture",["-x",shot]);return{screenshot:path.basename(shot)};});await press(s,pid,"settingsEntry",120000);await press(s,pid,"general");}
 async function configureDue(s,pid,minutes){
-  const due=new Date(Math.ceil((Date.now()+minutes*60000)/60000)*60000),hours=due.getUTCHours(),text=`${String(hours%12||12).padStart(2,"0")}${String(due.getUTCMinutes()).padStart(2,"0")}${hours<12?"A":"P"}`;
-  selector("dailyTime");await typeInto(s,pid,"dailyTime",text);await typeInto(s,pid,"timezone","UTC");selector("catchup");await typeInto(s,pid,"catchup","1");
-  await ensureChecked(s,pid,"closedConsent");await ensureChecked(s,pid,"idleConsent");await press(s,pid,"enable");await waitText(s,pid,"enabledNotice");
+  await typeInto(s,pid,"timezone","UTC");selector("catchup");await typeInto(s,pid,"catchup","1");
+  await typeInto(s,pid,"sizeBudget",String(GUI_SCHEDULE_BUDGETS.maxBytes/1024**3));await typeInto(s,pid,"durationBudget",String(GUI_SCHEDULE_BUDGETS.maxDurationMs/60000));
+  await ensureChecked(s,pid,"closedConsent");
+  // Compute the unchanged lead after slower form entry. Editing time clears idle
+  // consent (BackupSettings edit), so that consent must be confirmed afterward.
+  const due=new Date(Math.ceil((Date.now()+minutes*60000)/60000)*60000),text=`${String(due.getUTCHours()).padStart(2,"0")}:${String(due.getUTCMinutes()).padStart(2,"0")}`;
+  selector("dailyTime");await typeInto(s,pid,"dailyTime",text);
+  await ensureChecked(s,pid,"idleConsent");await press(s,pid,"enable");await waitText(s,pid,"enabledNotice");
   return due.getTime();
 }
 
@@ -310,7 +349,7 @@ async function prepare(){
   const plist=path.join(process.env.HOME,"Library","LaunchAgents",`${label}.plist`);check(!exists(plist)&&launchdJob({uid:s.uid,label})===null,"label-absent-before-install");
   const original=digestTree(requestedRoot);
   Object.assign(s,{parent,requestedRoot,userData,destination,keyFile,control,label,plist,original,manifest:path.join(E,"manifest.json")});
-  writeFileSync(s.manifest,JSON.stringify({frozenAt:new Date().toISOString(),source:process.env.GITHUB_SHA??null,zipSha:s.zipSha,app:s.app,appName:s.appName,team:s.team,keychainService:s.keychainService,label,plist,requestedRoot,userData,destination,control,keyFile:"<independent key file outside installation>",originalEntries:Object.keys(original).length,phases:PHASES.slice(1),assertions:ASSERTIONS},null,1),{flag:"wx",mode:0o600});
+  writeFileSync(s.manifest,JSON.stringify({frozenAt:new Date().toISOString(),source:process.env.GITHUB_SHA??null,zipSha:s.zipSha,app:s.app,appName:s.appName,team:s.team,keychainService:s.keychainService,label,plist,requestedRoot,userData,destination,control,keyFile:"<independent key file outside installation>",originalEntries:Object.keys(original).length,scheduleBudgets:GUI_SCHEDULE_BUDGETS,phases:PHASES.slice(1),assertions:ASSERTIONS},null,1),{flag:"wx",mode:0o600});
   saveState(s);record({step:"prepared",label,originalEntries:Object.keys(original).length});
 }
 async function probe(){
