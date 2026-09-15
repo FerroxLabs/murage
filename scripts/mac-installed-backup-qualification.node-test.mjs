@@ -257,3 +257,32 @@ test("manual AX argument retains CFBoolean through the actual JXA bridge",{skip:
   assert.equal(observed.actual,observed.expected);
   assert.equal(observed.value,true);
 });
+
+// Actual embedded JXA with System Events mocked: no OS/app/UI call.
+test("status query retains bounded nonmatching backup states without admitting them",()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const jxa=/const JXA=String.raw`([\s\S]*?)`;/.exec(source)?.[1];assert.ok(jxa);
+  const element=text=>({name:()=>text,title:()=>"",description:()=>"",value:()=>text});
+  const window={...element("Settings"),entireContents:()=>[element("Registration is not confirmed. Refresh status before enabling closed-app backups."),element("Closed-app scheduling unavailable"),element("Unrelated profile text")]};
+  const se={processes:{whose:()=>[{windows:()=>[window]}]}};
+  const run=runInNewContext(jxa+";run",{Application:()=>se});
+  const result=JSON.parse(run([JSON.stringify({op:"texts",pid:123,pattern:"Job registration confirmed"})]));
+  assert.equal(result.ok,true);assert.deepEqual(result.texts,[]);assert.equal(result.count,4);
+  assert.equal(result.diagnostics.length,2);assert.match(result.diagnostics[0],/Registration is not confirmed/);
+  window.entireContents=()=>[element("Job registration confirmed"),...Array.from({length:40},()=>element("backup "+"x".repeat(500)))];
+  const success=JSON.parse(run([JSON.stringify({op:"texts",pid:123,pattern:"Job registration confirmed"})]));
+  assert.equal(success.texts.length,1);assert.equal(success.diagnostics.length,30);assert.ok(success.diagnostics.every(value=>value.length<=300));
+});
+
+test("status wait preserves query failure versus readable missing status and rethrows the original gate",async()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const fn=/async function waitText\(s,pid,key,ms=60000\)\{[\s\S]*?\n\}/.exec(source)?.[0];assert.ok(fn);
+  for(const observation of [{ok:false,error:"osascript",code:null,signal:"SIGTERM",timedOut:true,stderr:"execution error"},{ok:true,texts:[],count:400,diagnostics:["Closed-app scheduling unavailable"]}]){
+    const records=[],failure=new Error("original text-installed gate");
+    const wait=runInNewContext(`(${fn})`,{UI:{installed:{pattern:"Job registration confirmed"}},step:(_label,callback)=>callback(),ax:()=>observation,until:async callback=>{assert.equal(callback(),null);throw failure;},record:value=>records.push(value),redactSecretsInLine:value=>value});
+    await assert.rejects(wait({},123,"installed"),error=>error===failure);
+    assert.equal(records.length,1);assert.equal(records[0].queries,1);assert.equal(records[0].result.ok,observation.ok);
+    assert.equal(records[0].result.timedOut,observation.timedOut);assert.equal(records[0].pid,123);
+    assert.equal(records[0].step,"text-query-failed-installed");
+  }
+});

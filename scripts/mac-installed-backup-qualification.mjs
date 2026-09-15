@@ -9,6 +9,7 @@ import {createHash,randomBytes} from "node:crypto";
 import {closeSync,lstatSync,mkdirSync,openSync,readFileSync,readSync,readdirSync,realpathSync,renameSync,rmSync,writeFileSync} from "node:fs";
 import {userInfo} from "node:os";
 import path from "node:path";
+import {redactSecretsInLine} from "../electron/diagnostics.mjs";
 import {admitSettingsEntry,cleanupKeychain,guiBackupFixtureBot,guiBackupFixtureRoutines,guiSeedStartupFindings,classifyQualificationSetup,freezeQualificationOperation,runCommand,setupKeychain} from "./mac-installed-backup-qualification-lib.mjs";
 
 const CONFIRM="packaged-backup-ephemeral-runner";
@@ -191,11 +192,11 @@ if(cmd.op==='value'){var v=matches();if(v.length!==1)return JSON.stringify({ok:f
 if(cmd.op==='press'||cmd.op==='focusType'){var m=matches();if(m.length!==1)return JSON.stringify({ok:false,error:'match',count:m.length});
  if(cmd.op==='press'){m[0].actions.byName('AXPress').perform();return JSON.stringify({ok:true});}
  p.frontmost=true;m[0].focused=true;delay(0.3);se.keystroke('a',{using:'command down'});se.keystroke(cmd.text);return JSON.stringify({ok:true});}
-if(cmd.op==='texts'){var re=new RegExp(cmd.pattern);return JSON.stringify({ok:true,texts:all().map(function(e){var v='';try{v=String(e.value());}catch(_){}return [v].concat(names(e)).join(' ');}).filter(function(t){return re.test(t);}).slice(0,10)});}
+if(cmd.op==='texts'){var re=new RegExp(cmd.pattern),values=all().map(function(e){var v='';try{v=String(e.value());}catch(_){}return [v].concat(names(e)).join(' ');});return JSON.stringify({ok:true,texts:values.filter(function(t){return re.test(t);}).slice(0,10),count:values.length,diagnostics:values.filter(function(t){return /backup|schedul|registration|job|refresh/i.test(t);}).slice(0,30).map(function(t){return t.slice(0,300);})});}
 if(cmd.op==='goto'){p.frontmost=true;delay(0.3);se.keystroke('g',{using:['command down','shift down']});delay(1);se.keystroke(cmd.path);delay(0.3);se.keyCode(36);delay(1);return JSON.stringify({ok:true});}
 if(cmd.op==='quit'){p.frontmost=true;delay(0.3);se.keystroke('q',{using:'command down'});return JSON.stringify({ok:true});}
 return JSON.stringify({ok:false,error:'op'});}`;
-function ax(s,cmd){const file=path.join(s.private,"ax.js");writeAtomic(file,JXA);const r=run("/usr/bin/osascript",["-l","JavaScript",file,JSON.stringify(cmd)],{timeout:90000});try{return JSON.parse(r.stdout.trim());}catch{return{ok:false,error:"osascript",code:r.code,signal:r.signal};}}
+function ax(s,cmd){const file=path.join(s.private,"ax.js");writeAtomic(file,JXA);const r=run("/usr/bin/osascript",["-l","JavaScript",file,JSON.stringify(cmd)],{timeout:90000});try{return JSON.parse(r.stdout.trim());}catch{return{ok:false,error:"osascript",code:r.code,signal:r.signal,timedOut:r.timedOut,commandError:r.error,stderr:redactSecretsInLine(r.stderr).slice(-2000)};}}
 async function step(label,fn){
   try{const result=await fn();record({step:label,ok:true,...(result===undefined?{}:{result})});return result;}
   catch(error){const shot=path.join(E,`${phase}-${label}.png`.replace(/[^A-Za-z0-9.-]/g,"_"));run("/usr/sbin/screencapture",["-x",shot]);throw Object.assign(error,{label:error.label??label,screenshot:path.basename(shot)});}
@@ -207,7 +208,16 @@ const press=(s,pid,key,ms=30000)=>step(`press-${key}`,async()=>{const {roles,lab
 // Set-state, not toggle: saved closedApp survives a disabled schedule (BackupSettings.tsx:40,135).
 const ensureChecked=(s,pid,key)=>step(`checked-${key}`,async()=>{const {roles,label}=selector(key,s);const before=ax(s,{op:"value",pid,roles,label});check(before.ok,`value-${key}`);if(Number(before.value)!==1)check(ax(s,{op:"press",pid,roles,label}).ok,`press-${key}`);const after=ax(s,{op:"value",pid,roles,label});check(after.ok&&Number(after.value)===1,`checked-${key}`);return{before:before.value};});
 const typeInto=(s,pid,key,text)=>step(`type-${key}`,async()=>{const {roles,label}=selector(key,s);const r=ax(s,{op:"focusType",pid,roles,label,text});check(r.ok,`type-${key}`);});
-const waitText=(s,pid,key,ms=60000)=>step(`wait-${key}`,()=>until(()=>{const r=ax(s,{op:"texts",pid,pattern:UI[key].pattern});return r.ok&&r.texts.length?r.texts[0]:null;},ms,`text-${key}`));
+async function waitText(s,pid,key,ms=60000){
+  let lastResult=null,queries=0;
+  return step(`wait-${key}`,async()=>{
+    try{return await until(()=>{lastResult=ax(s,{op:"texts",pid,pattern:UI[key].pattern});queries++;return lastResult.ok&&lastResult.texts.length?lastResult.texts[0]:null;},ms,`text-${key}`);}
+    catch(error){
+      const result=lastResult?{...lastResult,...(lastResult.diagnostics?{diagnostics:lastResult.diagnostics.map(redactSecretsInLine)}:{})}:null;
+      record({step:`text-query-failed-${key}`,pid,pattern:UI[key].pattern,queries,result});throw error;
+    }
+  });
+}
 const choosePath=async(s,pid,file,name)=>{await step(`panel-${name}`,async()=>{check(ax(s,{op:"goto",pid,path:file}).ok,`goto-${name}`);});await press(s,pid,"panelOpen");};
 
 async function launch(s,label,args=[]){
