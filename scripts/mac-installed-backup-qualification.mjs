@@ -190,7 +190,7 @@ async function quit(s,handle,label){
   await until(()=>bundleProcesses(s).filter(p=>!p.command.includes("closed-trigger-")).length===0,60000,`bundle-processes-exit-${label}`,1000);
   record({step:`exited-${label}`,pid:handle.pid,...result});
 }
-async function openBackupSettings(s,pid){await step("launch-state",()=>{const shot=path.join(E,`${phase}-launch-state-${pid}.png`);run("/usr/sbin/screencapture",["-x",shot]);return{screenshot:path.basename(shot)};});await press(s,pid,"settingsEntry");await press(s,pid,"general");}
+async function openBackupSettings(s,pid){await step("launch-state",()=>{const shot=path.join(E,`${phase}-launch-state-${pid}.png`);run("/usr/sbin/screencapture",["-x",shot]);return{screenshot:path.basename(shot)};});await press(s,pid,"settingsEntry",120000);await press(s,pid,"general");}
 async function configureDue(s,pid,minutes){
   const due=new Date(Math.ceil((Date.now()+minutes*60000)/60000)*60000),hours=due.getUTCHours(),text=`${String(hours%12||12).padStart(2,"0")}${String(due.getUTCMinutes()).padStart(2,"0")}${hours<12?"A":"P"}`;
   selector("dailyTime");await typeInto(s,pid,"dailyTime",text);await typeInto(s,pid,"timezone","UTC");selector("catchup");await typeInto(s,pid,"catchup","1");
@@ -250,15 +250,22 @@ async function prepare(){
   saveState(s);record({step:"prepared",label,originalEntries:Object.keys(original).length});
 }
 async function probe(){
-  const s=loadState();check(s.manifest&&!s.settingsEntry&&!s.installed,"prepared-not-probed");const app=await launch(s,"probe");let admission;
+  const s=loadState();check(s.manifest&&!s.settingsEntry&&!s.installed,"prepared-not-probed");const app=await launch(s,"probe");let admission,tree;
   try{
-    run("/usr/sbin/screencapture",["-x",path.join(E,"probe-launch.png")]);
-    const tree=ax(s,{op:"tree",pid:app.pid,limit:AX_TREE_LIMIT});
-    writeAtomic(path.join(E,"probe-ax-tree.json"),JSON.stringify({pid:app.pid,...tree},null,1));
-    check(tree.ok&&Array.isArray(tree.elements),"ax-tree");
-    admission=admitSettingsEntry(tree.elements);
-    record({step:"probe-settings-entry",admission,treeCount:tree.count,truncated:tree.truncated,treeFile:"probe-ax-tree.json",screenshot:"probe-launch.png",remainingProbes:Object.entries(UI).filter(([key,value])=>value.probe&&key!=="settingsEntry").map(([key])=>key)});
-  }finally{await quit(s,app,"probe");}
+    // A native window can precede the server/renderer. Wait for the unchanged
+    // exact control admission rather than judging the initial blank shell.
+    await until(()=>{
+      tree=ax(s,{op:"tree",pid:app.pid,limit:AX_TREE_LIMIT});
+      admission=admitSettingsEntry(tree.ok?tree.elements:null);
+      return admission.ok;
+    },120000,"renderer-settings-ready",1000);
+  }finally{
+    try{
+      run("/usr/sbin/screencapture",["-x",path.join(E,"probe-launch.png")]);
+      writeAtomic(path.join(E,"probe-ax-tree.json"),JSON.stringify({pid:app.pid,...tree},null,1));
+      record({step:"probe-settings-entry",admission,treeCount:tree?.count,truncated:tree?.truncated,treeFile:"probe-ax-tree.json",screenshot:"probe-launch.png",remainingProbes:Object.entries(UI).filter(([key,value])=>value.probe&&key!=="settingsEntry").map(([key])=>key)});
+    }finally{await quit(s,app,"probe");}
+  }
   check(admission?.ok,"settings-entry-admitted");
   s.settingsEntry={label:admission.label,roles:admission.roles,probedAt:new Date().toISOString()};saveState(s);
 }
@@ -363,9 +370,26 @@ async function cleanupVerify(){
   // Every restoration is attempted, then verified by re-reading (lib cleanupKeychain).
   const keychain=s.keychainIsolation?cleanupKeychain({runner:run,state:s.keychainIsolation,exists}):{ok:true,reason:"not-started",results:[],verified:null};
   const left=bundleProcesses(s).map(p=>p.pid);
+  // Bounded tails of the app's own logs, copied before task paths are removed:
+  // launch() stdout/stderr (main console, [renderer] load-failure/crash lines,
+  // electron/main.mjs:2311-2328) and the isolated logs dir (setAppLogsPath at
+  // electron/main.mjs:139; server.log/desktop-crashes.log at 691-692,741).
+  // server.log holds raw server child output (main.mjs:1380-1381) whose env carries
+  // tokens, and the evidence artifact is readable on a public repository, so bytes
+  // are kept only through the product redactor as the bug-report bundle uses it
+  // (electron/diagnostics.mjs readSafeLogTail:115, redactSecretsInLine:76, as in
+  // buildDiagnosticsReport:316,323). No redactor, no bytes; nothing here throws.
+  const appLogs=[];
+  try{
+    let safe=null;try{const d=await import("../electron/diagnostics.mjs");if(typeof d.readSafeLogTail==="function"&&typeof d.redactSecretsInLine==="function")safe=d;}catch{}
+    const keepLog=(file,name)=>{try{if(!safe){appLogs.push({name,error:"redaction-unavailable"});return;}const tail=safe.readSafeLogTail(file);if(!tail){appLogs.push({name,error:"unsafe-or-unreadable"});return;}let text;try{text=safe.redactSecretsInLine(tail.tail);}catch{appLogs.push({name,error:"redaction-unavailable"});return;}writeAtomic(path.join(E,name),text);appLogs.push({name,tailBytes:tail.bytes,redacted:true});}catch(error){appLogs.push({name,error:error?.code??"write-failed"});}};
+    const list=(dir,label)=>{try{return exists(dir)?readdirSync(dir):[];}catch(error){appLogs.push({name:label,error:error?.code??"enumerate-failed"});return[];}};
+    if(s.private)for(const name of list(s.private,"private-dir").filter(name=>name.endsWith(".log")).sort())keepLog(path.join(s.private,name),`app-${name}`);
+    if(s.userData){const logs=path.join(s.userData,"logs"),present=list(logs,"userdata-logs-dir");for(const name of ["server.log","desktop-crashes.log"])if(present.includes(name))keepLog(path.join(logs,name),`app-userdata-${name}`);}
+  }catch(error){appLogs.push({name:"app-logs",error:error?.code??"capture-failed"});}
   // Exact recorded task paths under ROOT only; the evidence directory is retained for upload.
   if(!left.length)for(const dir of [s.parent,s.appDir,s.tmp,s.private].filter(Boolean))if(dir.startsWith(ROOT+"/")&&dir!==E&&exists(dir))rmSync(dir,{recursive:true,force:true});
-  record({step:"cleanup",terminated:remaining.map(p=>p.pid),left,registrationBeforeCleanup:job,plistPresent,manualRemovalNotAPass:manual,keychainItemBeforeDelete:item,keychainCompleted:s.keychainIsolation?.completed??null,keychainCleanup:keychain,productRemovalPassed:Boolean(s.removed)});
+  record({step:"cleanup",terminated:remaining.map(p=>p.pid),left,registrationBeforeCleanup:job,plistPresent,manualRemovalNotAPass:manual,keychainItemBeforeDelete:item,keychainCompleted:s.keychainIsolation?.completed??null,keychainCleanup:keychain,appLogs,productRemovalPassed:Boolean(s.removed)});
   check(left.length===0,"no-owned-processes-left");check(keychain.ok,"keychain-restored-task-keychain-absent");
 }
 const phases={admit,prepare,probe,"launch-configure":launchConfigure,"await-scheduled":awaitScheduled,"no-replay":noReplay,busy,remove,restore,"cleanup-verify":cleanupVerify};
