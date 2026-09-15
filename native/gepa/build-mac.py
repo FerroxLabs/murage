@@ -12,10 +12,6 @@ R.mkdir(mode=0o700)
 source_sha=os.environ.get("SOURCE_SHA","")
 if not re.fullmatch(r"[0-9a-f]{40}",source_sha) or subprocess.check_output(["git","rev-parse","HEAD"],cwd=S,text=True).strip()!=source_sha:raise RuntimeError("exact source SHA required")
 subprocess.run(["git","diff","--exit-code",source_sha,"--","native/gepa"],cwd=S,check=True)
-identities=subprocess.check_output(["/usr/bin/security","find-identity","-v","-p","codesigning",str(KEYCHAIN)],text=True)
-matches=re.findall(r'([A-Fa-f0-9]{40}) "Developer ID Application: Ferrox Labs, LLC [^"\n]+"',identities)
-if len(matches)!=1:raise RuntimeError("one Ferrox Developer ID in task keychain required")
-IDENTITY=matches[0]
 NODE=shutil.which('node')
 if not NODE:raise RuntimeError('Node required')
 began=time.monotonic(); deadline=began+2700
@@ -25,13 +21,24 @@ signal.signal(signal.SIGALRM,deadline_expired)
 signal.alarm(2700)
 for d in ("home","cache","tmp","inputs","wheelhouse","source","logs","prefix","work","dist"):(R/d).mkdir(exist_ok=True,mode=0o700)
 env={"HOME":str(R/"home"),"PATH":"/usr/bin:/bin:/usr/sbin:/sbin","TMPDIR":str(R/"tmp"),"LC_ALL":"C","PYINSTALLER_CONFIG_DIR":str(R/"cache"),"PIP_CONFIG_FILE":"/dev/null","PIP_DISABLE_PIP_VERSION_CHECK":"1","SDKROOT":subprocess.check_output(["/usr/bin/xcrun","--show-sdk-path"],text=True).strip()}
+# Security.framework must see the same disposable runner account that imported
+# the explicit task keychain. Keep compiler/package HOME isolated; inherit no
+# credential environment when using the runner HOME for signing operations.
+runner_home=os.environ.get("HOME","")
+runner_temp=os.environ.get("RUNNER_TEMP","")
+if os.environ.get("GITHUB_ACTIONS")!="true" or not pathlib.Path(runner_home).is_absolute() or not pathlib.Path(runner_temp).is_absolute() or not KEYCHAIN.resolve().is_relative_to(pathlib.Path(runner_temp).resolve()):raise RuntimeError("signing requires the disposable CI runner and its task keychain")
+signing_env={**env,"HOME":runner_home}
+identities=subprocess.check_output(["/usr/bin/security","find-identity","-v","-p","codesigning",str(KEYCHAIN)],env=signing_env,text=True)
+matches=re.findall(r'([A-Fa-f0-9]{40}) "Developer ID Application: Ferrox Labs, LLC [^"\n]+"',identities)
+if len(matches)!=1:raise RuntimeError("one Ferrox Developer ID in task keychain required")
+IDENTITY=matches[0]
 state={"contract":"One attempt, 45 minute cap, make -j2. Pinned CPython 3.13.15, GEPA 0.1.4, PyInstaller 6.22.3; self-contained native Mac runtime; six offline fixture scenarios; actual licenses and externally verified manifest. CI-only Developer ID from explicit throwaway keychain; sign before manifest. No publication.","target":TARGET,"architecture":ARCH,"round":1,"attempt":1,"supervisorPid":os.getpid(),"root":str(R)}
 def receipt(**kw):
  state.update(kw);state["elapsedSeconds"]=round(time.monotonic()-began,2);(R/"state.json").write_text(json.dumps(state,indent=2)+"\n");print(json.dumps(kw),flush=True)
-def run(stage,args,cwd=None):
+def run(stage,args,cwd=None,command_env=None):
  global active_process
  receipt(stage=stage,command=[str(x) for x in args]); log=open(R/"logs"/(stage+".log"),"wb")
- p=subprocess.Popen([str(x) for x in args],cwd=cwd or R,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+ p=subprocess.Popen([str(x) for x in args],cwd=cwd or R,env=command_env if command_env is not None else env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
  active_process=p
  receipt(ownedPid=p.pid,ownedProcessGroup=p.pid)
  try:code=p.wait(timeout=max(0,deadline-time.monotonic()))
@@ -119,8 +126,8 @@ try:
   for library in libraries:
    name=library.strip().split(" (",1)[0]
    if not name.startswith(("@loader_path/","@rpath/","@executable_path/","/usr/lib/","/System/Library/")):raise RuntimeError("Non-portable native dependency: "+str(path.relative_to(bundle)))
-  run("sign-"+str(index),["/usr/bin/codesign","--force","--sign",IDENTITY,"--keychain",KEYCHAIN,"--timestamp","--options","runtime",path])
-  run("verify-sign-"+str(index),["/usr/bin/codesign","--verify","--strict","--verbose=2",path])
+  run("sign-"+str(index),["/usr/bin/codesign","--force","--sign",IDENTITY,"--keychain",KEYCHAIN,"--timestamp","--options","runtime",path],command_env=signing_env)
+  run("verify-sign-"+str(index),["/usr/bin/codesign","--verify","--strict","--verbose=2",path],command_env=signing_env)
  run("signed-offline-fixture",[py,"-I",R/"inputs/offline-fixture.py","--",bundle/"gepa-worker"])
  destination=S/"dist-native/gepa"/TARGET
  if destination.exists():raise RuntimeError("GEPA stage already exists")
