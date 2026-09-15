@@ -148,6 +148,7 @@ try:
     DESTINATION.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(bundle, DESTINATION, symlinks=True)
     metadata = SOURCE / "qualification-evidence/gepa-package-metadata.json"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
     run("manifest", [NODE, SOURCE / "native/gepa/create-manifest.mjs", DESTINATION, "linux-x64", metadata])
     receipt(status="BUILT_STAGED", destination=str(DESTINATION), metadata=str(metadata))
 except BaseException as error:
