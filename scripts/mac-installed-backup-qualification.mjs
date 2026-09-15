@@ -172,7 +172,14 @@ const keychainItem=s=>run("/usr/bin/security",["find-generic-password","-s",s.ke
 // System Events / JXA. Commands carry labels and task paths only.
 const JXA=String.raw`function run(argv){
 var cmd=JSON.parse(argv[0]),se=Application('System Events'),ps=se.processes.whose({unixId:cmd.pid});
-if(cmd.op==='manualAX'){ObjC.import('ApplicationServices');var app=$.AXUIElementCreateApplication(cmd.pid);return JSON.stringify({ok:true,code:$.AXUIElementSetAttributeValue(app,$('AXManualAccessibility'),$.kCFBooleanTrue)});}
+if(cmd.op==='manualAX'){
+ ObjC.import('ApplicationServices');
+ // JXA bridges kCFBooleanTrue as a CFNumber; wrap a JS boolean to retain CFBoolean.
+ var value=$(true),valueType=String($.CFGetTypeID(value)),booleanType=String($.CFBooleanGetTypeID());
+ if(valueType!==booleanType)return JSON.stringify({ok:false,error:'AX-boolean-type',valueType:valueType,booleanType:booleanType});
+ var app=$.AXUIElementCreateApplication(cmd.pid),code=$.AXUIElementSetAttributeValue(app,$('AXManualAccessibility'),value);
+ return JSON.stringify({ok:code===0,code:code,valueType:valueType,booleanType:booleanType});
+}
 if(ps.length!==1)return JSON.stringify({ok:false,error:'process',count:ps.length});var p=ps[0];
 function names(e){var v=[];['name','title','description'].forEach(function(k){try{var x=e[k]();if(typeof x==='string'&&x)v.push(x);}catch(_){}});return v;}
 function role(e){try{return e.role();}catch(_){return '';}}
@@ -209,8 +216,8 @@ async function launch(s,label,args=[]){
   closeSync(log);const exit=new Promise(resolve=>child.once("exit",(code,signal)=>resolve({code,signal})));
   record({step:`launch-${label}`,pid:child.pid});
   await until(()=>ax(s,{op:"count",pid:child.pid,roles:["AXWindow"],label:"__none__"}).windows>0,120000,`window-${label}`);
-  // Electron may expose its tree without supporting this optional setter (-25200).
-  // Record the hint's result; the actual UI tree and exact selector remain the gate.
+  // Retain the setter's actual status (-25200 is AX failure, not unsupported).
+  // The renderer tree and exact selector remain the admission gate.
   const accessibility=ax(s,{op:"manualAX",pid:child.pid});record({step:"manual-accessibility",result:accessibility});
   return{pid:child.pid,exit};
 }
