@@ -1,4 +1,5 @@
 import test from "node:test";
+import {spawnSync} from "node:child_process";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {createHash} from "node:crypto";
@@ -237,4 +238,22 @@ test("settings entry is admitted only for exactly one AXButton with the exact so
   assert.deepEqual([admitSettingsEntry([{role:"AXGroup",names:["App settings"]}]).reason,admitSettingsEntry([{role:"AXGroup",names:["App settings"]}]).otherRoles],["wrong-role",["AXGroup"]]);
   assert.equal(admitSettingsEntry([{role:"AXButton",names:["app settings"]},{role:"AXButton",names:["App settings…"]}]).ok,false);
   assert.equal(admitSettingsEntry(null).reason,"snapshot-invalid");
+});
+
+// Real JXA/CoreFoundation marshalling only. No AX target, Application(), UI,
+// permission request, user data or keychain access. Extract the actual helper
+// argument so reverting to the imported CF constant fails this regression.
+test("manual AX argument retains CFBoolean through the actual JXA bridge",{skip:process.platform!=="darwin"},()=>{
+  const source=readFileSync(new URL("./mac-installed-backup-qualification.mjs",import.meta.url),"utf8");
+  const body=/if\(cmd.op==='manualAX'\)\{([\s\S]*?)\n\}/.exec(source)?.[1];
+  assert.ok(body);
+  const expression=/var value=([^,;]+),valueType=/.exec(body)?.[1];
+  assert.ok(expression,"exercise the exact value passed to the AX setter");
+  assert.match(body,/AXUIElementSetAttributeValue\(app,\$\('AXManualAccessibility'\),value\)/);
+  const script=`ObjC.import('ApplicationServices');var value=${expression};JSON.stringify({actual:String($.CFGetTypeID(value)),expected:String($.CFBooleanGetTypeID()),value:ObjC.unwrap(value)})`;
+  const result=spawnSync("/usr/bin/osascript",["-l","JavaScript","-e",script],{encoding:"utf8",timeout:10000});
+  assert.equal(result.status,0,result.stderr);
+  const observed=JSON.parse(result.stdout.trim());
+  assert.equal(observed.actual,observed.expected);
+  assert.equal(observed.value,true);
 });
