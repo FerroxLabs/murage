@@ -1,0 +1,128 @@
+name: Qualify Linux service payload
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Full source SHA; must equal the commit containing this workflow"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Service tar (Ubuntu 24.04 x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOURCE_REF: ${{ inputs.ref }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+    steps:
+      - name: Admit exact workflow and source identity
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REF" =~ ^[a-f0-9]{40}$ ]]
+          test "$SOURCE_REF" = "$WORKFLOW_SHA"
+          test "$SOURCE_REF" = "$GITHUB_SHA"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Record source and toolchain
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 24.04
+          mkdir -p qualification-evidence/linux-service release-service
+          {
+            printf 'sourceCommit=%s\n' "$SOURCE_REF"
+            printf 'sourceTree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'workflowSha=%s\n' "$WORKFLOW_SHA"
+            printf 'runId=%s\n' "$GITHUB_RUN_ID"
+            printf 'runAttempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'platform=ubuntu-24.04-x86_64\n'
+            printf 'node=%s\n' "$(node --version)"
+            printf 'pnpm=%s\n' "$(pnpm --version)"
+            printf 'publication=none\n'
+          } > qualification-evidence/linux-service/source.txt
+      - name: Install frozen build dependencies
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile 2>&1 | tee qualification-evidence/linux-service/install.log
+      - name: Build the existing UI, bundled server and companion
+        run: |
+          set -euo pipefail
+          # build type-checks the server but does not emit the standalone bundle.
+          pnpm build 2>&1 | tee qualification-evidence/linux-service/build.log
+          pnpm build:server 2>&1 | tee qualification-evidence/linux-service/server.log
+          pnpm build:companion 2>&1 | tee qualification-evidence/linux-service/companion.log
+      - name: Stage the pinned Linux engine and backup tool
+        run: |
+          set -euo pipefail
+          node scripts/prepare-fuigo.mjs --target linux-x64 2>&1 | tee qualification-evidence/linux-service/fuigo.log
+          pnpm prepare:backup-age:linux 2>&1 | tee qualification-evidence/linux-service/age.log
+      - name: Create the exact service archive
+        run: |
+          set -euo pipefail
+          git diff --exit-code HEAD
+          test -f dist/index.html
+          test -f dist-server/index.js
+          test -f dist-companion/index.js
+          test -f installer/bin/murage.mjs
+          test -x dist-native/fuigo/linux-x64/fuigo
+          test -x dist-native/backup-age-linux/x64/age
+          node --input-type=module -e 'import assert from "node:assert/strict"; import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("dist-server/memory-runtime-manifest.json","utf8")); assert.equal(m.platform,"linux"); assert.equal(m.arch,"x64"); assert.ok(m.packages.length>0);'
+          cp dist-server/memory-runtime-manifest.json qualification-evidence/linux-service/
+          archive="release-service/murage-${SOURCE_REF}-linux-x64-service.tar"
+          tar -cf "$archive" \
+            package.json installer/bin installer/lib dist dist-server dist-companion \
+            skills skills-library library bot-library LICENSE NOTICE \
+            third_party/fuigo third_party/installation-archive \
+            dist-native/fuigo/linux-x64 dist-native/backup-age-linux
+          # Tar retains nested dist-server/node_modules and its native runtime.
+          tar -tf "$archive" > qualification-evidence/linux-service/archive-files.txt
+          (
+            cd release-service
+            sha256sum "murage-${SOURCE_REF}-linux-x64-service.tar" > SHA256SUMS.txt
+          )
+          cp qualification-evidence/linux-service/source.txt release-service/
+      - name: Smoke the server extracted from the service archive
+        run: |
+          set -euo pipefail
+          unpacked="$RUNNER_TEMP/murage-linux-service-smoke"
+          test ! -e "$unpacked"
+          mkdir -m 700 "$unpacked"
+          tar -xf "release-service/murage-${SOURCE_REF}-linux-x64-service.tar" -C "$unpacked"
+          # Existing fixture isolates HOME/data and checks owned PID health,
+          # every spawned proxy path, and MCP initialize/health/EOF drain.
+          MURAGE_SMOKE_DIST="$unpacked/dist-server" timeout --kill-after=15s 180s \
+            node scripts/smoke-packaged-server.mjs 2>&1 | tee qualification-evidence/linux-service/smoke.log
+          printf 'serverSmoke=passed\nhostPilot=not-run\nproviderCalls=none\n' > qualification-evidence/linux-service/result.txt
+      - name: Preserve qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: murage-linux-service-evidence-${{ github.sha }}
+          path: qualification-evidence/linux-service/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Preserve the accepted service payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: murage-linux-service-${{ github.sha }}
+          path: release-service/
+          if-no-files-found: error
+          retention-days: 7
